@@ -317,6 +317,49 @@ pub struct SemanticRule {
 
 ---
 
+## Type Conversions
+
+### Problem
+
+Different native types need conversion: `3 / 2` gives `1` (i32), but `3.0 / 2.0` gives `1.5` (f64). Mixed operations like `3 / 2.0` require type conversion.
+
+**Current state**: No conversion support - operations only work with matching types.
+
+### Design
+
+**Explicit conversions:**
+```rust
+conversions {
+    Int -> Float: |x: i32| x as f64,    // Lossless
+    Float -> Int: |x: f64| x as i32,    // Lossy (truncates)
+}
+```
+
+Generates conversion constructors:
+```rust
+ToFloat . Float ::= "float" "(" Int ")" ;
+ToInt . Int ::= "int" "(" Float ")" ;
+```
+
+**Usage:** `float(3) / 2.0` → `1.5`
+
+### Implementation Phases
+
+1. **Manual conversions** - User defines conversion constructors
+2. **Conversion registry** - Auto-generate from `conversions { }` block
+3. **Implicit conversions** - Parser auto-inserts for type mismatches
+4. **Fallible conversions** - Support `Result<T, Error>` for `String -> Int`
+
+### Standard Conversions
+
+- **Numeric**: `i32 <-> i64`, `i32 <-> f64`, `f64 -> i32` (truncate)
+- **String**: `Int -> String`, `String -> Int` (fallible), `Bool -> String`
+- **Collections**: `Vec<T> -> HashSet<T>`, `Option<T> -> Result<T, Error>`
+
+**Priority**: High (numeric), Medium (string), Low (implicit/generic)
+
+---
+
 ## Roadmap: Explicit Algebraic Properties
 
 ### Vision
