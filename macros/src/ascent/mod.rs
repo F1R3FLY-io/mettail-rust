@@ -297,9 +297,10 @@ fn generate_automatic_var_retrieval_rules(theory: &TheoryDef) -> Vec<TokenStream
             rule.category == *category && is_var_rule(rule)
         });
 
-        // Skip if no Var rule exists (VarRef is needed for variable retrieval)
-        // Note: VarRef is auto-generated for non-native types, so this should usually be true
-        if !has_var_rule && export.native_type.is_none() {
+        // For non-native types, Var variants are auto-generated if not explicitly defined
+        // So we should always generate variable retrieval rules for non-native types
+        // Skip only for native types that don't have a Var rule
+        if export.native_type.is_some() && !has_var_rule {
             continue;
         }
 

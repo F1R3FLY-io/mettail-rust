@@ -180,6 +180,34 @@ Proc :: insert_into_ppar(& mut bag_result, rhs_term);
 
 bag_result }).normalize();
 
+rw_proc(parent, result) <--
+    ppar_contains(parent, elem),
+    rw_proc(elem.clone(), elem_rewritten),
+    if let Proc :: PPar(ref bag) = parent,
+    let remaining = { let mut b = bag.clone();
+
+b.remove(& elem);
+
+b }, let result = Proc :: PPar({ let mut bag_result = remaining;
+
+Proc :: insert_into_ppar(& mut bag_result, elem_rewritten.clone());
+
+bag_result }).normalize();
+
+rw_proc(s, t) <--
+    proc(s),
+    if let Proc :: PVar(ord_var) = s,
+    if let Some(var_name) = match ord_var { mettail_runtime :: OrdVar(mettail_runtime :: Var :: Free(ref fv)) => { fv.pretty_name.clone() } _ => None },
+    env_var_proc(var_name, v),
+    let t = v.clone();
+
+rw_name(s, t) <--
+    name(s),
+    if let Name :: NVar(ord_var) = s,
+    if let Some(var_name) = match ord_var { mettail_runtime :: OrdVar(mettail_runtime :: Var :: Free(ref fv)) => { fv.pretty_name.clone() } _ => None },
+    env_var_name(var_name, v),
+    let t = v.clone();
+
 rw_proc(assign_s, assign_t) <--
     proc(assign_s),
     if let Proc :: Assign(x, s) = assign_s,
