@@ -40,10 +40,26 @@ impl Theory for CalculatorTheory {
 
         let trimmed = input.trim();
 
+        // Substitute variables with their environment values before parsing
+        // Only substitute in the RHS of assignments to preserve variable names on LHS
+        let substituted = CALC_ENV.with(|env| {
+            let env_ref = env.borrow();
+            if let Some(eq_pos) = trimmed.find('=') {
+                // For assignments: keep LHS as-is, substitute RHS only
+                let lhs = &trimmed[..eq_pos];
+                let rhs = &trimmed[eq_pos + 1..];
+                let substituted_rhs = substitute_vars_in_input(rhs, &env_ref)?;
+                Ok(format!("{}={}", lhs, substituted_rhs))
+            } else {
+                // For non-assignments: substitute the whole input
+                substitute_vars_in_input(trimmed, &env_ref)
+            }
+        })?;
+
         // Parse to Int AST
         let parser = calculator::IntParser::new();
         let expr = parser
-            .parse(trimmed)
+            .parse(&substituted)
             .map_err(|e| anyhow::anyhow!("Parse error: {:?}", e))?;
 
         // Handle assignments: evaluate RHS and update environment, but return the term
@@ -235,6 +251,47 @@ impl Theory for CalculatorTheory {
             format!("{}", term)
         }
     }
+}
+
+/// Substitute variable names with their values in an input string.
+/// Similar to the theory's substitute_vars, but works with the environment.
+fn substitute_vars_in_input(input: &str, env: &CalculatorIntEnv) -> Result<String> {
+    let mut result = String::new();
+    let mut chars = input.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch.is_alphabetic() || ch == '_' {
+            // Start of an identifier
+            let mut ident = String::from(ch);
+            while let Some(&next_ch) = chars.peek() {
+                if next_ch.is_alphanumeric() || next_ch == '_' {
+                    ident.push(next_ch);
+                    chars.next();
+                } else {
+                    break;
+                }
+            }
+
+            // Look up the variable in the environment
+            if let Some(val_term) = env.get(&ident) {
+                // Extract the i32 value from the Int term
+                if let Int::NumLit(val) = val_term {
+                    result.push_str(&val.to_string());
+                } else {
+                    // If not a simple NumLit, just return the variable name
+                    // (it might be a complex expression, but this shouldn't happen)
+                    result.push_str(&ident);
+                }
+            } else {
+                // Variable not found - leave it as is (will be caught by parser if undefined)
+                result.push_str(&ident);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    Ok(result)
 }
 
 /// Wrapper for Int AST that implements Term

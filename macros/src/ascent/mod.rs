@@ -295,9 +295,6 @@ fn generate_automatic_var_retrieval_rules(theory: &TheoryDef) -> Vec<TokenStream
         // Var variants are now auto-generated for ALL categories (native and non-native)
         // So we should always generate variable retrieval rules
 
-        // Var variants are now auto-generated for ALL categories (native and non-native)
-        // So we should always generate variable retrieval rules
-
         // Use the explicit Var rule label if it exists, otherwise use auto-generated label
         let var_label = theory.terms.iter()
             .find(|rule| rule.category == *category && is_var_rule(rule))
