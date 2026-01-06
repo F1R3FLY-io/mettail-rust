@@ -63,3 +63,18 @@ pub fn generate_var_label(category: &Ident) -> Ident {
         .collect::<String>();
     quote::format_ident!("{}Var", first_letter)
 }
+
+/// Generate the literal variant label for a category with native type
+///
+/// Convention: "NumLit" for integers, "FloatLit" for floats, "BoolLit" for bools
+/// This is used for auto-generated literal constructors
+pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
+    use crate::utils::native_type_to_string;
+    let type_str = native_type_to_string(native_type);
+    match type_str.as_str() {
+        "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => quote::format_ident!("NumLit"),
+        "f32" | "f64" => quote::format_ident!("FloatLit"),
+        "bool" => quote::format_ident!("BoolLit"),
+        _ => quote::format_ident!("Lit"), // Generic fallback
+    }
+}

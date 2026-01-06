@@ -1,6 +1,7 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use super::{display, generate_var_label, has_assign_rule, is_integer_rule, is_var_rule, subst, termgen};
+use super::{display, generate_literal_label, generate_var_label, has_assign_rule, is_integer_rule, is_var_rule, subst, termgen};
+use crate::utils::has_native_type;
 use crate::ast::{BuiltinOp, GrammarItem, GrammarRule, TheoryDef};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -77,22 +78,32 @@ fn generate_ast_enums(theory: &TheoryDef) -> TokenStream {
 
         // Check if there's already a Var rule
         let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
+        // Check if there's already an Integer/literal rule
+        let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
 
         let mut variants: Vec<TokenStream> = rules.iter().map(|rule| {
             generate_variant(rule, theory)
         }).collect();
 
-        // For native types, we don't add a Var variant (native types don't use variables)
-        // Instead, we'll handle native literals in the parser
-        if !has_var_rule {
-            // Only add Var variant if this is NOT a native type
-            if export.native_type.is_none() {
-                let var_label = generate_var_label(cat_name);
-
+        // Auto-generate literal variant for native types (if not explicitly declared)
+        if let Some(native_type) = has_native_type(cat_name, theory) {
+            if !has_integer_rule {
+                let literal_label = generate_literal_label(native_type);
+                let native_type_cloned = native_type.clone();
+                
                 variants.push(quote! {
-                    #var_label(mettail_runtime::OrdVar)
+                    #literal_label(#native_type_cloned)
                 });
             }
+        }
+
+        // Auto-generate Var variant for ALL categories (native and non-native)
+        if !has_var_rule {
+            let var_label = generate_var_label(cat_name);
+
+            variants.push(quote! {
+                #var_label(mettail_runtime::OrdVar)
+            });
         }
 
         // Automatically add Assign variant if it doesn't already exist
@@ -600,6 +611,17 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
         // Generate match arms
         let mut match_arms = Vec::new();
 
+        // Check if there's an auto-generated literal (for native types without explicit Integer rule)
+        let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+        if let Some(native_type) = has_native_type(category, theory) {
+            if !has_integer_rule {
+                let literal_label = generate_literal_label(native_type);
+                match_arms.push(quote! {
+                    #category::#literal_label(n) => *n,
+                });
+            }
+        }
+
         for rule in &rules {
             let label = &rule.label;
             let label_str = label.to_string();
@@ -610,7 +632,7 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
                     #category::#label(n) => *n,
                 });
             }
-            // Check if this is a Var rule (VarRef, etc.)
+            // Check if this is a Var rule (auto-generated or explicit)
             else if is_var_rule(rule) {
                 // Use loop { panic!() } idiom for proper `!` type handling in quote!
                 let panic_msg = format!(
@@ -750,13 +772,20 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                 .filter(|r| r.category.to_string() == category_str)
                 .collect();
 
-            // Find VarRef rule and Integer rule for the rewrite
-            // Look for any Var rule (not just "VarRef" - could be any name)
+            // Find Var rule and Integer/literal rule for the rewrite
+            // Look for any Var rule (auto-generated or explicit)
             let var_ref_rule = category_rules.iter().find(|r| is_var_rule(r));
             // Integer rule is the one that uses Integer keyword (for native type literals)
+            // Or use auto-generated literal label if no explicit rule
             let integer_rule = category_rules.iter().find(|r| is_integer_rule(r));
-
-            let integer_label = integer_rule.map(|r| &r.label);
+            let integer_label = if let Some(rule) = integer_rule {
+                Some(&rule.label)
+            } else if let Some(native_type) = has_native_type(category, theory) {
+                // Use auto-generated literal label
+                Some(&generate_literal_label(native_type))
+            } else {
+                None
+            };
 
             // Generate match arms for all constructors
             let mut match_arms: Vec<TokenStream> = Vec::new();
@@ -766,7 +795,7 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                 let label = &rule.label;
                 let label_str = label.to_string();
 
-                // Check if this is VarRef - apply rewrite
+                // Check if this is a Var rule - apply rewrite
                 let is_var_ref = var_ref_rule
                     .map(|vr| vr.label.to_string() == label_str)
                     .unwrap_or(false);
@@ -854,7 +883,7 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                 }
             }
 
-            // Ensure we have at least some match arms (should always have VarRef and NumLit at minimum)
+            // Ensure we have at least some match arms (should always have Var and NumLit at minimum)
             if match_arms.is_empty() {
                 return quote! {
                     compile_error!("No match arms generated for category with env_var rewrites");
@@ -867,7 +896,7 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                     /// Apply rewrites using environment facts.
                     /// Returns the normal form (most reduced term) after applying all rewrites.
                     ///
-                    /// Implements the rewrite rule: if env_var(x, v) then (VarRef x) => (NumLit v)
+                    /// Implements the rewrite rule: if env_var(x, v) then (Var x) => (NumLit v)
                     pub fn apply_rewrites_with_facts<I>(&self, facts: I) -> Result<#category, String>
                     where
                         I: IntoIterator<Item = (String, i32)>,
@@ -881,7 +910,7 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                     }
 
                     /// Recursively substitute variables using environment facts
-                    /// Implements the rewrite rule: if env_var(x, v) then (VarRef x) => (NumLit v)
+                    /// Implements the rewrite rule: if env_var(x, v) then (Var x) => (NumLit v)
                     fn substitute_vars_recursive(term: &#category, env: &std::collections::HashMap<String, i32>) -> Result<#category, String> {
                         match term {
                             #(#match_arms),*
@@ -991,11 +1020,13 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                 r.category == *category && is_integer_rule(r)
             });
             
+            // Store the literal label - either from explicit rule or auto-generated
             let num_lit_label = if let Some(rule) = integer_rule {
-                &rule.label
+                // Explicit integer rule found - use its label
+                rule.label.clone()
             } else {
-                // No integer rule found - skip generating this function
-                continue;
+                // No explicit integer rule - use auto-generated literal label
+                generate_literal_label(native_type)
             };
             
             // Find Var rule to generate has_var_ref helper
@@ -1003,11 +1034,12 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                 r.category == *category && is_var_rule(r)
             });
             
+            // Store the var label - either from explicit rule or auto-generated
             let var_label = if let Some(rule) = var_rule {
-                &rule.label
+                rule.label.clone()
             } else {
                 // Use auto-generated label
-                &generate_var_label(category)
+                generate_var_label(category)
             };
             
             // Generate function name for has_var_ref helper
@@ -1059,7 +1091,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                     .collect();
                 
                 if recursive_fields.is_empty() {
-                    // No recursive fields - can't have VarRef
+                    // No recursive fields - can't have Var
                     has_var_ref_match_arms.push(quote! {
                         #category::#label(..) => false,
                     });

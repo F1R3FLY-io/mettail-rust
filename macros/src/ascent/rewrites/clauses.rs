@@ -168,8 +168,8 @@ fn generate_rewrite_clause(rule: &RewriteRule, theory: &TheoryDef) -> TokenStrea
             },
             crate::ast::Condition::EnvQuery { relation, args } => {
                 // Generate Ascent clause that queries the environment relation
-                // Example: if env_var(x, v) then (VarRef x) => (NumLit v)
-                // Pattern: (VarRef x) binds x to OrdVar
+                // Example: if env_var(x, v) then (Var x) => (NumLit v)
+                // Pattern: (Var x) binds x to OrdVar
                 // Condition: env_var(x, v) means query env_var with x's name, bind v to the value
                 // RHS: (NumLit v) uses v which is bound from the query
 

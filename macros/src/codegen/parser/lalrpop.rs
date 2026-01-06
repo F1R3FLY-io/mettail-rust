@@ -6,7 +6,7 @@
 #![allow(clippy::cmp_owned, clippy::useless_format)]
 
 use crate::ast::{GrammarItem, GrammarRule, TheoryDef};
-use crate::codegen::{has_assign_rule, is_integer_rule, is_var_rule};
+use crate::codegen::{generate_literal_label, has_assign_rule, is_integer_rule, is_var_rule};
 use crate::utils::{has_native_type, native_type_to_string};
 
 /// Generates Var label for a category (first letter + "Var")
@@ -70,9 +70,9 @@ pub fn generate_lalrpop_grammar(theory: &TheoryDef) -> String {
     // Add use statements for runtime helpers. Only include what's needed
     let has_binders = theory.terms.iter().any(|r| !r.bindings.is_empty());
 
-    // Check if any category needs Var (i.e., has non-native exports OR has Var rules)
-    let needs_var = theory.exports.iter().any(|e| e.native_type.is_none())
-        || theory.terms.iter().any(is_var_rule);
+    // Var variants are now auto-generated for ALL categories (native and non-native)
+    // So we always need Var imports if there are any exports
+    let needs_var = !theory.exports.is_empty();
 
     if has_binders {
         if needs_var {
@@ -126,7 +126,7 @@ pub fn generate_lalrpop_grammar(theory: &TheoryDef) -> String {
 }
 
 /// Check if a rule starts with Var followed by a terminal (e.g., Var "=" Int)
-/// These rules need special handling to avoid ambiguity with bare VarRef rules
+/// These rules need special handling to avoid ambiguity with bare Var rules
 fn is_var_terminal_rule(rule: &GrammarRule) -> bool {
     rule.items.len() >= 2
         && matches!(&rule.items[0], GrammarItem::NonTerminal(nt) if nt.to_string() == "Var")
@@ -295,62 +295,96 @@ fn generate_tiered_production(
         .copied()
         .collect();
 
-    // Add unary minus support for native integer types (before other rules for precedence)
-    if let Some(native_type) = has_native_type(category, theory) {
-        let type_str = native_type_to_string(native_type);
-        if type_str == "i32" || type_str == "i64" {
-            // Find the Integer rule (for integer literals)
-            if let Some(integer_rule) = filtered_other_rules.iter().find(|r| is_integer_rule(r)) {
-                let integer_label = integer_rule.label.to_string();
-                production.push_str(&format!(
-                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    cat_str, integer_label
-                ));
-            }
-        }
-    }
+    // Check if there's an explicit Integer rule
+    let has_integer_rule = filtered_other_rules.iter().any(|r| is_integer_rule(r));
+    
+    // Track if we need a comma before the next rule
+    let mut needs_comma = false;
 
     // Add non-infix rules (excluding var+terminal rules, which are handled at top level)
     for (i, rule) in filtered_other_rules.iter().enumerate() {
-        production.push_str("    ");
-        production.push_str(&generate_rule_alternative_with_theory(rule, Some(theory)));
-
-        if i < filtered_other_rules.len() - 1 {
+        if needs_comma {
             production.push_str(",\n");
         } else {
-            production.push('\n');
+            production.push_str("\n");
+        }
+        production.push_str("    ");
+        let rule_alt = generate_rule_alternative_with_theory(rule, Some(theory));
+        production.push_str(&rule_alt);
+        
+        // Set needs_comma for next iteration: true if more rules in the loop
+        // Don't set it for the last rule even if something will be added after - 
+        // the comma will be added before that item instead
+        let is_last_rule = i == filtered_other_rules.len() - 1;
+        // Check if this is a collection rule (ends with "    }" without comma)
+        let is_collection_rule = rule.items.iter().any(|item| matches!(item, GrammarItem::Collection { .. }));
+        // For collection rules, they already have the closing brace with comma, so we don't need a comma after
+        // But we still need a comma if there are more rules
+        // For the last rule, only set needs_comma if it's NOT a collection rule AND something will be added after
+        let will_add_after = !has_var_rule || (has_native_type(category, theory).is_some() && !has_integer_rule);
+        if is_last_rule {
+            // Last rule: only need comma if it's not a collection rule AND something will be added after
+            // Collection rules already have the comma in the generated code (they end with "    },")
+            needs_comma = !is_collection_rule && will_add_after;
+        } else {
+            // Not last rule: always need comma
+            needs_comma = true;
+        }
+    }
+
+    // Auto-generate literal parser for native types (if not explicitly declared)
+    if let Some(native_type) = has_native_type(category, theory) {
+        let type_str = native_type_to_string(native_type);
+        if !has_integer_rule {
+            let literal_label = generate_literal_label(native_type);
+            
+            if needs_comma {
+                production.push_str(",\n");
+            }
+            
+            if type_str == "i32" || type_str == "i64" {
+                // Integer literals: parse Integer token
+                // Add unary minus support for negative numbers (before positive literals for precedence)
+                production.push_str(&format!(
+                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
+                    cat_str, literal_label
+                ));
+                production.push_str(&format!(
+                    "    <i:Integer> => {}::{}(i)\n",
+                    cat_str, literal_label
+                ));
+            } else if type_str == "f32" || type_str == "f64" {
+                // Float literals: parse Float token
+                production.push_str(&format!(
+                    "    <f:Float> => {}::{}(f)\n",
+                    cat_str, literal_label
+                ));
+            } else if type_str == "bool" {
+                // Boolean literals: parse Boolean token
+                production.push_str(&format!(
+                    "    <b:Boolean> => {}::{}(b)\n",
+                    cat_str, literal_label
+                ));
+            }
+            needs_comma = !has_var_rule; // Next rule (Var) needs comma only if Var will be added
         }
     }
 
     // Automatically adds Var alternative if it doesn't exist (lowest precedence)
-    // But check for native types first - if category has native type, use native literal parser
+    // Variables always parse as Ident (not Integer), regardless of native type
+    // Integer literals are handled separately via NumLit/Integer rules
     if !has_var_rule {
         let var_label = generate_var_label(category);
-        // Check if this category has a native type
-        if let Some(native_type) = has_native_type(category, theory) {
-            let type_str = native_type_to_string(native_type);
-            if type_str == "i32" || type_str == "i64" {
-                // Use Integer token for native integer types
-                // Also add unary minus support for negative numbers
-                production.push_str(&format!(
-                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    cat_str, var_label
-                ));
-                production.push_str(&format!("    <i:Integer> => {}::{}(i)\n", cat_str, var_label));
-            } else {
-                // Other native types - fall back to Var for now
-                production.push_str(&format!(
-                    "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))\n",
-                    cat_str, var_label
-                ));
-            }
+        // Variables always parse as Ident (not Integer)
+        if needs_comma {
+            production.push_str(",\n");
         } else {
-            // No native type - use regular Var
-            production.push_str(&format!(
-                "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))\n",
-                cat_str, var_label
-            ));
+            production.push_str("\n");
         }
+        production.push_str(&format!(
+            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))",
+            cat_str, var_label
+        ));
     }
 
     production.push_str("};\n");
@@ -430,6 +464,10 @@ fn generate_var_terminal_alternative(rule: &GrammarRule, cat_str: &str) -> Strin
                     // Recursive reference: use CatInfix to avoid circular reference
                     pattern.push_str(&format!(" <{}:{}Infix>", var_name, cat_str));
                     args.push(format!("Box::new({})", var_name));
+                } else if nt.to_string() == "Integer" {
+                    // Integer is a token, not a non-terminal type
+                    pattern.push_str(&format!(" <{}:Integer>", var_name));
+                    args.push(var_name.clone());
                 } else {
                     // Different category: use as-is
                     pattern.push_str(&format!(" <{}:{}>", var_name, nt));
@@ -464,6 +502,12 @@ fn generate_simple_production(
     // Production header: pub CategoryName: CategoryName = {
     production.push_str(&format!("pub {}: {} = {{\n", category, category));
 
+    // Check if there's an explicit Integer rule
+    let has_integer_rule = rules.iter().any(|r| is_integer_rule(r));
+
+    // Track if we need a comma before the next rule
+    let mut needs_comma = false;
+
     // Automatically add assignment parsing if no explicit Assign rule exists
     // Only generate assignments for exported categories that are NOT used as the first
     // non-terminal in other categories' rules (to avoid ambiguity)
@@ -473,55 +517,87 @@ fn generate_simple_production(
     if !has_assign && is_exported && !is_first_in_other {
         // For simple productions (no infix), use the category directly for RHS
         production.push_str(&format!(
-            "    <v:Ident> \"=\" <expr:{}> => {}::Assign(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))), Box::new(expr)),\n",
+            "    <v:Ident> \"=\" <expr:{}> => {}::Assign(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))), Box::new(expr))",
             cat_str, cat_str
         ));
+        needs_comma = true; // Next rule needs comma
     }
 
     // Generate alternative for each rule
     for (i, rule) in rules.iter().enumerate() {
+        if needs_comma {
+            production.push_str(",\n");
+        } else {
+            production.push_str("\n");
+        }
         production.push_str("    ");
         // Pass theory context for native type detection
         production.push_str(&generate_rule_alternative_with_theory(rule, Some(theory)));
-
-        // Adds comma unless it's the last rule and we won't add Var
-        if i < rules.len() - 1 || !has_var_rule {
-            production.push_str(",\n");
+        
+        // Check if this is the last rule and if it's a collection rule
+        let is_last_rule = i == rules.len() - 1;
+        let is_collection_rule = rule.items.iter().any(|item| matches!(item, GrammarItem::Collection { .. }));
+        let will_add_after = !has_var_rule || (has_native_type(category, theory).is_some() && !has_integer_rule);
+        
+        if is_last_rule {
+            // For the last rule, only set needs_comma if it's NOT a collection rule AND something will be added after
+            needs_comma = !is_collection_rule && will_add_after;
         } else {
-            production.push('\n');
+            // Not the last rule: always need comma
+            needs_comma = true;
+        }
+    }
+
+    // Auto-generate literal parser for native types (if not explicitly declared)
+    if let Some(native_type) = has_native_type(category, theory) {
+        let type_str = native_type_to_string(native_type);
+        if !has_integer_rule {
+            let literal_label = generate_literal_label(native_type);
+            
+            if needs_comma {
+                production.push_str(",\n");
+            }
+            
+            if type_str == "i32" || type_str == "i64" {
+                // Integer literals: parse Integer token
+                // Add unary minus support for negative numbers
+                production.push_str(&format!(
+                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
+                    category, literal_label
+                ));
+                production.push_str(&format!(
+                    "    <i:Integer> => {}::{}(i)\n",
+                    category, literal_label
+                ));
+            } else if type_str == "f32" || type_str == "f64" {
+                // Float literals: parse Float token
+                production.push_str(&format!(
+                    "    <f:Float> => {}::{}(f)\n",
+                    category, literal_label
+                ));
+            } else if type_str == "bool" {
+                // Boolean literals: parse Boolean token
+                production.push_str(&format!(
+                    "    <b:Boolean> => {}::{}(b)\n",
+                    category, literal_label
+                ));
+            }
+            // Note: Comma handling for Var rule is done below based on rules.is_empty() check
         }
     }
 
     // Automatically adds Var alternative if it doesn't exist (lowest precedence)
-    // But check for native types first - if category has native type, use native literal parser
+    // Variables always parse as Ident (not Integer), regardless of native type
     if !has_var_rule {
         let var_label = generate_var_label(category);
-        // Check if this category has a native type
-        if let Some(native_type) = has_native_type(category, theory) {
-            let type_str = native_type_to_string(native_type);
-            if type_str == "i32" || type_str == "i64" {
-                // Use Integer token for native integer types
-                // Also add unary minus support for negative numbers
-                production.push_str(&format!(
-                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    category, var_label
-                ));
-                production
-                    .push_str(&format!("    <i:Integer> => {}::{}(i)\n", category, var_label));
-            } else {
-                // Other native types - fall back to Var for now
-                production.push_str(&format!(
-                    "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))\n",
-                    category, var_label
-                ));
-            }
-        } else {
-            // No native type - use regular Var
-            production.push_str(&format!(
-                "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))\n",
-                category, var_label
-            ));
+        // Always add comma before Var if there were rules before (even collection rules)
+        if !rules.is_empty() || (has_native_type(category, theory).is_some() && !has_integer_rule) {
+            production.push_str(",\n");
         }
+        production.push_str(&format!(
+            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))",
+            category, var_label
+        ));
     }
 
     production.push_str("};\n");
@@ -560,10 +636,15 @@ fn generate_rule_alternative_with_theory(
             },
             GrammarItem::NonTerminal(nt) => {
                 // Non-terminal: recursively parse
-                alt.push_str(&format!(
-                    "<val:{}> => {}::{}(Box::new(val))",
-                    nt, rule.category, label
-                ));
+                // Special case: Integer is a token, not a non-terminal type
+                if nt.to_string() == "Integer" {
+                    alt.push_str(&format!("<i:Integer> => {}::{}(i)", rule.category, label));
+                } else {
+                    alt.push_str(&format!(
+                        "<val:{}> => {}::{}(Box::new(val))",
+                        nt, rule.category, label
+                    ));
+                }
             },
             GrammarItem::Collection {
                 coll_type,
@@ -856,6 +937,7 @@ fn generate_collection_alternative(
     action.push_str(&format!("        {}::{}(coll)\n", category, label));
     action.push_str("    }");
 
+    // Return the complete pattern => action
     format!("{}{}", pattern.trim(), action)
 }
 
@@ -1005,17 +1087,17 @@ mod tests {
         println!("is_var_terminal_rule: {}", is_var_term);
         assert!(is_var_term, "Assign rule should be detected as var+terminal rule");
 
-        // VarRef should NOT be detected as var+terminal (no terminal after Var)
-        let varref_rule = GrammarRule {
-            label: parse_quote!(VarRef),
+        // Var rule should NOT be detected as var+terminal (no terminal after Var)
+        let var_rule = GrammarRule {
+            label: parse_quote!(IVar),
             category: parse_quote!(Int),
             items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
             bindings: vec![],
         };
 
         assert!(
-            !is_var_terminal_rule(&varref_rule),
-            "VarRef should not be detected as var+terminal rule"
+            !is_var_terminal_rule(&var_rule),
+            "Var rule should not be detected as var+terminal rule"
         );
     }
 
@@ -1033,7 +1115,7 @@ mod tests {
             }],
             terms: vec![
                 GrammarRule {
-                    label: parse_quote!(VarRef),
+                    label: parse_quote!(IVar),
                     category: parse_quote!(Int),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
                     bindings: vec![],

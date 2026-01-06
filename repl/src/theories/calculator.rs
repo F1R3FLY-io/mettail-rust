@@ -24,7 +24,7 @@ impl Theory for CalculatorTheory {
     }
 
     fn constructor_count(&self) -> usize {
-        5 // NumLit, Add, Sub, VarRef, Assign
+        5 // NumLit, Add, Sub, IVar, Assign
     }
 
     fn equation_count(&self) -> usize {
@@ -91,7 +91,8 @@ impl Theory for CalculatorTheory {
                 Int::NumLit(v) => *v,
                 _ => {
                     // Try to evaluate if not a NumLit
-                    if has_var_ref_int(&current) {
+                    // Check if the term contains any variables
+                    if matches!(current, Int::IVar(_)) {
                         return Err(anyhow::anyhow!("Assignment RHS contains undefined variables"));
                     }
                     current.eval()
@@ -198,8 +199,8 @@ impl Theory for CalculatorTheory {
                             Some("var_substitution".to_string())
                         }
                     }
-                    // Variable substitution: VarRef -> NumLit
-                    (Int::VarRef(_), Int::NumLit(_)) => Some("var_substitution".to_string()),
+                    // Variable substitution: IVar -> NumLit
+                    (Int::IVar(_), Int::NumLit(_)) => Some("var_substitution".to_string()),
                     // Congruence rewrites (propagating through Add/Sub/Assign)
                     (Int::Add(_, _), Int::Add(_, _)) => Some("congruence".to_string()),
                     (Int::Sub(_, _), Int::Sub(_, _)) => Some("congruence".to_string()),

@@ -14,10 +14,9 @@ theory! {
         ![i32] as Int
     },
     terms {
-        // Variables parse as VarRef nodes (explicitly declared for native type)
-        VarRef . Int ::= Var ;
-        // Integer literals - uses Integer keyword for native integer type
-        NumLit . Int ::= Integer ;
+        // Variables are now auto-generated as IVar - no explicit declaration needed
+        // Literals (NumLit) are now auto-generated for native types - no explicit declaration needed
+        // No need for "NumLit . Int ::= Integer" - it's automatic!
 
         Add . Int ::= Int "+" Int ;
         Sub . Int ::= Int "-" Int ;

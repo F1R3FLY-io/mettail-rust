@@ -211,7 +211,7 @@ fn generate_depth_0_cases(
                             }
                         });
                     } else {
-                        // VarRef or other Var rules - generate from var pool
+                        // Var rules - generate from var pool
                         cases.push(quote! {
                             for var_name in &self.vars {
                                 terms.push(#cat_name::#label(

@@ -19,7 +19,7 @@
 
 use crate::{
     ast::TheoryDef,
-    codegen::{generate_var_label, is_var_rule},
+    codegen::{generate_literal_label, generate_var_label, is_var_rule},
     utils::print_rule,
 };
 use proc_macro2::{Ident, TokenStream};
@@ -155,7 +155,7 @@ fn format_rule(line: &str) -> String {
 /// - **Collection congruences**: If S => T, then {S, ...} => {T, ...}
 /// - **Regular congruences**: If S => T, then Constructor(S) => Constructor(T)
 /// - **Binding congruences**: If S => T, then (new x.S) => (new x.T)
-/// - **Auto variable retrieval**: if env_var(x, v) then (VarRef x) => v (for all categories)
+/// - **Auto variable retrieval**: if env_var(x, v) then (Var x) => v (for all categories)
 pub fn generate_rewrite_rules(theory: &TheoryDef) -> TokenStream {
     let mut rules = Vec::new();
 
@@ -278,7 +278,7 @@ fn generate_semantic_rules(theory: &TheoryDef) -> Vec<TokenStream> {
 }
 
 /// Generate automatic variable retrieval rewrite rules for all categories
-/// For native types: if env_var(x, v) then (VarRef x) => (NumLit v)
+/// For native types: if env_var(x, v) then (Var x) => (NumLit v)
 /// For custom types: if env_var(x, v) then (PVar x) => v
 fn generate_automatic_var_retrieval_rules(theory: &TheoryDef) -> Vec<TokenStream> {
     use crate::codegen::is_integer_rule;
@@ -292,17 +292,11 @@ fn generate_automatic_var_retrieval_rules(theory: &TheoryDef) -> Vec<TokenStream
         let rw_rel = format_ident!("rw_{}", cat_str.to_lowercase());
         let env_rel_name = format_ident!("env_var_{}", cat_str.to_lowercase());
 
-        // Check if there's a Var rule (VarRef is auto-generated or explicit)
-        let has_var_rule = theory.terms.iter().any(|rule| {
-            rule.category == *category && is_var_rule(rule)
-        });
+        // Var variants are now auto-generated for ALL categories (native and non-native)
+        // So we should always generate variable retrieval rules
 
-        // For non-native types, Var variants are auto-generated if not explicitly defined
-        // So we should always generate variable retrieval rules for non-native types
-        // Skip only for native types that don't have a Var rule
-        if export.native_type.is_some() && !has_var_rule {
-            continue;
-        }
+        // Var variants are now auto-generated for ALL categories (native and non-native)
+        // So we should always generate variable retrieval rules
 
         // Use the explicit Var rule label if it exists, otherwise use auto-generated label
         let var_label = theory.terms.iter()
@@ -310,32 +304,35 @@ fn generate_automatic_var_retrieval_rules(theory: &TheoryDef) -> Vec<TokenStream
             .map(|rule| rule.label.clone())
             .unwrap_or_else(|| generate_var_label(category));
 
-        if let Some(_native_type) = &export.native_type {
-            // Native type: if env_var(x, v) then (VarRef x) => (NumLit v)
-            // Find the NumLit/Integer rule
+        if let Some(native_type) = &export.native_type {
+            // Native type: if env_var(x, v) then (Var x) => (NumLit v)
+            // Find the NumLit/Integer rule (explicit or auto-generated)
             let integer_rule = theory.terms.iter().find(|rule| {
                 rule.category == *category && is_integer_rule(rule)
             });
             
-            if let Some(integer_rule) = integer_rule {
-                let num_lit_label = &integer_rule.label;
-                
-                // Generate: if env_var(x, v) then (VarRef x) => (NumLit v)
-                // v is the native type (e.g., i32) from env_var relation (bound as reference in Ascent)
-                rules.push(quote! {
-                    #rw_rel(s, t) <--
-                        #cat_lower(s),
-                        if let #category::#var_label(ord_var) = s,
-                        if let Some(var_name) = match ord_var {
-                            mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
-                                fv.pretty_name.clone()
-                            }
-                            _ => None
-                        },
-                        #env_rel_name(var_name, v),
-                        let t = #category::#num_lit_label(*v);
-                });
-            }
+            // Use explicit rule label if found, otherwise use auto-generated label
+            let num_lit_label = if let Some(integer_rule) = integer_rule {
+                integer_rule.label.clone()
+            } else {
+                generate_literal_label(native_type)
+            };
+            
+            // Generate: if env_var(x, v) then (Var x) => (NumLit v)
+            // v is the native type (e.g., i32) from env_var relation (bound as reference in Ascent)
+            rules.push(quote! {
+                #rw_rel(s, t) <--
+                    #cat_lower(s),
+                    if let #category::#var_label(ord_var) = s,
+                    if let Some(var_name) = match ord_var {
+                        mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
+                            fv.pretty_name.clone()
+                        }
+                        _ => None
+                    },
+                    #env_rel_name(var_name, v),
+                    let t = #category::#num_lit_label(*v);
+            });
         } else {
             // Custom type: if env_var(x, v) then (PVar x) => v
             // v is the category type (e.g., Proc) from env_var relation

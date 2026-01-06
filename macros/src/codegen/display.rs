@@ -6,7 +6,7 @@
 #![allow(clippy::cmp_owned)]
 
 use crate::ast::{GrammarItem, GrammarRule, TheoryDef};
-use crate::codegen::{generate_var_label, is_var_rule};
+use crate::codegen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
 use crate::utils::has_native_type;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -55,11 +55,22 @@ fn generate_display_impl(
         .collect();
 
     // Check if Var variant was auto-generated
-    // Skip for native types - they don't have Var variants
+    // Var variants are now auto-generated for ALL categories (native and non-native)
     let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
-    if !has_var_rule && has_native_type(category, theory).is_none() {
+    if !has_var_rule {
         let var_arm = generate_auto_var_display_arm(category);
         match_arms.push(var_arm);
+    }
+
+    // Check if literal variant was auto-generated for native types
+    let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+    if let Some(native_type) = has_native_type(category, theory) {
+        if !has_integer_rule {
+            let literal_label = generate_literal_label(native_type);
+            match_arms.push(quote! {
+                #category::#literal_label(val) => write!(f, "{}", val)
+            });
+        }
     }
 
     // Add Assign display arm: <var_name> = <rhs>

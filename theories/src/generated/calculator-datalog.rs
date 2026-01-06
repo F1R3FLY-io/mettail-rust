@@ -97,7 +97,7 @@ rw_int(s, t) <--
 
 rw_int(s, t) <--
     int(s),
-    if let Int :: VarRef(ord_var) = s,
+    if let Int :: IVar(ord_var) = s,
     if let Some(var_name) = match ord_var { mettail_runtime :: OrdVar(mettail_runtime :: Var :: Free(ref fv)) => { fv.pretty_name.clone() } _ => None },
     env_var_int(var_name, v),
     let t = Int :: NumLit(* v);

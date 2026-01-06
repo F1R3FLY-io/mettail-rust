@@ -28,7 +28,7 @@ IntInfix: Int = {
 IntAtom: Int = {
     "(" <Int> ")",
     "-" <i:Integer> => Int::NumLit(-i),
-    <v:Ident> => Int::VarRef(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v)))),
     <i:Integer> => Int::NumLit(i)
-};
+,
+    <v:Ident> => Int::IVar(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))};
 
