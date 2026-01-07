@@ -91,7 +91,7 @@ Vec(Name)                -- vector of names (collection)
 HashBag(Proc)            -- multiset of processes
 ```
 
-### 3.2 Type Representation
+### 3.2 Type Representationn
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -211,7 +211,7 @@ terms {
     
     // Multi-binder abstraction
     PInputs . ns:Vec(Name), \[xs].p:[[Name]->Proc] 
-            |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
+            |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(,) ){p} : Proc ;
     
     // Collection
     PPar . ps:HashBag(Proc) |- { ps.#sep("|") } : Proc ;
