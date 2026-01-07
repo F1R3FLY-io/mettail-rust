@@ -62,7 +62,8 @@ First-class lambda abstractions require:
 6. **Meta-syntax**: `#sep`, `#zip`, `#map` for compile-time grammar generation
 7. **Bidirectional**: syntax patterns generate both parser and display
 8. **Meta-level lambda**: `dup = \n:Name. ...` for reusable term templates
-9. **Clean migration**: from current BNFC-style syntax
+9. **Custom identifiers**: optional `identifier { r"..." }` for variable naming pattern
+10. **Clean migration**: from current BNFC-style syntax
 
 ---
 
@@ -91,7 +92,7 @@ Vec(Name)                -- vector of names (collection)
 HashBag(Proc)            -- multiset of processes
 ```
 
-### 3.2 Type Representationn
+### 3.2 Type Representation
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -147,6 +148,56 @@ pub enum CollType {
 - `\[xs].p:[[Name] -> Proc]` — LIST of binders, each of type `Name`
 
 These are semantically different. Multi-binder is needed for multi-channel input.
+
+### 3.4 Custom Identifier Syntax
+
+By default, variables use alphanumeric identifiers (standard Rust `Ident`). Theories can define a custom identifier pattern via an optional `identifier` block:
+
+```rust
+identifier {
+    r"[a-z]"  // Single lowercase letter (e.g., for lambda calculus)
+}
+```
+
+This pattern is used **globally** for all variable parsing in the theory.
+
+**Current Implementation:**
+
+The LALRPOP grammar currently generates for each category:
+```lalrpop
+// Auto-generated Var variant for Proc
+<v:Ident> => Proc::PVar(OrdVar(Var::Free(get_or_create_var(v))))
+```
+
+The `Ident` terminal is defined in LALRPOP as the standard identifier pattern.
+
+**With Custom Identifier:**
+
+```rust
+identifier {
+    r"[a-z]"  // Only single lowercase letters are valid variable names
+}
+```
+
+Generates:
+```lalrpop
+// Custom Ident terminal
+Ident: String = <s:r"[a-z]"> => s.to_string();
+
+// Same Var variant generation, but now only matches single letters
+<v:Ident> => Proc::PVar(OrdVar(Var::Free(get_or_create_var(v))))
+```
+
+**Examples:**
+
+| Identifier Pattern | Valid | Invalid |
+|-------------------|-------|---------|
+| Default (alphanumeric) | `x`, `foo`, `x1` | `1x`, `-` |
+| `r"[a-z]"` | `x`, `y`, `z` | `foo`, `X`, `x1` |
+| `r"[A-Z][a-zA-Z0-9]*"` | `X`, `Var`, `X1` | `x`, `1X` |
+| `r"[xyz]"` | `x`, `y`, `z` | `a`, `w` |
+
+This allows theories to enforce naming conventions appropriate to their domain.
 
 ---
 
@@ -211,7 +262,7 @@ terms {
     
     // Multi-binder abstraction
     PInputs . ns:Vec(Name), \[xs].p:[[Name]->Proc] 
-            |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(,) ){p} : Proc ;
+            |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
     
     // Collection
     PPar . ps:HashBag(Proc) |- { ps.#sep("|") } : Proc ;
@@ -1186,8 +1237,9 @@ PInputs . ns:Vec(Name), \[xs].p:[[Name]->Proc]
 - [ ] Parse abstraction params: `\x.p:[A->B]`
 - [ ] Parse multi-binder: `\[xs].p:[[A]->B]`
 - [ ] Parse nested abstractions: `\x.\y.p:[A->[B->C]]`
+- [ ] Parse optional `identifier { r"..." }` block for custom variable regex
 - [ ] Generate enum variants with `Scope` types
-- [ ] Generate LALRPOP parser rules
+- [ ] Generate LALRPOP parser rules (with custom `Ident` terminal if specified)
 
 ### Phase 3: Pattern Operations (1 week)
 
@@ -1245,6 +1297,7 @@ All abstractions are meta-lambdas (CCC internal hom):
 | Collection parameter | `ps:HashBag(Proc)` |
 | Syntax pattern | `for(x<-n){p}` |
 | Meta-syntax | `#sep`, `#zip`, `#map` |
+| Custom identifiers | `identifier { r"[a-z]" }` |
 | Meta-definition | `dup = \n:Name. ...` |
 | Meta-application | `dup(@(0))` |
 
