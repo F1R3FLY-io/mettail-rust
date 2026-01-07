@@ -33,9 +33,39 @@ fn generate_native_type_tokens(theory: &TheoryDef) -> String {
             // Generate token parser based on native type
             if type_str == "i32" || type_str == "i64" {
                 tokens.push_str(&format!("Integer: {} = {{\n", type_str));
-                // Only match positive integers at token level
+                // Match integers in multiple bases (hex, octal, binary, decimal)
                 // Negative integers will be handled in the grammar via unary minus
-                tokens.push_str("    r\"[0-9]+\" => <>.parse().unwrap_or(0),\n");
+                // Use a single regex that matches all bases - LALRPOP lexer uses longest match
+                // The pattern uses alternation: (0x... | 0o... | 0b... | ...)
+                let regex_pattern = r"(0[xX][0-9a-fA-F]+)|(0[oO][0-7]+)|(0[bB][01]+)|([0-9]+)";
+                
+                if type_str == "i32" {
+                    tokens.push_str(&format!("    r\"{}\" => {{",  regex_pattern));
+                    tokens.push_str("\n        let s = <>;");
+                    tokens.push_str("\n        if s.starts_with(\"0x\") || s.starts_with(\"0X\") {");
+                    tokens.push_str("\n            i64::from_str_radix(&s[2..], 16).unwrap_or(0) as i32");
+                    tokens.push_str("\n        } else if s.starts_with(\"0o\") || s.starts_with(\"0O\") {");
+                    tokens.push_str("\n            i64::from_str_radix(&s[2..], 8).unwrap_or(0) as i32");
+                    tokens.push_str("\n        } else if s.starts_with(\"0b\") || s.starts_with(\"0B\") {");
+                    tokens.push_str("\n            i64::from_str_radix(&s[2..], 2).unwrap_or(0) as i32");
+                    tokens.push_str("\n        } else {");
+                    tokens.push_str("\n            s.parse().unwrap_or(0)");
+                    tokens.push_str("\n        }");
+                    tokens.push_str("\n    },\n");
+                } else {
+                    tokens.push_str(&format!("    r\"{}\" => {{",  regex_pattern));
+                    tokens.push_str("\n        let s = <>;");
+                    tokens.push_str("\n        if s.starts_with(\"0x\") || s.starts_with(\"0X\") {");
+                    tokens.push_str("\n            i64::from_str_radix(&s[2..], 16).unwrap_or(0)");
+                    tokens.push_str("\n        } else if s.starts_with(\"0o\") || s.starts_with(\"0O\") {");
+                    tokens.push_str("\n            i64::from_str_radix(&s[2..], 8).unwrap_or(0)");
+                    tokens.push_str("\n        } else if s.starts_with(\"0b\") || s.starts_with(\"0B\") {");
+                    tokens.push_str("\n            i64::from_str_radix(&s[2..], 2).unwrap_or(0)");
+                    tokens.push_str("\n        } else {");
+                    tokens.push_str("\n            s.parse().unwrap_or(0)");
+                    tokens.push_str("\n        }");
+                    tokens.push_str("\n    },\n");
+                }
                 tokens.push_str("};\n\n");
             } else if type_str == "f32" || type_str == "f64" {
                 tokens.push_str(&format!("Float: {} = {{\n", type_str));

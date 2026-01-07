@@ -8,6 +8,7 @@ use mettail_macros::theory;
 
 // Simple integer calculator theory: supports integer literals, + and -
 // Uses native i64 type for direct integer support
+// Supports hexadecimal (0x), octal (0o), and binary (0b) integer literals
 theory! {
     name: Calculator,
     exports {
@@ -38,5 +39,4 @@ theory! {
         Sub: -,
     }
 }
-
 

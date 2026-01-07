@@ -63,4 +63,26 @@ fn main() {
             Err(e) => println!("  {} => Error: {}", var, e),
         }
     }
+
+    println!("\n=== Multi-base integer literals ===");
+    let mut env = CalculatorIntEnv::new();
+
+    let multi_base_tests = vec![
+        ("0xFF", 255),        // Hexadecimal
+        ("0x4A", 74),         // Hexadecimal lowercase
+        ("0o77", 63),         // Octal
+        ("0b1111", 15),       // Binary
+        ("0x10 + 0o10", 24),  // Hex 16 + Octal 8
+        ("0xFF - 0b11", 252), // Hex 255 - Binary 3
+    ];
+
+    for (input, expected) in multi_base_tests {
+        match parse_and_eval_with_env(input, &mut env) {
+            Ok(v) => {
+                let status = if v == expected { "OK" } else { "FAIL" };
+                println!("  [{}] {} = {} (expected {})", status, input, v, expected);
+            },
+            Err(e) => println!("  [FAIL] {} => Error: {}", input, e),
+        }
+    }
 }

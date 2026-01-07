@@ -11,7 +11,18 @@ Ident: String = {
 };
 
 Integer: i64 = {
-    r"[0-9]+" => <>.parse().unwrap_or(0),
+    r"(0[xX][0-9a-fA-F]+)|(0[oO][0-7]+)|(0[bB][01]+)|([0-9]+)" => {
+        let s = <>;
+        if s.starts_with("0x") || s.starts_with("0X") {
+            i64::from_str_radix(&s[2..], 16).unwrap_or(0)
+        } else if s.starts_with("0o") || s.starts_with("0O") {
+            i64::from_str_radix(&s[2..], 8).unwrap_or(0)
+        } else if s.starts_with("0b") || s.starts_with("0B") {
+            i64::from_str_radix(&s[2..], 2).unwrap_or(0)
+        } else {
+            s.parse().unwrap_or(0)
+        }
+    },
 };
 
 pub Int: Int = {
