@@ -12,7 +12,7 @@ relation int(Int);
 
 relation rw_int(Int, Int);
 
-relation env_var_int(String, i32);
+relation env_var_int(String, i64);
 
 
     // Category rules

@@ -7,11 +7,11 @@
 use mettail_macros::theory;
 
 // Simple integer calculator theory: supports integer literals, + and -
-// Uses native i32 type for direct integer support
+// Uses native i64 type for direct integer support
 theory! {
     name: Calculator,
     exports {
-        ![i32] as Int
+        ![i64] as Int
     },
     terms {
         // Variables are now auto-generated as IVar - no explicit declaration needed

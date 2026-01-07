@@ -65,16 +65,16 @@ impl Theory for CalculatorTheory {
         // Handle assignments: evaluate RHS and update environment, but return the term
         // so rewrites can still be shown
         if let Int::Assign(var, rhs) = &expr {
-            // Get current environment
-            let env_facts: Vec<(String, i32)> = CALC_ENV.with(|env| {
+        // Get current environment
+            let env_facts: Vec<(String, i64)> = CALC_ENV.with(|env| {
                 env.borrow().env_to_facts()
                     .into_iter()
                     .map(|(name, val)| {
-                        let i32_val = match val {
+                        let i64_val = match val {
                             Int::NumLit(v) => v,
                             _ => return Err(anyhow::anyhow!("Environment value must be a NumLit")),
                         };
-                        Ok((name, i32_val))
+                        Ok((name, i64_val))
                     })
                     .collect::<Result<Vec<_>>>()
             })
@@ -142,17 +142,17 @@ impl Theory for CalculatorTheory {
 
         let initial_int = calc_term.0.clone();
 
-        // Get environment facts from thread-local storage - convert Int enum to i32 for Ascent
-        let env_facts: Vec<(String, i32)> = CALC_ENV.with(|env| {
+        // Get environment facts from thread-local storage - convert Int enum to i64 for Ascent
+        let env_facts: Vec<(String, i64)> = CALC_ENV.with(|env| {
             env.borrow().env_to_facts()
                 .into_iter()
                 .map(|(name, val)| {
-                    // Extract i32 from Int enum (NumLit variant)
-                    let i32_val = match val {
+                    // Extract i64 from Int enum (NumLit variant)
+                    let i64_val = match val {
                         Int::NumLit(v) => v,
                         _ => return Err(anyhow::anyhow!("Environment value must be a NumLit"))?,
                     };
-                    Ok((name, i32_val))
+                    Ok((name, i64_val))
                 })
                 .collect::<Result<Vec<_>>>()
         })
