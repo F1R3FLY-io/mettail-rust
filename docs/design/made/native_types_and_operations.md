@@ -47,9 +47,10 @@ semantics {
 - Congruence rules for step-by-step evaluation
 
 **Supported:**
-- `i32` native type fully implemented
+- `i32` and `i64` native types fully implemented
 - 10 operators: `+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `<<`, `>>`
 - Automatic literal parsing via `Integer` keyword
+- **Multi-base integer literal support:** Hexadecimal (`0xFF`, `0x4A`), octal (`0o77`), binary (`0b1111`), and decimal (`255`) formats
 - Environment variable queries
 - Type-safe code generation
 
@@ -305,15 +306,16 @@ pub struct SemanticRule {
 ### Implementation Status
 
 | Type | Status | Priority |
-|------|--------|----------|
-| `i32` arithmetic | Implemented | - |
-| `i32` bitwise | Implemented | - |
-| `i32` comparison | Planned | High |
-| `i32` methods | Future | Medium |
-| `String` basic | Future | High |
-| `bool` logic | Future | High |
-| Cross-type | Future | Medium |
-| Generic collections | Future | Low |
+||------|--------|----------|
+|| `i32`/`i64` arithmetic | Implemented | - |
+|| `i32`/`i64` bitwise | Implemented | - |
+|| Multi-base integer literals | Implemented | - |
+|| `i32`/`i64` comparison | Planned | High |
+|| `i32`/`i64` methods | Future | Medium |
+|| `String` basic | Future | High |
+|| `bool` logic | Future | High |
+|| Cross-type | Future | Medium |
+|| Generic collections | Future | Low |
 
 ---
 
