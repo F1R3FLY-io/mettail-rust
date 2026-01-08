@@ -682,6 +682,28 @@ terms {
 
 ## Future Directions
 
+### Immediate Lookups: Bypassing the Rewrite System (Planned)
+
+**Goal**: Environment lookups should bypass the Ascent rewrite system entirely.
+
+**Current Limitation**: Variable lookups are mediated through Ascent relations, requiring rewrite system computation.
+
+**Proposed Solution**:
+- Add `immediate_lookup(name: &str) -> Option<T>` method to environment structs
+- Direct O(1) HashMap access, no rewrite system overhead
+- Use in REPL and expression evaluation before parsing
+- Keep rewrite system integration for formal environment reasoning
+
+**Implementation**:
+1. Direct lookup API on environment structs
+2. Variable substitution in expressions: `"x + 2"` → `"5 + 2"` (if x=5)
+3. REPL uses direct lookups for immediate feedback
+4. Rewrite system handles formal environment state changes
+
+**Benefits**: Faster lookups, simpler REPL interaction, reduced Ascent overhead
+
+---
+
 ### Phase 1: Enhanced API
 
 **Goal**: Add convenience methods to environment structs
