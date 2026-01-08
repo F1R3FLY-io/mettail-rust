@@ -396,182 +396,177 @@ These are the same abstraction mechanism with different uses:
 
 ### 6.2 Representation
 
-A meta-lambda `\x:A. body` is represented as:
+We extend the existing `Expr` enum (used in equations/rewrites) with lambda abstraction:
 
 ```rust
-/// Meta-level abstraction
-pub struct MetaLambda {
-    /// Binder variable
-    pub binder: Ident,
-    /// Binder type
-    pub binder_type: TypeExpr,
-    /// Body expression (may reference binder)
-    pub body: MetaExpr,
-}
-
-/// Meta-level expression
-pub enum MetaExpr {
+/// Expression in equations, rewrites, and definitions
+#[derive(Clone, Debug)]
+pub enum Expr {
     /// Variable reference
     Var(Ident),
-    /// Object-term literal
-    Term(TermExpr),
-    /// Lambda abstraction
-    Lambda(Box<MetaLambda>),
-    /// Application
-    App {
-        func: Box<MetaExpr>,
-        arg: Box<MetaExpr>,
+    
+    /// Constructor/function application: f(args) or Constructor(args)
+    Apply {
+        constructor: Ident,
+        args: Vec<Expr>,
     },
-    /// Collection literal
-    Collection {
-        coll_type: CollType,
-        elements: Vec<MetaExpr>,
+    
+    /// Substitution: term[replacement/var]
+    Subst {
+        term: Box<Expr>,
+        var: Ident,
+        replacement: Box<Expr>,
+    },
+    
+    /// Collection pattern: {P, Q, ...rest}
+    CollectionPattern {
+        constructor: Option<Ident>,
+        elements: Vec<Expr>,
+        rest: Option<Ident>,
+    },
+    
+    // === NEW: Lambda abstraction ===
+    
+    /// Lambda: \x:T. body
+    Lambda {
+        binder: Ident,
+        binder_type: TypeExpr,
+        body: Box<Expr>,
     },
 }
 ```
 
+**Notes:**
+- `Apply` serves for both constructor application (`PInput(n, p)`) and definition calls (`dup(n)`)
+- `Lambda` is the new variant for meta-level abstraction
+- At expansion time, `Apply` with a definition name triggers substitution
+
 ### 6.3 Application and Substitution
 
-Application `f(arg)` performs capture-avoiding substitution:
+Application `f(arg)` where `f` is a `Lambda` performs capture-avoiding substitution:
 
 ```rust
-impl MetaLambda {
-    /// Apply this lambda to an argument
-    pub fn apply(&self, arg: &MetaExpr, ctx: &TypeContext) -> Result<MetaExpr, TypeError> {
-        // Type check: arg must have type self.binder_type
-        let arg_type = arg.infer_type(ctx)?;
-        if arg_type != self.binder_type {
-            return Err(TypeError::Mismatch {
-                expected: self.binder_type.clone(),
-                found: arg_type,
-            });
-        }
-        
-        // Substitute arg for binder in body
-        Ok(self.body.substitute(&self.binder, arg))
-    }
-}
-
-impl MetaExpr {
-    /// Capture-avoiding substitution
-    pub fn substitute(&self, var: &Ident, replacement: &MetaExpr) -> MetaExpr {
+impl Expr {
+    /// Apply a lambda to an argument (beta reduction)
+    pub fn apply(&self, arg: &Expr, ctx: &TypeContext) -> Result<Expr, TypeError> {
         match self {
-            MetaExpr::Var(v) if v == var => replacement.clone(),
-            MetaExpr::Var(v) => MetaExpr::Var(v.clone()),
+            Expr::Lambda { binder, binder_type, body } => {
+                // Type check: arg must have type binder_type
+                let arg_type = arg.infer_type(ctx)?;
+                if arg_type != *binder_type {
+                    return Err(TypeError::Mismatch {
+                        expected: binder_type.clone(),
+                        found: arg_type,
+                    });
+                }
+                // Substitute arg for binder in body
+                Ok(body.substitute(binder, arg))
+            }
+            _ => Err(TypeError::NotAFunction),
+        }
+    }
+
+    /// Capture-avoiding substitution
+    pub fn substitute(&self, var: &Ident, replacement: &Expr) -> Expr {
+        match self {
+            Expr::Var(v) if v == var => replacement.clone(),
+            Expr::Var(v) => Expr::Var(v.clone()),
             
-            MetaExpr::Lambda(lam) => {
-                if &lam.binder == var {
+            Expr::Lambda { binder, binder_type, body } => {
+                if binder == var {
                     // Shadowed - don't substitute in body
-                    MetaExpr::Lambda(lam.clone())
+                    self.clone()
                 } else {
-                    // Moniker handles capture-avoidance automatically via Scope::unbind()
-                    // which freshens bound variables. We just substitute in the body.
-                    MetaExpr::Lambda(Box::new(MetaLambda {
-                        binder: lam.binder.clone(),
-                        binder_type: lam.binder_type.clone(),
-                        body: lam.body.substitute(var, replacement),
-                    }))
+                    // Substitute in body (moniker handles capture-avoidance at runtime)
+                    Expr::Lambda {
+                        binder: binder.clone(),
+                        binder_type: binder_type.clone(),
+                        body: Box::new(body.substitute(var, replacement)),
+                    }
                 }
             }
             
-            MetaExpr::App { func, arg } => MetaExpr::App {
-                func: Box::new(func.substitute(var, replacement)),
-                arg: Box::new(arg.substitute(var, replacement)),
+            Expr::Apply { constructor, args } => Expr::Apply {
+                constructor: constructor.clone(),
+                args: args.iter().map(|a| a.substitute(var, replacement)).collect(),
             },
             
-            MetaExpr::Term(t) => MetaExpr::Term(t.substitute_meta(var, replacement)),
+            Expr::Subst { term, var: v, replacement: r } => Expr::Subst {
+                term: Box::new(term.substitute(var, replacement)),
+                var: v.clone(),
+                replacement: Box::new(r.substitute(var, replacement)),
+            },
             
-            MetaExpr::Collection { coll_type, elements } => MetaExpr::Collection {
-                coll_type: coll_type.clone(),
+            Expr::CollectionPattern { constructor, elements, rest } => Expr::CollectionPattern {
+                constructor: constructor.clone(),
                 elements: elements.iter().map(|e| e.substitute(var, replacement)).collect(),
+                rest: rest.clone(),
             },
         }
     }
     
-    /// Collect free meta-variables in this expression
+    /// Collect free variables in this expression
     pub fn free_vars(&self) -> HashSet<Ident> {
         match self {
-            MetaExpr::Var(v) => std::iter::once(v.clone()).collect(),
-            MetaExpr::Term(t) => t.free_meta_vars(),
-            MetaExpr::Lambda(lam) => {
-                let mut vars = lam.body.free_vars();
-                vars.remove(&lam.binder);
+            Expr::Var(v) => std::iter::once(v.clone()).collect(),
+            Expr::Lambda { binder, body, .. } => {
+                let mut vars = body.free_vars();
+                vars.remove(binder);
                 vars
             }
-            MetaExpr::App { func, arg } => {
-                let mut vars = func.free_vars();
-                vars.extend(arg.free_vars());
+            Expr::Apply { args, .. } => {
+                args.iter().flat_map(|a| a.free_vars()).collect()
+            }
+            Expr::Subst { term, replacement, .. } => {
+                let mut vars = term.free_vars();
+                vars.extend(replacement.free_vars());
                 vars
             }
-            MetaExpr::Collection { elements, .. } => {
+            Expr::CollectionPattern { elements, .. } => {
                 elements.iter().flat_map(|e| e.free_vars()).collect()
             }
         }
     }
 }
-
-impl TermExpr {
-    /// Substitute a meta-variable in an object term.
-    /// 
-    /// Note: For object-level substitution (substituting object variables),
-    /// we use moniker's infrastructure. This method is for meta-level
-    /// substitution of definition parameters.
-    pub fn substitute_meta(&self, var: &Ident, replacement: &MetaExpr) -> TermExpr {
-        // Recursively descend into term structure, replacing meta-var refs.
-        // Implementation uses pattern matching on term constructors.
-        todo!("Implementation traverses term AST, replacing MetaVar(v) with replacement")
-    }
-    
-    /// Collect free meta-variables referenced in this term.
-    /// 
-    /// For object-level free variables, use moniker's `BoundTerm::visit_vars()`.
-    pub fn free_meta_vars(&self) -> HashSet<Ident> {
-        todo!("Implementation traverses term AST collecting MetaVar references")
-    }
-}
 ```
 
-### 6.4 Normalization to Object Terms
+### 6.4 Definition Expansion
 
-A fully-applied meta-expression normalizes to an object term:
+When `Apply { constructor, args }` refers to a definition name, we expand it:
 
 ```rust
-impl MetaExpr {
-    /// Extract lambda if this expression is (or reduces to) a lambda
-    fn as_lambda(&self) -> Result<&MetaLambda, NormError> {
+impl Expr {
+    /// Expand definition applications (beta reduction)
+    pub fn expand(&self, defs: &DefEnv, ctx: &TypeContext) -> Result<Expr, Error> {
         match self {
-            MetaExpr::Lambda(lam) => Ok(lam),
-            MetaExpr::Var(v) => Err(NormError::FreeVariable(v.clone())),
-            MetaExpr::Term(_) => Err(NormError::NotAFunction),
-            MetaExpr::App { .. } => Err(NormError::NotNormalized),
-            MetaExpr::Collection { .. } => Err(NormError::NotAFunction),
-        }
-    }
-
-    /// Normalize to object term (beta-reduce all applications)
-    pub fn normalize(&self, ctx: &TypeContext) -> Result<TermExpr, NormError> {
-        match self {
-            MetaExpr::Term(t) => Ok(t.clone()),
-            
-            MetaExpr::Var(v) => Err(NormError::FreeVariable(v.clone())),
-            
-            MetaExpr::Lambda(_) => Err(NormError::UnappliedLambda),
-            
-            MetaExpr::App { func, arg } => {
-                // First, reduce func to a lambda (or look it up if it's a var)
-                let lam = func.as_lambda()?;
-                let result = lam.apply(arg, ctx)?;
-                result.normalize(ctx)
+            Expr::Apply { constructor, args } => {
+                // Check if constructor is a definition
+                if let Some(def) = defs.get(constructor) {
+                    // Apply definition body to arguments
+                    let mut result = def.body.clone();
+                    for (param, arg) in def.params.iter().zip(args) {
+                        let expanded_arg = arg.expand(defs, ctx)?;
+                        result = result.substitute(param, &expanded_arg);
+                    }
+                    result.expand(defs, ctx)  // Continue expanding
+                } else {
+                    // Regular constructor - expand args
+                    Ok(Expr::Apply {
+                        constructor: constructor.clone(),
+                        args: args.iter()
+                            .map(|a| a.expand(defs, ctx))
+                            .collect::<Result<_, _>>()?,
+                    })
+                }
             }
-            
-            MetaExpr::Collection { coll_type, elements } => {
-                let norm_elems: Result<Vec<_>, _> = 
-                    elements.iter().map(|e| e.normalize(ctx)).collect();
-                Ok(TermExpr::Collection {
-                    coll_type: coll_type.clone(),
-                    elements: norm_elems?,
+            Expr::Lambda { binder, binder_type, body } => {
+                Ok(Expr::Lambda {
+                    binder: binder.clone(),
+                    binder_type: binder_type.clone(),
+                    body: Box::new(body.expand(defs, ctx)?),
                 })
             }
+            _ => Ok(self.clone()),
         }
     }
 }
@@ -622,7 +617,7 @@ definitions {
 pub struct Definition {
     pub name: Ident,
     pub params: Vec<(Ident, TypeExpr)>,  // Extracted from nested lambdas
-    pub body: MetaExpr,
+    pub body: Expr,
 }
 
 /// Definition environment
@@ -631,25 +626,8 @@ pub struct DefEnv {
 }
 
 impl DefEnv {
-    /// Expand a definition application
-    pub fn expand(&self, name: &Ident, args: &[MetaExpr]) -> Result<MetaExpr, Error> {
-        let def = self.defs.get(&name.to_string())
-            .ok_or(Error::UndefinedName(name.clone()))?;
-        
-        if args.len() != def.params.len() {
-            return Err(Error::ArityMismatch {
-                expected: def.params.len(),
-                found: args.len(),
-            });
-        }
-        
-        // Substitute all arguments
-        let mut result = def.body.clone();
-        for ((param_name, _), arg) in def.params.iter().zip(args) {
-            result = result.substitute(param_name, arg);
-        }
-        
-        Ok(result)
+    pub fn get(&self, name: &Ident) -> Option<&Definition> {
+        self.defs.get(&name.to_string())
     }
 }
 ```
@@ -663,33 +641,14 @@ pub enum BinderSpec {
     Single(Ident),
     Multi(Ident),  // xs represents x0, x1, ...
 }
-
-/// Multi-binder lambda
-pub struct MultiLambda {
-    pub binders: Ident,      // Collective name (xs)
-    pub binder_type: TypeExpr,  // Element type (Name)
-    pub body: MetaExpr,
-}
 ```
 
-**Application** takes a list and binds each element:
-
+Multi-binders are represented in `Expr::Lambda` with a `MultiBinder` type:
 ```rust
-impl MultiLambda {
-    pub fn apply(&self, args: &[MetaExpr]) -> Result<MetaExpr, TypeError> {
-        // Generate individual binder names: xs_0, xs_1, ...
-        let binder_names: Vec<Ident> = (0..args.len())
-            .map(|i| format_ident!("{}_{}", self.binders, i))
-            .collect();
-        
-        // Substitute each arg for its binder
-        let mut result = self.body.clone();
-        for (binder_name, arg) in binder_names.iter().zip(args) {
-            result = result.substitute(binder_name, arg);
-        }
-        
-        Ok(result)
-    }
+Expr::Lambda {
+    binder: xs,  // Collective name
+    binder_type: TypeExpr::MultiBinder(Box::new(TypeExpr::Base("Name"))),
+    body: ...,
 }
 ```
 
@@ -733,71 +692,46 @@ impl TypeContext {
 **Type Inference:**
 
 ```rust
-impl MetaExpr {
+impl Expr {
     pub fn infer_type(&self, ctx: &TypeContext) -> Result<TypeExpr, TypeError> {
         match self {
-            MetaExpr::Var(v) => ctx.lookup(v),
+            Expr::Var(v) => ctx.lookup(v),
             
-            MetaExpr::Term(t) => Ok(t.category()),
-            
-            MetaExpr::Lambda(lam) => {
-                let body_ctx = ctx.extend(&lam.binder, &lam.binder_type);
-                let body_type = lam.body.infer_type(&body_ctx)?;
+            Expr::Lambda { binder, binder_type, body } => {
+                let body_ctx = ctx.extend(binder, binder_type);
+                let body_type = body.infer_type(&body_ctx)?;
                 Ok(TypeExpr::Arrow {
-                    domain: Box::new(lam.binder_type.clone()),
+                    domain: Box::new(binder_type.clone()),
                     codomain: Box::new(body_type),
                 })
             }
             
-            MetaExpr::App { func, arg } => {
-                let func_type = func.infer_type(ctx)?;
-                match func_type {
-                    TypeExpr::Arrow { domain, codomain } => {
-                        let arg_type = arg.infer_type(ctx)?;
-                        if arg_type != *domain {
-                            return Err(TypeError::Mismatch {
-                                expected: *domain,
-                                found: arg_type,
-                            });
-                        }
-                        Ok(*codomain)
-                    }
-                    _ => Err(TypeError::NotAFunction(func_type)),
-                }
+            Expr::Apply { constructor, args } => {
+                // Look up constructor type and check args
+                // (Implementation depends on constructor registry)
+                todo!("Look up constructor/definition type")
             }
             
-            MetaExpr::Collection { coll_type, elements } => {
-                // All elements must have same type
-                let elem_types: Result<Vec<_>, _> = 
-                    elements.iter().map(|e| e.infer_type(ctx)).collect();
-                let elem_types = elem_types?;
-                
-                if elem_types.is_empty() {
-                    // Empty collection: element type determined by context (annotation required)
-                    // For now, defer to later unification or require annotation
+            Expr::Subst { .. } => {
+                // Substitution preserves the term's type
+                todo!("Infer type of term being substituted")
+            }
+            
+            Expr::CollectionPattern { elements, .. } => {
+                // Infer from elements
+                if elements.is_empty() {
                     return Err(TypeError::CannotInferEmptyCollection);
                 }
-                
-                let elem_type = elem_types[0].clone();
-                
-                for t in &elem_types[1..] {
-                    if t != &elem_type {
-                        return Err(TypeError::HeterogeneousCollection);
-                    }
-                }
-                
-                Ok(TypeExpr::Collection {
-                    coll_type: coll_type.clone(),
-                    element: Box::new(elem_type),
-                })
+                let elem_type = elements[0].infer_type(ctx)?;
+                // Check all elements have same type...
+                Ok(elem_type)
             }
         }
     }
 }
+```
 
-// Note: Empty collections like `{}` are valid syntactically but require type 
-// annotation or contextual inference. In constructor parameters where the 
-// collection type is declared (e.g., `ps:HashBag(Proc)`), the element type is known.
+Note: Empty collections like `{}` are valid syntactically but require type annotation or contextual inference.
 
 ### 6.9 Worked Examples
 
@@ -810,26 +744,21 @@ dup = \n:Name. for(x<-n){{ *(x) | n!(*(x)) }}
 
 **Type:** `[Name -> Proc]`
 
-This receives a value on channel `n`, dereferences it (with `*(x)`), and also re-sends the dereferenced process back on `n`.
-
 **Representation:**
 ```rust
-MetaLambda {
+Expr::Lambda {
     binder: "n",
     binder_type: TypeExpr::Base("Name"),
-    body: MetaExpr::Term(
-        PInput(n, Scope(x, PPar({PDrop(x), POutput(n, PDrop(x))})))
-    )
+    body: Box::new(Expr::Apply {
+        constructor: "PInput",
+        args: vec![Expr::Var("n"), /* body with x bound */]
+    })
 }
 ```
 
-Note: In the body, `n` appears as a free meta-variable (of type Name), and `x` is bound by the `for`. The term `*(x)` is `PDrop(x)`, which takes a Name and returns a Proc.
-
 **Application:** `dup(@(0))`
 
-Step 1: Type check
-- Argument `@(0)` has type `Name` ✓
-- Expected: `Name` ✓
+Step 1: Type check argument `@(0)` has type `Name` ✓
 
 Step 2: Substitute `@(0)` for `n` in body
 ```
@@ -838,17 +767,7 @@ for(x<-n){{ *(x) | n!(*(x)) }}
 for(x<-@(0)){{ *(x) | @(0)!(*(x)) }}
 ```
 
-Step 3: Result is an object term (no meta-redexes remain)
-```
-for(x<-@(0)){{ *(x) | @(0)!(*(x)) }}
-```
-
-**Final MetaExpr:**
-```rust
-MetaExpr::Term(
-    PInput(NQuote(PZero), Scope(x, PPar({PDrop(x), POutput(NQuote(PZero), PDrop(x))})))
-)
-```
+**Result:** `for(x<-@(0)){{ *(x) | @(0)!(*(x)) }}`
 
 ---
 
@@ -863,41 +782,25 @@ fwd = \n:Name. \m:Name. for(x<-n){ m!(*(x)) }
 
 **Representation:**
 ```rust
-MetaLambda {
+Expr::Lambda {
     binder: "n",
     binder_type: TypeExpr::Base("Name"),
-    body: MetaExpr::Lambda(Box::new(MetaLambda {
+    body: Box::new(Expr::Lambda {
         binder: "m",
         binder_type: TypeExpr::Base("Name"),
-        body: MetaExpr::Term(
-            PInput(@(n), Scope(x, POutput(m, PDrop(x))))
-        )
-    }))
+        body: Box::new(/* PInput(...) */)
+    })
 }
 ```
 
 **Application:** `fwd(@(a))(@(b))`
 
-**Step 1:** Apply outer lambda to `@(a)`
+**Step 1:** Apply outer lambda to `@(a)` → result type `[Name -> Proc]`
 ```
-fwd(@(a))
-= (\n:Name. \m:Name. for(x<-n){ m!(*(x)) })(@(a))
-    ↓ [n := @(a)]
-= \m:Name. for(x<-@(a)){ m!(*(x)) }
+\m:Name. for(x<-@(a)){ m!(*(x)) }
 ```
 
-Result type: `[Name -> Proc]` — still a lambda!
-
-**Step 2:** Apply result to `@(b)`
-```
-(\m:Name. for(x<-@(a)){ m!(*(x)) })(@(b))
-    ↓ [m := @(b)]
-= for(x<-@(a)){ @(b)!(*(x)) }
-```
-
-Result type: `Proc` — object term, fully reduced.
-
-**Final result:**
+**Step 2:** Apply result to `@(b)` → result type `Proc`
 ```
 for(x<-@(a)){ @(b)!(*(x)) }
 ```
@@ -913,52 +816,33 @@ invoke = \f:[Name->Proc]. f(@(0))
 
 **Type:** `[[Name->Proc] -> Proc]`
 
-This takes a function `f` of type `[Name->Proc]` and applies it to the fixed name `@(0)`.
+Takes a function `f` of type `[Name->Proc]` and applies it to `@(0)`.
 
 **Representation:**
 ```rust
-MetaLambda {
+Expr::Lambda {
     binder: "f",
-    binder_type: TypeExpr::Arrow {
+    binder_type: TypeExpr::Arrow { 
         domain: Box::new(TypeExpr::Base("Name")),
         codomain: Box::new(TypeExpr::Base("Proc")),
     },
-    body: MetaExpr::App {
-        func: Box::new(MetaExpr::Var("f")),
-        arg: Box::new(MetaExpr::Term(NQuote(PZero))),
-    }
+    body: Box::new(Expr::Apply {
+        constructor: "f",  // Treated as definition call
+        args: vec![Expr::Apply { constructor: "NQuote", args: vec![...] }]
+    })
 }
 ```
 
 **Application:** `invoke(\n:Name. *(n))`
 
-**Step 1:** Type check the argument
-- Argument: `\n:Name. *(n)`
-- Argument type: `[Name -> Proc]` ✓
-- Expected: `[Name -> Proc]` ✓
+Step 1: Type check — argument `\n:Name. *(n)` has type `[Name -> Proc]` ✓
 
-**Step 2:** Substitute `\n:Name. *(n)` for `f` in body `f(@(0))`
+Step 2: Substitute, then reduce inner application:
 ```
-f(@(0))
-    ↓ [f := \n:Name. *(n)]
-= (\n:Name. *(n))(@(0))
+f(@(0)) → (\n:Name. *(n))(@(0)) → *(@(0))
 ```
 
-Result is a meta-application — needs further reduction!
-
-**Step 3:** Reduce the inner application
-```
-(\n:Name. *(n))(@(0))
-    ↓ [n := @(0)]
-= *(@(0))
-```
-
-**Final result:**
-```
-*(@(0))
-```
-
-This is `PDrop(NQuote(PZero))` — a pure object term.
+**Result:** `*(@(0))`
 
 ---
 
@@ -971,23 +855,16 @@ twice = \f:[Proc->Proc]. \p:Proc. f(f(p))
 
 **Type:** `[[Proc->Proc] -> [Proc -> Proc]]`
 
-This takes a transformation `f` and returns a new transformation that applies `f` twice.
-
 **Application:** `twice(\q:Proc. {q|q})(0)`
 
-**Step 1:** Apply to `\q:Proc. {q|q}`
+**Step 1:** Apply to `\q:Proc. {q|q}` → type `[Proc -> Proc]`
 ```
-twice(\q:Proc. {q|q})
-= (\f:[Proc->Proc]. \p:Proc. f(f(p)))(\q:Proc. {q|q})
-    ↓ [f := \q:Proc. {q|q}]
-= \p:Proc. (\q:Proc. {q|q})((\q:Proc. {q|q})(p))
+\p:Proc. (\q:Proc. {q|q})((\q:Proc. {q|q})(p))
 ```
-
-Result type: `[Proc -> Proc]` — still a lambda.
 
 **Step 2:** Apply to `0`
 ```
-(\p:Proc. (\q:Proc. {q|q})((\q:Proc. {q|q})(p)))(0)
+(\p:Proc. ...)(0)
     ↓ [p := 0]
 = (\q:Proc. {q|q})((\q:Proc. {q|q})(0))
 ```
@@ -1145,7 +1022,7 @@ pub enum SyntaxExpr {
     },
 }
 
-/// Pattern operations for syntax patterns (distinct from MetaExpr in section 6)
+/// Pattern operations for syntax patterns (compile-time grammar generation)
 /// These are compile-time operations for generating grammar/display
 pub enum PatternOp {
     /// Variable reference
