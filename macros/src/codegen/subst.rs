@@ -207,7 +207,8 @@ fn generate_cross_category_substitute_method(
     }
 
     // Add Assign substitution arm (substitute in RHS only, not in variable name)
-    let method_name_for_rhs = quote::format_ident!("substitute_{}", binder_cat.to_string().to_lowercase());
+    let method_name_for_rhs =
+        quote::format_ident!("substitute_{}", binder_cat.to_string().to_lowercase());
     match_arms.push(quote! {
         #category::Assign(assign_var, rhs) => {
             // Extract FreeVar from OrdVar for substitution

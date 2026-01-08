@@ -214,7 +214,7 @@ fn generate_rewrite_clause(rule: &RewriteRule, theory: &TheoryDef) -> TokenStrea
                     // User-defined relation names are used as-is
                     relation.clone()
                 };
-                
+
                 let val_binding_name = format_ident!("{}", val_arg.to_string());
                 clauses.push(quote! {
                     if let Some(var_name) = #var_name_extraction,

@@ -38,28 +38,44 @@ fn generate_native_type_tokens(theory: &TheoryDef) -> String {
                 // Use a single regex that matches all bases - LALRPOP lexer uses longest match
                 // The pattern uses alternation: (0x... | 0o... | 0b... | ...)
                 let regex_pattern = r"(0[xX][0-9a-fA-F]+)|(0[oO][0-7]+)|(0[bB][01]+)|([0-9]+)";
-                
+
                 if type_str == "i32" {
-                    tokens.push_str(&format!("    r\"{}\" => {{",  regex_pattern));
+                    tokens.push_str(&format!("    r\"{}\" => {{", regex_pattern));
                     tokens.push_str("\n        let s = <>;");
-                    tokens.push_str("\n        if s.starts_with(\"0x\") || s.starts_with(\"0X\") {");
-                    tokens.push_str("\n            i64::from_str_radix(&s[2..], 16).unwrap_or(0) as i32");
-                    tokens.push_str("\n        } else if s.starts_with(\"0o\") || s.starts_with(\"0O\") {");
-                    tokens.push_str("\n            i64::from_str_radix(&s[2..], 8).unwrap_or(0) as i32");
-                    tokens.push_str("\n        } else if s.starts_with(\"0b\") || s.starts_with(\"0B\") {");
-                    tokens.push_str("\n            i64::from_str_radix(&s[2..], 2).unwrap_or(0) as i32");
+                    tokens
+                        .push_str("\n        if s.starts_with(\"0x\") || s.starts_with(\"0X\") {");
+                    tokens.push_str(
+                        "\n            i64::from_str_radix(&s[2..], 16).unwrap_or(0) as i32",
+                    );
+                    tokens.push_str(
+                        "\n        } else if s.starts_with(\"0o\") || s.starts_with(\"0O\") {",
+                    );
+                    tokens.push_str(
+                        "\n            i64::from_str_radix(&s[2..], 8).unwrap_or(0) as i32",
+                    );
+                    tokens.push_str(
+                        "\n        } else if s.starts_with(\"0b\") || s.starts_with(\"0B\") {",
+                    );
+                    tokens.push_str(
+                        "\n            i64::from_str_radix(&s[2..], 2).unwrap_or(0) as i32",
+                    );
                     tokens.push_str("\n        } else {");
                     tokens.push_str("\n            s.parse().unwrap_or(0)");
                     tokens.push_str("\n        }");
                     tokens.push_str("\n    },\n");
                 } else {
-                    tokens.push_str(&format!("    r\"{}\" => {{",  regex_pattern));
+                    tokens.push_str(&format!("    r\"{}\" => {{", regex_pattern));
                     tokens.push_str("\n        let s = <>;");
-                    tokens.push_str("\n        if s.starts_with(\"0x\") || s.starts_with(\"0X\") {");
+                    tokens
+                        .push_str("\n        if s.starts_with(\"0x\") || s.starts_with(\"0X\") {");
                     tokens.push_str("\n            i64::from_str_radix(&s[2..], 16).unwrap_or(0)");
-                    tokens.push_str("\n        } else if s.starts_with(\"0o\") || s.starts_with(\"0O\") {");
+                    tokens.push_str(
+                        "\n        } else if s.starts_with(\"0o\") || s.starts_with(\"0O\") {",
+                    );
                     tokens.push_str("\n            i64::from_str_radix(&s[2..], 8).unwrap_or(0)");
-                    tokens.push_str("\n        } else if s.starts_with(\"0b\") || s.starts_with(\"0B\") {");
+                    tokens.push_str(
+                        "\n        } else if s.starts_with(\"0b\") || s.starts_with(\"0B\") {",
+                    );
                     tokens.push_str("\n            i64::from_str_radix(&s[2..], 2).unwrap_or(0)");
                     tokens.push_str("\n        } else {");
                     tokens.push_str("\n            s.parse().unwrap_or(0)");
@@ -167,7 +183,7 @@ fn is_var_terminal_rule(rule: &GrammarRule) -> bool {
 /// This is used to avoid ambiguity when generating assignments.
 /// If a category appears as the first item (e.g., `Name` in `Name "[" Proc "]"`),
 /// then assignments for that category would create ambiguity (e.g., `x = ...` vs `x[...]`).
-/// 
+///
 /// Note: We check the FIRST item, not just first non-terminal, because terminals
 /// before a non-terminal don't prevent ambiguity. For example, `"@" "(" Proc ")"`
 /// doesn't create ambiguity for Proc assignments because `"@"` comes first.
@@ -180,13 +196,11 @@ fn is_category_referenced_as_first(category: &syn::Ident, theory: &TheoryDef) ->
             continue;
         }
         // Check if the first item is this category (as a non-terminal)
-        if let Some(first_item) = rule.items.first() {
-            if let GrammarItem::NonTerminal(nt) = first_item {
-                let nt_str = nt.to_string();
-                // Skip built-in types (Var, Integer) - they don't cause ambiguity
-                if nt_str != "Var" && nt_str != "Integer" && nt_str == cat_str {
-                    return true;
-                }
+        if let Some(GrammarItem::NonTerminal(nt)) = rule.items.first() {
+            let nt_str = nt.to_string();
+            // Skip built-in types (Var, Integer) - they don't cause ambiguity
+            if nt_str != "Var" && nt_str != "Integer" && nt_str == cat_str {
+                return true;
             }
         }
     }
@@ -327,7 +341,7 @@ fn generate_tiered_production(
 
     // Check if there's an explicit Integer rule
     let has_integer_rule = filtered_other_rules.iter().any(|r| is_integer_rule(r));
-    
+
     // Track if we need a comma before the next rule
     let mut needs_comma = false;
 
@@ -336,22 +350,26 @@ fn generate_tiered_production(
         if needs_comma {
             production.push_str(",\n");
         } else {
-            production.push_str("\n");
+            production.push('\n');
         }
         production.push_str("    ");
         let rule_alt = generate_rule_alternative_with_theory(rule, Some(theory));
         production.push_str(&rule_alt);
-        
+
         // Set needs_comma for next iteration: true if more rules in the loop
-        // Don't set it for the last rule even if something will be added after - 
+        // Don't set it for the last rule even if something will be added after -
         // the comma will be added before that item instead
         let is_last_rule = i == filtered_other_rules.len() - 1;
         // Check if this is a collection rule (ends with "    }" without comma)
-        let is_collection_rule = rule.items.iter().any(|item| matches!(item, GrammarItem::Collection { .. }));
+        let is_collection_rule = rule
+            .items
+            .iter()
+            .any(|item| matches!(item, GrammarItem::Collection { .. }));
         // For collection rules, they already have the closing brace with comma, so we don't need a comma after
         // But we still need a comma if there are more rules
         // For the last rule, only set needs_comma if it's NOT a collection rule AND something will be added after
-        let will_add_after = !has_var_rule || (has_native_type(category, theory).is_some() && !has_integer_rule);
+        let will_add_after =
+            !has_var_rule || (has_native_type(category, theory).is_some() && !has_integer_rule);
         if is_last_rule {
             // Last rule: only need comma if it's not a collection rule AND something will be added after
             // Collection rules already have the comma in the generated code (they end with "    },")
@@ -367,11 +385,11 @@ fn generate_tiered_production(
         let type_str = native_type_to_string(native_type);
         if !has_integer_rule {
             let literal_label = generate_literal_label(native_type);
-            
+
             if needs_comma {
                 production.push_str(",\n");
             }
-            
+
             if type_str == "i32" || type_str == "i64" {
                 // Integer literals: parse Integer token
                 // Add unary minus support for negative numbers (before positive literals for precedence)
@@ -379,22 +397,16 @@ fn generate_tiered_production(
                     "    \"-\" <i:Integer> => {}::{}(-i),\n",
                     cat_str, literal_label
                 ));
-                production.push_str(&format!(
-                    "    <i:Integer> => {}::{}(i)\n",
-                    cat_str, literal_label
-                ));
+                production
+                    .push_str(&format!("    <i:Integer> => {}::{}(i)\n", cat_str, literal_label));
             } else if type_str == "f32" || type_str == "f64" {
                 // Float literals: parse Float token
-                production.push_str(&format!(
-                    "    <f:Float> => {}::{}(f)\n",
-                    cat_str, literal_label
-                ));
+                production
+                    .push_str(&format!("    <f:Float> => {}::{}(f)\n", cat_str, literal_label));
             } else if type_str == "bool" {
                 // Boolean literals: parse Boolean token
-                production.push_str(&format!(
-                    "    <b:Boolean> => {}::{}(b)\n",
-                    cat_str, literal_label
-                ));
+                production
+                    .push_str(&format!("    <b:Boolean> => {}::{}(b)\n", cat_str, literal_label));
             }
             needs_comma = !has_var_rule; // Next rule (Var) needs comma only if Var will be added
         }
@@ -409,7 +421,7 @@ fn generate_tiered_production(
         if needs_comma {
             production.push_str(",\n");
         } else {
-            production.push_str("\n");
+            production.push('\n');
         }
         production.push_str(&format!(
             "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))",
@@ -558,17 +570,21 @@ fn generate_simple_production(
         if needs_comma {
             production.push_str(",\n");
         } else {
-            production.push_str("\n");
+            production.push('\n');
         }
         production.push_str("    ");
         // Pass theory context for native type detection
         production.push_str(&generate_rule_alternative_with_theory(rule, Some(theory)));
-        
+
         // Check if this is the last rule and if it's a collection rule
         let is_last_rule = i == rules.len() - 1;
-        let is_collection_rule = rule.items.iter().any(|item| matches!(item, GrammarItem::Collection { .. }));
-        let will_add_after = !has_var_rule || (has_native_type(category, theory).is_some() && !has_integer_rule);
-        
+        let is_collection_rule = rule
+            .items
+            .iter()
+            .any(|item| matches!(item, GrammarItem::Collection { .. }));
+        let will_add_after =
+            !has_var_rule || (has_native_type(category, theory).is_some() && !has_integer_rule);
+
         if is_last_rule {
             // For the last rule, only set needs_comma if it's NOT a collection rule AND something will be added after
             needs_comma = !is_collection_rule && will_add_after;
@@ -583,11 +599,11 @@ fn generate_simple_production(
         let type_str = native_type_to_string(native_type);
         if !has_integer_rule {
             let literal_label = generate_literal_label(native_type);
-            
+
             if needs_comma {
                 production.push_str(",\n");
             }
-            
+
             if type_str == "i32" || type_str == "i64" {
                 // Integer literals: parse Integer token
                 // Add unary minus support for negative numbers
@@ -595,22 +611,16 @@ fn generate_simple_production(
                     "    \"-\" <i:Integer> => {}::{}(-i),\n",
                     category, literal_label
                 ));
-                production.push_str(&format!(
-                    "    <i:Integer> => {}::{}(i)\n",
-                    category, literal_label
-                ));
+                production
+                    .push_str(&format!("    <i:Integer> => {}::{}(i)\n", category, literal_label));
             } else if type_str == "f32" || type_str == "f64" {
                 // Float literals: parse Float token
-                production.push_str(&format!(
-                    "    <f:Float> => {}::{}(f)\n",
-                    category, literal_label
-                ));
+                production
+                    .push_str(&format!("    <f:Float> => {}::{}(f)\n", category, literal_label));
             } else if type_str == "bool" {
                 // Boolean literals: parse Boolean token
-                production.push_str(&format!(
-                    "    <b:Boolean> => {}::{}(b)\n",
-                    category, literal_label
-                ));
+                production
+                    .push_str(&format!("    <b:Boolean> => {}::{}(b)\n", category, literal_label));
             }
             // Note: Comma handling for Var rule is done below based on rules.is_empty() check
         }

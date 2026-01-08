@@ -47,12 +47,10 @@ impl Theory for RhoCalculusTheory {
         // so rewrites can still be shown
         if let Proc::Assign(var, rhs) = &proc {
             // Get current environment
-            let proc_env_facts: Vec<(String, Proc)> = PROC_ENV.with(|env| {
-                env.borrow().env_to_facts()
-            });
-            let name_env_facts: Vec<(String, Name)> = NAME_ENV.with(|env| {
-                env.borrow().env_to_facts()
-            });
+            let proc_env_facts: Vec<(String, Proc)> =
+                PROC_ENV.with(|env| env.borrow().env_to_facts());
+            let name_env_facts: Vec<(String, Name)> =
+                NAME_ENV.with(|env| env.borrow().env_to_facts());
 
             // Evaluate RHS using Ascent
             use ascent::*;
@@ -75,21 +73,15 @@ impl Theory for RhoCalculusTheory {
 
             // Start from the RHS and follow rewrite chains to find normal form
             let mut current = rhs.as_ref().clone();
-            loop {
-                // Find a rewrite from current term
-                if let Some((_, next)) = rewrites.iter().find(|(from, _)| from == &current) {
-                    current = next.clone();
-                } else {
-                    // No more rewrites - this is the normal form
-                    break;
-                }
+            while let Some((_, next)) = rewrites.iter().find(|(from, _)| from == &current) {
+                current = next.clone();
             }
 
             // Update environment
             if let Some(var_name) = match var {
                 mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
                     fv.pretty_name.clone()
-                }
+                },
                 _ => None,
             } {
                 PROC_ENV.with(|env| {
@@ -113,12 +105,8 @@ impl Theory for RhoCalculusTheory {
         let initial_proc = rho_term.0.clone();
 
         // Get environment facts from thread-local storage
-        let proc_env_facts: Vec<(String, Proc)> = PROC_ENV.with(|env| {
-            env.borrow().env_to_facts()
-        });
-        let name_env_facts: Vec<(String, Name)> = NAME_ENV.with(|env| {
-            env.borrow().env_to_facts()
-        });
+        let proc_env_facts: Vec<(String, Proc)> = PROC_ENV.with(|env| env.borrow().env_to_facts());
+        let name_env_facts: Vec<(String, Name)> = NAME_ENV.with(|env| env.borrow().env_to_facts());
 
         // Run Ascent with the generated source
         let prog = ascent_run! {

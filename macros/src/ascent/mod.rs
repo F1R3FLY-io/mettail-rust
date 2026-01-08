@@ -282,7 +282,7 @@ fn generate_semantic_rules(theory: &TheoryDef) -> Vec<TokenStream> {
 /// For custom types: if env_var(x, v) then (PVar x) => v
 fn generate_automatic_var_retrieval_rules(theory: &TheoryDef) -> Vec<TokenStream> {
     use crate::codegen::is_integer_rule;
-    
+
     let mut rules = Vec::new();
 
     for export in &theory.exports {
@@ -296,7 +296,9 @@ fn generate_automatic_var_retrieval_rules(theory: &TheoryDef) -> Vec<TokenStream
         // So we should always generate variable retrieval rules
 
         // Use the explicit Var rule label if it exists, otherwise use auto-generated label
-        let var_label = theory.terms.iter()
+        let var_label = theory
+            .terms
+            .iter()
             .find(|rule| rule.category == *category && is_var_rule(rule))
             .map(|rule| rule.label.clone())
             .unwrap_or_else(|| generate_var_label(category));
@@ -304,17 +306,18 @@ fn generate_automatic_var_retrieval_rules(theory: &TheoryDef) -> Vec<TokenStream
         if let Some(native_type) = &export.native_type {
             // Native type: if env_var(x, v) then (Var x) => (NumLit v)
             // Find the NumLit/Integer rule (explicit or auto-generated)
-            let integer_rule = theory.terms.iter().find(|rule| {
-                rule.category == *category && is_integer_rule(rule)
-            });
-            
+            let integer_rule = theory
+                .terms
+                .iter()
+                .find(|rule| rule.category == *category && is_integer_rule(rule));
+
             // Use explicit rule label if found, otherwise use auto-generated label
             let num_lit_label = if let Some(integer_rule) = integer_rule {
                 integer_rule.label.clone()
             } else {
                 generate_literal_label(native_type)
             };
-            
+
             // Generate: if env_var(x, v) then (Var x) => (NumLit v)
             // v is the native type (e.g., i32) from env_var relation (bound as reference in Ascent)
             rules.push(quote! {

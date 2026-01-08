@@ -65,20 +65,26 @@ impl Theory for CalculatorTheory {
         // Handle assignments: evaluate RHS and update environment, but return the term
         // so rewrites can still be shown
         if let Int::Assign(var, rhs) = &expr {
-        // Get current environment
-            let env_facts: Vec<(String, i64)> = CALC_ENV.with(|env| {
-                env.borrow().env_to_facts()
-                    .into_iter()
-                    .map(|(name, val)| {
-                        let i64_val = match val {
-                            Int::NumLit(v) => v,
-                            _ => return Err(anyhow::anyhow!("Environment value must be a NumLit")),
-                        };
-                        Ok((name, i64_val))
-                    })
-                    .collect::<Result<Vec<_>>>()
-            })
-            .map_err(|e| anyhow::anyhow!("Failed to convert environment: {}", e))?;
+            // Get current environment
+            let env_facts: Vec<(String, i64)> = CALC_ENV
+                .with(|env| {
+                    env.borrow()
+                        .env_to_facts()
+                        .into_iter()
+                        .map(|(name, val)| {
+                            let i64_val = match val {
+                                Int::NumLit(v) => v,
+                                _ => {
+                                    return Err(anyhow::anyhow!(
+                                        "Environment value must be a NumLit"
+                                    ))
+                                },
+                            };
+                            Ok((name, i64_val))
+                        })
+                        .collect::<Result<Vec<_>>>()
+                })
+                .map_err(|e| anyhow::anyhow!("Failed to convert environment: {}", e))?;
 
             // Evaluate RHS using Ascent
             use ascent::*;
@@ -112,14 +118,14 @@ impl Theory for CalculatorTheory {
                         return Err(anyhow::anyhow!("Assignment RHS contains undefined variables"));
                     }
                     current.eval()
-                }
+                },
             };
 
             // Update environment
             if let Some(var_name) = match var {
                 mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
                     fv.pretty_name.clone()
-                }
+                },
                 _ => None,
             } {
                 CALC_ENV.with(|env| {
@@ -143,20 +149,24 @@ impl Theory for CalculatorTheory {
         let initial_int = calc_term.0.clone();
 
         // Get environment facts from thread-local storage - convert Int enum to i64 for Ascent
-        let env_facts: Vec<(String, i64)> = CALC_ENV.with(|env| {
-            env.borrow().env_to_facts()
-                .into_iter()
-                .map(|(name, val)| {
-                    // Extract i64 from Int enum (NumLit variant)
-                    let i64_val = match val {
-                        Int::NumLit(v) => v,
-                        _ => return Err(anyhow::anyhow!("Environment value must be a NumLit"))?,
-                    };
-                    Ok((name, i64_val))
-                })
-                .collect::<Result<Vec<_>>>()
-        })
-        .map_err(|e| anyhow::anyhow!("Failed to convert environment: {}", e))?;
+        let env_facts: Vec<(String, i64)> = CALC_ENV
+            .with(|env| {
+                env.borrow()
+                    .env_to_facts()
+                    .into_iter()
+                    .map(|(name, val)| {
+                        // Extract i64 from Int enum (NumLit variant)
+                        let i64_val = match val {
+                            Int::NumLit(v) => v,
+                            _ => {
+                                return Err(anyhow::anyhow!("Environment value must be a NumLit"))?
+                            },
+                        };
+                        Ok((name, i64_val))
+                    })
+                    .collect::<Result<Vec<_>>>()
+            })
+            .map_err(|e| anyhow::anyhow!("Failed to convert environment: {}", e))?;
 
         // Run Ascent with the generated source
         // Seed env_var facts using a rule that iterates over the collection
@@ -205,7 +215,7 @@ impl Theory for CalculatorTheory {
                         } else {
                             Some("var_substitution".to_string())
                         }
-                    }
+                    },
                     (Int::Sub(left, right), Int::NumLit(_)) => {
                         if matches!(left.as_ref(), Int::NumLit(_))
                             && matches!(right.as_ref(), Int::NumLit(_))
@@ -214,7 +224,7 @@ impl Theory for CalculatorTheory {
                         } else {
                             Some("var_substitution".to_string())
                         }
-                    }
+                    },
                     // Variable substitution: IVar -> NumLit
                     (Int::IVar(_), Int::NumLit(_)) => Some("var_substitution".to_string()),
                     // Congruence rewrites (propagating through Add/Sub/Assign)
@@ -226,8 +236,8 @@ impl Theory for CalculatorTheory {
                 };
 
                 Rewrite {
-                    from_id: compute_term_id(&from),
-                    to_id: compute_term_id(&to),
+                    from_id: compute_term_id(from),
+                    to_id: compute_term_id(to),
                     rule_name,
                 }
             })

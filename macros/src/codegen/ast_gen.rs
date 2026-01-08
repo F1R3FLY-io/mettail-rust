@@ -1,8 +1,11 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use super::{display, generate_literal_label, generate_var_label, has_assign_rule, is_integer_rule, is_var_rule, subst, termgen};
-use crate::utils::has_native_type;
+use super::{
+    display, generate_literal_label, generate_var_label, has_assign_rule, is_integer_rule,
+    is_var_rule, subst, termgen,
+};
 use crate::ast::{BuiltinOp, GrammarItem, GrammarRule, TheoryDef};
+use crate::utils::has_native_type;
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -90,7 +93,7 @@ fn generate_ast_enums(theory: &TheoryDef) -> TokenStream {
             if !has_integer_rule {
                 let literal_label = generate_literal_label(native_type);
                 let native_type_cloned = native_type.clone();
-                
+
                 variants.push(quote! {
                     #literal_label(#native_type_cloned)
                 });
@@ -778,14 +781,9 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
             // Integer rule is the one that uses Integer keyword (for native type literals)
             // Or use auto-generated literal label if no explicit rule
             let integer_rule = category_rules.iter().find(|r| is_integer_rule(r));
-            let integer_label = if let Some(rule) = integer_rule {
-                Some(&rule.label)
-            } else if let Some(native_type) = has_native_type(category, theory) {
-                // Use auto-generated literal label
-                Some(&generate_literal_label(native_type))
-            } else {
-                None
-            };
+            let integer_label = integer_rule
+                .map(|rule| rule.label.clone())
+                .or_else(|| has_native_type(category, theory).map(generate_literal_label));
 
             // Generate match arms for all constructors
             let mut match_arms: Vec<TokenStream> = Vec::new();
@@ -801,7 +799,7 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                     .unwrap_or(false);
 
                 if is_var_ref {
-                    if let Some(int_label) = integer_label {
+                    if let Some(ref int_label) = integer_label {
                         match_arms.push(quote! {
                             #category::#label(ord_var) => {
                                 let var_name: &str = match ord_var {
@@ -933,7 +931,7 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
 /// - Environment struct (e.g., CalculatorIntEnv, RhoCalcProcEnv)
 /// - Environment methods (new, set, get, clear)
 /// - env_to_facts helper function
-/// 
+///
 /// This enables automatic assignment and variable retrieval for every category.
 fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
     use quote::format_ident;
@@ -948,7 +946,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
         // Generate environment struct name: TheoryNameCategoryEnv
         // e.g., CalculatorIntEnv, RhoCalcProcEnv
         let env_name = format_ident!("{}{}Env", theory_name, category);
-        
+
         // Use category name directly - works for both native and custom types
         // For native types like Int = ![i32], Rust will use the type alias correctly
         // For custom types like Proc, it uses the enum type
@@ -1014,12 +1012,13 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
             let env_rel_name = format_ident!("env_var_{}", cat_str);
             let rw_rel_name = format_ident!("rw_{}", cat_str);
             let cat_rel_name = format_ident!("{}", cat_str);
-            
+
             // Find the Integer/NumLit rule to extract native values
-            let integer_rule = theory.terms.iter().find(|r| {
-                r.category == *category && is_integer_rule(r)
-            });
-            
+            let integer_rule = theory
+                .terms
+                .iter()
+                .find(|r| r.category == *category && is_integer_rule(r));
+
             // Store the literal label - either from explicit rule or auto-generated
             let num_lit_label = if let Some(rule) = integer_rule {
                 // Explicit integer rule found - use its label
@@ -1028,12 +1027,13 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                 // No explicit integer rule - use auto-generated literal label
                 generate_literal_label(native_type)
             };
-            
+
             // Find Var rule to generate has_var_ref helper
-            let var_rule = theory.terms.iter().find(|r| {
-                r.category == *category && is_var_rule(r)
-            });
-            
+            let var_rule = theory
+                .terms
+                .iter()
+                .find(|r| r.category == *category && is_var_rule(r));
+
             // Store the var label - either from explicit rule or auto-generated
             let var_label = if let Some(rule) = var_rule {
                 rule.label.clone()
@@ -1041,10 +1041,10 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                 // Use auto-generated label
                 generate_var_label(category)
             };
-            
+
             // Generate function name for has_var_ref helper
             let has_var_ref_fn = format_ident!("has_var_ref_{}", cat_str);
-            
+
             // Generate match arms for has_var_ref recursively checking all constructors
             let mut has_var_ref_match_arms = Vec::new();
             has_var_ref_match_arms.push(quote! {
@@ -1053,12 +1053,14 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
             has_var_ref_match_arms.push(quote! {
                 #category::#num_lit_label(_) => false,
             });
-            
+
             // Get all constructors for this category
-            let rules: Vec<&GrammarRule> = theory.terms.iter()
+            let rules: Vec<&GrammarRule> = theory
+                .terms
+                .iter()
                 .filter(|r| r.category == *category)
                 .collect();
-            
+
             // Generate recursive checks for all other constructors
             for rule in &rules {
                 let label = &rule.label;
@@ -1066,7 +1068,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                 if is_var_rule(rule) || is_integer_rule(rule) {
                     continue;
                 }
-                
+
                 // Check if this is Assign (explicit or auto-generated)
                 if label.to_string() == "Assign" {
                     has_var_ref_match_arms.push(quote! {
@@ -1074,22 +1076,26 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                     });
                     continue;
                 }
-                
+
                 // Count recursive fields (fields of same category)
-                let recursive_fields: Vec<_> = rule.items.iter()
+                let recursive_fields: Vec<_> = rule
+                    .items
+                    .iter()
                     .filter_map(|item| {
                         match item {
                             GrammarItem::NonTerminal(nt) if nt == category => {
                                 Some(false) // Box<Category>
-                            }
-                            GrammarItem::Collection { element_type, .. } if element_type == category => {
+                            },
+                            GrammarItem::Collection { element_type, .. }
+                                if element_type == category =>
+                            {
                                 Some(true) // Collection<Category>
-                            }
+                            },
                             _ => None,
                         }
                     })
                     .collect();
-                
+
                 if recursive_fields.is_empty() {
                     // No recursive fields - can't have Var
                     has_var_ref_match_arms.push(quote! {
@@ -1129,7 +1135,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                     });
                 }
             }
-            
+
             parse_eval_fns.push(quote! {
                 /// Parse and evaluate a statement (assignment or expression) with environment.
                 /// Returns the computed native type value.
@@ -1138,17 +1144,17 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                     env: &mut #env_name,
                 ) -> Result<#native_type, String> {
                     use ascent::*;
-                    
+
                     mettail_runtime::clear_var_cache();
-                    
+
                     let trimmed = input.trim();
-                    
+
                     // Parse the input (handles both assignments and expressions)
                     let parser = #parser_module::#parser_name::new();
                     let term = parser
                         .parse(trimmed)
                         .map_err(|e| format!("parse error: {:?}", e))?;
-                    
+
                     // Get environment facts - convert enum to native type for Ascent
                     let env_facts: Vec<(String, #native_type)> = env
                         .env_to_facts()
@@ -1161,24 +1167,24 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                             }
                         })
                         .collect::<Result<Vec<_>, String>>()?;
-                    
+
                     // Run Ascent to rewrite to normal form
                     let prog = ascent_run! {
                         include_source!(#source_name);
-                        
+
                         #cat_rel_name(term.clone());
-                        
+
                         // Seed environment facts (use category-specific relation name)
                         #env_rel_name(n.clone(), v) <-- for (n, v) in env_facts.clone();
                     };
-                    
+
                     // Find normal form (term with no outgoing rewrites)
                     let rewrites: Vec<(#category, #category)> = prog
                         .#rw_rel_name
                         .iter()
                         .map(|(from, to)| (from.clone(), to.clone()))
                         .collect();
-                    
+
                     let mut current = term;
                     loop {
                         // Find rewrite from current term
@@ -1189,7 +1195,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                             break;
                         }
                     }
-                    
+
                     // Handle assignments: extract value and update environment
                     if let #category::Assign(var, rhs) = &current {
                         // The RHS might still need rewriting (congruence rules may not fully rewrite nested expressions)
@@ -1204,7 +1210,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                                 break;
                             }
                         }
-                        
+
                         // Extract value from fully rewritten RHS (should be a #num_lit_label)
                         let val = match &rhs_current {
                             #category::#num_lit_label(v) => *v,
@@ -1217,7 +1223,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                                 rhs_current.eval()
                             }
                         };
-                        
+
                         // Update environment if we have a variable name
                         if let Some(var_name) = match var {
                             mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
@@ -1227,7 +1233,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                         } {
                             env.set(var_name, #category::#num_lit_label(val));
                         }
-                        
+
                         Ok(val)
                     } else {
                         // Not an assignment - extract value from normal form
@@ -1245,7 +1251,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                     }
                 }
             });
-            
+
             // Generate public has_var_ref helper function separately
             parse_eval_fns.push(quote! {
                 /// Helper function to check if a term contains a #var_label (undefined variable)
@@ -1261,7 +1267,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
 
     quote! {
         #(#env_structs)*
-        
+
         #(#parse_eval_fns)*
     }
 }

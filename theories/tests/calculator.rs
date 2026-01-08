@@ -35,27 +35,26 @@ fn test_binary_literal_parsing() {
 
 #[test]
 fn test_negative_hex_parsing() {
-    assert_eq!(-(0x4A as i64), -74);
-    assert_eq!(-(0xFF as i64), -255);
+    assert_eq!(-0x4A_i64, -74);
+    assert_eq!(-0xFF_i64, -255);
 }
 
 #[test]
 fn test_negative_octal_parsing() {
-    assert_eq!(-(0o47 as i64), -39);
-    assert_eq!(-(0o77 as i64), -63);
+    assert_eq!(-0o47_i64, -39);
+    assert_eq!(-0o77_i64, -63);
 }
 
 #[test]
 fn test_negative_binary_parsing() {
-    assert_eq!(-(0b110 as i64), -6);
-    assert_eq!(-(0b1111 as i64), -15);
+    assert_eq!(-0b110_i64, -6);
+    assert_eq!(-0b1111_i64, -15);
 }
 
 #[test]
 fn test_mixed_radix_arithmetic() {
     // Test that different bases can be mixed in arithmetic
-    assert_eq!(0x10 + 0o10, 24);  // 16 + 8
-    assert_eq!(0b100 + 0o4, 8);   // 4 + 4
+    assert_eq!(0x10 + 0o10, 24); // 16 + 8
+    assert_eq!(0b100 + 0o4, 8); // 4 + 4
     assert_eq!(0xFF - 0b11, 252); // 255 - 3
 }
-

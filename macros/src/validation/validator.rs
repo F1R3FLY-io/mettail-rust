@@ -120,11 +120,16 @@ fn validate_expr(expr: &Expr, theory: &TheoryDef) -> Result<(), ValidationError>
 
             // Also check if it's an auto-generated constructor
             let is_auto_generated = constructor_name == "Assign"
-                || (constructor_name.len() > 4 
+                || (constructor_name.len() > 4
                     && constructor_name.ends_with("Var")
                     && theory.exports.iter().any(|e| {
                         let cat_str = e.name.to_string();
-                        let first_letter = cat_str.chars().next().unwrap_or('V').to_uppercase().collect::<String>();
+                        let first_letter = cat_str
+                            .chars()
+                            .next()
+                            .unwrap_or('V')
+                            .to_uppercase()
+                            .collect::<String>();
                         constructor_name == format!("{}Var", first_letter)
                     }));
 
