@@ -14,16 +14,16 @@ pub Proc: Proc = {
     "0" => Proc::PZero,
     "*" "(" <f0:Name> ")" => Proc::PDrop(Box::new(f0)),
     <f0:Name> "!" "(" <f1:Proc> ")" => Proc::POutput(Box::new(f0), Box::new(f1)),
-    "for" "(" <f0:Name> "->" <x_1:Ident> ")" "{" <body_2:Proc> "}" => {
+    "for" "(" <x:Ident> "<" "-" <n:Name> ")" "{" <p:Proc> "}" => {
         use mettail_runtime::BoundTerm;
-        let free_vars = body_2.free_vars();
-        let binder = if let Some(fv) = free_vars.iter().find(|fv| fv.pretty_name.as_deref() == Some(&x_1)) {
+        let free_vars = p.free_vars();
+        let binder = if let Some(fv) = free_vars.iter().find(|fv| fv.pretty_name.as_deref() == Some(&x)) {
             Binder((*fv).clone())
         } else {
-            Binder(mettail_runtime::get_or_create_var(x_1))
+            Binder(mettail_runtime::get_or_create_var(x))
         };
-        let scope = Scope::new(binder, Box::new(body_2));
-        Proc::PInput(Box::new(f0), scope)
+        let scope = Scope::new(binder, Box::new(p));
+        Proc::PInput(Box::new(n), scope)
     },
     "{" <elems:(<Proc> r"\|")*> <last:Proc?> "}" => {
         let mut coll = mettail_runtime::HashBag::new();

@@ -19,7 +19,8 @@ theory! {
         PZero . Proc ::= "0" ;
         PDrop . Proc ::= "*" "(" Name ")" ;
         POutput . Proc ::= Name "!" "(" Proc ")" ;
-        PInput . Proc ::= "for" "(" Name "->" <Name> ")" "{" Proc "}" ;
+        // PInput . Proc ::= "for" "(" Name "->" <Name> ")" "{" Proc "}" ;
+        PInput . n:Name, ^x.p:[Name -> Proc] |- for(x<-n){p} : Proc ;
 
         PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
 

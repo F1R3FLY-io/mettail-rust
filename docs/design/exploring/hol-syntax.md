@@ -25,12 +25,12 @@ This becomes awkward when dealing with lambda abstractions. Type theory uses a c
 For example, the rho-calculus input constructor:
 
 ```
-PInput . n:Name, \x.p:[Name->Proc] |- for(x<-n){p} : Proc
+PInput . n:Name, ^x.p:[Name->Proc] |- for(x<-n){p} : Proc
 ```
 
 This syntax makes explicit:
 - **Label**: `PInput` — the Rust enum variant name
-- **Context**: term parameters (`n:Name`) and abstractions (`\x.p:[Name->Proc]`)
+- **Context**: term parameters (`n:Name`) and abstractions (`^x.p:[Name->Proc]`)
 - **Syntax pattern**: `for(x<-n){p}` — the concrete syntax, using identifiers from the context
 - **Result type**: `Proc`
 
@@ -39,7 +39,7 @@ This syntax makes explicit:
 The current `<Name>` binder syntax is **implicit** and **positional**:
 - Binding scope is inferred (binder binds in next non-terminal)
 - Cannot express function types
-- Cannot nest abstractions (`\x.\y.p`)
+- Cannot nest abstractions (`^x.^y.p`)
 - Cannot express higher-order functions (functions as arguments)
 - Cannot express multi-binders (binding a list of names)
 
@@ -56,14 +56,17 @@ First-class lambda abstractions require:
 
 1. **Judgement-style syntax** for constructor declarations
 2. **First-class function types**: `[A -> B]` as valid types
-3. **Nested abstractions**: `\x.\y.p:[A -> [B -> C]]`
+3. **Nested abstractions**: `^x.^y.p:[A -> [B -> C]]`
 4. **Higher-order abstractions**: functions that take functions as arguments
-5. **Multi-binders**: `\[xs].p:[[Name] -> Proc]` binds a list of names
+5. **Multi-binders**: `^[xs].p:[Name* -> Proc]` binds a list of names
 6. **Meta-syntax**: `#sep`, `#zip`, `#map` for compile-time grammar generation
 7. **Bidirectional**: syntax patterns generate both parser and display
-8. **Meta-level lambda**: `dup = \n:Name. ...` for reusable term templates
+8. **Meta-level lambda**: `dup = ^n:Name. ...` for reusable term templates
 9. **Custom identifiers**: optional `identifier { r"..." }` for variable naming pattern
 10. **Clean migration**: from current BNFC-style syntax
+
+> **Syntax Note:** Lambda abstractions use caret (`^x.body`) instead of backslash (`\x.body`) 
+> because backslash is not a valid token in Rust's proc-macro tokenizer.
 
 ---
 
@@ -74,7 +77,7 @@ First-class lambda abstractions require:
 ```
 Type ::= Ident                    -- base type: Name, Proc
        | "[" Type "->" Type "]"   -- function type: [Name -> Proc]
-       | "[[" Type "]]"           -- multi-binder domain: [[Name]]
+       | Type "*"                 -- multi-binder domain: Name*
        | CollType "(" Type ")"    -- collection type: Vec(Name)
 
 CollType ::= "Vec" | "HashBag" | "HashSet"
@@ -85,7 +88,7 @@ Examples:
 Name                     -- base type
 Proc                     -- base type
 [Name -> Proc]           -- function from Name to Proc
-[[Name] -> Proc]         -- function from list of Names to Proc (multi-binder)
+[Name* -> Proc]          -- function from list of Names to Proc (multi-binder)
 [Name -> [Name -> Proc]] -- curried function (nested abstraction)
 [[Proc -> Proc] -> Proc] -- higher-order: takes a function argument
 Vec(Name)                -- vector of names (collection)
@@ -106,7 +109,7 @@ pub enum TypeExpr {
         codomain: Box<TypeExpr>,
     },
     
-    /// Multi-binder domain: [[A]] means "list of binders of type A"
+    /// Multi-binder domain: `A*` means "list of binders of type A"
     MultiBinder(Box<TypeExpr>),
     
     /// Collection type: Vec(T), HashBag(T)
@@ -128,7 +131,7 @@ pub enum CollType {
 
 **Single binder** — binds one variable of a given type:
 ```
-\x.p:[Name -> Proc]
+^x.p:[Name -> Proc]
 ```
 - `x` is one variable of type `Name`
 - `x` is free in body `p`
@@ -136,7 +139,7 @@ pub enum CollType {
 
 **Multi-binder** — binds a list of variables:
 ```
-\[xs].p:[[Name] -> Proc]
+^[xs].p:[Name* -> Proc]
 ```
 - `xs` represents variables `x0, x1, ..., xk` each of type `Name`
 - All `xi` are free in body `p`
@@ -144,8 +147,8 @@ pub enum CollType {
 - Runtime type: `Scope<Vec<Binder<String>>, Box<Proc>>`
 
 **Important distinction:**
-- `\xs.p:[Vec(Name) -> Proc]` — ONE binder `xs` of type `Vec(Name)`
-- `\[xs].p:[[Name] -> Proc]` — LIST of binders, each of type `Name`
+- `^xs.p:[Vec(Name) -> Proc]` — ONE binder `xs` of type `Vec(Name)`
+- `^[xs].p:[Name* -> Proc]` — LIST of binders, each of type `Name`
 
 These are semantically different. Multi-binder is needed for multi-channel input.
 
@@ -226,22 +229,22 @@ ps:HashBag(Proc)  -- parameter ps of type HashBag(Proc)
 
 **Single abstraction** — binds one variable:
 ```
-\x.p:[Name -> Proc]     -- x binds in p
+^x.p:[Name -> Proc]     -- x binds in p
 ```
 
 **Named abstraction** — when you need to reference the whole abstraction:
 ```
-f = \x.y:[Proc -> Proc]  -- f names the abstraction; x binds in y
+f = ^x.y:[Proc -> Proc]  -- f names the abstraction; x binds in y
 ```
 
 **Multi-binder abstraction** — binds multiple variables:
 ```
-\[xs].p:[[Name] -> Proc]  -- xs represents x0, x1, ... binding in p
+^[xs].p:[Name* -> Proc]  -- xs represents x0, x1, ... binding in p
 ```
 
 **Nested abstraction** — multiple binding levels:
 ```
-\x.\y.p:[Name -> [Name -> Proc]]  -- x binds in (y binds in p)
+^x.^y.p:[Name -> [Name -> Proc]]  -- x binds in (y binds in p)
 ```
 
 ### 4.3 Examples
@@ -258,20 +261,20 @@ terms {
     POutput . n:Name, p:Proc |- n!(p) : Proc ;
     
     // Single abstraction
-    PInput . n:Name, \x.p:[Name->Proc] |- for(x<-n){p} : Proc ;
+    PInput . n:Name, ^x.p:[Name->Proc] |- for(x<-n){p} : Proc ;
     
     // Multi-binder abstraction
-    PInputs . ns:Vec(Name), \[xs].p:[[Name]->Proc] 
+    PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] 
             |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
     
     // Collection
     PPar . ps:HashBag(Proc) |- { ps.#sep("|") } : Proc ;
     
     // Nested abstraction
-    PLam2 . \x.\y.p:[Name -> [Name -> Proc]] |- lam(x,y){p} : Proc ;
+    PLam2 . ^x.^y.p:[Name -> [Name -> Proc]] |- lam(x,y){p} : Proc ;
     
     // Higher-order (named abstraction)
-    PMap . f = \x.y:[Proc->Proc], ps:HashBag(Proc) |- map(f){ps} : Proc ;
+    PMap . f = ^x.y:[Proc->Proc], ps:HashBag(Proc) |- map(f){ps} : Proc ;
     
     // Quote
     NQuote . p:Proc |- @(p) : Name ;
@@ -366,7 +369,7 @@ impl Display for Proc {
 Meta-constraints like "same length" are enforced by grammar structure:
 
 ```
-PInputs . ns:Vec(Name), \[xs].p:[[Name]->Proc] 
+PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] 
         |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
 ```
 
@@ -382,16 +385,16 @@ No explicit `#length(ns) = #length(xs)` needed—it's structural.
 
 All abstractions in MeTTaIL are **meta-lambdas**—the internal hom of a cartesian closed category. This includes:
 
-- Abstraction parameters in constructors: `\x.p:[Name->Proc]`
-- Named definitions: `dup = \n:Name. ...`
-- Higher-order parameters: `\f:[A->B]. ...`
+- Abstraction parameters in constructors: `^x.p:[Name->Proc]`
+- Named definitions: `dup = ^n:Name. ...`
+- Higher-order parameters: `^f:[A->B]. ...`
 
 These are the same abstraction mechanism with different uses:
 
 | Use | Syntax | Runtime Representation |
 |-----|--------|------------------------|
-| Constructor binding | `PInput . \x.p:[Name->Proc] |- ...` | `Scope<Binder, Box<Proc>>` |
-| Definition | `dup = \n:Name. body` | Expanded at use site |
+| Constructor binding | `PInput . ^x.p:[Name->Proc] |- ...` | `Scope<Binder, Box<Proc>>` |
+| Definition | `dup = ^n:Name. body` | Expanded at use site |
 | Unapplied parameter | `f:[A->B]` passed to constructor | `Scope<Binder, Box<B>>` |
 
 ### 6.2 Representation
@@ -427,10 +430,15 @@ pub enum Expr {
     
     // === NEW: Lambda abstraction ===
     
-    /// Lambda: \x:T. body
+    /// Lambda: ^x.body (type annotation is external: ^x.body:[A->B])
     Lambda {
         binder: Ident,
-        binder_type: TypeExpr,
+        body: Box<Expr>,
+    },
+    
+    /// Multi-binder lambda: ^[xs].body
+    MultiLambda {
+        binder: Ident,  // Collective name for bound variables
         body: Box<Expr>,
     },
 }
@@ -438,49 +446,66 @@ pub enum Expr {
 
 **Notes:**
 - `Apply` serves for both constructor application (`PInput(n, p)`) and definition calls (`dup(n)`)
-- `Lambda` is the new variant for meta-level abstraction
+- `Lambda` and `MultiLambda` are meta-level abstractions
+- Type annotations are external: `^x.body:[Name->Proc]` not `^x:Name.body`
 - At expansion time, `Apply` with a definition name triggers substitution
 
 ### 6.3 Application and Substitution
+
+**Status:** To be implemented in Phase 1b
 
 Application `f(arg)` where `f` is a `Lambda` performs capture-avoiding substitution:
 
 ```rust
 impl Expr {
     /// Apply a lambda to an argument (beta reduction)
-    pub fn apply(&self, arg: &Expr, ctx: &TypeContext) -> Result<Expr, TypeError> {
+    /// Type checking is done externally with TypeExpr
+    pub fn apply(&self, arg: &Expr) -> Result<Expr, ApplyError> {
         match self {
-            Expr::Lambda { binder, binder_type, body } => {
-                // Type check: arg must have type binder_type
-                let arg_type = arg.infer_type(ctx)?;
-                if arg_type != *binder_type {
-                    return Err(TypeError::Mismatch {
-                        expected: binder_type.clone(),
-                        found: arg_type,
-                    });
-                }
+            Expr::Lambda { binder, body } => {
                 // Substitute arg for binder in body
                 Ok(body.substitute(binder, arg))
             }
-            _ => Err(TypeError::NotAFunction),
+            Expr::MultiLambda { binder, body } => {
+                // Multi-binder application: arg should be a collection
+                // Each element binds to a fresh variable from xs
+                Ok(body.substitute(binder, arg))
+            }
+            _ => Err(ApplyError::NotAFunction),
         }
     }
 
     /// Capture-avoiding substitution
+    /// Note: For meta-level Expr, we handle capture-avoidance directly.
+    /// For runtime terms (Scope<T>), moniker handles it via unbind().
     pub fn substitute(&self, var: &Ident, replacement: &Expr) -> Expr {
         match self {
             Expr::Var(v) if v == var => replacement.clone(),
             Expr::Var(v) => Expr::Var(v.clone()),
             
-            Expr::Lambda { binder, binder_type, body } => {
+            Expr::Lambda { binder, body } => {
                 if binder == var {
                     // Shadowed - don't substitute in body
                     self.clone()
+                } else if replacement.free_vars().contains(binder) {
+                    // Would capture - need alpha-renaming
+                    // For now, panic; proper impl will generate fresh name
+                    panic!("Capture-avoiding substitution not yet implemented for this case")
                 } else {
-                    // Substitute in body (moniker handles capture-avoidance at runtime)
+                    // Safe to substitute
                     Expr::Lambda {
                         binder: binder.clone(),
-                        binder_type: binder_type.clone(),
+                        body: Box::new(body.substitute(var, replacement)),
+                    }
+                }
+            }
+            
+            Expr::MultiLambda { binder, body } => {
+                if binder == var {
+                    self.clone()
+                } else {
+                    Expr::MultiLambda {
+                        binder: binder.clone(),
                         body: Box::new(body.substitute(var, replacement)),
                     }
                 }
@@ -509,7 +534,7 @@ impl Expr {
     pub fn free_vars(&self) -> HashSet<Ident> {
         match self {
             Expr::Var(v) => std::iter::once(v.clone()).collect(),
-            Expr::Lambda { binder, body, .. } => {
+            Expr::Lambda { binder, body } | Expr::MultiLambda { binder, body } => {
                 let mut vars = body.free_vars();
                 vars.remove(binder);
                 vars
@@ -577,10 +602,10 @@ impl Expr {
 In a constructor declaration:
 
 ```rust
-PInput . n:Name, \x.p:[Name->Proc] |- for(x<-n){p} : Proc ;
+PInput . n:Name, ^x.p:[Name->Proc] |- for(x<-n){p} : Proc ;
 ```
 
-The `\x.p:[Name->Proc]` is a meta-lambda that:
+The `^x.p:[Name->Proc]` is a meta-lambda that:
 1. At parse time: binds `x` in the body `p`
 2. At runtime: becomes `Scope<Binder<String>, Box<Proc>>`
 3. At substitution: uses generated `substitute()` method (from `macros/src/codegen/subst.rs`)
@@ -607,7 +632,7 @@ Definitions bind names to meta-expressions:
 
 ```rust
 definitions {
-    dup = \n:Name. for(x<-n){{ *(x) | n!(*(x)) }} ;
+    dup = ^n:Name. for(x<-n){{ *(x) | n!(*(x)) }} ;
 }
 ```
 
@@ -634,7 +659,7 @@ impl DefEnv {
 
 ### 6.7 Multi-Binder Implementation
 
-For `\[xs].p:[[Name]->Proc]`:
+For `^[xs].p:[Name*->Proc]`:
 
 ```rust
 pub enum BinderSpec {
@@ -739,7 +764,7 @@ Note: Empty collections like `{}` are valid syntactically but require type annot
 
 **Definition:**
 ```
-dup = \n:Name. for(x<-n){{ *(x) | n!(*(x)) }}
+dup = ^n:Name. for(x<-n){{ *(x) | n!(*(x)) }}
 ```
 
 **Type:** `[Name -> Proc]`
@@ -775,7 +800,7 @@ for(x<-@(0)){{ *(x) | @(0)!(*(x)) }}
 
 **Definition:**
 ```
-fwd = \n:Name. \m:Name. for(x<-n){ m!(*(x)) }
+fwd = ^n:Name. ^m:Name. for(x<-n){ m!(*(x)) }
 ```
 
 **Type:** `[Name -> [Name -> Proc]]`
@@ -797,7 +822,7 @@ Expr::Lambda {
 
 **Step 1:** Apply outer lambda to `@(a)` → result type `[Name -> Proc]`
 ```
-\m:Name. for(x<-@(a)){ m!(*(x)) }
+^m:Name. for(x<-@(a)){ m!(*(x)) }
 ```
 
 **Step 2:** Apply result to `@(b)` → result type `Proc`
@@ -811,7 +836,7 @@ for(x<-@(a)){ @(b)!(*(x)) }
 
 **Definition:**
 ```
-invoke = \f:[Name->Proc]. f(@(0))
+invoke = ^f:[Name->Proc]. f(@(0))
 ```
 
 **Type:** `[[Name->Proc] -> Proc]`
@@ -833,13 +858,13 @@ Expr::Lambda {
 }
 ```
 
-**Application:** `invoke(\n:Name. *(n))`
+**Application:** `invoke(^n:Name. *(n))`
 
-Step 1: Type check — argument `\n:Name. *(n)` has type `[Name -> Proc]` ✓
+Step 1: Type check — argument `^n:Name. *(n)` has type `[Name -> Proc]` ✓
 
 Step 2: Substitute, then reduce inner application:
 ```
-f(@(0)) → (\n:Name. *(n))(@(0)) → *(@(0))
+f(@(0)) → (^n:Name. *(n))(@(0)) → *(@(0))
 ```
 
 **Result:** `*(@(0))`
@@ -850,35 +875,35 @@ f(@(0)) → (\n:Name. *(n))(@(0)) → *(@(0))
 
 **Definition:**
 ```
-twice = \f:[Proc->Proc]. \p:Proc. f(f(p))
+twice = ^f:[Proc->Proc]. ^p:Proc. f(f(p))
 ```
 
 **Type:** `[[Proc->Proc] -> [Proc -> Proc]]`
 
-**Application:** `twice(\q:Proc. {q|q})(0)`
+**Application:** `twice(^q:Proc. {q|q})(0)`
 
-**Step 1:** Apply to `\q:Proc. {q|q}` → type `[Proc -> Proc]`
+**Step 1:** Apply to `^q:Proc. {q|q}` → type `[Proc -> Proc]`
 ```
-\p:Proc. (\q:Proc. {q|q})((\q:Proc. {q|q})(p))
+^p:Proc. (^q:Proc. {q|q})((^q:Proc. {q|q})(p))
 ```
 
 **Step 2:** Apply to `0`
 ```
-(\p:Proc. ...)(0)
+(^p:Proc. ...)(0)
     ↓ [p := 0]
-= (\q:Proc. {q|q})((\q:Proc. {q|q})(0))
+= (^q:Proc. {q|q})((^q:Proc. {q|q})(0))
 ```
 
 **Step 3:** Reduce innermost application
 ```
-(\q:Proc. {q|q})(0)
+(^q:Proc. {q|q})(0)
     ↓ [q := 0]
 = {0|0}
 ```
 
 **Step 4:** Reduce outer application
 ```
-(\q:Proc. {q|q})({0|0})
+(^q:Proc. {q|q})({0|0})
     ↓ [q := {0|0}]
 = {{0|0}|{0|0}}
 ```
@@ -973,7 +998,7 @@ pub enum Param {
         typ: TypeExpr,
     },
     
-    /// Abstraction: \x.p:[A->B] or f = \x.p:[A->B]
+    /// Abstraction: ^x.p:[A->B] or f = ^x.p:[A->B]
     Abstraction {
         /// Optional name for the whole abstraction
         name: Option<Ident>,
@@ -988,11 +1013,11 @@ pub enum Param {
 
 /// Binder specification
 pub enum BinderSpec {
-    /// Single binder: \x
+    /// Single binder: ^x
     Single(Ident),
-    /// Multi-binder: \[xs]
+    /// Multi-binder: ^[xs]
     Multi(Ident),
-    /// Nested: \x.\y (list of single binders)
+    /// Nested: ^x.^y (list of single binders)
     Nested(Vec<Ident>),
 }
 
@@ -1081,7 +1106,7 @@ No new runtime types are needed.
 | Current | New |
 |---------|-----|
 | `Label . Cat ::= ... ;` | `Label . ctx \|- syntax : Cat ;` |
-| `<Name>` | `\x.p:[Name->...]` |
+| `<Name>` | `^x.p:[Name->...]` |
 | `HashBag(T) sep "s"` | `ps:HashBag(T)` + `ps.#sep("s")` in pattern |
 | `delim "{" "}"` | `{ ... }` in pattern |
 
@@ -1098,22 +1123,39 @@ No new runtime types are needed.
 
 **Guiding Goal**: Define and execute rho calculus with multi-channel input:
 ```
-PInputs . ns:Vec(Name), \[xs].p:[[Name]->Proc] 
+PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] 
         |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
 ```
 
-### Phase 1: Type System (2-3 days)
+### Phase 1: Type System (2-3 days) ✓
 
-- [ ] Extend `TypeExpr` with `Arrow { domain, codomain }`
-- [ ] Extend `TypeExpr` with `MultiBinder(element_type)`
-- [ ] Implement type equality and display
+- [x] Create `TypeExpr` enum with `Base`, `Arrow`, `MultiBinder`, `Collection` variants
+- [x] Implement `PartialEq` for type comparison during type checking
+- [x] Implement `Display` for error messages
+- [x] Parse `TypeExpr` from input stream (`Name*` for multi-binder)
+- [x] Add `Expr::Lambda` and `Expr::MultiLambda` variants
+- [x] Parse `^x.body` and `^[xs].body` syntax
+
+### Phase 1b: Lambda Robustness (3-4 days) ✓
+
+- [x] Implement `Expr::substitute()` for capture-avoiding substitution
+- [x] Implement `Expr::free_vars()` for collecting free variables
+- [x] Implement `Expr::apply()` for beta-reduction
+- [x] Add `TypeContext` for tracking variable types during inference
+- [x] Add `ConstructorSig` for constructor type signatures
+- [x] Implement `infer_type()` for Apply expressions
+- [x] Implement `check_type()` for Lambda and MultiLambda
+- [x] Test lambda substitution with shadowing cases
+- [x] Test type inference for nested lambdas
+- [x] Test collection-typed lambda: `^xs.p:[Vec(Name) -> Proc]`
+- [x] Test multi-binder lambda: `^[xs].p:[Name* -> Proc]`
 
 ### Phase 2: Constructor Syntax (1 week)
 
-- [ ] Parse new constructor syntax: `Label . ctx |- pattern : Type`
-- [ ] Parse abstraction params: `\x.p:[A->B]`
-- [ ] Parse multi-binder: `\[xs].p:[[A]->B]`
-- [ ] Parse nested abstractions: `\x.\y.p:[A->[B->C]]`
+- [ ] Parse new constructor syntax: `Label . ctx |- term : Type`
+- [ ] Parse abstraction params: `^x.p:[A->B]`
+- [ ] Parse multi-binder: `^[xs].p:[Name*->B]`
+- [ ] Parse nested abstractions: `^x.^y.p:[A->[B->C]]`
 - [ ] Parse optional `identifier { r"..." }` block for custom variable regex
 - [ ] Generate enum variants with `Scope` types
 - [ ] Generate LALRPOP parser rules (with custom `Ident` terminal if specified)
@@ -1158,29 +1200,30 @@ All abstractions are meta-lambdas (CCC internal hom):
 
 | Use | Syntax | Representation |
 |-----|--------|----------------|
-| Constructor param | `\x.p:[A->B]` | `Scope<Binder, Box<B>>` at runtime |
-| Definition | `name = \x:T. body` | Expanded at use site |
+| Constructor param | `^x.p:[A->B]` | `Scope<Binder, Box<B>>` at runtime |
+| Definition | `name = ^x:T. body` | Expanded at use site |
 | Higher-order param | `f:[A->B]` | `Scope<Binder, Box<B>>` when passed |
 
 ### 12.2 Key Features
 
 | Feature | Syntax |
 |---------|--------|
-| Constructor abstraction | `\x.p:[A->B]` |
-| Named constructor abs | `f = \x.p:[A->B]` |
-| Multi-binder | `\[xs].p:[[A]->B]` |
-| Nested abstraction | `\x.\y.p:[A->[B->C]]` |
+| Constructor abstraction | `^x.p:[A->B]` |
+| Named constructor abs | `f = ^x.p:[A->B]` |
+| Multi-binder | `^[xs].p:[Name*->B]` |
+| Collection-typed binder | `^xs.p:[Vec(Name)->B]` |
+| Nested abstraction | `^x.^y.p:[A->[B->C]]` |
 | Function type | `[A->B]` |
 | Collection parameter | `ps:HashBag(Proc)` |
 | Syntax pattern | `for(x<-n){p}` |
 | Meta-syntax | `#sep`, `#zip`, `#map` |
 | Custom identifiers | `identifier { r"[a-z]" }` |
-| Meta-definition | `dup = \n:Name. ...` |
+| Meta-definition | `dup = ^n:Name. ...` |
 | Meta-application | `dup(@(0))` |
 
 ### 12.3 Key Principles
 
-1. **Unified abstraction** — all `\x.body` are meta-lambdas (CCC hom)
+1. **Unified abstraction** — all `^x.body` are meta-lambdas (CCC hom)
 2. **Meta-syntax is compile-time** — generates grammar + display
 3. **Capture-avoiding via moniker** — `Scope::unbind()` freshens bound variables automatically
 4. **Constraints are structural** — enforced by grammar, not runtime checks
@@ -1191,3 +1234,4 @@ All abstractions are meta-lambdas (CCC internal hom):
 **Estimated Effort**: 4-5 weeks (Phases 1-5), +1 week optional (Phase 6)
 **Risk Level**: Medium (well-defined scope, leverages existing moniker infrastructure)  
 **Impact**: High (enables multi-channel input and expressive language specifications)
+

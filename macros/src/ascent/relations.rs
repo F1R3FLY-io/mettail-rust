@@ -152,5 +152,7 @@ fn extract_category_from_rewrite(
         Expr::Var(_) => None,
         Expr::Subst { .. } => None,
         Expr::CollectionPattern { .. } => None,
+        // Lambdas are meta-level constructs, not patterns in rewrites
+        Expr::Lambda { .. } | Expr::MultiLambda { .. } => None,
     }
 }

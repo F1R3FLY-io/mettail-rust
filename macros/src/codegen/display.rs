@@ -5,7 +5,7 @@
 
 #![allow(clippy::cmp_owned)]
 
-use crate::ast::{GrammarItem, GrammarRule, TheoryDef};
+use crate::ast::{GrammarItem, GrammarRule, SyntaxToken, TermParam, TheoryDef};
 use crate::codegen::{generate_var_label, is_var_rule};
 use crate::utils::has_native_type;
 use proc_macro2::TokenStream;
@@ -77,6 +77,11 @@ fn generate_display_impl(
 fn generate_display_arm(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
     let category = &rule.category;
     let label = &rule.label;
+
+    // Check if this uses new syntax with syntax_pattern
+    if rule.syntax_pattern.is_some() {
+        return generate_new_syntax_display_arm(rule);
+    }
 
     // Check if this has binders
     if !rule.bindings.is_empty() {
@@ -235,6 +240,127 @@ fn generate_binder_display_arm(rule: &GrammarRule, _theory: &TheoryDef) -> Token
             let (binder, body) = scope.clone().unbind();
             let binder_name = binder.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
             write!(f, #format_str, #(#regular_field_idents,)* binder_name, body)
+        }
+    }
+}
+
+/// Generate display for a constructor using the new syntax_pattern
+fn generate_new_syntax_display_arm(rule: &GrammarRule) -> TokenStream {
+    let category = &rule.category;
+    let label = &rule.label;
+
+    let syntax_pattern = rule.syntax_pattern.as_ref().unwrap();
+    let term_context = rule.term_context.as_ref().unwrap();
+
+    // Build a map from identifier names to their param info
+    let mut param_map: std::collections::HashMap<String, &TermParam> = std::collections::HashMap::new();
+    for param in term_context {
+        match param {
+            TermParam::Simple { name, .. } => {
+                param_map.insert(name.to_string(), param);
+            },
+            TermParam::Abstraction { binder, body, .. } => {
+                param_map.insert(binder.to_string(), param);
+                param_map.insert(body.to_string(), param);
+            },
+            TermParam::MultiAbstraction { binder, body, .. } => {
+                param_map.insert(binder.to_string(), param);
+                param_map.insert(body.to_string(), param);
+            },
+        }
+    }
+
+    // Collect field names for pattern matching
+    // Field order follows term_context order
+    let mut field_names = Vec::new();
+    let mut has_scope = false;
+    for param in term_context {
+        match param {
+            TermParam::Simple { name, .. } => {
+                field_names.push(name.to_string());
+            },
+            TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. } => {
+                field_names.push("scope".to_string());
+                has_scope = true;
+            },
+        }
+    }
+
+    let field_idents: Vec<syn::Ident> = field_names
+        .iter()
+        .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
+        .collect();
+
+    // Build format string from syntax_pattern
+    let mut format_parts = Vec::new();
+    let mut format_args: Vec<TokenStream> = Vec::new();
+
+    // Track which abstraction params we've seen
+    let mut seen_binder = false;
+    let mut seen_body = false;
+    let mut abstraction_binder_name: Option<String> = None;
+    let mut abstraction_body_name: Option<String> = None;
+
+    // Find the abstraction params (if any)
+    for param in term_context {
+        if let TermParam::Abstraction { binder, body, .. } | TermParam::MultiAbstraction { binder, body, .. } = param {
+            abstraction_binder_name = Some(binder.to_string());
+            abstraction_body_name = Some(body.to_string());
+            break;
+        }
+    }
+
+    for token in syntax_pattern {
+        match token {
+            SyntaxToken::Literal(s) | SyntaxToken::Keyword(s) => {
+                // Escape braces in format strings
+                let escaped = s.replace('{', "{{").replace('}', "}}");
+                format_parts.push(escaped);
+            },
+            SyntaxToken::Punct(c) => {
+                // Escape braces
+                let escaped = if *c == '{' { "{{".to_string() } else if *c == '}' { "}}".to_string() } else { c.to_string() };
+                format_parts.push(escaped);
+            },
+            SyntaxToken::Ident(ident) => {
+                let ident_str = ident.to_string();
+
+                // Check if this is a binder or body from an abstraction
+                if Some(&ident_str) == abstraction_binder_name.as_ref() {
+                    if !seen_binder {
+                        format_parts.push("{}".to_string());
+                        format_args.push(quote! { binder_name });
+                        seen_binder = true;
+                    }
+                } else if Some(&ident_str) == abstraction_body_name.as_ref() {
+                    if !seen_body {
+                        format_parts.push("{}".to_string());
+                        format_args.push(quote! { body });
+                        seen_body = true;
+                    }
+                } else if let Some(TermParam::Simple { name, .. }) = param_map.get(&ident_str).copied() {
+                    // Simple parameter - just reference it
+                    format_parts.push("{}".to_string());
+                    let field_ident = syn::Ident::new(&name.to_string(), proc_macro2::Span::call_site());
+                    format_args.push(quote! { #field_ident });
+                }
+            },
+        }
+    }
+
+    let format_str = format_parts.join("");
+
+    if has_scope {
+        quote! {
+            #category::#label(#(#field_idents),*) => {
+                let (binder, body) = scope.clone().unbind();
+                let binder_name = binder.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
+                write!(f, #format_str, #(#format_args),*)
+            }
+        }
+    } else {
+        quote! {
+            #category::#label(#(#field_idents),*) => write!(f, #format_str, #(#format_args),*)
         }
     }
 }
@@ -419,6 +545,8 @@ mod tests {
                     category: parse_quote!(Expr),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(Add),
@@ -429,6 +557,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Expr)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
             ],
             equations: vec![],

@@ -5,7 +5,7 @@
 
 #![allow(clippy::cmp_owned, clippy::useless_format)]
 
-use crate::ast::{GrammarItem, GrammarRule, TheoryDef};
+use crate::ast::{GrammarItem, GrammarRule, TheoryDef, TermParam, SyntaxToken, TypeExpr};
 use crate::codegen::{is_integer_rule, is_var_rule};
 use crate::utils::{has_native_type, native_type_to_string};
 
@@ -474,6 +474,11 @@ fn generate_rule_alternative_with_theory(
     rule: &GrammarRule,
     _theory: Option<&TheoryDef>,
 ) -> String {
+    // If this rule has a syntax pattern (new judgement-style syntax), use it
+    if let (Some(ref term_context), Some(ref syntax_pattern)) = (&rule.term_context, &rule.syntax_pattern) {
+        return generate_pattern_alternative(rule, term_context, syntax_pattern);
+    }
+
     let label = &rule.label;
     let mut alt = String::new();
 
@@ -675,6 +680,203 @@ fn generate_binder_alternative(rule: &GrammarRule) -> String {
     format!("{}{}", pattern.trim(), action)
 }
 
+/// Generate alternative from a syntax pattern (new judgement-style syntax)
+/// 
+/// Maps syntax pattern tokens to LALRPOP pattern elements:
+/// - Identifiers matching term_context params become non-terminal captures
+/// - Other identifiers become literal terminals
+/// - Punct chars become literal terminals
+fn generate_pattern_alternative(
+    rule: &GrammarRule,
+    term_context: &[TermParam],
+    syntax_pattern: &[SyntaxToken],
+) -> String {
+    let label = &rule.label;
+    let category = &rule.category;
+
+    // Build a map from parameter names to their types
+    let mut param_types: std::collections::HashMap<String, ParamInfo> = std::collections::HashMap::new();
+    
+    for param in term_context {
+        match param {
+            TermParam::Simple { name, ty } => {
+                param_types.insert(name.to_string(), ParamInfo {
+                    kind: ParamKind::Simple,
+                    ty: ty.clone(),
+                });
+            }
+            TermParam::Abstraction { binder, body, ty } => {
+                // Binder is captured as identifier
+                param_types.insert(binder.to_string(), ParamInfo {
+                    kind: ParamKind::Binder,
+                    ty: ty.clone(),
+                });
+                // Body is the codomain type
+                if let TypeExpr::Arrow { codomain, .. } = ty {
+                    param_types.insert(body.to_string(), ParamInfo {
+                        kind: ParamKind::Body,
+                        ty: (**codomain).clone(),
+                    });
+                }
+            }
+            TermParam::MultiAbstraction { binder, body, ty } => {
+                // Multi-binder is captured as multiple identifiers
+                param_types.insert(binder.to_string(), ParamInfo {
+                    kind: ParamKind::MultiBinder,
+                    ty: ty.clone(),
+                });
+                // Body is the codomain type
+                if let TypeExpr::Arrow { codomain, .. } = ty {
+                    param_types.insert(body.to_string(), ParamInfo {
+                        kind: ParamKind::Body,
+                        ty: (**codomain).clone(),
+                    });
+                }
+            }
+        }
+    }
+
+    // Generate pattern from syntax tokens
+    let mut pattern = String::new();
+    let mut args = Vec::new();
+    let mut binder_var: Option<String> = None;
+    let mut body_var: Option<String> = None;
+    let mut has_binder = false;
+    
+    for token in syntax_pattern {
+        match token {
+            SyntaxToken::Ident(id) => {
+                let name = id.to_string();
+                if let Some(info) = param_types.get(&name) {
+                    // This is a parameter reference - generate capture
+                    match info.kind {
+                        ParamKind::Simple => {
+                            let nonterminal = type_to_nonterminal(&info.ty);
+                            pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
+                            args.push((name.clone(), info.clone()));
+                        }
+                        ParamKind::Binder => {
+                            // Binder is captured as Ident
+                            pattern.push_str(&format!(" <{}:Ident>", name));
+                            binder_var = Some(name.clone());
+                            has_binder = true;
+                        }
+                        ParamKind::MultiBinder => {
+                            // Multi-binder - TODO: proper implementation
+                            pattern.push_str(&format!(" <{}:Ident>", name));
+                            binder_var = Some(name.clone());
+                            has_binder = true;
+                        }
+                        ParamKind::Body => {
+                            let nonterminal = type_to_nonterminal(&info.ty);
+                            pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
+                            body_var = Some(name.clone());
+                        }
+                    }
+                } else {
+                    // Not a parameter - literal keyword
+                    pattern.push_str(&format!(" \"{}\"", name));
+                }
+            }
+            SyntaxToken::Punct(c) => {
+                // Punctuation becomes literal
+                pattern.push_str(&format!(" \"{}\"", c));
+            }
+            SyntaxToken::Literal(s) => {
+                // Explicit literal
+                pattern.push_str(&format!(" \"{}\"", s));
+            }
+            SyntaxToken::Keyword(kw) => {
+                // Rust keyword used as literal in syntax
+                pattern.push_str(&format!(" \"{}\"", kw));
+            }
+        }
+    }
+
+    // Generate the action
+    if has_binder {
+        // Generate action with Scope creation
+        let binder = binder_var.clone().unwrap_or_else(|| "x".to_string());
+        let body = body_var.clone().unwrap_or_else(|| "body".to_string());
+        
+        let mut action = " => {\n".to_string();
+        action.push_str("        use mettail_runtime::BoundTerm;\n");
+        action.push_str(&format!("        let free_vars = {}.free_vars();\n", body));
+        action.push_str(&format!(
+            "        let binder = if let Some(fv) = free_vars.iter().find(|fv| fv.pretty_name.as_deref() == Some(&{})) {{\n",
+            binder
+        ));
+        action.push_str("            Binder((*fv).clone())\n");
+        action.push_str("        } else {\n");
+        action.push_str(&format!(
+            "            Binder(mettail_runtime::get_or_create_var({}))\n",
+            binder
+        ));
+        action.push_str("        };\n");
+        action.push_str(&format!("        let scope = Scope::new(binder, Box::new({}));\n", body));
+
+        // Build constructor call with regular args + scope
+        let mut all_args: Vec<String> = args
+            .iter()
+            .filter(|(name, _)| Some(name) != binder_var.as_ref() && Some(name) != body_var.as_ref())
+            .map(|(name, info)| {
+                match &info.ty {
+                    TypeExpr::Base(t) if t.to_string() == "Var" => name.clone(),
+                    _ => format!("Box::new({})", name),
+                }
+            })
+            .collect();
+        all_args.push("scope".to_string());
+
+        action.push_str(&format!("        {}::{}({})\n", category, label, all_args.join(", ")));
+        action.push_str("    }");
+        
+        format!("{}{}", pattern.trim(), action)
+    } else {
+        // Simple constructor call
+        let args_str: String = args
+            .iter()
+            .map(|(name, info)| {
+                match &info.ty {
+                    TypeExpr::Base(t) if t.to_string() == "Var" => name.clone(),
+                    _ => format!("Box::new({})", name),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        
+        format!("{} => {}::{}({})", pattern.trim(), category, label, args_str)
+    }
+}
+
+/// Helper enum for parameter kinds
+#[derive(Debug, Clone)]
+enum ParamKind {
+    Simple,
+    Binder,
+    MultiBinder,
+    Body,
+}
+
+/// Helper struct for parameter info
+#[derive(Debug, Clone)]
+struct ParamInfo {
+    kind: ParamKind,
+    ty: TypeExpr,
+}
+
+/// Convert a TypeExpr to a LALRPOP non-terminal name
+fn type_to_nonterminal(ty: &TypeExpr) -> String {
+    match ty {
+        TypeExpr::Base(id) => id.to_string(),
+        TypeExpr::Collection { element, .. } => {
+            // Collections need special handling
+            type_to_nonterminal(element)
+        }
+        _ => "UNKNOWN".to_string(),
+    }
+}
+
 /// Generate alternative for a collection constructor
 ///
 /// Generates LALRPOP rules for separated lists with optional delimiters.
@@ -828,6 +1030,8 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(NQuote),
@@ -837,6 +1041,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Proc)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 // No Var rules explicitly defined
             ],
@@ -886,12 +1092,16 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(PVar),
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 // Var rule explicitly defined
             ],
@@ -936,6 +1146,8 @@ mod tests {
                 GrammarItem::NonTerminal(parse_quote!(Int)),
             ],
             bindings: vec![],
+            term_context: None,
+            syntax_pattern: None,
         };
 
         println!("Testing Assign rule: items = {:?}", assign_rule.items);
@@ -952,6 +1164,8 @@ mod tests {
             category: parse_quote!(Int),
             items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
             bindings: vec![],
+            term_context: None,
+            syntax_pattern: None,
         };
 
         assert!(
@@ -978,12 +1192,16 @@ mod tests {
                     category: parse_quote!(Int),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(NumLit),
                     category: parse_quote!(Int),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Integer))],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(Add),
@@ -994,6 +1212,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Int)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(Assign),
@@ -1004,6 +1224,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Int)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
             ],
             equations: vec![],

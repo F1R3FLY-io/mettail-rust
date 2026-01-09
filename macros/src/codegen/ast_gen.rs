@@ -1280,6 +1280,8 @@ fn extract_category_from_rewrite_internal(
         Expr::Var(_) => None,
         Expr::Subst { .. } => None,
         Expr::CollectionPattern { .. } => None,
+        // Lambdas are meta-level constructs, not patterns in rewrites
+        Expr::Lambda { .. } | Expr::MultiLambda { .. } => None,
     }
 }
 
@@ -1304,6 +1306,8 @@ mod tests {
                     category: parse_quote!(Elem),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(Plus),
@@ -1314,6 +1318,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Elem)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
             ],
             equations: vec![],
@@ -1351,6 +1357,8 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(NQuote),
@@ -1360,6 +1368,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Proc)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
             ],
             equations: vec![],
@@ -1400,6 +1410,8 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(NQuote),
@@ -1409,6 +1421,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Proc)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 // No Var rules explicitly defined
             ],
@@ -1479,12 +1493,16 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(PVar),
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 // Var rule explicitly defined
             ],
