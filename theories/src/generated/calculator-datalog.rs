@@ -12,7 +12,7 @@ relation int(Int);
 
 relation rw_int(Int, Int);
 
-relation env_var(String, i32);
+relation env_var_int(String, i64);
 
 
     // Category rules
@@ -30,9 +30,9 @@ int(field_1.as_ref().clone()) <--
     int(t),
     if let Int :: Sub(field_0, field_1) = t;
 
-int(field_1.as_ref().clone()) <--
+int(rhs.as_ref().clone()) <--
     int(t),
-    if let Int :: Assign(field_0, field_1) = t;
+    if let Int :: Assign(_, rhs) = t;
 
 
     // Equation rules
@@ -57,13 +57,6 @@ eq_int(Int :: Sub(Box :: new(x0.clone()), Box :: new(x1.clone())), Int :: Sub(Bo
 
 
     // Rewrite rules
-rw_int(s, t) <--
-    int(s),
-    if let Int :: VarRef(s_f0) = s,
-    if let Some(var_name) = { let var_name_opt = match s_f0.clone() { mettail_runtime :: OrdVar(mettail_runtime :: Var :: Free(ref fv)) => { fv.pretty_name.clone() } _ => None };
-
-var_name_opt }, env_var(var_name, v), let t = Int :: NumLit(* v);
-
 rw_int(s, t) <--
     int(s),
     if let Int :: Add(left, right) = s,
@@ -104,8 +97,15 @@ rw_int(s, t) <--
 
 rw_int(s, t) <--
     int(s),
-    if let Int :: Assign(x, s0) = s,
-    rw_int(* * s0, t0),
-    let t = Int :: Assign(x.clone(), Box :: new(t0.clone()));
+    if let Int :: IVar(ord_var) = s,
+    if let Some(var_name) = match ord_var { mettail_runtime :: OrdVar(mettail_runtime :: Var :: Free(ref fv)) => { fv.pretty_name.clone() } _ => None },
+    env_var_int(var_name, v),
+    let t = Int :: NumLit(* v);
+
+rw_int(assign_s, assign_t) <--
+    int(assign_s),
+    if let Int :: Assign(x, s) = assign_s,
+    rw_int((* * s).clone(), t),
+    let assign_t = Int :: Assign(x.clone(), Box :: new(t.clone()));
 
 }

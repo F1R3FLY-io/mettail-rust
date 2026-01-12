@@ -7,7 +7,7 @@
 #![allow(clippy::cmp_owned)]
 
 use crate::ast::{GrammarItem, GrammarRule, TheoryDef};
-use crate::codegen::generate_var_label;
+use crate::codegen::{generate_literal_label, generate_var_label, is_integer_rule};
 use crate::utils::has_native_type;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -85,17 +85,11 @@ fn generate_category_substitution(
 ) -> TokenStream {
     let category_str = category.to_string();
 
-    // For native types, skip substitution generation (native values don't need substitution)
-    if has_native_type(category, theory).is_some() {
-        return quote! {
-            impl #category {
-                // Native types don't support substitution - they're values, not variables
-            }
-        };
-    }
+    // Native types now have auto-generated Var variants, so they DO need substitution
+    // The substitution will replace Var variants (e.g., IVar) with actual values
 
     // Generate the main substitute method (same-category)
-    let main_method = generate_substitute_method(category, rules, category);
+    let main_method = generate_substitute_method(category, rules, category, theory);
 
     // Generate cross-category substitute methods for OTHER categories
     let cross_methods: Vec<TokenStream> = subst_cats
@@ -103,7 +97,7 @@ fn generate_category_substitution(
         .filter(|cat| **cat != category_str)
         .map(|cat_str| {
             let cat = syn::Ident::new(cat_str, proc_macro2::Span::call_site());
-            generate_cross_category_substitute_method(category, rules, &cat)
+            generate_cross_category_substitute_method(category, rules, &cat, theory)
         })
         .collect();
 
@@ -122,22 +116,44 @@ fn generate_substitute_method(
     category: &Ident,
     rules: &[&GrammarRule],
     _replacement_cat: &Ident,
+    theory: &TheoryDef,
 ) -> TokenStream {
+    // Start by collecting match arms for all explicit rules
     let mut match_arms: Vec<TokenStream> = rules
         .iter()
         .map(|rule| generate_substitution_arm(category, rule, category))
         .collect();
 
+    // Add arm for auto-generated literal variant if needed
+    if let Some(native_type) = has_native_type(category, theory) {
+        let literal_label = generate_literal_label(native_type);
+        match_arms.push(quote! {
+            #category::#literal_label(_) => self.clone()
+        });
+    }
+
     // Check if Var variant was auto-generated
-    // Skip for native types - they don't have Var variants and don't need substitution
+    // Var variants are now auto-generated for ALL categories (native and non-native)
     let has_var_rule = rules.iter().any(|rule| is_var_constructor(rule));
     if !has_var_rule {
-        // Only generate auto-var substitution if category doesn't have native type
-        // (We already skip substitution entirely for native types in generate_category_substitution,
-        // but this is a safety check)
+        // Only generate auto-var substitution if category doesn't already have a var rule
         let var_arm = generate_auto_var_substitution_arm(category, category);
         match_arms.push(var_arm);
     }
+
+    // Add Assign substitution arm (substitute in RHS only, not in variable name)
+    // Assign variants are auto-generated for all categories
+    match_arms.push(quote! {
+        #category::Assign(assign_var, rhs) => {
+            // Extract FreeVar from OrdVar for substitution
+            if let mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) = assign_var {
+                #category::Assign(assign_var.clone(), Box::new(rhs.as_ref().substitute(fv, replacement)))
+            } else {
+                // Bound variable - no substitution needed
+                self.clone()
+            }
+        }
+    });
 
     quote! {
         pub fn substitute(
@@ -157,13 +173,31 @@ fn generate_cross_category_substitute_method(
     category: &Ident,
     rules: &[&GrammarRule],
     binder_cat: &Ident,
+    theory: &TheoryDef,
 ) -> TokenStream {
     let method_name = quote::format_ident!("substitute_{}", binder_cat.to_string().to_lowercase());
 
-    let mut match_arms: Vec<TokenStream> = rules
+    let mut match_arms: Vec<TokenStream> = Vec::new();
+
+    // Add literal arm for native types if needed (literals don't contain variables)
+    let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+    if let Some(native_type) = has_native_type(category, theory) {
+        if !has_integer_rule {
+            let literal_label = generate_literal_label(native_type);
+            // Literal values don't contain variables, so just clone
+            match_arms.push(quote! {
+                #category::#literal_label(_) => self.clone(),
+            });
+        }
+    }
+
+    // Generate match arms for each rule (skip Integer rules)
+    let rule_arms: Vec<TokenStream> = rules
         .iter()
+        .filter(|rule| !is_integer_rule(rule))
         .map(|rule| generate_substitution_arm(category, rule, binder_cat))
         .collect();
+    match_arms.extend(rule_arms);
 
     // Check if Var variant was auto-generated
     let has_var_rule = rules.iter().any(|rule| is_var_constructor(rule));
@@ -171,6 +205,21 @@ fn generate_cross_category_substitute_method(
         let var_arm = generate_auto_var_substitution_arm(category, binder_cat);
         match_arms.push(var_arm);
     }
+
+    // Add Assign substitution arm (substitute in RHS only, not in variable name)
+    let method_name_for_rhs =
+        quote::format_ident!("substitute_{}", binder_cat.to_string().to_lowercase());
+    match_arms.push(quote! {
+        #category::Assign(assign_var, rhs) => {
+            // Extract FreeVar from OrdVar for substitution
+            if let mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) = assign_var {
+                #category::Assign(assign_var.clone(), Box::new(rhs.as_ref().#method_name_for_rhs(fv, replacement)))
+            } else {
+                // Bound variable - no substitution needed
+                self.clone()
+            }
+        }
+    });
 
     quote! {
         /// Substitute `replacement` (of type #binder_cat) for free occurrences of `var` in this term

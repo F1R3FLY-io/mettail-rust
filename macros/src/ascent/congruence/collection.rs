@@ -159,6 +159,28 @@ pub fn generate_new_collection_congruence_clauses(
         }
     }
 
+    // Generate a general collection congruence clause for ANY rewrite from elements
+    // This handles auto-generated rewrites (like variable substitution) that aren't
+    // covered by the projection-based clauses above
+    let contains_rel = format_ident!("{}_contains", constructor.to_string().to_lowercase());
+    let elem_rw_rel = format_ident!("rw_{}", cong_info.element_category.to_string().to_lowercase());
+    clauses.push(quote! {
+        #rw_rel(parent, result) <--
+            #contains_rel(parent, elem),
+            #elem_rw_rel(elem.clone(), elem_rewritten),
+            if let #parent_cat::#constructor(ref bag) = parent,
+            let remaining = {
+                let mut b = bag.clone();
+                b.remove(&elem);
+                b
+            },
+            let result = #parent_cat::#constructor({
+                let mut bag_result = remaining;
+                #parent_cat::#insert_helper(&mut bag_result, elem_rewritten.clone());
+                bag_result
+            }).normalize();
+    });
+
     clauses
 }
 

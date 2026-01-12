@@ -1,10 +1,16 @@
 use crate::examples::TheoryName;
 use crate::theory::{AscentResults, Rewrite, Term, TermInfo, Theory};
 use anyhow::Result;
+use std::cell::RefCell;
 use std::fmt;
 
 // Import the theory definition from the theories crate
 use mettail_theories::rhocalc::*;
+
+thread_local! {
+    static PROC_ENV: RefCell<RhoCalcProcEnv> = RefCell::new(RhoCalcProcEnv::new());
+    static NAME_ENV: RefCell<RhoCalcNameEnv> = RefCell::new(RhoCalcNameEnv::new());
+}
 
 /// RhoCalc theory implementation for REPL
 pub struct RhoCalculusTheory;
@@ -36,6 +42,54 @@ impl Theory for RhoCalculusTheory {
         let proc = parser
             .parse(input)
             .map_err(|e| anyhow::anyhow!("Parse error: {:?}", e))?;
+
+        // Handle assignments: evaluate RHS and update environment, but return the term
+        // so rewrites can still be shown
+        if let Proc::Assign(var, rhs) = &proc {
+            // Get current environment
+            let proc_env_facts: Vec<(String, Proc)> =
+                PROC_ENV.with(|env| env.borrow().env_to_facts());
+            let name_env_facts: Vec<(String, Name)> =
+                NAME_ENV.with(|env| env.borrow().env_to_facts());
+
+            // Evaluate RHS using Ascent
+            use ascent::*;
+            let prog = ascent_run! {
+                include_source!(rhocalc_source);
+
+                proc(rhs.as_ref().clone());
+
+                // Seed environment facts
+                env_var_proc(n.clone(), v) <-- for (n, v) in proc_env_facts.clone();
+                env_var_name(n.clone(), v) <-- for (n, v) in name_env_facts.clone();
+            };
+
+            // Find normal form of RHS by following rewrite chains
+            let rewrites: Vec<(Proc, Proc)> = prog
+                .rw_proc
+                .iter()
+                .map(|(from, to)| (from.clone(), to.clone()))
+                .collect();
+
+            // Start from the RHS and follow rewrite chains to find normal form
+            let mut current = rhs.as_ref().clone();
+            while let Some((_, next)) = rewrites.iter().find(|(from, _)| from == &current) {
+                current = next.clone();
+            }
+
+            // Update environment
+            if let Some(var_name) = match var {
+                mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
+                    fv.pretty_name.clone()
+                },
+                _ => None,
+            } {
+                PROC_ENV.with(|env| {
+                    env.borrow_mut().set(var_name, current.clone());
+                });
+            }
+        }
+
         Ok(Box::new(RhoTerm(proc)))
     }
 
@@ -50,11 +104,19 @@ impl Theory for RhoCalculusTheory {
 
         let initial_proc = rho_term.0.clone();
 
+        // Get environment facts from thread-local storage
+        let proc_env_facts: Vec<(String, Proc)> = PROC_ENV.with(|env| env.borrow().env_to_facts());
+        let name_env_facts: Vec<(String, Name)> = NAME_ENV.with(|env| env.borrow().env_to_facts());
+
         // Run Ascent with the generated source
         let prog = ascent_run! {
             include_source!(rhocalc_source);
 
             proc(initial_proc.clone());
+
+            // Seed environment facts (use category-specific relation names)
+            env_var_proc(n.clone(), v) <-- for (n, v) in proc_env_facts.clone();
+            env_var_name(n.clone(), v) <-- for (n, v) in name_env_facts.clone();
         };
 
         // Extract results

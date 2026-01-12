@@ -89,43 +89,53 @@ fn generate_collection_projection_relations(theory: &TheoryDef) -> Vec<TokenStre
 
 /// Generate environment relations for EnvQuery conditions
 ///
-/// For each EnvQuery condition in rewrite rules, generate the corresponding relation.
-/// Example: `if env_var(x, v) then ...` generates `relation env_var(String, i32);`
+/// Automatically generates `env_var(String, Category)` relations for ALL exported categories.
+/// This enables automatic variable assignment and retrieval for every category.
+/// Works with both native types (i32) and custom category types (Proc, Expr, etc.)
 fn generate_env_relations(theory: &TheoryDef) -> Vec<TokenStream> {
     use crate::ast::Condition;
     use std::collections::HashSet;
 
     let mut relations = Vec::new();
-    let mut seen_relations = HashSet::new();
+    let mut seen_categories = HashSet::new();
 
-    // Find all EnvQuery conditions in rewrite rules
+    // First, collect categories from explicit EnvQuery conditions (for backward compatibility)
     for rewrite in &theory.rewrites {
         for condition in &rewrite.conditions {
             if let Condition::EnvQuery { relation, args: _ } = condition {
                 let rel_name = relation.to_string();
-
-                // Avoid duplicates
-                if seen_relations.contains(&rel_name) {
+                if rel_name != "env_var" {
+                    // Only handle env_var automatically, other relation names are user-defined
                     continue;
                 }
-                seen_relations.insert(rel_name.clone());
 
-                // Determine the relation type based on the category and native type
-                // For calculator: env_var(x, v) where x is String (var name) and v is i32 (value)
-                // We need to find which category this applies to and get its native type
+                // Determine the relation type based on the category
                 let category = extract_category_from_rewrite(rewrite, theory);
                 if let Some(category) = category {
-                    if let Some(export) = theory.exports.iter().find(|e| e.name == category) {
-                        if let Some(native_type) = &export.native_type {
-                            // Generate relation: env_var(String, native_type)
-                            // First arg is always String (variable name), second is the native type (value)
-                            relations.push(quote! {
-                                relation #relation(String, #native_type);
-                            });
-                        }
-                    }
+                    seen_categories.insert(category.to_string());
                 }
             }
+        }
+    }
+
+    // Automatically generate env_var relations for ALL exported categories
+    // Use category-specific relation names to avoid conflicts (e.g., env_var_proc, env_var_name)
+    for export in &theory.exports {
+        let category = &export.name;
+        let cat_str = category.to_string().to_lowercase();
+        let env_rel_name = format_ident!("env_var_{}", cat_str);
+
+        // Check if category has native type - if so, use native type; otherwise use category
+        if let Some(native_type) = &export.native_type {
+            // For native types, use the native type directly (e.g., i32 instead of Int)
+            relations.push(quote! {
+                relation #env_rel_name(String, #native_type);
+            });
+        } else {
+            // For custom types, use the category type (e.g., Proc, Expr)
+            relations.push(quote! {
+                relation #env_rel_name(String, #category);
+            });
         }
     }
 

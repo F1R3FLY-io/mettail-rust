@@ -4,11 +4,8 @@
 export const categoryInfo = {
 	Int: {
 		constructors: [
-			"VarRef",
-			"NumLit",
 			"Add",
-			"Sub",
-			"Assign"
+			"Sub"
 		],
 		colour: "51b0e0",
 	}

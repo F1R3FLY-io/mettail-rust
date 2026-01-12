@@ -7,36 +7,32 @@
 use mettail_macros::theory;
 
 // Simple integer calculator theory: supports integer literals, + and -
-// Uses native i32 type for direct integer support
+// Uses native i64 type for direct integer support
+// Supports hexadecimal (0x), octal (0o), and binary (0b) integer literals
 theory! {
     name: Calculator,
     exports {
-        ![i32] as Int
+        ![i64] as Int
     },
     terms {
-        // Variables parse as VarRef nodes
-        VarRef . Int ::= Var ;
-        // Integer literals - uses Integer keyword for native integer type
-        NumLit . Int ::= Integer ;
+        // Variables are now auto-generated as IVar - no explicit declaration needed
+        // Literals (NumLit) are now auto-generated for native types - no explicit declaration needed
+        // No need for "NumLit . Int ::= Integer" - it's automatic!
 
         Add . Int ::= Int "+" Int ;
         Sub . Int ::= Int "-" Int ;
 
-        // Assignment: x = expr evaluates expr and stores result
-        Assign . Int ::= Var "=" Int ;
+        // Assign is now automatically generated for all categories
     },
     equations {
     },
     rewrites {
-        // Variable substitution: if env_var(x, v) then VarRef(x) => NumLit(v)
-        if env_var(x, v) then (VarRef x) => (NumLit v);
-
-        // Congruence rules: propagate rewrites through Add, Sub, and Assign
+        // Variable substitution and Assign congruence are now auto-generated
+        // Congruence rules: propagate rewrites through Add and Sub
         if S => T then (Add S R) => (Add T R);
         if S => T then (Add L S) => (Add L T);
         if S => T then (Sub S R) => (Sub T R);
         if S => T then (Sub L S) => (Sub L T);
-        if S => T then (Assign x S) => (Assign x T);
     },
     semantics {
         Add: +,
