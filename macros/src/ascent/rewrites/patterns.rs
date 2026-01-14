@@ -162,6 +162,13 @@ pub fn generate_ascent_pattern(
                 equational_checks,
             );
         },
+
+        Expr::Lambda { .. } | Expr::MultiLambda { .. } => {
+            // TODO: Lambdas CAN appear in LHS patterns, e.g. `in(n, ^x.p)` matches
+            // an input constructor with a bound variable. Implement pattern matching
+            // for lambda binders when rewrite support is added.
+            panic!("Lambda pattern matching in LHS not yet implemented")
+        },
     }
 }
 
@@ -733,6 +740,9 @@ fn generate_ascent_regular_pattern(
             },
             Expr::CollectionPattern { .. } => {
                 panic!("Collection pattern in LHS - not yet implemented");
+            },
+            Expr::Lambda { .. } | Expr::MultiLambda { .. } => {
+                panic!("Lambda expressions should not appear in LHS of rewrite rules");
             },
         }
     }

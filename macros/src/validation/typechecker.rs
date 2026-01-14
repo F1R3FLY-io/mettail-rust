@@ -261,6 +261,19 @@ impl TypeChecker {
                     Ok("?".to_string())
                 }
             },
+
+            // Lambda expressions have function types [A -> B]
+            // For now, return placeholder - full type inference comes with definitions
+            Expr::Lambda { body, .. } => {
+                // Infer body type, but return function type placeholder
+                let _ = self.infer_type_with_context(body, context)?;
+                Ok("?->?".to_string())
+            },
+
+            Expr::MultiLambda { body, .. } => {
+                let _ = self.infer_type_with_context(body, context)?;
+                Ok("?*->?".to_string())
+            },
         }
     }
 
@@ -378,6 +391,8 @@ mod tests {
                     category: parse_quote!(Elem),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(Succ),
@@ -388,6 +403,8 @@ mod tests {
                         GrammarItem::Terminal("1".to_string()),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
             ],
             equations: vec![],

@@ -16,14 +16,19 @@ theory! {
     },
 
     terms {
-        PZero . Proc ::= "0" ;
-        PDrop . Proc ::= "*" "(" Name ")" ;
-        POutput . Proc ::= Name "!" "(" Proc ")" ;
-        PInput . Proc ::= "for" "(" Name "->" <Name> ")" "{" Proc "}" ;
+        // PZero . Proc ::= "0" ;
+        PZero . |- "0" : Proc;
+
+        PDrop . n:Name |- "*" "(" n ")" : Proc ;
+
+        POutput . n:Name, q:Proc |- n "!" "(" q ")" : Proc ;
+        
+        PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
 
         PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
+        // [TODO] PPar . ps:Bag(Proc) |- "{" ps.#sep("|") "}" : Proc;
 
-        NQuote . Name ::= "@" "(" Proc ")" ;
+        NQuote . p:Proc |- "@" "(" p ")" : Name ;
     },
 
     equations {

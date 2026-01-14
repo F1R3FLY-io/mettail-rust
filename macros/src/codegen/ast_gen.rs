@@ -1267,8 +1267,33 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
 
     quote! {
         #(#env_structs)*
-
         #(#parse_eval_fns)*
+   }
+}
+
+/// Extract the category from a rewrite rule (from LHS)
+/// Internal helper function for environment generation
+fn extract_category_from_rewrite_internal(
+    rewrite: &crate::ast::RewriteRule,
+    theory: &TheoryDef,
+) -> Option<proc_macro2::Ident> {
+    use crate::ast::Expr;
+
+    // Try to extract category from LHS pattern
+    match &rewrite.left {
+        Expr::Apply { constructor, .. } => {
+            // Find the rule with this constructor
+            theory
+                .terms
+                .iter()
+                .find(|r| r.label == *constructor)
+                .map(|rule| rule.category.clone())
+        },
+        Expr::Var(_) => None,
+        Expr::Subst { .. } => None,
+        Expr::CollectionPattern { .. } => None,
+        // Lambdas are meta-level constructs, not patterns in rewrites
+        Expr::Lambda { .. } | Expr::MultiLambda { .. } => None,
     }
 }
 
@@ -1293,6 +1318,8 @@ mod tests {
                     category: parse_quote!(Elem),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(Plus),
@@ -1303,6 +1330,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Elem)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
             ],
             equations: vec![],
@@ -1340,6 +1369,8 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(NQuote),
@@ -1349,6 +1380,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Proc)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
             ],
             equations: vec![],
@@ -1389,6 +1422,8 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(NQuote),
@@ -1398,6 +1433,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Proc)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 // No Var rules explicitly defined
             ],
@@ -1468,12 +1505,16 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(PVar),
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 // Var rule explicitly defined
             ],

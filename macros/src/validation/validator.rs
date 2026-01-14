@@ -192,6 +192,10 @@ fn validate_expr(expr: &Expr, theory: &TheoryDef) -> Result<(), ValidationError>
 
             Ok(())
         },
+
+        // Lambda expressions - validate body
+        Expr::Lambda { body, .. } => validate_expr(body, theory),
+        Expr::MultiLambda { body, .. } => validate_expr(body, theory),
     }
 }
 
@@ -354,6 +358,20 @@ fn collect_vars(expr: &Expr, vars: &mut HashSet<String>) {
                 vars.insert(rest_var.to_string());
             }
         },
+        // Lambda expressions - collect from body, binder is bound not free
+        Expr::Lambda { binder, body } => {
+            // Don't include the bound variable, only free vars in body
+            let mut body_vars = HashSet::new();
+            collect_vars(body, &mut body_vars);
+            body_vars.remove(&binder.to_string());
+            vars.extend(body_vars);
+        },
+        Expr::MultiLambda { binder, body } => {
+            let mut body_vars = HashSet::new();
+            collect_vars(body, &mut body_vars);
+            body_vars.remove(&binder.to_string());
+            vars.extend(body_vars);
+        },
     }
 }
 
@@ -377,6 +395,8 @@ mod tests {
                 category: parse_quote!(Elem),
                 items: vec![GrammarItem::Terminal("0".to_string())],
                 bindings: vec![],
+                term_context: None,
+                syntax_pattern: None,
             }],
             equations: vec![],
             rewrites: vec![],
@@ -403,6 +423,8 @@ mod tests {
                     GrammarItem::NonTerminal(parse_quote!(Elem)),
                 ],
                 bindings: vec![],
+                term_context: None,
+                syntax_pattern: None,
             }],
             equations: vec![],
             rewrites: vec![],
@@ -429,6 +451,8 @@ mod tests {
                     GrammarItem::NonTerminal(parse_quote!(Name)), // Not exported!
                 ],
                 bindings: vec![],
+                term_context: None,
+                syntax_pattern: None,
             }],
             equations: vec![],
             rewrites: vec![],
@@ -467,6 +491,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Proc)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(PDrop),
@@ -476,6 +502,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Name)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(PNew),
@@ -486,6 +514,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Proc)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
             ],
             equations: vec![Equation {
@@ -534,6 +564,8 @@ mod tests {
                 category: parse_quote!(Name),
                 items: vec![GrammarItem::Terminal("@0".to_string())],
                 bindings: vec![],
+                term_context: None,
+                syntax_pattern: None,
             }],
             equations: vec![Equation {
                 conditions: vec![FreshnessCondition {
@@ -575,6 +607,8 @@ mod tests {
                 category: parse_quote!(Name),
                 items: vec![GrammarItem::Terminal("var".to_string())],
                 bindings: vec![],
+                term_context: None,
+                syntax_pattern: None,
             }],
             equations: vec![Equation {
                 conditions: vec![FreshnessCondition {

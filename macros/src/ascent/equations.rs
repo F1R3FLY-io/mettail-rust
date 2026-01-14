@@ -394,6 +394,9 @@ fn generate_equation_rhs_from_idents(
         Expr::Subst { .. } => {
             panic!("Substitution expressions are not supported in equation RHS");
         },
+        Expr::Lambda { .. } | Expr::MultiLambda { .. } => {
+            panic!("Lambda expressions are meta-level constructs, not supported in equation RHS yet");
+        },
     }
 }
 
@@ -671,6 +674,9 @@ fn generate_equation_rhs(
                     }
                 }
             }
+        },
+        Expr::Lambda { .. } | Expr::MultiLambda { .. } => {
+            panic!("Lambda expressions are meta-level constructs, not supported in equation RHS yet");
         },
     }
 }

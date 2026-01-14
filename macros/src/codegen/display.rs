@@ -5,7 +5,7 @@
 
 #![allow(clippy::cmp_owned)]
 
-use crate::ast::{GrammarItem, GrammarRule, TheoryDef};
+use crate::ast::{GrammarItem, GrammarRule, TheoryDef, SyntaxToken, TermParam};
 use crate::codegen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
 use crate::utils::has_native_type;
 use proc_macro2::TokenStream;
@@ -100,7 +100,12 @@ fn generate_display_arm(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
     let category = &rule.category;
     let label = &rule.label;
 
-    // Check if this has binders
+    // Check if this uses new syntax_pattern - generate display from pattern
+    if let (Some(syntax_pattern), Some(term_context)) = (&rule.syntax_pattern, &rule.term_context) {
+        return generate_syntax_pattern_display_arm(rule, syntax_pattern, term_context);
+    }
+
+    // Check if this has binders (old syntax)
     if !rule.bindings.is_empty() {
         return generate_binder_display_arm(rule, theory);
     }
@@ -202,7 +207,102 @@ fn generate_display_arm(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
     }
 }
 
-/// Generate display for a constructor with binders
+/// Generate display for a constructor using new syntax_pattern
+fn generate_syntax_pattern_display_arm(
+    rule: &GrammarRule, 
+    syntax_pattern: &[SyntaxToken], 
+    term_context: &[TermParam]
+) -> TokenStream {
+    let category = &rule.category;
+    let label = &rule.label;
+
+    // Build a map from parameter names to their info
+    let mut param_names: Vec<String> = Vec::new();
+    let mut has_abstraction = false;
+    let mut abstraction_binder: Option<String> = None;
+    let mut abstraction_body: Option<String> = None;
+    
+    for param in term_context {
+        match param {
+            TermParam::Simple { name, .. } => {
+                param_names.push(name.to_string());
+            },
+            TermParam::Abstraction { binder, body, .. } => {
+                has_abstraction = true;
+                abstraction_binder = Some(binder.to_string());
+                abstraction_body = Some(body.to_string());
+            },
+            TermParam::MultiAbstraction { binder, body, .. } => {
+                has_abstraction = true;
+                abstraction_binder = Some(binder.to_string());
+                abstraction_body = Some(body.to_string());
+            },
+        }
+    }
+
+    // Build format string and args from syntax pattern
+    let mut format_str = String::new();
+    let mut format_args: Vec<TokenStream> = Vec::new();
+    
+    for token in syntax_pattern {
+        match token {
+            SyntaxToken::Literal(s) => {
+                // Escape braces in format strings
+                let escaped = s.replace('{', "{{").replace('}', "}}");
+                format_str.push_str(&escaped);
+            },
+            SyntaxToken::Ident(id) => {
+                let name = id.to_string();
+                format_str.push_str("{}");
+                
+                // Check if this is the binder from an abstraction
+                if Some(&name) == abstraction_binder.as_ref() {
+                    format_args.push(quote! { binder_name });
+                }
+                // Check if this is the body from an abstraction
+                else if Some(&name) == abstraction_body.as_ref() {
+                    format_args.push(quote! { body });
+                }
+                // Simple parameter - reference directly
+                else {
+                    let field_ident = syn::Ident::new(&name, proc_macro2::Span::call_site());
+                    format_args.push(quote! { #field_ident });
+                }
+            },
+        }
+    }
+
+    // Generate field pattern for match arm
+    // Simple params come first, then scope (if there's an abstraction)
+    let mut field_idents: Vec<syn::Ident> = param_names
+        .iter()
+        .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
+        .collect();
+    
+    if has_abstraction {
+        field_idents.push(syn::Ident::new("scope", proc_macro2::Span::call_site()));
+        
+        quote! {
+            #category::#label(#(#field_idents),*) => {
+                let (binder, body) = scope.clone().unbind();
+                let binder_name = binder.0.pretty_name.as_ref().map(|s| s.as_str()).unwrap_or("_");
+                write!(f, #format_str, #(#format_args),*)
+            }
+        }
+    } else if field_idents.is_empty() {
+        // Nullary constructor - unit variant pattern
+        quote! {
+            #category::#label => write!(f, #format_str)
+        }
+    } else {
+        // Tuple variant pattern
+        quote! {
+            #category::#label(#(#field_idents),*) => write!(f, #format_str, #(#format_args),*)
+        }
+    }
+}
+
+/// Generate display for a constructor with binders (old syntax)
 fn generate_binder_display_arm(rule: &GrammarRule, _theory: &TheoryDef) -> TokenStream {
     let category = &rule.category;
     let label = &rule.label;
@@ -441,6 +541,8 @@ mod tests {
                     category: parse_quote!(Expr),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
                 GrammarRule {
                     label: parse_quote!(Add),
@@ -451,6 +553,8 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Expr)),
                     ],
                     bindings: vec![],
+                    term_context: None,
+                    syntax_pattern: None,
                 },
             ],
             equations: vec![],

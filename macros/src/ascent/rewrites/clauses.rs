@@ -377,5 +377,9 @@ fn collect_variable_occurrences(
                 *idx += 1;
             }
         },
+        // Lambda - collect from body (binder is bound, not an occurrence)
+        Expr::Lambda { body, .. } | Expr::MultiLambda { body, .. } => {
+            collect_variable_occurrences(body, occurrences, idx);
+        },
     }
 }

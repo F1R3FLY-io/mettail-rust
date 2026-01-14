@@ -56,11 +56,11 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Input: for ( ... -> ... ) { ... }
+	// Input: ... ... ...
 	{
 		type: "proc_input",
-		tooltip: "Input: for ( ... -> ... ) { ... }",
-		message0: "for ( %1 -> %2 ) { %3 }",
+		tooltip: "Input: ... ... ...",
+		message0: "%1 %2 %3",
 		args0: [
 			{
 				type: "input_value",

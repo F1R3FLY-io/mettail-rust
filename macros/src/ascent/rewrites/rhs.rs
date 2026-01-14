@@ -278,5 +278,9 @@ pub fn generate_rhs_construction(
             // This should have been handled at the top level by generate_ascent_rhs
             panic!("CollectionPattern should be handled by generate_ascent_rhs/generate_ascent_collection_rhs");
         },
+
+        Expr::Lambda { .. } | Expr::MultiLambda { .. } => {
+            panic!("Lambda expressions in RHS not yet supported - use definitions block");
+        },
     }
 }

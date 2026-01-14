@@ -4,5 +4,5 @@
 //! including grammar rules, equations, and rewrite rules.
 
 mod types;
-
+mod types_test;
 pub use types::*;

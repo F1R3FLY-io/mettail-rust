@@ -390,6 +390,10 @@ fn extract_vars_from_expr(
             extract_vars_from_expr(term, category, field_idx, is_binder, captures);
             extract_vars_from_expr(replacement, category, field_idx, is_binder, captures);
         },
+        // Lambda expressions - extract from body
+        Expr::Lambda { body, .. } | Expr::MultiLambda { body, .. } => {
+            extract_vars_from_expr(body, category, field_idx, is_binder, captures);
+        },
     }
 }
 
@@ -499,6 +503,10 @@ fn extract_variable_categories_recursive(
                 extract_variable_categories_recursive(elem, theory, categories);
             }
         },
+        // Lambda expressions - extract from body
+        Expr::Lambda { body, .. } | Expr::MultiLambda { body, .. } => {
+            extract_variable_categories_recursive(body, theory, categories);
+        },
     }
 }
 
@@ -517,6 +525,10 @@ pub fn contains_collection_pattern(expr: &Expr) -> bool {
             contains_collection_pattern(term) || contains_collection_pattern(replacement)
         },
         Expr::Var(_) => false,
+        // Lambdas - check body
+        Expr::Lambda { body, .. } | Expr::MultiLambda { body, .. } => {
+            contains_collection_pattern(body)
+        },
     }
 }
 
@@ -544,6 +556,10 @@ pub fn extract_category(expr: &Expr, theory: &TheoryDef) -> Option<Ident> {
                 }
             }
             None
+        },
+        // Lambda body determines category
+        Expr::Lambda { body, .. } | Expr::MultiLambda { body, .. } => {
+            extract_category(body, theory)
         },
     }
 }

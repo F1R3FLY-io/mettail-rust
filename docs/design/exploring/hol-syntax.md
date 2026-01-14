@@ -25,21 +25,24 @@ This becomes awkward when dealing with lambda abstractions. Type theory uses a c
 For example, the rho-calculus input constructor:
 
 ```
-PInput . n:Name, \x.p:[Name->Proc] |- for(x<-n){p} : Proc
+PInput . n:Name, ^x.p:[Name->Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc
 ```
 
 This syntax makes explicit:
 - **Label**: `PInput` — the Rust enum variant name
-- **Context**: term parameters (`n:Name`) and abstractions (`\x.p:[Name->Proc]`)
-- **Syntax pattern**: `for(x<-n){p}` — the concrete syntax, using identifiers from the context
+- **Context**: term parameters (`n:Name`) and abstractions (`^x.p:[Name->Proc]`)
+- **Syntax pattern**: the concrete syntax using quoted literals and parameter references
 - **Result type**: `Proc`
+
+> **Syntax Pattern Note:** All syntax literals must be quoted strings (e.g., `"for"`, `"("`, `"<-"`).
+> Unquoted identifiers in the syntax pattern are parameter references from the term context.
 
 ### 1.2 The Core Problem
 
 The current `<Name>` binder syntax is **implicit** and **positional**:
 - Binding scope is inferred (binder binds in next non-terminal)
 - Cannot express function types
-- Cannot nest abstractions (`\x.\y.p`)
+- Cannot nest abstractions (`^x.^y.p`)
 - Cannot express higher-order functions (functions as arguments)
 - Cannot express multi-binders (binding a list of names)
 
@@ -56,13 +59,17 @@ First-class lambda abstractions require:
 
 1. **Judgement-style syntax** for constructor declarations
 2. **First-class function types**: `[A -> B]` as valid types
-3. **Nested abstractions**: `\x.\y.p:[A -> [B -> C]]`
+3. **Nested abstractions**: `^x.^y.p:[A -> [B -> C]]`
 4. **Higher-order abstractions**: functions that take functions as arguments
-5. **Multi-binders**: `\[xs].p:[[Name] -> Proc]` binds a list of names
+5. **Multi-binders**: `^[xs].p:[Name* -> Proc]` binds a list of names
 6. **Meta-syntax**: `#sep`, `#zip`, `#map` for compile-time grammar generation
 7. **Bidirectional**: syntax patterns generate both parser and display
-8. **Meta-level lambda**: `dup = \n:Name. ...` for reusable term templates
-9. **Clean migration**: from current BNFC-style syntax
+8. **Meta-level lambda**: `dup = ^n:Name. ...` for reusable term templates
+9. **Custom identifiers**: optional `identifier { r"..." }` for variable naming pattern
+10. **Clean migration**: from current BNFC-style syntax
+
+> **Syntax Note:** Lambda abstractions use caret (`^x.body`) instead of backslash (`\x.body`) 
+> because backslash is not a valid token in Rust's proc-macro tokenizer.
 
 ---
 
@@ -73,7 +80,7 @@ First-class lambda abstractions require:
 ```
 Type ::= Ident                    -- base type: Name, Proc
        | "[" Type "->" Type "]"   -- function type: [Name -> Proc]
-       | "[[" Type "]]"           -- multi-binder domain: [[Name]]
+       | Type "*"                 -- multi-binder domain: Name*
        | CollType "(" Type ")"    -- collection type: Vec(Name)
 
 CollType ::= "Vec" | "HashBag" | "HashSet"
@@ -84,7 +91,7 @@ Examples:
 Name                     -- base type
 Proc                     -- base type
 [Name -> Proc]           -- function from Name to Proc
-[[Name] -> Proc]         -- function from list of Names to Proc (multi-binder)
+[Name* -> Proc]          -- function from list of Names to Proc (multi-binder)
 [Name -> [Name -> Proc]] -- curried function (nested abstraction)
 [[Proc -> Proc] -> Proc] -- higher-order: takes a function argument
 Vec(Name)                -- vector of names (collection)
@@ -105,7 +112,7 @@ pub enum TypeExpr {
         codomain: Box<TypeExpr>,
     },
     
-    /// Multi-binder domain: [[A]] means "list of binders of type A"
+    /// Multi-binder domain: `A*` means "list of binders of type A"
     MultiBinder(Box<TypeExpr>),
     
     /// Collection type: Vec(T), HashBag(T)
@@ -127,7 +134,7 @@ pub enum CollType {
 
 **Single binder** — binds one variable of a given type:
 ```
-\x.p:[Name -> Proc]
+^x.p:[Name -> Proc]
 ```
 - `x` is one variable of type `Name`
 - `x` is free in body `p`
@@ -135,7 +142,7 @@ pub enum CollType {
 
 **Multi-binder** — binds a list of variables:
 ```
-\[xs].p:[[Name] -> Proc]
+^[xs].p:[Name* -> Proc]
 ```
 - `xs` represents variables `x0, x1, ..., xk` each of type `Name`
 - All `xi` are free in body `p`
@@ -143,10 +150,60 @@ pub enum CollType {
 - Runtime type: `Scope<Vec<Binder<String>>, Box<Proc>>`
 
 **Important distinction:**
-- `\xs.p:[Vec(Name) -> Proc]` — ONE binder `xs` of type `Vec(Name)`
-- `\[xs].p:[[Name] -> Proc]` — LIST of binders, each of type `Name`
+- `^xs.p:[Vec(Name) -> Proc]` — ONE binder `xs` of type `Vec(Name)`
+- `^[xs].p:[Name* -> Proc]` — LIST of binders, each of type `Name`
 
 These are semantically different. Multi-binder is needed for multi-channel input.
+
+### 3.4 Custom Identifier Syntax
+
+By default, variables use alphanumeric identifiers (standard Rust `Ident`). Theories can define a custom identifier pattern via an optional `identifier` block:
+
+```rust
+identifier {
+    r"[a-z]"  // Single lowercase letter (e.g., for lambda calculus)
+}
+```
+
+This pattern is used **globally** for all variable parsing in the theory.
+
+**Current Implementation:**
+
+The LALRPOP grammar currently generates for each category:
+```lalrpop
+// Auto-generated Var variant for Proc
+<v:Ident> => Proc::PVar(OrdVar(Var::Free(get_or_create_var(v))))
+```
+
+The `Ident` terminal is defined in LALRPOP as the standard identifier pattern.
+
+**With Custom Identifier:**
+
+```rust
+identifier {
+    r"[a-z]"  // Only single lowercase letters are valid variable names
+}
+```
+
+Generates:
+```lalrpop
+// Custom Ident terminal
+Ident: String = <s:r"[a-z]"> => s.to_string();
+
+// Same Var variant generation, but now only matches single letters
+<v:Ident> => Proc::PVar(OrdVar(Var::Free(get_or_create_var(v))))
+```
+
+**Examples:**
+
+| Identifier Pattern | Valid | Invalid |
+|-------------------|-------|---------|
+| Default (alphanumeric) | `x`, `foo`, `x1` | `1x`, `-` |
+| `r"[a-z]"` | `x`, `y`, `z` | `foo`, `X`, `x1` |
+| `r"[A-Z][a-zA-Z0-9]*"` | `X`, `Var`, `X1` | `x`, `1X` |
+| `r"[xyz]"` | `x`, `y`, `z` | `a`, `w` |
+
+This allows theories to enforce naming conventions appropriate to their domain.
 
 ---
 
@@ -175,22 +232,22 @@ ps:HashBag(Proc)  -- parameter ps of type HashBag(Proc)
 
 **Single abstraction** — binds one variable:
 ```
-\x.p:[Name -> Proc]     -- x binds in p
+^x.p:[Name -> Proc]     -- x binds in p
 ```
 
 **Named abstraction** — when you need to reference the whole abstraction:
 ```
-f = \x.y:[Proc -> Proc]  -- f names the abstraction; x binds in y
+f = ^x.y:[Proc -> Proc]  -- f names the abstraction; x binds in y
 ```
 
 **Multi-binder abstraction** — binds multiple variables:
 ```
-\[xs].p:[[Name] -> Proc]  -- xs represents x0, x1, ... binding in p
+^[xs].p:[Name* -> Proc]  -- xs represents x0, x1, ... binding in p
 ```
 
 **Nested abstraction** — multiple binding levels:
 ```
-\x.\y.p:[Name -> [Name -> Proc]]  -- x binds in (y binds in p)
+^x.^y.p:[Name -> [Name -> Proc]]  -- x binds in (y binds in p)
 ```
 
 ### 4.3 Examples
@@ -198,33 +255,56 @@ f = \x.y:[Proc -> Proc]  -- f names the abstraction; x binds in y
 ```rust
 terms {
     // Nullary constructor
-    PZero . |- 0 : Proc ;
+    PZero . |- "0" : Proc ;
     
     // Unary constructor
-    PDrop . n:Name |- *(n) : Proc ;
+    PDrop . n:Name |- "*" "(" n ")" : Proc ;
     
     // Binary constructor  
-    POutput . n:Name, p:Proc |- n!(p) : Proc ;
+    POutput . n:Name, p:Proc |- n "!" "(" p ")" : Proc ;
     
     // Single abstraction
-    PInput . n:Name, \x.p:[Name->Proc] |- for(x<-n){p} : Proc ;
+    PInput . n:Name, ^x.p:[Name->Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
     
-    // Multi-binder abstraction
-    PInputs . ns:Vec(Name), \[xs].p:[[Name]->Proc] 
-            |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
+    // Multi-binder abstraction (with meta-syntax - Phase 3)
+    PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] 
+            |- "for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}" : Proc ;
     
-    // Collection
-    PPar . ps:HashBag(Proc) |- { ps.#sep("|") } : Proc ;
+    // Collection (with meta-syntax - Phase 3)
+    PPar . ps:HashBag(Proc) |- "{" ps.#sep("|") "}" : Proc ;
     
     // Nested abstraction
-    PLam2 . \x.\y.p:[Name -> [Name -> Proc]] |- lam(x,y){p} : Proc ;
+    PLam2 . ^x.^y.p:[Name -> [Name -> Proc]] |- "lam" "(" x "," y ")" "{" p "}" : Proc ;
     
     // Higher-order (named abstraction)
-    PMap . f = \x.y:[Proc->Proc], ps:HashBag(Proc) |- map(f){ps} : Proc ;
+    PMap . f = ^x.y:[Proc->Proc], ps:HashBag(Proc) |- "map" "(" f ")" "{" ps "}" : Proc ;
     
     // Quote
-    NQuote . p:Proc |- @(p) : Name ;
+    NQuote . p:Proc |- "@" "(" p ")" : Name ;
 }
+```
+
+### 4.4 Syntax Pattern Format
+
+Syntax patterns use **quoted strings** for all literals and **unquoted identifiers** for parameter references:
+
+```
+"keyword" "(" param1 "," param2 ")"
+```
+
+Rules:
+- **Quoted strings** (`"for"`, `"("`, `"<-"`, etc.) become literal terminals in the parser
+- **Unquoted identifiers** (`x`, `n`, `p`) must match parameters from the term context
+- This avoids issues with Rust keywords (`for`, `if`, `while`) and special operators (`<-`, `|`)
+
+Example breakdown:
+```rust
+PInput . n:Name, ^x.p:[Name->Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
+//                                    ^^^^^ ^^^  ^  ^^^^  ^  ^^^  ^   ^  ^^^
+//                                    lit   lit  |  lit   |  lit  |   |  lit
+//                                               |        |       |   |
+//                                            binder   channel  body type
+//                                            (param)  (param) (param)
 ```
 
 ---
@@ -315,8 +395,8 @@ impl Display for Proc {
 Meta-constraints like "same length" are enforced by grammar structure:
 
 ```
-PInputs . ns:Vec(Name), \[xs].p:[[Name]->Proc] 
-        |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
+PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] 
+        |- "for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}" : Proc ;
 ```
 
 The `#zip(ns,xs)` generates grammar that pairs elements. If the user writes `for(x<-n, y){p}`, it fails to parse because `y` doesn't match the `x<-n` pattern.
@@ -331,196 +411,213 @@ No explicit `#length(ns) = #length(xs)` needed—it's structural.
 
 All abstractions in MeTTaIL are **meta-lambdas**—the internal hom of a cartesian closed category. This includes:
 
-- Abstraction parameters in constructors: `\x.p:[Name->Proc]`
-- Named definitions: `dup = \n:Name. ...`
-- Higher-order parameters: `\f:[A->B]. ...`
+- Abstraction parameters in constructors: `^x.p:[Name->Proc]`
+- Named definitions: `dup = ^n:Name. ...`
+- Higher-order parameters: `^f:[A->B]. ...`
 
 These are the same abstraction mechanism with different uses:
 
 | Use | Syntax | Runtime Representation |
 |-----|--------|------------------------|
-| Constructor binding | `PInput . \x.p:[Name->Proc] |- ...` | `Scope<Binder, Box<Proc>>` |
-| Definition | `dup = \n:Name. body` | Expanded at use site |
+| Constructor binding | `PInput . ^x.p:[Name->Proc] |- ...` | `Scope<Binder, Box<Proc>>` |
+| Definition | `dup = ^n:Name. body` | Expanded at use site |
 | Unapplied parameter | `f:[A->B]` passed to constructor | `Scope<Binder, Box<B>>` |
 
 ### 6.2 Representation
 
-A meta-lambda `\x:A. body` is represented as:
+We extend the existing `Expr` enum (used in equations/rewrites) with lambda abstraction:
 
 ```rust
-/// Meta-level abstraction
-pub struct MetaLambda {
-    /// Binder variable
-    pub binder: Ident,
-    /// Binder type
-    pub binder_type: TypeExpr,
-    /// Body expression (may reference binder)
-    pub body: MetaExpr,
-}
-
-/// Meta-level expression
-pub enum MetaExpr {
+/// Expression in equations, rewrites, and definitions
+#[derive(Clone, Debug)]
+pub enum Expr {
     /// Variable reference
     Var(Ident),
-    /// Object-term literal
-    Term(TermExpr),
-    /// Lambda abstraction
-    Lambda(Box<MetaLambda>),
-    /// Application
-    App {
-        func: Box<MetaExpr>,
-        arg: Box<MetaExpr>,
+    
+    /// Constructor/function application: f(args) or Constructor(args)
+    Apply {
+        constructor: Ident,
+        args: Vec<Expr>,
     },
-    /// Collection literal
-    Collection {
-        coll_type: CollType,
-        elements: Vec<MetaExpr>,
+    
+    /// Substitution: term[replacement/var]
+    Subst {
+        term: Box<Expr>,
+        var: Ident,
+        replacement: Box<Expr>,
+    },
+    
+    /// Collection pattern: {P, Q, ...rest}
+    CollectionPattern {
+        constructor: Option<Ident>,
+        elements: Vec<Expr>,
+        rest: Option<Ident>,
+    },
+    
+    // === NEW: Lambda abstraction ===
+    
+    /// Lambda: ^x.body (type annotation is external: ^x.body:[A->B])
+    Lambda {
+        binder: Ident,
+        body: Box<Expr>,
+    },
+    
+    /// Multi-binder lambda: ^[xs].body
+    MultiLambda {
+        binder: Ident,  // Collective name for bound variables
+        body: Box<Expr>,
     },
 }
 ```
 
+**Notes:**
+- `Apply` serves for both constructor application (`PInput(n, p)`) and definition calls (`dup(n)`)
+- `Lambda` and `MultiLambda` are meta-level abstractions
+- Type annotations are external: `^x.body:[Name->Proc]` not `^x:Name.body`
+- At expansion time, `Apply` with a definition name triggers substitution
+
 ### 6.3 Application and Substitution
 
-Application `f(arg)` performs capture-avoiding substitution:
+**Status:** To be implemented in Phase 1b
+
+Application `f(arg)` where `f` is a `Lambda` performs capture-avoiding substitution:
 
 ```rust
-impl MetaLambda {
-    /// Apply this lambda to an argument
-    pub fn apply(&self, arg: &MetaExpr, ctx: &TypeContext) -> Result<MetaExpr, TypeError> {
-        // Type check: arg must have type self.binder_type
-        let arg_type = arg.infer_type(ctx)?;
-        if arg_type != self.binder_type {
-            return Err(TypeError::Mismatch {
-                expected: self.binder_type.clone(),
-                found: arg_type,
-            });
-        }
-        
-        // Substitute arg for binder in body
-        Ok(self.body.substitute(&self.binder, arg))
-    }
-}
-
-impl MetaExpr {
-    /// Capture-avoiding substitution
-    pub fn substitute(&self, var: &Ident, replacement: &MetaExpr) -> MetaExpr {
+impl Expr {
+    /// Apply a lambda to an argument (beta reduction)
+    /// Type checking is done externally with TypeExpr
+    pub fn apply(&self, arg: &Expr) -> Result<Expr, ApplyError> {
         match self {
-            MetaExpr::Var(v) if v == var => replacement.clone(),
-            MetaExpr::Var(v) => MetaExpr::Var(v.clone()),
+            Expr::Lambda { binder, body } => {
+                // Substitute arg for binder in body
+                Ok(body.substitute(binder, arg))
+            }
+            Expr::MultiLambda { binder, body } => {
+                // Multi-binder application: arg should be a collection
+                // Each element binds to a fresh variable from xs
+                Ok(body.substitute(binder, arg))
+            }
+            _ => Err(ApplyError::NotAFunction),
+        }
+    }
+
+    /// Capture-avoiding substitution
+    /// Note: For meta-level Expr, we handle capture-avoidance directly.
+    /// For runtime terms (Scope<T>), moniker handles it via unbind().
+    pub fn substitute(&self, var: &Ident, replacement: &Expr) -> Expr {
+        match self {
+            Expr::Var(v) if v == var => replacement.clone(),
+            Expr::Var(v) => Expr::Var(v.clone()),
             
-            MetaExpr::Lambda(lam) => {
-                if &lam.binder == var {
+            Expr::Lambda { binder, body } => {
+                if binder == var {
                     // Shadowed - don't substitute in body
-                    MetaExpr::Lambda(lam.clone())
+                    self.clone()
+                } else if replacement.free_vars().contains(binder) {
+                    // Would capture - need alpha-renaming
+                    // For now, panic; proper impl will generate fresh name
+                    panic!("Capture-avoiding substitution not yet implemented for this case")
                 } else {
-                    // Moniker handles capture-avoidance automatically via Scope::unbind()
-                    // which freshens bound variables. We just substitute in the body.
-                    MetaExpr::Lambda(Box::new(MetaLambda {
-                        binder: lam.binder.clone(),
-                        binder_type: lam.binder_type.clone(),
-                        body: lam.body.substitute(var, replacement),
-                    }))
+                    // Safe to substitute
+                    Expr::Lambda {
+                        binder: binder.clone(),
+                        body: Box::new(body.substitute(var, replacement)),
+                    }
                 }
             }
             
-            MetaExpr::App { func, arg } => MetaExpr::App {
-                func: Box::new(func.substitute(var, replacement)),
-                arg: Box::new(arg.substitute(var, replacement)),
+            Expr::MultiLambda { binder, body } => {
+                if binder == var {
+                    self.clone()
+                } else {
+                    Expr::MultiLambda {
+                        binder: binder.clone(),
+                        body: Box::new(body.substitute(var, replacement)),
+                    }
+                }
+            }
+            
+            Expr::Apply { constructor, args } => Expr::Apply {
+                constructor: constructor.clone(),
+                args: args.iter().map(|a| a.substitute(var, replacement)).collect(),
             },
             
-            MetaExpr::Term(t) => MetaExpr::Term(t.substitute_meta(var, replacement)),
+            Expr::Subst { term, var: v, replacement: r } => Expr::Subst {
+                term: Box::new(term.substitute(var, replacement)),
+                var: v.clone(),
+                replacement: Box::new(r.substitute(var, replacement)),
+            },
             
-            MetaExpr::Collection { coll_type, elements } => MetaExpr::Collection {
-                coll_type: coll_type.clone(),
+            Expr::CollectionPattern { constructor, elements, rest } => Expr::CollectionPattern {
+                constructor: constructor.clone(),
                 elements: elements.iter().map(|e| e.substitute(var, replacement)).collect(),
+                rest: rest.clone(),
             },
         }
     }
     
-    /// Collect free meta-variables in this expression
+    /// Collect free variables in this expression
     pub fn free_vars(&self) -> HashSet<Ident> {
         match self {
-            MetaExpr::Var(v) => std::iter::once(v.clone()).collect(),
-            MetaExpr::Term(t) => t.free_meta_vars(),
-            MetaExpr::Lambda(lam) => {
-                let mut vars = lam.body.free_vars();
-                vars.remove(&lam.binder);
+            Expr::Var(v) => std::iter::once(v.clone()).collect(),
+            Expr::Lambda { binder, body } | Expr::MultiLambda { binder, body } => {
+                let mut vars = body.free_vars();
+                vars.remove(binder);
                 vars
             }
-            MetaExpr::App { func, arg } => {
-                let mut vars = func.free_vars();
-                vars.extend(arg.free_vars());
+            Expr::Apply { args, .. } => {
+                args.iter().flat_map(|a| a.free_vars()).collect()
+            }
+            Expr::Subst { term, replacement, .. } => {
+                let mut vars = term.free_vars();
+                vars.extend(replacement.free_vars());
                 vars
             }
-            MetaExpr::Collection { elements, .. } => {
+            Expr::CollectionPattern { elements, .. } => {
                 elements.iter().flat_map(|e| e.free_vars()).collect()
             }
         }
     }
 }
-
-impl TermExpr {
-    /// Substitute a meta-variable in an object term.
-    /// 
-    /// Note: For object-level substitution (substituting object variables),
-    /// we use moniker's infrastructure. This method is for meta-level
-    /// substitution of definition parameters.
-    pub fn substitute_meta(&self, var: &Ident, replacement: &MetaExpr) -> TermExpr {
-        // Recursively descend into term structure, replacing meta-var refs.
-        // Implementation uses pattern matching on term constructors.
-        todo!("Implementation traverses term AST, replacing MetaVar(v) with replacement")
-    }
-    
-    /// Collect free meta-variables referenced in this term.
-    /// 
-    /// For object-level free variables, use moniker's `BoundTerm::visit_vars()`.
-    pub fn free_meta_vars(&self) -> HashSet<Ident> {
-        todo!("Implementation traverses term AST collecting MetaVar references")
-    }
-}
 ```
 
-### 6.4 Normalization to Object Terms
+### 6.4 Definition Expansion
 
-A fully-applied meta-expression normalizes to an object term:
+When `Apply { constructor, args }` refers to a definition name, we expand it:
 
 ```rust
-impl MetaExpr {
-    /// Extract lambda if this expression is (or reduces to) a lambda
-    fn as_lambda(&self) -> Result<&MetaLambda, NormError> {
+impl Expr {
+    /// Expand definition applications (beta reduction)
+    pub fn expand(&self, defs: &DefEnv, ctx: &TypeContext) -> Result<Expr, Error> {
         match self {
-            MetaExpr::Lambda(lam) => Ok(lam),
-            MetaExpr::Var(v) => Err(NormError::FreeVariable(v.clone())),
-            MetaExpr::Term(_) => Err(NormError::NotAFunction),
-            MetaExpr::App { .. } => Err(NormError::NotNormalized),
-            MetaExpr::Collection { .. } => Err(NormError::NotAFunction),
-        }
-    }
-
-    /// Normalize to object term (beta-reduce all applications)
-    pub fn normalize(&self, ctx: &TypeContext) -> Result<TermExpr, NormError> {
-        match self {
-            MetaExpr::Term(t) => Ok(t.clone()),
-            
-            MetaExpr::Var(v) => Err(NormError::FreeVariable(v.clone())),
-            
-            MetaExpr::Lambda(_) => Err(NormError::UnappliedLambda),
-            
-            MetaExpr::App { func, arg } => {
-                // First, reduce func to a lambda (or look it up if it's a var)
-                let lam = func.as_lambda()?;
-                let result = lam.apply(arg, ctx)?;
-                result.normalize(ctx)
+            Expr::Apply { constructor, args } => {
+                // Check if constructor is a definition
+                if let Some(def) = defs.get(constructor) {
+                    // Apply definition body to arguments
+                    let mut result = def.body.clone();
+                    for (param, arg) in def.params.iter().zip(args) {
+                        let expanded_arg = arg.expand(defs, ctx)?;
+                        result = result.substitute(param, &expanded_arg);
+                    }
+                    result.expand(defs, ctx)  // Continue expanding
+                } else {
+                    // Regular constructor - expand args
+                    Ok(Expr::Apply {
+                        constructor: constructor.clone(),
+                        args: args.iter()
+                            .map(|a| a.expand(defs, ctx))
+                            .collect::<Result<_, _>>()?,
+                    })
+                }
             }
-            
-            MetaExpr::Collection { coll_type, elements } => {
-                let norm_elems: Result<Vec<_>, _> = 
-                    elements.iter().map(|e| e.normalize(ctx)).collect();
-                Ok(TermExpr::Collection {
-                    coll_type: coll_type.clone(),
-                    elements: norm_elems?,
+            Expr::Lambda { binder, binder_type, body } => {
+                Ok(Expr::Lambda {
+                    binder: binder.clone(),
+                    binder_type: binder_type.clone(),
+                    body: Box::new(body.expand(defs, ctx)?),
                 })
             }
+            _ => Ok(self.clone()),
         }
     }
 }
@@ -531,10 +628,10 @@ impl MetaExpr {
 In a constructor declaration:
 
 ```rust
-PInput . n:Name, \x.p:[Name->Proc] |- for(x<-n){p} : Proc ;
+PInput . n:Name, ^x.p:[Name->Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
 ```
 
-The `\x.p:[Name->Proc]` is a meta-lambda that:
+The `^x.p:[Name->Proc]` is a meta-lambda that:
 1. At parse time: binds `x` in the body `p`
 2. At runtime: becomes `Scope<Binder<String>, Box<Proc>>`
 3. At substitution: uses generated `substitute()` method (from `macros/src/codegen/subst.rs`)
@@ -546,7 +643,7 @@ PInput(Box<Name>, Scope<Binder<String>, Box<Proc>>)
 
 **Generated parser:**
 ```lalrpop
-"for" "(" <n:Name> "->" <x:Ident> ")" "{" <body:Proc> "}" => {
+"for" "(" <x:Ident> "<-" <n:Name> ")" "{" <body:Proc> "}" => {
     // get_or_create_var from runtime/src/binding.rs
     let binder = Binder(get_or_create_var(x));
     // Scope::new automatically closes bound variables
@@ -561,7 +658,7 @@ Definitions bind names to meta-expressions:
 
 ```rust
 definitions {
-    dup = \n:Name. for(x<-n){{ *(x) | n!(*(x)) }} ;
+    dup = ^n:Name. for(x<-n){{ *(x) | n!(*(x)) }} ;
 }
 ```
 
@@ -571,7 +668,7 @@ definitions {
 pub struct Definition {
     pub name: Ident,
     pub params: Vec<(Ident, TypeExpr)>,  // Extracted from nested lambdas
-    pub body: MetaExpr,
+    pub body: Expr,
 }
 
 /// Definition environment
@@ -580,65 +677,29 @@ pub struct DefEnv {
 }
 
 impl DefEnv {
-    /// Expand a definition application
-    pub fn expand(&self, name: &Ident, args: &[MetaExpr]) -> Result<MetaExpr, Error> {
-        let def = self.defs.get(&name.to_string())
-            .ok_or(Error::UndefinedName(name.clone()))?;
-        
-        if args.len() != def.params.len() {
-            return Err(Error::ArityMismatch {
-                expected: def.params.len(),
-                found: args.len(),
-            });
-        }
-        
-        // Substitute all arguments
-        let mut result = def.body.clone();
-        for ((param_name, _), arg) in def.params.iter().zip(args) {
-            result = result.substitute(param_name, arg);
-        }
-        
-        Ok(result)
+    pub fn get(&self, name: &Ident) -> Option<&Definition> {
+        self.defs.get(&name.to_string())
     }
 }
 ```
 
 ### 6.7 Multi-Binder Implementation
 
-For `\[xs].p:[[Name]->Proc]`:
+For `^[xs].p:[Name*->Proc]`:
 
 ```rust
 pub enum BinderSpec {
     Single(Ident),
     Multi(Ident),  // xs represents x0, x1, ...
 }
-
-/// Multi-binder lambda
-pub struct MultiLambda {
-    pub binders: Ident,      // Collective name (xs)
-    pub binder_type: TypeExpr,  // Element type (Name)
-    pub body: MetaExpr,
-}
 ```
 
-**Application** takes a list and binds each element:
-
+Multi-binders are represented in `Expr::Lambda` with a `MultiBinder` type:
 ```rust
-impl MultiLambda {
-    pub fn apply(&self, args: &[MetaExpr]) -> Result<MetaExpr, TypeError> {
-        // Generate individual binder names: xs_0, xs_1, ...
-        let binder_names: Vec<Ident> = (0..args.len())
-            .map(|i| format_ident!("{}_{}", self.binders, i))
-            .collect();
-        
-        // Substitute each arg for its binder
-        let mut result = self.body.clone();
-        for (binder_name, arg) in binder_names.iter().zip(args) {
-            result = result.substitute(binder_name, arg);
-        }
-        
-        Ok(result)
-    }
+Expr::Lambda {
+    binder: xs,  // Collective name
+    binder_type: TypeExpr::MultiBinder(Box::new(TypeExpr::Base("Name"))),
+    body: ...,
 }
 ```
 
@@ -682,71 +743,46 @@ impl TypeContext {
 **Type Inference:**
 
 ```rust
-impl MetaExpr {
+impl Expr {
     pub fn infer_type(&self, ctx: &TypeContext) -> Result<TypeExpr, TypeError> {
         match self {
-            MetaExpr::Var(v) => ctx.lookup(v),
+            Expr::Var(v) => ctx.lookup(v),
             
-            MetaExpr::Term(t) => Ok(t.category()),
-            
-            MetaExpr::Lambda(lam) => {
-                let body_ctx = ctx.extend(&lam.binder, &lam.binder_type);
-                let body_type = lam.body.infer_type(&body_ctx)?;
+            Expr::Lambda { binder, binder_type, body } => {
+                let body_ctx = ctx.extend(binder, binder_type);
+                let body_type = body.infer_type(&body_ctx)?;
                 Ok(TypeExpr::Arrow {
-                    domain: Box::new(lam.binder_type.clone()),
+                    domain: Box::new(binder_type.clone()),
                     codomain: Box::new(body_type),
                 })
             }
             
-            MetaExpr::App { func, arg } => {
-                let func_type = func.infer_type(ctx)?;
-                match func_type {
-                    TypeExpr::Arrow { domain, codomain } => {
-                        let arg_type = arg.infer_type(ctx)?;
-                        if arg_type != *domain {
-                            return Err(TypeError::Mismatch {
-                                expected: *domain,
-                                found: arg_type,
-                            });
-                        }
-                        Ok(*codomain)
-                    }
-                    _ => Err(TypeError::NotAFunction(func_type)),
-                }
+            Expr::Apply { constructor, args } => {
+                // Look up constructor type and check args
+                // (Implementation depends on constructor registry)
+                todo!("Look up constructor/definition type")
             }
             
-            MetaExpr::Collection { coll_type, elements } => {
-                // All elements must have same type
-                let elem_types: Result<Vec<_>, _> = 
-                    elements.iter().map(|e| e.infer_type(ctx)).collect();
-                let elem_types = elem_types?;
-                
-                if elem_types.is_empty() {
-                    // Empty collection: element type determined by context (annotation required)
-                    // For now, defer to later unification or require annotation
+            Expr::Subst { .. } => {
+                // Substitution preserves the term's type
+                todo!("Infer type of term being substituted")
+            }
+            
+            Expr::CollectionPattern { elements, .. } => {
+                // Infer from elements
+                if elements.is_empty() {
                     return Err(TypeError::CannotInferEmptyCollection);
                 }
-                
-                let elem_type = elem_types[0].clone();
-                
-                for t in &elem_types[1..] {
-                    if t != &elem_type {
-                        return Err(TypeError::HeterogeneousCollection);
-                    }
-                }
-                
-                Ok(TypeExpr::Collection {
-                    coll_type: coll_type.clone(),
-                    element: Box::new(elem_type),
-                })
+                let elem_type = elements[0].infer_type(ctx)?;
+                // Check all elements have same type...
+                Ok(elem_type)
             }
         }
     }
 }
+```
 
-// Note: Empty collections like `{}` are valid syntactically but require type 
-// annotation or contextual inference. In constructor parameters where the 
-// collection type is declared (e.g., `ps:HashBag(Proc)`), the element type is known.
+Note: Empty collections like `{}` are valid syntactically but require type annotation or contextual inference.
 
 ### 6.9 Worked Examples
 
@@ -754,31 +790,26 @@ impl MetaExpr {
 
 **Definition:**
 ```
-dup = \n:Name. for(x<-n){{ *(x) | n!(*(x)) }}
+dup = ^n:Name. for(x<-n){{ *(x) | n!(*(x)) }}
 ```
 
 **Type:** `[Name -> Proc]`
 
-This receives a value on channel `n`, dereferences it (with `*(x)`), and also re-sends the dereferenced process back on `n`.
-
 **Representation:**
 ```rust
-MetaLambda {
+Expr::Lambda {
     binder: "n",
     binder_type: TypeExpr::Base("Name"),
-    body: MetaExpr::Term(
-        PInput(n, Scope(x, PPar({PDrop(x), POutput(n, PDrop(x))})))
-    )
+    body: Box::new(Expr::Apply {
+        constructor: "PInput",
+        args: vec![Expr::Var("n"), /* body with x bound */]
+    })
 }
 ```
 
-Note: In the body, `n` appears as a free meta-variable (of type Name), and `x` is bound by the `for`. The term `*(x)` is `PDrop(x)`, which takes a Name and returns a Proc.
-
 **Application:** `dup(@(0))`
 
-Step 1: Type check
-- Argument `@(0)` has type `Name` ✓
-- Expected: `Name` ✓
+Step 1: Type check argument `@(0)` has type `Name` ✓
 
 Step 2: Substitute `@(0)` for `n` in body
 ```
@@ -787,17 +818,7 @@ for(x<-n){{ *(x) | n!(*(x)) }}
 for(x<-@(0)){{ *(x) | @(0)!(*(x)) }}
 ```
 
-Step 3: Result is an object term (no meta-redexes remain)
-```
-for(x<-@(0)){{ *(x) | @(0)!(*(x)) }}
-```
-
-**Final MetaExpr:**
-```rust
-MetaExpr::Term(
-    PInput(NQuote(PZero), Scope(x, PPar({PDrop(x), POutput(NQuote(PZero), PDrop(x))})))
-)
-```
+**Result:** `for(x<-@(0)){{ *(x) | @(0)!(*(x)) }}`
 
 ---
 
@@ -805,48 +826,32 @@ MetaExpr::Term(
 
 **Definition:**
 ```
-fwd = \n:Name. \m:Name. for(x<-n){ m!(*(x)) }
+fwd = ^n:Name. ^m:Name. for(x<-n){ m!(*(x)) }
 ```
 
 **Type:** `[Name -> [Name -> Proc]]`
 
 **Representation:**
 ```rust
-MetaLambda {
+Expr::Lambda {
     binder: "n",
     binder_type: TypeExpr::Base("Name"),
-    body: MetaExpr::Lambda(Box::new(MetaLambda {
+    body: Box::new(Expr::Lambda {
         binder: "m",
         binder_type: TypeExpr::Base("Name"),
-        body: MetaExpr::Term(
-            PInput(@(n), Scope(x, POutput(m, PDrop(x))))
-        )
-    }))
+        body: Box::new(/* PInput(...) */)
+    })
 }
 ```
 
 **Application:** `fwd(@(a))(@(b))`
 
-**Step 1:** Apply outer lambda to `@(a)`
+**Step 1:** Apply outer lambda to `@(a)` → result type `[Name -> Proc]`
 ```
-fwd(@(a))
-= (\n:Name. \m:Name. for(x<-n){ m!(*(x)) })(@(a))
-    ↓ [n := @(a)]
-= \m:Name. for(x<-@(a)){ m!(*(x)) }
+^m:Name. for(x<-@(a)){ m!(*(x)) }
 ```
 
-Result type: `[Name -> Proc]` — still a lambda!
-
-**Step 2:** Apply result to `@(b)`
-```
-(\m:Name. for(x<-@(a)){ m!(*(x)) })(@(b))
-    ↓ [m := @(b)]
-= for(x<-@(a)){ @(b)!(*(x)) }
-```
-
-Result type: `Proc` — object term, fully reduced.
-
-**Final result:**
+**Step 2:** Apply result to `@(b)` → result type `Proc`
 ```
 for(x<-@(a)){ @(b)!(*(x)) }
 ```
@@ -857,57 +862,38 @@ for(x<-@(a)){ @(b)!(*(x)) }
 
 **Definition:**
 ```
-invoke = \f:[Name->Proc]. f(@(0))
+invoke = ^f:[Name->Proc]. f(@(0))
 ```
 
 **Type:** `[[Name->Proc] -> Proc]`
 
-This takes a function `f` of type `[Name->Proc]` and applies it to the fixed name `@(0)`.
+Takes a function `f` of type `[Name->Proc]` and applies it to `@(0)`.
 
 **Representation:**
 ```rust
-MetaLambda {
+Expr::Lambda {
     binder: "f",
-    binder_type: TypeExpr::Arrow {
+    binder_type: TypeExpr::Arrow { 
         domain: Box::new(TypeExpr::Base("Name")),
         codomain: Box::new(TypeExpr::Base("Proc")),
     },
-    body: MetaExpr::App {
-        func: Box::new(MetaExpr::Var("f")),
-        arg: Box::new(MetaExpr::Term(NQuote(PZero))),
-    }
+    body: Box::new(Expr::Apply {
+        constructor: "f",  // Treated as definition call
+        args: vec![Expr::Apply { constructor: "NQuote", args: vec![...] }]
+    })
 }
 ```
 
-**Application:** `invoke(\n:Name. *(n))`
+**Application:** `invoke(^n:Name. *(n))`
 
-**Step 1:** Type check the argument
-- Argument: `\n:Name. *(n)`
-- Argument type: `[Name -> Proc]` ✓
-- Expected: `[Name -> Proc]` ✓
+Step 1: Type check — argument `^n:Name. *(n)` has type `[Name -> Proc]` ✓
 
-**Step 2:** Substitute `\n:Name. *(n)` for `f` in body `f(@(0))`
+Step 2: Substitute, then reduce inner application:
 ```
-f(@(0))
-    ↓ [f := \n:Name. *(n)]
-= (\n:Name. *(n))(@(0))
+f(@(0)) → (^n:Name. *(n))(@(0)) → *(@(0))
 ```
 
-Result is a meta-application — needs further reduction!
-
-**Step 3:** Reduce the inner application
-```
-(\n:Name. *(n))(@(0))
-    ↓ [n := @(0)]
-= *(@(0))
-```
-
-**Final result:**
-```
-*(@(0))
-```
-
-This is `PDrop(NQuote(PZero))` — a pure object term.
+**Result:** `*(@(0))`
 
 ---
 
@@ -915,42 +901,35 @@ This is `PDrop(NQuote(PZero))` — a pure object term.
 
 **Definition:**
 ```
-twice = \f:[Proc->Proc]. \p:Proc. f(f(p))
+twice = ^f:[Proc->Proc]. ^p:Proc. f(f(p))
 ```
 
 **Type:** `[[Proc->Proc] -> [Proc -> Proc]]`
 
-This takes a transformation `f` and returns a new transformation that applies `f` twice.
+**Application:** `twice(^q:Proc. {q|q})(0)`
 
-**Application:** `twice(\q:Proc. {q|q})(0)`
-
-**Step 1:** Apply to `\q:Proc. {q|q}`
+**Step 1:** Apply to `^q:Proc. {q|q}` → type `[Proc -> Proc]`
 ```
-twice(\q:Proc. {q|q})
-= (\f:[Proc->Proc]. \p:Proc. f(f(p)))(\q:Proc. {q|q})
-    ↓ [f := \q:Proc. {q|q}]
-= \p:Proc. (\q:Proc. {q|q})((\q:Proc. {q|q})(p))
+^p:Proc. (^q:Proc. {q|q})((^q:Proc. {q|q})(p))
 ```
-
-Result type: `[Proc -> Proc]` — still a lambda.
 
 **Step 2:** Apply to `0`
 ```
-(\p:Proc. (\q:Proc. {q|q})((\q:Proc. {q|q})(p)))(0)
+(^p:Proc. ...)(0)
     ↓ [p := 0]
-= (\q:Proc. {q|q})((\q:Proc. {q|q})(0))
+= (^q:Proc. {q|q})((^q:Proc. {q|q})(0))
 ```
 
 **Step 3:** Reduce innermost application
 ```
-(\q:Proc. {q|q})(0)
+(^q:Proc. {q|q})(0)
     ↓ [q := 0]
 = {0|0}
 ```
 
 **Step 4:** Reduce outer application
 ```
-(\q:Proc. {q|q})({0|0})
+(^q:Proc. {q|q})({0|0})
     ↓ [q := {0|0}]
 = {{0|0}|{0|0}}
 ```
@@ -1045,7 +1024,7 @@ pub enum Param {
         typ: TypeExpr,
     },
     
-    /// Abstraction: \x.p:[A->B] or f = \x.p:[A->B]
+    /// Abstraction: ^x.p:[A->B] or f = ^x.p:[A->B]
     Abstraction {
         /// Optional name for the whole abstraction
         name: Option<Ident>,
@@ -1060,11 +1039,11 @@ pub enum Param {
 
 /// Binder specification
 pub enum BinderSpec {
-    /// Single binder: \x
+    /// Single binder: ^x
     Single(Ident),
-    /// Multi-binder: \[xs]
+    /// Multi-binder: ^[xs]
     Multi(Ident),
-    /// Nested: \x.\y (list of single binders)
+    /// Nested: ^x.^y (list of single binders)
     Nested(Vec<Ident>),
 }
 
@@ -1094,7 +1073,7 @@ pub enum SyntaxExpr {
     },
 }
 
-/// Pattern operations for syntax patterns (distinct from MetaExpr in section 6)
+/// Pattern operations for syntax patterns (compile-time grammar generation)
 /// These are compile-time operations for generating grammar/display
 pub enum PatternOp {
     /// Variable reference
@@ -1153,7 +1132,7 @@ No new runtime types are needed.
 | Current | New |
 |---------|-----|
 | `Label . Cat ::= ... ;` | `Label . ctx \|- syntax : Cat ;` |
-| `<Name>` | `\x.p:[Name->...]` |
+| `<Name>` | `^x.p:[Name->...]` |
 | `HashBag(T) sep "s"` | `ps:HashBag(T)` + `ps.#sep("s")` in pattern |
 | `delim "{" "}"` | `{ ... }` in pattern |
 
@@ -1170,24 +1149,42 @@ No new runtime types are needed.
 
 **Guiding Goal**: Define and execute rho calculus with multi-channel input:
 ```
-PInputs . ns:Vec(Name), \[xs].p:[[Name]->Proc] 
-        |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
+PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] 
+        |- "for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}" : Proc ;
 ```
 
-### Phase 1: Type System (2-3 days)
+### Phase 1: Type System (2-3 days) ✓
 
-- [ ] Extend `TypeExpr` with `Arrow { domain, codomain }`
-- [ ] Extend `TypeExpr` with `MultiBinder(element_type)`
-- [ ] Implement type equality and display
+- [x] Create `TypeExpr` enum with `Base`, `Arrow`, `MultiBinder`, `Collection` variants
+- [x] Implement `PartialEq` for type comparison during type checking
+- [x] Implement `Display` for error messages
+- [x] Parse `TypeExpr` from input stream (`Name*` for multi-binder)
+- [x] Add `Expr::Lambda` and `Expr::MultiLambda` variants
+- [x] Parse `^x.body` and `^[xs].body` syntax
+
+### Phase 1b: Lambda Robustness (3-4 days) ✓
+
+- [x] Implement `Expr::substitute()` for capture-avoiding substitution
+- [x] Implement `Expr::free_vars()` for collecting free variables
+- [x] Implement `Expr::apply()` for beta-reduction
+- [x] Add `TypeContext` for tracking variable types during inference
+- [x] Add `ConstructorSig` for constructor type signatures
+- [x] Implement `infer_type()` for Apply expressions
+- [x] Implement `check_type()` for Lambda and MultiLambda
+- [x] Test lambda substitution with shadowing cases
+- [x] Test type inference for nested lambdas
+- [x] Test collection-typed lambda: `^xs.p:[Vec(Name) -> Proc]`
+- [x] Test multi-binder lambda: `^[xs].p:[Name* -> Proc]`
 
 ### Phase 2: Constructor Syntax (1 week)
 
-- [ ] Parse new constructor syntax: `Label . ctx |- pattern : Type`
-- [ ] Parse abstraction params: `\x.p:[A->B]`
-- [ ] Parse multi-binder: `\[xs].p:[[A]->B]`
-- [ ] Parse nested abstractions: `\x.\y.p:[A->[B->C]]`
+- [ ] Parse new constructor syntax: `Label . ctx |- term : Type`
+- [ ] Parse abstraction params: `^x.p:[A->B]`
+- [ ] Parse multi-binder: `^[xs].p:[Name*->B]`
+- [ ] Parse nested abstractions: `^x.^y.p:[A->[B->C]]`
+- [ ] Parse optional `identifier { r"..." }` block for custom variable regex
 - [ ] Generate enum variants with `Scope` types
-- [ ] Generate LALRPOP parser rules
+- [ ] Generate LALRPOP parser rules (with custom `Ident` terminal if specified)
 
 ### Phase 3: Pattern Operations (1 week)
 
@@ -1229,28 +1226,30 @@ All abstractions are meta-lambdas (CCC internal hom):
 
 | Use | Syntax | Representation |
 |-----|--------|----------------|
-| Constructor param | `\x.p:[A->B]` | `Scope<Binder, Box<B>>` at runtime |
-| Definition | `name = \x:T. body` | Expanded at use site |
+| Constructor param | `^x.p:[A->B]` | `Scope<Binder, Box<B>>` at runtime |
+| Definition | `name = ^x:T. body` | Expanded at use site |
 | Higher-order param | `f:[A->B]` | `Scope<Binder, Box<B>>` when passed |
 
 ### 12.2 Key Features
 
 | Feature | Syntax |
 |---------|--------|
-| Constructor abstraction | `\x.p:[A->B]` |
-| Named constructor abs | `f = \x.p:[A->B]` |
-| Multi-binder | `\[xs].p:[[A]->B]` |
-| Nested abstraction | `\x.\y.p:[A->[B->C]]` |
+| Constructor abstraction | `^x.p:[A->B]` |
+| Named constructor abs | `f = ^x.p:[A->B]` |
+| Multi-binder | `^[xs].p:[Name*->B]` |
+| Collection-typed binder | `^xs.p:[Vec(Name)->B]` |
+| Nested abstraction | `^x.^y.p:[A->[B->C]]` |
 | Function type | `[A->B]` |
 | Collection parameter | `ps:HashBag(Proc)` |
 | Syntax pattern | `for(x<-n){p}` |
 | Meta-syntax | `#sep`, `#zip`, `#map` |
-| Meta-definition | `dup = \n:Name. ...` |
+| Custom identifiers | `identifier { r"[a-z]" }` |
+| Meta-definition | `dup = ^n:Name. ...` |
 | Meta-application | `dup(@(0))` |
 
 ### 12.3 Key Principles
 
-1. **Unified abstraction** — all `\x.body` are meta-lambdas (CCC hom)
+1. **Unified abstraction** — all `^x.body` are meta-lambdas (CCC hom)
 2. **Meta-syntax is compile-time** — generates grammar + display
 3. **Capture-avoiding via moniker** — `Scope::unbind()` freshens bound variables automatically
 4. **Constraints are structural** — enforced by grammar, not runtime checks
@@ -1261,3 +1260,4 @@ All abstractions are meta-lambdas (CCC internal hom):
 **Estimated Effort**: 4-5 weeks (Phases 1-5), +1 week optional (Phase 6)
 **Risk Level**: Medium (well-defined scope, leverages existing moniker infrastructure)  
 **Impact**: High (enables multi-channel input and expressive language specifications)
+
