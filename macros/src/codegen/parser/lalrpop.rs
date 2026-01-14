@@ -746,9 +746,9 @@ fn generate_pattern_alternative(
     for token in syntax_pattern {
         match token {
             SyntaxToken::Ident(id) => {
+                // Parameter reference - must be in term context
                 let name = id.to_string();
                 if let Some(info) = param_types.get(&name) {
-                    // This is a parameter reference - generate capture
                     match info.kind {
                         ParamKind::Simple => {
                             let nonterminal = type_to_nonterminal(&info.ty);
@@ -774,21 +774,14 @@ fn generate_pattern_alternative(
                         }
                     }
                 } else {
-                    // Not a parameter - literal keyword
+                    // Unknown parameter - this is a validation error
+                    // For now, treat as literal but this should be caught during validation
                     pattern.push_str(&format!(" \"{}\"", name));
                 }
             }
-            SyntaxToken::Punct(c) => {
-                // Punctuation becomes literal
-                pattern.push_str(&format!(" \"{}\"", c));
-            }
             SyntaxToken::Literal(s) => {
-                // Explicit literal
+                // Quoted literal (keyword, punctuation, operator)
                 pattern.push_str(&format!(" \"{}\"", s));
-            }
-            SyntaxToken::Keyword(kw) => {
-                // Rust keyword used as literal in syntax
-                pattern.push_str(&format!(" \"{}\"", kw));
             }
         }
     }
@@ -832,8 +825,11 @@ fn generate_pattern_alternative(
         action.push_str("    }");
         
         format!("{}{}", pattern.trim(), action)
+    } else if args.is_empty() {
+        // Nullary constructor - unit variant
+        format!("{} => {}::{}", pattern.trim(), category, label)
     } else {
-        // Simple constructor call
+        // Simple constructor call with args
         let args_str: String = args
             .iter()
             .map(|(name, info)| {

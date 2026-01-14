@@ -25,14 +25,17 @@ This becomes awkward when dealing with lambda abstractions. Type theory uses a c
 For example, the rho-calculus input constructor:
 
 ```
-PInput . n:Name, ^x.p:[Name->Proc] |- for(x<-n){p} : Proc
+PInput . n:Name, ^x.p:[Name->Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc
 ```
 
 This syntax makes explicit:
 - **Label**: `PInput` — the Rust enum variant name
 - **Context**: term parameters (`n:Name`) and abstractions (`^x.p:[Name->Proc]`)
-- **Syntax pattern**: `for(x<-n){p}` — the concrete syntax, using identifiers from the context
+- **Syntax pattern**: the concrete syntax using quoted literals and parameter references
 - **Result type**: `Proc`
+
+> **Syntax Pattern Note:** All syntax literals must be quoted strings (e.g., `"for"`, `"("`, `"<-"`).
+> Unquoted identifiers in the syntax pattern are parameter references from the term context.
 
 ### 1.2 The Core Problem
 
@@ -252,33 +255,56 @@ f = ^x.y:[Proc -> Proc]  -- f names the abstraction; x binds in y
 ```rust
 terms {
     // Nullary constructor
-    PZero . |- 0 : Proc ;
+    PZero . |- "0" : Proc ;
     
     // Unary constructor
-    PDrop . n:Name |- *(n) : Proc ;
+    PDrop . n:Name |- "*" "(" n ")" : Proc ;
     
     // Binary constructor  
-    POutput . n:Name, p:Proc |- n!(p) : Proc ;
+    POutput . n:Name, p:Proc |- n "!" "(" p ")" : Proc ;
     
     // Single abstraction
-    PInput . n:Name, ^x.p:[Name->Proc] |- for(x<-n){p} : Proc ;
+    PInput . n:Name, ^x.p:[Name->Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
     
-    // Multi-binder abstraction
+    // Multi-binder abstraction (with meta-syntax - Phase 3)
     PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] 
-            |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
+            |- "for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}" : Proc ;
     
-    // Collection
-    PPar . ps:HashBag(Proc) |- { ps.#sep("|") } : Proc ;
+    // Collection (with meta-syntax - Phase 3)
+    PPar . ps:HashBag(Proc) |- "{" ps.#sep("|") "}" : Proc ;
     
     // Nested abstraction
-    PLam2 . ^x.^y.p:[Name -> [Name -> Proc]] |- lam(x,y){p} : Proc ;
+    PLam2 . ^x.^y.p:[Name -> [Name -> Proc]] |- "lam" "(" x "," y ")" "{" p "}" : Proc ;
     
     // Higher-order (named abstraction)
-    PMap . f = ^x.y:[Proc->Proc], ps:HashBag(Proc) |- map(f){ps} : Proc ;
+    PMap . f = ^x.y:[Proc->Proc], ps:HashBag(Proc) |- "map" "(" f ")" "{" ps "}" : Proc ;
     
     // Quote
-    NQuote . p:Proc |- @(p) : Name ;
+    NQuote . p:Proc |- "@" "(" p ")" : Name ;
 }
+```
+
+### 4.4 Syntax Pattern Format
+
+Syntax patterns use **quoted strings** for all literals and **unquoted identifiers** for parameter references:
+
+```
+"keyword" "(" param1 "," param2 ")"
+```
+
+Rules:
+- **Quoted strings** (`"for"`, `"("`, `"<-"`, etc.) become literal terminals in the parser
+- **Unquoted identifiers** (`x`, `n`, `p`) must match parameters from the term context
+- This avoids issues with Rust keywords (`for`, `if`, `while`) and special operators (`<-`, `|`)
+
+Example breakdown:
+```rust
+PInput . n:Name, ^x.p:[Name->Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
+//                                    ^^^^^ ^^^  ^  ^^^^  ^  ^^^  ^   ^  ^^^
+//                                    lit   lit  |  lit   |  lit  |   |  lit
+//                                               |        |       |   |
+//                                            binder   channel  body type
+//                                            (param)  (param) (param)
 ```
 
 ---
@@ -370,7 +396,7 @@ Meta-constraints like "same length" are enforced by grammar structure:
 
 ```
 PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] 
-        |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
+        |- "for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}" : Proc ;
 ```
 
 The `#zip(ns,xs)` generates grammar that pairs elements. If the user writes `for(x<-n, y){p}`, it fails to parse because `y` doesn't match the `x<-n` pattern.
@@ -602,7 +628,7 @@ impl Expr {
 In a constructor declaration:
 
 ```rust
-PInput . n:Name, ^x.p:[Name->Proc] |- for(x<-n){p} : Proc ;
+PInput . n:Name, ^x.p:[Name->Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
 ```
 
 The `^x.p:[Name->Proc]` is a meta-lambda that:
@@ -617,7 +643,7 @@ PInput(Box<Name>, Scope<Binder<String>, Box<Proc>>)
 
 **Generated parser:**
 ```lalrpop
-"for" "(" <n:Name> "->" <x:Ident> ")" "{" <body:Proc> "}" => {
+"for" "(" <x:Ident> "<-" <n:Name> ")" "{" <body:Proc> "}" => {
     // get_or_create_var from runtime/src/binding.rs
     let binder = Binder(get_or_create_var(x));
     // Scope::new automatically closes bound variables
@@ -1124,7 +1150,7 @@ No new runtime types are needed.
 **Guiding Goal**: Define and execute rho calculus with multi-channel input:
 ```
 PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] 
-        |- for( #zip(ns,xs).#map(|n,x| x<-n).#sep(",") ){p} : Proc ;
+        |- "for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}" : Proc ;
 ```
 
 ### Phase 1: Type System (2-3 days) ✓

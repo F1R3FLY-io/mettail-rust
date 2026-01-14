@@ -396,19 +396,18 @@ impl TermParam {
 
 /// Token in a syntax pattern
 /// 
-/// The syntax pattern `for(x<-n){p}` is parsed as:
-/// - Ident("for"), Punct('('), Ident("x"), Punct('<'), Punct('-'), 
-///   Ident("n"), Punct(')'), Punct('{'), Ident("p"), Punct('}')
+/// Syntax patterns use quoted strings for all literals and unquoted identifiers
+/// for parameter references only.
+/// 
+/// Example: `"for" "(" x "<-" n ")" "{" p "}"`
+/// - Literal("for"), Literal("("), Ident(x), Literal("<-"), Ident(n), 
+///   Literal(")"), Literal("{"), Ident(p), Literal("}")
 #[derive(Debug, Clone)]
 pub enum SyntaxToken {
-    /// Identifier - could be literal keyword or parameter reference
+    /// Parameter reference - must match a parameter in term context
     Ident(Ident),
-    /// Punctuation character
-    Punct(char),
-    /// String literal (explicit)
+    /// Literal syntax element - keywords, punctuation, operators (all quoted)
     Literal(String),
-    /// Rust keyword used as a literal in syntax (e.g., "for", "if")
-    Keyword(String),
 }
 
 /// Item in a grammar rule
@@ -1228,36 +1227,13 @@ fn parse_term_param(input: ParseStream) -> SynResult<TermParam> {
     }
 }
 
-/// Try to parse a Rust keyword as an identifier for syntax patterns.
-/// 
-/// In `theory!` macros, users want to use keywords like `for` in syntax patterns.
-/// The Rust lexer tokenizes these as keyword tokens, not identifiers.
-/// This function converts common keywords to identifiers.
-fn try_parse_keyword(input: ParseStream) -> Option<SyntaxToken> {
-    macro_rules! try_keyword {
-        ($($kw:ident),*) => {
-            $(
-                if input.peek(Token![$kw]) {
-                    if let Ok(_token) = input.parse::<Token![$kw]>() {
-                        return Some(SyntaxToken::Keyword(stringify!($kw).to_string()));
-                    }
-                }
-            )*
-        };
-    }
-    
-    // Keywords commonly used in DSL syntax patterns
-    // Note: true/false/self/super have special token types, handled separately
-    try_keyword!(
-        for, if, else, while, loop, match, in, let, fn, return,
-        as, const, mut, ref, type, where, break, continue,
-        async, await, dyn, impl, trait, pub, mod, use, move
-    );
-    
-    None
-}
-
 /// Parse syntax pattern until we hit `:` followed by an identifier (the type)
+/// 
+/// Syntax patterns use quoted strings for all literals:
+///   `"for" "(" x "<-" n ")" "{" p "}"`
+/// 
+/// - Quoted strings become `Literal` tokens (keywords, punctuation, operators)
+/// - Unquoted identifiers become `Ident` tokens (parameter references only)
 fn parse_syntax_pattern(input: ParseStream) -> SynResult<Vec<SyntaxToken>> {
     let mut tokens = Vec::new();
     
@@ -1275,81 +1251,21 @@ fn parse_syntax_pattern(input: ParseStream) -> SynResult<Vec<SyntaxToken>> {
             }
         }
         
-        // Parse the next token
-        // First check for Rust keywords (like `for`) and store as Keyword
-        if let Some(kw_token) = try_parse_keyword(input) {
-            tokens.push(kw_token);
-        } else if input.peek(Ident) {
+        // Parse the next token - only identifiers and string literals allowed
+        if input.peek(Ident) {
+            // Parameter reference
             tokens.push(SyntaxToken::Ident(input.parse::<Ident>()?));
         } else if input.peek(syn::LitStr) {
+            // Quoted literal (keyword, punctuation, operator)
             let lit = input.parse::<syn::LitStr>()?;
             tokens.push(SyntaxToken::Literal(lit.value()));
-        } else if input.peek(syn::token::Paren) {
-            // Handle parentheses as separate tokens
-            let content;
-            syn::parenthesized!(content in input);
-            tokens.push(SyntaxToken::Punct('('));
-            tokens.extend(parse_syntax_pattern_inner(&content)?);
-            tokens.push(SyntaxToken::Punct(')'));
-        } else if input.peek(syn::token::Brace) {
-            // Handle braces as separate tokens
-            let content;
-            syn::braced!(content in input);
-            tokens.push(SyntaxToken::Punct('{'));
-            tokens.extend(parse_syntax_pattern_inner(&content)?);
-            tokens.push(SyntaxToken::Punct('}'));
-        } else if input.peek(syn::token::Bracket) {
-            // Handle brackets as separate tokens
-            let content;
-            syn::bracketed!(content in input);
-            tokens.push(SyntaxToken::Punct('['));
-            tokens.extend(parse_syntax_pattern_inner(&content)?);
-            tokens.push(SyntaxToken::Punct(']'));
         } else {
-            // Try to parse as punctuation using proc_macro2
-            let punct = input.parse::<proc_macro2::Punct>()?;
-            tokens.push(SyntaxToken::Punct(punct.as_char()));
-        }
-    }
-    
-    Ok(tokens)
-}
-
-/// Parse syntax pattern inside delimiters (no end detection needed)
-fn parse_syntax_pattern_inner(input: ParseStream) -> SynResult<Vec<SyntaxToken>> {
-    let mut tokens = Vec::new();
-    
-    while !input.is_empty() {
-        // First check for Rust keywords (like `for`) and store as Keyword
-        if let Some(kw_token) = try_parse_keyword(input) {
-            tokens.push(kw_token);
-        } else if input.peek(Ident) {
-            tokens.push(SyntaxToken::Ident(input.parse::<Ident>()?));
-        } else if input.peek(syn::LitStr) {
-            let lit = input.parse::<syn::LitStr>()?;
-            tokens.push(SyntaxToken::Literal(lit.value()));
-        } else if input.peek(syn::token::Paren) {
-            let content;
-            syn::parenthesized!(content in input);
-            tokens.push(SyntaxToken::Punct('('));
-            tokens.extend(parse_syntax_pattern_inner(&content)?);
-            tokens.push(SyntaxToken::Punct(')'));
-        } else if input.peek(syn::token::Brace) {
-            let content;
-            syn::braced!(content in input);
-            tokens.push(SyntaxToken::Punct('{'));
-            tokens.extend(parse_syntax_pattern_inner(&content)?);
-            tokens.push(SyntaxToken::Punct('}'));
-        } else if input.peek(syn::token::Bracket) {
-            let content;
-            syn::bracketed!(content in input);
-            tokens.push(SyntaxToken::Punct('['));
-            tokens.extend(parse_syntax_pattern_inner(&content)?);
-            tokens.push(SyntaxToken::Punct(']'));
-        } else {
-            // Try to parse as punctuation using proc_macro2
-            let punct = input.parse::<proc_macro2::Punct>()?;
-            tokens.push(SyntaxToken::Punct(punct.as_char()));
+            // Unexpected token - provide helpful error message
+            return Err(syn::Error::new(
+                input.span(),
+                "Expected parameter reference (identifier) or quoted literal (string). \
+                 All syntax literals must be quoted, e.g.: \"for\" \"(\" x \"<-\" n \")\" \"{\" p \"}\""
+            ));
         }
     }
     

@@ -1007,14 +1007,13 @@ mod tests {
 
     #[test]
     fn parse_new_syntax_abstraction() {
-        // Abstraction: n:Name, ^x.p:[Name -> Proc] |- input(x, n){p} : Proc ;
-        // Using `input` instead of `for` to avoid Rust keyword issue
-        // In actual usage, LALRPOP will handle the `for` keyword
+        // Abstraction: n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
+        // All syntax literals must be quoted strings; only parameter references are unquoted
         let input = quote! {
             name: TestAbs,
             exports { Proc Name }
             terms {
-                PInput . n:Name, ^x.p:[Name -> Proc] |- input(x, n){p} : Proc ;
+                PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
             }
         };
 
@@ -1057,19 +1056,28 @@ mod tests {
         
         // Check syntax pattern
         let pattern = rule.syntax_pattern.as_ref().unwrap();
-        // Should have: for ( x < - n ) { p }
-        assert!(!pattern.is_empty());
+        // Should have: Literal("for"), Literal("("), Ident(x), Literal("<-"), Ident(n), Literal(")"), Literal("{"), Ident(p), Literal("}")
+        assert_eq!(pattern.len(), 9, "Pattern should have 9 tokens");
+        assert!(matches!(&pattern[0], SyntaxToken::Literal(s) if s == "for"));
+        assert!(matches!(&pattern[1], SyntaxToken::Literal(s) if s == "("));
+        assert!(matches!(&pattern[2], SyntaxToken::Ident(id) if id == "x"));
+        assert!(matches!(&pattern[3], SyntaxToken::Literal(s) if s == "<-"));
+        assert!(matches!(&pattern[4], SyntaxToken::Ident(id) if id == "n"));
+        assert!(matches!(&pattern[5], SyntaxToken::Literal(s) if s == ")"));
+        assert!(matches!(&pattern[6], SyntaxToken::Literal(s) if s == "{"));
+        assert!(matches!(&pattern[7], SyntaxToken::Ident(id) if id == "p"));
+        assert!(matches!(&pattern[8], SyntaxToken::Literal(s) if s == "}"));
     }
 
     #[test]
     fn parse_new_syntax_multi_abstraction() {
         // Multi-binder: ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- ...
-        // Using `inputs` instead of `for` to avoid Rust keyword issue
+        // All syntax literals must be quoted strings
         let input = quote! {
             name: TestMulti,
             exports { Proc Name }
             terms {
-                PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- inputs(xs, ns){p} : Proc ;
+                PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "inputs" "(" xs "," ns ")" "{" p "}" : Proc ;
             }
         };
 
@@ -1140,13 +1148,13 @@ mod tests {
     #[test]
     fn parse_mixed_syntax() {
         // Mix of old and new syntax
-        // Using `input` instead of `for` to avoid Rust keyword issue
+        // All syntax literals must be quoted strings
         let input = quote! {
             name: TestMixed,
             exports { Proc Name }
             terms {
                 PZero . Proc ::= "0" ;
-                PInput . n:Name, ^x.p:[Name -> Proc] |- input(x, n){p} : Proc ;
+                PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
             }
         };
 
@@ -1169,11 +1177,12 @@ mod tests {
     #[test]
     fn test_syntax_pattern_content() {
         // Verify the syntax pattern is captured correctly
+        // All syntax literals must be quoted strings
         let input = quote! {
             name: TestPattern,
             exports { Proc Name }
             terms {
-                PInput . n:Name, ^x.p:[Name -> Proc] |- input(x, n){p} : Proc ;
+                PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
             }
         };
 
@@ -1185,19 +1194,31 @@ mod tests {
         
         let pattern = rule.syntax_pattern.as_ref().unwrap();
         
-        // Pattern should be: input ( x , n ) { p }
-        // Find identifiers in the pattern
-        let idents: Vec<_> = pattern.iter()
+        // Pattern should be: Literal("for"), Literal("("), Ident(x), Literal("<-"), Ident(n), ...
+        // Find parameter references (unquoted identifiers) in the pattern
+        let param_refs: Vec<_> = pattern.iter()
             .filter_map(|t| match t {
                 SyntaxToken::Ident(id) => Some(id.to_string()),
                 _ => None,
             })
             .collect();
         
-        assert!(idents.contains(&"input".to_string()), "Should contain 'input'");
-        assert!(idents.contains(&"x".to_string()), "Should contain 'x'");
-        assert!(idents.contains(&"n".to_string()), "Should contain 'n'");
-        assert!(idents.contains(&"p".to_string()), "Should contain 'p'");
+        // Only parameter references should be Ident tokens (not "for" which is now Literal)
+        assert!(param_refs.contains(&"x".to_string()), "Should contain param 'x'");
+        assert!(param_refs.contains(&"n".to_string()), "Should contain param 'n'");
+        assert!(param_refs.contains(&"p".to_string()), "Should contain param 'p'");
+        assert!(!param_refs.contains(&"for".to_string()), "'for' should be Literal, not Ident");
+        
+        // Find literals in the pattern
+        let literals: Vec<_> = pattern.iter()
+            .filter_map(|t| match t {
+                SyntaxToken::Literal(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+        
+        assert!(literals.contains(&"for".to_string()), "Should contain literal 'for'");
+        assert!(literals.contains(&"<-".to_string()), "Should contain literal '<-'");
     }
 
     // =========================================================================
@@ -1208,12 +1229,13 @@ mod tests {
     fn test_lalrpop_generation_with_new_syntax() {
         use crate::codegen::parser::generate_lalrpop_grammar;
         
+        // All syntax literals must be quoted strings
         let input = quote! {
             name: TestGrammar,
             exports { Proc Name }
             terms {
                 PZero . Proc ::= "0" ;
-                PInput . n:Name, ^x.p:[Name -> Proc] |- input(x, n){p} : Proc ;
+                PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
             }
         };
 
@@ -1226,7 +1248,8 @@ mod tests {
         println!("Generated Grammar:\n{}", grammar);
         
         // Verify the grammar contains the expected elements
-        assert!(grammar.contains("\"input\""), "Grammar should contain 'input' literal");
+        assert!(grammar.contains("\"for\""), "Grammar should contain 'for' literal");
+        assert!(grammar.contains("\"<-\""), "Grammar should contain '<-' literal");
         assert!(grammar.contains("<n:Name>") || grammar.contains("<n: Name>"), 
                 "Grammar should capture 'n' as Name");
         assert!(grammar.contains("<x:Ident>") || grammar.contains("<x: Ident>"), 
@@ -1234,39 +1257,5 @@ mod tests {
         assert!(grammar.contains("<p:Proc>") || grammar.contains("<p: Proc>"), 
                 "Grammar should capture body 'p' as Proc");
         assert!(grammar.contains("Scope"), "Grammar should create Scope for binding");
-    }
-
-    #[test]
-    fn test_for_keyword_in_syntax_pattern() {
-        use crate::codegen::parser::generate_lalrpop_grammar;
-        
-        // Test that 'for' keyword is handled correctly in theory! macro
-        // This simulates what happens when parsing: for(x<-n){p}
-        let input = quote! {
-            name: TestFor,
-            exports { Proc Name }
-            terms {
-                PInput . n:Name, ^x.p:[Name -> Proc] |- for(x <- n){p} : Proc ;
-            }
-        };
-
-        let result = parse2::<TheoryDef>(input);
-        assert!(result.is_ok(), "Parse with 'for' keyword failed: {:?}", result.err());
-
-        let theory = result.unwrap();
-        let rule = &theory.terms[0];
-        
-        // Verify 'for' is captured in the syntax pattern as Keyword
-        let pattern = rule.syntax_pattern.as_ref().unwrap();
-        let has_for = pattern.iter().any(|t| {
-            matches!(t, SyntaxToken::Keyword(kw) if kw == "for")
-        });
-        assert!(has_for, "Syntax pattern should contain 'for' as Keyword");
-        
-        // Generate grammar and verify
-        let grammar = generate_lalrpop_grammar(&theory);
-        println!("Generated Grammar with 'for':\n{}", grammar);
-        
-        assert!(grammar.contains("\"for\""), "Grammar should contain 'for' as literal");
     }
 }
