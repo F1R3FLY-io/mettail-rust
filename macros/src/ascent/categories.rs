@@ -49,6 +49,8 @@ pub fn generate_category_rules(theory: &TheoryDef) -> TokenStream {
 
 /// Generate deconstruction rules for a category
 fn generate_deconstruction_rules(category: &Ident, theory: &TheoryDef) -> Vec<TokenStream> {
+    use crate::codegen::has_assign_rule;
+
     let mut rules = Vec::new();
 
     // Find all constructors for this category
@@ -62,6 +64,23 @@ fn generate_deconstruction_rules(category: &Ident, theory: &TheoryDef) -> Vec<To
         if let Some(rule) = generate_deconstruction_for_constructor(category, constructor, theory) {
             rules.push(rule);
         }
+    }
+
+    // Generate deconstruction rule for auto-generated Assign constructor
+    // Assign has form: Assign(OrdVar, Box<Category>)
+    // We need to extract the RHS (Box<Category>) and add it to the category relation
+    // Generate for all exported categories that don't have explicit Assign rules
+    let has_assign = has_assign_rule(category, theory);
+    let is_exported = theory.exports.iter().any(|e| e.name == *category);
+
+    if !has_assign && is_exported {
+        let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
+        // Extract RHS from Assign and add it to category relation
+        rules.push(quote! {
+            #cat_lower(rhs.as_ref().clone()) <--
+                #cat_lower(t),
+                if let #category::Assign(_, rhs) = t;
+        });
     }
 
     rules

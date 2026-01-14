@@ -137,7 +137,7 @@ fn generate_random_depth_0(
             if let GrammarItem::NonTerminal(nt) = non_terminals[0] {
                 let nt_str = nt.to_string();
                 if nt_str == "Var" {
-                    // VarRef or other Var rules - generate variables
+                    // Var rules - generate variables
                     cases.push(quote! {
                         if !vars.is_empty() {
                             let idx = rng.gen_range(0..vars.len());

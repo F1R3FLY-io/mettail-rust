@@ -17,7 +17,11 @@
 //! 3. **Equation Rules**: Add reflexivity, congruence, and user-defined equalities
 //! 4. **Rewrite Rules**: Base rewrites + congruence rules (propagate through constructors)
 
-use crate::{ast::TheoryDef, utils::print_rule};
+use crate::{
+    ast::TheoryDef,
+    codegen::{generate_literal_label, generate_var_label, is_var_rule},
+    utils::print_rule,
+};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
@@ -151,6 +155,7 @@ fn format_rule(line: &str) -> String {
 /// - **Collection congruences**: If S => T, then {S, ...} => {T, ...}
 /// - **Regular congruences**: If S => T, then Constructor(S) => Constructor(T)
 /// - **Binding congruences**: If S => T, then (new x.S) => (new x.T)
+/// - **Auto variable retrieval**: if env_var(x, v) then (Var x) => v (for all categories)
 pub fn generate_rewrite_rules(theory: &TheoryDef) -> TokenStream {
     let mut rules = Vec::new();
 
@@ -193,6 +198,14 @@ pub fn generate_rewrite_rules(theory: &TheoryDef) -> TokenStream {
             }
         }
     }
+
+    // Generate automatic variable retrieval rewrite rules for all categories
+    let auto_var_rules = generate_automatic_var_retrieval_rules(theory);
+    rules.extend(auto_var_rules);
+
+    // Generate automatic Assign congruence rules
+    let auto_assign_cong_rules = generate_automatic_assign_congruence_rules(theory);
+    rules.extend(auto_assign_cong_rules);
 
     quote! {
         #(#rules)*
@@ -259,6 +272,113 @@ fn generate_semantic_rules(theory: &TheoryDef) -> Vec<TokenStream> {
                 });
             }
         }
+    }
+
+    rules
+}
+
+/// Generate automatic variable retrieval rewrite rules for all categories
+/// For native types: if env_var(x, v) then (Var x) => (NumLit v)
+/// For custom types: if env_var(x, v) then (PVar x) => v
+fn generate_automatic_var_retrieval_rules(theory: &TheoryDef) -> Vec<TokenStream> {
+    use crate::codegen::is_integer_rule;
+
+    let mut rules = Vec::new();
+
+    for export in &theory.exports {
+        let category = &export.name;
+        let cat_str = category.to_string();
+        let cat_lower = format_ident!("{}", cat_str.to_lowercase());
+        let rw_rel = format_ident!("rw_{}", cat_str.to_lowercase());
+        let env_rel_name = format_ident!("env_var_{}", cat_str.to_lowercase());
+
+        // Var variants are now auto-generated for ALL categories (native and non-native)
+        // So we should always generate variable retrieval rules
+
+        // Use the explicit Var rule label if it exists, otherwise use auto-generated label
+        let var_label = theory
+            .terms
+            .iter()
+            .find(|rule| rule.category == *category && is_var_rule(rule))
+            .map(|rule| rule.label.clone())
+            .unwrap_or_else(|| generate_var_label(category));
+
+        if let Some(native_type) = &export.native_type {
+            // Native type: if env_var(x, v) then (Var x) => (NumLit v)
+            // Find the NumLit/Integer rule (explicit or auto-generated)
+            let integer_rule = theory
+                .terms
+                .iter()
+                .find(|rule| rule.category == *category && is_integer_rule(rule));
+
+            // Use explicit rule label if found, otherwise use auto-generated label
+            let num_lit_label = if let Some(integer_rule) = integer_rule {
+                integer_rule.label.clone()
+            } else {
+                generate_literal_label(native_type)
+            };
+
+            // Generate: if env_var(x, v) then (Var x) => (NumLit v)
+            // v is the native type (e.g., i32) from env_var relation (bound as reference in Ascent)
+            rules.push(quote! {
+                #rw_rel(s, t) <--
+                    #cat_lower(s),
+                    if let #category::#var_label(ord_var) = s,
+                    if let Some(var_name) = match ord_var {
+                        mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
+                            fv.pretty_name.clone()
+                        }
+                        _ => None
+                    },
+                    #env_rel_name(var_name, v),
+                    let t = #category::#num_lit_label(*v);
+            });
+        } else {
+            // Custom type: if env_var(x, v) then (PVar x) => v
+            // v is the category type (e.g., Proc) from env_var relation
+            rules.push(quote! {
+                #rw_rel(s, t) <--
+                    #cat_lower(s),
+                    if let #category::#var_label(ord_var) = s,
+                    if let Some(var_name) = match ord_var {
+                        mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
+                            fv.pretty_name.clone()
+                        }
+                        _ => None
+                    },
+                    #env_rel_name(var_name, v),
+                    let t = v.clone();
+            });
+        }
+    }
+
+    rules
+}
+
+/// Generate automatic congruence rules for Assign constructors
+/// if S => T then (Assign x S) => (Assign x T)
+fn generate_automatic_assign_congruence_rules(theory: &TheoryDef) -> Vec<TokenStream> {
+    let mut rules = Vec::new();
+
+    for export in &theory.exports {
+        let category = &export.name;
+        let cat_str = category.to_string();
+
+        // Assign is now always auto-generated for all categories (except those referenced by others)
+        // So we always generate congruence rules for it
+        // (No need to check has_assign_rule since we auto-generate it)
+
+        let cat_lower = format_ident!("{}", cat_str.to_lowercase());
+        let rw_rel = format_ident!("rw_{}", cat_str.to_lowercase());
+
+        // Generate congruence rule: if S => T then (Assign x S) => (Assign x T)
+        rules.push(quote! {
+            #rw_rel(assign_s, assign_t) <--
+                #cat_lower(assign_s),
+                if let #category::Assign(x, s) = assign_s,
+                #rw_rel((**s).clone(), t),
+                let assign_t = #category::Assign(x.clone(), Box::new(t.clone()));
+        });
     }
 
     rules

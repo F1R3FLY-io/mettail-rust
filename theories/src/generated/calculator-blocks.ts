@@ -5,40 +5,6 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
-	// Var Ref: ...
-	{
-		type: "int_var_ref",
-		tooltip: "Var Ref: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "field_input",
-				name: "VAR",
-				text: "v",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Num Lit: ...
-	{
-		type: "int_num_lit",
-		tooltip: "Num Lit: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Integer",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
 	// Add: ... + ...
 	{
 		type: "int_add",
@@ -71,28 +37,6 @@ const definitions = [
 				type: "input_value",
 				name: "ARG1",
 				check: "Int",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Assign: ... = ...
-	{
-		type: "int_assign",
-		tooltip: "Assign: ... = ...",
-		message0: "%1 = %2",
-		args0: [
-			{
-				type: "field_input",
-				name: "VAR",
-				text: "v",
 			},
 			{
 				type: "input_value",

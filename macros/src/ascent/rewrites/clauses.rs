@@ -168,8 +168,8 @@ fn generate_rewrite_clause(rule: &RewriteRule, theory: &TheoryDef) -> TokenStrea
             },
             crate::ast::Condition::EnvQuery { relation, args } => {
                 // Generate Ascent clause that queries the environment relation
-                // Example: if env_var(x, v) then (VarRef x) => (NumLit v)
-                // Pattern: (VarRef x) binds x to OrdVar
+                // Example: if env_var(x, v) then (Var x) => (NumLit v)
+                // Pattern: (Var x) binds x to OrdVar
                 // Condition: env_var(x, v) means query env_var with x's name, bind v to the value
                 // RHS: (NumLit v) uses v which is bound from the query
 
@@ -205,10 +205,20 @@ fn generate_rewrite_clause(rule: &RewriteRule, theory: &TheoryDef) -> TokenStrea
                 // Generate clause: env_var(var_name, val) where:
                 // - var_name is extracted from the OrdVar (x binding)
                 // - val is bound from the query and will be used in RHS as v
+                // Map generic "env_var" to category-specific relation name (e.g., env_var_proc)
+                let relation_ident = if relation.to_string() == "env_var" {
+                    // Use category-specific relation name for automatic env_var
+                    let cat_lower_str = category.to_string().to_lowercase();
+                    format_ident!("env_var_{}", cat_lower_str)
+                } else {
+                    // User-defined relation names are used as-is
+                    relation.clone()
+                };
+
                 let val_binding_name = format_ident!("{}", val_arg.to_string());
                 clauses.push(quote! {
                     if let Some(var_name) = #var_name_extraction,
-                    #relation(var_name, #val_binding_name)
+                    #relation_ident(var_name, #val_binding_name)
                 });
 
                 // Add val_binding to bindings so RHS can use it

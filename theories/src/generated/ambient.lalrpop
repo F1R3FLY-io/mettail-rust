@@ -11,6 +11,7 @@ Ident: String = {
 };
 
 pub Proc: Proc = {
+    <v:Ident> "=" <expr:Proc> => Proc::Assign(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))), Box::new(expr)),
     "0" => Proc::PZero,
     "in(" <f0:Name> "," <f1:Proc> ")" => Proc::PIn(Box::new(f0), Box::new(f1)),
     "out(" <f0:Name> "," <f1:Proc> ")" => Proc::POut(Box::new(f0), Box::new(f1)),
@@ -37,10 +38,8 @@ pub Proc: Proc = {
         }
         Proc::PPar(coll)
     },
-    <v:Ident> => Proc::PVar(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))
-};
+    <v:Ident> => Proc::PVar(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))};
 
 pub Name: Name = {
-    <v:Ident> => Name::NVar(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))
-};
+    <v:Ident> => Name::NVar(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))};
 

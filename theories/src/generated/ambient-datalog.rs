@@ -20,6 +20,10 @@ relation rw_name(Name, Name);
 
 relation ppar_contains(Proc, Proc);
 
+relation env_var_proc(String, Proc);
+
+relation env_var_name(String, Name);
+
 
     // Category rules
 proc(c1) <--
@@ -51,6 +55,10 @@ proc(body_value) <--
     if let Proc :: PNew(scope) = t,
     let body_value = scope.inner().unsafe_body.as_ref().clone();
 
+proc(rhs.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: Assign(_, rhs) = t;
+
 ppar_contains(parent.clone(), elem.clone()) <--
     proc(parent),
     if let Proc :: PPar(ref bag_field) = parent,
@@ -62,6 +70,10 @@ proc(elem) <--
 name(c1) <--
     name(c0),
     rw_name(c0, c1);
+
+name(rhs.as_ref().clone()) <--
+    name(t),
+    if let Name :: Assign(_, rhs) = t;
 
 
     // Equation rules
@@ -188,6 +200,7 @@ eq_proc(p0, p1) <--
     let n = p0_f0_val.clone(),
     let p = body_1.clone(),
     let x = binder_1.clone(),
+    let n = p0_f0_val.clone(),
     if is_fresh(& x, & p),
     let p1 = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(x.clone(), Box :: new(Proc :: PAmb(Box :: new(n.clone()), Box :: new(p.clone())))))).normalize();
 
@@ -416,6 +429,20 @@ Proc :: insert_into_ppar(& mut bag, rewritten);
 
 bag }).normalize();
 
+rw_proc(parent, result) <--
+    ppar_contains(parent, elem),
+    rw_proc(elem.clone(), elem_rewritten),
+    if let Proc :: PPar(ref bag) = parent,
+    let remaining = { let mut b = bag.clone();
+
+b.remove(& elem);
+
+b }, let result = Proc :: PPar({ let mut bag_result = remaining;
+
+Proc :: insert_into_ppar(& mut bag_result, elem_rewritten.clone());
+
+bag_result }).normalize();
+
 relation pnew_direct_congruence_proj(Proc, mettail_runtime :: Binder < String > , Proc);
 
 pnew_direct_congruence_proj(parent, binder_var, body) <--
@@ -435,5 +462,31 @@ rw_proc(s, t) <--
     if let Proc :: PAmb(n, s0) = s,
     rw_proc(* * s0, t0),
     let t = Proc :: PAmb(n.clone(), Box :: new(t0.clone()));
+
+rw_proc(s, t) <--
+    proc(s),
+    if let Proc :: PVar(ord_var) = s,
+    if let Some(var_name) = match ord_var { mettail_runtime :: OrdVar(mettail_runtime :: Var :: Free(ref fv)) => { fv.pretty_name.clone() } _ => None },
+    env_var_proc(var_name, v),
+    let t = v.clone();
+
+rw_name(s, t) <--
+    name(s),
+    if let Name :: NVar(ord_var) = s,
+    if let Some(var_name) = match ord_var { mettail_runtime :: OrdVar(mettail_runtime :: Var :: Free(ref fv)) => { fv.pretty_name.clone() } _ => None },
+    env_var_name(var_name, v),
+    let t = v.clone();
+
+rw_proc(assign_s, assign_t) <--
+    proc(assign_s),
+    if let Proc :: Assign(x, s) = assign_s,
+    rw_proc((* * s).clone(), t),
+    let assign_t = Proc :: Assign(x.clone(), Box :: new(t.clone()));
+
+rw_name(assign_s, assign_t) <--
+    name(assign_s),
+    if let Name :: Assign(x, s) = assign_s,
+    rw_name((* * s).clone(), t),
+    let assign_t = Name :: Assign(x.clone(), Box :: new(t.clone()));
 
 }

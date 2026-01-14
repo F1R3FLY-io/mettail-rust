@@ -1,7 +1,11 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use super::{display, generate_var_label, is_integer_rule, is_var_rule, subst, termgen};
+use super::{
+    display, generate_literal_label, generate_var_label, has_assign_rule, is_integer_rule,
+    is_var_rule, subst, termgen,
+};
 use crate::ast::{BuiltinOp, GrammarItem, GrammarRule, TheoryDef};
+use crate::utils::has_native_type;
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -77,22 +81,40 @@ fn generate_ast_enums(theory: &TheoryDef) -> TokenStream {
 
         // Check if there's already a Var rule
         let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
+        // Check if there's already an Integer/literal rule
+        let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
 
         let mut variants: Vec<TokenStream> = rules.iter().map(|rule| {
             generate_variant(rule, theory)
         }).collect();
 
-        // For native types, we don't add a Var variant (native types don't use variables)
-        // Instead, we'll handle native literals in the parser
-        if !has_var_rule {
-            // Only add Var variant if this is NOT a native type
-            if export.native_type.is_none() {
-                let var_label = generate_var_label(cat_name);
+        // Auto-generate literal variant for native types (if not explicitly declared)
+        if let Some(native_type) = has_native_type(cat_name, theory) {
+            if !has_integer_rule {
+                let literal_label = generate_literal_label(native_type);
+                let native_type_cloned = native_type.clone();
 
                 variants.push(quote! {
-                    #var_label(mettail_runtime::OrdVar)
+                    #literal_label(#native_type_cloned)
                 });
             }
+        }
+
+        // Auto-generate Var variant for ALL categories (native and non-native)
+        if !has_var_rule {
+            let var_label = generate_var_label(cat_name);
+
+            variants.push(quote! {
+                #var_label(mettail_runtime::OrdVar)
+            });
+        }
+
+        // Automatically add Assign variant if it doesn't already exist
+        let has_assign = has_assign_rule(cat_name, theory);
+        if !has_assign {
+            variants.push(quote! {
+                Assign(mettail_runtime::OrdVar, Box<#cat_name>)
+            });
         }
 
         quote! {
@@ -592,6 +614,17 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
         // Generate match arms
         let mut match_arms = Vec::new();
 
+        // Check if there's an auto-generated literal (for native types without explicit Integer rule)
+        let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+        if let Some(native_type) = has_native_type(category, theory) {
+            if !has_integer_rule {
+                let literal_label = generate_literal_label(native_type);
+                match_arms.push(quote! {
+                    #category::#literal_label(n) => *n,
+                });
+            }
+        }
+
         for rule in &rules {
             let label = &rule.label;
             let label_str = label.to_string();
@@ -602,7 +635,7 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
                     #category::#label(n) => *n,
                 });
             }
-            // Check if this is a Var rule (VarRef, etc.)
+            // Check if this is a Var rule (auto-generated or explicit)
             else if is_var_rule(rule) {
                 // Use loop { panic!() } idiom for proper `!` type handling in quote!
                 let panic_msg = format!(
@@ -742,13 +775,15 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                 .filter(|r| r.category.to_string() == category_str)
                 .collect();
 
-            // Find VarRef rule and Integer rule for the rewrite
-            // Look for any Var rule (not just "VarRef" - could be any name)
+            // Find Var rule and Integer/literal rule for the rewrite
+            // Look for any Var rule (auto-generated or explicit)
             let var_ref_rule = category_rules.iter().find(|r| is_var_rule(r));
             // Integer rule is the one that uses Integer keyword (for native type literals)
+            // Or use auto-generated literal label if no explicit rule
             let integer_rule = category_rules.iter().find(|r| is_integer_rule(r));
-
-            let integer_label = integer_rule.map(|r| &r.label);
+            let integer_label = integer_rule
+                .map(|rule| rule.label.clone())
+                .or_else(|| has_native_type(category, theory).map(generate_literal_label));
 
             // Generate match arms for all constructors
             let mut match_arms: Vec<TokenStream> = Vec::new();
@@ -758,13 +793,13 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                 let label = &rule.label;
                 let label_str = label.to_string();
 
-                // Check if this is VarRef - apply rewrite
+                // Check if this is a Var rule - apply rewrite
                 let is_var_ref = var_ref_rule
                     .map(|vr| vr.label.to_string() == label_str)
                     .unwrap_or(false);
 
                 if is_var_ref {
-                    if let Some(int_label) = integer_label {
+                    if let Some(ref int_label) = integer_label {
                         match_arms.push(quote! {
                             #category::#label(ord_var) => {
                                 let var_name: &str = match ord_var {
@@ -846,7 +881,7 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                 }
             }
 
-            // Ensure we have at least some match arms (should always have VarRef and NumLit at minimum)
+            // Ensure we have at least some match arms (should always have Var and NumLit at minimum)
             if match_arms.is_empty() {
                 return quote! {
                     compile_error!("No match arms generated for category with env_var rewrites");
@@ -859,7 +894,7 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                     /// Apply rewrites using environment facts.
                     /// Returns the normal form (most reduced term) after applying all rewrites.
                     ///
-                    /// Implements the rewrite rule: if env_var(x, v) then (VarRef x) => (NumLit v)
+                    /// Implements the rewrite rule: if env_var(x, v) then (Var x) => (NumLit v)
                     pub fn apply_rewrites_with_facts<I>(&self, facts: I) -> Result<#category, String>
                     where
                         I: IntoIterator<Item = (String, i32)>,
@@ -873,8 +908,8 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                     }
 
                     /// Recursively substitute variables using environment facts
-                    /// Implements the rewrite rule: if env_var(x, v) then (VarRef x) => (NumLit v)
-                    fn substitute_vars_recursive(term: &#category, env: &HashMap<String, i32>) -> Result<#category, String> {
+                    /// Implements the rewrite rule: if env_var(x, v) then (Var x) => (NumLit v)
+                    fn substitute_vars_recursive(term: &#category, env: &std::collections::HashMap<String, i32>) -> Result<#category, String> {
                         match term {
                             #(#match_arms),*
                         }
@@ -890,134 +925,67 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
     }
 }
 
-/// Generate environment infrastructure for theories with env_var conditions
+/// Generate environment infrastructure for all theories
 ///
-/// This generates:
-/// - Environment struct (e.g., CalculatorEnv)
+/// This generates environment structs for ALL exported categories (automatically):
+/// - Environment struct (e.g., CalculatorIntEnv, RhoCalcProcEnv)
 /// - Environment methods (new, set, get, clear)
 /// - env_to_facts helper function
-/// - rewrite_to_normal_form helper function
+///
+/// This enables automatic assignment and variable retrieval for every category.
 fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
-    use crate::ast::Condition;
     use quote::format_ident;
-    use std::collections::HashSet;
 
-    // Check if any rewrite uses env_var conditions OR env_actions
-    let mut env_info = Vec::new();
-    let mut seen_relations = HashSet::new();
-    let mut has_env_actions = false;
-
-    for rewrite in &theory.rewrites {
-        // Check for env_actions (fact creation)
-        if !rewrite.env_actions.is_empty() {
-            has_env_actions = true;
-        }
-
-        for condition in &rewrite.conditions {
-            if let Condition::EnvQuery { relation, args } = condition {
-                if args.len() >= 2 {
-                    let rel_name = relation.to_string();
-
-                    // Avoid duplicates
-                    if seen_relations.contains(&rel_name) {
-                        continue;
-                    }
-                    seen_relations.insert(rel_name.clone());
-
-                    // Extract category and native type from the rewrite
-                    let category = extract_category_from_rewrite_internal(rewrite, theory);
-                    if let Some(category) = category {
-                        if let Some(export) = theory.exports.iter().find(|e| e.name == category) {
-                            if let Some(native_type) = &export.native_type {
-                                env_info.push((
-                                    category.clone(),
-                                    native_type.clone(),
-                                    relation.clone(),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Also check env_actions for relations
-    if has_env_actions {
-        for rewrite in &theory.rewrites {
-            for action in &rewrite.env_actions {
-                let crate::ast::EnvAction::CreateFact { relation, .. } = action;
-                let rel_name = relation.to_string();
-                if !seen_relations.contains(&rel_name) {
-                    seen_relations.insert(rel_name.clone());
-                    // Extract category and native type from the rewrite
-                    let category = extract_category_from_rewrite_internal(rewrite, theory);
-                    if let Some(category) = category {
-                        if let Some(export) = theory.exports.iter().find(|e| e.name == category) {
-                            if let Some(native_type) = &export.native_type {
-                                env_info.push((
-                                    category.clone(),
-                                    native_type.clone(),
-                                    relation.clone(),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if env_info.is_empty() {
-        return quote! {};
-    }
-
-    // Generate environment infrastructure for each (category, native_type, relation) tuple
-    // Currently we only support one env relation per theory, but the structure allows extension
+    // Generate environment infrastructure for each exported category
+    // Simply use the category name directly - no need to worry about native vs custom types
     let mut env_structs = Vec::new();
 
-    for (category, native_type, relation) in &env_info {
+    for export in &theory.exports {
+        let category = &export.name;
         let theory_name = &theory.name;
-        let env_name = format_ident!("{}Env", theory_name);
-        let theory_name_lower = theory_name.to_string().to_lowercase();
-        let source_name = format_ident!("{}_source", theory_name_lower);
-        let cat_lower = category.to_string().to_lowercase();
-        let rw_rel = format_ident!("rw_{}", cat_lower);
-        let cat_rel = format_ident!("{}", cat_lower);
-        let category_clone = category.clone();
-        let native_type_clone = native_type.clone();
-        let relation_clone = relation.clone();
+        // Generate environment struct name: TheoryNameCategoryEnv
+        // e.g., CalculatorIntEnv, RhoCalcProcEnv
+        let env_name = format_ident!("{}{}Env", theory_name, category);
+
+        // Use category name directly - works for both native and custom types
+        // For native types like Int = ![i32], Rust will use the type alias correctly
+        // For custom types like Proc, it uses the enum type
+        let value_type = category.clone();
 
         env_structs.push(quote! {
-            use std::collections::HashMap;
-
             /// Environment for storing variable bindings
             #[derive(Debug, Clone)]
             pub struct #env_name {
-                vars: HashMap<String, #native_type_clone>,
+                vars: std::collections::HashMap<String, #value_type>,
             }
 
             impl #env_name {
                 /// Create a new empty environment
                 pub fn new() -> Self {
                     #env_name {
-                        vars: HashMap::new(),
+                        vars: std::collections::HashMap::new(),
                     }
                 }
 
                 /// Store a variable binding
-                pub fn set(&mut self, name: String, value: #native_type_clone) {
+                pub fn set(&mut self, name: String, value: #value_type) {
                     self.vars.insert(name, value);
                 }
 
                 /// Look up a variable value
-                pub fn get(&self, name: &str) -> Option<#native_type_clone> {
-                    self.vars.get(name).copied()
+                pub fn get(&self, name: &str) -> Option<#value_type> {
+                    self.vars.get(name).cloned()
                 }
 
                 /// Clear all bindings
                 pub fn clear(&mut self) {
                     self.vars.clear();
+                }
+
+                /// Convert environment to Ascent input facts
+                /// Returns a vector of (variable_name, value) tuples
+                pub fn env_to_facts(&self) -> Vec<(String, #value_type)> {
+                    self.vars.iter().map(|(name, val)| (name.clone(), val.clone())).collect()
                 }
             }
 
@@ -1026,237 +994,281 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
                     Self::new()
                 }
             }
-
-            /// Convert environment to Ascent input facts
-            /// Returns a vector of (variable_name, value) tuples for the #relation_clone relation
-            pub fn env_to_facts(env: &#env_name) -> Vec<(String, #native_type_clone)> {
-                env.vars.iter().map(|(name, val)| (name.clone(), *val)).collect()
-            }
-
-            /// Use Ascent to rewrite a term to normal form with environment
-            pub fn rewrite_to_normal_form(term: #category_clone, env: &#env_name) -> Result<#category_clone, String> {
-                use ascent::*;
-
-                let env_facts = env_to_facts(env);
-
-                // Run Ascent - seed #relation facts using a rule that iterates over the collection
-                let prog = ascent_run! {
-                    include_source!(#source_name);
-
-                    #cat_rel(term.clone());
-
-                    // Seed environment facts from the vector
-                    #relation_clone(n.clone(), v) <-- for (n, v) in env_facts.clone();
-                };
-
-                // Find normal form (term with no outgoing rewrites)
-                let rewrites: Vec<(#category_clone, #category_clone)> = prog.#rw_rel
-                    .iter()
-                    .map(|(from, to)| (from.clone(), to.clone()))
-                    .collect();
-
-                // Start from initial term and follow rewrite chain to normal form
-                let mut current = term;
-                loop {
-                    // Find rewrite from current term
-                    if let Some((_, next)) = rewrites.iter().find(|(from, _)| from == &current) {
-                        current = next.clone();
-                    } else {
-                        // No more rewrites - this is the normal form
-                        break;
-                    }
-                }
-
-                Ok(current)
-            }
         });
     }
 
-    // Generate parse_and_eval_with_env function
-    // This function handles parsing, rewriting, and value extraction automatically
-    let mut parse_eval_functions = Vec::new();
-    for (category, native_type, _relation) in &env_info {
-        let theory_name = &theory.name;
-        let theory_name_lower = theory_name.to_string().to_lowercase();
-        let parser_mod = format_ident!("{}", theory_name_lower);
-        let cat_parser = format_ident!("{}Parser", category);
-        let env_name = format_ident!("{}Env", theory_name);
+    // Generate parse_and_eval_with_env function for native type categories
+    let mut parse_eval_fns = Vec::new();
+    for export in &theory.exports {
+        if let Some(native_type) = &export.native_type {
+            let category = &export.name;
+            let theory_name = &theory.name;
+            let env_name = format_ident!("{}{}Env", theory_name, category);
+            let cat_str = category.to_string().to_lowercase();
+            let theory_name_lower = theory_name.to_string().to_lowercase();
+            let parser_module = format_ident!("{}", theory_name_lower);
+            let parser_name = format_ident!("{}Parser", category);
+            let source_name = format_ident!("{}_source", theory_name_lower);
+            let env_rel_name = format_ident!("env_var_{}", cat_str);
+            let rw_rel_name = format_ident!("rw_{}", cat_str);
+            let cat_rel_name = format_ident!("{}", cat_str);
 
-        // Find assignment-like constructors (Var + recursive category)
-        let assignment_constructors: Vec<_> = theory
-            .terms
-            .iter()
-            .filter(|rule| {
-                rule.category == *category
-                    && rule.items.iter().any(|item| {
-                        if let GrammarItem::NonTerminal(nt) = item {
-                            nt.to_string() == "Var"
-                        } else {
-                            false
-                        }
-                    })
-                    && rule.items.iter().any(|item| {
-                        if let GrammarItem::NonTerminal(nt) = item {
-                            nt == category
-                        } else {
-                            false
-                        }
-                    })
-            })
-            .map(|rule| &rule.label)
-            .collect();
+            // Find the Integer/NumLit rule to extract native values
+            let integer_rule = theory
+                .terms
+                .iter()
+                .find(|r| r.category == *category && is_integer_rule(r));
 
-        // Helper function for checking undefined variables
-        // We need to generate match arms for all constructors that might contain VarRef
-        let mut check_var_ref_arms = Vec::new();
+            // Store the literal label - either from explicit rule or auto-generated
+            let num_lit_label = if let Some(rule) = integer_rule {
+                // Explicit integer rule found - use its label
+                rule.label.clone()
+            } else {
+                // No explicit integer rule - use auto-generated literal label
+                generate_literal_label(native_type)
+            };
 
-        // Add specific cases for common constructors
-        for rule in theory.terms.iter().filter(|r| r.category == *category) {
-            let label = &rule.label;
-            let has_var_field = rule.items.iter().any(|item| {
-                if let GrammarItem::NonTerminal(nt) = item {
-                    nt.to_string() == "Var"
-                } else {
-                    false
-                }
+            // Find Var rule to generate has_var_ref helper
+            let var_rule = theory
+                .terms
+                .iter()
+                .find(|r| r.category == *category && is_var_rule(r));
+
+            // Store the var label - either from explicit rule or auto-generated
+            let var_label = if let Some(rule) = var_rule {
+                rule.label.clone()
+            } else {
+                // Use auto-generated label
+                generate_var_label(category)
+            };
+
+            // Generate function name for has_var_ref helper
+            let has_var_ref_fn = format_ident!("has_var_ref_{}", cat_str);
+
+            // Generate match arms for has_var_ref recursively checking all constructors
+            let mut has_var_ref_match_arms = Vec::new();
+            has_var_ref_match_arms.push(quote! {
+                #category::#var_label(_) => true,
+            });
+            has_var_ref_match_arms.push(quote! {
+                #category::#num_lit_label(_) => false,
             });
 
-            let recursive_fields: Vec<_> = rule
-                .items
+            // Get all constructors for this category
+            let rules: Vec<&GrammarRule> = theory
+                .terms
                 .iter()
-                .enumerate()
-                .filter_map(|(i, item)| {
-                    if let GrammarItem::NonTerminal(nt) = item {
-                        if nt == category {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
+                .filter(|r| r.category == *category)
                 .collect();
 
-            if has_var_field && recursive_fields.len() == 1 {
-                // Assign-like: (Var, Box<Category>) - only check the recursive field
-                check_var_ref_arms.push(quote! {
-                    #category::#label(_, f1) => check_var_ref(f1),
-                });
-            } else if recursive_fields.len() == 2 {
-                // Binary operators like Add, Sub: (Box<Category>, Box<Category>)
-                check_var_ref_arms.push(quote! {
-                    #category::#label(f0, f1) => check_var_ref(f0) || check_var_ref(f1),
-                });
-            } else if recursive_fields.len() == 1 {
-                // Single recursive field
-                check_var_ref_arms.push(quote! {
-                    #category::#label(f0) => check_var_ref(f0),
-                });
-            } else {
-                // No recursive fields or unit constructor
-                check_var_ref_arms.push(quote! {
-                    #category::#label(..) => false,
-                });
-            }
-        }
+            // Generate recursive checks for all other constructors
+            for rule in &rules {
+                let label = &rule.label;
+                // Skip Var and NumLit rules - already handled
+                if is_var_rule(rule) || is_integer_rule(rule) {
+                    continue;
+                }
 
-        let check_var_ref_fn = quote! {
-            fn check_var_ref(term: &#category) -> bool {
-                match term {
-                    #category::VarRef(_) => true,
-                    #category::NumLit(_) => false,
-                    #(#check_var_ref_arms)*
-                    _ => false,
+                // Check if this is Assign (explicit or auto-generated)
+                if label.to_string() == "Assign" {
+                    has_var_ref_match_arms.push(quote! {
+                        #category::Assign(_, rhs) => #has_var_ref_fn(rhs.as_ref()),
+                    });
+                    continue;
+                }
+
+                // Count recursive fields (fields of same category)
+                let recursive_fields: Vec<_> = rule
+                    .items
+                    .iter()
+                    .filter_map(|item| {
+                        match item {
+                            GrammarItem::NonTerminal(nt) if nt == category => {
+                                Some(false) // Box<Category>
+                            },
+                            GrammarItem::Collection { element_type, .. }
+                                if element_type == category =>
+                            {
+                                Some(true) // Collection<Category>
+                            },
+                            _ => None,
+                        }
+                    })
+                    .collect();
+
+                if recursive_fields.is_empty() {
+                    // No recursive fields - can't have Var
+                    has_var_ref_match_arms.push(quote! {
+                        #category::#label(..) => false,
+                    });
+                } else if recursive_fields.len() == 1 {
+                    // Single recursive field
+                    if recursive_fields[0] {
+                        // Collection field
+                        has_var_ref_match_arms.push(quote! {
+                            #category::#label(bag) => {
+                                for (elem, _count) in bag.iter() {
+                                    if #has_var_ref_fn(elem) {
+                                        return true;
+                                    }
+                                }
+                                false
+                            }
+                        });
+                    } else {
+                        // Single Box<Category> field
+                        has_var_ref_match_arms.push(quote! {
+                            #category::#label(field) => #has_var_ref_fn(field.as_ref()),
+                        });
+                    }
+                } else if recursive_fields.len() == 2 {
+                    // Binary operator (e.g., Add, Sub) - check both fields
+                    has_var_ref_match_arms.push(quote! {
+                        #category::#label(left, right) => {
+                            #has_var_ref_fn(left.as_ref()) || #has_var_ref_fn(right.as_ref())
+                        }
+                    });
+                } else {
+                    // More than 2 fields - use conservative approach
+                    has_var_ref_match_arms.push(quote! {
+                        #category::#label(..) => false,
+                    });
                 }
             }
-        };
 
-        // Generate value extraction logic
-        // Build match arms for assignment constructors
-        let mut assign_match_arms = Vec::new();
-        for assign_label in &assignment_constructors {
-            assign_match_arms.push(quote! {
-                #category::#assign_label(var, rhs) => {
-                    // Extract variable name from OrdVar
-                    let var_name = match var {
-                        mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
-                            fv.pretty_name.clone()
-                        },
-                        _ => None,
-                    };
+            parse_eval_fns.push(quote! {
+                /// Parse and evaluate a statement (assignment or expression) with environment.
+                /// Returns the computed native type value.
+                pub fn parse_and_eval_with_env(
+                    input: &str,
+                    env: &mut #env_name,
+                ) -> Result<#native_type, String> {
+                    use ascent::*;
 
-                    // Check if RHS is a NumLit (after rewriting)
-                    let val = match rhs.as_ref() {
-                        #category::NumLit(v) => *v,
-                        _ => {
-                            // RHS still has variables or isn't fully evaluated
-                            // Check for undefined variables
-                            if check_var_ref(rhs) {
-                                return Err("undefined variable in expression".to_string());
+                    mettail_runtime::clear_var_cache();
+
+                    let trimmed = input.trim();
+
+                    // Parse the input (handles both assignments and expressions)
+                    let parser = #parser_module::#parser_name::new();
+                    let term = parser
+                        .parse(trimmed)
+                        .map_err(|e| format!("parse error: {:?}", e))?;
+
+                    // Get environment facts - convert enum to native type for Ascent
+                    let env_facts: Vec<(String, #native_type)> = env
+                        .env_to_facts()
+                        .into_iter()
+                        .map(|(name, val)| {
+                            // Extract native value from enum (NumLit variant)
+                            match val {
+                                #category::#num_lit_label(v) => Ok((name, v)),
+                                _ => Err("Environment value must be a #num_lit_label".to_string()),
                             }
-                            // Try to evaluate the RHS
-                            rhs.eval()
-                        }
+                        })
+                        .collect::<Result<Vec<_>, String>>()?;
+
+                    // Run Ascent to rewrite to normal form
+                    let prog = ascent_run! {
+                        include_source!(#source_name);
+
+                        #cat_rel_name(term.clone());
+
+                        // Seed environment facts (use category-specific relation name)
+                        #env_rel_name(n.clone(), v) <-- for (n, v) in env_facts.clone();
                     };
 
-                    // Update environment if we have a variable name
-                    if let Some(name) = var_name {
-                        env.set(name, val);
+                    // Find normal form (term with no outgoing rewrites)
+                    let rewrites: Vec<(#category, #category)> = prog
+                        .#rw_rel_name
+                        .iter()
+                        .map(|(from, to)| (from.clone(), to.clone()))
+                        .collect();
+
+                    let mut current = term;
+                    loop {
+                        // Find rewrite from current term
+                        if let Some((_, next)) = rewrites.iter().find(|(from, _)| from == &current) {
+                            current = next.clone();
+                        } else {
+                            // No more rewrites - this is the normal form
+                            break;
+                        }
                     }
 
-                    val
+                    // Handle assignments: extract value and update environment
+                    if let #category::Assign(var, rhs) = &current {
+                        // The RHS might still need rewriting (congruence rules may not fully rewrite nested expressions)
+                        // So we recursively rewrite the RHS to its normal form
+                        let mut rhs_current = rhs.as_ref().clone();
+                        loop {
+                            // Find rewrite from current RHS term
+                            if let Some((_, next)) = rewrites.iter().find(|(from, _)| from == &rhs_current) {
+                                rhs_current = next.clone();
+                            } else {
+                                // No more rewrites - this is the normal form
+                                break;
+                            }
+                        }
+
+                        // Extract value from fully rewritten RHS (should be a #num_lit_label)
+                        let val = match &rhs_current {
+                            #category::#num_lit_label(v) => *v,
+                            _ => {
+                                // Check for undefined variables first by looking for #var_label
+                                if #has_var_ref_fn(&rhs_current) {
+                                    return Err("undefined variable in expression".to_string());
+                                }
+                                // Try to evaluate
+                                rhs_current.eval()
+                            }
+                        };
+
+                        // Update environment if we have a variable name
+                        if let Some(var_name) = match var {
+                            mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
+                                fv.pretty_name.clone()
+                            }
+                            _ => None,
+                        } {
+                            env.set(var_name, #category::#num_lit_label(val));
+                        }
+
+                        Ok(val)
+                    } else {
+                        // Not an assignment - extract value from normal form
+                        match &current {
+                            #category::#num_lit_label(v) => Ok(*v),
+                            _ => {
+                                // Check for undefined variables
+                                if #has_var_ref_fn(&current) {
+                                    return Err("undefined variable in expression".to_string());
+                                }
+                                // Try to evaluate
+                                Ok(current.eval())
+                            }
+                        }
+                    }
+                }
+            });
+
+            // Generate public has_var_ref helper function separately
+            parse_eval_fns.push(quote! {
+                /// Helper function to check if a term contains a #var_label (undefined variable)
+                pub fn #has_var_ref_fn(term: &#category) -> bool {
+                    match term {
+                        #(#has_var_ref_match_arms)*
+                        _ => false,
+                    }
                 }
             });
         }
-
-        parse_eval_functions.push(quote! {
-            /// Parse and evaluate a statement (assignment or expression) with environment.
-            /// Returns the computed value.
-            /// This function is automatically generated for theories with declarative fact creation.
-            pub fn parse_and_eval_with_env(
-                input: &str,
-                env: &mut #env_name,
-            ) -> Result<#native_type, String> {
-                #check_var_ref_fn
-
-                mettail_runtime::clear_var_cache();
-
-                let trimmed = input.trim();
-
-                // Parse the input (handles both assignments and expressions)
-                let parser = #parser_mod::#cat_parser::new();
-                let term = parser
-                    .parse(trimmed)
-                    .map_err(|e| format!("parse error: {:?}", e))?;
-
-                // Use Ascent to rewrite to normal form (generated function)
-                // This will create env_var facts via rewrite rules with env_actions
-                let normal_form = rewrite_to_normal_form(term, env)?;
-
-                // Extract value from the normal form
-                let val = match &normal_form {
-                    #(#assign_match_arms,)*
-                    #category::NumLit(v) => *v,
-                    _ => {
-                        // Fallback: try to evaluate the whole term
-                        // Check for undefined variables first
-                        if check_var_ref(&normal_form) {
-                            return Err("undefined variable in expression".to_string());
-                        }
-                        normal_form.eval()
-                    }
-                };
-
-                Ok(val)
-            }
-        });
     }
 
     quote! {
         #(#env_structs)*
-        #(#parse_eval_functions)*
-    }
+        #(#parse_eval_fns)*
+   }
 }
 
 /// Extract the category from a rewrite rule (from LHS)
