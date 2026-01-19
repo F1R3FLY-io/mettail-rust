@@ -17,8 +17,9 @@
 //! 3. **Equation Rules**: Add reflexivity, congruence, and user-defined equalities
 //! 4. **Rewrite Rules**: Base rewrites + congruence rules (propagate through constructors)
 
-use crate::{ast::TheoryDef, utils::print_rule};
+use crate::ast::{theory::{TheoryDef, BuiltinOp, SemanticOperation}, grammar::GrammarItem};
 use proc_macro2::{Ident, TokenStream};
+use crate::utils::print_rule;
 use quote::{format_ident, quote};
 
 mod categories;
@@ -28,14 +29,15 @@ mod writer;
 
 pub mod congruence;
 pub mod rewrites;
+pub mod rules;
 
 // Re-export key functions
 pub use categories::generate_category_rules;
 pub use equations::generate_equation_rules;
 pub use relations::generate_relations;
 
-// Re-export congruence types and functions used by lib.rs
-pub use congruence::{extract_collection_congruence_info, generate_congruence_projections};
+// Re-export congruence function
+pub use congruence::generate_all_explicit_congruences;
 
 pub use rewrites::{generate_freshness_functions, generate_rewrite_clauses};
 
@@ -124,33 +126,14 @@ fn format_ascent_source(
     output
 }
 
-/// Format a single Datalog rule for display
-#[allow(dead_code)]
-fn format_rule(line: &str) -> String {
-    let trimmed = line.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
-
-    // Use the existing print_rule logic but return string instead of printing
-    if trimmed.contains("<--") {
-        // It's a rule with body
-        format!("{};", trimmed)
-    } else if trimmed.starts_with("relation") || trimmed.starts_with("#[") {
-        // It's a relation declaration or attribute
-        format!("{};", trimmed)
-    } else {
-        // Other content
-        trimmed.to_string()
-    }
-}
-
-/// Generate rewrite rules: base rewrites + congruence rules
+/// Generate rewrite rules: base rewrites + explicit congruence rules
 ///
 /// - **Base rewrites**: Rules without premises (S => T)
-/// - **Collection congruences**: If S => T, then {S, ...} => {T, ...}
-/// - **Regular congruences**: If S => T, then Constructor(S) => Constructor(T)
-/// - **Binding congruences**: If S => T, then (new x.S) => (new x.T)
+/// - **Explicit congruences**: Rules with premises (if S => T then LHS => RHS)
+/// - **Semantic evaluation**: Rules for built-in operators (Add, Sub, etc.)
+///
+/// Note: Rewrite congruences are NOT auto-generated. Users explicitly control
+/// where rewrites propagate by writing `if S => T then ...` rules.
 pub fn generate_rewrite_rules(theory: &TheoryDef) -> TokenStream {
     let mut rules = Vec::new();
 
@@ -162,37 +145,10 @@ pub fn generate_rewrite_rules(theory: &TheoryDef) -> TokenStream {
     let semantic_rules = generate_semantic_rules(theory);
     rules.extend(semantic_rules);
 
-    // Generate congruence rules (with premise: if S => T then ...)
-    // For each collection congruence, generate projections and clauses
-    for (cong_idx, rewrite) in theory.rewrites.iter().enumerate() {
-        if let Some((source_var, target_var)) = &rewrite.premise {
-            // Check if this is a collection congruence
-            if let Some(cong_info) =
-                extract_collection_congruence_info(&rewrite.left, source_var, target_var, theory)
-            {
-                // Generate all projections for this congruence
-                let (projections, base_patterns) =
-                    generate_congruence_projections(cong_idx, &cong_info, theory);
-                rules.extend(projections);
-
-                // Generate congruence clauses using those projections
-                let congruence_clauses = congruence::generate_new_collection_congruence_clauses(
-                    cong_idx,
-                    &cong_info,
-                    &base_patterns,
-                    theory,
-                );
-                rules.extend(congruence_clauses);
-            } else {
-                // Regular (non-collection) congruence - dispatch to appropriate handler
-                if let Some(rule) =
-                    congruence::generate_congruence_rewrite(cong_idx, rewrite, theory)
-                {
-                    rules.push(rule);
-                }
-            }
-        }
-    }
+    // Generate explicit congruence rules (with premise: if S => T then ...)
+    // These are user-declared rules that control where rewrites propagate
+    let congruence_rules = generate_all_explicit_congruences(theory);
+    rules.extend(congruence_rules);
 
     quote! {
         #(#rules)*
@@ -202,7 +158,6 @@ pub fn generate_rewrite_rules(theory: &TheoryDef) -> TokenStream {
 /// Generate semantic evaluation rules for constructors with semantics
 /// For example: Add (NumLit a) (NumLit b) => NumLit(a + b)
 fn generate_semantic_rules(theory: &TheoryDef) -> Vec<TokenStream> {
-    use crate::ast::SemanticOperation;
 
     let mut rules = Vec::new();
 
@@ -212,7 +167,6 @@ fn generate_semantic_rules(theory: &TheoryDef) -> Vec<TokenStream> {
         // Extract the operator
         let op_token = match &semantic.operation {
             SemanticOperation::Builtin(builtin_op) => {
-                use crate::ast::BuiltinOp;
                 match builtin_op {
                     BuiltinOp::Add => quote! { + },
                     BuiltinOp::Sub => quote! { - },
@@ -231,7 +185,7 @@ fn generate_semantic_rules(theory: &TheoryDef) -> Vec<TokenStream> {
                 .items
                 .iter()
                 .filter_map(|item| {
-                    if let crate::ast::GrammarItem::NonTerminal(nt) = item {
+                    if let GrammarItem::NonTerminal(nt) = item {
                         Some(nt)
                     } else {
                         None

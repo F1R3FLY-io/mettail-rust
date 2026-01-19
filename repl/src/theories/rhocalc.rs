@@ -58,7 +58,7 @@ impl Theory for RhoCalculusTheory {
         };
 
         // Extract results
-        let all_procs: Vec<Proc> = prog.proc.iter().map(|(p,)| p.clone()).collect();
+        let all_procs: Vec<Proc> = prog.proc.iter().map(|(p,):&(Proc,)| p.clone()).collect();
         let rewrites: Vec<(Proc, Proc)> = prog
             .rw_proc
             .iter()

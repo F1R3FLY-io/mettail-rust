@@ -13,7 +13,7 @@
 
 use super::TypeChecker;
 use super::ValidationError;
-use crate::ast::{Equation, Expr, GrammarItem, RewriteRule, TheoryDef};
+use crate::ast::{theory::{Equation, TheoryDef, Export, FreshnessTarget, Condition, EnvAction, FreshnessCondition}, grammar::{GrammarItem, GrammarRule}, term::Term, theory::RewriteRule, pattern::{Pattern, PatternTerm}};
 use std::collections::HashSet;
 
 pub fn validate_theory(theory: &TheoryDef) -> Result<(), ValidationError> {
@@ -81,8 +81,8 @@ pub fn validate_theory(theory: &TheoryDef) -> Result<(), ValidationError> {
 
     // Validate expressions in equations
     for eq in theory.equations.iter() {
-        validate_expr(&eq.left, &theory)?;
-        validate_expr(&eq.right, &theory)?;
+        validate_pattern(&eq.left, &theory)?;
+        validate_pattern(&eq.right, &theory)?;
 
         // Validate freshness conditions
         validate_equation_freshness(eq)?;
@@ -90,8 +90,8 @@ pub fn validate_theory(theory: &TheoryDef) -> Result<(), ValidationError> {
 
     // Validate expressions in rewrites
     for rw in theory.rewrites.iter() {
-        validate_expr(&rw.left, &theory)?;
-        validate_expr(&rw.right, &theory)?;
+        validate_pattern(&rw.left, &theory)?;
+        validate_pattern(&rw.right, &theory)?;
 
         // Validate freshness conditions
         validate_rewrite_freshness(rw)?;
@@ -107,10 +107,100 @@ pub fn validate_theory(theory: &TheoryDef) -> Result<(), ValidationError> {
     Ok(())
 }
 
-fn validate_expr(expr: &Expr, theory: &TheoryDef) -> Result<(), ValidationError> {
+fn validate_pattern(pattern: &Pattern, theory: &TheoryDef) -> Result<(), ValidationError> {
+    match pattern {
+        Pattern::Term(pt) => validate_pattern_term(pt, theory),
+        Pattern::Collection { constructor, elements, rest: _ } => {
+            // Validate collection pattern
+            // 1. If constructor is specified, verify it's a known collection type
+            if let Some(cons) = constructor {
+                let rule = theory
+                    .terms
+                    .iter()
+                    .find(|r| r.label == *cons)
+                    .ok_or_else(|| ValidationError::UnknownConstructor {
+                        name: cons.to_string(),
+                        span: cons.span(),
+                    })?;
+
+                // Check that this constructor has a collection field
+                let has_collection = rule
+                    .items
+                    .iter()
+                    .any(|item| matches!(item, GrammarItem::Collection { .. }));
+
+                if !has_collection {
+                    // For now, just accept it - validation will happen later
+                }
+            }
+
+            // 2. Recursively validate element patterns
+            for elem in elements {
+                validate_pattern(elem, theory)?;
+            }
+
+            // 3. Rest variable doesn't need special validation here
+            Ok(())
+        }
+        Pattern::Map { collection, body, .. } => {
+            validate_pattern(collection, theory)?;
+            validate_pattern(body, theory)?;
+            Ok(())
+        }
+        Pattern::Zip { collections } => {
+            for coll in collections {
+                validate_pattern(coll, theory)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_pattern_term(pt: &PatternTerm, theory: &TheoryDef) -> Result<(), ValidationError> {
+    match pt {
+        PatternTerm::Var(_) => Ok(()),
+        PatternTerm::Apply { constructor, args } => {
+            // Check that constructor references a known rule
+            let constructor_name = constructor.to_string();
+            let found = theory
+                .terms
+                .iter()
+                .any(|r| r.label.to_string() == constructor_name);
+
+            if !found {
+                return Err(ValidationError::UnknownConstructor {
+                    name: constructor_name,
+                    span: constructor.span(),
+                });
+            }
+
+            // Recursively validate args (which are Patterns)
+            for arg in args {
+                validate_pattern(arg, theory)?;
+            }
+            Ok(())
+        }
+        PatternTerm::Lambda { body, .. } => validate_pattern(body, theory),
+        PatternTerm::MultiLambda { body, .. } => validate_pattern(body, theory),
+        PatternTerm::Subst { term, replacement, .. } => {
+            validate_pattern(term, theory)?;
+            validate_pattern(replacement, theory)?;
+            Ok(())
+        }
+        PatternTerm::MultiSubst { scope, replacements } => {
+            validate_pattern(scope, theory)?;
+            for repl in replacements {
+                validate_pattern(repl, theory)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+fn validate_expr(expr: &Term, theory: &TheoryDef) -> Result<(), ValidationError> {
     match expr {
-        Expr::Var(_) => Ok(()), // Variables are always OK
-        Expr::Apply { constructor, args } => {
+        Term::Var(_) => Ok(()), // Variables are always OK
+        Term::Apply { constructor, args } => {
             // Check that constructor references a known rule
             let constructor_name = constructor.to_string();
             let found = theory
@@ -132,7 +222,7 @@ fn validate_expr(expr: &Expr, theory: &TheoryDef) -> Result<(), ValidationError>
 
             Ok(())
         },
-        Expr::Subst { term, var: _, replacement } => {
+        Term::Subst { term, var: _, replacement } => {
             // Validate the term being substituted into
             validate_expr(term, theory)?;
 
@@ -142,45 +232,19 @@ fn validate_expr(expr: &Expr, theory: &TheoryDef) -> Result<(), ValidationError>
             // var is just an identifier, no validation needed
             Ok(())
         },
-        Expr::CollectionPattern { constructor, elements, rest: _ } => {
-            // Validate collection pattern
-            // 1. If constructor is specified, verify it's a collection type
-            if let Some(cons) = constructor {
-                let rule = theory
-                    .terms
-                    .iter()
-                    .find(|r| r.label == *cons)
-                    .ok_or_else(|| ValidationError::UnknownConstructor {
-                        name: cons.to_string(),
-                        span: cons.span(),
-                    })?;
-
-                // Check that this constructor has a collection field
-                let has_collection = rule
-                    .items
-                    .iter()
-                    .any(|item| matches!(item, crate::ast::GrammarItem::Collection { .. }));
-
-                if !has_collection {
-                    // For now, just accept it - validation will happen later
-                    // when we infer the constructor during type checking
-                }
-            }
-
-            // 2. Recursively validate element patterns
-            for elem in elements {
-                validate_expr(elem, theory)?;
-            }
-
-            // 3. Rest variable doesn't need special validation
-            //    (it will be checked for shadowing in type checker)
-
-            Ok(())
-        },
 
         // Lambda expressions - validate body
-        Expr::Lambda { body, .. } => validate_expr(body, theory),
-        Expr::MultiLambda { body, .. } => validate_expr(body, theory),
+        Term::Lambda { body, .. } => validate_expr(body, theory),
+        Term::MultiLambda { body, .. } => validate_expr(body, theory),
+        
+        // MultiSubst - validate scope and each replacement expression
+        Term::MultiSubst { scope, replacements } => {
+            validate_expr(scope, theory)?;
+            for repl in replacements {
+                validate_expr(repl, theory)?;
+            }
+            Ok(())
+        },
     }
 }
 
@@ -194,15 +258,15 @@ fn validate_expr(expr: &Expr, theory: &TheoryDef) -> Result<(), ValidationError>
 fn validate_equation_freshness(eq: &Equation) -> Result<(), ValidationError> {
     // Collect all variables that appear in the equation
     let mut equation_vars = HashSet::new();
-    collect_vars(&eq.left, &mut equation_vars);
-    collect_vars(&eq.right, &mut equation_vars);
+    collect_pattern_vars(&eq.left, &mut equation_vars);
+    collect_pattern_vars(&eq.right, &mut equation_vars);
 
     // Validate each freshness condition
     for cond in &eq.conditions {
         let var_name = cond.var.to_string();
         let (term_name, term_span) = match &cond.term {
-            crate::ast::FreshnessTarget::Var(id) => (id.to_string(), id.span()),
-            crate::ast::FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
+            FreshnessTarget::Var(id) => (id.to_string(), id.span()),
+            FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
         };
 
         // Check that the variable appears in the equation
@@ -241,17 +305,17 @@ fn validate_equation_freshness(eq: &Equation) -> Result<(), ValidationError> {
 fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
     // Collect all variables that appear in the rewrite
     let mut rewrite_vars = HashSet::new();
-    collect_vars(&rw.left, &mut rewrite_vars);
-    collect_vars(&rw.right, &mut rewrite_vars);
+    collect_pattern_vars(&rw.left, &mut rewrite_vars);
+    collect_pattern_vars(&rw.right, &mut rewrite_vars);
 
     // Validate each condition
     for cond in &rw.conditions {
         match cond {
-            crate::ast::Condition::Freshness(freshness) => {
+            Condition::Freshness(freshness) => {
                 let var_name = freshness.var.to_string();
                 let (term_name, term_span) = match &freshness.term {
-                    crate::ast::FreshnessTarget::Var(id) => (id.to_string(), id.span()),
-                    crate::ast::FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
+                    FreshnessTarget::Var(id) => (id.to_string(), id.span()),
+                    FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
                 };
 
                 // Check that the variable appears in the rewrite
@@ -279,7 +343,7 @@ fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
                     });
                 }
             },
-            crate::ast::Condition::EnvQuery { relation: _, args } => {
+            Condition::EnvQuery { relation: _, args } => {
                 // Validate that the first arg (variable name) appears in the rewrite
                 // The second arg (value) is bound from the query, so it doesn't need to appear
                 if let Some(first_arg) = args.first() {
@@ -298,7 +362,7 @@ fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
 
     // Validate environment actions
     for action in &rw.env_actions {
-        let crate::ast::EnvAction::CreateFact { args, .. } = action;
+        let EnvAction::CreateFact { args, .. } = action;
         // All arguments in env_actions must be bound variables in the rewrite
         for arg in args {
             let arg_name = arg.to_string();
@@ -314,18 +378,95 @@ fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
     Ok(())
 }
 
+/// Collect all variable names from a Pattern
+fn collect_pattern_vars(pattern: &Pattern, vars: &mut HashSet<String>) {
+    match pattern {
+        Pattern::Term(pt) => collect_pattern_term_vars(pt, vars),
+        Pattern::Collection { elements, rest, .. } => {
+            for elem in elements {
+                collect_pattern_vars(elem, vars);
+            }
+            if let Some(rest_var) = rest {
+                vars.insert(rest_var.to_string());
+            }
+        }
+        Pattern::Map { collection, params, body } => {
+            collect_pattern_vars(collection, vars);
+            // params are bound, so only collect from body excluding params
+            let mut body_vars = HashSet::new();
+            collect_pattern_vars(body, &mut body_vars);
+            for param in params {
+                body_vars.remove(&param.to_string());
+            }
+            vars.extend(body_vars);
+        }
+        Pattern::Zip { collections } => {
+            for coll in collections {
+                collect_pattern_vars(coll, vars);
+            }
+        }
+    }
+}
+
+/// Collect all variable names from a PatternTerm
+fn collect_pattern_term_vars(pt: &PatternTerm, vars: &mut HashSet<String>) {
+    match pt {
+        PatternTerm::Var(ident) => {
+            vars.insert(ident.to_string());
+        }
+        PatternTerm::Apply { args, .. } => {
+            for arg in args {
+                collect_pattern_vars(arg, vars);
+            }
+        }
+        PatternTerm::Lambda { binder, body } => {
+            // Include the binder as a valid pattern variable (for freshness conditions)
+            vars.insert(binder.to_string());
+            // Collect body vars, but remove binder from free vars (it's bound)
+            let mut body_vars = HashSet::new();
+            collect_pattern_vars(body, &mut body_vars);
+            body_vars.remove(&binder.to_string());
+            vars.extend(body_vars);
+        }
+        PatternTerm::MultiLambda { binders, body } => {
+            // Include all binders as valid pattern variables (for freshness conditions)
+            for binder in binders {
+                vars.insert(binder.to_string());
+            }
+            // Collect body vars, but remove binders from free vars (they're bound)
+            let mut body_vars = HashSet::new();
+            collect_pattern_vars(body, &mut body_vars);
+            for binder in binders {
+                body_vars.remove(&binder.to_string());
+            }
+            vars.extend(body_vars);
+        }
+        PatternTerm::Subst { term, var, replacement } => {
+            collect_pattern_vars(term, vars);
+            vars.insert(var.to_string());
+            collect_pattern_vars(replacement, vars);
+        }
+        PatternTerm::MultiSubst { scope, replacements } => {
+            collect_pattern_vars(scope, vars);
+            for repl in replacements {
+                collect_pattern_vars(repl, vars);
+            }
+        }
+    }
+}
+
 /// Collect all variable names from an expression
-fn collect_vars(expr: &Expr, vars: &mut HashSet<String>) {
+fn collect_vars(expr: &Term, vars: &mut HashSet<String>) {
     match expr {
-        Expr::Var(ident) => {
+        Term::Var(ident) => {
             vars.insert(ident.to_string());
         },
-        Expr::Apply { args, .. } => {
+        Term::Apply { args, .. } => {
             for arg in args {
                 collect_vars(arg, vars);
             }
         },
-        Expr::Subst { term, var, replacement } => {
+        Term::Subst { term, var, replacement } => {
             // Collect from the term being substituted into
             collect_vars(term, vars);
             // The substitution variable itself
@@ -333,32 +474,32 @@ fn collect_vars(expr: &Expr, vars: &mut HashSet<String>) {
             // Collect from the replacement
             collect_vars(replacement, vars);
         },
-        Expr::CollectionPattern { elements, rest, .. } => {
-            // Collect from element patterns
-            for elem in elements {
-                collect_vars(elem, vars);
-            }
-            // Collect rest variable if present
-            if let Some(rest_var) = rest {
-                vars.insert(rest_var.to_string());
-            }
-        },
         // Lambda expressions - collect from body, binder is bound not free
-        Expr::Lambda { binder, body } => {
+        Term::Lambda { binder, body } => {
             // Don't include the bound variable, only free vars in body
             let mut body_vars = HashSet::new();
             collect_vars(body, &mut body_vars);
             body_vars.remove(&binder.to_string());
             vars.extend(body_vars);
         },
-        Expr::MultiLambda { binder, body } => {
+        Term::MultiLambda { binders, body } => {
             let mut body_vars = HashSet::new();
             collect_vars(body, &mut body_vars);
-            body_vars.remove(&binder.to_string());
+            for binder in binders {
+                body_vars.remove(&binder.to_string());
+            }
             vars.extend(body_vars);
+        },
+        Term::MultiSubst { scope, replacements } => {
+            // collect from scope and each replacement expression
+            collect_vars(scope, vars);
+            for repl in replacements {
+                collect_vars(repl, vars);
+            }
         },
     }
 }
+
 
 #[cfg(test)]
 mod tests {
@@ -506,21 +647,24 @@ mod tests {
             equations: vec![Equation {
                 conditions: vec![FreshnessCondition {
                     var: parse_quote!(x),
-                    term: crate::ast::FreshnessTarget::Var(parse_quote!(P)),
+                    term: FreshnessTarget::Var(parse_quote!(P)),
                 }],
                 // (PDrop (NQuote (PNew x P)))  -- has type Proc
-                left: Expr::Apply {
+                left: Pattern::Term(PatternTerm::Apply { 
                     constructor: parse_quote!(PDrop),
-                    args: vec![Expr::Apply {
+                    args: vec![Pattern::Term(PatternTerm::Apply { 
                         constructor: parse_quote!(NQuote),
-                        args: vec![Expr::Apply {
+                        args: vec![Pattern::Term(PatternTerm::Apply { 
                             constructor: parse_quote!(PNew),
-                            args: vec![Expr::Var(parse_quote!(x)), Expr::Var(parse_quote!(P))],
-                        }],
-                    }],
-                },
+                            args: vec![
+                                Pattern::Term(PatternTerm::Var(parse_quote!(x))), 
+                                Pattern::Term(PatternTerm::Var(parse_quote!(P)))
+                            ] 
+                        })] 
+                    })] 
+                }),
                 // P  -- has type Proc
-                right: Expr::Var(parse_quote!(P)),
+                right: Pattern::Term(PatternTerm::Var(parse_quote!(P))),
             }],
             rewrites: vec![],
             semantics: vec![],
@@ -555,17 +699,17 @@ mod tests {
             equations: vec![Equation {
                 conditions: vec![FreshnessCondition {
                     var: parse_quote!(x), // x doesn't appear in equation!
-                    term: crate::ast::FreshnessTarget::Var(parse_quote!(Q)),
+                    term: FreshnessTarget::Var(parse_quote!(Q)),
                 }],
                 // (NZero) == (NZero) - no variables
-                left: Expr::Apply {
+                left: Pattern::Term(PatternTerm::Apply {
                     constructor: parse_quote!(NZero),
                     args: vec![],
-                },
-                right: Expr::Apply {
+                }),
+                right: Pattern::Term(PatternTerm::Apply {
                     constructor: parse_quote!(NZero),
                     args: vec![],
-                },
+                }),
             }],
             rewrites: vec![],
             semantics: vec![],
@@ -598,14 +742,14 @@ mod tests {
             equations: vec![Equation {
                 conditions: vec![FreshnessCondition {
                     var: parse_quote!(x),
-                    term: crate::ast::FreshnessTarget::Var(parse_quote!(x)), // x # x is invalid
+                    term: FreshnessTarget::Var(parse_quote!(x)), // x # x is invalid
                 }],
                 // x == (NVar)
-                left: Expr::Var(parse_quote!(x)),
-                right: Expr::Apply {
+                left: Pattern::Term(PatternTerm::Var(parse_quote!(x))),
+                right: Pattern::Term(PatternTerm::Apply {
                     constructor: parse_quote!(NVar),
                     args: vec![],
-                },
+                }),
             }],
             rewrites: vec![],
             semantics: vec![],

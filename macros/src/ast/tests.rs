@@ -5,8 +5,12 @@ mod tests {
         parse2,
         Ident,
     };
-    use crate::ast::types::{TheoryDef, TypeExpr, GrammarItem, CollectionType, FreshnessTarget, TypeError, TypeContext, Expr, ConstructorSig, TermParam, SyntaxToken};
-    use crate::ast::types::{parse_expr};
+    use crate::ast::theory::{TheoryDef, FreshnessTarget, parse_expr};
+    use crate::ast::types::{TypeExpr, CollectionType};
+    use crate::ast::grammar::{GrammarItem, TermParam};
+    use crate::ast::syntax::{SyntaxExpr, PatternOp};
+    use crate::ast::term::Term;
+    use crate::ast::types::{TypeContext, TypeError, ConstructorSig};
 
     #[test]
     fn parse_hashbag_simple() {
@@ -339,9 +343,9 @@ mod tests {
 
         let expr = result.unwrap();
         match expr {
-            Expr::Lambda { binder, body } => {
+            Term::Lambda { binder, body } => {
                 assert_eq!(binder.to_string(), "x");
-                assert!(matches!(*body, Expr::Var(ref v) if v == "p"));
+                assert!(matches!(*body, Term::Var(ref v) if v == "p"));
             }
             _ => panic!("Expected Lambda, got {:?}", expr),
         }
@@ -356,12 +360,12 @@ mod tests {
 
         let expr = result.unwrap();
         match expr {
-            Expr::Lambda { binder, body } => {
+            Term::Lambda { binder, body } => {
                 assert_eq!(binder.to_string(), "x");
                 match *body {
-                    Expr::Lambda { binder: inner_binder, body: inner_body } => {
+                    Term::Lambda { binder: inner_binder, body: inner_body } => {
                         assert_eq!(inner_binder.to_string(), "y");
-                        assert!(matches!(*inner_body, Expr::Var(ref v) if v == "p"));
+                        assert!(matches!(*inner_body, Term::Var(ref v) if v == "p"));
                     }
                     _ => panic!("Expected nested Lambda"),
                 }
@@ -372,16 +376,37 @@ mod tests {
 
     #[test]
     fn parse_expr_multi_lambda() {
-        // ^[xs].body - multi-binder lambda
+        // ^[xs].body - multi-binder lambda (single binder in brackets)
         let input = quote! { ^[xs].p };
         let result = parse_expr.parse2(input);
         assert!(result.is_ok(), "Failed to parse multi-lambda: {:?}", result.err());
 
         let expr = result.unwrap();
         match expr {
-            Expr::MultiLambda { binder, body } => {
-                assert_eq!(binder.to_string(), "xs");
-                assert!(matches!(*body, Expr::Var(ref v) if v == "p"));
+            Term::MultiLambda { binders, body } => {
+                assert_eq!(binders.len(), 1);
+                assert_eq!(binders[0].to_string(), "xs");
+                assert!(matches!(*body, Term::Var(ref v) if v == "p"));
+            }
+            _ => panic!("Expected MultiLambda, got {:?}", expr),
+        }
+    }
+    
+    #[test]
+    fn parse_expr_multi_lambda_multiple_binders() {
+        // ^[x0, x1, x2].body - multi-binder lambda with multiple binders
+        let input = quote! { ^[x0, x1, x2].p };
+        let result = parse_expr.parse2(input);
+        assert!(result.is_ok(), "Failed to parse multi-lambda with multiple binders: {:?}", result.err());
+
+        let expr = result.unwrap();
+        match expr {
+            Term::MultiLambda { binders, body } => {
+                assert_eq!(binders.len(), 3);
+                assert_eq!(binders[0].to_string(), "x0");
+                assert_eq!(binders[1].to_string(), "x1");
+                assert_eq!(binders[2].to_string(), "x2");
+                assert!(matches!(*body, Term::Var(ref v) if v == "p"));
             }
             _ => panic!("Expected MultiLambda, got {:?}", expr),
         }
@@ -396,10 +421,10 @@ mod tests {
 
         let expr = result.unwrap();
         match expr {
-            Expr::Lambda { binder, body } => {
+            Term::Lambda { binder, body } => {
                 assert_eq!(binder.to_string(), "x");
                 match *body {
-                    Expr::Apply { constructor, args } => {
+                    Term::Apply { constructor, args } => {
                         assert_eq!(constructor.to_string(), "PPar");
                         assert_eq!(args.len(), 2);
                     }
@@ -414,19 +439,19 @@ mod tests {
     // Expr free_vars, substitute, apply Tests
     // =========================================================================
 
-    fn make_var(name: &str) -> Expr {
-        Expr::Var(Ident::new(name, proc_macro2::Span::call_site()))
+    fn make_var(name: &str) -> Term {
+        Term::Var(Ident::new(name, proc_macro2::Span::call_site()))
     }
 
-    fn make_lambda(binder: &str, body: Expr) -> Expr {
-        Expr::Lambda {
+    fn make_lambda(binder: &str, body: Term) -> Term {
+        Term::Lambda {
             binder: Ident::new(binder, proc_macro2::Span::call_site()),
             body: Box::new(body),
         }
     }
 
-    fn make_apply(constructor: &str, args: Vec<Expr>) -> Expr {
-        Expr::Apply {
+    fn make_apply(constructor: &str, args: Vec<Term>) -> Term {
+        Term::Apply {
             constructor: Ident::new(constructor, proc_macro2::Span::call_site()),
             args,
         }
@@ -485,7 +510,7 @@ mod tests {
         let replacement = make_var("y");
         
         let result = expr.substitute(&var, &replacement);
-        assert!(matches!(result, Expr::Var(v) if v == "y"));
+        assert!(matches!(result, Term::Var(v) if v == "y"));
     }
 
     #[test]
@@ -496,7 +521,7 @@ mod tests {
         let replacement = make_var("z");
         
         let result = expr.substitute(&var, &replacement);
-        assert!(matches!(result, Expr::Var(v) if v == "x"));
+        assert!(matches!(result, Term::Var(v) if v == "x"));
     }
 
     #[test]
@@ -508,10 +533,10 @@ mod tests {
         
         let result = expr.substitute(&var, &replacement);
         match result {
-            Expr::Apply { constructor, args } => {
+            Term::Apply { constructor, args } => {
                 assert_eq!(constructor.to_string(), "PPar");
-                assert!(matches!(&args[0], Expr::Var(v) if v == "z"));
-                assert!(matches!(&args[1], Expr::Var(v) if v == "y"));
+                assert!(matches!(&args[0], Term::Var(v) if v == "z"));
+                assert!(matches!(&args[1], Term::Var(v) if v == "y"));
             }
             _ => panic!("Expected Apply"),
         }
@@ -526,9 +551,9 @@ mod tests {
         
         let result = expr.substitute(&var, &replacement);
         match result {
-            Expr::Lambda { binder, body } => {
+            Term::Lambda { binder, body } => {
                 assert_eq!(binder.to_string(), "x");
-                assert!(matches!(*body, Expr::Var(v) if v == "x"));
+                assert!(matches!(*body, Term::Var(v) if v == "x"));
             }
             _ => panic!("Expected Lambda"),
         }
@@ -543,9 +568,9 @@ mod tests {
         
         let result = expr.substitute(&var, &replacement);
         match result {
-            Expr::Lambda { binder, body } => {
+            Term::Lambda { binder, body } => {
                 assert_eq!(binder.to_string(), "x");
-                assert!(matches!(*body, Expr::Var(v) if v == "z"));
+                assert!(matches!(*body, Term::Var(v) if v == "z"));
             }
             _ => panic!("Expected Lambda"),
         }
@@ -559,10 +584,10 @@ mod tests {
         
         let result = lambda.apply(&arg).expect("apply should succeed");
         match result {
-            Expr::Apply { constructor, args } => {
+            Term::Apply { constructor, args } => {
                 assert_eq!(constructor.to_string(), "PPar");
-                assert!(matches!(&args[0], Expr::Var(v) if v == "z"));
-                assert!(matches!(&args[1], Expr::Var(v) if v == "y"));
+                assert!(matches!(&args[0], Term::Var(v) if v == "z"));
+                assert!(matches!(&args[1], Term::Var(v) if v == "y"));
             }
             _ => panic!("Expected Apply"),
         }
@@ -576,12 +601,12 @@ mod tests {
         
         let result = lambda.apply(&arg).expect("apply should succeed");
         match result {
-            Expr::Lambda { binder, body } => {
+            Term::Lambda { binder, body } => {
                 assert_eq!(binder.to_string(), "y");
                 match *body {
-                    Expr::Apply { ref args, .. } => {
-                        assert!(matches!(&args[0], Expr::Var(v) if v == "a"));
-                        assert!(matches!(&args[1], Expr::Var(v) if v == "y"));
+                    Term::Apply { ref args, .. } => {
+                        assert!(matches!(&args[0], Term::Var(v) if v == "a"));
+                        assert!(matches!(&args[1], Term::Var(v) if v == "y"));
                     }
                     _ => panic!("Expected Apply in body"),
                 }
@@ -705,7 +730,7 @@ mod tests {
         
         let result = lambda.apply_typed(&arg, &ctx, &func_type);
         assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), Expr::Var(v) if v == "n"));
+        assert!(matches!(result.unwrap(), Term::Var(v) if v == "n"));
     }
 
     #[test]
@@ -892,9 +917,11 @@ mod tests {
     // Multi-Lambda Tests: ^[xs].p:[Name* -> Proc]
     // =========================================================================
 
-    fn make_multi_lambda(binder: &str, body: Expr) -> Expr {
-        Expr::MultiLambda {
-            binder: Ident::new(binder, proc_macro2::Span::call_site()),
+    fn make_multi_lambda(binder_strs: &[&str], body: Term) -> Term {
+        Term::MultiLambda {
+            binders: binder_strs.iter()
+                .map(|s| Ident::new(s, proc_macro2::Span::call_site()))
+                .collect(),
             body: Box::new(body),
         }
     }
@@ -903,7 +930,7 @@ mod tests {
     fn test_check_type_multi_lambda() {
         // ^[xs].p : [Name* -> Proc]
         // xs binds multiple Names, body should be Proc
-        let multi_lambda = make_multi_lambda("xs", make_apply("PNil", vec![]));
+        let multi_lambda = make_multi_lambda(&["xs"], make_apply("PNil", vec![]));
         let multi_domain = TypeExpr::MultiBinder(Box::new(make_base_type("Name")));
         let arrow_type = make_arrow_type(multi_domain, make_base_type("Proc"));
         let ctx = TypeContext::new()
@@ -916,7 +943,7 @@ mod tests {
     #[test]
     fn test_check_type_multi_lambda_non_multi_domain_fails() {
         // ^[xs].p with non-multi domain should fail
-        let multi_lambda = make_multi_lambda("xs", make_var("p"));
+        let multi_lambda = make_multi_lambda(&["xs"], make_var("p"));
         let arrow_type = make_arrow_type(make_base_type("Name"), make_base_type("Proc"));
         let ctx = TypeContext::new().with_var("p", make_base_type("Proc"));
         
@@ -1056,17 +1083,17 @@ mod tests {
         
         // Check syntax pattern
         let pattern = rule.syntax_pattern.as_ref().unwrap();
-        // Should have: Literal("for"), Literal("("), Ident(x), Literal("<-"), Ident(n), Literal(")"), Literal("{"), Ident(p), Literal("}")
+        // Should have: Literal("for"), Literal("("), Param(x), Literal("<-"), Param(n), Literal(")"), Literal("{"), Param(p), Literal("}")
         assert_eq!(pattern.len(), 9, "Pattern should have 9 tokens");
-        assert!(matches!(&pattern[0], SyntaxToken::Literal(s) if s == "for"));
-        assert!(matches!(&pattern[1], SyntaxToken::Literal(s) if s == "("));
-        assert!(matches!(&pattern[2], SyntaxToken::Ident(id) if id == "x"));
-        assert!(matches!(&pattern[3], SyntaxToken::Literal(s) if s == "<-"));
-        assert!(matches!(&pattern[4], SyntaxToken::Ident(id) if id == "n"));
-        assert!(matches!(&pattern[5], SyntaxToken::Literal(s) if s == ")"));
-        assert!(matches!(&pattern[6], SyntaxToken::Literal(s) if s == "{"));
-        assert!(matches!(&pattern[7], SyntaxToken::Ident(id) if id == "p"));
-        assert!(matches!(&pattern[8], SyntaxToken::Literal(s) if s == "}"));
+        assert!(matches!(&pattern[0], SyntaxExpr::Literal(s) if s == "for"));
+        assert!(matches!(&pattern[1], SyntaxExpr::Literal(s) if s == "("));
+        assert!(matches!(&pattern[2], SyntaxExpr::Param(id) if id == "x"));
+        assert!(matches!(&pattern[3], SyntaxExpr::Literal(s) if s == "<-"));
+        assert!(matches!(&pattern[4], SyntaxExpr::Param(id) if id == "n"));
+        assert!(matches!(&pattern[5], SyntaxExpr::Literal(s) if s == ")"));
+        assert!(matches!(&pattern[6], SyntaxExpr::Literal(s) if s == "{"));
+        assert!(matches!(&pattern[7], SyntaxExpr::Param(id) if id == "p"));
+        assert!(matches!(&pattern[8], SyntaxExpr::Literal(s) if s == "}"));
     }
 
     #[test]
@@ -1194,25 +1221,25 @@ mod tests {
         
         let pattern = rule.syntax_pattern.as_ref().unwrap();
         
-        // Pattern should be: Literal("for"), Literal("("), Ident(x), Literal("<-"), Ident(n), ...
+        // Pattern should be: Literal("for"), Literal("("), Param(x), Literal("<-"), Param(n), ...
         // Find parameter references (unquoted identifiers) in the pattern
         let param_refs: Vec<_> = pattern.iter()
             .filter_map(|t| match t {
-                SyntaxToken::Ident(id) => Some(id.to_string()),
+                SyntaxExpr::Param(id) => Some(id.to_string()),
                 _ => None,
             })
             .collect();
         
-        // Only parameter references should be Ident tokens (not "for" which is now Literal)
+        // Only parameter references should be Param tokens (not "for" which is Literal)
         assert!(param_refs.contains(&"x".to_string()), "Should contain param 'x'");
         assert!(param_refs.contains(&"n".to_string()), "Should contain param 'n'");
         assert!(param_refs.contains(&"p".to_string()), "Should contain param 'p'");
-        assert!(!param_refs.contains(&"for".to_string()), "'for' should be Literal, not Ident");
+        assert!(!param_refs.contains(&"for".to_string()), "'for' should be Literal, not Param");
         
         // Find literals in the pattern
         let literals: Vec<_> = pattern.iter()
             .filter_map(|t| match t {
-                SyntaxToken::Literal(s) => Some(s.clone()),
+                SyntaxExpr::Literal(s) => Some(s.clone()),
                 _ => None,
             })
             .collect();
@@ -1257,5 +1284,99 @@ mod tests {
         assert!(grammar.contains("<p:Proc>") || grammar.contains("<p: Proc>"), 
                 "Grammar should capture body 'p' as Proc");
         assert!(grammar.contains("Scope"), "Grammar should create Scope for binding");
+    }
+
+    // =========================================================================
+    // Pattern Operation Tests (#sep, #zip, #map, #opt)
+    // =========================================================================
+
+    #[test]
+    fn parse_sep_function_syntax() {
+        // #sep(ps, "|") function call syntax
+        // Note: Can't use quote! because # has special meaning there
+        let input = r#"
+            name: TestSep,
+            exports { Proc }
+            terms {
+                PPar . ps:HashBag(Proc) |- "{" #sep(ps, "|") "}" : Proc ;
+            }
+        "#;
+
+        let result = syn::parse_str::<TheoryDef>(input);
+        assert!(result.is_ok(), "Failed to parse #sep: {:?}", result.err());
+
+        let theory = result.unwrap();
+        let rule = &theory.terms[0];
+        
+        let pattern = rule.syntax_pattern.as_ref().unwrap();
+        
+        // Should have: Literal("{"), Op(Sep{...}), Literal("}")
+        assert_eq!(pattern.len(), 3, "Pattern should have 3 elements, got {:?}", pattern);
+        assert!(matches!(&pattern[0], SyntaxExpr::Literal(s) if s == "{"));
+        match &pattern[1] {
+            SyntaxExpr::Op(PatternOp::Sep { collection, separator, source }) => {
+                assert_eq!(collection.to_string(), "ps");
+                assert_eq!(separator, "|");
+                assert!(source.is_none(), "Simple #sep should have no source");
+            }
+            other => panic!("Expected Sep pattern op, got {:?}", other),
+        }
+        assert!(matches!(&pattern[2], SyntaxExpr::Literal(s) if s == "}"));
+    }
+
+    #[test]
+    fn parse_sep_method_syntax() {
+        // ps.#sep("|") method chain syntax
+        let input = r#"
+            name: TestSepMethod,
+            exports { Proc }
+            terms {
+                PPar . ps:HashBag(Proc) |- "{" ps.#sep("|") "}" : Proc ;
+            }
+        "#;
+
+        let result = syn::parse_str::<TheoryDef>(input);
+        assert!(result.is_ok(), "Failed to parse method #sep: {:?}", result.err());
+
+        let theory = result.unwrap();
+        let rule = &theory.terms[0];
+        
+        let pattern = rule.syntax_pattern.as_ref().unwrap();
+        
+        // Should have: Literal("{"), Op(Sep{...}), Literal("}")
+        assert_eq!(pattern.len(), 3, "Pattern should have 3 elements, got {:?}", pattern);
+        
+        match &pattern[1] {
+            SyntaxExpr::Op(PatternOp::Sep { collection, separator, source }) => {
+                assert_eq!(collection.to_string(), "ps");
+                assert_eq!(separator, "|");
+                assert!(source.is_none(), "Simple #sep should have no source");
+            }
+            other => panic!("Expected Sep pattern op, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn parse_zip_syntax() {
+        // #zip(ns, xs) syntax
+        let input = r#"
+            name: TestZip,
+            exports { Proc Name }
+            terms {
+                PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "for" "(" #zip(ns, xs) ")" "{" p "}" : Proc ;
+            }
+        "#;
+
+        let result = syn::parse_str::<TheoryDef>(input);
+        assert!(result.is_ok(), "Failed to parse #zip: {:?}", result.err());
+
+        let theory = result.unwrap();
+        let rule = &theory.terms[0];
+        
+        let pattern = rule.syntax_pattern.as_ref().unwrap();
+        
+        // Find the Zip op in the pattern
+        let has_zip = pattern.iter().any(|expr| matches!(expr, SyntaxExpr::Op(PatternOp::Zip { .. })));
+        assert!(has_zip, "Pattern should contain Zip operation");
     }
 }

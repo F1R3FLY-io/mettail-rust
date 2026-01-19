@@ -11,7 +11,7 @@
     clippy::unnecessary_filter_map
 )]
 
-use crate::ast::{GrammarItem, GrammarRule, TheoryDef};
+use crate::ast::{theory::TheoryDef, grammar::{GrammarItem, GrammarRule, TermParam}};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;

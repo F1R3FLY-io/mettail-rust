@@ -8,7 +8,8 @@
 //! - Collection projections (extracting elements from collections)
 //! - Congruence rules for equality
 
-use crate::ast::{GrammarRule, TheoryDef};
+use crate::ast::{grammar::{GrammarRule, GrammarItem}, theory::TheoryDef};
+use crate::ast::grammar::TermParam;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -80,7 +81,7 @@ fn generate_deconstruction_for_constructor(
     let has_collections = constructor
         .items
         .iter()
-        .any(|item| matches!(item, crate::ast::GrammarItem::Collection { .. }));
+        .any(|item| matches!(item, GrammarItem::Collection { .. }));
 
     if has_collections {
         // Generate deconstruction for collection fields
@@ -93,7 +94,7 @@ fn generate_deconstruction_for_constructor(
         .iter()
         .enumerate()
         .filter_map(|(i, item)| {
-            if let crate::ast::GrammarItem::NonTerminal(ident) = item {
+            if let GrammarItem::NonTerminal(ident) = item {
                 Some((i, ident))
             } else {
                 None
@@ -164,9 +165,17 @@ fn generate_collection_projection_population(
         .collect();
 
     for constructor in constructors {
+        // Skip multi-binder constructors (they have term_context with MultiAbstraction)
+        let is_multi_binder = constructor.term_context.as_ref().map_or(false, |ctx| {
+            ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        });
+        if is_multi_binder {
+            continue;
+        }
+        
         // Check if this constructor has a collection field
         for item in &constructor.items {
-            if let crate::ast::GrammarItem::Collection { element_type, .. } = item {
+            if let GrammarItem::Collection { element_type, .. } = item {
                 // Found a collection field - generate projection rule
                 let parent_cat = &constructor.category;
                 let parent_cat_lower = format_ident!("{}", parent_cat.to_string().to_lowercase());
@@ -218,9 +227,17 @@ fn generate_projection_seeding_rules(category: &Ident, theory: &TheoryDef) -> Ve
         .collect();
 
     for constructor in constructors {
+        // Skip multi-binder constructors
+        let is_multi_binder = constructor.term_context.as_ref().map_or(false, |ctx| {
+            ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        });
+        if is_multi_binder {
+            continue;
+        }
+        
         // Check if this constructor has a collection field
         for item in &constructor.items {
-            if let crate::ast::GrammarItem::Collection { element_type, .. } = item {
+            if let GrammarItem::Collection { element_type, .. } = item {
                 // Found a collection field
                 let elem_cat = element_type;
                 let elem_cat_lower = format_ident!("{}", elem_cat.to_string().to_lowercase());
@@ -304,7 +321,7 @@ fn generate_binding_deconstruction(
 
     // Get the body category
     let body_cat = match &constructor.items[body_idx] {
-        crate::ast::GrammarItem::NonTerminal(cat) => cat,
+        GrammarItem::NonTerminal(cat) => cat,
         _ => return None,
     };
     let body_cat_lower = format_ident!("{}", body_cat.to_string().to_lowercase());
@@ -313,7 +330,7 @@ fn generate_binding_deconstruction(
     let field_count = constructor
         .items
         .iter()
-        .filter(|item| matches!(item, crate::ast::GrammarItem::NonTerminal(_)))
+        .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
         .count();
 
     if field_count == 1 {
@@ -339,7 +356,7 @@ fn generate_binding_deconstruction(
                 continue; // Skip binder
             } else if _i == body_idx {
                 field_names.push(format_ident!("scope_field"));
-            } else if let crate::ast::GrammarItem::NonTerminal(cat) = item {
+            } else if let GrammarItem::NonTerminal(cat) = item {
                 let field_name = format!("field_{}", ast_field_idx);
                 field_names.push(format_ident!("{}", field_name));
                 field_cats.push((ast_field_idx, cat.clone()));

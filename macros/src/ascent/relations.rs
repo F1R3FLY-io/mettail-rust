@@ -3,8 +3,8 @@
 //! Generates relation declarations for categories, equality, rewrites,
 //! and collection projections.
 
-use crate::ascent::congruence::get_constructor_collection_element_type;
-use crate::ast::TheoryDef;
+use crate::ast::theory::{TheoryDef, Condition, RewriteRule};
+use crate::ast::grammar::TermParam;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -70,8 +70,16 @@ fn generate_collection_projection_relations(theory: &TheoryDef) -> Vec<TokenStre
     let mut relations = Vec::new();
 
     for rule in &theory.terms {
+        // Skip multi-binder constructors (they have term_context with MultiAbstraction)
+        let is_multi_binder = rule.term_context.as_ref().map_or(false, |ctx| {
+            ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        });
+        if is_multi_binder {
+            continue;
+        }
+        
         // Check if this constructor has a collection field
-        if let Some(elem_cat) = get_constructor_collection_element_type(&rule.label, theory) {
+        if let Some(elem_cat) = theory.collection_element_type(&rule.label) {
             let parent_cat = &rule.category;
             let constructor = &rule.label;
 
@@ -92,7 +100,6 @@ fn generate_collection_projection_relations(theory: &TheoryDef) -> Vec<TokenStre
 /// For each EnvQuery condition in rewrite rules, generate the corresponding relation.
 /// Example: `if env_var(x, v) then ...` generates `relation env_var(String, i32);`
 fn generate_env_relations(theory: &TheoryDef) -> Vec<TokenStream> {
-    use crate::ast::Condition;
     use std::collections::HashSet;
 
     let mut relations = Vec::new();
@@ -134,25 +141,18 @@ fn generate_env_relations(theory: &TheoryDef) -> Vec<TokenStream> {
 
 /// Extract the category from a rewrite rule (from LHS)
 fn extract_category_from_rewrite(
-    rewrite: &crate::ast::RewriteRule,
+    rewrite: &RewriteRule,
     theory: &TheoryDef,
 ) -> Option<proc_macro2::Ident> {
-    use crate::ast::Expr;
-
     // Try to extract category from LHS pattern
-    match &rewrite.left {
-        Expr::Apply { constructor, .. } => {
-            // Find the rule with this constructor
-            theory
-                .terms
-                .iter()
-                .find(|r| r.label == *constructor)
-                .map(|rule| rule.category.clone())
-        },
-        Expr::Var(_) => None,
-        Expr::Subst { .. } => None,
-        Expr::CollectionPattern { .. } => None,
-        // Lambdas are meta-level constructs, not patterns in rewrites
-        Expr::Lambda { .. } | Expr::MultiLambda { .. } => None,
+    if let Some(constructor) = rewrite.left.constructor_name() {
+        // Find the rule with this constructor
+        theory
+            .terms
+            .iter()
+            .find(|r| &r.label == constructor)
+            .map(|rule| rule.category.clone())
+    } else {
+        None
     }
 }

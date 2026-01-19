@@ -5,8 +5,8 @@
 
 #![allow(clippy::cmp_owned, clippy::useless_format)]
 
-use crate::ast::{GrammarItem, GrammarRule, TheoryDef, TermParam, SyntaxToken, TypeExpr};
-use crate::codegen::{is_integer_rule, is_var_rule};
+use crate::ast::{theory::{TheoryDef, Export}, grammar::{GrammarItem, GrammarRule, TermParam}, syntax::{SyntaxExpr, PatternOp}, types::{TypeExpr, CollectionType}};
+use crate::codegen::{generate_literal_label, is_integer_rule, is_var_rule};
 use crate::utils::{has_native_type, native_type_to_string};
 
 /// Generates Var label for a category (first letter + "Var")
@@ -74,14 +74,21 @@ pub fn generate_lalrpop_grammar(theory: &TheoryDef) -> String {
     let needs_var = theory.exports.iter().any(|e| e.native_type.is_none())
         || theory.terms.iter().any(is_var_rule);
 
-    if has_binders {
-        if needs_var {
-            grammar.push_str("use mettail_runtime::{Var, Binder, Scope};\n");
-        } else {
-            grammar.push_str("use mettail_runtime::{Binder, Scope};\n");
-        }
-    } else if needs_var {
-        grammar.push_str("use mettail_runtime::{Var};\n");
+    // Check if any term uses HashBag collections (for #sep)
+    let needs_hashbag = theory.terms.iter().any(|r| {
+        r.term_context.as_ref().map_or(false, |ctx| {
+            ctx.iter().any(|param| matches!(param, TermParam::Simple { ty: TypeExpr::Collection { coll_type: CollectionType::HashBag, .. }, .. }))
+        })
+    });
+
+    // Build the runtime imports
+    let mut imports = Vec::new();
+    if needs_var { imports.push("Var"); }
+    if has_binders { imports.push("Binder"); imports.push("Scope"); }
+    if needs_hashbag { imports.push("HashBag"); }
+    
+    if !imports.is_empty() {
+        grammar.push_str(&format!("use mettail_runtime::{{{}}};\n", imports.join(", ")));
     }
 
     // Import the AST types from the crate where the theory is defined
@@ -278,38 +285,62 @@ fn generate_tiered_production(
         }
     }
 
-    // Automatically adds Var alternative if it doesn't exist (lowest precedence)
-    // But check for native types first - if category has native type, use native literal parser
-    if !has_var_rule {
-        let var_label = generate_var_label(category);
-        // Check if this category has a native type
-        if let Some(native_type) = has_native_type(category, theory) {
-            let type_str = native_type_to_string(native_type);
+    // Check if we need to add a comma before auto-generated rules
+    let mut needs_comma = !filtered_other_rules.is_empty();
+    
+    // Check if there's an explicit Integer rule (NumLit . Cat ::= Integer)
+    let has_integer_rule = filtered_other_rules.iter().any(|r| is_integer_rule(r));
+
+    // Auto-generate literal parser for native types (if not explicitly declared)
+    if let Some(native_type) = has_native_type(category, theory) {
+        let type_str = native_type_to_string(native_type);
+        if !has_integer_rule {
+            let literal_label = generate_literal_label(native_type);
+
+            if needs_comma {
+                production.push_str(",\n");
+            }
+
             if type_str == "i32" || type_str == "i64" {
-                // Use Integer token for native integer types
-                // Also add unary minus support for negative numbers
+                // Integer literals: parse Integer token
+                // Add unary minus support for negative numbers (before positive literals for precedence)
                 production.push_str(&format!(
                     "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    cat_str, var_label
+                    cat_str, literal_label
                 ));
-                production.push_str(&format!("    <i:Integer> => {}::{}(i)\n", cat_str, var_label));
-            } else {
-                // Other native types - fall back to Var for now
-                production.push_str(&format!(
-                    "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))\n",
-                    cat_str, var_label
-                ));
+                production
+                    .push_str(&format!("    <i:Integer> => {}::{}(i)", cat_str, literal_label));
+            } else if type_str == "f32" || type_str == "f64" {
+                // Float literals: parse Float token
+                production
+                    .push_str(&format!("    <f:Float> => {}::{}(f)", cat_str, literal_label));
+            } else if type_str == "bool" {
+                // Boolean literals: parse Boolean token
+                production
+                    .push_str(&format!("    <b:Boolean> => {}::{}(b)", cat_str, literal_label));
             }
-        } else {
-            // No native type - use regular Var
-            production.push_str(&format!(
-                "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))\n",
-                cat_str, var_label
-            ));
+            needs_comma = true; // Next rule (Var) needs comma
         }
     }
 
-    production.push_str("};\n");
+    // Automatically adds Var alternative if it doesn't exist (lowest precedence)
+    // Variables always parse as Ident (not Integer), regardless of native type
+    // Integer literals are handled separately via NumLit/Integer rules
+    if !has_var_rule {
+        let var_label = generate_var_label(category);
+        // Variables always parse as Ident (not Integer)
+        if needs_comma {
+            production.push_str(",\n");
+        } else {
+            production.push('\n');
+        }
+        production.push_str(&format!(
+            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))",
+            cat_str, var_label
+        ));
+    }
+
+    production.push_str("\n};\n");
     production
 }
 
@@ -381,7 +412,7 @@ fn generate_var_terminal_alternative(rule: &GrammarRule, cat_str: &str) -> Strin
                 if nt.to_string() == "Var" {
                     // Var should parse as Ident, then convert to OrdVar
                     pattern.push_str(&format!(" <{}:Ident>", var_name));
-                    args.push(format!("mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var({})))", var_name));
+                    args.push(format!("mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var({})))", var_name));
                 } else if nt == category {
                     // Recursive reference: use CatInfix to avoid circular reference
                     pattern.push_str(&format!(" <{}:{}Infix>", var_name, cat_str));
@@ -425,47 +456,69 @@ fn generate_simple_production(
         // Pass theory context for native type detection
         production.push_str(&generate_rule_alternative_with_theory(rule, Some(theory)));
 
-        // Adds comma unless it's the last rule and we won't add Var
-        if i < rules.len() - 1 || !has_var_rule {
+        if i < rules.len() - 1 {
             production.push_str(",\n");
         } else {
             production.push('\n');
         }
     }
 
-    // Automatically adds Var alternative if it doesn't exist (lowest precedence)
-    // But check for native types first - if category has native type, use native literal parser
-    if !has_var_rule {
-        let var_label = generate_var_label(category);
-        // Check if this category has a native type
-        if let Some(native_type) = has_native_type(category, theory) {
-            let type_str = native_type_to_string(native_type);
+    // Check if we need to add a comma before auto-generated rules
+    let mut needs_comma = !rules.is_empty();
+    
+    // Check if there's an explicit Integer rule (NumLit . Cat ::= Integer)
+    let has_integer_rule = rules.iter().any(|r| is_integer_rule(r));
+
+    // Auto-generate literal parser for native types (if not explicitly declared)
+    if let Some(native_type) = has_native_type(category, theory) {
+        let type_str = native_type_to_string(native_type);
+        if !has_integer_rule {
+            let literal_label = generate_literal_label(native_type);
+
+            if needs_comma {
+                production.push_str(",\n");
+            }
+
             if type_str == "i32" || type_str == "i64" {
-                // Use Integer token for native integer types
-                // Also add unary minus support for negative numbers
+                // Integer literals: parse Integer token
+                // Add unary minus support for negative numbers (before positive literals for precedence)
                 production.push_str(&format!(
                     "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    category, var_label
+                    category, literal_label
                 ));
                 production
-                    .push_str(&format!("    <i:Integer> => {}::{}(i)\n", category, var_label));
-            } else {
-                // Other native types - fall back to Var for now
-                production.push_str(&format!(
-                    "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))\n",
-                    category, var_label
-                ));
+                    .push_str(&format!("    <i:Integer> => {}::{}(i)", category, literal_label));
+            } else if type_str == "f32" || type_str == "f64" {
+                // Float literals: parse Float token
+                production
+                    .push_str(&format!("    <f:Float> => {}::{}(f)", category, literal_label));
+            } else if type_str == "bool" {
+                // Boolean literals: parse Boolean token
+                production
+                    .push_str(&format!("    <b:Boolean> => {}::{}(b)", category, literal_label));
             }
-        } else {
-            // No native type - use regular Var
-            production.push_str(&format!(
-                "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))\n",
-                category, var_label
-            ));
+            needs_comma = true; // Next rule (Var) needs comma
         }
     }
 
-    production.push_str("};\n");
+    // Automatically adds Var alternative if it doesn't exist (lowest precedence)
+    // Variables always parse as Ident (not Integer), regardless of native type
+    // Integer literals are handled separately via NumLit/Integer rules
+    if !has_var_rule {
+        let var_label = generate_var_label(category);
+        // Variables always parse as Ident (not Integer)
+        if needs_comma {
+            production.push_str(",\n");
+        } else {
+            production.push('\n');
+        }
+        production.push_str(&format!(
+            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))",
+            category, var_label
+        ));
+    }
+
+    production.push_str("\n};\n");
     production
 }
 
@@ -501,7 +554,7 @@ fn generate_rule_alternative_with_theory(
             GrammarItem::NonTerminal(nt) if nt == "Var" => {
                 // Variable: parse identifier as variable node
                 // Use get_or_create_var to ensure same name = same ID within a parse
-                alt.push_str(&format!("<v:Ident> => {}::{}(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))",
+                alt.push_str(&format!("<v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))",
                     rule.category, label));
             },
             GrammarItem::NonTerminal(nt) => {
@@ -564,7 +617,7 @@ fn generate_sequence_alternative(rule: &GrammarRule) -> String {
                 if nt.to_string() == "Var" {
                     // Var should parse as Ident, then convert to OrdVar
                     pattern.push_str(&format!(" <{}:Ident>", var_name));
-                    args.push(format!("mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var({})))", var_name));
+                    args.push(format!("mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var({})))", var_name));
                 } else {
                     pattern.push_str(&format!(" <{}:{}>", var_name, nt));
                     args.push(format!("Box::new({})", var_name));
@@ -680,110 +733,55 @@ fn generate_binder_alternative(rule: &GrammarRule) -> String {
     format!("{}{}", pattern.trim(), action)
 }
 
+/// Info for multi-binder patterns (#zip + #map + #sep chains)
+#[derive(Debug, Clone)]
+struct MultiBinderInfo {
+    /// The collection parameter name (e.g., "ns")
+    collection_param: String,
+    /// The multi-binder parameter name (e.g., "xs")
+    binder_param: String,
+    /// The body parameter name (e.g., "p")
+    body_param: String,
+}
+
 /// Generate alternative from a syntax pattern (new judgement-style syntax)
 /// 
-/// Maps syntax pattern tokens to LALRPOP pattern elements:
-/// - Identifiers matching term_context params become non-terminal captures
-/// - Other identifiers become literal terminals
-/// - Punct chars become literal terminals
+/// Maps syntax pattern expressions to LALRPOP pattern elements:
+/// - Param references matching term_context become non-terminal captures
+/// - Literals become quoted terminals
+/// - Pattern operations (#sep, #map, etc.) generate appropriate grammar
 fn generate_pattern_alternative(
     rule: &GrammarRule,
     term_context: &[TermParam],
-    syntax_pattern: &[SyntaxToken],
+    syntax_pattern: &[SyntaxExpr],
 ) -> String {
     let label = &rule.label;
     let category = &rule.category;
 
     // Build a map from parameter names to their types
-    let mut param_types: std::collections::HashMap<String, ParamInfo> = std::collections::HashMap::new();
-    
-    for param in term_context {
-        match param {
-            TermParam::Simple { name, ty } => {
-                param_types.insert(name.to_string(), ParamInfo {
-                    kind: ParamKind::Simple,
-                    ty: ty.clone(),
-                });
-            }
-            TermParam::Abstraction { binder, body, ty } => {
-                // Binder is captured as identifier
-                param_types.insert(binder.to_string(), ParamInfo {
-                    kind: ParamKind::Binder,
-                    ty: ty.clone(),
-                });
-                // Body is the codomain type
-                if let TypeExpr::Arrow { codomain, .. } = ty {
-                    param_types.insert(body.to_string(), ParamInfo {
-                        kind: ParamKind::Body,
-                        ty: (**codomain).clone(),
-                    });
-                }
-            }
-            TermParam::MultiAbstraction { binder, body, ty } => {
-                // Multi-binder is captured as multiple identifiers
-                param_types.insert(binder.to_string(), ParamInfo {
-                    kind: ParamKind::MultiBinder,
-                    ty: ty.clone(),
-                });
-                // Body is the codomain type
-                if let TypeExpr::Arrow { codomain, .. } = ty {
-                    param_types.insert(body.to_string(), ParamInfo {
-                        kind: ParamKind::Body,
-                        ty: (**codomain).clone(),
-                    });
-                }
-            }
-        }
-    }
+    let param_types = build_param_types(term_context);
 
-    // Generate pattern from syntax tokens
+    // Generate pattern from syntax expressions
     let mut pattern = String::new();
     let mut args = Vec::new();
     let mut binder_var: Option<String> = None;
     let mut body_var: Option<String> = None;
     let mut has_binder = false;
+    let mut collection_params: Vec<(String, String, String)> = Vec::new(); // (name, elem_type, separator)
+    let mut multi_binder_info: Option<MultiBinderInfo> = None;
     
-    for token in syntax_pattern {
-        match token {
-            SyntaxToken::Ident(id) => {
-                // Parameter reference - must be in term context
-                let name = id.to_string();
-                if let Some(info) = param_types.get(&name) {
-                    match info.kind {
-                        ParamKind::Simple => {
-                            let nonterminal = type_to_nonterminal(&info.ty);
-                            pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
-                            args.push((name.clone(), info.clone()));
-                        }
-                        ParamKind::Binder => {
-                            // Binder is captured as Ident
-                            pattern.push_str(&format!(" <{}:Ident>", name));
-                            binder_var = Some(name.clone());
-                            has_binder = true;
-                        }
-                        ParamKind::MultiBinder => {
-                            // Multi-binder - TODO: proper implementation
-                            pattern.push_str(&format!(" <{}:Ident>", name));
-                            binder_var = Some(name.clone());
-                            has_binder = true;
-                        }
-                        ParamKind::Body => {
-                            let nonterminal = type_to_nonterminal(&info.ty);
-                            pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
-                            body_var = Some(name.clone());
-                        }
-                    }
-                } else {
-                    // Unknown parameter - this is a validation error
-                    // For now, treat as literal but this should be caught during validation
-                    pattern.push_str(&format!(" \"{}\"", name));
-                }
-            }
-            SyntaxToken::Literal(s) => {
-                // Quoted literal (keyword, punctuation, operator)
-                pattern.push_str(&format!(" \"{}\"", s));
-            }
-        }
+    for expr in syntax_pattern {
+        generate_syntax_expr_pattern(
+            expr,
+            &param_types,
+            &mut pattern,
+            &mut args,
+            &mut binder_var,
+            &mut body_var,
+            &mut has_binder,
+            &mut collection_params,
+            &mut multi_binder_info,
+        );
     }
 
     // Generate the action
@@ -825,9 +823,89 @@ fn generate_pattern_alternative(
         action.push_str("    }");
         
         format!("{}{}", pattern.trim(), action)
-    } else if args.is_empty() {
+    } else if args.is_empty() && collection_params.is_empty() && multi_binder_info.is_none() {
         // Nullary constructor - unit variant
         format!("{} => {}::{}", pattern.trim(), category, label)
+    } else if let Some(ref mb_info) = multi_binder_info {
+        // Multi-binder pattern: #zip(...).#map(...).#sep(...)
+        // The pattern captures __pairs_v (Vec of tuples) and __pairs_e (Option of tuple)
+        //
+        // Pattern: <__pairs_v:((inner) "sep")*> <__pair_e:(inner)?>
+        // - __pairs_v items have type ((inner_tuple), &str) - inner plus separator
+        // - __pair_e has type Option<inner_tuple> - just the inner
+        //
+        // For inner pattern like `Ident "<-" Name`, inner_tuple = (String, &str, Name)
+        let mut action = " => {\n".to_string();
+        
+        // Extract names and binder strings from captured tuples
+        // __pairs_v: Vec<((String, &str, Name), &str)> - need ((x, _, n), _)
+        // __pairs_e: Option<(String, &str, Name)> - need (x, _, n)
+        action.push_str(&format!(
+            "        let mut {coll} = Vec::new();\n\
+             let mut __binder_strs = Vec::new();\n\
+             for ((x, _, n), _) in __pairs_v {{\n\
+                 __binder_strs.push(x);\n\
+                 {coll}.push(n);\n\
+             }}\n\
+             if let Some((x, _, n)) = __pair_e {{\n\
+                 __binder_strs.push(x);\n\
+                 {coll}.push(n);\n\
+             }}\n",
+            coll = mb_info.collection_param
+        ));
+        
+        // Create binders from strings
+        action.push_str(
+            "        let __binders: Vec<Binder<String>> = __binder_strs.into_iter()\n\
+             .map(|s| Binder(mettail_runtime::get_or_create_var(s)))\n\
+             .collect();\n"
+        );
+        
+        // Create the multi-binder scope
+        action.push_str(&format!(
+            "        let __scope = Scope::new(__binders, Box::new({}));\n",
+            mb_info.body_param
+        ));
+        
+        // Build constructor call with collection and scope
+        action.push_str(&format!(
+            "        {}::{}({}, __scope)\n",
+            category, label, mb_info.collection_param
+        ));
+        action.push_str("    }");
+        
+        format!("{}{}", pattern.trim(), action)
+    } else if !collection_params.is_empty() {
+        // Has collection parameters - need to combine _v and _e captures
+        let mut action = " => {\n".to_string();
+        
+        // Generate code to combine collection captures
+        for (coll_name, _elem_type, _sep) in &collection_params {
+            action.push_str(&format!(
+                "        let mut {name} = HashBag::new();\n\
+                 for item in {name}_v {{ {name}.insert(item); }}\n\
+                 if let Some(item) = {name}_e {{ {name}.insert(item); }}\n",
+                name = coll_name
+            ));
+        }
+        
+        // Build constructor call
+        let args_str: String = args
+            .iter()
+            .map(|(name, info)| {
+                match &info.ty {
+                    TypeExpr::Base(t) if t.to_string() == "Var" => name.clone(),
+                    TypeExpr::Collection { .. } => name.clone(), // Already built above
+                    _ => format!("Box::new({})", name),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        
+        action.push_str(&format!("        {}::{}({})\n", category, label, args_str));
+        action.push_str("    }");
+        
+        format!("{}{}", pattern.trim(), action)
     } else {
         // Simple constructor call with args
         let args_str: String = args
@@ -852,6 +930,7 @@ enum ParamKind {
     Binder,
     MultiBinder,
     Body,
+    Collection,
 }
 
 /// Helper struct for parameter info
@@ -859,6 +938,297 @@ enum ParamKind {
 struct ParamInfo {
     kind: ParamKind,
     ty: TypeExpr,
+}
+
+/// Build param_types map from term context
+fn build_param_types(term_context: &[TermParam]) -> std::collections::HashMap<String, ParamInfo> {
+    let mut param_types = std::collections::HashMap::new();
+    
+    for param in term_context {
+        match param {
+            TermParam::Simple { name, ty } => {
+                let kind = if matches!(ty, TypeExpr::Collection { .. }) {
+                    ParamKind::Collection
+                } else {
+                    ParamKind::Simple
+                };
+                param_types.insert(name.to_string(), ParamInfo {
+                    kind,
+                    ty: ty.clone(),
+                });
+            }
+            TermParam::Abstraction { binder, body, ty } => {
+                // Binder is captured as identifier
+                param_types.insert(binder.to_string(), ParamInfo {
+                    kind: ParamKind::Binder,
+                    ty: ty.clone(),
+                });
+                // Body is the codomain type
+                if let TypeExpr::Arrow { codomain, .. } = ty {
+                    param_types.insert(body.to_string(), ParamInfo {
+                        kind: ParamKind::Body,
+                        ty: (**codomain).clone(),
+                    });
+                }
+            }
+            TermParam::MultiAbstraction { binder, body, ty } => {
+                // Multi-binder is captured as multiple identifiers
+                param_types.insert(binder.to_string(), ParamInfo {
+                    kind: ParamKind::MultiBinder,
+                    ty: ty.clone(),
+                });
+                // Body is the codomain type
+                if let TypeExpr::Arrow { codomain, .. } = ty {
+                    param_types.insert(body.to_string(), ParamInfo {
+                        kind: ParamKind::Body,
+                        ty: (**codomain).clone(),
+                    });
+                }
+            }
+        }
+    }
+    
+    param_types
+}
+
+/// Generate LALRPOP pattern elements for a single SyntaxExpr
+#[allow(clippy::too_many_arguments)]
+fn generate_syntax_expr_pattern(
+    expr: &SyntaxExpr,
+    param_types: &std::collections::HashMap<String, ParamInfo>,
+    pattern: &mut String,
+    args: &mut Vec<(String, ParamInfo)>,
+    binder_var: &mut Option<String>,
+    body_var: &mut Option<String>,
+    has_binder: &mut bool,
+    collection_params: &mut Vec<(String, String, String)>, // (name, elem_type, separator)
+    multi_binder_info: &mut Option<MultiBinderInfo>,
+) {
+    match expr {
+        SyntaxExpr::Literal(s) => {
+            pattern.push_str(&format!(" \"{}\"", s));
+        }
+        SyntaxExpr::Param(id) => {
+            let name = id.to_string();
+            if let Some(info) = param_types.get(&name) {
+                match info.kind {
+                    ParamKind::Simple => {
+                        let nonterminal = type_to_nonterminal(&info.ty);
+                        pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
+                        args.push((name.clone(), info.clone()));
+                    }
+                    ParamKind::Binder => {
+                        pattern.push_str(&format!(" <{}:Ident>", name));
+                        *binder_var = Some(name.clone());
+                        *has_binder = true;
+                    }
+                    ParamKind::MultiBinder => {
+                        pattern.push_str(&format!(" <{}:Ident>", name));
+                        *binder_var = Some(name.clone());
+                        *has_binder = true;
+                    }
+                    ParamKind::Body => {
+                        let nonterminal = type_to_nonterminal(&info.ty);
+                        pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
+                        *body_var = Some(name.clone());
+                    }
+                    ParamKind::Collection => {
+                        // Collection without #sep - use default separator
+                        if let TypeExpr::Collection { element, .. } = &info.ty {
+                            let elem_type = type_to_nonterminal(element);
+                            // Default separator is "|" - but this should be specified via #sep
+                            pattern.push_str(&format!(" <{}:((<{}> \"|\")* <{}>?)>", name, elem_type, elem_type));
+                            args.push((name.clone(), info.clone()));
+                        }
+                    }
+                }
+            } else {
+                // Unknown parameter - treat as literal (validation should catch this)
+                pattern.push_str(&format!(" \"{}\"", name));
+            }
+        }
+        SyntaxExpr::Op(op) => {
+            generate_pattern_op_pattern(op, param_types, pattern, args, collection_params, multi_binder_info);
+        }
+    }
+}
+
+/// Generate LALRPOP pattern for a pattern operation
+fn generate_pattern_op_pattern(
+    op: &PatternOp,
+    param_types: &std::collections::HashMap<String, ParamInfo>,
+    pattern: &mut String,
+    args: &mut Vec<(String, ParamInfo)>,
+    collection_params: &mut Vec<(String, String, String)>,
+    multi_binder_info: &mut Option<MultiBinderInfo>,
+) {
+    match op {
+        PatternOp::Sep { collection, separator, source } => {
+            // Check for chained operation (e.g., #zip(...).#map(...).#sep(","))
+            if let Some(chain_source) = source {
+                generate_chained_sep_pattern(chain_source, separator, param_types, pattern, args, collection_params, multi_binder_info);
+                return;
+            }
+            
+            // Simple collection separator
+            let name = collection.to_string();
+            if let Some(info) = param_types.get(&name) {
+                if let TypeExpr::Collection { element, .. } = &info.ty {
+                    let elem_type = type_to_nonterminal(element);
+                    // Generate separated list pattern with two captures:
+                    // <name_v:(<Elem> "sep")*> <name_e:Elem?>
+                    // Then combine in action code
+                    pattern.push_str(&format!(
+                        " <{}_v:(<{}> \"{}\")*> <{}_e:{}?>",
+                        name, elem_type, separator, name, elem_type
+                    ));
+                    args.push((name.clone(), info.clone()));
+                    collection_params.push((name, elem_type, separator.clone()));
+                }
+            }
+        }
+        PatternOp::Var(id) => {
+            // Variable reference in pattern op context - treat as param
+            let name = id.to_string();
+            if let Some(info) = param_types.get(&name) {
+                let nonterminal = type_to_nonterminal(&info.ty);
+                pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
+                args.push((name.clone(), info.clone()));
+            }
+        }
+        PatternOp::Zip { .. } | PatternOp::Map { .. } => {
+            // Zip and Map are typically chained with Sep
+            // For now, we handle the common case: #zip(a,b).#map(|x,y| ...).#sep(",")
+            // This needs more sophisticated handling for the full case
+            // TODO: Implement full zip/map support
+            pattern.push_str(" /* TODO: zip/map pattern */");
+        }
+        PatternOp::Opt { inner } => {
+            // Optional pattern: (inner)?
+            pattern.push_str(" (");
+            for expr in inner {
+                generate_syntax_expr_pattern(
+                    expr,
+                    param_types,
+                    pattern,
+                    args,
+                    &mut None,
+                    &mut None,
+                    &mut false,
+                    collection_params,
+                    &mut None, // multi_binder_info not propagated to optional inner
+                );
+            }
+            pattern.push_str(")?");
+        }
+    }
+}
+
+/// Generate LALRPOP pattern for chained #zip(...).#map(...).#sep(",")
+/// 
+/// This handles multi-binder patterns like:
+///   `#zip(ns, xs).#map(|n,x| x "<-" n).#sep(",")`
+/// Which generates:
+///   `<__pairs_v:((Ident "<-" Name) ",")*> <__pair_e:(Ident "<-" Name)?>`
+/// 
+/// Note: LALRPOP doesn't allow named captures inside nested patterns,
+/// so we use anonymous captures. The result is tuples that we destructure.
+fn generate_chained_sep_pattern(
+    source: &PatternOp,
+    separator: &str,
+    param_types: &std::collections::HashMap<String, ParamInfo>,
+    pattern: &mut String,
+    _args: &mut Vec<(String, ParamInfo)>,
+    _collection_params: &mut Vec<(String, String, String)>,
+    multi_binder_info: &mut Option<MultiBinderInfo>,
+) {
+    // Extract the Map and Zip from the chain
+    if let PatternOp::Map { source: map_source, params, body } = source {
+        if let PatternOp::Zip { left, right } = map_source.as_ref() {
+            // We have: #zip(left, right).#map(|params| body).#sep(separator)
+            
+            // Determine which zip operand is the collection and which is the multi-binder
+            let left_name = left.to_string();
+            let right_name = right.to_string();
+            
+            let (collection_param, binder_param) = 
+                if param_types.get(&left_name).map(|i| matches!(i.kind, ParamKind::MultiBinder)).unwrap_or(false) {
+                    (right_name.clone(), left_name.clone())
+                } else {
+                    (left_name.clone(), right_name.clone())
+                };
+            
+            // Find the body parameter name (the one that's not involved in the zip)
+            let body_param = param_types.iter()
+                .find(|(name, info)| {
+                    matches!(info.kind, ParamKind::Body) || 
+                    (*name != &collection_param && *name != &binder_param && 
+                     matches!(info.ty, TypeExpr::Base(_)))
+                })
+                .map(|(name, _)| name.clone())
+                .unwrap_or_else(|| "p".to_string());
+            
+            // Build the inner pattern from the map body
+            // e.g., |n,x| x "<-" n → "Ident \"<-\" Name"
+            let mut inner_pattern = String::new();
+            let mut param_map: std::collections::HashMap<String, &syn::Ident> = std::collections::HashMap::new();
+            
+            // Map closure params to zip operands
+            if params.len() >= 2 {
+                param_map.insert(params[0].to_string(), left);
+                param_map.insert(params[1].to_string(), right);
+            }
+            
+            for expr in body {
+                match expr {
+                    SyntaxExpr::Literal(s) => {
+                        inner_pattern.push_str(&format!(" \"{}\"", s));
+                    }
+                    SyntaxExpr::Param(id) => {
+                        let name = id.to_string();
+                        if let Some(&orig_param) = param_map.get(&name) {
+                            // This closure param maps to a zip operand
+                            let orig_name = orig_param.to_string();
+                            if let Some(info) = param_types.get(&orig_name) {
+                                match info.kind {
+                                    ParamKind::MultiBinder => {
+                                        // Multi-binder captures as Ident (anonymous)
+                                        inner_pattern.push_str(" Ident");
+                                    }
+                                    _ => {
+                                        let nt = type_to_nonterminal(&info.ty);
+                                        // Anonymous capture - LALRPOP doesn't allow named symbols in nested patterns
+                                        inner_pattern.push_str(&format!(" {}", nt));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            
+            // Generate the full pattern with separator:
+            // <__pairs_v:((inner) sep)*> <__pair_e:(inner)?>
+            let inner_trimmed = inner_pattern.trim();
+            pattern.push_str(&format!(
+                " <__pairs_v:(({}) \"{}\")*> <__pair_e:({})?>",
+                inner_trimmed, separator, inner_trimmed
+            ));
+            
+            // Set multi-binder info for action generation
+            *multi_binder_info = Some(MultiBinderInfo {
+                collection_param,
+                binder_param,
+                body_param,
+            });
+            
+            return;
+        }
+    }
+    
+    // Fallback: just output a placeholder
+    pattern.push_str(" /* unhandled chained pattern */");
 }
 
 /// Convert a TypeExpr to a LALRPOP non-terminal name
@@ -882,7 +1252,7 @@ fn type_to_nonterminal(ty: &TypeExpr) -> String {
 /// - `[]` (empty collection)
 fn generate_collection_alternative(
     rule: &GrammarRule,
-    coll_type: &crate::ast::CollectionType,
+    coll_type: &CollectionType,
     element_type: &syn::Ident,
     separator: &str,
     delimiters: Option<&(String, String)>,
@@ -907,9 +1277,9 @@ fn generate_collection_alternative(
 
     // Determine the collection type constructor
     let coll_constructor = match coll_type {
-        crate::ast::CollectionType::HashBag => "mettail_runtime::HashBag",
-        crate::ast::CollectionType::HashSet => "std::collections::HashSet",
-        crate::ast::CollectionType::Vec => "Vec",
+        CollectionType::HashBag => "mettail_runtime::HashBag",
+        CollectionType::HashSet => "std::collections::HashSet",
+        CollectionType::Vec => "Vec",
     };
 
     // Build the pattern
@@ -944,26 +1314,26 @@ fn generate_collection_alternative(
         // With delimiters: use elems and last pattern
         action.push_str("        for e in elems {\n");
         match coll_type {
-            crate::ast::CollectionType::HashBag => {
+            CollectionType::HashBag => {
                 action.push_str("            coll.insert(e);\n");
             },
-            crate::ast::CollectionType::HashSet => {
+            CollectionType::HashSet => {
                 action.push_str("            coll.insert(e);\n");
             },
-            crate::ast::CollectionType::Vec => {
+            CollectionType::Vec => {
                 action.push_str("            coll.push(e);\n");
             },
         }
         action.push_str("        }\n");
         action.push_str("        if let Some(e) = last {\n");
         match coll_type {
-            crate::ast::CollectionType::HashBag => {
+            CollectionType::HashBag => {
                 action.push_str("            coll.insert(e);\n");
             },
-            crate::ast::CollectionType::HashSet => {
+            CollectionType::HashSet => {
                 action.push_str("            coll.insert(e);\n");
             },
-            crate::ast::CollectionType::Vec => {
+            CollectionType::Vec => {
                 action.push_str("            coll.push(e);\n");
             },
         }
@@ -971,19 +1341,19 @@ fn generate_collection_alternative(
     } else {
         // Without delimiters: use first and rest pattern
         match coll_type {
-            crate::ast::CollectionType::HashBag => {
+            CollectionType::HashBag => {
                 action.push_str("        coll.insert(first);\n");
                 action.push_str("        for e in rest {\n");
                 action.push_str("            coll.insert(e);\n");
                 action.push_str("        }\n");
             },
-            crate::ast::CollectionType::HashSet => {
+            CollectionType::HashSet => {
                 action.push_str("        coll.insert(first);\n");
                 action.push_str("        for e in rest {\n");
                 action.push_str("            coll.insert(e);\n");
                 action.push_str("        }\n");
-            },
-            crate::ast::CollectionType::Vec => {
+            },  
+            CollectionType::Vec => {
                 action.push_str("        coll.push(first);\n");
                 action.push_str("        for e in rest {\n");
                 action.push_str("            coll.push(e);\n");
@@ -1001,7 +1371,6 @@ fn generate_collection_alternative(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::*;
     use syn::parse_quote;
 
     #[test]
@@ -1054,14 +1423,14 @@ mod tests {
         // Proc -> PVar
         assert!(
             grammar.contains(
-                "PVar(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))"
+                "PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))"
             ),
             "Expected PVar parser alternative for Proc category"
         );
         // Name -> NVar
         assert!(
             grammar.contains(
-                "NVar(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))"
+                "NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))"
             ),
             "Expected NVar parser alternative for Name category"
         );
@@ -1114,7 +1483,7 @@ mod tests {
         assert_eq!(pvar_count, 1, "Expected exactly one PVar alternative, found {}", pvar_count);
         assert!(
             grammar.contains(
-                "PVar(mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var(v))))"
+                "PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))"
             ),
             "Expected PVar parser alternative"
         );
@@ -1173,7 +1542,6 @@ mod tests {
     #[test]
     fn test_calculator_like_grammar() {
         // Test a calculator-like grammar with assignment
-        use crate::ast::Export;
 
         let theory = TheoryDef {
             name: parse_quote!(Calculator),

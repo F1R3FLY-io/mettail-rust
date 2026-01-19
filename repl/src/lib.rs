@@ -14,5 +14,7 @@ pub use pretty::format_term_pretty;
 pub use registry::{build_registry, TheoryRegistry};
 pub use repl::Repl;
 pub use state::{HistoryEntry, ReplState};
-pub use theories::{AmbCalculusTheory, RhoCalculusTheory};
+pub use theories::{
+    AmbCalculusTheory, 
+    RhoCalculusTheory};
 pub use theory::{AscentResults, EquivClass, Rewrite, Term, TermInfo, Theory};

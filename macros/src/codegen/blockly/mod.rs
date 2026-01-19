@@ -19,7 +19,7 @@ mod builder;
 mod colors;
 mod writer;
 
-use crate::ast::TheoryDef;
+use crate::ast::theory::TheoryDef;
 use std::collections::HashMap;
 
 pub use writer::{write_blockly_blocks, write_blockly_categories};

@@ -3,7 +3,7 @@
 //! Converts MeTTaIL grammar rules into Blockly block definitions
 
 use super::{ArgType, BlockArg, BlockDefinition, ConnectionType};
-use crate::ast::{GrammarItem, GrammarRule};
+use crate::ast::grammar::{GrammarItem, GrammarRule};
 
 /// Generate a Blockly block definition from a grammar rule
 pub fn generate_block_definition(rule: &GrammarRule, theory_name: &str) -> BlockDefinition {

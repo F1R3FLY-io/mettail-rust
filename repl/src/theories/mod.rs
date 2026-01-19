@@ -6,9 +6,9 @@
 // - Result extraction
 
 pub mod ambient;
-pub mod calculator;
+// pub mod calculator;
 pub mod rhocalc;
 
 pub use ambient::AmbCalculusTheory;
-pub use calculator::CalculatorTheory;
+// pub use calculator::CalculatorTheory;
 pub use rhocalc::RhoCalculusTheory;

@@ -13,7 +13,7 @@ pub mod parser;
 
 pub use ast_gen::*;
 
-use crate::ast::{GrammarItem, GrammarRule};
+use crate::ast::{grammar::{GrammarItem, GrammarRule}};
 use syn::Ident;
 
 /// Checks if a rule is a Var rule (single item, NonTerminal "Var")
@@ -31,10 +31,28 @@ pub fn is_integer_rule(rule: &GrammarRule) -> bool {
         && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if ident.to_string() == "Integer")
 }
 
+/// Checks if a rule is an Assign rule (Var "=" Category)
+/// Example: `Assign . Int ::= Var "=" Int ;`
+#[allow(clippy::cmp_owned)]
+pub fn is_assign_rule(rule: &GrammarRule) -> bool {
+    rule.items.len() == 3
+        && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if ident.to_string() == "Var")
+        && matches!(&rule.items[1], GrammarItem::Terminal(term) if term == "=")
+        && matches!(&rule.items[2], GrammarItem::NonTerminal(ident) if ident == &rule.category)
+}
+
+/// Check if a category has an Assign rule in the theory
+pub fn has_assign_rule(category: &Ident, theory: &crate::ast::theory::TheoryDef) -> bool {
+    theory
+        .terms
+        .iter()
+        .any(|rule| rule.category == *category && is_assign_rule(rule))
+}
+
 /// Generate the Var variant label for a category
 ///
 /// Convention: First letter of category + "Var"
-/// Examples: Proc -> PVar, Name -> NVar, Term -> TVar
+/// Examples: Proc -> PVar, Name -> NVar, Int -> IVar
 pub fn generate_var_label(category: &Ident) -> Ident {
     let cat_str = category.to_string();
     let first_letter = cat_str
@@ -44,4 +62,19 @@ pub fn generate_var_label(category: &Ident) -> Ident {
         .to_uppercase()
         .collect::<String>();
     quote::format_ident!("{}Var", first_letter)
+}
+
+/// Generate the literal variant label for a category with native type
+///
+/// Convention: "NumLit" for integers, "FloatLit" for floats, "BoolLit" for bools
+/// Used for auto-generated literal constructors
+pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
+    use crate::utils::native_type_to_string;
+    let type_str = native_type_to_string(native_type);
+    match type_str.as_str() {
+        "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => quote::format_ident!("NumLit"),
+        "f32" | "f64" => quote::format_ident!("FloatLit"),
+        "bool" => quote::format_ident!("BoolLit"),
+        _ => quote::format_ident!("Lit"), // Generic fallback
+    }
 }

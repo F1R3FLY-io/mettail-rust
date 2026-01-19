@@ -11,7 +11,7 @@
     clippy::unnecessary_filter_map
 )]
 
-use crate::ast::{GrammarItem, GrammarRule, TheoryDef};
+use crate::ast::{theory::TheoryDef, grammar::{GrammarItem, GrammarRule, TermParam}};
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
@@ -213,6 +213,16 @@ fn generate_random_depth_d(
     let mut constructor_cases = Vec::new();
 
     for rule in rules {
+        // Check if this is a multi-binder rule (skip random generation for now)
+        let is_multi_binder = rule.term_context.as_ref().map_or(false, |ctx| {
+            ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        });
+        
+        if is_multi_binder {
+            // TODO: Implement proper random generation for multi-binder constructors
+            continue;
+        }
+        
         // Check if this has collections
         let has_collections = rule
             .items

@@ -51,7 +51,7 @@ pub fn build_registry() -> Result<TheoryRegistry> {
     // Register theories
     registry.register(Box::new(crate::theories::RhoCalculusTheory));
     registry.register(Box::new(crate::theories::AmbCalculusTheory));
-    registry.register(Box::new(crate::theories::CalculatorTheory));
+    // registry.register(Box::new(crate::theories::CalculatorTheory));
 
     if registry.theories.is_empty() {
         bail!("No theories available.");

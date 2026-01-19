@@ -2,21 +2,16 @@
 //!
 //! Handles:
 //! - Base rewrite rules (no premise)
-//! - Pattern matching for LHS
-//! - RHS construction
 //! - Freshness functions
 
-use crate::ast::TheoryDef;
+use crate::ast::theory::TheoryDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 
 mod clauses;
-mod patterns;
-pub mod rhs;
 
 // Re-export key functions
 pub use clauses::generate_rewrite_clauses;
-pub use patterns::generate_ascent_pattern;
 
 /// Generate freshness checking functions
 pub fn generate_freshness_functions(_theory: &TheoryDef) -> TokenStream {

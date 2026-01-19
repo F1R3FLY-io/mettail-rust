@@ -20,7 +20,7 @@ use syn::parse_macro_input;
 
 use ascent::generate_ascent_source;
 use ascent::generate_freshness_functions;
-use ast::TheoryDef;
+use ast::theory::TheoryDef;
 use codegen::blockly::{
     generate_blockly_definitions, write_blockly_blocks, write_blockly_categories,
 };

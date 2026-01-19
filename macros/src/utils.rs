@@ -1,4 +1,4 @@
-use crate::ast::TheoryDef;
+use crate::ast::theory::TheoryDef;
 use syn::Ident;
 
 /// Check if a category has a native type and return it

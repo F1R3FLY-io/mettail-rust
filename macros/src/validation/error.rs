@@ -2,7 +2,6 @@ use proc_macro2::{Span, TokenStream};
 use quote::quote_spanned;
 
 /// Validation error with span information for better compile-time diagnostics
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum ValidationError {
     UnknownCategory {
@@ -112,7 +111,6 @@ impl ValidationError {
     }
 
     /// Convert to a compile_error! token stream
-    #[allow(dead_code)]
     pub fn to_compile_error(&self) -> TokenStream {
         let span = self.span();
         let msg = self.message();

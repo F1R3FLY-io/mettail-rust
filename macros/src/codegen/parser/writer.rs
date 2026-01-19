@@ -1,7 +1,7 @@
 // Helper module for writing generated LALRPOP grammars to files
 // This is used during macro expansion or build process
 
-use crate::ast::TheoryDef;
+use crate::ast::theory::TheoryDef;
 use std::fs;
 use std::path::Path;
 
@@ -38,7 +38,6 @@ pub fn write_grammar_file(theory_name: &str, grammar_content: &str) -> std::io::
 }
 
 /// Generate grammar file path for a theory
-#[allow(dead_code)]
 pub fn grammar_file_name(theory: &TheoryDef) -> String {
     format!("{}.lalrpop", theory.name.to_string().to_lowercase())
 }

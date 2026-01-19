@@ -1,7 +1,7 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
 use super::{display, generate_var_label, is_integer_rule, is_var_rule, subst, termgen};
-use crate::ast::{BuiltinOp, GrammarItem, GrammarRule, TheoryDef};
+use crate::ast::{theory::{TheoryDef, Export, SemanticOperation, BuiltinOp, Condition, EnvAction, RewriteRule}, grammar::{GrammarItem, GrammarRule, TermParam}, types::{TypeExpr, CollectionType}, term::Term};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -75,24 +75,32 @@ fn generate_ast_enums(theory: &TheoryDef) -> TokenStream {
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
-        // Check if there's already a Var rule
+        // Check for existing rules
         let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
+        let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
 
         let mut variants: Vec<TokenStream> = rules.iter().map(|rule| {
             generate_variant(rule, theory)
         }).collect();
 
-        // For native types, we don't add a Var variant (native types don't use variables)
-        // Instead, we'll handle native literals in the parser
-        if !has_var_rule {
-            // Only add Var variant if this is NOT a native type
-            if export.native_type.is_none() {
-                let var_label = generate_var_label(cat_name);
-
+        // Auto-generate NumLit variant for native types without explicit Integer rule
+        if let Some(native_type) = &export.native_type {
+            if !has_integer_rule {
+                let literal_label = super::generate_literal_label(native_type);
+                let native_type_cloned = native_type.clone();
                 variants.push(quote! {
-                    #var_label(mettail_runtime::OrdVar)
+                    #literal_label(#native_type_cloned)
                 });
             }
+        }
+
+        // Auto-generate Var variant for ALL categories (including native types)
+        // Variables are needed even for native types to support env_var queries
+        if !has_var_rule {
+            let var_label = generate_var_label(cat_name);
+            variants.push(quote! {
+                #var_label(mettail_runtime::OrdVar)
+            });
         }
 
         quote! {
@@ -111,7 +119,12 @@ fn generate_ast_enums(theory: &TheoryDef) -> TokenStream {
 fn generate_variant(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
     let label = &rule.label;
 
-    // Check if this rule has bindings
+    // Check if this rule uses new syntax (term_context)
+    if let Some(ref term_context) = rule.term_context {
+        return generate_variant_from_term_context(label, term_context);
+    }
+
+    // Check if this rule has bindings (old syntax)
     if !rule.bindings.is_empty() {
         // This constructor has binders - generate Scope type
         return generate_binder_variant(rule);
@@ -122,7 +135,7 @@ fn generate_variant(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
     enum FieldType {
         NonTerminal(syn::Ident),
         Collection {
-            coll_type: crate::ast::CollectionType,
+            coll_type: CollectionType,
             element_type: syn::Ident,
         },
     }
@@ -178,9 +191,9 @@ fn generate_variant(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
             FieldType::Collection { coll_type, element_type } => {
                 // Single collection field
                 let coll_type_ident = match coll_type {
-                    crate::ast::CollectionType::HashBag => quote! { mettail_runtime::HashBag },
-                    crate::ast::CollectionType::HashSet => quote! { std::collections::HashSet },
-                    crate::ast::CollectionType::Vec => quote! { Vec },
+                    CollectionType::HashBag => quote! { mettail_runtime::HashBag },
+                    CollectionType::HashSet => quote! { std::collections::HashSet },
+                    CollectionType::Vec => quote! { Vec },
                 };
                 quote! { #label(#coll_type_ident<#element_type>) }
             },
@@ -198,9 +211,9 @@ fn generate_variant(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
                 },
                 FieldType::Collection { coll_type, element_type } => {
                     let coll_type_ident = match coll_type {
-                        crate::ast::CollectionType::HashBag => quote! { mettail_runtime::HashBag },
-                        crate::ast::CollectionType::HashSet => quote! { std::collections::HashSet },
-                        crate::ast::CollectionType::Vec => quote! { Vec },
+                        CollectionType::HashBag => quote! { mettail_runtime::HashBag },
+                        CollectionType::HashSet => quote! { std::collections::HashSet },
+                        CollectionType::Vec => quote! { Vec },
                     };
                     quote! { #coll_type_ident<#element_type> }
                 },
@@ -208,6 +221,110 @@ fn generate_variant(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
             .collect();
 
         quote! { #label(#(#field_types),*) }
+    }
+}
+
+/// Generate variant from new term_context syntax
+fn generate_variant_from_term_context(label: &syn::Ident, term_context: &[TermParam]) -> TokenStream {
+    let mut fields: Vec<TokenStream> = Vec::new();
+    
+    for param in term_context {
+        match param {
+            TermParam::Simple { ty, .. } => {
+                // Simple parameter: generate appropriate field type
+                let field_type = type_expr_to_field_type(ty);
+                fields.push(field_type);
+            }
+            TermParam::Abstraction { ty, .. } => {
+                // Single abstraction: ^x.p:[A -> B]
+                // Generates: Scope<Binder<String>, Box<B>>
+                if let TypeExpr::Arrow { codomain, .. } = ty {
+                    let body_type = type_expr_to_rust_type(codomain);
+                    fields.push(quote! {
+                        mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#body_type>>
+                    });
+                }
+            }
+            TermParam::MultiAbstraction { ty, .. } => {
+                // Multi-abstraction: ^[xs].p:[Name* -> B]
+                // Generates: Scope<Vec<Binder<String>>, Box<B>>
+                if let TypeExpr::Arrow { codomain, .. } = ty {
+                    let body_type = type_expr_to_rust_type(codomain);
+                    fields.push(quote! {
+                        mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#body_type>>
+                    });
+                }
+            }
+        }
+    }
+    
+    if fields.is_empty() {
+        // Unit variant
+        quote! { #label }
+    } else if fields.len() == 1 {
+        let field = &fields[0];
+        quote! { #label(#field) }
+    } else {
+        quote! { #label(#(#fields),*) }
+    }
+}
+
+/// Convert TypeExpr to a Rust field type (for enum variant fields)
+fn type_expr_to_field_type(ty: &TypeExpr) -> TokenStream {
+    match ty {
+        TypeExpr::Base(ident) => {
+            let name = ident.to_string();
+            if name == "Var" {
+                quote! { mettail_runtime::OrdVar }
+            } else if name == "Integer" {
+                quote! { i64 }
+            } else {
+                quote! { Box<#ident> }
+            }
+        }
+        TypeExpr::Collection { coll_type, element } => {
+            let elem_type = type_expr_to_rust_type(element);
+            match coll_type {
+                CollectionType::HashBag => quote! { mettail_runtime::HashBag<#elem_type> },
+                CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
+                CollectionType::Vec => quote! { Vec<#elem_type> },
+            }
+        }
+        TypeExpr::Arrow { .. } => {
+            // Arrow types in simple params shouldn't happen, but handle gracefully
+            quote! { Box<dyn std::any::Any> }
+        }
+        TypeExpr::MultiBinder(inner) => {
+            // MultiBinder in simple context: Vec<T>
+            let inner_type = type_expr_to_rust_type(inner);
+            quote! { Vec<#inner_type> }
+        }
+    }
+}
+
+/// Convert TypeExpr to a Rust type (for use inside Box<>, etc.)
+fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
+    match ty {
+        TypeExpr::Base(ident) => {
+            quote! { #ident }
+        }
+        TypeExpr::Collection { coll_type, element } => {
+            let elem_type = type_expr_to_rust_type(element);
+            match coll_type {
+                CollectionType::HashBag => quote! { mettail_runtime::HashBag<#elem_type> },
+                CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
+                CollectionType::Vec => quote! { Vec<#elem_type> },
+            }
+        }
+        TypeExpr::Arrow { domain, codomain } => {
+            let dom = type_expr_to_rust_type(domain);
+            let cod = type_expr_to_rust_type(codomain);
+            quote! { (#dom -> #cod) }
+        }
+        TypeExpr::MultiBinder(inner) => {
+            let inner_type = type_expr_to_rust_type(inner);
+            quote! { Vec<#inner_type> }
+        }
     }
 }
 
@@ -256,9 +373,9 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
                 GrammarItem::Collection { coll_type, element_type, .. } => {
                     // Collection becomes a field with the appropriate collection type
                     let coll_type_ident = match coll_type {
-                        crate::ast::CollectionType::HashBag => quote! { mettail_runtime::HashBag },
-                        crate::ast::CollectionType::HashSet => quote! { std::collections::HashSet },
-                        crate::ast::CollectionType::Vec => quote! { Vec },
+                        CollectionType::HashBag => quote! { mettail_runtime::HashBag },
+                        CollectionType::HashSet => quote! { std::collections::HashSet },
+                        CollectionType::Vec => quote! { Vec },
                     };
                     fields.push(quote! { #coll_type_ident<#element_type> });
                 },
@@ -287,7 +404,16 @@ fn generate_flatten_helpers(theory: &TheoryDef) -> TokenStream {
     let mut helpers_by_cat: HashMap<String, Vec<TokenStream>> = HashMap::new();
 
     for rule in &theory.terms {
-        // Check if this rule has a collection field
+        // Skip rules that use new term_context with multi-binders
+        // These have structured fields, not just a collection
+        if let Some(ref ctx) = rule.term_context {
+            let has_multi_binder = ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }));
+            if has_multi_binder {
+                continue;
+            }
+        }
+        
+        // Check if this rule has a collection field (old style)
         let has_collection = rule
             .items
             .iter()
@@ -393,8 +519,13 @@ fn generate_normalize_functions(theory: &TheoryDef) -> TokenStream {
             .filter_map(|rule| {
                 let label = &rule.label;
 
-                // Check if this is a collection constructor
-                let is_collection = rule
+                // Check if this rule uses term_context with multi-binder
+                let has_multi_binder = rule.term_context.as_ref().map_or(false, |ctx| {
+                    ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+                });
+
+                // Check if this is a simple collection constructor (no multi-binder)
+                let is_collection = !has_multi_binder && rule
                     .items
                     .iter()
                     .any(|item| matches!(item, GrammarItem::Collection { .. }));
@@ -417,6 +548,11 @@ fn generate_normalize_functions(theory: &TheoryDef) -> TokenStream {
                             }
                             #category::#label(new_bag)
                         }
+                    })
+                } else if has_multi_binder {
+                    // Multi-binder constructor: just clone (no collection flattening)
+                    Some(quote! {
+                        #category::#label(field_0, scope) => self.clone()
                     })
                 } else if rule.bindings.is_empty() {
                     // For non-collection, non-binder constructors
@@ -583,7 +719,7 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
             // Find the rule for this constructor
             if let Some(rule) = rules.iter().find(|r| r.label == semantic_rule.constructor) {
                 if rule.category == *category {
-                    let crate::ast::SemanticOperation::Builtin(op) = &semantic_rule.operation;
+                    let SemanticOperation::Builtin(op) = &semantic_rule.operation;
                     semantics_map.insert(semantic_rule.constructor.to_string(), *op);
                 }
             }
@@ -591,6 +727,30 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
 
         // Generate match arms
         let mut match_arms = Vec::new();
+        
+        // Check for existing rules
+        let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+        let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
+        
+        // Add arm for auto-generated NumLit if no explicit Integer rule
+        if !has_integer_rule {
+            let literal_label = super::generate_literal_label(native_type);
+            match_arms.push(quote! {
+                #category::#literal_label(n) => *n,
+            });
+        }
+        
+        // Add arm for auto-generated Var variant if no explicit Var rule
+        if !has_var_rule {
+            let var_label = super::generate_var_label(category);
+            let panic_msg = format!(
+                "Cannot evaluate {} - variables must be substituted via rewrites first",
+                var_label
+            );
+            match_arms.push(quote! {
+                #category::#var_label(_) => loop { panic!(#panic_msg) },
+            });
+        }
 
         for rule in &rules {
             let label = &rule.label;
@@ -708,10 +868,10 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
     // Find categories that have rewrite rules
     let mut categories_with_rewrites = std::collections::HashSet::new();
     for rewrite in &theory.rewrites {
-        // Extract category from LHS expression
-        if let crate::ast::Expr::Apply { constructor, .. } = &rewrite.left {
+        // Extract category from LHS pattern
+        if let Some(constructor) = rewrite.left.constructor_name() {
             // Find the rule for this constructor to get its category
-            if let Some(rule) = theory.terms.iter().find(|r| r.label == *constructor) {
+            if let Some(rule) = theory.terms.iter().find(|r| &r.label == constructor) {
                 categories_with_rewrites.insert(rule.category.to_string());
             }
         }
@@ -730,7 +890,7 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
         let has_env_query = theory.rewrites.iter().any(|rw| {
             rw.conditions
                 .iter()
-                .any(|c| matches!(c, crate::ast::Condition::EnvQuery { .. }))
+                .any(|c| matches!(c, Condition::EnvQuery { .. }))
         });
 
         if has_env_query {
@@ -748,23 +908,58 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
             // Integer rule is the one that uses Integer keyword (for native type literals)
             let integer_rule = category_rules.iter().find(|r| is_integer_rule(r));
 
-            let integer_label = integer_rule.map(|r| &r.label);
+            // Use auto-generated labels if no explicit rules
+            let integer_label: Option<syn::Ident> = integer_rule
+                .map(|r| r.label.clone())
+                .or_else(|| export.native_type.as_ref().map(super::generate_literal_label));
+            let var_label: Option<syn::Ident> = var_ref_rule
+                .map(|r| r.label.clone())
+                .or_else(|| Some(super::generate_var_label(category)));
 
             // Generate match arms for all constructors
             let mut match_arms: Vec<TokenStream> = Vec::new();
             let category_str = category.to_string();
+            
+            // Add match arm for auto-generated Var variant if no explicit rule
+            if var_ref_rule.is_none() {
+                if let (Some(var_lbl), Some(int_lbl)) = (&var_label, &integer_label) {
+                    match_arms.push(quote! {
+                        #category::#var_lbl(ord_var) => {
+                            let var_name: &str = match ord_var {
+                                mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
+                                    fv.pretty_name.as_deref()
+                                        .ok_or_else(|| "Variable has no name".to_string())?
+                                }
+                                _ => return Err("Cannot substitute bound variable".to_string()),
+                            };
+                            let val = env.get(var_name)
+                                .ok_or_else(|| format!("undefined variable: {}", var_name))?;
+                            Ok(#category::#int_lbl(*val))
+                        }
+                    });
+                }
+            }
+            
+            // Add match arm for auto-generated NumLit variant if no explicit rule
+            if integer_rule.is_none() {
+                if let Some(int_lbl) = &integer_label {
+                    match_arms.push(quote! {
+                        #category::#int_lbl(n) => Ok(#category::#int_lbl(*n))
+                    });
+                }
+            }
 
             for rule in &category_rules {
                 let label = &rule.label;
                 let label_str = label.to_string();
 
-                // Check if this is VarRef - apply rewrite
+                // Check if this is VarRef - apply rewrite (explicit rule only, auto-generated handled above)
                 let is_var_ref = var_ref_rule
                     .map(|vr| vr.label.to_string() == label_str)
                     .unwrap_or(false);
 
                 if is_var_ref {
-                    if let Some(int_label) = integer_label {
+                    if let Some(ref int_lbl) = integer_label {
                         match_arms.push(quote! {
                             #category::#label(ord_var) => {
                                 let var_name: &str = match ord_var {
@@ -776,14 +971,14 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
                                 };
                                 let val = env.get(var_name)
                                     .ok_or_else(|| format!("undefined variable: {}", var_name))?;
-                                Ok(#category::#int_label(*val))
+                                Ok(#category::#int_lbl(*val))
                             }
                         });
                         continue;
                     }
                 }
 
-                // Check if this is an Integer rule - pass through (has native type value)
+                // Check if this is an Integer rule - pass through (explicit rule only, auto-generated handled above)
                 let is_integer = integer_rule
                     .map(|ir| ir.label.to_string() == label_str)
                     .unwrap_or(false);
@@ -898,7 +1093,6 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
 /// - env_to_facts helper function
 /// - rewrite_to_normal_form helper function
 fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
-    use crate::ast::Condition;
     use quote::format_ident;
     use std::collections::HashSet;
 
@@ -946,7 +1140,7 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
     if has_env_actions {
         for rewrite in &theory.rewrites {
             for action in &rewrite.env_actions {
-                let crate::ast::EnvAction::CreateFact { relation, .. } = action;
+                let EnvAction::CreateFact { relation, .. } = action;
                 let rel_name = relation.to_string();
                 if !seen_relations.contains(&rel_name) {
                     seen_relations.insert(rel_name.clone());
@@ -1262,33 +1456,25 @@ fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
 /// Extract the category from a rewrite rule (from LHS)
 /// Internal helper function for environment generation
 fn extract_category_from_rewrite_internal(
-    rewrite: &crate::ast::RewriteRule,
+    rewrite: &RewriteRule,
     theory: &TheoryDef,
 ) -> Option<proc_macro2::Ident> {
-    use crate::ast::Expr;
-
     // Try to extract category from LHS pattern
-    match &rewrite.left {
-        Expr::Apply { constructor, .. } => {
-            // Find the rule with this constructor
-            theory
-                .terms
-                .iter()
-                .find(|r| r.label == *constructor)
-                .map(|rule| rule.category.clone())
-        },
-        Expr::Var(_) => None,
-        Expr::Subst { .. } => None,
-        Expr::CollectionPattern { .. } => None,
-        // Lambdas are meta-level constructs, not patterns in rewrites
-        Expr::Lambda { .. } | Expr::MultiLambda { .. } => None,
+    if let Some(constructor) = rewrite.left.constructor_name() {
+        // Find the rule with this constructor
+        theory
+            .terms
+            .iter()
+            .find(|r| &r.label == constructor)
+            .map(|rule| rule.category.clone())
+    } else {
+        None
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ast::*;
     use syn::parse_quote;
 
     #[test]

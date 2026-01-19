@@ -51,12 +51,12 @@ fn run_test(test: &TestCase) -> Result<(), String> {
 
     println!("\nEquations:");
     let mut eq_count = 0;
-    for (lhs, rhs) in prog.__eq_proc_ind_common.iter_all_added() {
-        if lhs.to_string() != rhs.to_string() {
-            println!("  {} = {}", lhs, rhs);
-            eq_count += 1;
-        }
-    }
+    // for (lhs, rhs) in prog.__eq_proc_ind_common.iter_all_added() {
+    //     if lhs.to_string() != rhs.to_string() {
+    //         println!("  {} = {}", lhs, rhs);
+    //         eq_count += 1;
+    //     }
+    // }
     if eq_count == 0 {
         println!("  (none)");
     }

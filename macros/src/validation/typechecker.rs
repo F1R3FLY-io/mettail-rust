@@ -1,5 +1,5 @@
 use super::ValidationError;
-use crate::ast::{Equation, Expr, GrammarItem, GrammarRule, RewriteRule, TheoryDef};
+use crate::ast::{theory::{Equation, TheoryDef, Export}, grammar::{GrammarItem, GrammarRule}, term::Term, theory::RewriteRule, pattern::{Pattern, PatternTerm}};
 use proc_macro2::Span;
 use std::collections::HashMap;
 
@@ -17,21 +17,18 @@ pub struct TypeChecker {
 /// Information about a constructor
 #[derive(Debug, Clone)]
 pub struct ConstructorType {
-    #[allow(dead_code)]
     pub name: String,
     pub result_category: String,
     pub arg_categories: Vec<String>,
 }
 
 /// Information about a category
-#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CategoryInfo {
     pub name: String,
     pub exported: bool,
 }
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub enum TypeError {
     UnknownConstructor(String),
@@ -124,14 +121,13 @@ impl TypeChecker {
     }
 
     /// Infer the type/category of an expression with a variable context
-    #[allow(dead_code)]
     pub fn infer_type_with_context(
         &self,
-        expr: &Expr,
+        expr: &Term,
         context: &mut HashMap<String, String>,
     ) -> Result<String, ValidationError> {
         match expr {
-            Expr::Var(var) => {
+            Term::Var(var) => {
                 let var_name = var.to_string();
                 // Check if we already know this variable's type
                 if let Some(typ) = context.get(&var_name) {
@@ -142,7 +138,7 @@ impl TypeChecker {
                 }
             },
 
-            Expr::Apply { constructor, args } => {
+            Term::Apply { constructor, args } => {
                 let constructor_name = constructor.to_string();
 
                 // Look up constructor type
@@ -172,7 +168,7 @@ impl TypeChecker {
 
                     // If it's a variable with unknown type, constrain it
                     if arg_type == "?" {
-                        if let Expr::Var(var) = arg {
+                        if let Term::Var(var) = arg {
                             context.insert(var.to_string(), expected_cat.clone());
                         }
                     } else {
@@ -191,7 +187,7 @@ impl TypeChecker {
                 Ok(ctor_type.result_category.clone())
             },
 
-            Expr::Subst { term, var, replacement } => {
+            Term::Subst { term, var, replacement } => {
                 // Infer type of the term being substituted into
                 let term_type = self.infer_type_with_context(term, context)?;
 
@@ -229,59 +225,109 @@ impl TypeChecker {
                 Ok(term_type)
             },
 
-            Expr::CollectionPattern { constructor, elements, rest } => {
-                // For collection patterns, we need to infer the constructor
-                // and type-check the elements against the collection's element type
-
-                // For now, return a placeholder
-                // Full implementation will come when we generate Ascent code
-                // TODO: Implement proper type inference for collection patterns
-
-                // Type-check element patterns
-                for elem in elements {
-                    let _ = self.infer_type_with_context(elem, context)?;
-                }
-
-                // Rest variable gets bound to a collection type
-                if let Some(rest_var) = rest {
-                    // For now, don't add to context
-                    // Will be handled during Ascent generation
-                    let _ = rest_var;
-                }
-
-                // Return placeholder - will be refined during validation
-                if let Some(cons) = constructor {
-                    // Look up the constructor's result category
-                    if let Some(ctor) = self.constructors.get(&cons.to_string()) {
-                        Ok(ctor.result_category.clone())
-                    } else {
-                        Ok("?".to_string())
-                    }
-                } else {
-                    Ok("?".to_string())
-                }
-            },
-
             // Lambda expressions have function types [A -> B]
             // For now, return placeholder - full type inference comes with definitions
-            Expr::Lambda { body, .. } => {
+            Term::Lambda { body, .. } => {
                 // Infer body type, but return function type placeholder
                 let _ = self.infer_type_with_context(body, context)?;
                 Ok("?->?".to_string())
             },
 
-            Expr::MultiLambda { body, .. } => {
+            Term::MultiLambda { body, .. } => {
                 let _ = self.infer_type_with_context(body, context)?;
                 Ok("?*->?".to_string())
+            },
+            
+            Term::MultiSubst { .. } => {
+                // MultiSubst returns the body type of the scope
+                // Without full type inference, return placeholder
+                Ok("?".to_string())
             },
         }
     }
 
     /// Infer the type/category of an expression (legacy method - uses context internally)
-    #[allow(dead_code)]
-    pub fn infer_type(&self, expr: &Expr) -> Result<String, ValidationError> {
+    pub fn infer_type(&self, expr: &Term) -> Result<String, ValidationError> {
         let mut context = HashMap::new();
         self.infer_type_with_context(expr, &mut context)
+    }
+
+    /// Infer the type/category of a Pattern with a variable context
+    pub fn infer_type_from_pattern(
+        &self,
+        pattern: &Pattern,
+        context: &mut HashMap<String, String>,
+    ) -> Result<String, ValidationError> {
+        match pattern {
+            Pattern::Term(pt) => self.infer_type_from_pattern_term(pt, context),
+            Pattern::Collection { constructor, elements, .. } => {
+                // If constructor is specified, use its result category
+                if let Some(ctor) = constructor {
+                    let ctor_name = ctor.to_string();
+                    if let Some(ctor_type) = self.constructors.get(&ctor_name) {
+                        // Optionally type-check elements here
+                        for elem in elements {
+                            let _ = self.infer_type_from_pattern(elem, context)?;
+                        }
+                        return Ok(ctor_type.result_category.clone());
+                    }
+                }
+                // Unknown constructor - return placeholder
+                Ok("?".to_string())
+            }
+            Pattern::Map { collection, body, .. } => {
+                // Map doesn't change the type
+                let _ = self.infer_type_from_pattern(collection, context)?;
+                self.infer_type_from_pattern(body, context)
+            }
+            Pattern::Zip { collections } => {
+                // Zip combines types
+                for coll in collections {
+                    let _ = self.infer_type_from_pattern(coll, context)?;
+                }
+                Ok("?".to_string())
+            }
+        }
+    }
+
+    /// Infer the type/category of a PatternTerm with a variable context
+    fn infer_type_from_pattern_term(
+        &self,
+        pt: &PatternTerm,
+        context: &mut HashMap<String, String>,
+    ) -> Result<String, ValidationError> {
+        match pt {
+            PatternTerm::Var(name) => {
+                let name_str = name.to_string();
+                if let Some(ty) = context.get(&name_str) {
+                    Ok(ty.clone())
+                } else {
+                    Ok("?".to_string())
+                }
+            }
+            PatternTerm::Apply { constructor, args } => {
+                let ctor_name = constructor.to_string();
+                if let Some(ctor_type) = self.constructors.get(&ctor_name) {
+                    // Check argument types match
+                    for (arg, param) in args.iter().zip(&ctor_type.arg_categories) {
+                        let arg_type = self.infer_type_from_pattern(arg, context)?;
+                        if arg_type != "?" && arg_type != *param {
+                            // Type mismatch
+                        }
+                    }
+                    Ok(ctor_type.result_category.clone())
+                } else {
+                    Err(ValidationError::UnknownConstructor {
+                        name: ctor_name,
+                        span: constructor.span(),
+                    })
+                }
+            }
+            PatternTerm::Lambda { body, .. } => self.infer_type_from_pattern(body, context),
+            PatternTerm::MultiLambda { body, .. } => self.infer_type_from_pattern(body, context),
+            PatternTerm::Subst { term, .. } => self.infer_type_from_pattern(term, context),
+            PatternTerm::MultiSubst { scope, .. } => self.infer_type_from_pattern(scope, context),
+        }
     }
 
     /// Check that an equation is well-typed (both sides have same type)
@@ -290,10 +336,10 @@ impl TypeChecker {
         let mut context = HashMap::new();
 
         // Infer left side type (this will constrain variables)
-        let left_type = self.infer_type_with_context(&eq.left, &mut context)?;
+        let left_type = self.infer_type_from_pattern(&eq.left, &mut context)?;
 
         // Infer right side type (using constraints from left side)
-        let right_type = self.infer_type_with_context(&eq.right, &mut context)?;
+        let right_type = self.infer_type_from_pattern(&eq.right, &mut context)?;
 
         // Now both types should be concrete (no "?")
         // Skip if either side still has unknowns
@@ -326,11 +372,11 @@ impl TypeChecker {
         // Use a shared context to track variable types across both sides
         let mut context = HashMap::new();
 
-        // Infer left side type (this will constrain variables)
-        let left_type = self.infer_type_with_context(&rw.left, &mut context)?;
+        // Infer left side type from Pattern
+        let left_type = self.infer_type_from_pattern(&rw.left, &mut context)?;
 
         // Infer right side type (using constraints from left side)
-        let right_type = self.infer_type_with_context(&rw.right, &mut context)?;
+        let right_type = self.infer_type_from_pattern(&rw.right, &mut context)?;
 
         // Now both types should be concrete (no "?")
         // Skip if either side still has unknowns
@@ -359,13 +405,11 @@ impl TypeChecker {
     }
 
     /// Get information about a constructor
-    #[allow(dead_code)]
     pub fn get_constructor(&self, name: &str) -> Option<&ConstructorType> {
         self.constructors.get(name)
     }
 
     /// Check if a category exists
-    #[allow(dead_code)]
     pub fn has_category(&self, name: &str) -> bool {
         self.categories.contains_key(name)
     }
@@ -419,7 +463,7 @@ mod tests {
         let checker = TypeChecker::new(&theory);
 
         // Zero has type Elem
-        let zero_expr = Expr::Apply {
+        let zero_expr = Term::Apply {
             constructor: parse_quote!(Zero),
             args: vec![],
         };
@@ -433,9 +477,9 @@ mod tests {
         let checker = TypeChecker::new(&theory);
 
         // Succ(Zero) has type Elem
-        let nested = Expr::Apply {
+        let nested = Term::Apply {
             constructor: parse_quote!(Succ),
-            args: vec![Expr::Apply {
+            args: vec![Term::Apply {
                 constructor: parse_quote!(Zero),
                 args: vec![],
             }],
@@ -452,14 +496,14 @@ mod tests {
         // Zero == Zero (both Elem)
         let eq = Equation {
             conditions: vec![],
-            left: Expr::Apply {
+            left: Pattern::Term(PatternTerm::Apply {
                 constructor: parse_quote!(Zero),
                 args: vec![],
-            },
-            right: Expr::Apply {
+            }),
+            right: Pattern::Term(PatternTerm::Apply {
                 constructor: parse_quote!(Zero),
                 args: vec![],
-            },
+            }),
         };
 
         assert!(checker.check_equation(&eq).is_ok());
@@ -470,7 +514,7 @@ mod tests {
         let theory = make_simple_theory();
         let checker = TypeChecker::new(&theory);
 
-        let expr = Expr::Apply {
+        let expr = Term::Apply {
             constructor: parse_quote!(Unknown),
             args: vec![],
         };
@@ -487,7 +531,7 @@ mod tests {
         let checker = TypeChecker::new(&theory);
 
         // Succ expects 1 arg, but given 0
-        let expr = Expr::Apply {
+        let expr = Term::Apply {
             constructor: parse_quote!(Succ),
             args: vec![],
         };

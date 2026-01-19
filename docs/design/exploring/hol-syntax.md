@@ -1,8 +1,8 @@
 # HOL Syntax for MeTTaIL
 
-**Status:** Design Phase  
+**Status:** Implementation Phase  
 **Date:** January 2026  
-**Revision:** 3
+**Revision:** 5
 
 ---
 
@@ -1176,23 +1176,178 @@ PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc]
 - [x] Test collection-typed lambda: `^xs.p:[Vec(Name) -> Proc]`
 - [x] Test multi-binder lambda: `^[xs].p:[Name* -> Proc]`
 
-### Phase 2: Constructor Syntax (1 week)
+### Phase 2: Constructor Syntax (1 week) ✓
 
-- [ ] Parse new constructor syntax: `Label . ctx |- term : Type`
-- [ ] Parse abstraction params: `^x.p:[A->B]`
-- [ ] Parse multi-binder: `^[xs].p:[Name*->B]`
+- [x] Parse new constructor syntax: `Label . ctx |- syntax : Type`
+- [x] Parse term context with simple params: `n:Name`
+- [x] Parse abstraction params: `^x.p:[A->B]`
+- [x] Parse multi-abstraction params: `^[xs].p:[Name*->B]`
+- [x] Parse syntax patterns with quoted literals: `"for" "(" x "<-" n ")"`
+- [x] Auto-detect old vs new syntax (based on `::=` vs `|-`)
+- [x] Generate LALRPOP rules for new syntax (with Scope creation for binders)
+- [x] Generate Display impl for new syntax (reconstructs syntax pattern)
+- [x] Handle nullary constructors correctly (unit variants)
 - [ ] Parse nested abstractions: `^x.^y.p:[A->[B->C]]`
 - [ ] Parse optional `identifier { r"..." }` block for custom variable regex
-- [ ] Generate enum variants with `Scope` types
-- [ ] Generate LALRPOP parser rules (with custom `Ident` terminal if specified)
 
-### Phase 3: Pattern Operations (1 week)
+### Phase 3: Pattern Operations (1-2 weeks)
 
-- [ ] Parse `#sep(coll, sep)` and method form `coll.#sep(sep)`
-- [ ] Parse `#zip(a, b)` and `#map(coll, |x| expr)`
-- [ ] Compile pattern ops to LALRPOP grammar
-- [ ] Compile pattern ops to Display impl
-- [ ] Validate pattern variable usage
+Pattern operations are **compile-time macros** that generate grammar rules and display code.
+They enable concise specification of collection syntax (separators, zipping, mapping).
+
+#### 3.1 AST Representation
+
+Extend `SyntaxToken` or introduce `SyntaxExpr` to represent pattern operations:
+
+```rust
+/// Syntax expression in patterns (can include meta-operations)
+pub enum SyntaxExpr {
+    /// Quoted literal: "for", "(", "<-"
+    Literal(String),
+    /// Parameter reference: n, x, p
+    Param(Ident),
+    /// Pattern operation: #sep, #zip, #map, #opt
+    Op(PatternOp),
+    /// Sequence of expressions
+    Seq(Vec<SyntaxExpr>),
+}
+
+/// Pattern operation (compile-time meta-syntax)
+pub enum PatternOp {
+    /// #sep(coll, "sep") or coll.#sep("sep")
+    Sep {
+        collection: Ident,
+        separator: String,
+    },
+    /// #zip(a, b) - pairs corresponding elements
+    Zip {
+        left: Ident,
+        right: Ident,
+    },
+    /// #map(coll, |x| expr) or coll.#map(|x| expr)
+    Map {
+        source: Box<PatternOp>,  // Can be Zip result
+        params: Vec<Ident>,
+        body: Box<SyntaxExpr>,
+    },
+    /// #opt(expr) - optional element
+    Opt {
+        inner: Box<SyntaxExpr>,
+    },
+}
+```
+
+#### 3.2 Parsing Pattern Operations
+
+- [x] Parse `#sep(coll, "sep")` function call syntax
+- [x] Parse `coll.#sep("sep")` method chain syntax
+- [x] Parse `#zip(a, b)` for pairing collections
+- [x] Parse `#map(source, |x| expr)` with closure
+- [x] Parse `#zip(a,b).#map(|x,y| expr)` chained operations
+- [ ] Parse `#opt(expr)` for optional elements
+- [ ] Validate closure arity matches source (zip → 2 params, single → 1 param)
+
+#### 3.3 LALRPOP Generation
+
+Each pattern op generates specific grammar patterns:
+
+**`#sep(coll, ",")`** → separated list:
+```lalrpop
+// For ps:HashBag(Proc) with ps.#sep("|")
+(<Proc> "|")* <Proc>?
+```
+
+**`#zip(ns, xs).#map(|n,x| x "<-" n)`** → paired pattern:
+```lalrpop
+// For ns:Vec(Name), ^[xs].p with #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",")
+(<Ident> "<-" <Name> ",")* (<Ident> "<-" <Name>)?
+```
+
+**`#opt(expr)`** → optional:
+```lalrpop
+("else" <Proc>)?
+```
+
+Tasks:
+- [x] Generate separated list pattern for `#sep`
+- [x] Generate paired capture pattern for `#zip + #map`
+- [ ] Generate optional pattern for `#opt`
+- [x] Handle action code for collecting into Vec/HashBag
+- [x] Handle action code for creating multi-binder Scope
+
+#### 3.4 Display Generation
+
+Each pattern op generates display code:
+
+**`#sep`** → join with separator:
+```rust
+let mut first = true;
+for item in collection {
+    if !first { write!(f, " | ")?; }
+    first = false;
+    write!(f, "{}", item)?;
+}
+```
+
+**`#zip + #map`** → paired display:
+```rust
+for (n, x) in ns.iter().zip(xs.iter()) {
+    write!(f, "{}<-{}", x, n)?;
+}
+```
+
+Tasks:
+- [x] Generate display loop for `#sep`
+- [x] Generate paired display for `#zip + #map`
+- [ ] Generate optional display for `#opt`
+- [x] Extract binder names from multi-binder Scope for display
+
+#### 3.5 Validation
+
+- [ ] Check that `#sep` operand is a collection-typed parameter
+- [ ] Check that `#zip` operands have compatible lengths (structurally enforced)
+- [ ] Check that `#map` closure params match source arity
+- [ ] Check that all parameter references in pattern ops exist in term context
+
+#### 3.6 Test Cases
+
+- [x] Simple separator: `PPar . ps:HashBag(Proc) |- "{" ps.#sep("|") "}" : Proc`
+- [x] Multi-channel input: `PInputs . ns:Vec(Name), ^[xs].p:[Name*->Proc] |- "for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}" : Proc`
+- [ ] Optional else: `PIf . c:Bool, t:Proc, e:#opt(Proc) |- "if" c "then" t e.#opt(|e| "else" e) : Proc`
+- [ ] Round-trip: parse → display → parse produces same AST
+
+### Phase 3b: Type Refactoring (3-4 days) **← CURRENT**
+
+See: [type-refactoring.md](./type-refactoring.md)
+
+Prerequisites for clean collection metasyntax. Refactor the monolithic `types.rs` (3000+ lines).
+
+- [ ] Split `types.rs` into focused modules (`term.rs`, `pattern.rs`, `syntax.rs`, etc.)
+- [ ] Rename `Expr` → `Term`
+- [ ] Extract `Pattern` for LHS patterns (with `Collection` variant)
+- [ ] Remove `Expr::Map` (wrong level of abstraction)
+- [ ] Fix `MultiSubst.replacements` to `Vec<Term>`
+- [ ] Update all pattern matching in code generation
+
+### Phase 3c: LHS Pattern Matching for #zip/#map (5-6 days)
+
+See: [lhs-pattern-matching.md](./lhs-pattern-matching.md)
+
+- [ ] AST support: `ZipMapPattern` analysis struct
+- [ ] Binding analysis: classify bound vs unbound in `#zip`
+- [ ] Datalog LHS generation for `#zip.#map` patterns
+- [ ] Integration with rewrite rule processing
+- [ ] Testing: multi-communication rule end-to-end
+
+### Phase 3d: Collection Metasyntax (5-6 days)
+
+See: [collection-metasyntax.md](./collection-metasyntax.md)
+
+Depends on Phase 3b (clean types) and 3c (LHS matching).
+
+- [ ] Define thin layer for `#map`, `#zip`, `#filter` in rewrite RHS
+- [ ] Parse collection operations → generate `Vec<Term>`
+- [ ] Integrate with `MultiSubst` (which now takes `Vec<Term>`)
 
 ### Phase 4: Equations and Rewrites Syntax (3-4 days)
 
@@ -1258,6 +1413,33 @@ All abstractions are meta-lambdas (CCC internal hom):
 ---
 
 **Estimated Effort**: 4-5 weeks (Phases 1-5), +1 week optional (Phase 6)
+**Completed**: Phases 1, 1b, 2, 3 (core), Multi-substitution — ~3.5 weeks
+**Remaining**: Phase 3 (#opt), Phase 4 (eq/rewrite syntax), Phase 5 (migration), LHS pattern matching for #zip/#map — ~1-2 weeks
 **Risk Level**: Medium (well-defined scope, leverages existing moniker infrastructure)  
 **Impact**: High (enables multi-channel input and expressive language specifications)
 
+### 12.4 Multi-substitution (Completed)
+
+The `multisubst` RHS expression enables simultaneous substitution for multi-binder scopes:
+
+```rust
+// Syntax: (multisubst scope replacements_expr)
+// - scope: pattern variable bound to Scope<Vec<Binder>, Box<Body>>
+// - replacements_expr: expression producing Vec of replacements
+
+// Example: in multi-communication rule
+(multisubst scope qs.#map(|q| NQuote q))
+// Unbinds scope to get (binders, body), maps qs through NQuote,
+// then calls body.multi_substitute_name(&binders_as_vars, &mapped_qs)
+```
+
+Generated runtime methods:
+- `Proc::multi_substitute(&[&FreeVar], &[Proc]) -> Proc` — same-category
+- `Proc::multi_substitute_name(&[&FreeVar], &[Name]) -> Proc` — cross-category (Name binders)
+- `Name::multi_substitute(&[&FreeVar], &[Name]) -> Name` — same-category
+- `Name::multi_substitute_proc(&[&FreeVar], &[Proc]) -> Name` — cross-category (Proc binders)
+
+Key behaviors:
+- **Capture-avoiding**: Each method filters out shadowed variables before recursing
+- **Cross-category awareness**: `Name` binder in `Proc::PInput` doesn't shadow `Proc` variables
+- **Correct method dispatch**: When `Name::multi_substitute` encounters `NQuote(Proc)`, it calls `Proc::multi_substitute_name`
