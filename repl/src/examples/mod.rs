@@ -42,8 +42,9 @@ pub enum ExampleCategory {
     Advanced,
     Performance,
     EdgeCase,
-    Mobility, // For ambient calculus
-    Security, // For ambient calculus
+    Mobility,  // For ambient calculus
+    Security,  // For ambient calculus
+    MultiComm, // For rho calculus join patterns
 }
 
 impl Example {

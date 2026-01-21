@@ -21,8 +21,8 @@ theory! {
         POpen . Proc ::= "open(" Name "," Proc ")";
 
         PAmb . Proc ::= Name "[" Proc "]";
+        
         // PNew . Proc ::= "new(" <Name> "," Proc ")";
-
         PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc;
 
         PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;

@@ -25,10 +25,10 @@ theory! {
         
         PInput . n:Name, ^x.p:[Name -> Proc] |- n "?" x "." "{" p "}" : Proc ;
 
-        // n0!(q0)|n1!(q1)|(n0?x0,n1?x1).{p} ~> p[q0,q1]
+        // (n0?x0,n1?x1).{p} ~> p[q0,q1]
 
-        // PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] 
-        //     |- "for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}" : Proc ;
+        PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] 
+            |- "(" #zip(ns,xs).#map(|n,x| n "?" x).#sep(",") ")" "." "{" p "}" : Proc ;
 
         // PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
         PPar . ps:HashBag(Proc) |- "{" ps.#sep("|") "}" : Proc;
@@ -45,8 +45,9 @@ theory! {
          (PPar {(PInput N ^x.P), (POutput N Q), ...rest})
             => (PPar {(subst P x (NQuote Q)), ...rest});
 
-        // ns:Vec(Name), scope=^[xs].p:[Name*->Proc], qs:Vec(Proc) 
-        // |- (PPar {(PInputs ns scope), #zip(ns,qs).#map(|n,q| Output n q)}) ~> (multisubst scope qs)
+        // multi-communication
+        (PPar {(PInputs ns scope), #zip(ns,qs).#map(|n,q| (POutput n q)), ...rest}) 
+            => (PPar {(multisubst scope qs.#map(|q| (NQuote q))), ...rest});
 
         (PDrop (NQuote P)) => P;
 

@@ -5,7 +5,7 @@
 
 #![allow(clippy::cmp_owned, clippy::useless_format)]
 
-use crate::ast::{theory::{TheoryDef, Export}, grammar::{GrammarItem, GrammarRule, TermParam}, syntax::{SyntaxExpr, PatternOp}, types::{TypeExpr, CollectionType}};
+use crate::ast::{theory::TheoryDef, grammar::{GrammarItem, GrammarRule, TermParam}, syntax::{SyntaxExpr, PatternOp}, types::{TypeExpr, CollectionType}};
 use crate::codegen::{generate_literal_label, is_integer_rule, is_var_rule};
 use crate::utils::{has_native_type, native_type_to_string};
 
@@ -285,60 +285,17 @@ fn generate_tiered_production(
         }
     }
 
-    // Check if we need to add a comma before auto-generated rules
-    let mut needs_comma = !filtered_other_rules.is_empty();
-    
     // Check if there's an explicit Integer rule (NumLit . Cat ::= Integer)
     let has_integer_rule = filtered_other_rules.iter().any(|r| is_integer_rule(r));
-
-    // Auto-generate literal parser for native types (if not explicitly declared)
-    if let Some(native_type) = has_native_type(category, theory) {
-        let type_str = native_type_to_string(native_type);
-        if !has_integer_rule {
-            let literal_label = generate_literal_label(native_type);
-
-            if needs_comma {
-                production.push_str(",\n");
-            }
-
-            if type_str == "i32" || type_str == "i64" {
-                // Integer literals: parse Integer token
-                // Add unary minus support for negative numbers (before positive literals for precedence)
-                production.push_str(&format!(
-                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    cat_str, literal_label
-                ));
-                production
-                    .push_str(&format!("    <i:Integer> => {}::{}(i)", cat_str, literal_label));
-            } else if type_str == "f32" || type_str == "f64" {
-                // Float literals: parse Float token
-                production
-                    .push_str(&format!("    <f:Float> => {}::{}(f)", cat_str, literal_label));
-            } else if type_str == "bool" {
-                // Boolean literals: parse Boolean token
-                production
-                    .push_str(&format!("    <b:Boolean> => {}::{}(b)", cat_str, literal_label));
-            }
-            needs_comma = true; // Next rule (Var) needs comma
-        }
-    }
-
-    // Automatically adds Var alternative if it doesn't exist (lowest precedence)
-    // Variables always parse as Ident (not Integer), regardless of native type
-    // Integer literals are handled separately via NumLit/Integer rules
-    if !has_var_rule {
-        let var_label = generate_var_label(category);
-        // Variables always parse as Ident (not Integer)
-        if needs_comma {
-            production.push_str(",\n");
-        } else {
-            production.push('\n');
-        }
-        production.push_str(&format!(
-            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))",
-            cat_str, var_label
-        ));
-    }
+    
+    // Add auto-generated alternatives (Var and literal rules)
+    production.push_str(&generate_auto_alternatives(
+        category,
+        has_var_rule,
+        has_integer_rule,
+        theory,
+        !filtered_other_rules.is_empty(), // needs_leading_comma
+    ));
 
     production.push_str("\n};\n");
     production
@@ -463,208 +420,276 @@ fn generate_simple_production(
         }
     }
 
-    // Check if we need to add a comma before auto-generated rules
-    let mut needs_comma = !rules.is_empty();
-    
     // Check if there's an explicit Integer rule (NumLit . Cat ::= Integer)
     let has_integer_rule = rules.iter().any(|r| is_integer_rule(r));
-
-    // Auto-generate literal parser for native types (if not explicitly declared)
-    if let Some(native_type) = has_native_type(category, theory) {
-        let type_str = native_type_to_string(native_type);
-        if !has_integer_rule {
-            let literal_label = generate_literal_label(native_type);
-
-            if needs_comma {
-                production.push_str(",\n");
-            }
-
-            if type_str == "i32" || type_str == "i64" {
-                // Integer literals: parse Integer token
-                // Add unary minus support for negative numbers (before positive literals for precedence)
-                production.push_str(&format!(
-                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    category, literal_label
-                ));
-                production
-                    .push_str(&format!("    <i:Integer> => {}::{}(i)", category, literal_label));
-            } else if type_str == "f32" || type_str == "f64" {
-                // Float literals: parse Float token
-                production
-                    .push_str(&format!("    <f:Float> => {}::{}(f)", category, literal_label));
-            } else if type_str == "bool" {
-                // Boolean literals: parse Boolean token
-                production
-                    .push_str(&format!("    <b:Boolean> => {}::{}(b)", category, literal_label));
-            }
-            needs_comma = true; // Next rule (Var) needs comma
-        }
-    }
-
-    // Automatically adds Var alternative if it doesn't exist (lowest precedence)
-    // Variables always parse as Ident (not Integer), regardless of native type
-    // Integer literals are handled separately via NumLit/Integer rules
-    if !has_var_rule {
-        let var_label = generate_var_label(category);
-        // Variables always parse as Ident (not Integer)
-        if needs_comma {
-            production.push_str(",\n");
-        } else {
-            production.push('\n');
-        }
-        production.push_str(&format!(
-            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))",
-            category, var_label
-        ));
-    }
+    
+    // Add auto-generated alternatives (Var and literal rules)
+    production.push_str(&generate_auto_alternatives(
+        category,
+        has_var_rule,
+        has_integer_rule,
+        theory,
+        !rules.is_empty(), // needs_leading_comma
+    ));
 
     production.push_str("\n};\n");
     production
 }
 
-/// Generate a LALRPOP alternative for a single grammar rule (with theory context for native types)
+/// Generate a LALRPOP alternative for a single grammar rule
+/// 
+/// This is the main entry point - delegates to unified analyze/generate flow.
 fn generate_rule_alternative_with_theory(
     rule: &GrammarRule,
     _theory: Option<&TheoryDef>,
 ) -> String {
-    // If this rule has a syntax pattern (new judgement-style syntax), use it
-    if let (Some(ref term_context), Some(ref syntax_pattern)) = (&rule.term_context, &rule.syntax_pattern) {
-        return generate_pattern_alternative(rule, term_context, syntax_pattern);
-    }
+    let cat_str = rule.category.to_string();
 
-    let label = &rule.label;
-    let mut alt = String::new();
-
-    // Generate pattern for matching the syntax
-    // Example: PZero . Proc ::= "0" ;
-    //   becomes: "0" => Proc::PZero
-
-    // Handle different cases based on rule structure
+    // Collection rules (old BNFC-style) have special pattern/action generation
+    // Pattern-style collection rules are handled by analyze_pattern_rule
+    if rule.syntax_pattern.is_none() {
     if rule.items.len() == 1 {
-        // Single item (terminal or non-terminal)
-        match &rule.items[0] {
-            GrammarItem::Terminal(term) => {
-                // Terminal: just match the literal
-                alt.push_str(&format!("\"{}\" => {}::{}", term, rule.category, label));
-            },
-            GrammarItem::NonTerminal(nt) if nt == "Integer" => {
-                // Integer keyword: parse Integer token directly for native integer literals
-                alt.push_str(&format!("<i:Integer> => {}::{}(i)", rule.category, label));
-            },
-            GrammarItem::NonTerminal(nt) if nt == "Var" => {
-                // Variable: parse identifier as variable node
-                // Use get_or_create_var to ensure same name = same ID within a parse
-                alt.push_str(&format!("<v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))",
-                    rule.category, label));
-            },
-            GrammarItem::NonTerminal(nt) => {
-                // Non-terminal: recursively parse
-                alt.push_str(&format!(
-                    "<val:{}> => {}::{}(Box::new(val))",
-                    nt, rule.category, label
-                ));
-            },
-            GrammarItem::Collection {
-                coll_type,
-                element_type,
-                separator,
-                delimiters,
-            } => {
-                // Single-item collection - generate the collection alternative
-                return generate_collection_alternative(
-                    rule,
-                    coll_type,
-                    element_type,
-                    separator,
-                    delimiters.as_ref(),
-                );
-            },
-            GrammarItem::Binder { .. } => {
-                // Binder alone shouldn't happen
-                alt.push_str(&format!("// TODO: handle binder => {}::{}", rule.category, label));
-            },
+            if let GrammarItem::Collection { coll_type, element_type, separator, delimiters } = &rule.items[0] {
+                return generate_collection_alternative(rule, coll_type, element_type, separator, delimiters.as_ref());
+            }
         }
-    } else {
-        // Multiple items: need to handle sequence
-        alt.push_str(&generate_sequence_alternative(rule));
+        for item in &rule.items {
+            if let GrammarItem::Collection { coll_type, element_type, separator, delimiters } = item {
+                return generate_collection_alternative(rule, coll_type, element_type, separator, delimiters.as_ref());
+            }
+        }
     }
-
-    alt
+    
+    // All rules go through unified analyze/generate flow
+    let analyzed = analyze_rule(rule, &cat_str);
+    generate_alternative(&analyzed, &rule.category, &rule.label)
 }
 
-/// Generate alternative for a rule with multiple items
-fn generate_sequence_alternative(rule: &GrammarRule) -> String {
-    let label = &rule.label;
-    let category = &rule.category;
+//==============================================================================
+// CORE STRUCTURES
+//==============================================================================
 
-    // Check if this rule has binders
-    if !rule.bindings.is_empty() {
-        return generate_binder_alternative(rule);
+/// How a captured value is used in the action code
+#[derive(Debug, Clone)]
+enum CaptureUsage {
+    /// Box::new(var)
+    Boxed,
+    /// Use as-is (e.g., for OrdVar, collections)
+    Direct,
+    /// Convert to OrdVar: OrdVar(Var::Free(get_or_create_var(var)))
+    AsVar,
+    /// Used as binder name in Scope creation
+    Binder,
+    /// Used as body in Scope creation
+    Body,
+}
+
+/// A single capture in a LALRPOP pattern
+#[derive(Debug, Clone)]
+struct Capture {
+    /// Variable name in LALRPOP pattern (e.g., "f0", "body")
+    var_name: String,
+    /// LALRPOP non-terminal to parse (e.g., "Proc", "Ident") - used for debugging
+    #[allow(dead_code)]
+    nonterminal: String,
+    /// How to use this capture in the action
+    usage: CaptureUsage,
+}
+
+/// What kind of action to generate
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+enum ActionKind {
+    /// Simple constructor: Category::Label(args...)
+    Simple,
+    /// Unit constructor: Category::Label
+    Unit,
+    /// Needs single-binder Scope creation
+    Binder { binder_var: String, body_var: String },
+    /// Needs multi-binder Scope with Vec<Binder>
+    MultiBinder { 
+        collection_param: String, 
+        body_param: String,
+        /// Pattern elements for tuple destructuring
+        elements: Vec<SepElement>,
+    },
+    /// Builds a collection from separated list (BNFC-style rules)
+    Collection { 
+        name: String,
+        elem_type: String,
+        coll_type: CollectionType,
+    },
+    /// Simple with collection parameters that need _v/_e combining
+    SimpleWithCollections {
+        /// Collection params: (name, coll_type, mapped_info)
+        /// mapped_info: Some((element_index, tuple_len)) if from #map, None if simple
+        collections: Vec<(String, CollectionType, Option<(usize, usize)>)>,
+    },
+}
+
+/// Element in a separated list pattern (for multi-binder)
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+enum SepElement {
+    /// Literal - matched but not captured (becomes _ in tuple)
+    Literal(String),
+    /// Captured as collection element
+    CollectionCapture(String),
+    /// Captured as binder string
+    BinderCapture(String),
+}
+
+/// Analyzed rule ready for LALRPOP generation
+#[derive(Debug, Clone)]
+struct AnalyzedRule {
+    /// LALRPOP pattern string
+    pattern: String,
+    /// Captures in order (for simple/binder rules)
+    captures: Vec<Capture>,
+    /// What kind of action to generate
+    action_kind: ActionKind,
+}
+
+//==============================================================================
+// UNIFIED RULE ANALYSIS
+//==============================================================================
+
+/// Analyze a grammar rule to produce an AnalyzedRule
+/// 
+/// This is the single entry point for converting any GrammarRule into
+/// the unified AnalyzedRule representation.
+fn analyze_rule(rule: &GrammarRule, cat_str: &str) -> AnalyzedRule {
+    // Check for new judgement-style syntax first
+    if let (Some(ref term_context), Some(ref syntax_pattern)) = (&rule.term_context, &rule.syntax_pattern) {
+        return analyze_pattern_rule(rule, term_context, syntax_pattern);
     }
+    
+    // Handle old BNFC-style rules
+    if rule.items.len() == 1 {
+        analyze_single_item_rule(rule)
+    } else if !rule.bindings.is_empty() {
+        analyze_binder_rule(rule)
+    } else {
+        analyze_sequence_rule(rule, cat_str)
+    }
+}
 
-    let mut pattern = String::new();
-    let mut args = Vec::new();
+/// Analyze a single-item rule
+fn analyze_single_item_rule(rule: &GrammarRule) -> AnalyzedRule {
+    match &rule.items[0] {
+        GrammarItem::Terminal(_term) => {
+            // Unit constructor: "0" => Proc::PZero
+            AnalyzedRule {
+                pattern: format!("\"{}\"", _term),
+                captures: vec![],
+                action_kind: ActionKind::Unit,
+            }
+        }
+        GrammarItem::NonTerminal(nt) if nt.to_string() == "Integer" => {
+            AnalyzedRule {
+                pattern: "<i:Integer>".to_string(),
+                captures: vec![Capture {
+                    var_name: "i".to_string(),
+                    nonterminal: "Integer".to_string(),
+                    usage: CaptureUsage::Direct,
+                }],
+                action_kind: ActionKind::Simple,
+            }
+        }
+        GrammarItem::NonTerminal(nt) if nt.to_string() == "Var" => {
+            AnalyzedRule {
+                pattern: "<v:Ident>".to_string(),
+                captures: vec![Capture {
+                    var_name: "v".to_string(),
+                    nonterminal: "Ident".to_string(),
+                    usage: CaptureUsage::AsVar,
+                }],
+                action_kind: ActionKind::Simple,
+            }
+        }
+        GrammarItem::NonTerminal(nt) => {
+            AnalyzedRule {
+                pattern: format!("<val:{}>", nt),
+                captures: vec![Capture {
+                    var_name: "val".to_string(),
+                    nonterminal: nt.to_string(),
+                    usage: CaptureUsage::Boxed,
+                }],
+                action_kind: ActionKind::Simple,
+            }
+        }
+        GrammarItem::Collection { coll_type, element_type, separator, delimiters } => {
+            analyze_collection_rule(rule, coll_type, element_type, separator, delimiters.as_ref())
+        }
+            GrammarItem::Binder { .. } => {
+            // Binder alone shouldn't happen in valid grammar rules
+            panic!("GrammarItem::Binder should not appear alone - use binder syntax in term context")
+        }
+    }
+}
+
+/// Analyze a sequence rule (multiple items, no binders)
+fn analyze_sequence_rule(rule: &GrammarRule, _cat_str: &str) -> AnalyzedRule {
+    let mut pattern_parts = Vec::new();
+    let mut captures = Vec::new();
     let mut field_idx = 0;
 
     for item in &rule.items {
         match item {
             GrammarItem::Terminal(term) => {
-                pattern.push_str(&format!(" \"{}\"", term));
-            },
+                pattern_parts.push(format!("\"{}\"", term));
+            }
             GrammarItem::NonTerminal(nt) => {
                 let var_name = format!("f{}", field_idx);
 
                 if nt.to_string() == "Var" {
-                    // Var should parse as Ident, then convert to OrdVar
-                    pattern.push_str(&format!(" <{}:Ident>", var_name));
-                    args.push(format!("mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var({})))", var_name));
+                    pattern_parts.push(format!("<{}:Ident>", var_name));
+                    captures.push(Capture {
+                        var_name: var_name.clone(),
+                        nonterminal: "Ident".to_string(),
+                        usage: CaptureUsage::AsVar,
+                    });
                 } else {
-                    pattern.push_str(&format!(" <{}:{}>", var_name, nt));
-                    args.push(format!("Box::new({})", var_name));
+                    pattern_parts.push(format!("<{}:{}>", var_name, nt));
+                    captures.push(Capture {
+                        var_name: var_name.clone(),
+                        nonterminal: nt.to_string(),
+                        usage: CaptureUsage::Boxed,
+                    });
                 }
                 field_idx += 1;
-            },
-            GrammarItem::Collection {
-                coll_type,
-                element_type,
-                separator,
-                delimiters,
-            } => {
-                // Generate LALRPOP rule for separated list
-                return generate_collection_alternative(
-                    rule,
-                    coll_type,
-                    element_type,
-                    separator,
-                    delimiters.as_ref(),
-                );
-            },
-            GrammarItem::Binder { category: _binder_cat } => {
-                // Binder: parse as identifier
+            }
+            GrammarItem::Collection { coll_type, element_type, separator, delimiters } => {
+                // Collection in sequence - return full collection rule
+                return analyze_collection_rule(rule, coll_type, element_type, separator, delimiters.as_ref());
+            }
+            GrammarItem::Binder { .. } => {
                 let var_name = format!("b{}", field_idx);
-                pattern.push_str(&format!(" <{}:Ident>", var_name));
-                // Binders are captured in Scope, handled separately
+                pattern_parts.push(format!("<{}:Ident>", var_name));
+                captures.push(Capture {
+                    var_name,
+                    nonterminal: "Ident".to_string(),
+                    usage: CaptureUsage::Binder,
+                });
                 field_idx += 1;
-            },
+            }
         }
     }
 
-    // Construct the AST node
-    let args_str = args.join(", ");
-    format!("{} => {}::{}({})", pattern.trim(), category, label, args_str)
+    AnalyzedRule {
+        pattern: pattern_parts.join(" "),
+        captures,
+        action_kind: ActionKind::Simple,
+    }
 }
 
-/// Generate alternative for a rule with binders (creates Scope)
-fn generate_binder_alternative(rule: &GrammarRule) -> String {
-    let label = &rule.label;
-    let category = &rule.category;
-
+/// Analyze a rule with binders
+fn analyze_binder_rule(rule: &GrammarRule) -> AnalyzedRule {
     let (binder_idx, body_indices) = &rule.bindings[0];
     let body_idx = body_indices[0];
 
-    // Generate pattern and track which items go where
-    let mut pattern = String::new();
-    let mut regular_fields = Vec::new();
+    let mut pattern_parts = Vec::new();
+    let mut captures = Vec::new();
     let mut binder_var = String::new();
     let mut body_var = String::new();
     let mut field_idx = 0;
@@ -672,48 +697,578 @@ fn generate_binder_alternative(rule: &GrammarRule) -> String {
     for (i, item) in rule.items.iter().enumerate() {
         match item {
             GrammarItem::Terminal(term) => {
-                pattern.push_str(&format!(" \"{}\"", term));
-            },
+                pattern_parts.push(format!("\"{}\"", term));
+            }
             GrammarItem::NonTerminal(nt) => {
                 if i == body_idx {
-                    // This is the body
                     body_var = format!("body_{}", field_idx);
-                    pattern.push_str(&format!(" <{}:{}>", body_var, nt));
+                    pattern_parts.push(format!("<{}:{}>", body_var, nt));
+                    captures.push(Capture {
+                        var_name: body_var.clone(),
+                        nonterminal: nt.to_string(),
+                        usage: CaptureUsage::Body,
+                    });
                 } else {
-                    // Regular field (not binder, not body)
                     let var_name = format!("f{}", field_idx);
-                    pattern.push_str(&format!(" <{}:{}>", var_name, nt));
+                    pattern_parts.push(format!("<{}:{}>", var_name, nt));
 
-                    if nt.to_string() == "Var" {
-                        regular_fields.push(var_name);
+                    let usage = if nt.to_string() == "Var" {
+                        CaptureUsage::Direct
                     } else {
-                        regular_fields.push(format!("Box::new({})", var_name));
-                    }
+                        CaptureUsage::Boxed
+                    };
+                    captures.push(Capture {
+                        var_name,
+                        nonterminal: nt.to_string(),
+                        usage,
+                    });
                 }
                 field_idx += 1;
-            },
+            }
             GrammarItem::Collection { .. } => {
-                // Collections in binder rules not yet supported (Phase 4)
-                panic!("Collection types in binder rules not yet implemented (Phase 4)");
-            },
+                panic!("Collection types in binder rules not yet implemented");
+            }
             GrammarItem::Binder { .. } => {
                 if i == *binder_idx {
-                    // This is the binder - parse as identifier
                     binder_var = format!("x_{}", field_idx);
-                    pattern.push_str(&format!(" <{}:Ident>", binder_var));
+                    pattern_parts.push(format!("<{}:Ident>", binder_var));
+                    captures.push(Capture {
+                        var_name: binder_var.clone(),
+                        nonterminal: "Ident".to_string(),
+                        usage: CaptureUsage::Binder,
+                    });
                 }
                 field_idx += 1;
-            },
+            }
         }
     }
 
-    // Generate the action code that creates Scope
-    // We need to extract the free variable from the body that matches the binder name
-    // and use it as the binder, so moniker can properly bind it
-    let mut action = format!(" => {{\n");
+    AnalyzedRule {
+        pattern: pattern_parts.join(" "),
+        captures,
+        action_kind: ActionKind::Binder { binder_var, body_var },
+    }
+}
+
+/// Analyze a collection rule
+fn analyze_collection_rule(
+    _rule: &GrammarRule,
+    coll_type: &CollectionType,
+    element_type: &syn::Ident,
+    separator: &str,
+    delimiters: Option<&(String, String)>,
+) -> AnalyzedRule {
+    let sep_escaped = if separator == "|" {
+        r"\|".to_string()
+    } else {
+        separator.replace("\"", "\\\"")
+    };
+
+    let sep_pattern = if separator == "|" {
+        format!("r\"{}\"", sep_escaped)
+    } else {
+        format!("\"{}\"", sep_escaped)
+    };
+
+    let pattern = if let Some((open, close)) = delimiters {
+        let open_escaped = open.replace("\"", "\\\"");
+        let close_escaped = close.replace("\"", "\\\"");
+        format!(
+            "\"{}\" <elems:(<{}> {})*> <last:{}?> \"{}\"",
+            open_escaped, element_type, sep_pattern, element_type, close_escaped
+        )
+    } else {
+        format!(
+            "<first:{}> <rest:({} <{}>)*>",
+            element_type, sep_pattern, element_type
+        )
+    };
+
+    AnalyzedRule {
+        pattern,
+        captures: vec![], // Collection captures are handled specially
+        action_kind: ActionKind::Collection {
+            name: "coll".to_string(),
+            elem_type: element_type.to_string(),
+            coll_type: coll_type.clone(),
+        },
+    }
+}
+
+/// Analyze a pattern-style rule (new judgement syntax)
+fn analyze_pattern_rule(
+    _rule: &GrammarRule,
+    term_context: &[TermParam],
+    syntax_pattern: &[SyntaxExpr],
+) -> AnalyzedRule {
+    let param_types = build_param_types(term_context);
+    
+    let mut pattern_parts = Vec::new();
+    let mut captures = Vec::new();
+    let mut binder_var: Option<String> = None;
+    let mut body_var: Option<String> = None;
+    let mut multi_binder: Option<(String, String, Vec<SepElement>)> = None;
+    let mut collection_params: Vec<(String, CollectionType, Option<(usize, usize)>)> = Vec::new();
+    
+    for expr in syntax_pattern {
+        analyze_syntax_expr_with_collections(
+            expr,
+            &param_types,
+            &mut pattern_parts,
+            &mut captures,
+            &mut binder_var,
+            &mut body_var,
+            &mut multi_binder,
+            &mut collection_params,
+        );
+    }
+    
+    let action_kind = if let Some((collection_param, body_param, elements)) = multi_binder {
+        ActionKind::MultiBinder { collection_param, body_param, elements }
+    } else if let (Some(bv), Some(bdy)) = (binder_var, body_var) {
+        ActionKind::Binder { binder_var: bv, body_var: bdy }
+    } else if !collection_params.is_empty() {
+        ActionKind::SimpleWithCollections { collections: collection_params }
+    } else if captures.is_empty() {
+        ActionKind::Unit
+    } else {
+        ActionKind::Simple
+    };
+    
+    AnalyzedRule {
+        pattern: pattern_parts.join(" "),
+        captures,
+        action_kind,
+    }
+}
+
+/// Analyze a single syntax expression (with collection tracking)
+fn analyze_syntax_expr_with_collections(
+    expr: &SyntaxExpr,
+    param_types: &std::collections::HashMap<String, ParamInfo>,
+    pattern_parts: &mut Vec<String>,
+    captures: &mut Vec<Capture>,
+    binder_var: &mut Option<String>,
+    body_var: &mut Option<String>,
+    multi_binder: &mut Option<(String, String, Vec<SepElement>)>,
+    collection_params: &mut Vec<(String, CollectionType, Option<(usize, usize)>)>,
+) {
+    match expr {
+        SyntaxExpr::Literal(s) => {
+            pattern_parts.push(format!("\"{}\"", s));
+        }
+        SyntaxExpr::Param(id) => {
+            let name = id.to_string();
+            if let Some(info) = param_types.get(&name) {
+                match info.kind {
+                    ParamKind::Simple => {
+                        let nonterminal = type_to_nonterminal(&info.ty);
+                        pattern_parts.push(format!("<{}:{}>", name, nonterminal));
+                        captures.push(Capture {
+                            var_name: name,
+                            nonterminal,
+                            usage: CaptureUsage::Boxed,
+                        });
+                    }
+                    ParamKind::Binder => {
+                        pattern_parts.push(format!("<{}:Ident>", name));
+                        *binder_var = Some(name.clone());
+                        captures.push(Capture {
+                            var_name: name,
+                            nonterminal: "Ident".to_string(),
+                            usage: CaptureUsage::Binder,
+                        });
+                    }
+                    ParamKind::MultiBinder => {
+                        pattern_parts.push(format!("<{}:Ident>", name));
+                        *binder_var = Some(name.clone());
+                        captures.push(Capture {
+                            var_name: name,
+                            nonterminal: "Ident".to_string(),
+                            usage: CaptureUsage::Binder,
+                        });
+                    }
+                    ParamKind::Body => {
+                        let nonterminal = type_to_nonterminal(&info.ty);
+                        pattern_parts.push(format!("<{}:{}>", name, nonterminal));
+                        *body_var = Some(name.clone());
+                        captures.push(Capture {
+                            var_name: name,
+                            nonterminal,
+                            usage: CaptureUsage::Body,
+                        });
+                    }
+                    ParamKind::Collection => {
+                        if let TypeExpr::Collection { element, .. } = &info.ty {
+                            let elem_type = type_to_nonterminal(element);
+                            pattern_parts.push(format!("<{}:((<{}> \"|\")* <{}>?)>", name, elem_type, elem_type));
+                            captures.push(Capture {
+                                var_name: name,
+                                nonterminal: elem_type,
+                                usage: CaptureUsage::Direct,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        SyntaxExpr::Op(op) => {
+            analyze_pattern_op_with_collections(op, param_types, pattern_parts, captures, multi_binder, collection_params);
+        }
+    }
+}
+
+/// Analyze a single syntax expression (legacy, without collection tracking)
+fn analyze_syntax_expr(
+    expr: &SyntaxExpr,
+    param_types: &std::collections::HashMap<String, ParamInfo>,
+    pattern_parts: &mut Vec<String>,
+    captures: &mut Vec<Capture>,
+    binder_var: &mut Option<String>,
+    body_var: &mut Option<String>,
+    multi_binder: &mut Option<(String, String, Vec<SepElement>)>,
+) {
+    let mut collection_params = Vec::new();
+    analyze_syntax_expr_with_collections(
+        expr, param_types, pattern_parts, captures, 
+        binder_var, body_var, multi_binder, &mut collection_params
+    );
+}
+
+/// Analyze a pattern operation (with collection tracking)
+fn analyze_pattern_op_with_collections(
+    op: &PatternOp,
+    param_types: &std::collections::HashMap<String, ParamInfo>,
+    pattern_parts: &mut Vec<String>,
+    captures: &mut Vec<Capture>,
+    multi_binder: &mut Option<(String, String, Vec<SepElement>)>,
+    collection_params: &mut Vec<(String, CollectionType, Option<(usize, usize)>)>,
+) {
+    match op {
+        PatternOp::Sep { collection, separator, source } => {
+            if let Some(chain_source) = source {
+                // Chained operation with map
+                if let PatternOp::Map { source: map_source, params, body } = chain_source.as_ref() {
+                    // Check what the map source is
+                    if let PatternOp::Zip { left, right } = map_source.as_ref() {
+                        // Multi-binder pattern: #zip(...).#map(...).#sep(",")
+                        let left_name = left.to_string();
+                        let right_name = right.to_string();
+                        
+                        let (collection_param, _binder_param) = 
+                            if param_types.get(&left_name).map(|i| matches!(i.kind, ParamKind::MultiBinder)).unwrap_or(false) {
+                                (right_name.clone(), left_name.clone())
+                            } else {
+                                (left_name.clone(), right_name.clone())
+                            };
+                        
+                        let body_param = param_types.iter()
+                            .find(|(name, info)| {
+                                matches!(info.kind, ParamKind::Body) || 
+                                (*name != &collection_param && *name != &_binder_param && 
+                                 matches!(info.ty, TypeExpr::Base(_)))
+                            })
+                            .map(|(name, _)| name.clone())
+                            .unwrap_or_else(|| "p".to_string());
+                        
+                        // Map closure params to zip operands
+                        let mut param_map: std::collections::HashMap<String, &syn::Ident> = std::collections::HashMap::new();
+                        if params.len() >= 2 {
+                            param_map.insert(params[0].to_string(), left);
+                            param_map.insert(params[1].to_string(), right);
+                        }
+                        
+                        let mut elements: Vec<SepElement> = Vec::new();
+                        let mut lalrpop_parts: Vec<String> = Vec::new();
+                        
+                        for expr in body {
+                            match expr {
+                                SyntaxExpr::Literal(s) => {
+                                    elements.push(SepElement::Literal(s.clone()));
+                                    lalrpop_parts.push(format!("\"{}\"", s));
+                                }
+                                SyntaxExpr::Param(id) => {
+                                    let name = id.to_string();
+                                    if let Some(&orig_param) = param_map.get(&name) {
+                                        let orig_name = orig_param.to_string();
+                                        if let Some(info) = param_types.get(&orig_name) {
+                                            let (lalrpop, elem) = match info.kind {
+                                                ParamKind::MultiBinder => {
+                                                    ("Ident".to_string(), SepElement::BinderCapture(name))
+                                                }
+                                                _ => {
+                                                    let nt = type_to_nonterminal(&info.ty);
+                                                    (nt.clone(), SepElement::CollectionCapture(nt))
+                                                }
+                                            };
+                                            elements.push(elem);
+                                            lalrpop_parts.push(lalrpop);
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+                        
+                        let inner_pattern = lalrpop_parts.join(" ");
+                        pattern_parts.push(format!(
+                            "<__pairs_v:(({}) \"{}\")*> <__pair_e:({})?>",
+                            inner_pattern, separator, inner_pattern
+                        ));
+                        
+                        *multi_binder = Some((collection_param, body_param, elements));
+                        return;
+                    } else {
+                        // Map without Zip: ns.#map(|n| n "!").#sep(",")
+                        // Single collection map - transform each element
+                        
+                        // The map source should be a Var referencing the collection
+                        let coll_name = match map_source.as_ref() {
+                            PatternOp::Var(id) => id.to_string(),
+                            _ => panic!("Map source should be a variable reference to a collection"),
+                        };
+                        
+                        // Get collection info
+                        let coll_info = param_types.get(&coll_name)
+                            .expect("Map source collection not found in params");
+                        let coll_type = if let TypeExpr::Collection { coll_type, .. } = &coll_info.ty {
+                            coll_type.clone()
+                        } else {
+                            panic!("Map source must be a collection type");
+                        };
+                        
+                        // Build the inner pattern from map body
+                        // params[0] maps to the collection element
+                        let elem_param = if !params.is_empty() { params[0].to_string() } else { "x".to_string() };
+                        
+                        let mut lalrpop_parts: Vec<String> = Vec::new();
+                        let mut elem_index: Option<usize> = None;
+                        let mut tuple_len = 0;
+                        
+                        for expr in body {
+                            match expr {
+                                SyntaxExpr::Literal(s) => {
+                                    lalrpop_parts.push(format!("\"{}\"", s));
+                                    tuple_len += 1;
+                                }
+                                SyntaxExpr::Param(id) => {
+                                    let name = id.to_string();
+                                    if name == elem_param {
+                                        // This is the collection element - track its position
+                                        elem_index = Some(tuple_len);
+                                        if let TypeExpr::Collection { element, .. } = &coll_info.ty {
+                                            let nt = type_to_nonterminal(element);
+                                            lalrpop_parts.push(nt);
+                                        }
+                                    }
+                                    tuple_len += 1;
+                                }
+                                _ => {}
+                            }
+                        }
+                        
+                        let inner_pattern = lalrpop_parts.join(" ");
+                        pattern_parts.push(format!(
+                            "<{}_v:(({}) \"{}\")*> <{}_e:({})?>",
+                            coll_name, inner_pattern, separator, coll_name, inner_pattern
+                        ));
+                        
+                        // Track as mapped collection with element index
+                        let mapped_info = elem_index.map(|idx| (idx, tuple_len));
+                        collection_params.push((coll_name.clone(), coll_type, mapped_info));
+                        captures.push(Capture {
+                            var_name: coll_name,
+                            nonterminal: "mapped".to_string(),
+                            usage: CaptureUsage::Direct,
+                        });
+                        
+                        return;
+                    }
+                }
+            }
+            
+            // Simple collection separator: ps.#sep("|")
+            let name = collection.to_string();
+            if let Some(info) = param_types.get(&name) {
+                if let TypeExpr::Collection { element, coll_type } = &info.ty {
+                    let elem_type = type_to_nonterminal(element);
+                    pattern_parts.push(format!(
+                        "<{}_v:(<{}> \"{}\")*> <{}_e:{}?>",
+                        name, elem_type, separator, name, elem_type
+                    ));
+                    // Track collection param for action generation (None = not mapped)
+                    collection_params.push((name.clone(), coll_type.clone(), None));
+                    captures.push(Capture {
+                        var_name: name,
+                        nonterminal: elem_type,
+                        usage: CaptureUsage::Direct,
+                    });
+                }
+            }
+        }
+        PatternOp::Var(id) => {
+            let name = id.to_string();
+            if let Some(info) = param_types.get(&name) {
+                let nonterminal = type_to_nonterminal(&info.ty);
+                pattern_parts.push(format!("<{}:{}>", name, nonterminal));
+                captures.push(Capture {
+                    var_name: name,
+                    nonterminal,
+                    usage: CaptureUsage::Direct,
+                });
+            }
+        }
+        PatternOp::Zip { .. } | PatternOp::Map { .. } => {
+            // Standalone Zip/Map not yet supported
+            // Currently supported: 
+            //   - collection.#sep(",") - simple separated list
+            //   - #zip(a,b).#map(|x,y| ...).#sep(",") - multi-binder pattern
+            // Not yet implemented:
+            //   - collection.#map(|x| ...).#sep(",") - single collection map
+            panic!("Standalone PatternOp::Zip/Map not supported - chain with #sep() or use simple collection.#sep()")
+        }
+        PatternOp::Opt { inner } => {
+            let mut inner_parts = Vec::new();
+            for expr in inner {
+                analyze_syntax_expr(
+                    expr,
+                    param_types,
+                    &mut inner_parts,
+                    captures,
+                    &mut None,
+                    &mut None,
+                    &mut None,
+                );
+            }
+            pattern_parts.push(format!("({})?", inner_parts.join(" ")));
+        }
+    }
+}
+
+//==============================================================================
+// UNIFIED ACTION GENERATION
+//==============================================================================
+
+/// Generate action code from an AnalyzedRule
+fn generate_action(analyzed: &AnalyzedRule, category: &syn::Ident, label: &syn::Ident) -> String {
+    match &analyzed.action_kind {
+        ActionKind::Unit => {
+            format!("{}::{}", category, label)
+        }
+        ActionKind::Simple => {
+            let args: Vec<String> = analyzed.captures.iter()
+                .map(|c| capture_to_arg(c))
+                .collect();
+            format!("{}::{}({})", category, label, args.join(", "))
+        }
+        ActionKind::Binder { binder_var, body_var } => {
+            generate_binder_action(&analyzed.captures, binder_var, body_var, category, label)
+        }
+        ActionKind::MultiBinder { collection_param, body_param, elements } => {
+            let mut action = "{\n".to_string();
+            action.push_str(&generate_multi_binder_action(collection_param, body_param, elements));
+            action.push_str(&format!(
+                "        {}::{}({}, __scope)\n",
+                category, label, collection_param
+            ));
+            action.push_str("    }");
+            action
+        }
+        ActionKind::Collection { name, coll_type, .. } => {
+            generate_collection_action(name, coll_type)
+        }
+        ActionKind::SimpleWithCollections { collections } => {
+            let mut action = "{\n".to_string();
+            // Generate code to combine _v and _e captures into collections
+            for (coll_name, coll_type, mapped_info) in collections {
+                let coll_type_name = match coll_type {
+                    CollectionType::HashBag => "HashBag",
+                    CollectionType::HashSet => "HashSet",
+                    CollectionType::Vec => "Vec",
+                };
+                
+                // Generate extraction code based on whether it's a mapped collection
+                let (extract_item, extract_opt) = if let Some((elem_idx, tuple_len)) = mapped_info {
+                    // Mapped collection - need to destructure tuple
+                    // LALRPOP pattern ((inner_tuple) sep)* produces Vec<(tuple, ())>
+                    // Generate pattern like (_, elem, _) or (elem, _) etc.
+                    let mut pattern_parts: Vec<&str> = vec!["_"; *tuple_len];
+                    pattern_parts[*elem_idx] = "elem";
+                    let pattern = pattern_parts.join(", ");
+                    
+                    let op = if coll_type_name == "Vec" { "push" } else { "insert" };
+                    let v_extract = format!("for (({pattern}), _) in {name}_v {{ {name}.{op}(elem); }}", 
+                        pattern = pattern, name = coll_name, op = op);
+                    let e_extract = format!("if let Some(({pattern})) = {name}_e {{ {name}.{op}(elem); }}", 
+                        pattern = pattern, name = coll_name, op = op);
+                    (v_extract, e_extract)
+                } else {
+                    // Simple collection - LALRPOP (<Elem> "sep")* produces Vec<Elem> (sep not captured)
+                    let op = if coll_type_name == "Vec" { "push" } else { "insert" };
+                    let v_extract = format!("for item in {name}_v {{ {name}.{op}(item); }}", 
+                        name = coll_name, op = op);
+                    let e_extract = format!("if let Some(item) = {name}_e {{ {name}.{op}(item); }}", 
+                        name = coll_name, op = op);
+                    (v_extract, e_extract)
+                };
+                
+                action.push_str(&format!(
+                    "        let mut {name} = {coll_type}::new();\n\
+                     {extract_v}\n\
+                     {extract_e}\n",
+                    name = coll_name,
+                    coll_type = coll_type_name,
+                    extract_v = extract_item,
+                    extract_e = extract_opt
+                ));
+            }
+            // Build constructor args, using collection names directly
+            let args: Vec<String> = analyzed.captures.iter()
+                .filter_map(|c| {
+                    // Skip captures that are from _v/_e split (they're handled above)
+                    let is_collection = collections.iter().any(|(n, _, _)| n == &c.var_name);
+                    if is_collection {
+                        Some(c.var_name.clone())
+                    } else {
+                        Some(capture_to_arg(c))
+                    }
+                })
+                .collect();
+            action.push_str(&format!("        {}::{}({})\n", category, label, args.join(", ")));
+            action.push_str("    }");
+            action
+        }
+    }
+}
+
+/// Convert a capture to its action code representation
+fn capture_to_arg(capture: &Capture) -> String {
+    match &capture.usage {
+        CaptureUsage::Boxed => format!("Box::new({})", capture.var_name),
+        CaptureUsage::Direct => capture.var_name.clone(),
+        CaptureUsage::AsVar => format!(
+            "mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var({})))",
+            capture.var_name
+        ),
+        CaptureUsage::Binder | CaptureUsage::Body => capture.var_name.clone(),
+    }
+}
+
+/// Generate action code for binder rules
+fn generate_binder_action(
+    captures: &[Capture],
+    binder_var: &str,
+    body_var: &str,
+    category: &syn::Ident,
+    label: &syn::Ident,
+) -> String {
+    let mut action = "{\n".to_string();
     action.push_str("        use mettail_runtime::BoundTerm;\n");
     action.push_str(&format!("        let free_vars = {}.free_vars();\n", body_var));
-    action.push_str(&format!("        let binder = if let Some(fv) = free_vars.iter().find(|fv| fv.pretty_name.as_deref() == Some(&{})) {{\n", binder_var));
+    action.push_str(&format!(
+        "        let binder = if let Some(fv) = free_vars.iter().find(|fv| fv.pretty_name.as_deref() == Some(&{})) {{\n",
+        binder_var
+    ));
     action.push_str("            Binder((*fv).clone())\n");
     action.push_str("        } else {\n");
     action.push_str(&format!(
@@ -723,205 +1278,205 @@ fn generate_binder_alternative(rule: &GrammarRule) -> String {
     action.push_str("        };\n");
     action.push_str(&format!("        let scope = Scope::new(binder, Box::new({}));\n", body_var));
 
-    // Build constructor call
-    let mut all_args = regular_fields;
+    // Build constructor call with regular args + scope
+    let mut all_args: Vec<String> = captures.iter()
+        .filter(|c| c.var_name != binder_var && c.var_name != body_var)
+        .map(|c| capture_to_arg(c))
+        .collect();
     all_args.push("scope".to_string());
 
     action.push_str(&format!("        {}::{}({})\n", category, label, all_args.join(", ")));
     action.push_str("    }");
-
-    format!("{}{}", pattern.trim(), action)
+    action
 }
 
-/// Info for multi-binder patterns (#zip + #map + #sep chains)
-#[derive(Debug, Clone)]
-struct MultiBinderInfo {
-    /// The collection parameter name (e.g., "ns")
-    collection_param: String,
-    /// The multi-binder parameter name (e.g., "xs")
-    binder_param: String,
-    /// The body parameter name (e.g., "p")
-    body_param: String,
-}
+/// Generate action code for collection rules
+fn generate_collection_action(name: &str, coll_type: &CollectionType) -> String {
+    let coll_constructor = match coll_type {
+        CollectionType::HashBag => "mettail_runtime::HashBag",
+        CollectionType::HashSet => "std::collections::HashSet",
+        CollectionType::Vec => "Vec",
+    };
 
-/// Generate alternative from a syntax pattern (new judgement-style syntax)
-/// 
-/// Maps syntax pattern expressions to LALRPOP pattern elements:
-/// - Param references matching term_context become non-terminal captures
-/// - Literals become quoted terminals
-/// - Pattern operations (#sep, #map, etc.) generate appropriate grammar
-fn generate_pattern_alternative(
-    rule: &GrammarRule,
-    term_context: &[TermParam],
-    syntax_pattern: &[SyntaxExpr],
-) -> String {
-    let label = &rule.label;
-    let category = &rule.category;
-
-    // Build a map from parameter names to their types
-    let param_types = build_param_types(term_context);
-
-    // Generate pattern from syntax expressions
-    let mut pattern = String::new();
-    let mut args = Vec::new();
-    let mut binder_var: Option<String> = None;
-    let mut body_var: Option<String> = None;
-    let mut has_binder = false;
-    let mut collection_params: Vec<(String, String, String)> = Vec::new(); // (name, elem_type, separator)
-    let mut multi_binder_info: Option<MultiBinderInfo> = None;
+    let mut action = "{\n".to_string();
+    action.push_str(&format!("        let mut {} = {}::new();\n", name, coll_constructor));
     
-    for expr in syntax_pattern {
-        generate_syntax_expr_pattern(
-            expr,
-            &param_types,
-            &mut pattern,
-            &mut args,
-            &mut binder_var,
-            &mut body_var,
-            &mut has_binder,
-            &mut collection_params,
-            &mut multi_binder_info,
-        );
-    }
-
-    // Generate the action
-    if has_binder {
-        // Generate action with Scope creation
-        let binder = binder_var.clone().unwrap_or_else(|| "x".to_string());
-        let body = body_var.clone().unwrap_or_else(|| "body".to_string());
-        
-        let mut action = " => {\n".to_string();
-        action.push_str("        use mettail_runtime::BoundTerm;\n");
-        action.push_str(&format!("        let free_vars = {}.free_vars();\n", body));
-        action.push_str(&format!(
-            "        let binder = if let Some(fv) = free_vars.iter().find(|fv| fv.pretty_name.as_deref() == Some(&{})) {{\n",
-            binder
-        ));
-        action.push_str("            Binder((*fv).clone())\n");
-        action.push_str("        } else {\n");
-        action.push_str(&format!(
-            "            Binder(mettail_runtime::get_or_create_var({}))\n",
-            binder
-        ));
-        action.push_str("        };\n");
-        action.push_str(&format!("        let scope = Scope::new(binder, Box::new({}));\n", body));
-
-        // Build constructor call with regular args + scope
-        let mut all_args: Vec<String> = args
-            .iter()
-            .filter(|(name, _)| Some(name) != binder_var.as_ref() && Some(name) != body_var.as_ref())
-            .map(|(name, info)| {
-                match &info.ty {
-                    TypeExpr::Base(t) if t.to_string() == "Var" => name.clone(),
-                    _ => format!("Box::new({})", name),
-                }
-            })
-            .collect();
-        all_args.push("scope".to_string());
-
-        action.push_str(&format!("        {}::{}({})\n", category, label, all_args.join(", ")));
-        action.push_str("    }");
-        
-        format!("{}{}", pattern.trim(), action)
-    } else if args.is_empty() && collection_params.is_empty() && multi_binder_info.is_none() {
-        // Nullary constructor - unit variant
-        format!("{} => {}::{}", pattern.trim(), category, label)
-    } else if let Some(ref mb_info) = multi_binder_info {
-        // Multi-binder pattern: #zip(...).#map(...).#sep(...)
-        // The pattern captures __pairs_v (Vec of tuples) and __pairs_e (Option of tuple)
-        //
-        // Pattern: <__pairs_v:((inner) "sep")*> <__pair_e:(inner)?>
-        // - __pairs_v items have type ((inner_tuple), &str) - inner plus separator
-        // - __pair_e has type Option<inner_tuple> - just the inner
-        //
-        // For inner pattern like `Ident "<-" Name`, inner_tuple = (String, &str, Name)
-        let mut action = " => {\n".to_string();
-        
-        // Extract names and binder strings from captured tuples
-        // __pairs_v: Vec<((String, &str, Name), &str)> - need ((x, _, n), _)
-        // __pairs_e: Option<(String, &str, Name)> - need (x, _, n)
-        action.push_str(&format!(
-            "        let mut {coll} = Vec::new();\n\
-             let mut __binder_strs = Vec::new();\n\
-             for ((x, _, n), _) in __pairs_v {{\n\
-                 __binder_strs.push(x);\n\
-                 {coll}.push(n);\n\
-             }}\n\
-             if let Some((x, _, n)) = __pair_e {{\n\
-                 __binder_strs.push(x);\n\
-                 {coll}.push(n);\n\
-             }}\n",
-            coll = mb_info.collection_param
-        ));
-        
-        // Create binders from strings
-        action.push_str(
-            "        let __binders: Vec<Binder<String>> = __binder_strs.into_iter()\n\
-             .map(|s| Binder(mettail_runtime::get_or_create_var(s)))\n\
-             .collect();\n"
-        );
-        
-        // Create the multi-binder scope
-        action.push_str(&format!(
-            "        let __scope = Scope::new(__binders, Box::new({}));\n",
-            mb_info.body_param
-        ));
-        
-        // Build constructor call with collection and scope
-        action.push_str(&format!(
-            "        {}::{}({}, __scope)\n",
-            category, label, mb_info.collection_param
-        ));
-        action.push_str("    }");
-        
-        format!("{}{}", pattern.trim(), action)
-    } else if !collection_params.is_empty() {
-        // Has collection parameters - need to combine _v and _e captures
-        let mut action = " => {\n".to_string();
-        
-        // Generate code to combine collection captures
-        for (coll_name, _elem_type, _sep) in &collection_params {
-            action.push_str(&format!(
-                "        let mut {name} = HashBag::new();\n\
-                 for item in {name}_v {{ {name}.insert(item); }}\n\
-                 if let Some(item) = {name}_e {{ {name}.insert(item); }}\n",
-                name = coll_name
-            ));
-        }
-        
-        // Build constructor call
-        let args_str: String = args
-            .iter()
-            .map(|(name, info)| {
-                match &info.ty {
-                    TypeExpr::Base(t) if t.to_string() == "Var" => name.clone(),
-                    TypeExpr::Collection { .. } => name.clone(), // Already built above
-                    _ => format!("Box::new({})", name),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        
-        action.push_str(&format!("        {}::{}({})\n", category, label, args_str));
-        action.push_str("    }");
-        
-        format!("{}{}", pattern.trim(), action)
-    } else {
-        // Simple constructor call with args
-        let args_str: String = args
-            .iter()
-            .map(|(name, info)| {
-                match &info.ty {
-                    TypeExpr::Base(t) if t.to_string() == "Var" => name.clone(),
-                    _ => format!("Box::new({})", name),
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        
-        format!("{} => {}::{}({})", pattern.trim(), category, label, args_str)
-    }
+    // For delimited collections (elems + last pattern)
+    let insert_method = match coll_type {
+        CollectionType::HashBag | CollectionType::HashSet => "insert",
+        CollectionType::Vec => "push",
+    };
+    
+    action.push_str(&format!("        for e in elems {{ {}.{}(e); }}\n", name, insert_method));
+    action.push_str(&format!("        if let Some(e) = last {{ {}.{}(e); }}\n", name, insert_method));
+    action.push_str(&format!("        {}\n", name));
+    action.push_str("    }");
+    action
 }
+
+//==============================================================================
+// UNIFIED ALTERNATIVE GENERATION
+//==============================================================================
+
+/// Generate a complete LALRPOP alternative from an AnalyzedRule
+fn generate_alternative(analyzed: &AnalyzedRule, category: &syn::Ident, label: &syn::Ident) -> String {
+    let action = generate_action(analyzed, category, label);
+    format!("{} => {}", analyzed.pattern, action)
+}
+
+//==============================================================================
+// LEGACY ACTION GENERATION (to be removed after migration)
+//==============================================================================
+
+/// Generate action code for multi-binder patterns
+/// 
+/// Handles tuple destructuring from __pairs_v and __pair_e captures
+fn generate_multi_binder_action(collection_param: &str, body_param: &str, elements: &[SepElement]) -> String {
+    let mut action = String::new();
+    
+    // Generate tuple destructuring pattern from elements
+    let mut tuple_vars = Vec::new();
+    let mut binder_indices = Vec::new();
+    let mut coll_indices = Vec::new();
+    
+    for (i, elem) in elements.iter().enumerate() {
+        match elem {
+            SepElement::Literal(_) => {
+                tuple_vars.push("_".to_string());
+            }
+            SepElement::BinderCapture(_) => {
+                tuple_vars.push(format!("__e{}", i));
+                binder_indices.push(i);
+            }
+            SepElement::CollectionCapture(_) => {
+                tuple_vars.push(format!("__e{}", i));
+                coll_indices.push(i);
+            }
+        }
+    }
+    
+    let tuple_pattern = tuple_vars.join(", ");
+    
+    // Generate push statements
+    let binder_pushes: Vec<String> = binder_indices.iter()
+        .map(|i| format!("__binder_strs.push(__e{});", i))
+        .collect();
+    let coll_pushes: Vec<String> = coll_indices.iter()
+        .map(|i| format!("{}.push(__e{});", collection_param, i))
+        .collect();
+    
+    // Initialize collections
+    action.push_str(&format!(
+        "        let mut {} = Vec::new();\n\
+         let mut __binder_strs = Vec::new();\n",
+        collection_param
+    ));
+    
+    // Process __pairs_v (with separator)
+    action.push_str(&format!("        for (({}), _) in __pairs_v {{\n", tuple_pattern));
+    for push in &binder_pushes {
+        action.push_str(&format!("             {}\n", push));
+    }
+    for push in &coll_pushes {
+        action.push_str(&format!("             {}\n", push));
+    }
+    action.push_str("        }\n");
+    
+    // Process __pair_e (without separator)
+    action.push_str(&format!("        if let Some(({tuple_pattern})) = __pair_e {{\n"));
+    for push in &binder_pushes {
+        action.push_str(&format!("             {}\n", push));
+    }
+    for push in &coll_pushes {
+        action.push_str(&format!("             {}\n", push));
+    }
+    action.push_str("        }\n");
+    
+    // Create binders from strings
+    action.push_str(
+        "        let __binders: Vec<Binder<String>> = __binder_strs.into_iter()\n\
+         .map(|s| Binder(mettail_runtime::get_or_create_var(s)))\n\
+         .collect();\n"
+    );
+    
+    // Create the multi-binder scope
+    action.push_str(&format!(
+        "        let __scope = Scope::new(__binders, Box::new({}));\n",
+        body_param
+    ));
+    
+    action
+}
+
+/// Generate auto-generated alternatives (Var and literal rules)
+/// 
+/// This extracts the duplicated code from generate_tiered_production and generate_simple_production
+fn generate_auto_alternatives(
+    category: &syn::Ident,
+    has_var_rule: bool,
+    has_integer_rule: bool,
+    theory: &TheoryDef,
+    needs_leading_comma: bool,
+) -> String {
+    let cat_str = category.to_string();
+    let mut result = String::new();
+    let mut needs_comma = needs_leading_comma;
+    
+    // Auto-generate literal parser for native types (if not explicitly declared)
+    if let Some(native_type) = has_native_type(category, theory) {
+        let type_str = native_type_to_string(native_type);
+        if !has_integer_rule {
+            let literal_label = generate_literal_label(native_type);
+
+            if needs_comma {
+                result.push_str(",\n");
+            }
+
+            if type_str == "i32" || type_str == "i64" {
+                // Add unary minus support for negative numbers
+                result.push_str(&format!(
+                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
+                    cat_str, literal_label
+                ));
+                result.push_str(&format!(
+                    "    <i:Integer> => {}::{}(i)",
+                    cat_str, literal_label
+                ));
+            } else if type_str == "f32" || type_str == "f64" {
+                result.push_str(&format!(
+                    "    <f:Float> => {}::{}(f)",
+                    cat_str, literal_label
+                ));
+            } else if type_str == "bool" {
+                result.push_str(&format!(
+                    "    <b:Boolean> => {}::{}(b)",
+                    cat_str, literal_label
+                ));
+            }
+            needs_comma = true;
+        }
+    }
+
+    // Auto-generate Var alternative if not explicitly defined
+    if !has_var_rule {
+        let var_label = generate_var_label(category);
+        if needs_comma {
+            result.push_str(",\n");
+        } else {
+            result.push('\n');
+        }
+        result.push_str(&format!(
+            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))",
+            cat_str, var_label
+        ));
+    }
+    
+    result
+}
+
+//==============================================================================
+// HELPER STRUCTURES FOR PATTERN ANALYSIS
+//==============================================================================
 
 /// Helper enum for parameter kinds
 #[derive(Debug, Clone)]
@@ -989,246 +1544,6 @@ fn build_param_types(term_context: &[TermParam]) -> std::collections::HashMap<St
     }
     
     param_types
-}
-
-/// Generate LALRPOP pattern elements for a single SyntaxExpr
-#[allow(clippy::too_many_arguments)]
-fn generate_syntax_expr_pattern(
-    expr: &SyntaxExpr,
-    param_types: &std::collections::HashMap<String, ParamInfo>,
-    pattern: &mut String,
-    args: &mut Vec<(String, ParamInfo)>,
-    binder_var: &mut Option<String>,
-    body_var: &mut Option<String>,
-    has_binder: &mut bool,
-    collection_params: &mut Vec<(String, String, String)>, // (name, elem_type, separator)
-    multi_binder_info: &mut Option<MultiBinderInfo>,
-) {
-    match expr {
-        SyntaxExpr::Literal(s) => {
-            pattern.push_str(&format!(" \"{}\"", s));
-        }
-        SyntaxExpr::Param(id) => {
-            let name = id.to_string();
-            if let Some(info) = param_types.get(&name) {
-                match info.kind {
-                    ParamKind::Simple => {
-                        let nonterminal = type_to_nonterminal(&info.ty);
-                        pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
-                        args.push((name.clone(), info.clone()));
-                    }
-                    ParamKind::Binder => {
-                        pattern.push_str(&format!(" <{}:Ident>", name));
-                        *binder_var = Some(name.clone());
-                        *has_binder = true;
-                    }
-                    ParamKind::MultiBinder => {
-                        pattern.push_str(&format!(" <{}:Ident>", name));
-                        *binder_var = Some(name.clone());
-                        *has_binder = true;
-                    }
-                    ParamKind::Body => {
-                        let nonterminal = type_to_nonterminal(&info.ty);
-                        pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
-                        *body_var = Some(name.clone());
-                    }
-                    ParamKind::Collection => {
-                        // Collection without #sep - use default separator
-                        if let TypeExpr::Collection { element, .. } = &info.ty {
-                            let elem_type = type_to_nonterminal(element);
-                            // Default separator is "|" - but this should be specified via #sep
-                            pattern.push_str(&format!(" <{}:((<{}> \"|\")* <{}>?)>", name, elem_type, elem_type));
-                            args.push((name.clone(), info.clone()));
-                        }
-                    }
-                }
-            } else {
-                // Unknown parameter - treat as literal (validation should catch this)
-                pattern.push_str(&format!(" \"{}\"", name));
-            }
-        }
-        SyntaxExpr::Op(op) => {
-            generate_pattern_op_pattern(op, param_types, pattern, args, collection_params, multi_binder_info);
-        }
-    }
-}
-
-/// Generate LALRPOP pattern for a pattern operation
-fn generate_pattern_op_pattern(
-    op: &PatternOp,
-    param_types: &std::collections::HashMap<String, ParamInfo>,
-    pattern: &mut String,
-    args: &mut Vec<(String, ParamInfo)>,
-    collection_params: &mut Vec<(String, String, String)>,
-    multi_binder_info: &mut Option<MultiBinderInfo>,
-) {
-    match op {
-        PatternOp::Sep { collection, separator, source } => {
-            // Check for chained operation (e.g., #zip(...).#map(...).#sep(","))
-            if let Some(chain_source) = source {
-                generate_chained_sep_pattern(chain_source, separator, param_types, pattern, args, collection_params, multi_binder_info);
-                return;
-            }
-            
-            // Simple collection separator
-            let name = collection.to_string();
-            if let Some(info) = param_types.get(&name) {
-                if let TypeExpr::Collection { element, .. } = &info.ty {
-                    let elem_type = type_to_nonterminal(element);
-                    // Generate separated list pattern with two captures:
-                    // <name_v:(<Elem> "sep")*> <name_e:Elem?>
-                    // Then combine in action code
-                    pattern.push_str(&format!(
-                        " <{}_v:(<{}> \"{}\")*> <{}_e:{}?>",
-                        name, elem_type, separator, name, elem_type
-                    ));
-                    args.push((name.clone(), info.clone()));
-                    collection_params.push((name, elem_type, separator.clone()));
-                }
-            }
-        }
-        PatternOp::Var(id) => {
-            // Variable reference in pattern op context - treat as param
-            let name = id.to_string();
-            if let Some(info) = param_types.get(&name) {
-                let nonterminal = type_to_nonterminal(&info.ty);
-                pattern.push_str(&format!(" <{}:{}>", name, nonterminal));
-                args.push((name.clone(), info.clone()));
-            }
-        }
-        PatternOp::Zip { .. } | PatternOp::Map { .. } => {
-            // Zip and Map are typically chained with Sep
-            // For now, we handle the common case: #zip(a,b).#map(|x,y| ...).#sep(",")
-            // This needs more sophisticated handling for the full case
-            // TODO: Implement full zip/map support
-            pattern.push_str(" /* TODO: zip/map pattern */");
-        }
-        PatternOp::Opt { inner } => {
-            // Optional pattern: (inner)?
-            pattern.push_str(" (");
-            for expr in inner {
-                generate_syntax_expr_pattern(
-                    expr,
-                    param_types,
-                    pattern,
-                    args,
-                    &mut None,
-                    &mut None,
-                    &mut false,
-                    collection_params,
-                    &mut None, // multi_binder_info not propagated to optional inner
-                );
-            }
-            pattern.push_str(")?");
-        }
-    }
-}
-
-/// Generate LALRPOP pattern for chained #zip(...).#map(...).#sep(",")
-/// 
-/// This handles multi-binder patterns like:
-///   `#zip(ns, xs).#map(|n,x| x "<-" n).#sep(",")`
-/// Which generates:
-///   `<__pairs_v:((Ident "<-" Name) ",")*> <__pair_e:(Ident "<-" Name)?>`
-/// 
-/// Note: LALRPOP doesn't allow named captures inside nested patterns,
-/// so we use anonymous captures. The result is tuples that we destructure.
-fn generate_chained_sep_pattern(
-    source: &PatternOp,
-    separator: &str,
-    param_types: &std::collections::HashMap<String, ParamInfo>,
-    pattern: &mut String,
-    _args: &mut Vec<(String, ParamInfo)>,
-    _collection_params: &mut Vec<(String, String, String)>,
-    multi_binder_info: &mut Option<MultiBinderInfo>,
-) {
-    // Extract the Map and Zip from the chain
-    if let PatternOp::Map { source: map_source, params, body } = source {
-        if let PatternOp::Zip { left, right } = map_source.as_ref() {
-            // We have: #zip(left, right).#map(|params| body).#sep(separator)
-            
-            // Determine which zip operand is the collection and which is the multi-binder
-            let left_name = left.to_string();
-            let right_name = right.to_string();
-            
-            let (collection_param, binder_param) = 
-                if param_types.get(&left_name).map(|i| matches!(i.kind, ParamKind::MultiBinder)).unwrap_or(false) {
-                    (right_name.clone(), left_name.clone())
-                } else {
-                    (left_name.clone(), right_name.clone())
-                };
-            
-            // Find the body parameter name (the one that's not involved in the zip)
-            let body_param = param_types.iter()
-                .find(|(name, info)| {
-                    matches!(info.kind, ParamKind::Body) || 
-                    (*name != &collection_param && *name != &binder_param && 
-                     matches!(info.ty, TypeExpr::Base(_)))
-                })
-                .map(|(name, _)| name.clone())
-                .unwrap_or_else(|| "p".to_string());
-            
-            // Build the inner pattern from the map body
-            // e.g., |n,x| x "<-" n → "Ident \"<-\" Name"
-            let mut inner_pattern = String::new();
-            let mut param_map: std::collections::HashMap<String, &syn::Ident> = std::collections::HashMap::new();
-            
-            // Map closure params to zip operands
-            if params.len() >= 2 {
-                param_map.insert(params[0].to_string(), left);
-                param_map.insert(params[1].to_string(), right);
-            }
-            
-            for expr in body {
-                match expr {
-                    SyntaxExpr::Literal(s) => {
-                        inner_pattern.push_str(&format!(" \"{}\"", s));
-                    }
-                    SyntaxExpr::Param(id) => {
-                        let name = id.to_string();
-                        if let Some(&orig_param) = param_map.get(&name) {
-                            // This closure param maps to a zip operand
-                            let orig_name = orig_param.to_string();
-                            if let Some(info) = param_types.get(&orig_name) {
-                                match info.kind {
-                                    ParamKind::MultiBinder => {
-                                        // Multi-binder captures as Ident (anonymous)
-                                        inner_pattern.push_str(" Ident");
-                                    }
-                                    _ => {
-                                        let nt = type_to_nonterminal(&info.ty);
-                                        // Anonymous capture - LALRPOP doesn't allow named symbols in nested patterns
-                                        inner_pattern.push_str(&format!(" {}", nt));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            
-            // Generate the full pattern with separator:
-            // <__pairs_v:((inner) sep)*> <__pair_e:(inner)?>
-            let inner_trimmed = inner_pattern.trim();
-            pattern.push_str(&format!(
-                " <__pairs_v:(({}) \"{}\")*> <__pair_e:({})?>",
-                inner_trimmed, separator, inner_trimmed
-            ));
-            
-            // Set multi-binder info for action generation
-            *multi_binder_info = Some(MultiBinderInfo {
-                collection_param,
-                binder_param,
-                body_param,
-            });
-            
-            return;
-        }
-    }
-    
-    // Fallback: just output a placeholder
-    pattern.push_str(" /* unhandled chained pattern */");
 }
 
 /// Convert a TypeExpr to a LALRPOP non-terminal name
@@ -1352,7 +1667,7 @@ fn generate_collection_alternative(
                 action.push_str("        for e in rest {\n");
                 action.push_str("            coll.insert(e);\n");
                 action.push_str("        }\n");
-            },  
+            },
             CollectionType::Vec => {
                 action.push_str("        coll.push(first);\n");
                 action.push_str("        for e in rest {\n");
@@ -1366,249 +1681,4 @@ fn generate_collection_alternative(
     action.push_str("    }");
 
     format!("{}{}", pattern.trim(), action)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use syn::parse_quote;
-
-    #[test]
-    fn test_automatic_var_in_parser() {
-        // Tests theory without Var rules - they should be automatically generated in parser
-        let theory = TheoryDef {
-            name: parse_quote!(Test),
-            params: vec![],
-            exports: vec![
-                Export {
-                    name: parse_quote!(Proc),
-                    native_type: None,
-                },
-                Export {
-                    name: parse_quote!(Name),
-                    native_type: None,
-                },
-            ],
-            terms: vec![
-                GrammarRule {
-                    label: parse_quote!(PZero),
-                    category: parse_quote!(Proc),
-                    items: vec![GrammarItem::Terminal("0".to_string())],
-                    bindings: vec![],
-                    term_context: None,
-                    syntax_pattern: None,
-                },
-                GrammarRule {
-                    label: parse_quote!(NQuote),
-                    category: parse_quote!(Name),
-                    items: vec![
-                        GrammarItem::Terminal("@".to_string()),
-                        GrammarItem::NonTerminal(parse_quote!(Proc)),
-                    ],
-                    bindings: vec![],
-                    term_context: None,
-                    syntax_pattern: None,
-                },
-                // No Var rules explicitly defined
-            ],
-            equations: vec![],
-            rewrites: vec![],
-            semantics: vec![],
-        };
-
-        let grammar = generate_lalrpop_grammar(&theory);
-        println!("Generated grammar:\n{}", grammar);
-
-        // Checks that Var alternatives are automatically generated for each exported category
-        // Proc -> PVar
-        assert!(
-            grammar.contains(
-                "PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))"
-            ),
-            "Expected PVar parser alternative for Proc category"
-        );
-        // Name -> NVar
-        assert!(
-            grammar.contains(
-                "NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))"
-            ),
-            "Expected NVar parser alternative for Name category"
-        );
-
-        // Verifies the grammar structure
-        assert!(grammar.contains("pub Proc: Proc"));
-        assert!(grammar.contains("pub Name: Name"));
-        assert!(grammar.contains("<v:Ident>"));
-    }
-
-    #[test]
-    fn test_automatic_var_in_parser_with_existing_var() {
-        // Tests that if a Var rule already exists, we don't generate a duplicate
-        let theory = TheoryDef {
-            name: parse_quote!(Test),
-            params: vec![],
-            exports: vec![Export {
-                name: parse_quote!(Proc),
-                native_type: None,
-            }],
-            terms: vec![
-                GrammarRule {
-                    label: parse_quote!(PZero),
-                    category: parse_quote!(Proc),
-                    items: vec![GrammarItem::Terminal("0".to_string())],
-                    bindings: vec![],
-                    term_context: None,
-                    syntax_pattern: None,
-                },
-                GrammarRule {
-                    label: parse_quote!(PVar),
-                    category: parse_quote!(Proc),
-                    items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
-                    bindings: vec![],
-                    term_context: None,
-                    syntax_pattern: None,
-                },
-                // Var rule explicitly defined
-            ],
-            equations: vec![],
-            rewrites: vec![],
-            semantics: vec![],
-        };
-
-        let grammar = generate_lalrpop_grammar(&theory);
-        println!("Generated grammar:\n{}", grammar);
-
-        // Should have exactly one PVar alternative (the explicitly defined one)
-        let pvar_count = grammar.matches("PVar").count();
-        assert_eq!(pvar_count, 1, "Expected exactly one PVar alternative, found {}", pvar_count);
-        assert!(
-            grammar.contains(
-                "PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))"
-            ),
-            "Expected PVar parser alternative"
-        );
-    }
-
-    #[test]
-    fn test_var_label_generation() {
-        // Tests that Var labels are generated correctly for different category names
-        assert_eq!(generate_var_label(&parse_quote!(Proc)), "PVar");
-        assert_eq!(generate_var_label(&parse_quote!(Name)), "NVar");
-        assert_eq!(generate_var_label(&parse_quote!(Term)), "TVar");
-        assert_eq!(generate_var_label(&parse_quote!(Expr)), "EVar");
-        assert_eq!(generate_var_label(&parse_quote!(Type)), "TVar");
-    }
-
-    #[test]
-    fn test_var_terminal_rule_detection() {
-        // Test that rules starting with Var + terminal are detected
-        let assign_rule = GrammarRule {
-            label: parse_quote!(Assign),
-            category: parse_quote!(Int),
-            items: vec![
-                GrammarItem::NonTerminal(parse_quote!(Var)),
-                GrammarItem::Terminal("=".to_string()),
-                GrammarItem::NonTerminal(parse_quote!(Int)),
-            ],
-            bindings: vec![],
-            term_context: None,
-            syntax_pattern: None,
-        };
-
-        println!("Testing Assign rule: items = {:?}", assign_rule.items);
-        println!("Item 0: {:?}", assign_rule.items[0]);
-        println!("Item 1: {:?}", assign_rule.items[1]);
-
-        let is_var_term = is_var_terminal_rule(&assign_rule);
-        println!("is_var_terminal_rule: {}", is_var_term);
-        assert!(is_var_term, "Assign rule should be detected as var+terminal rule");
-
-        // VarRef should NOT be detected as var+terminal (no terminal after Var)
-        let varref_rule = GrammarRule {
-            label: parse_quote!(VarRef),
-            category: parse_quote!(Int),
-            items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
-            bindings: vec![],
-            term_context: None,
-            syntax_pattern: None,
-        };
-
-        assert!(
-            !is_var_terminal_rule(&varref_rule),
-            "VarRef should not be detected as var+terminal rule"
-        );
-    }
-
-    #[test]
-    fn test_calculator_like_grammar() {
-        // Test a calculator-like grammar with assignment
-
-        let theory = TheoryDef {
-            name: parse_quote!(Calculator),
-            params: vec![],
-            exports: vec![Export {
-                name: parse_quote!(Int),
-                native_type: Some(parse_quote!(i32)),
-            }],
-            terms: vec![
-                GrammarRule {
-                    label: parse_quote!(VarRef),
-                    category: parse_quote!(Int),
-                    items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
-                    bindings: vec![],
-                    term_context: None,
-                    syntax_pattern: None,
-                },
-                GrammarRule {
-                    label: parse_quote!(NumLit),
-                    category: parse_quote!(Int),
-                    items: vec![GrammarItem::NonTerminal(parse_quote!(Integer))],
-                    bindings: vec![],
-                    term_context: None,
-                    syntax_pattern: None,
-                },
-                GrammarRule {
-                    label: parse_quote!(Add),
-                    category: parse_quote!(Int),
-                    items: vec![
-                        GrammarItem::NonTerminal(parse_quote!(Int)),
-                        GrammarItem::Terminal("+".to_string()),
-                        GrammarItem::NonTerminal(parse_quote!(Int)),
-                    ],
-                    bindings: vec![],
-                    term_context: None,
-                    syntax_pattern: None,
-                },
-                GrammarRule {
-                    label: parse_quote!(Assign),
-                    category: parse_quote!(Int),
-                    items: vec![
-                        GrammarItem::NonTerminal(parse_quote!(Var)),
-                        GrammarItem::Terminal("=".to_string()),
-                        GrammarItem::NonTerminal(parse_quote!(Int)),
-                    ],
-                    bindings: vec![],
-                    term_context: None,
-                    syntax_pattern: None,
-                },
-            ],
-            equations: vec![],
-            rewrites: vec![],
-            semantics: vec![],
-        };
-
-        let grammar = generate_lalrpop_grammar(&theory);
-        println!("Generated Calculator grammar:\n{}", grammar);
-
-        // Check that Assign is at the top level, not in IntAtom
-        assert!(grammar.contains("pub Int: Int = {"), "Should have top-level Int rule");
-
-        // The Assign rule should appear at the top level before IntInfix
-        let int_rule_start = grammar.find("pub Int: Int = {").unwrap();
-        let int_rule_end = grammar.find("IntInfix: Int = {").unwrap();
-        let top_level_section = &grammar[int_rule_start..int_rule_end];
-
-        println!("Top level section:\n{}", top_level_section);
-        assert!(top_level_section.contains("Assign"), "Assign should be at the top level");
-    }
 }

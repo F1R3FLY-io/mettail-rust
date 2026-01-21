@@ -28,6 +28,16 @@ pub fn all() -> Vec<&'static Example> {
         &EMPTY,
         &SELF_COMM,
         &DROP_QUOTE_TEST,
+        // Multi-communication patterns
+        &JOIN_BASIC,
+        &JOIN_BARRIER,
+        &JOIN_SAME_CHANNEL,
+        &ATOMIC_PAIR,
+        &SCATTER_GATHER,
+        &RESOURCE_LOCK,
+        &RENDEZVOUS,
+        &CORRELATION,
+        &MULTI_PARTY_SYNC,
     ]
 }
 
@@ -268,5 +278,106 @@ pub static SELF_COMM: Example = Example {
     description: "Self-communication (infinite loop)",
     source: "{for(x->y){x!(*(y))} | x!(@(0))}",
     category: ExampleCategory::EdgeCase,
+    theory: TheoryName::RhoCalculus,
+};
+
+//=============================================================================
+// MULTI-COMMUNICATION PATTERNS
+//=============================================================================
+// These examples use the join pattern: (n1?x, n2?y).{body}
+// which receives from multiple channels atomically before proceeding.
+
+pub static JOIN_BASIC: Example = Example {
+    name: "join_basic",
+    description: "Basic join: wait for two channels before proceeding",
+    source: "{(a?x, b?y).{result!({*(x) | *(y)})} | a!(p) | b!(q)}",
+    category: ExampleCategory::MultiComm,
+    theory: TheoryName::RhoCalculus,
+};
+
+pub static JOIN_BARRIER: Example = Example {
+    name: "join_barrier",
+    description: "Join barrier: cleaner than nested for-loops",
+    source: "{
+        (ready1?x, ready2?y, ready3?z).{go!({*(x) | *(y) | *(z)})} |
+        ready1!(a) | ready2!(b) | ready3!(c)
+    }",
+    category: ExampleCategory::MultiComm,
+    theory: TheoryName::RhoCalculus,
+};
+
+pub static JOIN_SAME_CHANNEL: Example = Example {
+    name: "join_same_channel",
+    description: "Join on same channel: consume two distinct messages atomically",
+    source: "{(c?x, c?y).{{*(x) | *(y)}} | c!(a) | c!(b)}",
+    category: ExampleCategory::MultiComm,
+    theory: TheoryName::RhoCalculus,
+};
+
+pub static ATOMIC_PAIR: Example = Example {
+    name: "atomic_pair",
+    description: "Atomic pair receive: prevents partial consumption",
+    source: "{
+        (key?k, value?v).{store!({*(k) | *(v)})} |
+        key!(name) | value!(data)
+    }",
+    category: ExampleCategory::MultiComm,
+    theory: TheoryName::RhoCalculus,
+};
+
+pub static SCATTER_GATHER: Example = Example {
+    name: "scatter_gather",
+    description: "Scatter-gather: broadcast request, collect all responses",
+    source: "{
+        req!(query) |
+        (req?q).{{resp1!(*(q)) | resp2!(*(q))}} |
+        (resp1?r1, resp2?r2).{result!({*(r1) | *(r2)})}
+    }",
+    category: ExampleCategory::MultiComm,
+    theory: TheoryName::RhoCalculus,
+};
+
+pub static RESOURCE_LOCK: Example = Example {
+    name: "resource_lock",
+    description: "Atomic resource acquisition: acquire both forks or neither",
+    source: "{
+        fork1!(f1) | fork2!(f2) |
+        (fork1?a, fork2?b).{eating!({*(a) | *(b)})}
+    }",
+    category: ExampleCategory::MultiComm,
+    theory: TheoryName::RhoCalculus,
+};
+
+pub static RENDEZVOUS: Example = Example {
+    name: "rendezvous",
+    description: "Rendezvous: two parties meet and exchange simultaneously",
+    source: "{
+        (alice_out?a, bob_out?b).{{alice_in!(*(b)) | bob_in!(*(a))}} |
+        alice_out!(gift_a) | bob_out!(gift_b) |
+        (alice_in?x).{got_a!(*(x))} | (bob_in?y).{got_b!(*(y))}
+    }",
+    category: ExampleCategory::MultiComm,
+    theory: TheoryName::RhoCalculus,
+};
+
+pub static CORRELATION: Example = Example {
+    name: "correlation",
+    description: "Correlated receive: match request with its response by correlation ID",
+    source: "{
+        (request?id, response?data).{matched!({*(id) | *(data)})} |
+        request!(txn42) | response!(result42)
+    }",
+    category: ExampleCategory::MultiComm,
+    theory: TheoryName::RhoCalculus,
+};
+
+pub static MULTI_PARTY_SYNC: Example = Example {
+    name: "multi_party_sync",
+    description: "Multi-party synchronization: all four parties must contribute",
+    source: "{
+        (p1?a, p2?b, p3?c, p4?d).{consensus!({*(a) | *(b) | *(c) | *(d)})} |
+        p1!(vote1) | p2!(vote2) | p3!(vote3) | p4!(vote4)
+    }",
+    category: ExampleCategory::MultiComm,
     theory: TheoryName::RhoCalculus,
 };

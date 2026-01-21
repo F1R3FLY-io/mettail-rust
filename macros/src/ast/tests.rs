@@ -5,7 +5,7 @@ mod tests {
         parse2,
         Ident,
     };
-    use crate::ast::theory::{TheoryDef, FreshnessTarget, parse_expr};
+    use crate::ast::theory::{TheoryDef, FreshnessTarget};
     use crate::ast::types::{TypeExpr, CollectionType};
     use crate::ast::grammar::{GrammarItem, TermParam};
     use crate::ast::syntax::{SyntaxExpr, PatternOp};
@@ -333,107 +333,6 @@ mod tests {
     // =========================================================================
 
     use syn::parse::Parser;
-
-    #[test]
-    fn parse_expr_lambda_simple() {
-        // ^x.body where body is a variable
-        let input = quote! { ^x.p };
-        let result = parse_expr.parse2(input);
-        assert!(result.is_ok(), "Failed to parse lambda: {:?}", result.err());
-
-        let expr = result.unwrap();
-        match expr {
-            Term::Lambda { binder, body } => {
-                assert_eq!(binder.to_string(), "x");
-                assert!(matches!(*body, Term::Var(ref v) if v == "p"));
-            }
-            _ => panic!("Expected Lambda, got {:?}", expr),
-        }
-    }
-
-    #[test]
-    fn parse_expr_lambda_nested() {
-        // ^x.^y.body - nested lambdas
-        let input = quote! { ^x.^y.p };
-        let result = parse_expr.parse2(input);
-        assert!(result.is_ok(), "Failed to parse nested lambda: {:?}", result.err());
-
-        let expr = result.unwrap();
-        match expr {
-            Term::Lambda { binder, body } => {
-                assert_eq!(binder.to_string(), "x");
-                match *body {
-                    Term::Lambda { binder: inner_binder, body: inner_body } => {
-                        assert_eq!(inner_binder.to_string(), "y");
-                        assert!(matches!(*inner_body, Term::Var(ref v) if v == "p"));
-                    }
-                    _ => panic!("Expected nested Lambda"),
-                }
-            }
-            _ => panic!("Expected Lambda"),
-        }
-    }
-
-    #[test]
-    fn parse_expr_multi_lambda() {
-        // ^[xs].body - multi-binder lambda (single binder in brackets)
-        let input = quote! { ^[xs].p };
-        let result = parse_expr.parse2(input);
-        assert!(result.is_ok(), "Failed to parse multi-lambda: {:?}", result.err());
-
-        let expr = result.unwrap();
-        match expr {
-            Term::MultiLambda { binders, body } => {
-                assert_eq!(binders.len(), 1);
-                assert_eq!(binders[0].to_string(), "xs");
-                assert!(matches!(*body, Term::Var(ref v) if v == "p"));
-            }
-            _ => panic!("Expected MultiLambda, got {:?}", expr),
-        }
-    }
-    
-    #[test]
-    fn parse_expr_multi_lambda_multiple_binders() {
-        // ^[x0, x1, x2].body - multi-binder lambda with multiple binders
-        let input = quote! { ^[x0, x1, x2].p };
-        let result = parse_expr.parse2(input);
-        assert!(result.is_ok(), "Failed to parse multi-lambda with multiple binders: {:?}", result.err());
-
-        let expr = result.unwrap();
-        match expr {
-            Term::MultiLambda { binders, body } => {
-                assert_eq!(binders.len(), 3);
-                assert_eq!(binders[0].to_string(), "x0");
-                assert_eq!(binders[1].to_string(), "x1");
-                assert_eq!(binders[2].to_string(), "x2");
-                assert!(matches!(*body, Term::Var(ref v) if v == "p"));
-            }
-            _ => panic!("Expected MultiLambda, got {:?}", expr),
-        }
-    }
-
-    #[test]
-    fn parse_expr_lambda_with_apply() {
-        // ^x.(Constructor x y) - lambda with constructor application body
-        let input = quote! { ^x.(PPar x y) };
-        let result = parse_expr.parse2(input);
-        assert!(result.is_ok(), "Failed to parse lambda with apply: {:?}", result.err());
-
-        let expr = result.unwrap();
-        match expr {
-            Term::Lambda { binder, body } => {
-                assert_eq!(binder.to_string(), "x");
-                match *body {
-                    Term::Apply { constructor, args } => {
-                        assert_eq!(constructor.to_string(), "PPar");
-                        assert_eq!(args.len(), 2);
-                    }
-                    _ => panic!("Expected Apply in body"),
-                }
-            }
-            _ => panic!("Expected Lambda"),
-        }
-    }
 
     // =========================================================================
     // Expr free_vars, substitute, apply Tests

@@ -484,146 +484,16 @@ fn parse_equation(input: ParseStream) -> SynResult<Equation> {
     Ok(Equation { conditions, left, right })
 }
 
-pub fn parse_expr(input: ParseStream) -> SynResult<Term> {
-    // Parse lambda: ^x.body or ^[xs].body
-    // Using caret since backslash isn't valid Rust tokenization
-    if input.peek(Token![^]) {
-        input.parse::<Token![^]>()?;
-
-        // Check for multi-binder: ^[x0, x1, ...].body
-        if input.peek(syn::token::Bracket) {
-            let content;
-            syn::bracketed!(content in input);
-            
-            // Parse comma-separated list of binders
-            let binders: syn::punctuated::Punctuated<Ident, Token![,]> = 
-                content.parse_terminated(Ident::parse, Token![,])?;
-            let binders: Vec<Ident> = binders.into_iter().collect();
-
-            // Expect dot
-            input.parse::<Token![.]>()?;
-
-            // Parse body
-            let body = parse_expr(input)?;
-
-            return Ok(Term::MultiLambda {
-                binders,
-                body: Box::new(body),
-            });
-        }
-
-        // Single binder: ^x.body
-        let binder = input.parse::<Ident>()?;
-        input.parse::<Token![.]>()?;
-        let body = parse_expr(input)?;
-
-        return Ok(Term::Lambda {
-            binder,
-            body: Box::new(body),
-        });
-    }
-
-    // Parse collection pattern: {P, Q, ...rest}
-    if input.peek(syn::token::Brace) {
-        let content;
-        syn::braced!(content in input);
-
-        let mut elements = Vec::new();
-        let mut rest = None;
-
-        // Parse elements and optional rest
-        while !content.is_empty() {
-            // Check for rest pattern: ...rest
-            if content.peek(Token![...]) {
-                let _ = content.parse::<Token![...]>()?;
-                rest = Some(content.parse::<Ident>()?);
-
-                // Optional trailing comma
-                if content.peek(Token![,]) {
-                    let _ = content.parse::<Token![,]>()?;
-                }
-                break;
-            }
-
-            // Parse regular element expression
-            elements.push(parse_expr(&content)?);
-
-            // Parse comma separator
-            if content.peek(Token![,]) {
-                let _ = content.parse::<Token![,]>()?;
-            } else {
-                break;
-            }
-        }
-
-        // NOTE: Collection syntax is now Pattern::Collection, not Term::CollectionConstruct
-        // This code path should use parse_pattern instead of parse_expr for collection literals
-        panic!(
-            "Collection syntax {{...}} should be parsed via parse_pattern, not parse_expr. \
-             Term no longer has CollectionConstruct - use Pattern::Collection instead."
-        );
-    }
-
-    // Parse parenthesized expression or variable
-    if input.peek(syn::token::Paren) {
-        let content;
-        syn::parenthesized!(content in input);
-
-        // Parse constructor name or 'subst'
-        let constructor = content.parse::<Ident>()?;
-
-        // Check if this is a substitution
-        if constructor == "subst" {
-            // Parse: subst term var replacement
-            // Where term and replacement are expressions, var is an identifier
-            let term = parse_expr(&content)?;
-            let var = content.parse::<Ident>()?;
-            let replacement = parse_expr(&content)?;
-
-            return Ok(Term::Subst {
-                term: Box::new(term),
-                var,
-                replacement: Box::new(replacement),
-            });
-        }
-        
-        // Check if this is a multi-substitution
-        if constructor == "multisubst" {
-            // Parse: (multisubst scope r0 r1 r2 ...)
-            // scope: term (usually a variable bound to a multi-binder Scope)
-            // r0, r1, r2, ...: individual replacement terms
-            let scope = parse_expr(&content)?;
-            
-            // Parse remaining arguments as replacement terms
-            let mut replacements = Vec::new();
-            while !content.is_empty() {
-                replacements.push(parse_expr(&content)?);
-            }
-
-            return Ok(Term::MultiSubst {
-                scope: Box::new(scope),
-                replacements,
-            });
-        }
-
-        // Parse arguments for regular constructor
-        let mut args = Vec::new();
-        while !content.is_empty() {
-            args.push(parse_expr(&content)?);
-        }
-
-        Ok(Term::Apply { constructor, args })
-    } else {
-        // Just a variable
-        let var = input.parse::<Ident>()?;
-        Ok(Term::Var(var))
-    }
-}
 
 /// Parse a pattern (for LHS and RHS of rules)
 /// Returns Pattern which can include Collection for {P, Q, ...rest} patterns
 /// and nested patterns in constructor arguments
 pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
+    // Parse #zip or #map metasyntax: #zip(a, b) or #map(coll, |x| body)
+    if input.peek(Token![#]) {
+        return parse_metasyntax_pattern(input);
+    }
+    
     // Parse collection pattern: {P, Q, ...rest}
     if input.peek(syn::token::Brace) {
         let content;
@@ -658,7 +528,7 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
         }
 
         return Ok(Pattern::Collection {
-            constructor: None, // Will be inferred during validation
+            coll_type: None, // Inferred from enclosing constructor's grammar
             elements,
             rest,
         });
@@ -704,19 +574,11 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
         }
 
         // Parse arguments as nested patterns
+        // NOTE: Collections inside Apply are handled correctly - the Apply knows
+        // its constructor and can look up the collection type from grammar
         let mut args = Vec::new();
         while !content.is_empty() {
-            let mut arg = parse_pattern(&content)?;
-            
-            // Propagate constructor to nested Collection patterns
-            // e.g., (PPar {P, Q, ...rest}) should have PPar as the Collection's constructor
-            if let Pattern::Collection { constructor: ref mut coll_cons, .. } = arg {
-                if coll_cons.is_none() {
-                    *coll_cons = Some(constructor.clone());
-                }
-            }
-            
-            args.push(arg);
+            args.push(parse_pattern(&content)?);
         }
 
         // Create Apply PatternTerm with Pattern args
@@ -760,10 +622,145 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
             body: Box::new(body),
         }))
     } else {
-        // Just a variable
+        // Just a variable - but check for chained metasyntax like `var.#map(...)`
         let var = input.parse::<Ident>()?;
-        Ok(Pattern::Term(PatternTerm::Var(var)))
+        let base = Pattern::Term(PatternTerm::Var(var));
+        
+        // Check for chained method-style metasyntax: var.#map(...)
+        if input.peek(Token![.]) && input.peek2(Token![#]) {
+            return parse_chained_metasyntax(input, base);
+        }
+        
+        Ok(base)
     }
+}
+
+/// Parse metasyntax patterns: #zip(a, b), #map(coll, |x| body), etc.
+fn parse_metasyntax_pattern(input: ParseStream) -> SynResult<Pattern> {
+    input.parse::<Token![#]>()?;
+    let op_name = input.parse::<Ident>()?;
+    let op_str = op_name.to_string();
+    
+    match op_str.as_str() {
+        "zip" => {
+            // #zip(coll1, coll2)
+            let content;
+            syn::parenthesized!(content in input);
+            
+            let coll1 = parse_pattern(&content)?;
+            content.parse::<Token![,]>()?;
+            let coll2 = parse_pattern(&content)?;
+            
+            let base = Pattern::Zip {
+                first: Box::new(coll1),
+                second: Box::new(coll2),
+            };
+            
+            // Check for chained metasyntax: #zip(a, b).#map(|x, y| ...)
+            if input.peek(Token![.]) && input.peek2(Token![#]) {
+                parse_chained_metasyntax(input, base)
+            } else {
+                Ok(base)
+            }
+        }
+        "map" => {
+            // #map(coll, |params| body) - prefix form
+            let content;
+            syn::parenthesized!(content in input);
+            
+            let collection = parse_pattern(&content)?;
+            content.parse::<Token![,]>()?;
+            
+            // Parse closure: |params| body
+            let (params, body) = parse_closure(&content)?;
+            
+            Ok(Pattern::Map {
+                collection: Box::new(collection),
+                params,
+                body: Box::new(body),
+            })
+        }
+        _ => Err(syn::Error::new(
+            op_name.span(),
+            format!("Unknown metasyntax operator: #{}", op_str),
+        )),
+    }
+}
+
+/// Parse chained method-style metasyntax: base.#map(|x| body)
+fn parse_chained_metasyntax(input: ParseStream, base: Pattern) -> SynResult<Pattern> {
+    input.parse::<Token![.]>()?;
+    input.parse::<Token![#]>()?;
+    let op_name = input.parse::<Ident>()?;
+    let op_str = op_name.to_string();
+    
+    match op_str.as_str() {
+        "map" => {
+            // base.#map(|params| body)
+            let content;
+            syn::parenthesized!(content in input);
+            
+            let (params, body) = parse_closure(&content)?;
+            
+            let result = Pattern::Map {
+                collection: Box::new(base),
+                params,
+                body: Box::new(body),
+            };
+            
+            // Check for more chaining
+            if input.peek(Token![.]) && input.peek2(Token![#]) {
+                parse_chained_metasyntax(input, result)
+            } else {
+                Ok(result)
+            }
+        }
+        "zip" => {
+            // base.#zip(other) - less common but supported
+            let content;
+            syn::parenthesized!(content in input);
+            
+            let other = parse_pattern(&content)?;
+            
+            let result = Pattern::Zip {
+                first: Box::new(base),
+                second: Box::new(other),
+            };
+            
+            if input.peek(Token![.]) && input.peek2(Token![#]) {
+                parse_chained_metasyntax(input, result)
+            } else {
+                Ok(result)
+            }
+        }
+        _ => Err(syn::Error::new(
+            op_name.span(),
+            format!("Unknown chained metasyntax operator: #{}", op_str),
+        )),
+    }
+}
+
+/// Parse a closure: |params| body or |param1, param2| body
+fn parse_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Pattern)> {
+    input.parse::<Token![|]>()?;
+    
+    // Parse comma-separated params
+    let mut params = Vec::new();
+    while !input.peek(Token![|]) {
+        params.push(input.parse::<Ident>()?);
+        if input.peek(Token![,]) {
+            input.parse::<Token![,]>()?;
+        } else {
+            break;
+        }
+    }
+    
+    input.parse::<Token![|]>()?;
+    
+    // Parse body as pattern
+    let body = parse_pattern(input)?;
+    
+    Ok((params, body))
 }
 
 /// Backwards compatibility alias

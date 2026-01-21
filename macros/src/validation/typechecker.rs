@@ -241,7 +241,7 @@ impl TypeChecker {
             Term::MultiSubst { .. } => {
                 // MultiSubst returns the body type of the scope
                 // Without full type inference, return placeholder
-                Ok("?".to_string())
+                    Ok("?".to_string())
             },
         }
     }
@@ -260,31 +260,25 @@ impl TypeChecker {
     ) -> Result<String, ValidationError> {
         match pattern {
             Pattern::Term(pt) => self.infer_type_from_pattern_term(pt, context),
-            Pattern::Collection { constructor, elements, .. } => {
-                // If constructor is specified, use its result category
-                if let Some(ctor) = constructor {
-                    let ctor_name = ctor.to_string();
-                    if let Some(ctor_type) = self.constructors.get(&ctor_name) {
-                        // Optionally type-check elements here
-                        for elem in elements {
-                            let _ = self.infer_type_from_pattern(elem, context)?;
-                        }
-                        return Ok(ctor_type.result_category.clone());
-                    }
+            Pattern::Collection { elements, .. } => {
+                // Collections no longer have constructors - they get their type
+                // from the enclosing PatternTerm::Apply. 
+                // Here we just validate elements and return a placeholder.
+                for elem in elements {
+                    let _ = self.infer_type_from_pattern(elem, context)?;
                 }
-                // Unknown constructor - return placeholder
-                Ok("?".to_string())
+                // Collection type is determined by enclosing Apply
+                Ok("Collection".to_string())
             }
             Pattern::Map { collection, body, .. } => {
                 // Map doesn't change the type
                 let _ = self.infer_type_from_pattern(collection, context)?;
                 self.infer_type_from_pattern(body, context)
             }
-            Pattern::Zip { collections } => {
+            Pattern::Zip { first, second } => {
                 // Zip combines types
-                for coll in collections {
-                    let _ = self.infer_type_from_pattern(coll, context)?;
-                }
+                let _ = self.infer_type_from_pattern(first, context)?;
+                let _ = self.infer_type_from_pattern(second, context)?;
                 Ok("?".to_string())
             }
         }

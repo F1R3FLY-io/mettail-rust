@@ -26,13 +26,16 @@
 
 | Feature | Status | Required For |
 |---------|--------|--------------|
-| `Pattern::Map` in RHS | Not started | Transform collections |
-| `Pattern::Zip` in RHS | Not started | Pair collections |
-| `Pattern::Zip` in LHS (search) | Not started | Extract matching elements |
-| `PatternTerm::MultiLambda` | Partial | Multi-binder `^[x,y].body` |
-| `PatternTerm::MultiSubst` | Not started | Simultaneous substitution |
-| `Vec(T)` collection type | Not started | Ordered collections |
-| `#sep` for display | Not started | Parser/display syntax |
+| `Vec(T)` collection type | ✓ Complete | Ordered collections |
+| `#sep` for display | ✓ Complete | Parser/display syntax |
+| `PatternTerm::MultiLambda` | ✓ Complete | Multi-binder `^[x,y].body` |
+| `Pattern::Map` in RHS | ✓ Complete | Transform collections |
+| `Pattern::Map` in LHS | ✓ Basic | Search in collections |
+| `Pattern::Zip` in RHS | ✓ Complete | Pair collections |
+| `Pattern::Zip` in LHS | ✓ Basic | Parallel iteration |
+| `PatternTerm::MultiSubst` | ✓ Complete | Simultaneous substitution |
+
+**Note**: Map/Zip in LHS have basic implementations. Full testing with multi-communication rules still needed.
 
 ---
 
@@ -121,11 +124,12 @@ pub enum Pattern {
     
     // --- Collection metasyntax (only these add new capabilities) ---
     
-    /// Collection: {P, Q, ...rest}
+    /// Collection literal: {P, Q, ...rest}
+    /// Does NOT include constructor - use PatternTerm::Apply for that
     /// LHS: match elements, bind remainder to `rest`
     /// RHS: construct collection, merge with `rest`
     Collection {
-        constructor: Option<Ident>,
+        coll_type: CollectionType,  // HashBag, HashSet, or Vec
         elements: Vec<Pattern>,
         rest: Option<Ident>,
     },
@@ -139,11 +143,12 @@ pub enum Pattern {
         body: Box<Pattern>,
     },
     
-    /// Zip: #zip(xs, ys)
-    /// LHS: if one unbound, search/join; if both bound, parallel iterate
+    /// Zip: #zip(first, second)
+    /// LHS: correlated search - iterate first, search for matches, extract into second
     /// RHS: pair-wise combination
     Zip {
-        collections: Vec<Pattern>,
+        first: Box<Pattern>,   // First collection (iterated on LHS)
+        second: Box<Pattern>,  // Second collection (extracted on LHS, paired on RHS)
     },
     
     /// Filter: xs.#filter(|x| pred)
@@ -167,6 +172,13 @@ pub enum Pattern {
         left: Box<Pattern>,
         right: Box<Pattern>,
     },
+}
+
+/// Collection type for Pattern::Collection
+pub enum CollectionType {
+    HashBag,  // Unordered multiset (current default)
+    HashSet,  // Unordered set
+    Vec,      // Ordered list (required for #zip)
 }
 ```
 
@@ -210,7 +222,7 @@ The same pattern has different meanings based on position:
 | `Term(Lambda{..})` | Match against Scope, bind body | Construct Scope |
 | `Collection { elements, rest }` | Match elements, bind remainder to `rest` | Build from elements, merge with `rest` |
 | `Map { collection, body }` | For each in collection, match body | Transform each by body |
-| `Zip { [a, b] }` | If `b` unbound: search/join | Pair-wise combine |
+| `Zip { first, second }` | Correlated search: iterate first, extract into second | Pair-wise combine |
 | `Filter { predicate }` | Only match if predicate holds | Keep satisfying elements |
 | `Flatten { collection }` | Rarely used in LHS | Un-nest collections |
 | `Concat { left, right }` | Ambiguous split | Concatenate |
@@ -252,16 +264,22 @@ RewriteRule {
 // if S => T then (PPar {S, ...rest}) => (PPar {T, ...rest})
 RewriteRule {
     premise: Some(("S", "T")),
-    left: Pattern::Collection {
-        constructor: Some("PPar"),
-        elements: [Pattern::Term(PatternTerm::Var("S"))],
-        rest: Some("rest"),
-    },
-    right: Pattern::Collection {
-        constructor: Some("PPar"),
-        elements: [Pattern::Term(PatternTerm::Var("T"))],
-        rest: Some("rest"),
-    },
+    left: Pattern::Term(PatternTerm::Apply {
+        constructor: "PPar",
+        args: [Pattern::Collection {
+            coll_type: HashBag,
+            elements: [Pattern::Term(PatternTerm::Var("S"))],
+            rest: Some("rest"),
+        }]
+    }),
+    right: Pattern::Term(PatternTerm::Apply {
+        constructor: "PPar",
+        args: [Pattern::Collection {
+            coll_type: HashBag,
+            elements: [Pattern::Term(PatternTerm::Var("T"))],
+            rest: Some("rest"),
+        }]
+    }),
 }
 ```
 
@@ -321,37 +339,38 @@ RewriteRule {
 // (PPar {(PInputs ns scope), #zip(ns,qs).#map(|n,q| POutput n q)})
 //     => (multisubst scope qs.#map(|q| NQuote q))
 RewriteRule {
-    left: Pattern::Collection {
-        constructor: Some("PPar"),
-        elements: [
-            // Match PInputs, binding ns and scope
-            Pattern::Term(PatternTerm::Apply {
-                constructor: "PInputs",
-                args: [
-                    Pattern::Term(PatternTerm::Var("ns")),
-                    Pattern::Term(PatternTerm::Var("scope"))
-                ]
-            }),
-            // Search for matching outputs, extracting qs
-            Pattern::Map {
-                collection: Box::new(Pattern::Zip {
-                    collections: [
-                        Pattern::Term(PatternTerm::Var("ns")),    // bound
-                        Pattern::Term(PatternTerm::Var("qs")),    // unbound - to extract
+    left: Pattern::Term(PatternTerm::Apply {
+        constructor: "PPar",
+        args: [Pattern::Collection {
+            coll_type: HashBag,
+            elements: [
+                // Match PInputs, binding ns and scope
+                Pattern::Term(PatternTerm::Apply {
+                    constructor: "PInputs",
+                    args: [
+                        Pattern::Term(PatternTerm::Var("ns")),
+                        Pattern::Term(PatternTerm::Var("scope"))
                     ]
                 }),
-                params: vec!["n", "q"],
-                body: Box::new(Pattern::Term(PatternTerm::Apply {
-                    constructor: "POutput",
-                    args: [
-                        Pattern::Term(PatternTerm::Var("n")),
-                        Pattern::Term(PatternTerm::Var("q"))
-                    ]
-                })),
-            }
-        ],
-        rest: None,  // or Some("rest") to capture remaining processes
-    },
+                // Search for matching outputs, extracting qs
+                Pattern::Map {
+                    collection: Box::new(Pattern::Zip {
+                        first: Box::new(Pattern::Term(PatternTerm::Var("ns"))),   // iterate
+                        second: Box::new(Pattern::Term(PatternTerm::Var("qs"))),  // extract
+                    }),
+                    params: vec!["n", "q"],
+                    body: Box::new(Pattern::Term(PatternTerm::Apply {
+                        constructor: "POutput",
+                        args: [
+                            Pattern::Term(PatternTerm::Var("n")),
+                            Pattern::Term(PatternTerm::Var("q"))
+                        ]
+                    })),
+                }
+            ],
+            rest: None,  // or Some("rest") to capture remaining processes
+        }]
+    }),
     right: Pattern::Term(PatternTerm::MultiSubst {
         scope: Box::new(Pattern::Term(PatternTerm::Var("scope"))),
         replacements: [
@@ -429,10 +448,20 @@ pub enum Pattern {
     
     // --- Collection metasyntax ---
     
-    /// Collection: {P, Q, ...rest}
+    /// Collection literal: {P, Q, ...rest}
+    /// NOTE: Does NOT include constructor - that's in PatternTerm::Apply
+    /// 
+    /// Example: (PPar {P, Q, ...rest})
+    /// Parses as: Pattern::Term(PatternTerm::Apply {
+    ///     constructor: PPar,
+    ///     args: [Pattern::Collection { coll_type: HashBag, elements: [P, Q], rest: Some(rest) }]
+    /// })
     Collection {
-        constructor: Option<Ident>,
+        /// Collection type: HashBag, HashSet, or Vec
+        coll_type: CollectionType,
+        /// Elements in the collection (can be patterns)
         elements: Vec<Pattern>,
+        /// If Some, binds/merges with the remainder
         rest: Option<Ident>,
     },
     
@@ -443,9 +472,11 @@ pub enum Pattern {
         body: Box<Pattern>,
     },
     
-    /// Zip: #zip(xs, ys)
+    /// Zip: #zip(first, second)
+    /// LHS: correlated search; RHS: pair-wise combination
     Zip {
-        collections: Vec<Pattern>,
+        first: Box<Pattern>,
+        second: Box<Pattern>,
     },
     
     /// Filter: xs.#filter(|x| pred)
@@ -467,6 +498,14 @@ pub enum Pattern {
     },
 }
 ```
+
+**Key Design Choice:** `Pattern::Collection` represents *just* the collection literal `{P, Q, ...rest}`, not the enclosing constructor. When you write `(PPar {P, ...rest})`, this is:
+- `PatternTerm::Apply { constructor: PPar, args: [Collection { ... }] }`
+
+This separation allows:
+1. Collection type (`HashBag`/`Vec`) to be stored in `Collection`, inferred from grammar
+2. Constructor semantics (category, insert helpers) to come from `PatternTerm::Apply`
+3. Cleaner code generation - Apply handles destructuring, Collection handles iteration
 
 ### 5.4 Conversion Functions
 
@@ -602,14 +641,38 @@ fn has_metasyntax_in_pattern_term(pt: &PatternTerm) -> bool {
 
 ### Migration Steps
 
-1. **Create `PatternTerm` enum** mirroring Term with Pattern args
-2. **Create `Pattern` enum** wrapping PatternTerm + metasyntax variants
-3. **Update `Equation` and `RewriteRule`** to use `Pattern` for both sides
-4. **Remove `Term::CollectionConstruct`** (replaced by `Pattern::Collection`)
-5. **Remove `LhsPattern`** (functionality merged into `Pattern`)
-6. **Update parsing** to produce `Pattern` for both LHS and RHS
-7. **Update code generation** to handle `Pattern` symmetrically
-8. **Add conversion functions** between `Term`, `PatternTerm`, and `Pattern`
+1. **Create `PatternTerm` enum** mirroring Term with Pattern args ✓
+2. **Create `Pattern` enum** wrapping PatternTerm + metasyntax variants ✓
+3. **Update `Equation` and `RewriteRule`** to use `Pattern` for both sides ✓
+4. **Remove `Term::CollectionConstruct`** (replaced by `Pattern::Collection`) ✓
+5. **Remove `LhsPattern`** (functionality merged into `Pattern`) ✓
+6. **Update parsing** to produce `Pattern` for both LHS and RHS ✓
+7. **Update code generation** to handle `Pattern` symmetrically ✓
+8. **Add conversion functions** between `Term`, `PatternTerm`, and `Pattern` ✓
+
+### Pattern::Collection Design Fix ✓ COMPLETE
+
+**Problem solved:** `Pattern::Collection` previously had `constructor: Option<Ident>` which was redundant (constructor belongs in `PatternTerm::Apply`) and lacked `coll_type: CollectionType` needed for Vec vs HashBag distinction.
+
+**New design:**
+```rust
+Pattern::Collection {
+    coll_type: Option<CollectionType>,  // HashBag, HashSet, or Vec (None = infer)
+    elements: Vec<Pattern>,
+    rest: Option<Ident>,
+}
+```
+
+**Key changes implemented:**
+1. Removed `constructor` field from `Pattern::Collection`
+2. Added `coll_type: Option<CollectionType>` field
+3. `generate_clauses` now receives element type from parent `PatternTerm::Apply` via `GrammarItem::Collection`
+4. `to_ascent_rhs` now passes constructor context from parent Apply to Collection via `generate_collection_rhs_with_constructor()` for proper insert helpers
+
+**Why this works:**
+- Collections always appear inside `PatternTerm::Apply` which knows the constructor
+- LHS: Apply passes `element_type` from grammar to Collection's `generate_clauses`
+- RHS: Apply passes constructor to Collection for insert helper (e.g., `Proc::insert_into_ppar`) which handles flattening
 
 ---
 
@@ -805,27 +868,128 @@ Pair-wise iteration over two collections:
 **Changes:**
 - `macros/src/ast/pattern.rs`: Implement `generate_zip_rhs()`
 
-#### 5. Pattern::Zip in LHS (Search/Join)
+#### 5. Pattern::Zip in LHS (Correlated Search/Join)
 **Effort:** 2-3 days
 
-When second arg is unbound, search for matching elements:
+This is the key feature for multi-communication. Zip in LHS performs a **correlated search**: for each element in a bound collection, find a matching element in the enclosing collection and extract values.
+
+##### 5.1 Type Change: Zip as Pair
+
+Simplify `Pattern::Zip` from `Vec<Pattern>` to a pair with clear semantics:
+
 ```rust
-// #zip(ns, qs).#map(|n,q| POutput n q) in LHS:
-// For each n in ns, find a (POutput n q) in the bag and extract q
-let mut qs = Vec::new();
-for n in ns.iter() {
-    let q = bag.iter().find_map(|(elem, _)| {
-        if let Proc::POutput(n2, q2) = elem {
-            if n2.as_ref() == n { Some((**q2).clone()) } else { None }
-        } else { None }
-    })?;  // Pattern fails if not found
-    qs.push(q);
+/// Zip: #zip(first, second)
+/// LHS: correlated search - for each elem in first, find match and extract into second
+/// RHS: pair-wise combination
+Zip {
+    /// First collection (iterated on LHS)
+    first: Box<Pattern>,
+    /// Second collection (extracted on LHS, paired on RHS)
+    second: Box<Pattern>,
 }
 ```
 
-**Changes:**
-- `macros/src/ast/pattern.rs`: Implement `generate_zip_lhs_clauses()`
-- Variable mode analysis (input/output/search classification)
+##### 5.2 Search Context
+
+A `Collection` pattern in LHS establishes a **search context** - the bag being iterated. When a `Zip` appears inside that collection, it searches against that same bag:
+
+```
+(PPar {(PInputs ns scope), #zip(ns,qs).#map(|n,q| (POutput n q))})
+       ^-- Collection establishes search_context = bag variable
+                                ^-- Zip searches within search_context
+```
+
+The search context is passed through `generate_clauses` as an additional parameter:
+
+```rust
+fn generate_clauses(
+    &self,
+    term_var: &Ident,
+    category: &Ident,
+    theory: &TheoryDef,
+    duplicate_vars: &HashSet<String>,
+    result: &mut AscentClauses,
+    first_occurrences: &mut HashSet<String>,
+    iter_counter: &mut usize,
+    search_context: Option<&Ident>,  // NEW: enclosing collection for Zip search
+)
+```
+
+##### 5.3 Semantics
+
+`#zip(first_coll, second_var).#map(|x,y| body)` in LHS:
+
+1. **Iterate** over `first_coll` (gives iteration variable `x`)
+2. **Search** the `search_context` for elements matching `body` with `x` bound
+3. **Extract** `y` from each successful match
+4. **Collect** all `y` values into `second_var`
+5. **Fail** the entire pattern if any `x` has no match
+
+##### 5.4 Code Generation
+
+For `#zip(ns, qs).#map(|n,q| (POutput n q))` inside a Collection with `search_context = bag`:
+
+```rust
+// Initialize collection for extracted values
+let mut qs = Vec::new();
+// Track which elements have been matched (for exact-once matching)
+let mut __used = std::collections::HashSet::new();
+
+// Iterate over bound collection
+for n in ns.iter() {
+    let mut __found = false;
+    
+    // Search in the enclosing collection
+    for (__idx, (candidate, _)) in bag.iter().enumerate() {
+        // Skip already-matched elements
+        if __used.contains(&__idx) {
+            continue;
+        }
+        
+        // Try to match the body pattern
+        if let Proc::POutput(ref n2, ref q) = candidate {
+            // Check bound variable equality
+            if **n2 == *n {
+                // Extract unbound variable
+                qs.push((**q).clone());
+                __used.insert(__idx);
+                __found = true;
+                break;
+            }
+        }
+    }
+    
+    // Pattern fails if no match found for this element
+    if !__found {
+        continue '__outer;  // Jump to next iteration of enclosing loop
+    }
+}
+// qs is now bound to Vec of extracted values
+```
+
+##### 5.5 Key Properties
+
+1. **Exact matching**: Each element in `first` matches exactly one element in the search context
+2. **No duplicates**: The `__used` set ensures each search context element is matched at most once
+3. **Order preservation**: Results in `second` preserve the order of `first`
+4. **Fail-fast**: Pattern match fails immediately if any element has no match
+
+##### 5.6 Changes Required
+
+**`macros/src/ast/pattern.rs`:**
+- Change `Zip { collections: Vec<Pattern> }` to `Zip { first: Box<Pattern>, second: Box<Pattern> }`
+- Add `search_context: Option<&Ident>` parameter to `generate_clauses`
+- `Pattern::Collection` sets search context when processing nested patterns
+- `Pattern::Zip` in LHS generates correlated search loop using search context
+- `Pattern::Map` chained to `Zip` provides the body pattern and params
+
+**`macros/src/ast/theory.rs`:**
+- Update `parse_metasyntax_pattern` to parse `#zip(a, b)` into new Zip structure
+
+**Validation:**
+- Error if `Zip.first` is not bound in the current scope (on LHS)
+- Error if `Zip.second` is already bound on LHS (it should be fresh for extraction)
+- Error if `Zip` appears outside a Collection context in LHS
 
 #### 6. MultiSubst in RHS
 **Effort:** 1 day
@@ -853,15 +1017,19 @@ Separator syntax for pretty-printing collections:
 
 ### Summary
 
-| Feature | Estimated Days | Difficulty |
-|---------|----------------|------------|
-| Vec collection type | 1-2 | Low |
-| Multi-binder syntax | 2-3 | Medium |
-| Map in RHS | 1 | Low |
-| Zip in RHS | 1 | Low |
-| Zip in LHS (search) | 2-3 | High |
-| MultiSubst | 1 | Low |
-| Display #sep | 1 | Low |
-| **Total** | **~10-12 days** | |
+| Feature | Status | Difficulty |
+|---------|--------|------------|
+| Vec collection type | ✓ Complete | Low |
+| Multi-binder syntax | ✓ Complete | Medium |
+| Map in RHS | ✓ Complete | Low |
+| Zip in RHS | ✓ Complete | Low |
+| Zip in LHS (search) | **Design complete, needs implementation** | High |
+| MultiSubst | ✓ Complete | Low |
+| Display #sep | ✓ Complete | Low |
+| Parsing #zip/#map | ✓ Complete | Low |
 
-The key challenge is the **search semantics** for `#zip` in LHS patterns, which requires binding analysis to determine which variables are input (iterate) vs output (search).
+**Remaining work:** Implement `Zip` in LHS correlated search as specified in section 5 above. Key changes:
+1. Change `Pattern::Zip` from `Vec<Pattern>` to `{ bound, unbound }` pair
+2. Add `search_context` parameter to `generate_clauses`
+3. `Collection` sets search context for nested patterns
+4. `Zip` generates correlated search loop

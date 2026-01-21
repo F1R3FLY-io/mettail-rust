@@ -146,12 +146,12 @@ fn extract_category_from_rewrite(
 ) -> Option<proc_macro2::Ident> {
     // Try to extract category from LHS pattern
     if let Some(constructor) = rewrite.left.constructor_name() {
-        // Find the rule with this constructor
-        theory
-            .terms
-            .iter()
+            // Find the rule with this constructor
+            theory
+                .terms
+                .iter()
             .find(|r| &r.label == constructor)
-            .map(|rule| rule.category.clone())
+                .map(|rule| rule.category.clone())
     } else {
         None
     }

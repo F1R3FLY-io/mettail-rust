@@ -17,6 +17,7 @@ use std::collections::{HashMap, HashSet};
 use super::term::Term;
 use super::theory::TheoryDef;
 use super::grammar::GrammarItem;
+use super::types::CollectionType;
 
 /// Term-like structure for rule specification.
 /// Mirrors `Term` but allows `Pattern` in sub-expression positions.
@@ -72,12 +73,20 @@ pub enum Pattern {
     
     // --- Collection metasyntax ---
     
-    /// Collection: {P, Q, ...rest}
+    /// Collection literal: {P, Q, ...rest}
+    /// NOTE: Does NOT include constructor - that's in PatternTerm::Apply
     /// LHS: match elements, bind remainder to `rest`
     /// RHS: construct collection, merge with `rest`
+    ///
+    /// Example: (PPar {P, Q, ...rest}) parses as:
+    ///   Pattern::Term(PatternTerm::Apply {
+    ///     constructor: PPar,
+    ///     args: [Pattern::Collection { coll_type: None, elements: [P, Q], rest }]
+    ///   })
     Collection {
-        /// Constructor label (e.g., PPar) - inferred if not provided
-        constructor: Option<Ident>,
+        /// Collection type (HashBag, Vec, HashSet)
+        /// None means infer from enclosing constructor's grammar rule
+        coll_type: Option<CollectionType>,
         /// Elements in the collection (can be patterns)
         elements: Vec<Pattern>,
         /// If Some, binds/merges with the remainder
@@ -96,12 +105,14 @@ pub enum Pattern {
         body: Box<Pattern>,
     },
     
-    /// Zip: #zip(xs, ys)
-    /// LHS: if one unbound, search/join; if both bound, parallel iterate
+    /// Zip: #zip(first, second)
+    /// LHS: correlated search - iterate first, search for matches, extract into second
     /// RHS: pair-wise combination
     Zip {
-        /// Collections to zip together
-        collections: Vec<Pattern>,
+        /// First collection (iterated on LHS)
+        first: Box<Pattern>,
+        /// Second collection (extracted on LHS, paired on RHS)
+        second: Box<Pattern>,
     },
 }
 
@@ -199,11 +210,9 @@ impl Pattern {
                 vars.extend(body_vars);
                 vars
             }
-            Pattern::Zip { collections } => {
-                let mut vars = HashSet::new();
-                for coll in collections {
-                    vars.extend(coll.free_vars());
-                }
+            Pattern::Zip { first, second } => {
+                let mut vars = first.free_vars();
+                vars.extend(second.free_vars());
                 vars
             }
         }
@@ -224,11 +233,12 @@ impl Pattern {
         matches!(self, Pattern::Collection { .. })
     }
     
-    /// Get the constructor name if this is a constructor application or collection
+    /// Get the constructor name if this is a constructor application
+    /// NOTE: Collection patterns no longer have constructors - they get it from enclosing Apply
     pub fn constructor_name(&self) -> Option<&Ident> {
         match self {
             Pattern::Term(PatternTerm::Apply { constructor, .. }) => Some(constructor),
-            Pattern::Collection { constructor, .. } => constructor.as_ref(),
+            // Collections don't have constructors anymore - that's in the parent Apply
             _ => None,
         }
     }
@@ -259,16 +269,19 @@ impl Pattern {
     /// 
     /// Returns `Some(category)` if the pattern unambiguously produces that category.
     /// Returns `None` for variables (unknown without context) or errors.
+    /// 
+    /// NOTE: Collection patterns return None - they get their category from
+    /// the enclosing PatternTerm::Apply which knows the constructor.
     pub fn category<'a>(&self, theory: &'a TheoryDef) -> Option<&'a Ident> {
         match self {
             Pattern::Term(pt) => pt.category(theory),
-            Pattern::Collection { constructor, .. } => {
-                constructor.as_ref().and_then(|c| theory.category_of_constructor(c))
-            }
-            Pattern::Map { collection, .. } => collection.category(theory),
-            Pattern::Zip { collections } => {
-                // Zip produces a collection of tuples - category depends on usage
-                collections.first().and_then(|c| c.category(theory))
+            // Collections don't know their category - it comes from enclosing Apply
+            Pattern::Collection { .. } => None,
+            // Map produces elements of the body's category
+            Pattern::Map { body, .. } => body.category(theory),
+            Pattern::Zip { first, .. } => {
+                // Zip produces a collection of tuples - category depends on first
+                first.category(theory)
             }
         }
     }
@@ -309,10 +322,9 @@ impl Pattern {
                     }
                 }
             }
-            Pattern::Zip { collections } => {
-                for coll in collections {
-                    coll.collect_var_occurrences(counts);
-                }
+            Pattern::Zip { first, second } => {
+                first.collect_var_occurrences(counts);
+                second.collect_var_occurrences(counts);
             }
         }
     }
@@ -432,6 +444,7 @@ impl Pattern {
             &mut result,
             &mut first_occurrences,
             &mut iter_counter,
+            None,  // No enclosing search_context at top level
         );
         
         result
@@ -446,82 +459,372 @@ impl Pattern {
         result: &mut AscentClauses,
         first_occurrences: &mut HashSet<String>,
         iter_counter: &mut usize,
+        search_context: Option<&Ident>,  // Enclosing collection for Zip correlated search
     ) {
         match self {
             Pattern::Term(pt) => {
-                pt.generate_clauses(term_var, category, theory, duplicate_vars, result, first_occurrences, iter_counter);
+                pt.generate_clauses(term_var, category, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context);
             }
             
-            Pattern::Collection { constructor, elements, rest } => {
-                // NOTE: When nested inside PatternTerm::Apply, term_var is already the bag field.
-                // We do NOT generate `if let` here - the parent Apply already destructured.
-                // The constructor is used to look up element type, not for destructuring.
+            Pattern::Collection { elements, rest, .. } => {
+                // NOTE: Collection patterns appear inside PatternTerm::Apply.
+                // The parent Apply already:
+                //   1. Destructured to get the bag field as term_var
+                //   2. Passed the element type as `category`
+                // So here, term_var IS the bag and `category` IS the element type.
                 
-                let cons = constructor.as_ref()
-                    .expect("Collection pattern must have constructor for LHS matching");
-                
-                // Get element category from constructor
-                let elem_cat = theory.collection_element_type(cons)
-                    .expect("Collection constructor must have element type");
-                
-                // term_var IS the bag - iterate directly over it
+                let elem_cat = category;
                 let bag_var = term_var;
                 
-                // For each element, iterate and match
+                // This collection becomes the search_context for nested Map patterns
+                let nested_search_context = Some(bag_var);
+                
+                // Track variables for rest calculation:
+                // - elem_vars: single elements bound via iteration  
+                // - matched_indices_vars: sets of indices from Map patterns (which match multiple elements)
                 let mut elem_vars = Vec::new();
+                let mut matched_indices_vars: Vec<Ident> = Vec::new();
+                
                 for (i, elem) in elements.iter().enumerate() {
+                    // Map patterns match MULTIPLE elements and collect them
+                    // They handle their own iteration and track matched indices
+                    if matches!(elem, Pattern::Map { .. }) {
+                        // Map pattern - will generate its own search and track matched indices
+                        let idx_var = format_ident!("__map_matched_indices_{}", *iter_counter);
+                        matched_indices_vars.push(idx_var);
+                        
+                        elem.generate_clauses(
+                            bag_var, elem_cat, theory, duplicate_vars, result, first_occurrences, iter_counter,
+                            nested_search_context,
+                        );
+                        continue;
+                    }
+                    
+                    // Standard element: iterate and match ONE element
                     let elem_var = format_ident!("{}_e{}", term_var, i);
                     let count_var = format_ident!("_count_{}", *iter_counter);
-                    *iter_counter += 1; // Increment global counter for next iteration
+                    *iter_counter += 1;
                     elem_vars.push(elem_var.clone());
                     
-                    // for (elem_var, _count_N) in bag_var.iter()
                     result.clauses.push(quote! {
                         for (#elem_var, #count_var) in #bag_var.iter()
                     });
                     
-                    // Distinctness checks: each element must be different from previous
-                    for prev in &elem_vars[..i] {
+                    // Distinctness: each element must be different from previous single elements
+                    for prev in &elem_vars[..elem_vars.len()-1] {
                         result.clauses.push(quote! {
                             if &#elem_var != &#prev
                         });
                     }
                     
-                    // Recursively process element pattern
                     elem.generate_clauses(
-                        &elem_var, elem_cat, theory, duplicate_vars, result, first_occurrences, iter_counter
+                        &elem_var, elem_cat, theory, duplicate_vars, result, first_occurrences, iter_counter,
+                        nested_search_context,
                     );
                 }
                 
                 // Bind rest variable if present
                 if let Some(rest_var) = rest {
                     let rest_ident = format_ident!("{}_rest", term_var);
-                    if !elem_vars.is_empty() {
+                    
+                    if elem_vars.is_empty() && matched_indices_vars.is_empty() {
+                        result.clauses.push(quote! {
+                            let #rest_ident = #bag_var.clone()
+                        });
+                    } else {
+                        // Remove ALL matched elements:
+                        // 1. Single elements (elem_vars)
+                        // 2. All elements at indices from Map patterns (matched_indices_vars)
+                        let remove_singles = if elem_vars.is_empty() {
+                            quote! {}
+                        } else {
+                            quote! { #(bag.remove(&#elem_vars);)* }
+                        };
+                        
+                        let remove_map_matched = if matched_indices_vars.is_empty() {
+                            quote! {}
+                        } else {
+                            quote! {
+                                let __ctx_vec: Vec<_> = #bag_var.iter().collect();
+                                #(
+                                    for __idx in #matched_indices_vars.iter() {
+                                        if let Some((elem, _)) = __ctx_vec.get(*__idx) {
+                                            bag.remove(elem);
+                                        }
+                                    }
+                                )*
+                            }
+                        };
+                        
                         result.clauses.push(quote! {
                             let #rest_ident = {
                                 let mut bag = #bag_var.clone();
-                                #(bag.remove(&#elem_vars);)*
+                                #remove_singles
+                                #remove_map_matched
                                 bag
                             }
-                        });
-                    } else {
-                        result.clauses.push(quote! {
-                            let #rest_ident = #bag_var.clone()
                         });
                     }
                     result.bindings.insert(rest_var.to_string(), quote! { #rest_ident.clone() });
                 }
             }
             
-            Pattern::Map { .. } => {
-                // Map on LHS: for each element matching the pattern, extract bindings
-                // This is complex - defer to future implementation
-                unimplemented!("Map patterns in LHS not yet implemented")
+            Pattern::Map { collection, params, body } => {
+                // Map on LHS: search for elements in a collection where each element
+                // matches the body pattern after binding the params
+                //
+                // Special case: when collection is a Zip, this is a correlated search
+                // #zip(ns, qs).#map(|n, q| (POutput n q)) means:
+                //   - ns is already bound (e.g., from PInputs)
+                //   - For each n in ns, find matching (POutput n q) in search_context
+                //   - Collect all q's into qs
+                
+                if let Pattern::Zip { first, second } = collection.as_ref() {
+                    // Correlated search: Zip + Map
+                    // first (ns) is bound, second (qs) will collect results
+                    
+                    let Some(ctx) = search_context else {
+                        panic!("Zip+Map pattern requires search_context from enclosing Collection");
+                    };
+                    
+                    // Get variable names from first and second
+                    let first_var_name = match first.as_ref() {
+                        Pattern::Term(PatternTerm::Var(v)) => v.to_string(),
+                        _ => panic!("Zip first must be a variable"),
+                    };
+                    let second_var_name = match second.as_ref() {
+                        Pattern::Term(PatternTerm::Var(v)) => v.to_string(),
+                        _ => panic!("Zip second must be a variable"),
+                    };
+                    
+                    // first should already be bound - get its binding
+                    let first_binding = result.bindings.get(&first_var_name)
+                        .cloned()
+                        .unwrap_or_else(|| {
+                            let ident = format_ident!("{}", first_var_name);
+                            quote! { #ident }
+                        });
+                    
+                    // params should be [n, q] for the body pattern
+                    if params.len() != 2 {
+                        panic!("Zip+Map requires exactly 2 params, got {}", params.len());
+                    }
+                    let first_param = &params[0]; // n - iterates over first (ns)
+                    let second_param = &params[1]; // q - extracted from matches
+                    
+                    // Generate the body's match pattern to extract constructor info
+                    // We need to generate a pattern match that:
+                    // 1. Iterates over first (ns)
+                    // 2. For each n, searches ctx for matching body pattern
+                    // 3. Extracts q from match and collects into second (qs)
+                    
+                    let iter_idx = *iter_counter;
+                    *iter_counter += 1;
+                    
+                    let first_elem = format_ident!("__zip_first_{}", iter_idx);
+                    let search_elem = format_ident!("__zip_search_{}", iter_idx);
+                    let collected_var = format_ident!("__zip_collected_{}", iter_idx);
+                    
+                    // Bind first_param to first_elem for body pattern matching
+                    result.bindings.insert(first_param.to_string(), quote! { #first_elem.clone() });
+                    
+                    // Generate the correlated search as a let expression
+                    // This collects results from searching ctx for each element of first
+                    
+                    // We need to inline the body pattern match as an if-let
+                    // For now, assume body is a constructor pattern like (POutput n q)
+                    let (constructor, body_args) = match body.as_ref() {
+                        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+                            (constructor.clone(), args.clone())
+                        }
+                        _ => panic!("Zip+Map body must be a constructor pattern"),
+                    };
+                    
+                    // Find which arg position corresponds to first_param and second_param
+                    let mut first_param_idx = None;
+                    let mut second_param_idx = None;
+                    for (i, arg) in body_args.iter().enumerate() {
+                        if let Pattern::Term(PatternTerm::Var(v)) = arg {
+                            if v.to_string() == first_param.to_string() {
+                                first_param_idx = Some(i);
+                            }
+                            if v.to_string() == second_param.to_string() {
+                                second_param_idx = Some(i);
+                            }
+                        }
+                    }
+                    
+                    let first_idx = first_param_idx.expect("first_param not found in body pattern");
+                    let second_idx = second_param_idx.expect("second_param not found in body pattern");
+                    
+                    // Generate field variables for the constructor match
+                    let field_vars: Vec<Ident> = (0..body_args.len())
+                        .map(|i| format_ident!("__match_f{}_{}", i, iter_idx))
+                        .collect();
+                    
+                    let first_field = &field_vars[first_idx];
+                    let second_field = &field_vars[second_idx];
+                    
+                    // Generate the correlated search
+                    // Note: fields are Box<T>, so we dereference with &**field
+                    // first_elem is &Name from Vec<Name>.iter()
+                    // 
+                    // IMPORTANT: Track matched elements to:
+                    // 1. Handle join patterns where the same channel appears multiple times
+                    // 2. Allow parent Collection to remove ALL matched elements from rest
+                    let matched_indices_var = format_ident!("__map_matched_indices_{}", iter_idx);
+                    
+                    // Generate correlated search that returns BOTH the collected values
+                    // AND the set of matched indices (for rest calculation)
+                    // Ascent doesn't support `let mut` or type annotations, so we
+                    // compute both in a single block and destructure the tuple result.
+                    result.clauses.push(quote! {
+                        let (#collected_var, #matched_indices_var) = {
+                            let __ctx_vec: Vec<_> = #ctx.iter().collect();
+                            let mut __results = Vec::new();
+                            let mut __matched = std::collections::HashSet::new();
+                            
+                            for #first_elem in #first_binding.iter() {
+                                let mut __found = None;
+                                for (__idx, (#search_elem, _)) in __ctx_vec.iter().enumerate() {
+                                    if __matched.contains(&__idx) {
+                                        continue;
+                                    }
+                                    if let #category::#constructor(#(ref #field_vars),*) = #search_elem {
+                                        if &**#first_field == #first_elem {
+                                            __found = Some((__idx, (**#second_field).clone()));
+                                            break;
+                                        }
+                                    }
+                                }
+                                if let Some((__idx, __val)) = __found {
+                                    __matched.insert(__idx);
+                                    __results.push(__val);
+                                }
+                            }
+                            (__results, __matched)
+                        }
+                    });
+                    
+                    // Verify all elements matched (qs.len() == ns.len())
+                    result.clauses.push(quote! {
+                        if #collected_var.len() == #first_binding.len()
+                    });
+                    
+                    // Bind second (qs) to the collected results
+                    result.bindings.insert(second_var_name, quote! { #collected_var.clone() });
+                    
+                } else {
+                    // Regular map: iterate over collection
+                    
+                    // First, process the collection to get its binding
+                    collection.generate_clauses(
+                        &format_ident!("__map_coll"),
+                        category,
+                        theory,
+                        duplicate_vars,
+                        result,
+                        first_occurrences,
+                        iter_counter,
+                        search_context,
+                    );
+                    
+                    // For LHS map, we need to generate iteration over the collection
+                    // and for each element, check if it matches the body pattern
+                    let iter_idx = *iter_counter;
+                    *iter_counter += 1;
+                    let elem_var = format_ident!("__map_elem_{}", iter_idx);
+                    
+                    // Bind each param to the element (or element parts for multi-param)
+                    if params.len() == 1 {
+                        let param = &params[0];
+                        result.bindings.insert(param.to_string(), quote! { #elem_var });
+                    } else if params.len() == 2 {
+                        // For zipped pairs
+                        result.bindings.insert(params[0].to_string(), quote! { #elem_var.0 });
+                        result.bindings.insert(params[1].to_string(), quote! { #elem_var.1 });
+                    }
+                    
+                    // Generate iteration clause
+                    result.clauses.push(quote! {
+                        for (#elem_var, _) in __map_coll.iter()
+                    });
+                    
+                    // Process body pattern with elem_var bindings
+                    // This adds match clauses for the body pattern
+                    body.generate_clauses(
+                        &elem_var,
+                        category,
+                        theory,
+                        duplicate_vars,
+                        result,
+                        first_occurrences,
+                        iter_counter,
+                        search_context,
+                    );
+                }
             }
             
-            Pattern::Zip { .. } => {
-                // Zip on LHS: parallel iteration over multiple collections
-                unimplemented!("Zip patterns in LHS not yet implemented")
+            Pattern::Zip { first, second } => {
+                // Zip on LHS: standalone usage (rare)
+                //
+                // When Zip appears chained with Map (e.g., #zip(ns, qs).#map(...)),
+                // the Map handles the correlated search logic. This case handles
+                // standalone Zip which just sets up variable bindings.
+                //
+                // Standalone Zip without Map is unusual and limited in functionality.
+                
+                // Get variable names if they're simple vars
+                let first_var_name = match first.as_ref() {
+                    Pattern::Term(PatternTerm::Var(v)) => Some(v.to_string()),
+                    _ => None,
+                };
+                let second_var_name = match second.as_ref() {
+                    Pattern::Term(PatternTerm::Var(v)) => Some(v.to_string()),
+                    _ => None,
+                };
+                
+                // Set up bindings for both variables
+                if let Some(first_name) = &first_var_name {
+                    if !result.bindings.contains_key(first_name) {
+                        let first_ident = format_ident!("{}", first_name);
+                        result.bindings.insert(first_name.clone(), quote! { #first_ident.clone() });
+                    }
+                }
+                
+                if let Some(second_name) = &second_var_name {
+                    if !result.bindings.contains_key(second_name) {
+                        let second_ident = format_ident!("{}", second_name);
+                        result.bindings.insert(second_name.clone(), quote! { #second_ident.clone() });
+                    }
+                }
+                
+                // If patterns are more complex (not just variables), process them
+                if first_var_name.is_none() {
+                    first.generate_clauses(
+                        &format_ident!("__zip_first"),
+                        category,
+                        theory,
+                        duplicate_vars,
+                        result,
+                        first_occurrences,
+                        iter_counter,
+                        search_context,
+                    );
+                }
+                
+                if second_var_name.is_none() {
+                    second.generate_clauses(
+                        &format_ident!("__zip_second"),
+                        category,
+                        theory,
+                        duplicate_vars,
+                        result,
+                        first_occurrences,
+                        iter_counter,
+                        search_context,
+                    );
+                }
             }
         }
     }
@@ -537,6 +840,7 @@ impl PatternTerm {
         result: &mut AscentClauses,
         first_occurrences: &mut HashSet<String>,
         iter_counter: &mut usize,
+        search_context: Option<&Ident>,  // Enclosing collection for Zip correlated search
     ) {
         match self {
             PatternTerm::Var(v) => {
@@ -601,7 +905,7 @@ impl PatternTerm {
                                 };
                                 
                                 args[field_idx].generate_clauses(
-                                    &deref_var, field_cat, theory, duplicate_vars, result, first_occurrences, iter_counter
+                                    &deref_var, field_cat, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
                                 );
                                 field_idx += 1;
                             }
@@ -609,8 +913,10 @@ impl PatternTerm {
                         GrammarItem::Collection { element_type, .. } => {
                             if field_idx < args.len() {
                                 // Collection field - delegate to collection handling
+                                // Pass the field variable as search_context for nested Zip patterns
+                                let field_var = &field_vars[field_idx];
                                 args[field_idx].generate_clauses(
-                                    &field_vars[field_idx], element_type, theory, duplicate_vars, result, first_occurrences, iter_counter
+                                    field_var, element_type, theory, duplicate_vars, result, first_occurrences, iter_counter, Some(field_var)
                                 );
                                 field_idx += 1;
                             }
@@ -644,8 +950,8 @@ impl PatternTerm {
                                 
                                 // Check if arg is a Lambda pattern - if so, extract binder/body directly
                                 if let Pattern::Term(PatternTerm::Lambda { binder, body }) = &args[field_idx] {
+                                    // Single binder: binder_var is Binder<String>
                                     // Bind the Lambda's binder name to the inner FreeVar (Binder.0)
-                                    // This is needed because substitute methods expect FreeVar<String>, not Binder<String>
                                     result.bindings.insert(binder.to_string(), quote! { #binder_var.0.clone() });
                                     
                                     // Also bind the full binder for RHS reconstruction
@@ -653,12 +959,40 @@ impl PatternTerm {
                                     
                                     // Process the Lambda's body with body_var
                                     body.generate_clauses(
-                                        &body_var, body_cat, theory, duplicate_vars, result, first_occurrences, iter_counter
+                                        &body_var, body_cat, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
                                     );
+                                } else if let Pattern::Term(PatternTerm::MultiLambda { binders, body }) = &args[field_idx] {
+                                    // Multi-binder: binder_var is Vec<Binder<String>>
+                                    // Bind each binder variable to its corresponding element
+                                    for (i, binder) in binders.iter().enumerate() {
+                                        let binder_elem_var = format_ident!("{}_b{}", field_var, i);
+                                        let idx = syn::Index::from(i);
+                                        
+                                        // Extract the i-th binder from the Vec
+                                        result.clauses.push(quote! {
+                                            let #binder_elem_var = #binder_var[#idx].clone()
+                                        });
+                                        
+                                        // Bind the binder name to its FreeVar
+                                        result.bindings.insert(binder.to_string(), quote! { #binder_elem_var.0.clone() });
+                                        
+                                        // Also bind the full binder for RHS reconstruction
+                                        result.bindings.insert(format!("__binder_{}", binder), quote! { #binder_elem_var.clone() });
+                                    }
+                                    
+                                    // Process the MultiLambda's body with body_var
+                                    body.generate_clauses(
+                                        &body_var, body_cat, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
+                                    );
+                                } else if let Pattern::Term(PatternTerm::Var(v)) = &args[field_idx] {
+                                    // Simple variable in binder position - bind to the FULL SCOPE
+                                    // This is for patterns like (PInputs ns scope) where scope
+                                    // should capture the entire Scope object for later use with multisubst
+                                    result.bindings.insert(v.to_string(), quote! { #field_var.clone() });
                                 } else {
-                                    // Non-Lambda pattern in binder position - just process normally
+                                    // Other pattern in binder position - process as body pattern
                                     args[field_idx].generate_clauses(
-                                        &body_var, body_cat, theory, duplicate_vars, result, first_occurrences, iter_counter
+                                        &body_var, body_cat, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
                                     );
                                 }
                                 field_idx += 1;
@@ -701,7 +1035,7 @@ impl PatternTerm {
                 // The body has the same category as the enclosing term (from context)
                 // For Scope<Binder, Body>, both the Scope and Body have the same category
                 body.generate_clauses(
-                    &body_var, category, theory, duplicate_vars, result, first_occurrences, iter_counter
+                    &body_var, category, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
                 );
             }
             
@@ -721,15 +1055,27 @@ impl PatternTerm {
                     let #body_var = &**#body_boxed_var
                 });
                 
-                // Bind each binder variable (as the whole binders vec for now)
-                // TODO: Support destructuring individual binders
-                for binder in binders {
-                    result.bindings.insert(binder.to_string(), quote! { #binders_var.clone() });
+                // Bind each binder variable to its corresponding element in the Vec
+                // For ^[x,y].body: bind x to binders[0], y to binders[1]
+                for (i, binder) in binders.iter().enumerate() {
+                    let binder_elem_var = format_ident!("{}_b{}", term_var, i);
+                    let idx = syn::Index::from(i);
+                    
+                    // Extract the i-th binder from the Vec
+                    result.clauses.push(quote! {
+                        let #binder_elem_var = #binders_var[#idx].clone()
+                    });
+                    
+                    // Bind the binder name to its FreeVar (the .0 field)
+                    result.bindings.insert(binder.to_string(), quote! { #binder_elem_var.0.clone() });
+                    
+                    // Also bind the full binder for RHS reconstruction
+                    result.bindings.insert(format!("__binder_{}", binder), quote! { #binder_elem_var.clone() });
                 }
                 
                 // Recursively process body with the same category as the enclosing term
                 body.generate_clauses(
-                    &body_var, category, theory, duplicate_vars, result, first_occurrences, iter_counter
+                    &body_var, category, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
                 );
             }
             
@@ -773,21 +1119,21 @@ impl Pattern {
     ) -> TokenStream {
         match self {
             Pattern::Term(pt) => pt.to_ascent_rhs(bindings, theory),
-            Pattern::Collection { constructor, elements, rest } => {
-                self.generate_collection_rhs(constructor.as_ref(), elements, rest.as_ref(), bindings, theory)
+            Pattern::Collection { coll_type, elements, rest } => {
+                self.generate_collection_rhs(coll_type.as_ref(), elements, rest.as_ref(), bindings, theory)
             }
             Pattern::Map { collection, params, body } => {
                 self.generate_map_rhs(collection, params, body, bindings, theory)
             }
-            Pattern::Zip { collections } => {
-                self.generate_zip_rhs(collections, bindings, theory)
+            Pattern::Zip { first, second } => {
+                self.generate_zip_rhs(first, second, bindings, theory)
             }
         }
     }
     
     fn generate_collection_rhs(
         &self,
-        constructor: Option<&Ident>,
+        coll_type: Option<&CollectionType>,
         elements: &[Pattern],
         rest: Option<&Ident>,
         bindings: &HashMap<String, TokenStream>,
@@ -797,40 +1143,32 @@ impl Pattern {
             .map(|e| e.to_ascent_rhs(bindings, theory))
             .collect();
         
-        let coll_type = quote! { mettail_runtime::HashBag };
-        
-        // Get category and insert helper if constructor provided
-        let (category, insert_helper) = if let Some(cons) = constructor {
-            if let Some(cat) = theory.category_of_constructor(cons) {
-                let cons_lower = format_ident!("{}", cons.to_string().to_lowercase());
-                let helper = format_ident!("insert_into_{}", cons_lower);
-                (Some(cat.clone()), Some(helper))
-            } else {
-                (None, None)
-            }
-        } else {
-            (None, None)
+        // Use coll_type if provided, default to HashBag
+        let coll_type_tok = match coll_type {
+            Some(CollectionType::Vec) => quote! { Vec },
+            Some(CollectionType::HashSet) => quote! { std::collections::HashSet },
+            Some(CollectionType::HashBag) | None => quote! { mettail_runtime::HashBag },
         };
         
+        // Generate insert/push based on collection type
+        let use_vec = matches!(coll_type, Some(CollectionType::Vec));
+        
         if let Some(rest_var) = rest {
-            // TODO: Variable binding will be handled by unified rule generation
             let rest_name = rest_var.to_string();
             let rest_ident = quote::format_ident!("{}", rest_name);
             let rest_binding = bindings.get(&rest_name)
                 .cloned()
                 .unwrap_or_else(|| quote! { #rest_ident });
             
-            if let (Some(cat), Some(helper)) = (&category, &insert_helper) {
-                // Use flatten helper
+            if use_vec {
                 quote! {
                     {
-                        let mut bag = (#rest_binding).clone();
-                        #(#cat::#helper(&mut bag, #elem_exprs);)*
-                        bag
+                        let mut coll = (#rest_binding).clone();
+                        #(coll.push(#elem_exprs);)*
+                        coll
                     }
                 }
             } else {
-                // Plain insert
                 quote! {
                     {
                         let mut bag = (#rest_binding).clone();
@@ -840,18 +1178,18 @@ impl Pattern {
                 }
             }
         } else {
-            if let (Some(cat), Some(helper)) = (&category, &insert_helper) {
+            if use_vec {
                 quote! {
                     {
-                        let mut bag = #coll_type::new();
-                        #(#cat::#helper(&mut bag, #elem_exprs);)*
-                        bag
+                        let mut coll = Vec::new();
+                        #(coll.push(#elem_exprs);)*
+                        coll
                     }
                 }
             } else {
                 quote! {
                     {
-                        let mut bag = #coll_type::new();
+                        let mut bag = #coll_type_tok::new();
                         #(bag.insert(#elem_exprs);)*
                         bag
                     }
@@ -859,7 +1197,101 @@ impl Pattern {
             }
         }
     }
+}
+
+/// Generate collection RHS with constructor context for proper insert helpers
+fn generate_collection_rhs_with_constructor(
+    coll_type: Option<&CollectionType>,
+    elements: &[Pattern],
+    rest: Option<&Ident>,
+    constructor: Option<&Ident>,
+    category: &Ident,
+    bindings: &HashMap<String, TokenStream>,
+    theory: &TheoryDef,
+) -> TokenStream {
+    let elem_exprs: Vec<_> = elements.iter()
+        .map(|e| e.to_ascent_rhs(bindings, theory))
+        .collect();
     
+    // Use coll_type if provided, default to HashBag
+    let coll_type_tok = match coll_type {
+        Some(CollectionType::Vec) => quote! { Vec },
+        Some(CollectionType::HashSet) => quote! { std::collections::HashSet },
+        Some(CollectionType::HashBag) | None => quote! { mettail_runtime::HashBag },
+    };
+    
+    let use_vec = matches!(coll_type, Some(CollectionType::Vec));
+    
+    // Get insert helper if constructor is provided (for flattening)
+    let insert_helper = constructor.map(|cons| {
+        let cons_lower = format_ident!("{}", cons.to_string().to_lowercase());
+        format_ident!("insert_into_{}", cons_lower)
+    });
+    
+    if let Some(rest_var) = rest {
+        let rest_name = rest_var.to_string();
+        let rest_ident = quote::format_ident!("{}", rest_name);
+        let rest_binding = bindings.get(&rest_name)
+            .cloned()
+            .unwrap_or_else(|| quote! { #rest_ident });
+        
+        if use_vec {
+            quote! {
+                {
+                    let mut coll = (#rest_binding).clone();
+                    #(coll.push(#elem_exprs);)*
+                    coll
+                }
+            }
+        } else if let Some(helper) = &insert_helper {
+            // Use insert helper for flattening
+            quote! {
+                {
+                    let mut bag = (#rest_binding).clone();
+                    #(#category::#helper(&mut bag, #elem_exprs);)*
+                    bag
+                }
+            }
+        } else {
+            quote! {
+                {
+                    let mut bag = (#rest_binding).clone();
+                    #(bag.insert(#elem_exprs);)*
+                    bag
+                }
+            }
+        }
+    } else {
+        if use_vec {
+            quote! {
+                {
+                    let mut coll = Vec::new();
+                    #(coll.push(#elem_exprs);)*
+                    coll
+                }
+            }
+        } else if let Some(helper) = &insert_helper {
+            // Use insert helper for flattening
+            quote! {
+                {
+                    let mut bag = #coll_type_tok::new();
+                    #(#category::#helper(&mut bag, #elem_exprs);)*
+                    bag
+                }
+            }
+        } else {
+            quote! {
+                {
+                    let mut bag = #coll_type_tok::new();
+                    #(bag.insert(#elem_exprs);)*
+                    bag
+                }
+            }
+        }
+    }
+}
+
+impl Pattern {
     fn generate_map_rhs(
         &self,
         collection: &Pattern,
@@ -868,34 +1300,100 @@ impl Pattern {
         bindings: &HashMap<String, TokenStream>,
         theory: &TheoryDef,
     ) -> TokenStream {
-        // Generate: iterate collection, apply body to each element
+        // Generate: iterate collection, apply body transform to each element
         let coll_expr = collection.to_ascent_rhs(bindings, theory);
-        let param = &params[0]; // Assume single param for now
         
-        // Create bindings with param bound for body evaluation
-        // This is a simplification - full implementation needs proper scoping
-        let body_expr = body.to_ascent_rhs(bindings, theory);
+        // Determine if source collection is Vec or HashBag
+        // For now, check if collection is a Pattern::Collection with coll_type
+        let is_vec = matches!(collection, Pattern::Collection { coll_type: Some(CollectionType::Vec), .. });
         
-        quote! {
-            {
-                let mut result = mettail_runtime::HashBag::new();
-                for (#param, _count) in (#coll_expr).iter() {
-                    let mapped = #body_expr;
-                    result.insert(mapped);
+        if params.len() == 1 {
+            // Single param: xs.#map(|x| body)
+            let param = &params[0];
+            let param_name = param.to_string();
+            
+            // Create extended bindings with param bound to iteration variable
+            let mut body_bindings = bindings.clone();
+            body_bindings.insert(param_name, quote! { __elem });
+            
+            let body_expr = body.to_ascent_rhs(&body_bindings, theory);
+            
+            if is_vec {
+                quote! {
+                    {
+                        let __coll = #coll_expr;
+                        let mut __result = Vec::new();
+                        for __elem in __coll.iter() {
+                            let __mapped = #body_expr;
+                            __result.push(__mapped);
+                        }
+                        __result
+                    }
                 }
-                result
+            } else {
+                quote! {
+                    {
+                        let __coll = #coll_expr;
+                        let mut __result = mettail_runtime::HashBag::new();
+                        for (__elem, __count) in __coll.iter() {
+                            let __mapped = #body_expr;
+                            for _ in 0..__count {
+                                __result.insert(__mapped.clone());
+                            }
+                        }
+                        __result
+                    }
+                }
             }
+        } else if params.len() == 2 {
+            // Two params: typically from zip - (xs, ys).#map(|x, y| body)
+            let param0 = &params[0];
+            let param1 = &params[1];
+            
+            // Create extended bindings
+            let mut body_bindings = bindings.clone();
+            body_bindings.insert(param0.to_string(), quote! { __elem.0 });
+            body_bindings.insert(param1.to_string(), quote! { __elem.1 });
+            
+            let body_expr = body.to_ascent_rhs(&body_bindings, theory);
+            
+            // When mapping over zipped pairs, always produce Vec
+            quote! {
+                {
+                    let __coll = #coll_expr;
+                    let mut __result = Vec::new();
+                    for __elem in __coll.iter() {
+                        let __mapped = #body_expr;
+                        __result.push(__mapped);
+                    }
+                    __result
+                }
+            }
+        } else {
+            // More than 2 params - not yet supported
+            quote! { compile_error!("Map with more than 2 params not yet supported") }
         }
     }
     
     fn generate_zip_rhs(
         &self,
-        _collections: &[Pattern],
-        _bindings: &HashMap<String, TokenStream>,
-        _theory: &TheoryDef,
+        first: &Pattern,
+        second: &Pattern,
+        bindings: &HashMap<String, TokenStream>,
+        theory: &TheoryDef,
     ) -> TokenStream {
         // Zip on RHS - pair-wise combination of collections
-        unimplemented!("Zip in RHS not yet implemented")
+        // #zip(xs, ys) produces Vec<(X, Y)>
+        let first_expr = first.to_ascent_rhs(bindings, theory);
+        let second_expr = second.to_ascent_rhs(bindings, theory);
+        
+        quote! {
+            {
+                let __first: Vec<_> = (#first_expr).iter().cloned().collect();
+                let __second: Vec<_> = (#second_expr).iter().cloned().collect();
+                __first.into_iter().zip(__second.into_iter()).collect::<Vec<_>>()
+            }
+        }
     }
 }
 
@@ -931,11 +1429,24 @@ impl PatternTerm {
                 let arg_exprs: Vec<_> = args.iter()
                     .enumerate()
                     .map(|(i, arg)| {
-                        let expr = arg.to_ascent_rhs(bindings, theory);
-                        
                         // Check if this arg needs Box wrapping
                         let needs_box = needs_box_for_field(rule, i, theory);
                         let is_collection = is_collection_field(rule, i);
+                        
+                        // For Collection args, pass the constructor for proper insert helper
+                        let expr = if is_collection {
+                            if let Pattern::Collection { coll_type, elements, rest } = arg {
+                                // Generate collection RHS with constructor context
+                                generate_collection_rhs_with_constructor(
+                                    coll_type.as_ref(), elements, rest.as_ref(),
+                                    Some(constructor), category, bindings, theory
+                                )
+                            } else {
+                                arg.to_ascent_rhs(bindings, theory)
+                            }
+                        } else {
+                            arg.to_ascent_rhs(bindings, theory)
+                        };
                         
                         if is_collection || !needs_box {
                             expr
@@ -1016,11 +1527,8 @@ impl PatternTerm {
             }
             
             PatternTerm::MultiSubst { scope, replacements } => {
-                // Multi-substitution
+                // Multi-substitution: (multisubst scope [r1, r2, ...]) or (multisubst scope coll.#map(...))
                 let scope_expr = scope.to_ascent_rhs(bindings, theory);
-                let repl_exprs: Vec<_> = replacements.iter()
-                    .map(|r| r.to_ascent_rhs(bindings, theory))
-                    .collect();
                 
                 // Determine category from first replacement
                 let repl_cat = replacements.first()
@@ -1029,13 +1537,60 @@ impl PatternTerm {
                     .unwrap_or_else(|| "unknown".to_string());
                 let subst_method = format_ident!("multi_substitute_{}", repl_cat);
                 
+                // Special case: single Map replacement produces the entire replacements list
+                // e.g., (multisubst scope qs.#map(|q| (NQuote q))) - the map result IS the repls
+                let repls_expr = if replacements.len() == 1 {
+                    if let Pattern::Map { collection, params, body } = &replacements[0] {
+                        // Generate a Vec from the Map, not a HashBag
+                        let coll_expr = collection.to_ascent_rhs(bindings, theory);
+                        if params.len() == 1 {
+                            let param_name = params[0].to_string();
+                            let mut body_bindings = bindings.clone();
+                            body_bindings.insert(param_name, quote! { __elem });
+                            let body_expr = body.to_ascent_rhs(&body_bindings, theory);
+                            
+                            quote! {
+                                {
+                                    let __map_coll = #coll_expr;
+                                    __map_coll.iter().map(|__elem| #body_expr).collect::<Vec<_>>()
+                                }
+                            }
+                        } else {
+                            // Multi-param map (from Zip) - handle tuple iteration
+                            let param0 = params[0].to_string();
+                            let param1 = params.get(1).map(|p| p.to_string()).unwrap_or_default();
+                            let mut body_bindings = bindings.clone();
+                            body_bindings.insert(param0, quote! { __elem.0 });
+                            body_bindings.insert(param1, quote! { __elem.1 });
+                            let body_expr = body.to_ascent_rhs(&body_bindings, theory);
+                            
+                            quote! {
+                                {
+                                    let __map_coll = #coll_expr;
+                                    __map_coll.iter().map(|__elem| #body_expr).collect::<Vec<_>>()
+                                }
+                            }
+                        }
+                    } else {
+                        // Single non-Map replacement - wrap in vec
+                        let expr = replacements[0].to_ascent_rhs(bindings, theory);
+                        quote! { vec![#expr] }
+                    }
+                } else {
+                    // Multiple replacements - collect into vec
+                    let repl_exprs: Vec<_> = replacements.iter()
+                        .map(|r| r.to_ascent_rhs(bindings, theory))
+                        .collect();
+                    quote! { vec![#(#repl_exprs),*] }
+                };
+                
                 quote! {
                     {
                         let (__binders, __body) = (#scope_expr).unbind();
                         let __vars: Vec<&mettail_runtime::FreeVar<String>> = __binders.iter()
                             .map(|b| &b.0)
                             .collect();
-                        let __repls = vec![#(#repl_exprs),*];
+                        let __repls = #repls_expr;
                         (*__body).#subst_method(&__vars, &__repls)
                     }
                 }
@@ -1177,162 +1732,5 @@ pub fn pattern_term_to_term(pt: &PatternTerm) -> Option<Term> {
                 replacements: r,
             })
         }
-    }
-}
-
-// ============================================================================
-// Backwards compatibility aliases (to be removed after migration)
-// ============================================================================
-
-/// Type alias for backwards compatibility
-pub type LhsPattern = Pattern;
-
-/// Alias for Collection variant (backwards compatibility)
-impl Pattern {
-    /// Create a CollectionMatch pattern (backwards compatibility name)
-    pub fn collection_match(
-        constructor: Option<Ident>,
-        elements: Vec<Pattern>,
-        rest: Option<Ident>,
-    ) -> Self {
-        Pattern::Collection { constructor, elements, rest }
-    }
-}
-
-// ============================================================================
-// Tests
-// ============================================================================
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use quote::format_ident;
-    
-    #[test]
-    fn test_pattern_term_var_free_vars() {
-        let pt = PatternTerm::Var(format_ident!("x"));
-        let vars = pt.free_vars();
-        assert!(vars.contains("x"));
-        assert_eq!(vars.len(), 1);
-    }
-    
-    #[test]
-    fn test_pattern_term_lambda_free_vars() {
-        // \x. (App x y) - x is bound, y is free
-        let pt = PatternTerm::Lambda {
-            binder: format_ident!("x"),
-            body: Box::new(Pattern::Term(PatternTerm::Apply {
-                constructor: format_ident!("App"),
-                args: vec![
-                    Pattern::Term(PatternTerm::Var(format_ident!("x"))),
-                    Pattern::Term(PatternTerm::Var(format_ident!("y"))),
-                ],
-            })),
-        };
-        let vars = pt.free_vars();
-        assert!(!vars.contains("x"), "x should be bound");
-        assert!(vars.contains("y"), "y should be free");
-    }
-    
-    #[test]
-    fn test_pattern_collection_free_vars() {
-        // {P, Q, ...rest}
-        let p = Pattern::Collection {
-            constructor: Some(format_ident!("PPar")),
-            elements: vec![
-                Pattern::Term(PatternTerm::Var(format_ident!("P"))),
-                Pattern::Term(PatternTerm::Var(format_ident!("Q"))),
-            ],
-            rest: Some(format_ident!("rest")),
-        };
-        let vars = p.free_vars();
-        assert!(vars.contains("P"));
-        assert!(vars.contains("Q"));
-        assert!(vars.contains("rest"));
-    }
-    
-    #[test]
-    fn test_pattern_map_free_vars() {
-        // xs.#map(|x| (F x y)) - xs and y are free, x is bound by map
-        let p = Pattern::Map {
-            collection: Box::new(Pattern::Term(PatternTerm::Var(format_ident!("xs")))),
-            params: vec![format_ident!("x")],
-            body: Box::new(Pattern::Term(PatternTerm::Apply {
-                constructor: format_ident!("F"),
-                args: vec![
-                    Pattern::Term(PatternTerm::Var(format_ident!("x"))),
-                    Pattern::Term(PatternTerm::Var(format_ident!("y"))),
-                ],
-            })),
-        };
-        let vars = p.free_vars();
-        assert!(vars.contains("xs"), "xs should be free");
-        assert!(vars.contains("y"), "y should be free");
-        assert!(!vars.contains("x"), "x should be bound by map params");
-    }
-    
-    #[test]
-    fn test_has_metasyntax() {
-        // Simple term - no metasyntax
-        let simple = Pattern::Term(PatternTerm::Var(format_ident!("x")));
-        assert!(!simple.has_metasyntax());
-        
-        // Collection - has metasyntax
-        let collection = Pattern::Collection {
-            constructor: None,
-            elements: vec![],
-            rest: None,
-        };
-        assert!(collection.has_metasyntax());
-        
-        // Map - has metasyntax
-        let map = Pattern::Map {
-            collection: Box::new(Pattern::Term(PatternTerm::Var(format_ident!("xs")))),
-            params: vec![format_ident!("x")],
-            body: Box::new(Pattern::Term(PatternTerm::Var(format_ident!("x")))),
-        };
-        assert!(map.has_metasyntax());
-        
-        // Term containing Map in args - has metasyntax
-        let nested = Pattern::Term(PatternTerm::Apply {
-            constructor: format_ident!("App"),
-            args: vec![map.clone()],
-        });
-        assert!(nested.has_metasyntax());
-    }
-    
-    #[test]
-    fn test_term_to_pattern_roundtrip() {
-        // Create a simple Term
-        let term = Term::Apply {
-            constructor: format_ident!("Add"),
-            args: vec![
-                Term::Var(format_ident!("x")),
-                Term::Var(format_ident!("y")),
-            ],
-        };
-        
-        // Convert to Pattern and back
-        let pattern = term_to_pattern(&term);
-        let back = pattern_to_term(&pattern);
-        
-        assert!(back.is_some());
-        if let Some(Term::Apply { constructor, args }) = back {
-            assert_eq!(constructor.to_string(), "Add");
-            assert_eq!(args.len(), 2);
-        } else {
-            panic!("Expected Apply");
-        }
-    }
-    
-    #[test]
-    fn test_pattern_to_term_fails_with_metasyntax() {
-        let pattern = Pattern::Collection {
-            constructor: Some(format_ident!("PPar")),
-            elements: vec![Pattern::Term(PatternTerm::Var(format_ident!("P")))],
-            rest: Some(format_ident!("rest")),
-        };
-        
-        assert!(pattern_to_term(&pattern).is_none());
     }
 }

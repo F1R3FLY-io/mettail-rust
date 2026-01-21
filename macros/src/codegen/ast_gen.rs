@@ -97,10 +97,10 @@ fn generate_ast_enums(theory: &TheoryDef) -> TokenStream {
         // Auto-generate Var variant for ALL categories (including native types)
         // Variables are needed even for native types to support env_var queries
         if !has_var_rule {
-            let var_label = generate_var_label(cat_name);
-            variants.push(quote! {
-                #var_label(mettail_runtime::OrdVar)
-            });
+                let var_label = generate_var_label(cat_name);
+                variants.push(quote! {
+                    #var_label(mettail_runtime::OrdVar)
+                });
         }
 
         quote! {
@@ -1461,12 +1461,12 @@ fn extract_category_from_rewrite_internal(
 ) -> Option<proc_macro2::Ident> {
     // Try to extract category from LHS pattern
     if let Some(constructor) = rewrite.left.constructor_name() {
-        // Find the rule with this constructor
-        theory
-            .terms
-            .iter()
+            // Find the rule with this constructor
+            theory
+                .terms
+                .iter()
             .find(|r| &r.label == constructor)
-            .map(|rule| rule.category.clone())
+                .map(|rule| rule.category.clone())
     } else {
         None
     }

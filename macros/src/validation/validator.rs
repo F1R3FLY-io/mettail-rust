@@ -110,36 +110,17 @@ pub fn validate_theory(theory: &TheoryDef) -> Result<(), ValidationError> {
 fn validate_pattern(pattern: &Pattern, theory: &TheoryDef) -> Result<(), ValidationError> {
     match pattern {
         Pattern::Term(pt) => validate_pattern_term(pt, theory),
-        Pattern::Collection { constructor, elements, rest: _ } => {
+        Pattern::Collection { elements, .. } => {
             // Validate collection pattern
-            // 1. If constructor is specified, verify it's a known collection type
-            if let Some(cons) = constructor {
-                let rule = theory
-                    .terms
-                    .iter()
-                    .find(|r| r.label == *cons)
-                    .ok_or_else(|| ValidationError::UnknownConstructor {
-                        name: cons.to_string(),
-                        span: cons.span(),
-                    })?;
-
-                // Check that this constructor has a collection field
-                let has_collection = rule
-                    .items
-                    .iter()
-                    .any(|item| matches!(item, GrammarItem::Collection { .. }));
-
-                if !has_collection {
-                    // For now, just accept it - validation will happen later
-                }
-            }
-
-            // 2. Recursively validate element patterns
+            // NOTE: Collections no longer have constructors - they get context from
+            // the enclosing PatternTerm::Apply. Validation of collection type
+            // compatibility happens when we process the parent Apply.
+            
+            // Recursively validate element patterns
             for elem in elements {
                 validate_pattern(elem, theory)?;
             }
 
-            // 3. Rest variable doesn't need special validation here
             Ok(())
         }
         Pattern::Map { collection, body, .. } => {
@@ -147,10 +128,9 @@ fn validate_pattern(pattern: &Pattern, theory: &TheoryDef) -> Result<(), Validat
             validate_pattern(body, theory)?;
             Ok(())
         }
-        Pattern::Zip { collections } => {
-            for coll in collections {
-                validate_pattern(coll, theory)?;
-            }
+        Pattern::Zip { first, second } => {
+            validate_pattern(first, theory)?;
+            validate_pattern(second, theory)?;
             Ok(())
         }
     }
@@ -400,10 +380,9 @@ fn collect_pattern_vars(pattern: &Pattern, vars: &mut HashSet<String>) {
             }
             vars.extend(body_vars);
         }
-        Pattern::Zip { collections } => {
-            for coll in collections {
-                collect_pattern_vars(coll, vars);
-            }
+        Pattern::Zip { first, second } => {
+            collect_pattern_vars(first, vars);
+            collect_pattern_vars(second, vars);
         }
     }
 }

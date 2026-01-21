@@ -527,6 +527,9 @@ impl Repl {
             ExampleCategory::Advanced,
             ExampleCategory::Performance,
             ExampleCategory::EdgeCase,
+            ExampleCategory::MultiComm,
+            ExampleCategory::Mobility,
+            ExampleCategory::Security,
         ] {
             let examples = Example::by_theory_and_category(*theory_name, category);
             if !examples.is_empty() {

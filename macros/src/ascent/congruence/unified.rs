@@ -86,25 +86,9 @@ fn find_rewrite_context(
     theory: &TheoryDef,
 ) -> Option<RewriteContext> {
     match pattern {
-        Pattern::Collection { constructor, elements, rest } => {
-            // Check if source_var appears in elements
-            for elem in elements {
-                if let Pattern::Term(PatternTerm::Var(v)) = elem {
-                    if v == source_var {
-                        let cons = constructor.as_ref()?;
-                        let category = theory.category_of_constructor(cons)?.clone();
-                        let elem_cat = theory.collection_element_type(cons)?.clone();
-                        return Some(RewriteContext::Collection {
-                            category,
-                            constructor: cons.clone(),
-                            element_category: elem_cat,
-                            has_rest: rest.is_some(),
-                        });
-                    }
-                }
-            }
-            None
-        }
+        // Collections no longer have constructors - they're always inside an Apply
+        // that provides the context. Top-level Collection patterns can't determine context.
+        Pattern::Collection { .. } => None,
         Pattern::Term(pt) => find_rewrite_context_in_term(pt, source_var, theory),
         _ => None,
     }

@@ -275,7 +275,7 @@ fn parse_type_atom(input: ParseStream) -> SynResult<TypeExpr> {
 
     // Check for arrow type: [Domain -> Codomain]
     if input.peek(syn::token::Bracket) {
-        let content;
+    let content;
         syn::bracketed!(content in input);
 
         // Parse domain (which may itself be a bracketed type or include *)

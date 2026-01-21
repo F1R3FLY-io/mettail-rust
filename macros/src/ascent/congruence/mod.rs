@@ -24,7 +24,9 @@ pub fn contains_collection_pattern(pattern: &Pattern) -> bool {
         Pattern::Map { collection, body, .. } => {
             contains_collection_pattern(collection) || contains_collection_pattern(body)
         }
-        Pattern::Zip { collections } => collections.iter().any(contains_collection_pattern),
+        Pattern::Zip { first, second } => {
+            contains_collection_pattern(first) || contains_collection_pattern(second)
+        }
     }
 }
 
@@ -40,9 +42,9 @@ fn contains_collection_in_pattern_term(pt: &crate::ast::pattern::PatternTerm) ->
         }
         PatternTerm::MultiSubst { scope, replacements } => {
             contains_collection_pattern(scope) || replacements.iter().any(contains_collection_pattern)
+            }
         }
     }
-}
 
 /// Generate all explicit congruence rules for a theory
 ///
