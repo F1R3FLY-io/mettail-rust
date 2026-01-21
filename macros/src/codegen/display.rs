@@ -71,6 +71,68 @@ fn generate_display_impl(
         }
     }
 
+    // Generate display arms for auto-generated lambda variants
+    for domain_export in &theory.exports {
+        // Skip native types
+        if domain_export.native_type.is_some() {
+            continue;
+        }
+        
+        let domain_name = &domain_export.name;
+        
+        // Single-binder lambda: Lam{Domain}
+        let lam_variant = syn::Ident::new(
+            &format!("Lam{}", domain_name),
+            proc_macro2::Span::call_site()
+        );
+        match_arms.push(quote! {
+            #category::#lam_variant(scope) => {
+                let (binder, body) = scope.clone().unbind();
+                let var_name = binder.0.pretty_name.as_deref().unwrap_or("?");
+                write!(f, "^{}.{{{}}}", var_name, body)
+            }
+        });
+        
+        // Multi-binder lambda: MLam{Domain}
+        let mlam_variant = syn::Ident::new(
+            &format!("MLam{}", domain_name),
+            proc_macro2::Span::call_site()
+        );
+        match_arms.push(quote! {
+            #category::#mlam_variant(scope) => {
+                let (binders, body) = scope.clone().unbind();
+                let names: Vec<_> = binders.iter()
+                    .map(|b| b.0.pretty_name.as_deref().unwrap_or("?").to_string())
+                    .collect();
+                write!(f, "^[{}].{{{}}}", names.join(","), body)
+            }
+        });
+        
+        // Application: Apply{Domain} - display as $domain(lam, arg)
+        let apply_variant = syn::Ident::new(
+            &format!("Apply{}", domain_name),
+            proc_macro2::Span::call_site()
+        );
+        let domain_lower = domain_name.to_string().to_lowercase();
+        match_arms.push(quote! {
+            #category::#apply_variant(lam, arg) => {
+                write!(f, "${}({}, {})", #domain_lower, lam, arg)
+            }
+        });
+        
+        // Multi-application: MApply{Domain} - display as $$domain(lam, args...)
+        let mapply_variant = syn::Ident::new(
+            &format!("MApply{}", domain_name),
+            proc_macro2::Span::call_site()
+        );
+        match_arms.push(quote! {
+            #category::#mapply_variant(lam, args) => {
+                let arg_strs: Vec<_> = args.iter().map(|a| a.to_string()).collect();
+                write!(f, "$${}({}, {})", #domain_lower, lam, arg_strs.join(", "))
+            }
+        });
+    }
+
     quote! {
         impl std::fmt::Display for #category {
             fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {

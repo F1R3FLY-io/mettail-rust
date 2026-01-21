@@ -1,6 +1,7 @@
 use crate::examples::TheoryName;
 use crate::theory::{AscentResults, Rewrite, Term, TermInfo, Theory};
 use anyhow::Result;
+use std::any::Any;
 use std::cell::RefCell;
 use std::fmt;
 
@@ -129,6 +130,16 @@ impl Theory for CalculatorTheory {
         }
     }
 
+    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>> {
+        // Calculator already handles env differently; just parse without clearing cache
+        let trimmed = input.trim();
+        let parser = calculator::IntParser::new();
+        let expr = parser
+            .parse(trimmed)
+            .map_err(|e| anyhow::anyhow!("Parse error: {:?}", e))?;
+        Ok(Box::new(CalcTerm(expr)))
+    }
+
     fn run_ascent(&self, term: Box<dyn Term>) -> Result<AscentResults> {
         use ascent::*;
 
@@ -202,7 +213,68 @@ impl Theory for CalculatorTheory {
             format!("{}", term)
         }
     }
+    
+    // === Environment Support ===
+    // Calculator uses its own CalculatorEnv (native i32 values, not AST terms)
+    // These methods bridge to the existing thread-local environment
+    
+    fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+        // Calculator uses thread-local env, so we return a marker
+        Box::new(CalculatorEnvMarker)
+    }
+    
+    fn add_to_env(&self, _env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<()> {
+        let calc_term = term
+            .as_any()
+            .downcast_ref::<CalcTerm>()
+            .ok_or_else(|| anyhow::anyhow!("Expected CalcTerm"))?;
+        
+        // Try to evaluate the term to get an i32 value
+        let value = std::panic::catch_unwind(|| calc_term.0.eval())
+            .map_err(|_| anyhow::anyhow!("Cannot add term with undefined variables to environment"))?;
+        
+        CALC_ENV.with(|env| {
+            env.borrow_mut().set(name.to_string(), value);
+        });
+        
+        Ok(())
+    }
+    
+    fn remove_from_env(&self, _env: &mut dyn Any, name: &str) -> Result<bool> {
+        CALC_ENV.with(|env| {
+            Ok(env.borrow_mut().remove(name).is_some())
+        })
+    }
+    
+    fn clear_env(&self, _env: &mut dyn Any) {
+        CALC_ENV.with(|env| {
+            env.borrow_mut().clear();
+        });
+    }
+    
+    fn substitute_env(&self, term: &dyn Term, _env: &dyn Any) -> Result<Box<dyn Term>> {
+        // Calculator handles env substitution via Ascent rules, not pre-substitution
+        // Just return the term as-is; Ascent will handle variable substitution
+        Ok(term.clone_box())
+    }
+    
+    fn list_env(&self, _env: &dyn Any) -> Vec<(String, String)> {
+        CALC_ENV.with(|env| {
+            env.borrow()
+                .iter()
+                .map(|(name, value)| (name.clone(), format!("{}", value)))
+                .collect()
+        })
+    }
+    
+    fn is_env_empty(&self, _env: &dyn Any) -> bool {
+        CALC_ENV.with(|env| env.borrow().is_empty())
+    }
 }
+
+/// Marker type for calculator's thread-local environment
+#[derive(Clone)]
+struct CalculatorEnvMarker;
 
 /// Wrapper for Int AST that implements Term
 #[derive(Clone)]

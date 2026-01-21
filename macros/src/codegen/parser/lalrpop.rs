@@ -94,7 +94,13 @@ pub fn generate_lalrpop_grammar(theory: &TheoryDef) -> String {
     // Import the AST types from the crate where the theory is defined
     // When used in test modules, this will be super::{...}
     // When used in library modules, LALRPOP will handle the paths correctly
-    let type_names: Vec<String> = theory.exports.iter().map(|e| e.name.to_string()).collect();
+    let mut type_names: Vec<String> = theory.exports.iter().map(|e| e.name.to_string()).collect();
+    
+    // Add VarCategory for lambda type inference (only if there are non-native exports)
+    let has_non_native_exports = theory.exports.iter().any(|e| e.native_type.is_none());
+    if has_non_native_exports {
+        type_names.push("VarCategory".to_string());
+    }
 
     if !type_names.is_empty() {
         grammar.push_str(&format!("use super::{{{}}};\n", type_names.join(", ")));
@@ -104,6 +110,14 @@ pub fn generate_lalrpop_grammar(theory: &TheoryDef) -> String {
 
     // Add grammar directive
     grammar.push_str("grammar;\n\n");
+
+    // Add Comma helper macro for comma-separated lists
+    grammar.push_str("Comma<T>: Vec<T> = {\n");
+    grammar.push_str("    <mut v:(<T> \",\")*> <e:T?> => match e {\n");
+    grammar.push_str("        None => v,\n");
+    grammar.push_str("        Some(e) => { v.push(e); v }\n");
+    grammar.push_str("    }\n");
+    grammar.push_str("};\n\n");
 
     // Add identifier token definition (needed for binders and variables)
     grammar.push_str("Ident: String = {\n");
@@ -1469,6 +1483,102 @@ fn generate_auto_alternatives(
             "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))",
             cat_str, var_label
         ));
+        needs_comma = true;
+    }
+    
+    // Auto-generate lambda alternatives
+    // ONLY for the FIRST (primary) exported category to avoid grammar ambiguity
+    // Other categories can still have lambda VARIANTS but no parser rules
+    let first_export = theory.exports.iter()
+        .find(|e| e.native_type.is_none())
+        .map(|e| &e.name);
+    
+    // Only add lambda parser rules if this is the primary category
+    let is_primary_category = first_export.map(|f| f == category).unwrap_or(false);
+    
+    if is_primary_category {
+        // Get all non-native categories for the match arms
+        let domain_cats: Vec<_> = theory.exports.iter()
+            .filter(|e| e.native_type.is_none())
+            .map(|e| &e.name)
+            .collect();
+        
+        if !domain_cats.is_empty() {
+            if needs_comma {
+                result.push_str(",\n");
+            }
+            
+            // Generate match arms for each possible domain category
+            let match_arms: String = domain_cats.iter().map(|domain| {
+                format!(
+                    "            Some(VarCategory::{}) => {}::Lam{}(mettail_runtime::Scope::new(binder, Box::new(body))),\n",
+                    domain, cat_str, domain
+                )
+            }).collect();
+            
+            // Single-binder lambda: ^x.{body} with type inference
+            result.push_str(&format!(
+                r#"    "^" <x:Ident> "." "{{" <body:{}> "}}" => {{
+        let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(x.clone()));
+        // Infer binder type from usage in body
+        match body.infer_var_category(&x) {{
+{}            None => panic!("Lambda binder '{{}}' not used in body", x),
+        }}
+    }}"#,
+                cat_str, match_arms
+            ));
+            
+            // Generate match arms for multi-lambda
+            let multi_match_arms: String = domain_cats.iter().map(|domain| {
+                format!(
+                    "            Some(VarCategory::{}) => {}::MLam{}(mettail_runtime::Scope::new(binders, Box::new(body))),\n",
+                    domain, cat_str, domain
+                )
+            }).collect();
+            
+            // Multi-binder lambda: ^[x,y,z].{body}
+            result.push_str(",\n");
+            result.push_str(&format!(
+                r#"    "^" "[" <xs:Comma<Ident>> "]" "." "{{" <body:{}> "}}" => {{
+        let binder_names: Vec<_> = xs.clone();
+        let binders: Vec<_> = xs.into_iter()
+            .map(|x| mettail_runtime::Binder(mettail_runtime::get_or_create_var(x)))
+            .collect();
+        // Infer binder type from first binder's usage in body
+        let first_binder = binder_names.first().expect("Multi-lambda needs at least one binder");
+        match body.infer_var_category(first_binder) {{
+{}            None => panic!("Lambda binder '{{}}' not used in body", first_binder),
+        }}
+    }}"#,
+                cat_str, multi_match_arms
+            ));
+            
+            // Lambda application: $Domain(lam, arg) - explicit typed application syntax
+            // Uses $ prefix with domain type to avoid grammar ambiguity
+            // Beta reduction happens during Ascent evaluation
+            for domain in &domain_cats {
+                let domain_lower = domain.to_string().to_lowercase();
+                result.push_str(",\n");
+                result.push_str(&format!(
+                    r#"    "${}" "(" <lam:{}> "," <arg:{}> ")" => {{
+        {}::Apply{}(Box::new(lam), Box::new(arg))
+    }}"#,
+                    domain_lower, cat_str, domain, cat_str, domain
+                ));
+            }
+            
+            // Multi-lambda application: $$Domain(mlam, arg1, arg2, ...)
+            for domain in &domain_cats {
+                let domain_lower = domain.to_string().to_lowercase();
+                result.push_str(",\n");
+                result.push_str(&format!(
+                    r#"    "$${}(" <lam:{}> "," <args:Comma<{}>> ")" => {{
+        {}::MApply{}(Box::new(lam), args)
+    }}"#,
+                    domain_lower, cat_str, domain, cat_str, domain
+                ));
+            }
+        }
     }
     
     result

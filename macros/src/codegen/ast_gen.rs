@@ -1,6 +1,6 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use super::{display, generate_var_label, is_integer_rule, is_var_rule, subst, termgen};
+use super::{display, env, generate_var_label, is_integer_rule, is_var_rule, subst, termgen};
 use crate::ast::{theory::{TheoryDef, Export, SemanticOperation, BuiltinOp, Condition, EnvAction, RewriteRule}, grammar::{GrammarItem, GrammarRule, TermParam}, types::{TypeExpr, CollectionType}, term::Term};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -11,12 +11,14 @@ pub fn generate_ast(theory: &TheoryDef) -> TokenStream {
     let flatten_helpers = generate_flatten_helpers(theory);
     let normalize_impl = generate_normalize_functions(theory);
     let subst_impl = subst::generate_substitution(theory);
+    let env_types = env::generate_environments(theory);
+    let env_subst_impl = subst::generate_env_substitution(theory);
     let display_impl = display::generate_display(theory);
     let generation_impl = termgen::generate_term_generation(theory);
     let random_gen_impl = termgen::generate_random_generation(theory);
     let eval_impl = generate_eval_method(theory);
     let rewrite_impl = generate_rewrite_application(theory);
-    let env_impl = generate_env_infrastructure(theory);
+    let var_inference_impl = generate_var_category_inference(theory);
 
     // Generate LALRPOP module reference
     let theory_name = &theory.name;
@@ -34,6 +36,10 @@ pub fn generate_ast(theory: &TheoryDef) -> TokenStream {
 
         #subst_impl
 
+        #env_types
+
+        #env_subst_impl
+
         #display_impl
 
         #generation_impl
@@ -44,7 +50,7 @@ pub fn generate_ast(theory: &TheoryDef) -> TokenStream {
 
         #rewrite_impl
 
-        #env_impl
+        #var_inference_impl
 
         #[cfg(not(test))]
         #[allow(unused_imports)]
@@ -75,9 +81,8 @@ fn generate_ast_enums(theory: &TheoryDef) -> TokenStream {
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
-        // Check for existing rules
-        let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
         let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+        let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
 
         let mut variants: Vec<TokenStream> = rules.iter().map(|rule| {
             generate_variant(rule, theory)
@@ -94,13 +99,60 @@ fn generate_ast_enums(theory: &TheoryDef) -> TokenStream {
             }
         }
 
-        // Auto-generate Var variant for ALL categories (including native types)
-        // Variables are needed even for native types to support env_var queries
+        // Auto-generate Var variant if no explicit Var rule exists
         if !has_var_rule {
-                let var_label = generate_var_label(cat_name);
-                variants.push(quote! {
-                    #var_label(mettail_runtime::OrdVar)
-                });
+            let var_label = generate_var_label(cat_name);
+            variants.push(quote! {
+                #var_label(mettail_runtime::OrdVar)
+            });
+        }
+
+        // Auto-generate lambda variants for every domain category
+        // This creates Lam{Domain} and MLam{Domain} for each domain type
+        for domain_export in &theory.exports {
+            // Skip native types (e.g., Int) - can't use as lambda binder
+            if domain_export.native_type.is_some() {
+                continue;
+            }
+            
+            let domain_name = &domain_export.name;
+            
+            // Single-binder lambda: Lam{Domain}
+            let lam_variant = syn::Ident::new(
+                &format!("Lam{}", domain_name),
+                proc_macro2::Span::call_site()
+            );
+            variants.push(quote! {
+                #lam_variant(mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#cat_name>>)
+            });
+            
+            // Multi-binder lambda: MLam{Domain}
+            let mlam_variant = syn::Ident::new(
+                &format!("MLam{}", domain_name),
+                proc_macro2::Span::call_site()
+            );
+            variants.push(quote! {
+                #mlam_variant(mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#cat_name>>)
+            });
+            
+            // Application variant: Apply{Domain}
+            // Represents unevaluated application of a lambda to an argument
+            let apply_variant = syn::Ident::new(
+                &format!("Apply{}", domain_name),
+                proc_macro2::Span::call_site()
+            );
+            variants.push(quote! {
+                #apply_variant(Box<#cat_name>, Box<#domain_name>)
+            });
+            
+            // Multi-application variant: MApply{Domain}
+            let mapply_variant = syn::Ident::new(
+                &format!("MApply{}", domain_name),
+                proc_macro2::Span::call_site()
+            );
+            variants.push(quote! {
+                #mapply_variant(Box<#cat_name>, Vec<#domain_name>)
+            });
         }
 
         quote! {
@@ -730,7 +782,6 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
         
         // Check for existing rules
         let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
-        let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
         
         // Add arm for auto-generated NumLit if no explicit Integer rule
         if !has_integer_rule {
@@ -741,16 +792,14 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
         }
         
         // Add arm for auto-generated Var variant if no explicit Var rule
-        if !has_var_rule {
-            let var_label = super::generate_var_label(category);
-            let panic_msg = format!(
-                "Cannot evaluate {} - variables must be substituted via rewrites first",
-                var_label
-            );
-            match_arms.push(quote! {
-                #category::#var_label(_) => loop { panic!(#panic_msg) },
-            });
-        }
+        let var_label = super::generate_var_label(category);
+        let panic_msg = format!(
+            "Cannot evaluate {} - variables must be substituted via rewrites first",
+            var_label
+        );
+        match_arms.push(quote! {
+            #category::#var_label(_) => loop { panic!(#panic_msg) },
+        });
 
         for rule in &rules {
             let label = &rule.label;
@@ -760,17 +809,6 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
             if is_integer_rule(rule) {
                 match_arms.push(quote! {
                     #category::#label(n) => *n,
-                });
-            }
-            // Check if this is a Var rule (VarRef, etc.)
-            else if is_var_rule(rule) {
-                // Use loop { panic!() } idiom for proper `!` type handling in quote!
-                let panic_msg = format!(
-                    "Cannot evaluate {} - variables must be substituted via rewrites first",
-                    label
-                );
-                match_arms.push(quote! {
-                    #category::#label(_) => loop { panic!(#panic_msg) },
                 });
             }
             // Check if this has semantics (operator)
@@ -1085,374 +1123,6 @@ fn generate_rewrite_application(theory: &TheoryDef) -> TokenStream {
     }
 }
 
-/// Generate environment infrastructure for theories with env_var conditions
-///
-/// This generates:
-/// - Environment struct (e.g., CalculatorEnv)
-/// - Environment methods (new, set, get, clear)
-/// - env_to_facts helper function
-/// - rewrite_to_normal_form helper function
-fn generate_env_infrastructure(theory: &TheoryDef) -> TokenStream {
-    use quote::format_ident;
-    use std::collections::HashSet;
-
-    // Check if any rewrite uses env_var conditions OR env_actions
-    let mut env_info = Vec::new();
-    let mut seen_relations = HashSet::new();
-    let mut has_env_actions = false;
-
-    for rewrite in &theory.rewrites {
-        // Check for env_actions (fact creation)
-        if !rewrite.env_actions.is_empty() {
-            has_env_actions = true;
-        }
-
-        for condition in &rewrite.conditions {
-            if let Condition::EnvQuery { relation, args } = condition {
-                if args.len() >= 2 {
-                    let rel_name = relation.to_string();
-
-                    // Avoid duplicates
-                    if seen_relations.contains(&rel_name) {
-                        continue;
-                    }
-                    seen_relations.insert(rel_name.clone());
-
-                    // Extract category and native type from the rewrite
-                    let category = extract_category_from_rewrite_internal(rewrite, theory);
-                    if let Some(category) = category {
-                        if let Some(export) = theory.exports.iter().find(|e| e.name == category) {
-                            if let Some(native_type) = &export.native_type {
-                                env_info.push((
-                                    category.clone(),
-                                    native_type.clone(),
-                                    relation.clone(),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Also check env_actions for relations
-    if has_env_actions {
-        for rewrite in &theory.rewrites {
-            for action in &rewrite.env_actions {
-                let EnvAction::CreateFact { relation, .. } = action;
-                let rel_name = relation.to_string();
-                if !seen_relations.contains(&rel_name) {
-                    seen_relations.insert(rel_name.clone());
-                    // Extract category and native type from the rewrite
-                    let category = extract_category_from_rewrite_internal(rewrite, theory);
-                    if let Some(category) = category {
-                        if let Some(export) = theory.exports.iter().find(|e| e.name == category) {
-                            if let Some(native_type) = &export.native_type {
-                                env_info.push((
-                                    category.clone(),
-                                    native_type.clone(),
-                                    relation.clone(),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if env_info.is_empty() {
-        return quote! {};
-    }
-
-    // Generate environment infrastructure for each (category, native_type, relation) tuple
-    // Currently we only support one env relation per theory, but the structure allows extension
-    let mut env_structs = Vec::new();
-
-    for (category, native_type, relation) in &env_info {
-        let theory_name = &theory.name;
-        let env_name = format_ident!("{}Env", theory_name);
-        let theory_name_lower = theory_name.to_string().to_lowercase();
-        let source_name = format_ident!("{}_source", theory_name_lower);
-        let cat_lower = category.to_string().to_lowercase();
-        let rw_rel = format_ident!("rw_{}", cat_lower);
-        let cat_rel = format_ident!("{}", cat_lower);
-        let category_clone = category.clone();
-        let native_type_clone = native_type.clone();
-        let relation_clone = relation.clone();
-
-        env_structs.push(quote! {
-            use std::collections::HashMap;
-
-            /// Environment for storing variable bindings
-            #[derive(Debug, Clone)]
-            pub struct #env_name {
-                vars: HashMap<String, #native_type_clone>,
-            }
-
-            impl #env_name {
-                /// Create a new empty environment
-                pub fn new() -> Self {
-                    #env_name {
-                        vars: HashMap::new(),
-                    }
-                }
-
-                /// Store a variable binding
-                pub fn set(&mut self, name: String, value: #native_type_clone) {
-                    self.vars.insert(name, value);
-                }
-
-                /// Look up a variable value
-                pub fn get(&self, name: &str) -> Option<#native_type_clone> {
-                    self.vars.get(name).copied()
-                }
-
-                /// Clear all bindings
-                pub fn clear(&mut self) {
-                    self.vars.clear();
-                }
-            }
-
-            impl Default for #env_name {
-                fn default() -> Self {
-                    Self::new()
-                }
-            }
-
-            /// Convert environment to Ascent input facts
-            /// Returns a vector of (variable_name, value) tuples for the #relation_clone relation
-            pub fn env_to_facts(env: &#env_name) -> Vec<(String, #native_type_clone)> {
-                env.vars.iter().map(|(name, val)| (name.clone(), *val)).collect()
-            }
-
-            /// Use Ascent to rewrite a term to normal form with environment
-            pub fn rewrite_to_normal_form(term: #category_clone, env: &#env_name) -> Result<#category_clone, String> {
-                use ascent::*;
-
-                let env_facts = env_to_facts(env);
-
-                // Run Ascent - seed #relation facts using a rule that iterates over the collection
-                let prog = ascent_run! {
-                    include_source!(#source_name);
-
-                    #cat_rel(term.clone());
-
-                    // Seed environment facts from the vector
-                    #relation_clone(n.clone(), v) <-- for (n, v) in env_facts.clone();
-                };
-
-                // Find normal form (term with no outgoing rewrites)
-                let rewrites: Vec<(#category_clone, #category_clone)> = prog.#rw_rel
-                    .iter()
-                    .map(|(from, to)| (from.clone(), to.clone()))
-                    .collect();
-
-                // Start from initial term and follow rewrite chain to normal form
-                let mut current = term;
-                loop {
-                    // Find rewrite from current term
-                    if let Some((_, next)) = rewrites.iter().find(|(from, _)| from == &current) {
-                        current = next.clone();
-                    } else {
-                        // No more rewrites - this is the normal form
-                        break;
-                    }
-                }
-
-                Ok(current)
-            }
-        });
-    }
-
-    // Generate parse_and_eval_with_env function
-    // This function handles parsing, rewriting, and value extraction automatically
-    let mut parse_eval_functions = Vec::new();
-    for (category, native_type, _relation) in &env_info {
-        let theory_name = &theory.name;
-        let theory_name_lower = theory_name.to_string().to_lowercase();
-        let parser_mod = format_ident!("{}", theory_name_lower);
-        let cat_parser = format_ident!("{}Parser", category);
-        let env_name = format_ident!("{}Env", theory_name);
-
-        // Find assignment-like constructors (Var + recursive category)
-        let assignment_constructors: Vec<_> = theory
-            .terms
-            .iter()
-            .filter(|rule| {
-                rule.category == *category
-                    && rule.items.iter().any(|item| {
-                        if let GrammarItem::NonTerminal(nt) = item {
-                            nt.to_string() == "Var"
-                        } else {
-                            false
-                        }
-                    })
-                    && rule.items.iter().any(|item| {
-                        if let GrammarItem::NonTerminal(nt) = item {
-                            nt == category
-                        } else {
-                            false
-                        }
-                    })
-            })
-            .map(|rule| &rule.label)
-            .collect();
-
-        // Helper function for checking undefined variables
-        // We need to generate match arms for all constructors that might contain VarRef
-        let mut check_var_ref_arms = Vec::new();
-
-        // Add specific cases for common constructors
-        for rule in theory.terms.iter().filter(|r| r.category == *category) {
-            let label = &rule.label;
-            let has_var_field = rule.items.iter().any(|item| {
-                if let GrammarItem::NonTerminal(nt) = item {
-                    nt.to_string() == "Var"
-                } else {
-                    false
-                }
-            });
-
-            let recursive_fields: Vec<_> = rule
-                .items
-                .iter()
-                .enumerate()
-                .filter_map(|(i, item)| {
-                    if let GrammarItem::NonTerminal(nt) = item {
-                        if nt == category {
-                            Some(i)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if has_var_field && recursive_fields.len() == 1 {
-                // Assign-like: (Var, Box<Category>) - only check the recursive field
-                check_var_ref_arms.push(quote! {
-                    #category::#label(_, f1) => check_var_ref(f1),
-                });
-            } else if recursive_fields.len() == 2 {
-                // Binary operators like Add, Sub: (Box<Category>, Box<Category>)
-                check_var_ref_arms.push(quote! {
-                    #category::#label(f0, f1) => check_var_ref(f0) || check_var_ref(f1),
-                });
-            } else if recursive_fields.len() == 1 {
-                // Single recursive field
-                check_var_ref_arms.push(quote! {
-                    #category::#label(f0) => check_var_ref(f0),
-                });
-            } else {
-                // No recursive fields or unit constructor
-                check_var_ref_arms.push(quote! {
-                    #category::#label(..) => false,
-                });
-            }
-        }
-
-        let check_var_ref_fn = quote! {
-            fn check_var_ref(term: &#category) -> bool {
-                match term {
-                    #category::VarRef(_) => true,
-                    #category::NumLit(_) => false,
-                    #(#check_var_ref_arms)*
-                    _ => false,
-                }
-            }
-        };
-
-        // Generate value extraction logic
-        // Build match arms for assignment constructors
-        let mut assign_match_arms = Vec::new();
-        for assign_label in &assignment_constructors {
-            assign_match_arms.push(quote! {
-                #category::#assign_label(var, rhs) => {
-                    // Extract variable name from OrdVar
-                    let var_name = match var {
-                        mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
-                            fv.pretty_name.clone()
-                        },
-                        _ => None,
-                    };
-
-                    // Check if RHS is a NumLit (after rewriting)
-                    let val = match rhs.as_ref() {
-                        #category::NumLit(v) => *v,
-                        _ => {
-                            // RHS still has variables or isn't fully evaluated
-                            // Check for undefined variables
-                            if check_var_ref(rhs) {
-                                return Err("undefined variable in expression".to_string());
-                            }
-                            // Try to evaluate the RHS
-                            rhs.eval()
-                        }
-                    };
-
-                    // Update environment if we have a variable name
-                    if let Some(name) = var_name {
-                        env.set(name, val);
-                    }
-
-                    val
-                }
-            });
-        }
-
-        parse_eval_functions.push(quote! {
-            /// Parse and evaluate a statement (assignment or expression) with environment.
-            /// Returns the computed value.
-            /// This function is automatically generated for theories with declarative fact creation.
-            pub fn parse_and_eval_with_env(
-                input: &str,
-                env: &mut #env_name,
-            ) -> Result<#native_type, String> {
-                #check_var_ref_fn
-
-                mettail_runtime::clear_var_cache();
-
-                let trimmed = input.trim();
-
-                // Parse the input (handles both assignments and expressions)
-                let parser = #parser_mod::#cat_parser::new();
-                let term = parser
-                    .parse(trimmed)
-                    .map_err(|e| format!("parse error: {:?}", e))?;
-
-                // Use Ascent to rewrite to normal form (generated function)
-                // This will create env_var facts via rewrite rules with env_actions
-                let normal_form = rewrite_to_normal_form(term, env)?;
-
-                // Extract value from the normal form
-                let val = match &normal_form {
-                    #(#assign_match_arms,)*
-                    #category::NumLit(v) => *v,
-                    _ => {
-                        // Fallback: try to evaluate the whole term
-                        // Check for undefined variables first
-                        if check_var_ref(&normal_form) {
-                            return Err("undefined variable in expression".to_string());
-                        }
-                        normal_form.eval()
-                    }
-                };
-
-                Ok(val)
-            }
-        });
-    }
-
-    quote! {
-        #(#env_structs)*
-        #(#parse_eval_functions)*
-    }
-}
-
 /// Extract the category from a rewrite rule (from LHS)
 /// Internal helper function for environment generation
 fn extract_category_from_rewrite_internal(
@@ -1469,6 +1139,269 @@ fn extract_category_from_rewrite_internal(
                 .map(|rule| rule.category.clone())
     } else {
         None
+    }
+}
+
+/// Generate variable category inference methods for lambda type checking
+/// 
+/// For each category, generates a method that finds what category a variable
+/// is used as within that term. Used by the parser to select the correct
+/// Lam{Domain} variant based on how the binder is used in the body.
+fn generate_var_category_inference(theory: &TheoryDef) -> TokenStream {
+    // Get non-native categories
+    let categories: Vec<_> = theory.exports.iter()
+        .filter(|e| e.native_type.is_none())
+        .collect();
+    
+    if categories.is_empty() {
+        return quote! {};
+    }
+    
+    // Generate an enum for the possible categories
+    let cat_variants: Vec<TokenStream> = categories.iter()
+        .map(|e| {
+            let name = &e.name;
+            quote! { #name }
+        })
+        .collect();
+    
+    let cat_names: Vec<_> = categories.iter().map(|e| &e.name).collect();
+    
+    // Generate the inference method for each category
+    let impls: Vec<TokenStream> = categories.iter().map(|export| {
+        let cat_name = &export.name;
+        
+        // Get rules for this category
+        let rules: Vec<_> = theory.terms.iter()
+            .filter(|r| r.category == *cat_name)
+            .collect();
+        
+        // Generate match arms for each constructor
+        let mut match_arms: Vec<TokenStream> = rules.iter().filter_map(|rule| {
+            generate_var_inference_arm(rule, &cat_names, theory)
+        }).collect();
+        
+        // Add arm for Var variant - if variable name matches, return this category
+        let var_label = generate_var_label(cat_name);
+        let cat_name_str = cat_name.to_string();
+        match_arms.push(quote! {
+            #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
+                if fv.pretty_name.as_deref() == Some(var_name) {
+                    return Some(VarCategory::#cat_name);
+                }
+                None
+            }
+        });
+        
+        // Add wildcard arm for other variants (lambdas, etc.)
+        match_arms.push(quote! {
+            _ => None
+        });
+        
+        quote! {
+            impl #cat_name {
+                /// Find what category a variable is used as in this term
+                pub fn infer_var_category(&self, var_name: &str) -> Option<VarCategory> {
+                    match self {
+                        #(#match_arms),*
+                    }
+                }
+            }
+        }
+    }).collect();
+    
+    quote! {
+        /// Enum representing possible variable categories for type inference
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub enum VarCategory {
+            #(#cat_variants),*
+        }
+        
+        #(#impls)*
+    }
+}
+
+/// Field kind for inference generation
+#[derive(Clone)]
+enum InferFieldKind {
+    Simple,          // Regular field
+    HashBag,         // HashBag collection (iter returns (&T, usize))
+    Vec,             // Vec collection (iter returns &T)
+    Binder,          // Scope with single binder
+    MultiBinder,     // Scope with multiple binders
+}
+
+/// Generate a match arm for variable inference in a constructor
+fn generate_var_inference_arm(
+    rule: &GrammarRule,
+    all_cats: &[&syn::Ident],
+    _theory: &TheoryDef,
+) -> Option<TokenStream> {
+    let category = &rule.category;
+    let label = &rule.label;
+    
+    // Skip Var rules (handled separately)
+    if is_var_rule(rule) {
+        return None;
+    }
+    
+    // Get field info from term_context or bindings
+    let fields: Vec<(syn::Ident, syn::Ident, InferFieldKind)> = if let Some(ctx) = &rule.term_context {
+        ctx.iter().enumerate().filter_map(|(i, param)| {
+            let field_name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
+            match param {
+                TermParam::Simple { ty, .. } => {
+                    let field_cat = extract_base_cat(ty);
+                    if all_cats.iter().any(|c| c.to_string() == field_cat.to_string()) {
+                        let kind = match ty {
+                            TypeExpr::Collection { coll_type: CollectionType::HashBag, .. } => InferFieldKind::HashBag,
+                            TypeExpr::Collection { coll_type: CollectionType::Vec, .. } => InferFieldKind::Vec,
+                            TypeExpr::Collection { coll_type: CollectionType::HashSet, .. } => InferFieldKind::Vec, // HashSet iter is like Vec
+                            _ => InferFieldKind::Simple,
+                        };
+                        Some((field_name, field_cat, kind))
+                    } else {
+                        None
+                    }
+                }
+                TermParam::Abstraction { ty, .. } => {
+                    // For binders, we need to check the body inside the scope
+                    let body_cat = extract_base_cat(ty);
+                    if all_cats.iter().any(|c| c.to_string() == body_cat.to_string()) {
+                        Some((field_name, body_cat, InferFieldKind::Binder))
+                    } else {
+                        None
+                    }
+                }
+                TermParam::MultiAbstraction { ty, .. } => {
+                    let body_cat = extract_base_cat(ty);
+                    if all_cats.iter().any(|c| c.to_string() == body_cat.to_string()) {
+                        Some((field_name, body_cat, InferFieldKind::MultiBinder))
+                    } else {
+                        None
+                    }
+                }
+            }
+        }).collect()
+    } else {
+        // Old syntax - use items
+        rule.items.iter().enumerate().filter_map(|(i, item)| {
+            let field_name = syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
+            match item {
+                GrammarItem::NonTerminal(nt) => {
+                    if all_cats.iter().any(|c| c.to_string() == nt.to_string()) {
+                        Some((field_name, nt.clone(), InferFieldKind::Simple))
+                    } else {
+                        None
+                    }
+                }
+                GrammarItem::Collection { element_type, coll_type, .. } => {
+                    if all_cats.iter().any(|c| c.to_string() == element_type.to_string()) {
+                        let kind = match coll_type {
+                            CollectionType::HashBag => InferFieldKind::HashBag,
+                            CollectionType::Vec => InferFieldKind::Vec,
+                            CollectionType::HashSet => InferFieldKind::Vec,
+                        };
+                        Some((field_name, element_type.clone(), kind))
+                    } else {
+                        None
+                    }
+                }
+                GrammarItem::Binder { category, .. } => {
+                    if all_cats.iter().any(|c| c.to_string() == category.to_string()) {
+                        Some((field_name, category.clone(), InferFieldKind::Binder))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }).collect()
+    };
+    
+    if fields.is_empty() {
+        // No recursive fields - check if this is a unit variant
+        let has_any_fields = if let Some(ctx) = &rule.term_context {
+            !ctx.is_empty()
+        } else {
+            !rule.items.iter().all(|i| matches!(i, GrammarItem::Terminal(_)))
+        };
+        
+        return Some(if has_any_fields {
+            quote! { #category::#label(..) => None }
+        } else {
+            quote! { #category::#label => None }
+        });
+    }
+    
+    // Generate pattern and recursive calls
+    let field_patterns: Vec<TokenStream> = fields.iter().map(|(name, _, _)| {
+        quote! { ref #name }
+    }).collect();
+    
+    let recursive_calls: Vec<TokenStream> = fields.iter().map(|(name, _field_cat, kind)| {
+        match kind {
+            InferFieldKind::HashBag => {
+                // HashBag.iter() returns (&T, usize), need to extract element
+                quote! {
+                    for (item, _count) in #name.iter() {
+                        if let Some(cat) = item.infer_var_category(var_name) {
+                            return Some(cat);
+                        }
+                    }
+                }
+            }
+            InferFieldKind::Vec => {
+                // Vec.iter() returns &T
+                quote! {
+                    for item in #name.iter() {
+                        if let Some(cat) = item.infer_var_category(var_name) {
+                            return Some(cat);
+                        }
+                    }
+                }
+            }
+            InferFieldKind::Binder => {
+                // Scope - access the body via unsafe_body()
+                quote! {
+                    if let Some(cat) = #name.unsafe_body().infer_var_category(var_name) {
+                        return Some(cat);
+                    }
+                }
+            }
+            InferFieldKind::MultiBinder => {
+                // Same as Binder
+                quote! {
+                    if let Some(cat) = #name.unsafe_body().infer_var_category(var_name) {
+                        return Some(cat);
+                    }
+                }
+            }
+            InferFieldKind::Simple => {
+                quote! {
+                    if let Some(cat) = #name.infer_var_category(var_name) {
+                        return Some(cat);
+                    }
+                }
+            }
+        }
+    }).collect();
+    
+    Some(quote! {
+        #category::#label(#(#field_patterns),*) => {
+            #(#recursive_calls)*
+            None
+        }
+    })
+}
+
+/// Extract the base category from a type expression
+fn extract_base_cat(ty: &TypeExpr) -> syn::Ident {
+    match ty {
+        TypeExpr::Base(ident) => ident.clone(),
+        TypeExpr::Collection { element, .. } => extract_base_cat(element),
+        TypeExpr::Arrow { codomain, .. } => extract_base_cat(codomain),
+        TypeExpr::MultiBinder(inner) => extract_base_cat(inner),
     }
 }
 

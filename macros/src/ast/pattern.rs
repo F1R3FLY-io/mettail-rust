@@ -1511,8 +1511,6 @@ impl PatternTerm {
             
             PatternTerm::Subst { term, var, replacement } => {
                 let term_expr = term.to_ascent_rhs(bindings, theory);
-                let var_binding = bindings.get(&var.to_string())
-                    .expect("Substitution variable not bound");
                 let repl_expr = replacement.to_ascent_rhs(bindings, theory);
                 
                 // Determine category of replacement for method name
@@ -1521,14 +1519,38 @@ impl PatternTerm {
                     .unwrap_or_else(|| "unknown".to_string());
                 let subst_method = format_ident!("substitute_{}", repl_cat);
                 
-                quote! {
-                    (#term_expr).#subst_method(&#var_binding, &#repl_expr)
+                // Check if we have the full Binder (from ^x.p pattern matching)
+                // If so, we need to reconstruct the Scope and unbind to get consistent FreeVars
+                // because the body was "closed" and contains BoundVars, not FreeVars
+                let full_binder_key = format!("__binder_{}", var);
+                if let Some(full_binder) = bindings.get(&full_binder_key) {
+                    // We matched a lambda pattern: reconstruct Scope, unbind, then substitute
+                    quote! {{
+                        // Reconstruct a Scope from the binder and body
+                        let __scope = mettail_runtime::Scope::from_parts_unsafe(
+                            #full_binder.clone(),
+                            Box::new(#term_expr)
+                        );
+                        // Unbind to get fresh, consistent FreeVar and body
+                        let (__fresh_binder, __fresh_body) = __scope.unbind();
+                        // Now substitute - the body has FreeVars that match __fresh_binder
+                        // substitute_* methods expect &FreeVar<String>, not &OrdVar
+                        __fresh_body.#subst_method(&__fresh_binder.0, &#repl_expr)
+                    }}
+                } else {
+                    // Old style: var is bound directly to a FreeVar
+                    let var_binding = bindings.get(&var.to_string())
+                        .expect("Substitution variable not bound");
+                    quote! {
+                        (#term_expr).#subst_method(&#var_binding, &#repl_expr)
+                    }
                 }
             }
             
             PatternTerm::MultiSubst { scope, replacements } => {
-                // Multi-substitution: (multisubst scope [r1, r2, ...]) or (multisubst scope coll.#map(...))
-                let scope_expr = scope.to_ascent_rhs(bindings, theory);
+                // Multi-substitution for multi-binder scopes
+                // New syntax: (subst ^[xs].body repls) or (subst scope repls)
+                // Legacy syntax: (multisubst scope r0 r1 ...)
                 
                 // Determine category from first replacement
                 let repl_cat = replacements.first()
@@ -1537,11 +1559,10 @@ impl PatternTerm {
                     .unwrap_or_else(|| "unknown".to_string());
                 let subst_method = format_ident!("multi_substitute_{}", repl_cat);
                 
-                // Special case: single Map replacement produces the entire replacements list
-                // e.g., (multisubst scope qs.#map(|q| (NQuote q))) - the map result IS the repls
+                // Build replacements expression
                 let repls_expr = if replacements.len() == 1 {
                     if let Pattern::Map { collection, params, body } = &replacements[0] {
-                        // Generate a Vec from the Map, not a HashBag
+                        // Map produces the entire replacements list
                         let coll_expr = collection.to_ascent_rhs(bindings, theory);
                         if params.len() == 1 {
                             let param_name = params[0].to_string();
@@ -1556,7 +1577,7 @@ impl PatternTerm {
                                 }
                             }
                         } else {
-                            // Multi-param map (from Zip) - handle tuple iteration
+                            // Multi-param map (from Zip)
                             let param0 = params[0].to_string();
                             let param1 = params.get(1).map(|p| p.to_string()).unwrap_or_default();
                             let mut body_bindings = bindings.clone();
@@ -1584,14 +1605,43 @@ impl PatternTerm {
                     quote! { vec![#(#repl_exprs),*] }
                 };
                 
-                quote! {
-                    {
-                        let (__binders, __body) = (#scope_expr).unbind();
-                        let __vars: Vec<&mettail_runtime::FreeVar<String>> = __binders.iter()
-                            .map(|b| &b.0)
-                            .collect();
-                        let __repls = #repls_expr;
-                        (*__body).#subst_method(&__vars, &__repls)
+                // Check if scope is a literal MultiLambda - if so, use bindings directly
+                // This avoids constructing a Scope just to unbind it immediately
+                if let Pattern::Term(PatternTerm::MultiLambda { binders, body }) = scope.as_ref() {
+                    // Direct access to binders and body via bindings
+                    let body_expr = body.to_ascent_rhs(bindings, theory);
+                    let var_exprs: Vec<_> = binders.iter().map(|b| {
+                        let binder_name = b.to_string();
+                        if let Some(bound_var) = bindings.get(&binder_name) {
+                            quote! { &#bound_var }
+                        } else {
+                            // Shouldn't happen if LHS properly bound the binders
+                            panic!("Binder {} not found in bindings for MultiSubst", binder_name);
+                        }
+                    }).collect();
+                    
+                    quote! {
+                        {
+                            let __vars: Vec<&mettail_runtime::FreeVar<String>> = vec![#(#var_exprs),*];
+                            let __repls = #repls_expr;
+                            (#body_expr).#subst_method(&__vars, &__repls)
+                        }
+                    }
+                } else {
+                    // Variable or other pattern - unbind at runtime
+                    // NOTE: This assumes a multi-binder scope (Vec<Binder>)
+                    // For single-binder scopes, use the ^x.body syntax which parses as Subst
+                    let scope_expr = scope.to_ascent_rhs(bindings, theory);
+                    
+                    quote! {
+                        {
+                            let (__binders, __body) = (#scope_expr).unbind();
+                            let __vars: Vec<&mettail_runtime::FreeVar<String>> = __binders.iter()
+                                .map(|b| &b.0)
+                                .collect();
+                            let __repls = #repls_expr;
+                            (*__body).#subst_method(&__vars, &__repls)
+                        }
                     }
                 }
             }

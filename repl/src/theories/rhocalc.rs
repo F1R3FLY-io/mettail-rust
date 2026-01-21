@@ -1,6 +1,7 @@
 use crate::examples::TheoryName;
 use crate::theory::{AscentResults, Rewrite, Term, TermInfo, Theory};
 use anyhow::Result;
+use std::any::Any;
 use std::fmt;
 
 // Import the theory definition from the theories crate
@@ -32,6 +33,15 @@ impl Theory for RhoCalculusTheory {
 
     fn parse_term(&self, input: &str) -> Result<Box<dyn Term>> {
         mettail_runtime::clear_var_cache();
+        let parser = rhocalc::ProcParser::new();
+        let proc = parser
+            .parse(input)
+            .map_err(|e| anyhow::anyhow!("Parse error: {:?}", e))?;
+        Ok(Box::new(RhoTerm(proc)))
+    }
+    
+    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>> {
+        // Don't clear var cache - allows shared variables across env definitions
         let parser = rhocalc::ProcParser::new();
         let proc = parser
             .parse(input)
@@ -100,6 +110,87 @@ impl Theory for RhoCalculusTheory {
 
     fn format_term(&self, term: &dyn Term) -> String {
         format!("{}", term)
+    }
+    
+    // === Environment Support ===
+    
+    fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+        Box::new(RhoCalcEnv::new())
+    }
+    
+    fn add_to_env(&self, env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<()> {
+        let rho_env = env
+            .downcast_mut::<RhoCalcEnv>()
+            .ok_or_else(|| anyhow::anyhow!("Invalid environment type"))?;
+        
+        let rho_term = term
+            .as_any()
+            .downcast_ref::<RhoTerm>()
+            .ok_or_else(|| anyhow::anyhow!("Expected RhoTerm"))?;
+        
+        // Add to Proc environment
+        rho_env.proc.set(name.to_string(), rho_term.0.clone());
+        Ok(())
+    }
+    
+    fn remove_from_env(&self, env: &mut dyn Any, name: &str) -> Result<bool> {
+        let rho_env = env
+            .downcast_mut::<RhoCalcEnv>()
+            .ok_or_else(|| anyhow::anyhow!("Invalid environment type"))?;
+        
+        // Try to remove from both environments
+        let proc_removed = rho_env.proc.remove(name).is_some();
+        let name_removed = rho_env.name.remove(name).is_some();
+        
+        Ok(proc_removed || name_removed)
+    }
+    
+    fn clear_env(&self, env: &mut dyn Any) {
+        if let Some(rho_env) = env.downcast_mut::<RhoCalcEnv>() {
+            rho_env.clear();
+        }
+    }
+    
+    fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>> {
+        let rho_env = env
+            .downcast_ref::<RhoCalcEnv>()
+            .ok_or_else(|| anyhow::anyhow!("Invalid environment type"))?;
+        
+        let rho_term = term
+            .as_any()
+            .downcast_ref::<RhoTerm>()
+            .ok_or_else(|| anyhow::anyhow!("Expected RhoTerm"))?;
+        
+        // Apply environment substitution
+        let substituted = rho_term.0.substitute_env(rho_env);
+        Ok(Box::new(RhoTerm(substituted)))
+    }
+    
+    fn list_env(&self, env: &dyn Any) -> Vec<(String, String)> {
+        let rho_env = match env.downcast_ref::<RhoCalcEnv>() {
+            Some(e) => e,
+            None => return Vec::new(),
+        };
+        
+        let mut result = Vec::new();
+        
+        // List Proc bindings
+        for (name, proc) in rho_env.proc.iter() {
+            result.push((name.clone(), format!("{}", proc)));
+        }
+        
+        // List Name bindings
+        for (name, name_val) in rho_env.name.iter() {
+            result.push((name.clone(), format!("{}", name_val)));
+        }
+        
+        result
+    }
+    
+    fn is_env_empty(&self, env: &dyn Any) -> bool {
+        env.downcast_ref::<RhoCalcEnv>()
+            .map(|e| e.is_empty())
+            .unwrap_or(true)
     }
 }
 

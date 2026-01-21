@@ -59,5 +59,3 @@ theory! {
         if S => T then (PAmb N S) => (PAmb N T);
     }
 }
-
-//// GENERATED ////

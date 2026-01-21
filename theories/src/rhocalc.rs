@@ -41,18 +41,16 @@ theory! {
     },
 
     rewrites {
-        // communication
-         (PPar {(PInput N ^x.P), (POutput N Q), ...rest})
-            => (PPar {(subst P x (NQuote Q)), ...rest});
+        // communication - new unified subst syntax
+        (PPar {(PInput n ^x.p), (POutput n q), ...rest})
+            => (PPar {(subst ^x.p (NQuote q)), ...rest});
 
-        // multi-communication
+        // multi-communication - subst with multi-lambda (uses scope variable which unbinds at runtime)
         (PPar {(PInputs ns scope), #zip(ns,qs).#map(|n,q| (POutput n q)), ...rest}) 
-            => (PPar {(multisubst scope qs.#map(|q| (NQuote q))), ...rest});
+            => (PPar {(subst scope qs.#map(|q| (NQuote q))), ...rest});
 
         (PDrop (NQuote P)) => P;
 
         if S => T then (PPar {S, ...rest}) => (PPar {T, ...rest});
     },
 }
-
-//// GENERATED ////

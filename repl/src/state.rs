@@ -1,6 +1,7 @@
 use crate::examples::TheoryName;
 use crate::theory::{AscentResults, Term};
 use anyhow::Result;
+use std::any::Any;
 
 /// The current state of the REPL session
 pub struct ReplState {
@@ -21,6 +22,9 @@ pub struct ReplState {
 
     /// Cached Ascent results
     ascent_results: Option<AscentResults>,
+    
+    /// Environment for variable bindings (theory-specific type)
+    environment: Option<Box<dyn Any + Send + Sync>>,
 }
 
 /// An entry in the navigation history
@@ -41,6 +45,7 @@ impl ReplState {
             history: Vec::new(),
             history_idx: 0,
             ascent_results: None,
+            environment: None,
         }
     }
 
@@ -52,6 +57,33 @@ impl ReplState {
         self.history.clear();
         self.history_idx = 0;
         self.ascent_results = None;
+        self.environment = None; // Reset environment when loading a new theory
+    }
+    
+    /// Get the environment (immutable)
+    pub fn environment(&self) -> Option<&(dyn Any + Send + Sync)> {
+        self.environment.as_ref().map(|b| b.as_ref())
+    }
+    
+    /// Get the environment (mutable)
+    pub fn environment_mut(&mut self) -> Option<&mut (dyn Any + Send + Sync)> {
+        self.environment.as_mut().map(|b| b.as_mut())
+    }
+    
+    /// Set the environment
+    pub fn set_environment(&mut self, env: Box<dyn Any + Send + Sync>) {
+        self.environment = Some(env);
+    }
+    
+    /// Ensure environment exists (create if needed)
+    pub fn ensure_environment<F>(&mut self, create: F) -> &mut (dyn Any + Send + Sync)
+    where
+        F: FnOnce() -> Box<dyn Any + Send + Sync>,
+    {
+        if self.environment.is_none() {
+            self.environment = Some(create());
+        }
+        self.environment.as_mut().unwrap().as_mut()
     }
 
     /// Get the name of the current theory

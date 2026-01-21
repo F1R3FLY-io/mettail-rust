@@ -91,14 +91,19 @@ impl Repl {
             return Ok(());
         }
 
-        // let theory_name = self.name_str().unwrap_or_default();
-        // let theory = self.registry.get(theory_name)?;
+        // Check for assignment syntax: name = term
+        if let Some((name, term_str)) = Self::parse_assignment(line) {
+            return self.cmd_assign(&name, &term_str);
+        }
 
         match parts[0] {
             "help" => self.cmd_help(),
             "load" => self.cmd_load(&parts[1..]),
             "list" | "list-theories" => self.cmd_list_theories(),
             "info" => self.cmd_info(),
+            "env" => self.cmd_env(),
+            "clear" => self.cmd_clear(&parts[1..]),
+            "clear-all" => self.cmd_clear_all(),
             "rewrites" => self.cmd_rewrites(),
             "equations" => self.cmd_equations(),
             "normal-forms" | "nf" => self.cmd_normal_forms(),
@@ -123,6 +128,38 @@ impl Repl {
             },
         }
     }
+    
+    /// Parse assignment syntax: name = term
+    /// Returns (name, term_string) if it's an assignment, None otherwise
+    fn parse_assignment(line: &str) -> Option<(String, String)> {
+        // Look for = that's not inside parentheses or brackets
+        let mut paren_depth = 0;
+        let mut bracket_depth = 0;
+        
+        for (i, ch) in line.char_indices() {
+            match ch {
+                '(' | '{' => paren_depth += 1,
+                ')' | '}' => paren_depth -= 1,
+                '[' => bracket_depth += 1,
+                ']' => bracket_depth -= 1,
+                '=' if paren_depth == 0 && bracket_depth == 0 => {
+                    let name = line[..i].trim();
+                    let term_str = line[i + 1..].trim();
+                    
+                    // Validate name is a valid identifier (alphanumeric + underscore, starts with letter)
+                    if !name.is_empty() 
+                        && name.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false)
+                        && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                        && !term_str.is_empty()
+                    {
+                        return Some((name.to_string(), term_str.to_string()));
+                    }
+                }
+                _ => {}
+            }
+        }
+        None
+    }
 
     fn cmd_help(&self) -> Result<()> {
         println!();
@@ -137,6 +174,12 @@ impl Repl {
         println!("    {}    Parse and load a term", "term: <expr>".green());
         println!("    {}    Load example process", "example <name>".green());
         println!("    {}    List available examples", "list-examples".green());
+        println!();
+        println!("{}", "  Environment:".yellow());
+        println!("    {} Define a named term", "<name> = <term>".green());
+        println!("    {}               Show all environment bindings", "env".green());
+        println!("    {}    Remove a binding", "clear <name>".green());
+        println!("    {}         Clear all bindings", "clear-all".green());
         println!();
         println!("{}", "  Navigation:".yellow());
         println!("    {}           List rewrites from current term", "rewrites".green());
@@ -221,6 +264,103 @@ impl Repl {
         }
         Ok(())
     }
+    
+    // === Environment Commands ===
+    
+    fn cmd_assign(&mut self, name: &str, term_str: &str) -> Result<()> {
+        let theory_name = self
+            .state
+            .theory_name()
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'load <theory>' first."))?;
+        
+        let theory = self.registry.get(theory_name.as_str())?;
+        
+        // Parse the term WITHOUT clearing var cache
+        // This allows shared variables across env definitions (e.g., same `n` in multiple terms)
+        let term = theory.parse_term_for_env(term_str)?;
+        
+        // Ensure environment exists
+        let env = self.state.ensure_environment(|| theory.create_env());
+        
+        // Add to environment
+        theory.add_to_env(env, name, term.as_ref())?;
+        
+        println!("{} {} added to environment", "✓".green(), name.cyan());
+        Ok(())
+    }
+    
+    fn cmd_env(&self) -> Result<()> {
+        let theory_name = self
+            .state
+            .theory_name()
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'load <theory>' first."))?;
+        
+        let theory = self.registry.get(theory_name.as_str())?;
+        
+        println!();
+        println!("{}", "Environment:".bold());
+        
+        if let Some(env) = self.state.environment() {
+            if theory.is_env_empty(env) {
+                println!("  {}", "(empty)".dimmed());
+            } else {
+                let bindings = theory.list_env(env);
+                for (name, value) in bindings {
+                    println!("  {} = {}", name.cyan(), value.green());
+                }
+            }
+        } else {
+            println!("  {}", "(empty)".dimmed());
+        }
+        
+        println!();
+        Ok(())
+    }
+    
+    fn cmd_clear(&mut self, args: &[&str]) -> Result<()> {
+        if args.is_empty() {
+            anyhow::bail!("Usage: clear <name>");
+        }
+        
+        let name = args[0];
+        
+        let theory_name = self
+            .state
+            .theory_name()
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded."))?;
+        
+        let theory = self.registry.get(theory_name.as_str())?;
+        
+        if let Some(env) = self.state.environment_mut() {
+            if theory.remove_from_env(env, name)? {
+                println!("{} {} removed from environment", "✓".green(), name.cyan());
+            } else {
+                println!("{} {} not found in environment", "⚠".yellow(), name);
+            }
+        } else {
+            println!("{} Environment is empty", "⚠".yellow());
+        }
+        
+        Ok(())
+    }
+    
+    fn cmd_clear_all(&mut self) -> Result<()> {
+        let theory_name = self
+            .state
+            .theory_name()
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded."))?;
+        
+        let theory = self.registry.get(theory_name.as_str())?;
+        
+        if let Some(env) = self.state.environment_mut() {
+            theory.clear_env(env);
+            println!("{} Environment cleared", "✓".green());
+        } else {
+            println!("{} Environment is already empty", "⚠".yellow());
+        }
+        
+        Ok(())
+    }
 
     fn cmd_parse_term(&mut self, term_str: &str) -> Result<()> {
         // Get the loaded theory name
@@ -238,6 +378,31 @@ impl Repl {
         // Parse the term
         let term = theory.parse_term(term_str)?;
         println!("{}", "✓".green());
+        
+        // Apply environment substitution if environment exists and is not empty
+        let term = if let Some(env) = self.state.environment() {
+            if !theory.is_env_empty(env) {
+                print!("Substituting environment... ");
+                let substituted = theory.substitute_env(term.as_ref(), env)?;
+                println!("{}", "✓".green());
+                
+                // Show substituted term if different
+                let orig_str = format!("{}", term);
+                let subst_str = format!("{}", substituted);
+                if orig_str != subst_str {
+                    println!("{}", "Substituted:".bold());
+                    let formatted = format_term_pretty(&subst_str);
+                    println!("{}", formatted.cyan());
+                    println!();
+                }
+                
+                substituted
+            } else {
+                term
+            }
+        } else {
+            term
+        };
 
         print!("Running Ascent... ");
 

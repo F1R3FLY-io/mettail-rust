@@ -1,6 +1,7 @@
 use crate::examples::TheoryName;
 use crate::theory::{AscentResults, EquivClass, Rewrite, Term, TermInfo, Theory};
 use anyhow::Result;
+use std::any::Any;
 use std::fmt;
 
 // Import the theory definition from the theories crate
@@ -32,6 +33,15 @@ impl Theory for AmbCalculusTheory {
 
     fn parse_term(&self, input: &str) -> Result<Box<dyn Term>> {
         mettail_runtime::clear_var_cache();
+        let parser = ambient::ProcParser::new();
+        let proc = parser
+            .parse(input)
+            .map_err(|e| anyhow::anyhow!("Parse error: {:?}", e))?;
+        Ok(Box::new(AmbTerm(proc)))
+    }
+    
+    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>> {
+        // Don't clear var cache - allows shared variables across env definitions
         let parser = ambient::ProcParser::new();
         let proc = parser
             .parse(input)
@@ -108,6 +118,83 @@ impl Theory for AmbCalculusTheory {
 
     fn format_term(&self, term: &dyn Term) -> String {
         format!("{}", term)
+    }
+    
+    // === Environment Support ===
+    
+    fn create_env(&self) -> Box<dyn Any + Send + Sync> {
+        Box::new(AmbientEnv::new())
+    }
+    
+    fn add_to_env(&self, env: &mut dyn Any, name: &str, term: &dyn Term) -> Result<()> {
+        let amb_env = env
+            .downcast_mut::<AmbientEnv>()
+            .ok_or_else(|| anyhow::anyhow!("Invalid environment type"))?;
+        
+        let amb_term = term
+            .as_any()
+            .downcast_ref::<AmbTerm>()
+            .ok_or_else(|| anyhow::anyhow!("Expected AmbTerm"))?;
+        
+        // Add to Proc environment
+        amb_env.proc.set(name.to_string(), amb_term.0.clone());
+        Ok(())
+    }
+    
+    fn remove_from_env(&self, env: &mut dyn Any, name: &str) -> Result<bool> {
+        let amb_env = env
+            .downcast_mut::<AmbientEnv>()
+            .ok_or_else(|| anyhow::anyhow!("Invalid environment type"))?;
+        
+        let proc_removed = amb_env.proc.remove(name).is_some();
+        let name_removed = amb_env.name.remove(name).is_some();
+        
+        Ok(proc_removed || name_removed)
+    }
+    
+    fn clear_env(&self, env: &mut dyn Any) {
+        if let Some(amb_env) = env.downcast_mut::<AmbientEnv>() {
+            amb_env.clear();
+        }
+    }
+    
+    fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>> {
+        let amb_env = env
+            .downcast_ref::<AmbientEnv>()
+            .ok_or_else(|| anyhow::anyhow!("Invalid environment type"))?;
+        
+        let amb_term = term
+            .as_any()
+            .downcast_ref::<AmbTerm>()
+            .ok_or_else(|| anyhow::anyhow!("Expected AmbTerm"))?;
+        
+        let substituted = amb_term.0.substitute_env(amb_env);
+        Ok(Box::new(AmbTerm(substituted)))
+    }
+    
+    fn list_env(&self, env: &dyn Any) -> Vec<(String, String)> {
+        let amb_env = match env.downcast_ref::<AmbientEnv>() {
+            Some(e) => e,
+            None => return Vec::new(),
+        };
+        
+        let mut result = Vec::new();
+        
+        for (name, proc) in amb_env.proc.iter() {
+            result.push((name.clone(), format!("{}", proc)));
+        }
+        
+        for (name, name_val) in amb_env.name.iter() {
+            result.push((name.clone(), format!("{}", name_val)));
+        }
+        
+        result
+    }
+    
+    fn is_env_empty(&self, env: &dyn Any) -> bool {
+        env.downcast_ref::<AmbientEnv>()
+            .map(|e| e.is_empty())
+            .unwrap_or(true)
     }
 }
 

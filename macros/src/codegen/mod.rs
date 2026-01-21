@@ -1,10 +1,11 @@
 //! Code generation for theory definitions
 //!
 //! This module orchestrates the generation of Rust AST types, Display implementations,
-//! substitution logic, term generation, and parser integration.
+//! substitution logic, environment types, term generation, and parser integration.
 
 mod ast_gen;
 mod display;
+mod env;
 mod subst;
 pub mod termgen;
 
@@ -12,6 +13,7 @@ pub mod blockly;
 pub mod parser;
 
 pub use ast_gen::*;
+pub use env::generate_environments;
 
 use crate::ast::{grammar::{GrammarItem, GrammarRule}};
 use syn::Ident;
@@ -29,24 +31,6 @@ pub fn is_var_rule(rule: &GrammarRule) -> bool {
 pub fn is_integer_rule(rule: &GrammarRule) -> bool {
     rule.items.len() == 1
         && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if ident.to_string() == "Integer")
-}
-
-/// Checks if a rule is an Assign rule (Var "=" Category)
-/// Example: `Assign . Int ::= Var "=" Int ;`
-#[allow(clippy::cmp_owned)]
-pub fn is_assign_rule(rule: &GrammarRule) -> bool {
-    rule.items.len() == 3
-        && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if ident.to_string() == "Var")
-        && matches!(&rule.items[1], GrammarItem::Terminal(term) if term == "=")
-        && matches!(&rule.items[2], GrammarItem::NonTerminal(ident) if ident == &rule.category)
-}
-
-/// Check if a category has an Assign rule in the theory
-pub fn has_assign_rule(category: &Ident, theory: &crate::ast::theory::TheoryDef) -> bool {
-    theory
-        .terms
-        .iter()
-        .any(|rule| rule.category == *category && is_assign_rule(rule))
 }
 
 /// Generate the Var variant label for a category

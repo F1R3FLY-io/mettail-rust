@@ -542,21 +542,70 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
         // Parse constructor name (or special keywords like 'subst', 'multisubst')
         let constructor = content.parse::<Ident>()?;
 
-        // Check if this is a substitution
+        // Check if this is a substitution (beta reduction)
+        // New unified syntax: (subst lamterm repl) where lamterm is ^x.body or ^[xs].body or a variable
+        // Old syntax (backward compat): (subst term var repl)
         if constructor == "subst" {
-            // Parse: subst term var replacement
-            let term = parse_pattern(&content)?;
-            let var = content.parse::<Ident>()?;
-            let replacement = parse_pattern(&content)?;
-
-            return Ok(Pattern::Term(PatternTerm::Subst {
-                term: Box::new(term),
-                var,
-                replacement: Box::new(replacement),
-            }));
+            let first = parse_pattern(&content)?;
+            
+            if content.is_empty() {
+                return Err(syn::Error::new(constructor.span(), "subst requires at least 2 arguments"));
+            }
+            
+            let second = parse_pattern(&content)?;
+            
+            if content.is_empty() {
+                // New syntax: (subst lamterm repl) - 2 args
+                // lamterm can be ^x.body (Lambda), ^[xs].body (MultiLambda), or a variable
+                match &first {
+                    Pattern::Term(PatternTerm::Lambda { binder, body }) => {
+                        // Single lambda: extract binder and body for Subst
+                        return Ok(Pattern::Term(PatternTerm::Subst {
+                            term: body.clone(),
+                            var: binder.clone(),
+                            replacement: Box::new(second),
+                        }));
+                    }
+                    Pattern::Term(PatternTerm::MultiLambda { .. }) => {
+                        // Multi-lambda: use MultiSubst with single replacement (will be collection)
+                        return Ok(Pattern::Term(PatternTerm::MultiSubst {
+                            scope: Box::new(first),
+                            replacements: vec![second],
+                        }));
+                    }
+                    _ => {
+                        // Variable or other pattern: treat as scope, use MultiSubst
+                        // This handles both single and multi at runtime via unbind
+                        return Ok(Pattern::Term(PatternTerm::MultiSubst {
+                            scope: Box::new(first),
+                            replacements: vec![second],
+                        }));
+                    }
+                }
+            } else {
+                // Old syntax: (subst term var repl) - 3 args (backward compatibility)
+                let var = match &second {
+                    Pattern::Term(PatternTerm::Var(v)) => v.clone(),
+                    _ => return Err(syn::Error::new(
+                        constructor.span(), 
+                        "In 3-arg subst syntax (subst term var repl), second argument must be a variable name"
+                    )),
+                };
+                let replacement = parse_pattern(&content)?;
+                
+                if !content.is_empty() {
+                    return Err(syn::Error::new(constructor.span(), "subst takes 2 or 3 arguments"));
+                }
+                
+                return Ok(Pattern::Term(PatternTerm::Subst {
+                    term: Box::new(first),
+                    var,
+                    replacement: Box::new(replacement),
+                }));
+            }
         }
 
-        // Check if this is a multi-substitution
+        // Check if this is a multi-substitution (legacy syntax, still supported)
         if constructor == "multisubst" {
             // Parse: (multisubst scope r0 r1 r2 ...)
             let scope = parse_pattern(&content)?;

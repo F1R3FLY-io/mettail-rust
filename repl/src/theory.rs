@@ -20,14 +20,43 @@ pub trait Theory: Send + Sync {
     /// Get the number of rewrite rules
     fn rewrite_count(&self) -> usize;
 
-    /// Parse a term from a string
+    /// Parse a term from a string (clears var cache for fresh evaluation)
     fn parse_term(&self, input: &str) -> Result<Box<dyn Term>>;
+    
+    /// Parse a term for environment storage (does NOT clear var cache)
+    /// This allows variables like `n` to be shared across multiple env definitions
+    fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn Term>>;
 
     /// Run Ascent on a term and return results
     fn run_ascent(&self, term: Box<dyn Term>) -> Result<AscentResults>;
 
     /// Format a term as a string
     fn format_term(&self, term: &dyn Term) -> String;
+    
+    // === Environment Support ===
+    
+    /// Create a new empty environment for this theory
+    fn create_env(&self) -> Box<dyn std::any::Any + Send + Sync>;
+    
+    /// Add a term to the environment under the given name
+    /// The category is inferred from the term's category
+    fn add_to_env(&self, env: &mut dyn std::any::Any, name: &str, term: &dyn Term) -> Result<()>;
+    
+    /// Remove a binding from the environment
+    fn remove_from_env(&self, env: &mut dyn std::any::Any, name: &str) -> Result<bool>;
+    
+    /// Clear all bindings from the environment
+    fn clear_env(&self, env: &mut dyn std::any::Any);
+    
+    /// Apply environment substitution to a term
+    /// Returns the term with all environment variables replaced
+    fn substitute_env(&self, term: &dyn Term, env: &dyn std::any::Any) -> Result<Box<dyn Term>>;
+    
+    /// List all environment bindings as (name, display) pairs
+    fn list_env(&self, env: &dyn std::any::Any) -> Vec<(String, String)>;
+    
+    /// Check if the environment is empty
+    fn is_env_empty(&self, env: &dyn std::any::Any) -> bool;
 }
 
 /// A trait for terms (AST nodes) that can be manipulated generically
