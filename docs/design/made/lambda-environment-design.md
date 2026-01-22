@@ -372,3 +372,286 @@ Parsing... ✓
 | Binder not used | "Lambda binder 'x' not used in body" |
 | Conflicting types | "Variable 'x' used as both Name and Proc" |
 | Ambiguous (bare var) | "Cannot infer type of 'x' - appears only as bare variable" |
+
+---
+
+## Higher-Order Lambda Support
+
+### Motivation
+
+For replication to be a genuine metaprogram acting on any input process:
+
+```
+rep = ^n.^a.^cont.{{$name(dup, n) | n!(a?y.{{$name(cont,y) | $name(dup, n)}})}}
+```
+
+Here `cont` is not a base type - it's a function `[Name -> Proc]` that transforms the received value `y`. We need to:
+1. Infer `cont : [Name -> Proc]` from its use in `$name(cont, y)`
+2. Infer that `rep : [Name -> [Name -> [[Name->Proc] -> Proc]]]`
+
+### Key Insight: Function Types as Base Types
+
+Our representation already handles this! The type `[Name -> Proc]` is represented as a `Proc` value (specifically, a `Proc::LamName`). So:
+
+- `cont : [Name -> Proc]` means `cont` is a `Proc` that happens to be a `LamName` variant
+- `^cont.{...}` where `cont : [Name -> Proc]` generates `Proc::LamProc` (taking a Proc argument)
+- The nested lambda structure encodes the full type
+
+**Type correspondence:**
+
+| Type Expression | Rust Representation |
+|-----------------|---------------------|
+| `Name` | `Name` |
+| `Proc` | `Proc` |
+| `[Name -> Proc]` | `Proc` (as `Proc::LamName`) |
+| `[Proc -> Proc]` | `Proc` (as `Proc::LamProc`) |
+| `[[Name->Proc] -> Proc]` | `Proc` (as `Proc::LamProc` containing a lambda-typed arg) |
+
+### Enhanced Type Inference
+
+Current inference returns only base categories. Enhanced inference tracks full function types:
+
+```rust
+enum InferredType {
+    Base(Category),                              // Name, Proc, Int
+    Arrow(Box<InferredType>, Box<InferredType>), // [A -> B]
+}
+```
+
+#### Inference Rules
+
+**Rule 1: Constructor position** - Standard inference
+```
+x in POutput(x, p)  →  x : Name
+p in PPar(..., p, ...)  →  p : Proc
+```
+
+**Rule 2: Application position** - Function type inference
+```
+f in $domain(f, arg)  →  f : [type(arg) -> result_type_from_context]
+```
+
+For `$name(cont, y)` in a Proc context:
+- `$name` = `ApplyName` = apply with `Name` domain
+- `y : Name` (bound by input binder)
+- Result context: inside `PPar` with other `Proc`s
+- Therefore: `cont : [Name -> Proc]`
+
+**Rule 3: Nested applications**
+```
+f in $domain(f, $inner(...))  →  infer inner application first, use result type as argument type
+```
+
+#### Inference Algorithm
+
+```rust
+/// Infer the full type of a variable from its usage in a term
+fn infer_var_type(term: &Proc, var_name: &str, context_type: Category) -> Option<InferredType> {
+    match term {
+        // Application: f must be a function type
+        Proc::ApplyName(f, arg) if is_var(f, var_name) => {
+            let arg_type = infer_term_type(arg);  // Type of argument
+            Some(InferredType::Arrow(
+                Box::new(arg_type),
+                Box::new(InferredType::Base(context_type))
+            ))
+        }
+        Proc::ApplyProc(f, arg) if is_var(f, var_name) => {
+            let arg_type = infer_term_type(arg);
+            Some(InferredType::Arrow(
+                Box::new(arg_type),
+                Box::new(InferredType::Base(context_type))
+            ))
+        }
+        
+        // Regular constructor position: base type
+        Proc::POutput(n, _) if is_var(n, var_name) => {
+            Some(InferredType::Base(Category::Name))
+        }
+        
+        // Recurse into subterms with appropriate context
+        Proc::PPar(bag) => {
+            for elem in bag {
+                if let Some(t) = infer_var_type(elem, var_name, Category::Proc) {
+                    return Some(t);
+                }
+            }
+            None
+        }
+        
+        // ... other cases
+    }
+}
+```
+
+### Example: Typing `rep`
+
+```
+rep = ^n.^a.^cont.{{$name(dup, n) | n!(a?y.{{$name(cont,y) | $name(dup, n)}})}}
+```
+
+**Step-by-step inference:**
+
+1. **Innermost uses:**
+   - `n` in `$name(dup, n)`: `n : Name` (argument to dup's Name domain)
+   - `n` in `n!(...)`: `n : Name` (channel)
+   - `a` in `a?y.{...}`: `a : Name` (channel)
+   - `y` in `$name(cont, y)`: bound by input, so `y : Name`
+
+2. **Function type inference:**
+   - `cont` in `$name(cont, y)`: `y : Name`, context is `Proc`
+   - Therefore: `cont : [Name -> Proc]`
+
+3. **Lambda construction (inside-out):**
+   - `^cont.{...}` where `cont : [Name -> Proc]` (base type `Proc`)
+     - → `Proc::LamProc` (taking Proc, returning Proc)
+     - Type: `[[Name->Proc] -> Proc]`
+   - `^a.{...}` where `a : Name`
+     - → `Proc::LamName` (taking Name, returning the above)
+     - Type: `[Name -> [[Name->Proc] -> Proc]]`
+   - `^n.{...}` where `n : Name`
+     - → `Proc::LamName` (taking Name, returning the above)
+     - Type: `[Name -> [Name -> [[Name->Proc] -> Proc]]]`
+
+**Result:** `rep : [Name -> [Name -> [[Name->Proc] -> Proc]]]`
+
+### Storage
+
+The full type is encoded structurally:
+
+```rust
+// rep = ^n.^a.^cont.{...}
+Proc::LamName(Scope::new(n_binder, Box::new(
+    Proc::LamName(Scope::new(a_binder, Box::new(
+        Proc::LamProc(Scope::new(cont_binder, Box::new(
+            // body...
+        )))
+    )))
+)))
+```
+
+Each `LamName` or `LamProc` tells us the domain type. The nesting tells us the full curried type.
+
+### Type Annotations (Optional Enhancement)
+
+Allow explicit type annotations for clarity or when inference fails:
+
+```
+^cont:[Name->Proc].{...}
+```
+
+Parser extension:
+```lalrpop
+Proc: Proc = {
+    // With type annotation
+    "^" <x:Ident> ":" <ty:TypeExpr> "." "{" <body:Proc> "}" => {
+        validate_type(&body, &x, &ty)?;
+        build_lambda(&x, &ty, body)
+    },
+    
+    // Without annotation (infer)
+    "^" <x:Ident> "." "{" <body:Proc> "}" => {
+        let ty = infer_var_type(&body, &x)?;
+        build_lambda(&x, &ty, body)
+    },
+};
+
+TypeExpr: InferredType = {
+    <base:Ident> => InferredType::Base(base.into()),
+    "[" <domain:TypeExpr> "->" <codomain:TypeExpr> "]" => {
+        InferredType::Arrow(Box::new(domain), Box::new(codomain))
+    },
+};
+```
+
+### Validation
+
+When applying a higher-order function:
+
+```
+$name(rep, channel_n)  // rep expects [Name -> ...], channel_n : Name ✓
+```
+
+Runtime beta reduction handles this naturally - if `rep` is a `LamName`, applying it with a `Name` works. Type mismatches cause runtime panics (or we add static checking).
+
+### Lambda Selection from Inferred Type
+
+```rust
+fn build_lambda(binder: &str, inferred: &InferredType, body: Proc) -> Proc {
+    match inferred.base_type() {
+        Category::Name => Proc::LamName(make_scope(binder, body)),
+        Category::Proc => Proc::LamProc(make_scope(binder, body)),
+        // ... other categories
+    }
+}
+
+impl InferredType {
+    /// Get the base representation type (what category stores this type)
+    fn base_type(&self) -> Category {
+        match self {
+            InferredType::Base(cat) => *cat,
+            InferredType::Arrow(_, codomain) => codomain.base_type(),
+        }
+    }
+}
+```
+
+For `cont : [Name -> Proc]`:
+- `base_type()` = `Proc` (the codomain's base type)
+- So `^cont.{...}` uses `LamProc` (taking a Proc-typed argument)
+
+### Display Enhancement
+
+Show full types in environment listing:
+
+```
+rhocalc> env
+Environment:
+  dup : [Name -> Proc] = ^n. { n?x. {  { *(x) | n!(*(x)) } } }
+  rep : [Name -> [Name -> [[Name->Proc] -> Proc]]] = ^n.^a.^cont. { ... }
+```
+
+### Implementation Status (Completed)
+
+1. **`InferredType` enum** - Defined in `macros/src/codegen/ast_gen.rs`
+   - `Base(VarCategory)` for simple types
+   - `Arrow(InferredType, InferredType)` for function types
+   - `MultiArrow(InferredType, InferredType)` for multi-arg functions
+   - `base_type()` method returns representation category
+
+2. **`infer_var_type` method** - Generated for each category
+   - Detects variable usage in `ApplyX` function position → infers `[Domain -> Codomain]`
+   - Recurses into all subterms including auto-generated `LamX`, `ApplyX` variants
+   - Returns full type information
+
+3. **Parser generation** - Uses `base_type()` for variant selection
+   - Nested match: outer on `Option<InferredType>`, inner on `t.base_type()`
+   - Correctly handles higher-order types like `[Name -> Proc]`
+
+4. **Subterm deconstruction** - Added rules for auto-generated variants
+   - `ApplyX(lam, arg)` → extracts both `lam` and `arg`
+   - `LamX(scope)` → extracts body from scope
+   - Enables beta reduction to find redexes in subterms
+
+5. **Rewrite congruence** - Propagates rewrites through structure
+   - If `lam` rewrites in `ApplyX(lam, arg)`, the whole `ApplyX` rewrites
+   - If `arg` rewrites in `ApplyX(lam, arg)`, the whole `ApplyX` rewrites  
+   - If `body` rewrites in `LamX(scope)`, the whole `LamX` rewrites
+   - Enables nested beta reductions to appear as top-level choices
+
+### Future Work
+
+- **Type annotations**: Optional `^x:[Type].{body}` syntax
+- **Type display in environment**: Show inferred types in `env` command
+
+### Summary
+
+| Aspect | First-Order (Current) | Higher-Order (Enhanced) |
+|--------|----------------------|-------------------------|
+| Type inference | Base category only | Full function types |
+| `^f.{$name(f,x)}` | `f : Proc` | `f : [Name -> Proc]` |
+| Storage | `LamProc` | `LamProc` (same - base type is Proc) |
+| Display | `^f.{...}` | `^f:[Name->Proc].{...}` (optional) |
+| Validation | None | Check application type consistency |
+
+The key insight: **function types are already representable** - `[A->B]` is stored as a `B` value (specifically a `Lam` variant). Enhanced inference just tracks the full type for validation and documentation, without changing the underlying representation.

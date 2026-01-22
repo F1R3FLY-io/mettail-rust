@@ -41,6 +41,10 @@ pub fn generate_category_rules(theory: &TheoryDef) -> TokenStream {
         // This adds collection elements to their category relations
         let seeding_rules = generate_projection_seeding_rules(cat, theory);
         rules.extend(seeding_rules);
+        
+        // Generate rewrite congruence rules for auto-generated Apply/Lam variants
+        let congruence_rules = generate_auto_variant_congruence(cat, theory);
+        rules.extend(congruence_rules);
     }
 
     quote! {
@@ -64,7 +68,159 @@ fn generate_deconstruction_rules(category: &Ident, theory: &TheoryDef) -> Vec<To
             rules.push(rule);
         }
     }
+    
+    // Generate deconstruction rules for auto-generated variants (Apply, Lam, etc.)
+    let auto_deconstruct = generate_auto_variant_deconstruction(category, theory);
+    rules.extend(auto_deconstruct);
 
+    rules
+}
+
+/// Generate deconstruction rules for auto-generated variants (Apply, Lam, MApply, MLam)
+fn generate_auto_variant_deconstruction(category: &Ident, theory: &TheoryDef) -> Vec<TokenStream> {
+    let mut rules = Vec::new();
+    let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
+    
+    // Get all non-native categories for domain types
+    let domain_cats: Vec<_> = theory.exports.iter()
+        .filter(|e| e.native_type.is_none())
+        .map(|e| &e.name)
+        .collect();
+    
+    for domain in &domain_cats {
+        let domain_lower = format_ident!("{}", domain.to_string().to_lowercase());
+        
+        // ApplyX(lam, arg) - extract both lam (same category) and arg (domain category)
+        let apply_variant = format_ident!("Apply{}", domain);
+        rules.push(quote! {
+            #cat_lower(lam.as_ref().clone()),
+            #domain_lower(arg.as_ref().clone()) <--
+                #cat_lower(t),
+                if let #category::#apply_variant(lam, arg) = t;
+        });
+        
+        // MApplyX(lam, args) - extract lam and all args
+        let mapply_variant = format_ident!("MApply{}", domain);
+        rules.push(quote! {
+            #cat_lower(lam.as_ref().clone()) <--
+                #cat_lower(t),
+                if let #category::#mapply_variant(lam, _) = t;
+        });
+        rules.push(quote! {
+            #domain_lower(arg.clone()) <--
+                #cat_lower(t),
+                if let #category::#mapply_variant(_, args) = t,
+                for arg in args.iter();
+        });
+        
+        // LamX(scope) - extract body from scope
+        let lam_variant = format_ident!("Lam{}", domain);
+        rules.push(quote! {
+            #cat_lower((* scope.inner().unsafe_body).clone()) <--
+                #cat_lower(t),
+                if let #category::#lam_variant(scope) = t;
+        });
+        
+        // MLamX(scope) - extract body from scope
+        let mlam_variant = format_ident!("MLam{}", domain);
+        rules.push(quote! {
+            #cat_lower((* scope.inner().unsafe_body).clone()) <--
+                #cat_lower(t),
+                if let #category::#mlam_variant(scope) = t;
+        });
+    }
+    
+    rules
+}
+
+/// Generate rewrite congruence rules for auto-generated variants (Apply, Lam, MApply, MLam)
+/// 
+/// These rules propagate rewrites through the structure:
+/// - If lam rewrites in ApplyX(lam, arg), the whole ApplyX rewrites
+/// - If arg rewrites in ApplyX(lam, arg), the whole ApplyX rewrites
+/// - If body rewrites in LamX(scope), the whole LamX rewrites
+fn generate_auto_variant_congruence(category: &Ident, theory: &TheoryDef) -> Vec<TokenStream> {
+    let mut rules = Vec::new();
+    let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
+    let rw_cat = format_ident!("rw_{}", category.to_string().to_lowercase());
+    
+    // Get all non-native categories for domain types
+    let domain_cats: Vec<_> = theory.exports.iter()
+        .filter(|e| e.native_type.is_none())
+        .map(|e| &e.name)
+        .collect();
+    
+    for domain in &domain_cats {
+        let rw_domain = format_ident!("rw_{}", domain.to_string().to_lowercase());
+        
+        // ApplyX(lam, arg) - congruence for lam rewriting
+        let apply_variant = format_ident!("Apply{}", domain);
+        rules.push(quote! {
+            #rw_cat(
+                #category::#apply_variant(lam.clone(), arg.clone()),
+                #category::#apply_variant(Box::new(lam_new.clone()), arg.clone())
+            ) <--
+                #cat_lower(t),
+                if let #category::#apply_variant(ref lam, ref arg) = t,
+                #rw_cat(lam.as_ref().clone(), lam_new);
+        });
+        
+        // ApplyX(lam, arg) - congruence for arg rewriting
+        rules.push(quote! {
+            #rw_cat(
+                #category::#apply_variant(lam.clone(), arg.clone()),
+                #category::#apply_variant(lam.clone(), Box::new(arg_new.clone()))
+            ) <--
+                #cat_lower(t),
+                if let #category::#apply_variant(ref lam, ref arg) = t,
+                #rw_domain(arg.as_ref().clone(), arg_new);
+        });
+        
+        // MApplyX(lam, args) - congruence for lam rewriting
+        let mapply_variant = format_ident!("MApply{}", domain);
+        rules.push(quote! {
+            #rw_cat(
+                #category::#mapply_variant(lam.clone(), args.clone()),
+                #category::#mapply_variant(Box::new(lam_new.clone()), args.clone())
+            ) <--
+                #cat_lower(t),
+                if let #category::#mapply_variant(ref lam, ref args) = t,
+                #rw_cat(lam.as_ref().clone(), lam_new);
+        });
+        
+        // LamX(scope) - congruence for body rewriting
+        let lam_variant = format_ident!("Lam{}", domain);
+        rules.push(quote! {
+            #rw_cat(
+                #category::#lam_variant(scope.clone()),
+                #category::#lam_variant(mettail_runtime::Scope::new(
+                    scope.inner().unsafe_pattern.clone(),
+                    Box::new(body_new.clone())
+                ))
+            ) <--
+                #cat_lower(t),
+                if let #category::#lam_variant(ref scope) = t,
+                let body = (* scope.inner().unsafe_body).clone(),
+                #rw_cat(body, body_new);
+        });
+        
+        // MLamX(scope) - congruence for body rewriting
+        let mlam_variant = format_ident!("MLam{}", domain);
+        rules.push(quote! {
+            #rw_cat(
+                #category::#mlam_variant(scope.clone()),
+                #category::#mlam_variant(mettail_runtime::Scope::new(
+                    scope.inner().unsafe_pattern.clone(),
+                    Box::new(body_new.clone())
+                ))
+            ) <--
+                #cat_lower(t),
+                if let #category::#mlam_variant(ref scope) = t,
+                let body = (* scope.inner().unsafe_body).clone(),
+                #rw_cat(body, body_new);
+        });
+    }
+    
     rules
 }
 

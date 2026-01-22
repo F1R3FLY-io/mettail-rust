@@ -1,3 +1,2 @@
 dup = ^l.{l?x.{{*(x)|l!(*(x))}}}
-rep = ^n.{{$name(dup,n)|n!(a?y.{{p|$name(dup,n)}})}}
-a_rep = {a?y.{{$name(^l.{l?x.{{*(x) | l!(*(x))}}}, c) | p}} | c!(*(@(a?y.{{$name(^l.{l?x.{{l!(*(x)) | *(x)}}}, c) | p}})))}
+rep = ^n.{^a.{^cont.{{$name(dup,n)|n!(a?y.{{$name(cont,y)|$name(dup,n)}})}}}}

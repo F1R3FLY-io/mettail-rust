@@ -1508,30 +1508,35 @@ fn generate_auto_alternatives(
                 result.push_str(",\n");
             }
             
-            // Generate match arms for each possible domain category
-            let match_arms: String = domain_cats.iter().map(|domain| {
+            // Generate match arms using a nested match on base_type()
+            // This ensures exhaustive pattern matching
+            let base_type_arms: String = domain_cats.iter().map(|domain| {
                 format!(
-                    "            Some(VarCategory::{}) => {}::Lam{}(mettail_runtime::Scope::new(binder, Box::new(body))),\n",
+                    "                VarCategory::{} => {}::Lam{}(mettail_runtime::Scope::new(binder, Box::new(body))),\n",
                     domain, cat_str, domain
                 )
             }).collect();
             
             // Single-binder lambda: ^x.{body} with type inference
+            // Uses infer_var_type for full type inference (including function types)
+            // and base_type() to get the representation category
             result.push_str(&format!(
                 r#"    "^" <x:Ident> "." "{{" <body:{}> "}}" => {{
         let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(x.clone()));
-        // Infer binder type from usage in body
-        match body.infer_var_category(&x) {{
-{}            None => panic!("Lambda binder '{{}}' not used in body", x),
+        // Infer binder type from usage in body (supports higher-order types)
+        match body.infer_var_type(&x) {{
+            Some(ref t) => match t.base_type() {{
+{}            }},
+            None => panic!("Lambda binder '{{}}' not used in body", x),
         }}
     }}"#,
-                cat_str, match_arms
+                cat_str, base_type_arms
             ));
             
             // Generate match arms for multi-lambda
-            let multi_match_arms: String = domain_cats.iter().map(|domain| {
+            let multi_base_type_arms: String = domain_cats.iter().map(|domain| {
                 format!(
-                    "            Some(VarCategory::{}) => {}::MLam{}(mettail_runtime::Scope::new(binders, Box::new(body))),\n",
+                    "                VarCategory::{} => {}::MLam{}(mettail_runtime::Scope::new(binders, Box::new(body))),\n",
                     domain, cat_str, domain
                 )
             }).collect();
@@ -1546,11 +1551,13 @@ fn generate_auto_alternatives(
             .collect();
         // Infer binder type from first binder's usage in body
         let first_binder = binder_names.first().expect("Multi-lambda needs at least one binder");
-        match body.infer_var_category(first_binder) {{
-{}            None => panic!("Lambda binder '{{}}' not used in body", first_binder),
+        match body.infer_var_type(first_binder) {{
+            Some(ref t) => match t.base_type() {{
+{}            }},
+            None => panic!("Lambda binder '{{}}' not used in body", first_binder),
         }}
     }}"#,
-                cat_str, multi_match_arms
+                cat_str, multi_base_type_arms
             ));
             
             // Lambda application: $Domain(lam, arg) - explicit typed application syntax
