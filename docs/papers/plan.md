@@ -22,7 +22,7 @@
 
   - MeTTaIL's role
   
-2. Weaken strong bisimilarity to weak & address issues that arise
+2. Weaken strong bisimilarity & address issues that arise
 
   - Pi to RHO
 
@@ -42,12 +42,14 @@
 
     4. Destructuring resource (maybe linear, maybe not) such that tag(...args) ⊙ destruct ~> (tag, ...args)
 
-3. Compare Hypercube (with structural stuff but may have weaker logic) to paper above (without structural stuff but with topos).
-
-  - Functor that extends syntax of a theory so we can talk about term constructors in the original as behavior in extension and thus capture structural types as well for the purposes of bisimilarity
+3. Compare Hypercube (with structural stuff but may have weaker logic) to paper 1 above (without structural stuff but with topos).
 
 4. Stochastic stuff
 
   - define finite presentations of weighted GSLTs
+  - thm: any finitely presentable theory using Warrell's approach can be presented using our approach
 
 5. HDC
+
+  - Write down shredding idea for substitution, analyze performance
+  - hypothesis: running all the parsing, lookup, regenerating the table, reencoding etc. as vector ops on the GPU is faster than doing the same without vectors on the CPU.
