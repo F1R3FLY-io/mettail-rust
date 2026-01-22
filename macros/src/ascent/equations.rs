@@ -15,16 +15,23 @@ use syn::Ident;
 ///
 /// This includes:
 /// 1. Reflexivity rules for all categories
-/// 2. Equality congruence for all constructors
-/// 3. User-defined equations
+/// 2. User-defined equations
+///
+/// Note: Equality congruence rules (if args equal, then constructed terms equal)
+/// are DISABLED by default for performance. They cause O(N²) blowup when many
+/// terms are equal. Enable by setting ENABLE_EQ_CONGRUENCE = true below.
+const ENABLE_EQ_CONGRUENCE: bool = false;
+
 pub fn generate_equation_rules(theory: &TheoryDef) -> TokenStream {
     let mut rules = Vec::new();
 
     // 1. Add reflexivity for eq relations
     rules.extend(generate_reflexivity_rules(theory));
 
-    // 2. Add congruence rules for all constructors
-    rules.extend(generate_congruence_rules(theory));
+    // 2. Add congruence rules for all constructors (disabled by default)
+    if ENABLE_EQ_CONGRUENCE {
+        rules.extend(generate_congruence_rules(theory));
+    }
 
     // 3. Generate user-defined equation rules using unified approach
     rules.extend(unified_rules::generate_equation_rules(theory));

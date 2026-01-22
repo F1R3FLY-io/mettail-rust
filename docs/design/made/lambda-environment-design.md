@@ -633,10 +633,10 @@ Environment:
    - `LamX(scope)` → extracts body from scope
    - Enables beta reduction to find redexes in subterms
 
-5. **Rewrite congruence** - Propagates rewrites through structure
+5. **Rewrite congruence** - Propagates rewrites through applications
    - If `lam` rewrites in `ApplyX(lam, arg)`, the whole `ApplyX` rewrites
-   - If `arg` rewrites in `ApplyX(lam, arg)`, the whole `ApplyX` rewrites  
-   - If `body` rewrites in `LamX(scope)`, the whole `LamX` rewrites
+   - If `arg` rewrites in `ApplyX(lam, arg)`, the whole `ApplyX` rewrites
+   - Does NOT propagate through lambda bodies (lambdas are suspended computations)
    - Enables nested beta reductions to appear as top-level choices
 
 ### Future Work

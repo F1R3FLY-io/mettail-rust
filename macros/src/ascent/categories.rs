@@ -133,12 +133,15 @@ fn generate_auto_variant_deconstruction(category: &Ident, theory: &TheoryDef) ->
     rules
 }
 
-/// Generate rewrite congruence rules for auto-generated variants (Apply, Lam, MApply, MLam)
+/// Generate rewrite congruence rules for auto-generated Apply variants
 /// 
-/// These rules propagate rewrites through the structure:
+/// These rules propagate rewrites through applications:
 /// - If lam rewrites in ApplyX(lam, arg), the whole ApplyX rewrites
 /// - If arg rewrites in ApplyX(lam, arg), the whole ApplyX rewrites
-/// - If body rewrites in LamX(scope), the whole LamX rewrites
+/// 
+/// Note: We do NOT propagate rewrites through lambda bodies (LamX, MLamX)
+/// because lambdas are suspended computations - their bodies shouldn't
+/// reduce until they are applied.
 fn generate_auto_variant_congruence(category: &Ident, theory: &TheoryDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
     let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
@@ -186,38 +189,6 @@ fn generate_auto_variant_congruence(category: &Ident, theory: &TheoryDef) -> Vec
                 #cat_lower(t),
                 if let #category::#mapply_variant(ref lam, ref args) = t,
                 #rw_cat(lam.as_ref().clone(), lam_new);
-        });
-        
-        // LamX(scope) - congruence for body rewriting
-        let lam_variant = format_ident!("Lam{}", domain);
-        rules.push(quote! {
-            #rw_cat(
-                #category::#lam_variant(scope.clone()),
-                #category::#lam_variant(mettail_runtime::Scope::new(
-                    scope.inner().unsafe_pattern.clone(),
-                    Box::new(body_new.clone())
-                ))
-            ) <--
-                #cat_lower(t),
-                if let #category::#lam_variant(ref scope) = t,
-                let body = (* scope.inner().unsafe_body).clone(),
-                #rw_cat(body, body_new);
-        });
-        
-        // MLamX(scope) - congruence for body rewriting
-        let mlam_variant = format_ident!("MLam{}", domain);
-        rules.push(quote! {
-            #rw_cat(
-                #category::#mlam_variant(scope.clone()),
-                #category::#mlam_variant(mettail_runtime::Scope::new(
-                    scope.inner().unsafe_pattern.clone(),
-                    Box::new(body_new.clone())
-                ))
-            ) <--
-                #cat_lower(t),
-                if let #category::#mlam_variant(ref scope) = t,
-                let body = (* scope.inner().unsafe_body).clone(),
-                #rw_cat(body, body_new);
         });
     }
     

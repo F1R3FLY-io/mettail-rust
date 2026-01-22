@@ -2,7 +2,7 @@ use crate::examples::{Example, ExampleCategory, TheoryName};
 use crate::pretty::format_term_pretty;
 use crate::registry::TheoryRegistry;
 use crate::state::ReplState;
-use crate::theory::{AscentResults, TermInfo};
+use crate::theory::{AscentResults, TermInfo, Theory};
 use anyhow::Result;
 use colored::Colorize;
 use rustyline::error::ReadlineError;
@@ -99,18 +99,19 @@ impl Repl {
 
         match parts[0] {
             "help" => self.cmd_help(),
-            "load" => self.cmd_load(&parts[1..]),
+            "lang" => self.cmd_lang(&parts[1..]),
             "load-env" => self.cmd_load_env(&parts[1..]),
-            "list" | "list-theories" => self.cmd_list_theories(),
+            "list-theories" => self.cmd_list_theories(),
             "info" => self.cmd_info(),
             "env" => self.cmd_env(),
             "save" => self.cmd_save(&parts[1..]),
             "clear" => self.cmd_clear(&parts[1..]),
             "clear-all" => self.cmd_clear_all(),
+            "term" => self.cmd_term(),
             "rewrites" => self.cmd_rewrites(),
             "rewrites-all" => self.cmd_rewrites_all(),
             "equations" => self.cmd_equations(),
-            "normal-forms" | "nf" => self.cmd_normal_forms(),
+            "normal-forms" => self.cmd_normal_forms(),
             "apply" => self.cmd_apply(&parts[1..]),
             "goto" => self.cmd_goto(&parts[1..]),
             "example" => self.cmd_example(&parts[1..]),
@@ -119,7 +120,7 @@ impl Repl {
                 println!("Goodbye!");
                 std::process::exit(0);
             },
-            "exec" => self.cmd_parse_term(line.strip_prefix("exec").unwrap()),
+            "exec" => self.cmd_exec_term(line.strip_prefix("exec").unwrap()),
             _ => {
                 anyhow::bail!(
                     "Unknown command: '{}'. Type 'help' for available commands.",
@@ -166,7 +167,7 @@ impl Repl {
         println!("{}", "Available commands:".bold());
         println!();
         println!("{}", "  Theory Management:".yellow());
-        println!("    {}  Load a theory", "load <name>".green());
+        println!("    {}  Load a theory", "lang <name>".green());
         println!("    {}        Show available theories", "list-theories".green());
         println!("    {}              Show theory information", "info".green());
         println!();
@@ -197,9 +198,9 @@ impl Repl {
         Ok(())
     }
 
-    fn cmd_load(&mut self, args: &[&str]) -> Result<()> {
+    fn cmd_lang(&mut self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
-            anyhow::bail!("Usage: load <theory-name>");
+            anyhow::bail!("Usage: theory <theory-name>");
         }
 
         let theory_name = args[0];
@@ -217,14 +218,28 @@ impl Repl {
         let theory = self.registry.get(theory_name)?;
 
         // Print theory info
-        println!("  ✓ {} categories", theory.categories().len());
-        println!("  ✓ {} constructors", theory.constructor_count());
-        println!("  ✓ {} equations", theory.equation_count());
-        println!("  ✓ {} rewrite rules", theory.rewrite_count());
-        println!();
+        // println!("  ✓ {} categories", theory.categories().len());
+        // println!("  ✓ {} constructors", theory.constructor_count());
+        // println!("  ✓ {} equations", theory.equation_count());
+        // println!("  ✓ {} rewrite rules", theory.rewrite_count());
 
         // Store the theory name in state
         self.state.load_theory(theory.name());
+
+        // Try to auto-load environment from repl/src/examples/{theory_name}.txt
+        let env_file = format!("repl/src/examples/{}.txt", theory_name);
+        if std::path::Path::new(&env_file).exists() {
+            match self.load_env_from_file(&env_file) {
+                Ok(count) if count > 0 => {
+                    println!("  ✓ {} definitions from {}", count, env_file);
+                }
+                Ok(_) => {} // Empty file, no message
+                Err(e) => {
+                    println!("  {} Failed to load {}: {}", "⚠".yellow(), env_file, e);
+                }
+            }
+        }
+        println!();
 
         println!("{} Theory loaded successfully!", "✓".green());
         println!("Use {} to execute a program.", "'exec <term>'".cyan());
@@ -263,10 +278,11 @@ impl Repl {
             println!("  Rewrites: {}", theory.rewrite_count());
             println!();
         } else {
-            println!("{} No theory loaded. Use 'load <name>' first.", "Info:".yellow());
+            println!("{} No theory loaded. Use 'lang <name>' first.", "Info:".yellow());
         }
         Ok(())
     }
+
     
     // === Environment Commands ===
     
@@ -274,7 +290,7 @@ impl Repl {
         let theory_name = self
             .state
             .theory_name()
-            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'load <theory>' first."))?;
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'lang <theory>' first."))?;
         
         let theory = self.registry.get(theory_name.as_str())?;
         
@@ -296,7 +312,7 @@ impl Repl {
         let theory_name = self
             .state
             .theory_name()
-            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'load <theory>' first."))?;
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'theory <theory>' first."))?;
         
         let theory = self.registry.get(theory_name.as_str())?;
         
@@ -414,10 +430,25 @@ impl Repl {
         
         let file_path = args[0];
         
+        match self.load_env_from_file(file_path) {
+            Ok(count) => {
+                if count > 0 {
+                    println!("{} Loaded {} declaration(s) from '{}'", "✓".green(), count, file_path);
+                } else {
+                    println!("{} No declarations found in '{}'", "ℹ".blue(), file_path);
+                }
+                Ok(())
+            }
+            Err(e) => Err(e)
+        }
+    }
+    
+    /// Helper to load environment from a file, returns count of loaded declarations
+    fn load_env_from_file(&mut self, file_path: &str) -> Result<usize> {
         let theory_name = self
             .state
             .theory_name()
-            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'load <theory>' first."))?;
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'lang <theory>' first."))?;
         
         let theory = self.registry.get(theory_name.as_str())?;
         
@@ -461,11 +492,7 @@ impl Repl {
             }
         }
         
-        // Report results
-        if count > 0 {
-            println!("{} Loaded {} declaration(s) from '{}'", "✓".green(), count, file_path);
-        }
-        
+        // Report errors if any
         if !errors.is_empty() {
             println!();
             println!("{}", "Errors:".red());
@@ -474,15 +501,28 @@ impl Repl {
             }
         }
         
+        Ok(count)
+    }
+
+
+    fn cmd_term(&mut self) -> Result<()> {
+        println!("{}", "Current term:".bold());
+        if let Some(term) = self.state.current_term() {
+            let formatted = format_term_pretty(&format!("{}", term));
+            println!("{}", formatted.cyan());
+        } else {
+            println!("{}", "(none)".dimmed());
+        }
+        println!();
         Ok(())
     }
 
-    fn cmd_parse_term(&mut self, term_str: &str) -> Result<()> {
+    fn cmd_exec_term(&mut self, term_str: &str) -> Result<()> {
         // Get the loaded theory name
         let theory_name = self
             .state
             .theory_name()
-            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'load <theory>' first."))?;
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'theory <theory>' first."))?;
 
         // Get the theory from the registry
         let theory = self.registry.get(theory_name.as_str())?;
@@ -495,7 +535,6 @@ impl Repl {
         let term = theory.parse_term_for_env(term_str)?;
         println!("{}", "✓".green());
         
-        println!("{}", "Current term:".bold());
         // Apply environment substitution if environment exists and is not empty
         let term = if let Some(env) = self.state.environment() {
             if !theory.is_env_empty(env) {
@@ -798,7 +837,7 @@ impl Repl {
         println!();
 
         // Parse and load the example
-        self.cmd_parse_term(example.source)?;
+        self.cmd_exec_term(example.source)?;
 
         Ok(())
     }
