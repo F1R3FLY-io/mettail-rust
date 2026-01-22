@@ -560,8 +560,17 @@ fn generate_normalize_functions(theory: &TheoryDef) -> TokenStream {
                 .any(|item| matches!(item, GrammarItem::Collection { .. }))
         });
 
-        // Only generate normalize if this category has collections
+        // If no collections, generate a simple normalize that just clones
         if !has_collections {
+            let impl_block = quote! {
+                impl #category {
+                    /// Normalize (no-op for categories without collections)
+                    pub fn normalize(&self) -> Self {
+                        self.clone()
+                    }
+                }
+            };
+            impls.push(impl_block);
             continue;
         }
 

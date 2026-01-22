@@ -2,6 +2,7 @@ use crate::examples::{Example, ExampleCategory, TheoryName};
 use crate::pretty::format_term_pretty;
 use crate::registry::TheoryRegistry;
 use crate::state::ReplState;
+use crate::theory::{AscentResults, TermInfo};
 use anyhow::Result;
 use colored::Colorize;
 use rustyline::error::ReadlineError;
@@ -99,12 +100,15 @@ impl Repl {
         match parts[0] {
             "help" => self.cmd_help(),
             "load" => self.cmd_load(&parts[1..]),
+            "load-env" => self.cmd_load_env(&parts[1..]),
             "list" | "list-theories" => self.cmd_list_theories(),
             "info" => self.cmd_info(),
             "env" => self.cmd_env(),
+            "save" => self.cmd_save(&parts[1..]),
             "clear" => self.cmd_clear(&parts[1..]),
             "clear-all" => self.cmd_clear_all(),
             "rewrites" => self.cmd_rewrites(),
+            "rewrites-all" => self.cmd_rewrites_all(),
             "equations" => self.cmd_equations(),
             "normal-forms" | "nf" => self.cmd_normal_forms(),
             "apply" => self.cmd_apply(&parts[1..]),
@@ -115,16 +119,12 @@ impl Repl {
                 println!("Goodbye!");
                 std::process::exit(0);
             },
+            "exec" => self.cmd_parse_term(line.strip_prefix("exec").unwrap()),
             _ => {
-                // Check if it's a term input
-                if let Some(term_str) = line.strip_prefix("term:") {
-                    self.cmd_parse_term(term_str.trim())
-                } else {
-                    anyhow::bail!(
-                        "Unknown command: '{}'. Type 'help' for available commands.",
-                        parts[0]
-                    )
-                }
+                anyhow::bail!(
+                    "Unknown command: '{}'. Type 'help' for available commands.",
+                    parts[0]
+                )
             },
         }
     }
@@ -171,18 +171,21 @@ impl Repl {
         println!("    {}              Show theory information", "info".green());
         println!();
         println!("{}", "  Term Input:".yellow());
-        println!("    {}    Parse and load a term", "term: <expr>".green());
-        println!("    {}    Load example process", "example <name>".green());
+        println!("    {}    Execute a program", "exec <term>".green());
+        println!("    {}    Load example program", "example <name>".green());
         println!("    {}    List available examples", "list-examples".green());
         println!();
         println!("{}", "  Environment:".yellow());
         println!("    {} Define a named term", "<name> = <term>".green());
+        println!("    {}      Save current term to environment", "save <name>".green());
         println!("    {}               Show all environment bindings", "env".green());
         println!("    {}    Remove a binding", "clear <name>".green());
         println!("    {}         Clear all bindings", "clear-all".green());
+        println!("    {} Load declarations from file", "load-env <file>".green());
         println!();
         println!("{}", "  Navigation:".yellow());
         println!("    {}           List rewrites from current term", "rewrites".green());
+        println!("    {}         List all rewrites", "rewrites-all".green());
         println!("    {}        Show normal forms", "normal-forms".green());
         println!("    {} Apply rewrite N", "apply <N>".green());
         println!("    {}              Go to normal form N", "goto <N>".green());
@@ -224,7 +227,7 @@ impl Repl {
         self.state.load_theory(theory.name());
 
         println!("{} Theory loaded successfully!", "✓".green());
-        println!("Use {} to parse and execute a term.", "'term: <expr>'".cyan());
+        println!("Use {} to execute a program.", "'exec <term>'".cyan());
         println!();
 
         Ok(())
@@ -361,6 +364,118 @@ impl Repl {
         
         Ok(())
     }
+    
+    /// Save the current term to the environment with a given name
+    fn cmd_save(&mut self, args: &[&str]) -> Result<()> {
+        if args.is_empty() {
+            anyhow::bail!("Usage: save <name>");
+        }
+        
+        let name = args[0];
+        
+        // Validate name is a valid identifier
+        if !name.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false)
+            || !name.chars().all(|c| c.is_alphanumeric() || c == '_')
+        {
+            anyhow::bail!("Invalid identifier: '{}'", name);
+        }
+        
+        let theory_name = self
+            .state
+            .theory_name()
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded."))?;
+        
+        // Clone the current term to release the borrow on self.state
+        let current_term = self
+            .state
+            .current_term()
+            .ok_or_else(|| anyhow::anyhow!("No current term. Use 'term: <expr>' first."))?
+            .clone_box();
+        
+        let theory = self.registry.get(theory_name.as_str())?;
+        
+        // Ensure environment exists
+        self.state.ensure_environment(|| theory.create_env());
+        
+        // Add the current term to the environment
+        if let Some(env) = self.state.environment_mut() {
+            theory.add_to_env(env, name, current_term.as_ref())?;
+            println!("{} {} added to environment", "✓".green(), name.cyan());
+        }
+        
+        Ok(())
+    }
+    
+    /// Load term declarations from a file
+    fn cmd_load_env(&mut self, args: &[&str]) -> Result<()> {
+        if args.is_empty() {
+            anyhow::bail!("Usage: load-env <file>");
+        }
+        
+        let file_path = args[0];
+        
+        let theory_name = self
+            .state
+            .theory_name()
+            .ok_or_else(|| anyhow::anyhow!("No theory loaded. Use 'load <theory>' first."))?;
+        
+        let theory = self.registry.get(theory_name.as_str())?;
+        
+        // Ensure environment exists
+        self.state.ensure_environment(|| theory.create_env());
+        
+        // Read the file
+        let content = std::fs::read_to_string(file_path)
+            .map_err(|e| anyhow::anyhow!("Failed to read file '{}': {}", file_path, e))?;
+        
+        let mut count = 0;
+        let mut errors = Vec::new();
+        
+        for (line_num, line) in content.lines().enumerate() {
+            let line = line.trim();
+            
+            // Skip empty lines and comments
+            if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
+                continue;
+            }
+            
+            // Try to parse as assignment
+            if let Some((name, term_str)) = Self::parse_assignment(line) {
+                // Parse the term (using parse_term_for_env to share variable IDs)
+                match theory.parse_term_for_env(&term_str) {
+                    Ok(term) => {
+                        if let Some(env) = self.state.environment_mut() {
+                            if let Err(e) = theory.add_to_env(env, &name, term.as_ref()) {
+                                errors.push(format!("Line {}: {}", line_num + 1, e));
+                            } else {
+                                count += 1;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        errors.push(format!("Line {}: Failed to parse '{}': {}", line_num + 1, name, e));
+                    }
+                }
+            } else {
+                errors.push(format!("Line {}: Invalid assignment syntax", line_num + 1));
+            }
+        }
+        
+        // Report results
+        if count > 0 {
+            println!("{} Loaded {} declaration(s) from '{}'", "✓".green(), count, file_path);
+        }
+        
+        if !errors.is_empty() {
+            println!();
+            println!("{}", "Errors:".red());
+            for error in errors {
+                println!("  {}", error);
+            }
+        }
+        
+        Ok(())
+    }
 
     fn cmd_parse_term(&mut self, term_str: &str) -> Result<()> {
         // Get the loaded theory name
@@ -375,10 +490,12 @@ impl Repl {
         println!();
         print!("Parsing... ");
 
-        // Parse the term
-        let term = theory.parse_term(term_str)?;
+        // Parse the term using parse_term_for_env to share FreeVar IDs with environment
+        // This ensures that variables like `a` in the input match `a` from substituted env terms
+        let term = theory.parse_term_for_env(term_str)?;
         println!("{}", "✓".green());
         
+        println!("{}", "Current term:".bold());
         // Apply environment substitution if environment exists and is not empty
         let term = if let Some(env) = self.state.environment() {
             if !theory.is_env_empty(env) {
@@ -432,11 +549,12 @@ impl Repl {
         Ok(())
     }
 
+    fn get_results(&self) -> Result<&AscentResults> {
+        self.state.ascent_results().ok_or_else(|| anyhow::anyhow!("No term loaded. Use 'term: <expr>' first."))
+    }
+
     fn cmd_equations(&self) -> Result<()> {
-        let results = self
-            .state
-            .ascent_results()
-            .ok_or_else(|| anyhow::anyhow!("No term loaded. Use 'term: <expr>' first."))?;
+        let results = self.get_results()?;
 
         let equivalences = results.equivalences.clone();
         println!();
@@ -461,11 +579,23 @@ impl Repl {
         Ok(())
     }
 
+    fn cmd_rewrites_all(&self) -> Result<()> {
+        let results = self.get_results()?;
+
+        let rewrites = results.rewrites.clone();
+        println!();
+        println!("{}", "Rewrites:".bold());
+        for rewrite in rewrites {
+            let from_info = self.term_by_id(rewrite.from_id)?;
+            let to_info = self.term_by_id(rewrite.to_id)?;
+            println!("  {} → {}", from_info.display, to_info.display);
+        }
+        println!();
+        Ok(())
+    }
+
     fn cmd_rewrites(&self) -> Result<()> {
-        let results = self
-            .state
-            .ascent_results()
-            .ok_or_else(|| anyhow::anyhow!("No term loaded. Use 'term: <expr>' first."))?;
+        let results = self.get_results()?;
 
         let current_id = self
             .state
@@ -490,12 +620,8 @@ impl Repl {
             println!();
             for (idx, rewrite) in available_rewrites.iter().enumerate() {
                 // Find the target term display
-                let target_display = results
-                    .all_terms
-                    .iter()
-                    .find(|t| t.term_id == rewrite.to_id)
-                    .map(|t| t.display.as_str())
-                    .unwrap_or("<unknown>");
+                let target_info = self.term_by_id(rewrite.to_id)?;
+                let target_display = target_info.display.as_str();
 
                 // Pretty print the target
                 let formatted = format_term_pretty(target_display);
@@ -512,11 +638,16 @@ impl Repl {
         Ok(())
     }
 
+    fn term_by_id(&self, id: u64) -> Result<&TermInfo> {
+        let results = self.get_results()?;
+        results.all_terms
+            .iter()
+            .find(|t| t.term_id == id)
+            .ok_or_else(|| anyhow::anyhow!("Term not found"))
+    }
+
     fn cmd_normal_forms(&self) -> Result<()> {
-        let results = self
-            .state
-            .ascent_results()
-            .ok_or_else(|| anyhow::anyhow!("No term loaded. Use 'term: <expr>' first."))?;
+        let results = self.get_results()?;
 
         let normal_forms = results.normal_forms();
 
@@ -555,10 +686,7 @@ impl Repl {
 
         let theory = self.registry.get(theory_name.as_str())?;
 
-        let results = self
-            .state
-            .ascent_results()
-            .ok_or_else(|| anyhow::anyhow!("No term loaded"))?;
+        let results = self.get_results()?;
 
         let current_id = self
             .state
@@ -619,10 +747,7 @@ impl Repl {
 
         let theory = self.registry.get(theory_name.as_str())?;
 
-        let results = self
-            .state
-            .ascent_results()
-            .ok_or_else(|| anyhow::anyhow!("No term loaded"))?;
+        let results = self.get_results()?;
 
         let normal_forms = results.normal_forms();
 

@@ -48,6 +48,23 @@ pub fn var_cache_size() -> usize {
     VAR_CACHE.lock().unwrap().len()
 }
 
+/// Get or insert a FreeVar into the cache
+///
+/// Unlike `get_or_create_var`, this uses an existing FreeVar if not in cache
+/// (rather than creating a fresh one). This is used for unifying FreeVar IDs
+/// after environment substitution.
+pub fn get_or_insert_var(var: &FreeVar<String>) -> FreeVar<String> {
+    if let Some(name) = &var.pretty_name {
+        let mut cache = VAR_CACHE.lock().unwrap();
+        cache
+            .entry(name.clone())
+            .or_insert_with(|| var.clone())
+            .clone()
+    } else {
+        var.clone()
+    }
+}
+
 //=============================================================================
 // SCOPE WRAPPER
 //=============================================================================

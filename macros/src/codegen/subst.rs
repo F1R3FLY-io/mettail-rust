@@ -166,27 +166,226 @@ pub fn generate_env_substitution(theory: &TheoryDef) -> TokenStream {
                 /// Replaces all free variables whose names match keys in the environment
                 /// with their corresponding values. Uses name-based matching (not FreeVar identity).
                 /// Iterates until fixed point (no more substitutions possible).
+                /// Finally normalizes FreeVar IDs and flattens any nested collections.
                 pub fn substitute_env(&self, env: &#env_name) -> Self {
                     let mut result = self.clone();
                     // Iterate until fixed point - keep substituting until no changes
-                    loop {
-                        let prev = result.clone();
+                    // Use Display format for comparison (more stable than Debug for HashBag)
+                    // Limit iterations to prevent infinite loops
+                    for _ in 0..100 {
+                        let prev_str = format!("{}", result);
                         #(#all_subst_calls)*
                         // Check if we've reached fixed point (no more changes)
-                        if format!("{:?}", result) == format!("{:?}", prev) {
+                        if format!("{}", result) == prev_str {
                             break;
                         }
                     }
-                    result
+                    // Unify FreeVar IDs by name using VAR_CACHE
+                    // This ensures all variables with the same pretty_name have the same ID
+                    let result = result.unify_freevars();
+                    // Normalize to flatten any nested collections (e.g., PPar inside PPar)
+                    result.normalize()
                 }
                 
                 #(#subst_by_name_methods)*
+                
+                /// Unify FreeVar IDs by pretty_name using the global VAR_CACHE.
+                /// This ensures all variables with the same name have the same FreeVar ID,
+                /// which is necessary for Ascent equality checks to work correctly
+                /// when terms come from different parsing contexts (e.g., environment vs user input).
+                pub fn unify_freevars(&self) -> Self {
+                    self.unify_freevars_impl()
+                }
+            }
+        }
+    }).collect();
+    
+    // Generate unify_freevars_impl methods for each category
+    let unify_impls: Vec<TokenStream> = categories.iter().map(|export| {
+        let cat_name = &export.name;
+        let variants = collect_category_variants(cat_name, theory);
+        let match_arms: Vec<TokenStream> = variants.iter().map(|variant| {
+            generate_unify_freevars_arm(cat_name, variant)
+        }).collect();
+        
+        quote! {
+            impl #cat_name {
+                fn unify_freevars_impl(&self) -> Self {
+                    match self {
+                        #(#match_arms),*
+                    }
+                }
             }
         }
     }).collect();
     
     quote! {
         #(#impls)*
+        #(#unify_impls)*
+    }
+}
+
+/// Generate a match arm for unify_freevars
+fn generate_unify_freevars_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
+    match variant {
+        VariantKind::Var { label } => {
+            // For Var variants, look up and replace with canonical FreeVar from VAR_CACHE
+            quote! {
+                #category::#label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(v))) => {
+                    // Get or insert canonical FreeVar for this name
+                    let canonical = mettail_runtime::get_or_insert_var(v);
+                    #category::#label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(canonical)))
+                },
+                #category::#label(bound) => #category::#label(bound.clone())
+            }
+        }
+        
+        VariantKind::Literal { label } => {
+            quote! { #category::#label(v) => #category::#label(*v) }
+        }
+        
+        VariantKind::Nullary { label } => {
+            quote! { #category::#label => #category::#label }
+        }
+        
+        VariantKind::Regular { label, fields } => {
+            let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+            let field_unifies: Vec<TokenStream> = fields.iter().zip(field_names.iter()).map(|(field, name)| {
+                if field.is_collection {
+                    match field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag) {
+                        CollectionType::HashBag => {
+                            quote! {
+                                {
+                                    let mut bag = mettail_runtime::HashBag::new();
+                                    for (elem, count) in #name.iter() {
+                                        let u = elem.unify_freevars_impl();
+                                        for _ in 0..count { bag.insert(u.clone()); }
+                                    }
+                                    bag
+                                }
+                            }
+                        }
+                        CollectionType::HashSet => {
+                            quote! { #name.iter().map(|e| e.unify_freevars_impl()).collect() }
+                        }
+                        CollectionType::Vec => {
+                            quote! { #name.iter().map(|e| e.unify_freevars_impl()).collect() }
+                        }
+                    }
+                } else {
+                    quote! { Box::new((**#name).unify_freevars_impl()) }
+                }
+            }).collect();
+            
+            quote! {
+                #category::#label(#(#field_names),*) => {
+                    #category::#label(#(#field_unifies),*)
+                }
+            }
+        }
+        
+        VariantKind::Collection { label, coll_type, .. } => {
+            match coll_type {
+                CollectionType::HashBag => {
+                    quote! {
+                        #category::#label(bag) => {
+                            let mut new_bag = mettail_runtime::HashBag::new();
+                            for (elem, count) in bag.iter() {
+                                let u = elem.unify_freevars_impl();
+                                for _ in 0..count { new_bag.insert(u.clone()); }
+                            }
+                            #category::#label(new_bag)
+                        }
+                    }
+                }
+                CollectionType::HashSet => {
+                    quote! {
+                        #category::#label(elems) => {
+                            #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect())
+                        }
+                    }
+                }
+                CollectionType::Vec => {
+                    quote! {
+                        #category::#label(elems) => {
+                            #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect())
+                        }
+                    }
+                }
+            }
+        }
+        
+        VariantKind::Binder { label, pre_scope_fields, .. } => {
+            let field_names: Vec<Ident> = (0..pre_scope_fields.len())
+                .map(|i| format_ident!("f{}", i))
+                .collect();
+            
+            let field_unifies: Vec<TokenStream> = pre_scope_fields.iter().zip(field_names.iter()).map(|(field, name)| {
+                if field.is_collection {
+                    quote! { #name.iter().map(|e| e.unify_freevars_impl()).collect::<Vec<_>>() }
+                } else {
+                    quote! { Box::new((**#name).unify_freevars_impl()) }
+                }
+            }).collect();
+            
+            let pattern = if field_names.is_empty() {
+                quote! { #category::#label(scope) }
+            } else {
+                quote! { #category::#label(#(#field_names,)* scope) }
+            };
+            
+            let reconstruction = if field_names.is_empty() {
+                quote! { #category::#label(new_scope) }
+            } else {
+                quote! { #category::#label(#(#field_unifies,)* new_scope) }
+            };
+            
+            quote! {
+                #pattern => {
+                    let binder = &scope.inner().unsafe_pattern;
+                    let body = &scope.inner().unsafe_body;
+                    let new_body = (**body).unify_freevars_impl();
+                    let new_scope = mettail_runtime::Scope::new(binder.clone(), Box::new(new_body));
+                    #reconstruction
+                }
+            }
+        }
+        
+        VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
+            let field_names: Vec<Ident> = (0..pre_scope_fields.len())
+                .map(|i| format_ident!("f{}", i))
+                .collect();
+            
+            let field_unifies: Vec<TokenStream> = pre_scope_fields.iter().zip(field_names.iter()).map(|(field, name)| {
+                if field.is_collection {
+                    quote! { #name.iter().map(|e| e.unify_freevars_impl()).collect::<Vec<_>>() }
+                } else {
+                    quote! { Box::new((**#name).unify_freevars_impl()) }
+                }
+            }).collect();
+            
+            let pattern = if field_names.is_empty() {
+                quote! { #category::#label(scope) }
+            } else {
+                quote! { #category::#label(#(#field_names,)* scope) }
+            };
+            
+            let reconstruction = if field_names.is_empty() {
+                quote! { #category::#label(new_scope) }
+            } else {
+                quote! { #category::#label(#(#field_unifies,)* new_scope) }
+            };
+            
+            quote! {
+                #pattern => {
+                    let binders = &scope.inner().unsafe_pattern;
+                    let body = &scope.inner().unsafe_body;
+                    let new_body = (**body).unify_freevars_impl();
+                    let new_scope = mettail_runtime::Scope::new(binders.clone(), Box::new(new_body));
+                    #reconstruction
+                }
+            }
+        }
     }
 }
 
