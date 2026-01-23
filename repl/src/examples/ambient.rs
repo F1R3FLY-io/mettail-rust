@@ -2,7 +2,7 @@
 //
 // Demonstrates mobility, security, and context preservation patterns
 
-use super::{Example, ExampleCategory, TheoryName};
+use super::{Example, ExampleCategory, LanguageName};
 
 pub fn all() -> Vec<&'static Example> {
     vec![
@@ -36,7 +36,7 @@ pub static AMB_ENTER: Example = Example {
     description: "Basic ambient entry: n[{in(m,p)}] | m[r] => m[{n[{p}] | r}]",
     source: "{n[{in(m,p)}] | m[r]}",
     category: ExampleCategory::Simple,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_EXIT: Example = Example {
@@ -44,7 +44,7 @@ pub static AMB_EXIT: Example = Example {
     description: "Ambient exit: m[{n[{out(m,p)}] | r}] => {n[{p}] | m[r]}",
     source: "m[{n[{out(m,p)}] | r}]",
     category: ExampleCategory::Simple,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_OPEN: Example = Example {
@@ -52,7 +52,7 @@ pub static AMB_OPEN: Example = Example {
     description: "Open ambient: {open(n,p) | n[q]} => {p | q}",
     source: "{open(n,p) | n[q]}",
     category: ExampleCategory::Simple,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 //=============================================================================
@@ -64,7 +64,7 @@ pub static AMB_FIREWALL: Example = Example {
     description: "Firewall pattern: agent enters trusted zone but not untrusted",
     source: "{firewall[{agent[{in(firewall,0)} | trusted[0]}] | untrusted[{agent[{in(untrusted,0)} | 0]}]}",
     category: ExampleCategory::Mobility,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_MOBILE_AGENT: Example = Example {
@@ -72,7 +72,7 @@ pub static AMB_MOBILE_AGENT: Example = Example {
     description: "Mobile agent: travels through multiple locations sequentially",
     source: "{agent[{in(loc1, in(loc2, 0))}] | loc1[0] | loc2[0]}",
     category: ExampleCategory::Mobility,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_COLOCATED: Example = Example {
@@ -80,7 +80,7 @@ pub static AMB_COLOCATED: Example = Example {
     description: "Co-location: two ambients enter the same parent",
     source: "{parent[0] | child1[{in(parent,0)}] | child2[{in(parent,0)}]}",
     category: ExampleCategory::Mobility,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_NESTED_MOBILITY: Example = Example {
@@ -88,7 +88,7 @@ pub static AMB_NESTED_MOBILITY: Example = Example {
     description: "Nested mobility: child moves with parent",
     source: "{grandparent[0] | parent[{in(grandparent,0) | child[0]}]}",
     category: ExampleCategory::Mobility,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 //=============================================================================
@@ -100,7 +100,7 @@ pub static AMB_CAPABILITY_PASSING: Example = Example {
     description: "Capability passing: new creates fresh ambient names",
     source: "new(x, {agent[{in(x,0)}] | x[0]})",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_SAFE_AMBIENT: Example = Example {
@@ -108,7 +108,7 @@ pub static AMB_SAFE_AMBIENT: Example = Example {
     description: "Safe ambient: only authorized agents can access resources",
     source: "{safe[{open(key,0)}] | key[{secret[0]}] | agent[{in(safe,0) | open(key,0)}]}",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_PARENT_CHILD: Example = Example {
@@ -116,7 +116,7 @@ pub static AMB_PARENT_CHILD: Example = Example {
     description: "Parent-child coordination: child exits and parent opens",
     source: "parent[{child[{out(parent,0)}] | open(child,result)}]",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 //=============================================================================
@@ -128,7 +128,7 @@ pub static AMB_REST_EMPTY: Example = Example {
     description: "Rest pattern with empty context: demonstrates ...rest matching empty bag",
     source: "{n[{in(m,p)}] | m[r]}",
     category: ExampleCategory::EdgeCase,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_REST_NONEMPTY: Example = Example {
@@ -136,7 +136,7 @@ pub static AMB_REST_NONEMPTY: Example = Example {
     description: "Rest pattern with non-empty context: ...rest captures additional processes",
     source: "{n[{in(m,p), q, s}] | m[r]}",
     category: ExampleCategory::EdgeCase,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_REST_CONTEXT: Example = Example {
@@ -144,7 +144,7 @@ pub static AMB_REST_CONTEXT: Example = Example {
     description: "Context preservation: rest maintains ambient state during mobility",
     source: "{n[{in(m,p), state1, state2, counter}] | m[{r, local}]}",
     category: ExampleCategory::Mobility,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_REST_NESTED: Example = Example {
@@ -152,7 +152,7 @@ pub static AMB_REST_NESTED: Example = Example {
     description: "Nested rest patterns: multiple levels of context preservation",
     source: "{outer[{inner[{in(target, data), ctx1}] | ctx2}] | target[base]}",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_REST_MULTIPLE: Example = Example {
@@ -160,7 +160,7 @@ pub static AMB_REST_MULTIPLE: Example = Example {
     description: "Multiple mobility operations with independent contexts",
     source: "{a[{in(parent, x), ctxA}] | b[{in(parent, y), ctxB}] | parent[z]}",
     category: ExampleCategory::Parallel,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_REST_PRESERVATION: Example = Example {
@@ -168,7 +168,7 @@ pub static AMB_REST_PRESERVATION: Example = Example {
     description: "Sequential mobility preserving context through multiple steps",
     source: "{agent[{in(loc1, in(loc2, done)), state}] | loc1[0] | loc2[0]}",
     category: ExampleCategory::Mobility,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };
 
 pub static AMB_REST_COMPLEX: Example = Example {
@@ -176,5 +176,5 @@ pub static AMB_REST_COMPLEX: Example = Example {
     description: "Complex interaction: entry, exit, and open with context preservation",
     source: "{container[{child[{out(container, result), data}] | open(child, final)}] | observer}",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::AmbientCalculus,
+    language: LanguageName::AmbientCalculus,
 };

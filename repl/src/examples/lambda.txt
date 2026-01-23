@@ -1,0 +1,21 @@
+// Classic combinators
+I = lam x.x
+K = lam x.lam y.x
+S = lam x.lam y.lam z.((x,z),(y,z))
+
+// Church booleans
+true = lam t.lam f.t
+false = lam t.lam f.f
+not = lam b.((b,false),true)
+and = lam a.lam b.((a,b),false)
+or = lam a.lam b.((a,true),b)
+if = lam p.lam a.lam b.((p,a),b)
+
+// Church numerals
+zero = lam f.lam x.x
+one = lam f.lam x.(f,x)
+two = lam f.lam x.(f,(f,x))
+three = lam f.lam x.(f,(f,(f,x)))
+succ = lam n.lam f.lam x.(f,((n,f),x))
+add = lam m. lam n. lam f. lam x.((m,f),((n,f),x))
+mult = lam m. lam n. lam f. lam x.((m,(n,f)),x)

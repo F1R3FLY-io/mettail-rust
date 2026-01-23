@@ -33,8 +33,6 @@ Detailed technical designs:
 ### Made (Implemented)
 - **`design/made/ascent_generation.md`** - How Datalog rules are generated
 - **`design/made/data_structures.md`** - Collections and binding design
-- **`design/made/native_types_and_operations.md`** - Rust native type integration and operator semantics (i32, String, etc.)
-- **`design/made/environments.md`** - Data structures required to interpret code written in MeTTaIL theory languages.
 - **`design/made/repl.md`** - Term explorer REPL design
 
 ### Exploring (In Progress / Future)
