@@ -5,30 +5,29 @@ use mettail_repl::{build_registry, Repl};
 /// MeTTaIL Term Explorer - Interactive REPL for exploring rewrite systems
 #[derive(Parser, Debug)]
 #[command(name = "mettail")]
-#[command(about = "Interactive term exploration for MeTTaIL theories", long_about = None)]
+#[command(about = "Interactive term exploration for programming languages", long_about = None)]
 struct Args {
-    /// Theory to load on startup
-    #[arg(value_name = "THEORY")]
-    theory: Option<String>,
+    /// Language to load on startup
+    #[arg(value_name = "LANGUAGE")]
+    language: Option<String>,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
 
-    // Build the theory registry
+    // Build the language registry
     let registry = build_registry().unwrap_or_else(|e| {
         eprintln!("Warning: {}", e);
         eprintln!("Continuing with empty registry...");
-        mettail_repl::TheoryRegistry::new()
+        mettail_repl::LanguageRegistry::new()
     });
 
     // Create and run the REPL
     let mut repl = Repl::new(registry)?;
 
-    // If a theory was specified, try to load it
-    if let Some(theory_name) = args.theory {
-        println!("Auto-loading theory: {}", theory_name);
-        // TODO: Actually load the theory
+    // If a language was specified, load it on startup
+    if let Some(language_name) = args.language {
+        repl.load_language(&language_name)?;
     }
 
     repl.run()?;

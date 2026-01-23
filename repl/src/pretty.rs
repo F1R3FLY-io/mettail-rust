@@ -1,18 +1,8 @@
 /// Pretty-printing utilities for terms
 ///
 /// Provides indented multi-line formatting for complex terms.
-/// Trait for pretty-printing with indentation
-pub trait PrettyPrint {
-    fn pretty_print(&self) -> String {
-        let mut output = String::new();
-        self.pretty_print_indent(&mut output, 0);
-        output
-    }
 
-    fn pretty_print_indent(&self, output: &mut String, indent: usize);
-}
-
-pub fn indent_str(level: usize) -> String {
+fn indent_str(level: usize) -> String {
     "    ".repeat(level)
 }
 

@@ -17,22 +17,11 @@
 //! their respective modules.
 
 
-// Focused modules that re-export from types.rs
-// In future phases, definitions will migrate here
 pub mod term;
 pub mod pattern;
-pub mod syntax;
 pub mod types;
 pub mod grammar;
-pub mod theory;
+pub mod language;
 
-pub use term::*;
-pub use pattern::*;
-pub use syntax::*;
-pub use types::*;
-pub use grammar::*;
-pub use theory::*;
-
-// Tests
-#[cfg(test)]
-mod tests;
+pub mod tests;
+pub mod validation;

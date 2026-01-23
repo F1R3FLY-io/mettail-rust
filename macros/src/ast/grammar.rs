@@ -4,7 +4,6 @@ use syn::{
 };
 
 use super::types::{CollectionType, TypeExpr};
-use super::syntax::{SyntaxExpr, PatternOp};
 
 /// Item in a grammar rule
 #[derive(Debug, Clone, PartialEq)]
@@ -58,6 +57,8 @@ pub enum TermParam {
     },
 }
 
+
+
 impl TermParam {
     /// Get the name(s) this parameter introduces
     pub fn names(&self) -> Vec<&Ident> {
@@ -76,6 +77,57 @@ impl TermParam {
             TermParam::MultiAbstraction { ty, .. } => ty,
         }
     }
+}
+
+/// Syntax expression in patterns (can include meta-operations)
+/// 
+/// Example: `"for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}"`
+#[derive(Debug, Clone)]
+pub enum SyntaxExpr {
+    /// Quoted literal: "for", "(", "<-"
+    Literal(String),
+    /// Parameter reference: n, x, p
+    Param(Ident),
+    /// Pattern operation: #sep, #zip, #map, #opt
+    Op(PatternOp),
+}
+
+/// Pattern operation (compile-time meta-syntax)
+/// 
+/// These operations generate grammar rules and display code at compile time.
+#[derive(Debug, Clone)]
+pub enum PatternOp {
+    /// #sep(coll, "sep") or coll.#sep("sep") or chain.#sep(",")
+    /// Generates: `(<elem> "sep")* <elem>?` in grammar
+    /// 
+    /// For simple collections: source=None, collection=coll_name
+    /// For chained operations: source=Some(Map/Zip), collection ignored
+    Sep {
+        collection: Ident,
+        separator: String,
+        /// Optional source for chained operations like #zip(...).#map(...).#sep(",")
+        source: Option<Box<PatternOp>>,
+    },
+    /// #zip(a, b) - pairs corresponding elements
+    /// Used with #map to generate paired patterns
+    Zip {
+        left: Ident,
+        right: Ident,
+    },
+    /// #map(source, |x| expr) or source.#map(|x| expr)
+    /// Transforms each element according to the pattern
+    Map {
+        source: Box<PatternOp>,  // Can be Zip result or collection ref
+        params: Vec<Ident>,       // Closure parameters
+        body: Vec<SyntaxExpr>,    // Pattern body
+    },
+    /// #opt(expr) - optional element
+    /// Generates: `(expr)?` in grammar
+    Opt {
+        inner: Vec<SyntaxExpr>,
+    },
+    /// Variable reference (for chaining: coll.#sep)
+    Var(Ident),
 }
 
 /// Grammar rule - supports both old BNFC-style and new judgement-style syntax
@@ -360,7 +412,7 @@ fn is_end_of_syntax_pattern(input: ParseStream) -> bool {
 /// Parse a single syntax expression (literal, param, or pattern op)
 fn parse_syntax_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
     // Check for pattern operation: #name(...)
-    if input.peek(Token![#]) {
+    if input.peek(Token![*]) {
         return parse_pattern_op_expr(input);
     }
     
@@ -369,7 +421,7 @@ fn parse_syntax_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
         let id = input.parse::<Ident>()?;
         
         // Check for method chain: ident.#name(...)
-        if input.peek(Token![.]) && input.peek2(Token![#]) {
+        if input.peek(Token![.]) && input.peek2(Token![*]) {
             let _ = input.parse::<Token![.]>()?;
             let op = parse_pattern_op_with_receiver(input, PatternOp::Var(id))?;
             return Ok(SyntaxExpr::Op(op));
@@ -399,7 +451,7 @@ fn parse_pattern_op_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
 
 /// Parse a pattern operation: #name(args)
 fn parse_pattern_op(input: ParseStream) -> SynResult<PatternOp> {
-    let _ = input.parse::<Token![#]>()?;
+    let _ = input.parse::<Token![*]>()?;
     let name = input.parse::<Ident>()?;
     let name_str = name.to_string();
     
@@ -418,7 +470,7 @@ fn parse_pattern_op(input: ParseStream) -> SynResult<PatternOp> {
     };
     
     // Check for method chain continuation: .#name(...)
-    if input.peek(Token![.]) && input.peek2(Token![#]) {
+    if input.peek(Token![.]) && input.peek2(Token![*]) {
         let _ = input.parse::<Token![.]>()?;
         return parse_pattern_op_with_receiver(input, op);
     }
@@ -428,7 +480,7 @@ fn parse_pattern_op(input: ParseStream) -> SynResult<PatternOp> {
 
 /// Parse pattern operation with a receiver (method chain style)
 fn parse_pattern_op_with_receiver(input: ParseStream, receiver: PatternOp) -> SynResult<PatternOp> {
-    let _ = input.parse::<Token![#]>()?;
+    let _ = input.parse::<Token![*]>()?;
     let name = input.parse::<Ident>()?;
     let name_str = name.to_string();
     
@@ -474,7 +526,7 @@ fn parse_pattern_op_with_receiver(input: ParseStream, receiver: PatternOp) -> Sy
     };
     
     // Check for further chaining
-    if input.peek(Token![.]) && input.peek2(Token![#]) {
+    if input.peek(Token![.]) && input.peek2(Token![*]) {
         let _ = input.parse::<Token![.]>()?;
         return parse_pattern_op_with_receiver(input, op);
     }
@@ -501,7 +553,7 @@ fn parse_zip_op(content: ParseStream) -> SynResult<PatternOp> {
 /// Parse #map(source, |x| expr)
 fn parse_map_op(content: ParseStream) -> SynResult<PatternOp> {
     // Source can be an identifier or a pattern op
-    let source = if content.peek(Token![#]) {
+    let source = if content.peek(Token![*]) {
         parse_pattern_op(content)?
     } else {
         let id = content.parse::<Ident>()?;

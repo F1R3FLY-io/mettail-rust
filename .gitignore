@@ -57,7 +57,7 @@ examples/src/*_gen.rs
 *.dll
 
 # Generated files
-/theories/src/generated
+/languages/src/generated
 
 # trybuild artifacts
 target/tests/trybuild/

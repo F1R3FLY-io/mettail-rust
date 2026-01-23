@@ -15,7 +15,7 @@ use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 use super::term::Term;
-use super::theory::TheoryDef;
+use super::language::LanguageDef;
 use super::grammar::GrammarItem;
 use super::types::CollectionType;
 
@@ -272,16 +272,16 @@ impl Pattern {
     /// 
     /// NOTE: Collection patterns return None - they get their category from
     /// the enclosing PatternTerm::Apply which knows the constructor.
-    pub fn category<'a>(&self, theory: &'a TheoryDef) -> Option<&'a Ident> {
+    pub fn category<'a>(&self, language: &'a LanguageDef) -> Option<&'a Ident> {
         match self {
-            Pattern::Term(pt) => pt.category(theory),
+            Pattern::Term(pt) => pt.category(language),
             // Collections don't know their category - it comes from enclosing Apply
             Pattern::Collection { .. } => None,
             // Map produces elements of the body's category
-            Pattern::Map { body, .. } => body.category(theory),
+            Pattern::Map { body, .. } => body.category(language),
             Pattern::Zip { first, .. } => {
                 // Zip produces a collection of tuples - category depends on first
-                first.category(theory)
+                first.category(language)
             }
         }
     }
@@ -341,14 +341,14 @@ impl Pattern {
 
 impl PatternTerm {
     /// Infer the category this pattern term produces
-    pub fn category<'a>(&self, theory: &'a TheoryDef) -> Option<&'a Ident> {
+    pub fn category<'a>(&self, language: &'a LanguageDef) -> Option<&'a Ident> {
         match self {
             PatternTerm::Var(_) => None, // Variables need context
-            PatternTerm::Apply { constructor, .. } => theory.category_of_constructor(constructor),
-            PatternTerm::Lambda { body, .. } => body.category(theory),
-            PatternTerm::MultiLambda { body, .. } => body.category(theory),
-            PatternTerm::Subst { term, .. } => term.category(theory),
-            PatternTerm::MultiSubst { scope, .. } => scope.category(theory),
+            PatternTerm::Apply { constructor, .. } => language.category_of_constructor(constructor),
+            PatternTerm::Lambda { body, .. } => body.category(language),
+            PatternTerm::MultiLambda { body, .. } => body.category(language),
+            PatternTerm::Subst { term, .. } => term.category(language),
+            PatternTerm::MultiSubst { scope, .. } => scope.category(language),
         }
     }
     
@@ -429,7 +429,7 @@ impl Pattern {
         &self,
         term_var: &Ident,
         category: &Ident,
-        theory: &TheoryDef,
+        language: &LanguageDef,
         duplicate_vars: &HashSet<String>,
     ) -> AscentClauses {
         let mut result = AscentClauses::default();
@@ -439,7 +439,7 @@ impl Pattern {
         self.generate_clauses(
             term_var,
             category,
-            theory,
+            language,
             duplicate_vars,
             &mut result,
             &mut first_occurrences,
@@ -454,7 +454,7 @@ impl Pattern {
         &self,
         term_var: &Ident,
         category: &Ident,
-        theory: &TheoryDef,
+        language: &LanguageDef,
         duplicate_vars: &HashSet<String>,
         result: &mut AscentClauses,
         first_occurrences: &mut HashSet<String>,
@@ -463,7 +463,7 @@ impl Pattern {
     ) {
         match self {
             Pattern::Term(pt) => {
-                pt.generate_clauses(term_var, category, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context);
+                pt.generate_clauses(term_var, category, language, duplicate_vars, result, first_occurrences, iter_counter, search_context);
             }
             
             Pattern::Collection { elements, rest, .. } => {
@@ -494,7 +494,7 @@ impl Pattern {
                         matched_indices_vars.push(idx_var);
                         
                         elem.generate_clauses(
-                            bag_var, elem_cat, theory, duplicate_vars, result, first_occurrences, iter_counter,
+                            bag_var, elem_cat, language, duplicate_vars, result, first_occurrences, iter_counter,
                             nested_search_context,
                         );
                         continue;
@@ -518,7 +518,7 @@ impl Pattern {
                     }
                     
                     elem.generate_clauses(
-                        &elem_var, elem_cat, theory, duplicate_vars, result, first_occurrences, iter_counter,
+                        &elem_var, elem_cat, language, duplicate_vars, result, first_occurrences, iter_counter,
                         nested_search_context,
                     );
                 }
@@ -721,7 +721,7 @@ impl Pattern {
                     collection.generate_clauses(
                         &format_ident!("__map_coll"),
                         category,
-                        theory,
+                        language,
                         duplicate_vars,
                         result,
                         first_occurrences,
@@ -755,7 +755,7 @@ impl Pattern {
                     body.generate_clauses(
                         &elem_var,
                         category,
-                        theory,
+                        language,
                         duplicate_vars,
                         result,
                         first_occurrences,
@@ -804,7 +804,7 @@ impl Pattern {
                     first.generate_clauses(
                         &format_ident!("__zip_first"),
                         category,
-                        theory,
+                        language,
                         duplicate_vars,
                         result,
                         first_occurrences,
@@ -817,7 +817,7 @@ impl Pattern {
                     second.generate_clauses(
                         &format_ident!("__zip_second"),
                         category,
-                        theory,
+                        language,
                         duplicate_vars,
                         result,
                         first_occurrences,
@@ -835,7 +835,7 @@ impl PatternTerm {
         &self,
         term_var: &Ident,
         category: &Ident,
-        theory: &TheoryDef,
+        language: &LanguageDef,
         duplicate_vars: &HashSet<String>,
         result: &mut AscentClauses,
         first_occurrences: &mut HashSet<String>,
@@ -868,7 +868,7 @@ impl PatternTerm {
             }
             
             PatternTerm::Apply { constructor, args } => {
-                let rule = theory.get_constructor(constructor)
+                let rule = language.get_constructor(constructor)
                     .expect("Unknown constructor in pattern");
                 
                 // Generate field variables
@@ -905,7 +905,7 @@ impl PatternTerm {
                                 };
                                 
                                 args[field_idx].generate_clauses(
-                                    &deref_var, field_cat, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
+                                    &deref_var, field_cat, language, duplicate_vars, result, first_occurrences, iter_counter, search_context
                                 );
                                 field_idx += 1;
                             }
@@ -916,7 +916,7 @@ impl PatternTerm {
                                 // Pass the field variable as search_context for nested Zip patterns
                                 let field_var = &field_vars[field_idx];
                                 args[field_idx].generate_clauses(
-                                    field_var, element_type, theory, duplicate_vars, result, first_occurrences, iter_counter, Some(field_var)
+                                    field_var, element_type, language, duplicate_vars, result, first_occurrences, iter_counter, Some(field_var)
                                 );
                                 field_idx += 1;
                             }
@@ -959,7 +959,7 @@ impl PatternTerm {
                                     
                                     // Process the Lambda's body with body_var
                                     body.generate_clauses(
-                                        &body_var, body_cat, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
+                                        &body_var, body_cat, language, duplicate_vars, result, first_occurrences, iter_counter, search_context
                                     );
                                 } else if let Pattern::Term(PatternTerm::MultiLambda { binders, body }) = &args[field_idx] {
                                     // Multi-binder: binder_var is Vec<Binder<String>>
@@ -982,7 +982,7 @@ impl PatternTerm {
                                     
                                     // Process the MultiLambda's body with body_var
                                     body.generate_clauses(
-                                        &body_var, body_cat, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
+                                        &body_var, body_cat, language, duplicate_vars, result, first_occurrences, iter_counter, search_context
                                     );
                                 } else if let Pattern::Term(PatternTerm::Var(v)) = &args[field_idx] {
                                     // Simple variable in binder position - bind to the FULL SCOPE
@@ -992,7 +992,7 @@ impl PatternTerm {
                                 } else {
                                     // Other pattern in binder position - process as body pattern
                                     args[field_idx].generate_clauses(
-                                        &body_var, body_cat, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
+                                        &body_var, body_cat, language, duplicate_vars, result, first_occurrences, iter_counter, search_context
                                     );
                                 }
                                 field_idx += 1;
@@ -1035,7 +1035,7 @@ impl PatternTerm {
                 // The body has the same category as the enclosing term (from context)
                 // For Scope<Binder, Body>, both the Scope and Body have the same category
                 body.generate_clauses(
-                    &body_var, category, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
+                    &body_var, category, language, duplicate_vars, result, first_occurrences, iter_counter, search_context
                 );
             }
             
@@ -1075,7 +1075,7 @@ impl PatternTerm {
                 
                 // Recursively process body with the same category as the enclosing term
                 body.generate_clauses(
-                    &body_var, category, theory, duplicate_vars, result, first_occurrences, iter_counter, search_context
+                    &body_var, category, language, duplicate_vars, result, first_occurrences, iter_counter, search_context
                 );
             }
             
@@ -1115,18 +1115,18 @@ impl Pattern {
     pub fn to_ascent_rhs(
         &self,
         bindings: &HashMap<String, TokenStream>,
-        theory: &TheoryDef,
+        language: &LanguageDef,
     ) -> TokenStream {
         match self {
-            Pattern::Term(pt) => pt.to_ascent_rhs(bindings, theory),
+            Pattern::Term(pt) => pt.to_ascent_rhs(bindings, language),
             Pattern::Collection { coll_type, elements, rest } => {
-                self.generate_collection_rhs(coll_type.as_ref(), elements, rest.as_ref(), bindings, theory)
+                self.generate_collection_rhs(coll_type.as_ref(), elements, rest.as_ref(), bindings, language)
             }
             Pattern::Map { collection, params, body } => {
-                self.generate_map_rhs(collection, params, body, bindings, theory)
+                self.generate_map_rhs(collection, params, body, bindings, language)
             }
             Pattern::Zip { first, second } => {
-                self.generate_zip_rhs(first, second, bindings, theory)
+                self.generate_zip_rhs(first, second, bindings, language)
             }
         }
     }
@@ -1137,10 +1137,10 @@ impl Pattern {
         elements: &[Pattern],
         rest: Option<&Ident>,
         bindings: &HashMap<String, TokenStream>,
-        theory: &TheoryDef,
+        language: &LanguageDef,
     ) -> TokenStream {
         let elem_exprs: Vec<_> = elements.iter()
-            .map(|e| e.to_ascent_rhs(bindings, theory))
+            .map(|e| e.to_ascent_rhs(bindings, language))
             .collect();
         
         // Use coll_type if provided, default to HashBag
@@ -1207,10 +1207,10 @@ fn generate_collection_rhs_with_constructor(
     constructor: Option<&Ident>,
     category: &Ident,
     bindings: &HashMap<String, TokenStream>,
-    theory: &TheoryDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     let elem_exprs: Vec<_> = elements.iter()
-        .map(|e| e.to_ascent_rhs(bindings, theory))
+        .map(|e| e.to_ascent_rhs(bindings, language))
         .collect();
     
     // Use coll_type if provided, default to HashBag
@@ -1298,10 +1298,10 @@ impl Pattern {
         params: &[Ident],
         body: &Pattern,
         bindings: &HashMap<String, TokenStream>,
-        theory: &TheoryDef,
+        language: &LanguageDef,
     ) -> TokenStream {
         // Generate: iterate collection, apply body transform to each element
-        let coll_expr = collection.to_ascent_rhs(bindings, theory);
+        let coll_expr = collection.to_ascent_rhs(bindings, language);
         
         // Determine if source collection is Vec or HashBag
         // For now, check if collection is a Pattern::Collection with coll_type
@@ -1316,7 +1316,7 @@ impl Pattern {
             let mut body_bindings = bindings.clone();
             body_bindings.insert(param_name, quote! { __elem });
             
-            let body_expr = body.to_ascent_rhs(&body_bindings, theory);
+            let body_expr = body.to_ascent_rhs(&body_bindings, language);
             
             if is_vec {
                 quote! {
@@ -1355,7 +1355,7 @@ impl Pattern {
             body_bindings.insert(param0.to_string(), quote! { __elem.0 });
             body_bindings.insert(param1.to_string(), quote! { __elem.1 });
             
-            let body_expr = body.to_ascent_rhs(&body_bindings, theory);
+            let body_expr = body.to_ascent_rhs(&body_bindings, language);
             
             // When mapping over zipped pairs, always produce Vec
             quote! {
@@ -1380,12 +1380,12 @@ impl Pattern {
         first: &Pattern,
         second: &Pattern,
         bindings: &HashMap<String, TokenStream>,
-        theory: &TheoryDef,
+        language: &LanguageDef,
     ) -> TokenStream {
         // Zip on RHS - pair-wise combination of collections
         // #zip(xs, ys) produces Vec<(X, Y)>
-        let first_expr = first.to_ascent_rhs(bindings, theory);
-        let second_expr = second.to_ascent_rhs(bindings, theory);
+        let first_expr = first.to_ascent_rhs(bindings, language);
+        let second_expr = second.to_ascent_rhs(bindings, language);
         
         quote! {
             {
@@ -1401,7 +1401,7 @@ impl PatternTerm {
     pub fn to_ascent_rhs(
         &self,
         bindings: &HashMap<String, TokenStream>,
-        theory: &TheoryDef,
+        language: &LanguageDef,
     ) -> TokenStream {
         match self {
             PatternTerm::Var(v) => {
@@ -1410,7 +1410,7 @@ impl PatternTerm {
                     .map(|b| quote! { (#b).clone() })
                     .unwrap_or_else(|| {
                         // Check if it's a nullary constructor
-                        if let Some(rule) = theory.get_constructor(v) {
+                        if let Some(rule) = language.get_constructor(v) {
                             let category = &rule.category;
                             quote! { #category::#v }
                         } else {
@@ -1422,15 +1422,15 @@ impl PatternTerm {
             }
             
             PatternTerm::Apply { constructor, args } => {
-                let category = theory.category_of_constructor(constructor)
+                let category = language.category_of_constructor(constructor)
                     .expect("Unknown constructor");
-                let rule = theory.get_constructor(constructor).unwrap();
+                let rule = language.get_constructor(constructor).unwrap();
                 
                 let arg_exprs: Vec<_> = args.iter()
                     .enumerate()
                     .map(|(i, arg)| {
                         // Check if this arg needs Box wrapping
-                        let needs_box = needs_box_for_field(rule, i, theory);
+                        let needs_box = needs_box_for_field(rule, i, language);
                         let is_collection = is_collection_field(rule, i);
                         
                         // For Collection args, pass the constructor for proper insert helper
@@ -1439,13 +1439,13 @@ impl PatternTerm {
                                 // Generate collection RHS with constructor context
                                 generate_collection_rhs_with_constructor(
                                     coll_type.as_ref(), elements, rest.as_ref(),
-                                    Some(constructor), category, bindings, theory
+                                    Some(constructor), category, bindings, language
                                 )
                             } else {
-                                arg.to_ascent_rhs(bindings, theory)
+                                arg.to_ascent_rhs(bindings, language)
                             }
                         } else {
-                            arg.to_ascent_rhs(bindings, theory)
+                            arg.to_ascent_rhs(bindings, language)
                         };
                         
                         if is_collection || !needs_box {
@@ -1462,8 +1462,8 @@ impl PatternTerm {
             PatternTerm::Lambda { binder, body } => {
                 // Construct a Scope using from_parts_unsafe to preserve binder identity!
                 // Using Scope::new would re-close the body with a different binder ID,
-                // causing infinite loops in equations.
-                let body_expr = body.to_ascent_rhs(bindings, theory);
+                // causing infinite loops in equations. 
+                let body_expr = body.to_ascent_rhs(bindings, language);
                 let binder_name = binder.to_string();
                 let full_binder_key = format!("__binder_{}", binder);
                 
@@ -1488,7 +1488,7 @@ impl PatternTerm {
             
             PatternTerm::MultiLambda { binders, body } => {
                 // Construct a multi-binder Scope using from_parts_unsafe
-                let body_expr = body.to_ascent_rhs(bindings, theory);
+                let body_expr = body.to_ascent_rhs(bindings, language);
                 let binder_exprs: Vec<_> = binders.iter().map(|b| {
                     let binder_name = b.to_string();
                     let full_binder_key = format!("__binder_{}", b);
@@ -1510,11 +1510,11 @@ impl PatternTerm {
             }
             
             PatternTerm::Subst { term, var, replacement } => {
-                let term_expr = term.to_ascent_rhs(bindings, theory);
-                let repl_expr = replacement.to_ascent_rhs(bindings, theory);
+                let term_expr = term.to_ascent_rhs(bindings, language);
+                let repl_expr = replacement.to_ascent_rhs(bindings, language);
                 
                 // Determine category of replacement for method name
-                let repl_cat = replacement.category(theory)
+                let repl_cat = replacement.category(language)
                     .map(|c| c.to_string().to_lowercase())
                     .unwrap_or_else(|| "unknown".to_string());
                 let subst_method = format_ident!("substitute_{}", repl_cat);
@@ -1554,7 +1554,7 @@ impl PatternTerm {
                 
                 // Determine category from first replacement
                 let repl_cat = replacements.first()
-                    .and_then(|r| r.category(theory))
+                    .and_then(|r| r.category(language))
                     .map(|c| c.to_string().to_lowercase())
                     .unwrap_or_else(|| "unknown".to_string());
                 let subst_method = format_ident!("multi_substitute_{}", repl_cat);
@@ -1563,12 +1563,12 @@ impl PatternTerm {
                 let repls_expr = if replacements.len() == 1 {
                     if let Pattern::Map { collection, params, body } = &replacements[0] {
                         // Map produces the entire replacements list
-                        let coll_expr = collection.to_ascent_rhs(bindings, theory);
+                        let coll_expr = collection.to_ascent_rhs(bindings, language);
                         if params.len() == 1 {
                             let param_name = params[0].to_string();
                             let mut body_bindings = bindings.clone();
                             body_bindings.insert(param_name, quote! { __elem });
-                            let body_expr = body.to_ascent_rhs(&body_bindings, theory);
+                            let body_expr = body.to_ascent_rhs(&body_bindings, language);
                             
                             quote! {
                                 {
@@ -1583,7 +1583,7 @@ impl PatternTerm {
                             let mut body_bindings = bindings.clone();
                             body_bindings.insert(param0, quote! { __elem.0 });
                             body_bindings.insert(param1, quote! { __elem.1 });
-                            let body_expr = body.to_ascent_rhs(&body_bindings, theory);
+                            let body_expr = body.to_ascent_rhs(&body_bindings, language);
                             
                             quote! {
                                 {
@@ -1594,13 +1594,13 @@ impl PatternTerm {
                         }
                     } else {
                         // Single non-Map replacement - wrap in vec
-                        let expr = replacements[0].to_ascent_rhs(bindings, theory);
+                        let expr = replacements[0].to_ascent_rhs(bindings, language);
                         quote! { vec![#expr] }
                     }
                 } else {
                     // Multiple replacements - collect into vec
                     let repl_exprs: Vec<_> = replacements.iter()
-                        .map(|r| r.to_ascent_rhs(bindings, theory))
+                        .map(|r| r.to_ascent_rhs(bindings, language))
                         .collect();
                     quote! { vec![#(#repl_exprs),*] }
                 };
@@ -1609,7 +1609,7 @@ impl PatternTerm {
                 // This avoids constructing a Scope just to unbind it immediately
                 if let Pattern::Term(PatternTerm::MultiLambda { binders, body }) = scope.as_ref() {
                     // Direct access to binders and body via bindings
-                    let body_expr = body.to_ascent_rhs(bindings, theory);
+                    let body_expr = body.to_ascent_rhs(bindings, language);
                     let var_exprs: Vec<_> = binders.iter().map(|b| {
                         let binder_name = b.to_string();
                         if let Some(bound_var) = bindings.get(&binder_name) {
@@ -1631,7 +1631,7 @@ impl PatternTerm {
                     // Variable or other pattern - unbind at runtime
                     // NOTE: This assumes a multi-binder scope (Vec<Binder>)
                     // For single-binder scopes, use the ^x.body syntax which parses as Subst
-                    let scope_expr = scope.to_ascent_rhs(bindings, theory);
+                    let scope_expr = scope.to_ascent_rhs(bindings, language);
                     
                     quote! {
                         {
@@ -1653,7 +1653,7 @@ impl PatternTerm {
 /// ALL non-terminal fields are boxed EXCEPT:
 /// - Var (which is OrdVar, not Box<OrdVar>)
 /// - Integer (which is native type like i32, not Box<i32>)
-fn needs_box_for_field(rule: &super::grammar::GrammarRule, i: usize, _theory: &TheoryDef) -> bool {
+fn needs_box_for_field(rule: &super::grammar::GrammarRule, i: usize, _language: &LanguageDef) -> bool {
     let mut field_idx = 0;
     for item in &rule.items {
         match item {

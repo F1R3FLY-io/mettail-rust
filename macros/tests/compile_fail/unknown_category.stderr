@@ -1,5 +1,0 @@
-error: expected identifier
-  --> tests/compile_fail/unknown_category.rs:12:30
-   |
-12 |         Quote . Name ::= "@" (Proc) ;
-   |                              ^

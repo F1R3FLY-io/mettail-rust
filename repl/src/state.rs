@@ -1,12 +1,11 @@
-use crate::examples::TheoryName;
-use crate::theory::{AscentResults, Term};
+use mettail_runtime::{AscentResults, Term};
 use anyhow::Result;
 use std::any::Any;
 
 /// The current state of the REPL session
 pub struct ReplState {
-    /// The name of the currently loaded theory
-    theory_name: Option<TheoryName>,
+    /// The name of the currently loaded language
+    language_name: Option<String>,
 
     /// The current term being explored
     current_term: Option<Box<dyn Term>>,
@@ -39,7 +38,7 @@ impl ReplState {
     /// Create a new empty state
     pub fn new() -> Self {
         Self {
-            theory_name: None,
+            language_name: None,
             current_term: None,
             current_graph_id: None,
             history: Vec::new(),
@@ -49,15 +48,15 @@ impl ReplState {
         }
     }
 
-    /// Load a theory by name
-    pub fn load_theory(&mut self, name: TheoryName) {
-        self.theory_name = Some(name);
+    /// Load a language by name
+    pub fn load_language(&mut self, name: &str) {
+        self.language_name = Some(name.to_string());
         self.current_term = None;
         self.current_graph_id = None;
         self.history.clear();
         self.history_idx = 0;
         self.ascent_results = None;
-        self.environment = None; // Reset environment when loading a new theory
+        self.environment = None;
     }
     
     /// Get the environment (immutable)
@@ -86,9 +85,9 @@ impl ReplState {
         self.environment.as_mut().unwrap().as_mut()
     }
 
-    /// Get the name of the current theory
-    pub fn theory_name(&self) -> Option<TheoryName> {
-        self.theory_name
+    /// Get the name of the current language
+    pub fn language_name(&self) -> Option<&str> {
+        self.language_name.as_deref()
     }
 
     /// Set the current term (without running Ascent - that's done externally now)

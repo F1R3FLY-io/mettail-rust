@@ -2,7 +2,7 @@
 //
 // Demonstrates various communication patterns in the Rho Calculus
 
-use super::{Example, ExampleCategory, TheoryName};
+use super::{Example, ExampleCategory, LanguageName};
 
 pub fn all() -> Vec<&'static Example> {
     vec![
@@ -50,7 +50,7 @@ pub static SIMPLE_COMM: Example = Example {
     description: "Basic communication: single channel, immediate communication",
     source: "{a!(0) | for(a->x){*(x)}}",
     category: ExampleCategory::Simple,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static SEQUENTIAL: Example = Example {
@@ -58,7 +58,7 @@ pub static SEQUENTIAL: Example = Example {
     description: "Two independent channels communicating in parallel",
     source: "{a!(0) | for(a->x){*(x)} | b!(0) | for(b->y){*(y)}}",
     category: ExampleCategory::Simple,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static REFLECTION: Example = Example {
@@ -66,7 +66,7 @@ pub static REFLECTION: Example = Example {
     description: "Quote/drop cycle demonstrating reflection",
     source: "{for(@(0)->x){*x} | @(0)!(0)}",
     category: ExampleCategory::Simple,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 //=============================================================================
@@ -78,7 +78,7 @@ pub static CHOICE: Example = Example {
     description: "Non-deterministic choice: multiple listeners on same channel",
     source: "{a!(0) | for(a->x){x!(0)} | for(a->y){y!(0)}}",
     category: ExampleCategory::Branching,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static RACE: Example = Example {
@@ -86,7 +86,7 @@ pub static RACE: Example = Example {
     description: "Race condition: multiple senders, one listener",
     source: "{a!(0) | a!(1) | for(a->x){*(x)}}",
     category: ExampleCategory::Branching,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 //=============================================================================
@@ -98,7 +98,7 @@ pub static FORWARD: Example = Example {
     description: "Relay messages between channels (forwarder pattern)",
     source: "{a!(0) | for(a->x){b!(*(x))} | for(b->y){*(y)}}",
     category: ExampleCategory::Complex,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static CIRCULAR: Example = Example {
@@ -106,7 +106,7 @@ pub static CIRCULAR: Example = Example {
     description: "Circular communication (infinite loop, no normal form)",
     source: "{a!(0) | for(a->x){b!(*(x))} | for(b->y){a!(*(y))}}",
     category: ExampleCategory::Complex,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static HANDSHAKE: Example = Example {
@@ -114,7 +114,7 @@ pub static HANDSHAKE: Example = Example {
     description: "Three-way handshake protocol",
     source: "{a!(0) | for(a->x){{b!(*(x)) | for(c->z){*(z)}}} | for(b->y){c!(*(y))}}",
     category: ExampleCategory::Complex,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 //=============================================================================
@@ -134,7 +134,7 @@ pub static MULTI_PATH: Example = Example {
         for(@(0)->y0){*(y0)}
     }",
     category: ExampleCategory::Parallel,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static PARALLEL: Example = Example {
@@ -147,7 +147,7 @@ pub static PARALLEL: Example = Example {
         d!(0) | for(d->w){*(w)  }
     }",
     category: ExampleCategory::Parallel,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static BARRIER: Example = Example {
@@ -155,7 +155,7 @@ pub static BARRIER: Example = Example {
     description: "Barrier synchronization: wait for all inputs",
     source: "{a!(0) | b!(0) | for(a->x){for(b->y){{*(x) | *(y)}}}}",
     category: ExampleCategory::Parallel,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 //=============================================================================
@@ -167,7 +167,7 @@ pub static SPAWN: Example = Example {
     description: "Recursive spawning: process creates new processes",
     source: "{a!(0) | for(a->x){{a!(*(x)) | for(a->y){*(y)}}}",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static FRESH_NAMES: Example = Example {
@@ -175,7 +175,7 @@ pub static FRESH_NAMES: Example = Example {
     description: "Name generation via bound variables (capability passing)",
     source: "{for(new->chan){{chan!(0) | for(chan->x){*(x)}}} | new!(@(0))}",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static CONTRACT: Example = Example {
@@ -183,7 +183,7 @@ pub static CONTRACT: Example = Example {
     description: "Contract net: broadcast request, collect responses",
     source: "{req!(0) | for(req->x){{resp1!(*(x)) | resp2!(*(x))}} | for(resp1->a){*(a)  } | for(resp2->b){*(b)  }}",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static DEADLOCK: Example = Example {
@@ -191,7 +191,7 @@ pub static DEADLOCK: Example = Example {
     description: "Deadlock: circular dependency, no progress possible",
     source: "{for(a->x){for(b->y){{*(x) | *(y)}}} | for(b->z){a!(z)}}",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static PHILOSOPHERS: Example = Example {
@@ -203,7 +203,7 @@ pub static PHILOSOPHERS: Example = Example {
         for(fork2->f2){for(fork1->f1){done2!({*(f2) | *(f1)})}}
     }",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static REPLICATED_INPUT: Example = Example {
@@ -217,7 +217,7 @@ pub static REPLICATED_INPUT: Example = Example {
         req!(0)
     }",
     category: ExampleCategory::Advanced,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static DROP_QUOTE_TEST: Example = Example {
@@ -225,7 +225,7 @@ pub static DROP_QUOTE_TEST: Example = Example {
     description: "Test the *@(P) => P rewrite rule",
     source: "{*(@(0)) | a!(0)}",
     category: ExampleCategory::EdgeCase,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 //=============================================================================
@@ -242,7 +242,7 @@ pub static FANOUT: Example = Example {
         for(e->y){*(y)  } | for(f->y){*(y)  } | for(g->y){*(y)  } | for(h->y){*(y)  }
     }",
     category: ExampleCategory::Performance,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static PIPELINE: Example = Example {
@@ -258,7 +258,7 @@ pub static PIPELINE: Example = Example {
         for(f->x){*(x)  }
     }",
     category: ExampleCategory::Performance,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 //=============================================================================
@@ -270,7 +270,7 @@ pub static EMPTY: Example = Example {
     description: "Empty parallel process (tests identity normalization)",
     source: "{}",
     category: ExampleCategory::EdgeCase,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static SELF_COMM: Example = Example {
@@ -278,7 +278,7 @@ pub static SELF_COMM: Example = Example {
     description: "Self-communication (infinite loop)",
     source: "{for(x->y){x!(*(y))} | x!(@(0))}",
     category: ExampleCategory::EdgeCase,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 //=============================================================================
@@ -292,7 +292,7 @@ pub static JOIN_BASIC: Example = Example {
     description: "Basic join: wait for two channels before proceeding",
     source: "{(a?x, b?y).{result!({*(x) | *(y)})} | a!(p) | b!(q)}",
     category: ExampleCategory::MultiComm,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static JOIN_BARRIER: Example = Example {
@@ -303,7 +303,7 @@ pub static JOIN_BARRIER: Example = Example {
         ready1!(a) | ready2!(b) | ready3!(c)
     }",
     category: ExampleCategory::MultiComm,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static JOIN_SAME_CHANNEL: Example = Example {
@@ -311,7 +311,7 @@ pub static JOIN_SAME_CHANNEL: Example = Example {
     description: "Join on same channel: consume two distinct messages atomically",
     source: "{(c?x, c?y).{{*(x) | *(y)}} | c!(a) | c!(b)}",
     category: ExampleCategory::MultiComm,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static ATOMIC_PAIR: Example = Example {
@@ -322,7 +322,7 @@ pub static ATOMIC_PAIR: Example = Example {
         key!(name) | value!(data)
     }",
     category: ExampleCategory::MultiComm,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static SCATTER_GATHER: Example = Example {
@@ -334,7 +334,7 @@ pub static SCATTER_GATHER: Example = Example {
         (resp1?r1, resp2?r2).{result!({*(r1) | *(r2)})}
     }",
     category: ExampleCategory::MultiComm,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static RESOURCE_LOCK: Example = Example {
@@ -345,7 +345,7 @@ pub static RESOURCE_LOCK: Example = Example {
         (fork1?a, fork2?b).{eating!({*(a) | *(b)})}
     }",
     category: ExampleCategory::MultiComm,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static RENDEZVOUS: Example = Example {
@@ -357,7 +357,7 @@ pub static RENDEZVOUS: Example = Example {
         (alice_in?x).{got_a!(*(x))} | (bob_in?y).{got_b!(*(y))}
     }",
     category: ExampleCategory::MultiComm,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static CORRELATION: Example = Example {
@@ -368,7 +368,7 @@ pub static CORRELATION: Example = Example {
         request!(txn42) | response!(result42)
     }",
     category: ExampleCategory::MultiComm,
-    theory: TheoryName::RhoCalculus,
+        language: LanguageName::RhoCalculus,
 };
 
 pub static MULTI_PARTY_SYNC: Example = Example {
@@ -379,5 +379,5 @@ pub static MULTI_PARTY_SYNC: Example = Example {
         p1!(vote1) | p2!(vote2) | p3!(vote3) | p4!(vote4)
     }",
     category: ExampleCategory::MultiComm,
-    theory: TheoryName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };

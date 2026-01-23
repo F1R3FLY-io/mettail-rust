@@ -1,102 +1,109 @@
-# MeTTaIL: Metalanguage for language implementation
+# MeTTaIL: Language framework in Rust
 
 ---
 
-## 🎯 What is MeTTaIL?
+This package enables you to specify a formal language in a macro, which generates all code needed to make and run its terms.
 
-MeTTaIL is a **meta-language framework** for **poly-lingual computation** - enabling seamless interoperability between formal languages with production-grade performance.
-
-### Vision: Poly-Lingual Computation
-
-**The Problem:** Modern systems need multiple programming paradigms, but language interoperability is hard:
-- Process calculi for concurrency
-- Lambda calculi for functional programming
-- Logic programming for constraints
-- Linear logic for resource management
-
-**MeTTaIL's Solution:** Define languages formally with shared semantics, compose them, and execute efficiently.
-
-### How MeTTaIL Works
-
-MeTTaIL lets you define formal languages through:
-1. **Operations** - BNF-like syntax with binders
-2. **Equations** - Structural equivalences
-3. **Rewrites** - Computational rules with substitution
-
-Then automatically generates:
-- Type-safe AST with term sorting
-- LALRPOP parsers with precedence
-- Ascent-based rewrite engine with equational matching
-- Display, substitution, and term generation
-
-### Example: Rho Calculus in MeTTaIL
-
+For example, the rho-calculus is the concurrent language of [f1r3fly](https://github.com/F1R3FLY-io).
 ```rust
-theory! {
+language! {
     name: RhoCalc,
-    exports { Proc, Name }
+
+    types {
+        Proc
+        Name
+    },
 
     terms {
-        PZero . Proc ::= "0" ;
-        PInput . Proc ::= "for" "(" Name "->" <Name> ")" "{" Proc "}" ;
-        POutput . Proc ::= Name "!" "(" Proc ")" ;
-        PPar . Proc ::= HashBag(Proc) sep "," delim "{" "}" ;  // AC operation
-        PDrop . Proc ::= "*" Name ;
-        NQuote . Name ::= "@" "(" Proc ")" ;
-        NVar . Name ::= Var ;
-    }
+        PZero . |- "0" : Proc;
+
+        PDrop . n:Name |- "*" "(" n ")" : Proc ;
+
+        POutput . n:Name, q:Proc |- n "!" "(" q ")" : Proc ;
+        
+        PInput . n:Name, ^x.p:[Name -> Proc] |- n "?" x "." "{" p "}" : Proc ;
+
+        PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
+
+        NQuote . p:Proc |- "@" "(" p ")" : Name ;
+    },
 
     equations {
-        (NQuote (PDrop N)) == N ;      // Reflection
-    }
+        (NQuote (PDrop N)) = N ;
+    },
 
     rewrites {
-        // Communication: for(chan->x){P} , chan!(Q) => P[@Q/x]
-        (PPar {(PInput chan x P), (POutput chan Q), ...rest})
-            => (PPar {(subst P x (NQuote Q)), ...rest});
-    }
+        (PPar {(PInput n ^x.p), (POutput n q), ...rest})
+            ~> (PPar {(subst ^x.p (NQuote q)), ...rest});
+
+        (PDrop (NQuote P)) ~> P;
+
+        if S ~> T then (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+    },
 }
 ```
 
-### Code Generation
-From a theory definition, MeTTaIL generates:
-- **AST enums** - Clean, type-safe data structures with term sorting (`Ord`)
-- **LALRPOP grammars** - Full parser generation with precedence handling
-- **Substitution methods** - Capture-avoiding, cross-category
-- **Ascent-based rewrite engine** - Order-independent pattern matching with indexed joins
-- **Collection support** - `HashBag<T>` fields with efficient equality and hashing
-- **Display implementations** - Pretty-printing with correct precedence
-- **Type derivations** - `Debug`, `Clone`, `PartialEq`, `Eq`, `Ord`, `BoundTerm`, `Display`
+From a language definition, it generates:
+- **AST enums** - Type-safe data structures with first-class binding
+- **Grammars** - Parser generation with bidirectional display ([lalrpop])
+- **Substitution methods** - Capture-avoiding, cross-category substitution ([moniker])
+- **Datalog rewrite engine** - Order-independent pattern matching with indexed joins ([ascent])
+- **Higher-order lambdas** - Auto-generated `LamX`/`ApplyX`, with type inference
+- **Environments** - Named term definitions with eager substitution
 
 ---
 
-## 💡 Key Insights from Development
+## REPL Example
 
-### What We've Learned
+The interactive REPL supports term exploration, step-by-step rewriting, and higher-order metaprogramming:
 
-1. **Collections over Binary Ops**: HashBag + indexed projection is 100x+ faster than binary Par with AC equations
-2. **Structural Properties**: Auto-flatten demonstrates compile-time code generation eliminates entire class of user burden
-3. **Ascent Power**: Datalog is excellent for rewriting - declarative, compositional, and performant
-4. **Type Safety Matters**: Category tracking prevents entire classes of bugs
-5. **Simplicity Wins**: Straightforward generated code is easier to debug than clever optimizations
+```
+$ cargo run
+mettail> lang rhocalc
+Loading theory: rhocalc
+  ✓ 8 definitions from repl/src/examples/rhocalc.txt
 
-### Design Principles Emerging
+rhocalc> env
+Environment:
+  dup = ^l.{l?x.{{*(x) | l!(*(x))}}}
+  rep = ^n.{^a.{^cont.{{$name(dup, n) | n!(a?y.{{$name(cont, y) | $name(dup, n)}})}}}}
+  id = ^z.{*(z)}
+  fwd = ^src.{^dst.{src?x.{dst!(*(x))}}}
 
-1. **Default to Structural**: Implement properties structurally when possible, equations when necessary
-2. **Generate Simple Code**: Let Rust compiler optimize, focus on correctness
-3. **Pay for What You Use**: Fast paths for common cases (flat collections), slow paths for rare cases (deep nesting)
-4. **Progressive Enhancement**: Start with working system, add optimizations where needed
-5. **User-Centered**: Minimize theory author burden, maximize generated code quality
+rhocalc> exec { server!(request) | $name($name($name(rep, server), a?y.{$name(id, y)}), id) }
+Parsing... ✓
+Substituting environment... ✓
+Running Ascent... Time taken: 45.2ms
+Done!
+
+Computed:
+  - 40 terms
+  - 33 rewrites
+  - 16 normal forms
+
+rhocalc> apply 0
+Applied rewrite →
+  { $name(id, @(request)) | server?y.{{$name(id, y) | $name(dup, server)}} }
+
+rhocalc> apply 0
+Applied rewrite →
+  { server?y.{{$name(id, y) | $name(dup, server)}} | *(@(request)) }
+
+rhocalc> apply 0
+Applied rewrite →
+  { server?y.{{$name(id, y) | $name(dup, server)}} | request }
+```
 
 ---
+
 ## 🙏 Credits
 
 **Core Technologies:**
-- [ascent] - Datalog in Rust via macros
+- [ascent](https://github.com/s-arash/ascent) - Datalog in Rust via macros
 - [syn](https://github.com/dtolnay/syn) - Rust parsing
 - [quote](https://github.com/dtolnay/quote) - Code generation
 - [moniker](https://github.com/brendanzab/moniker) - Variable binding
-- [LALRPOP](https://github.com/lalrpop/lalrpop) - Parser generator (Phase 2)
+- [LALRPOP](https://github.com/lalrpop/lalrpop) - Parser generator
 
 **Inspiration:**
 - [Rholang](https://rchain.coop/) - Motivating use case

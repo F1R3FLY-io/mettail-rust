@@ -5,10 +5,10 @@ mod tests {
         parse2,
         Ident,
     };
-    use crate::ast::theory::{TheoryDef, FreshnessTarget};
+    use crate::ast::language::{LanguageDef, FreshnessTarget};
     use crate::ast::types::{TypeExpr, CollectionType};
     use crate::ast::grammar::{GrammarItem, TermParam};
-    use crate::ast::syntax::{SyntaxExpr, PatternOp};
+    use crate::ast::grammar::{SyntaxExpr, PatternOp};
     use crate::ast::term::Term;
     use crate::ast::types::{TypeContext, TypeError, ConstructorSig};
 
@@ -23,15 +23,15 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse HashBag: {:?}", result.err());
 
-        let theory = result.unwrap();
-        assert_eq!(theory.name.to_string(), "TestBag");
-        assert_eq!(theory.terms.len(), 2);
+        let language = result.unwrap();
+        assert_eq!(language.name.to_string(), "TestBag");
+        assert_eq!(language.terms.len(), 2);
 
         // Check EBag has a Collection item
-        let ebag = &theory.terms[0];
+        let ebag = &language.terms[0];
         assert_eq!(ebag.label.to_string(), "EBag");
         assert_eq!(ebag.items.len(), 1);
 
@@ -67,11 +67,11 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse parenthesized freshness: {:?}", result.err());
-        let theory = result.unwrap();
-        assert_eq!(theory.equations.len(), 1);
-        let eq = &theory.equations[0];
+        let language = result.unwrap();
+        assert_eq!(language.equations.len(), 1);
+        let eq = &language.equations[0];
         assert_eq!(eq.conditions.len(), 1);
         match &eq.conditions[0].term {
             FreshnessTarget::CollectionRest(id) => assert_eq!(id.to_string(), "rest"),
@@ -89,11 +89,11 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse Vec with delimiters: {:?}", result.err());
 
-        let theory = result.unwrap();
-        let elist = &theory.terms[0];
+        let language = result.unwrap();
+        let elist = &language.terms[0];
 
         match &elist.items[0] {
             GrammarItem::Collection { coll_type, separator, delimiters, .. } => {
@@ -115,11 +115,11 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse HashSet: {:?}", result.err());
 
-        let theory = result.unwrap();
-        let eset = &theory.terms[0];
+        let language = result.unwrap();
+        let eset = &language.terms[0];
 
         match &eset.items[0] {
             GrammarItem::Collection { coll_type, separator, delimiters, .. } => {
@@ -141,7 +141,7 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_err(), "Should reject empty separator");
         let err = result.err().unwrap();
         assert!(err.to_string().contains("separator cannot be empty"));
@@ -157,7 +157,7 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_err(), "Should require 'sep' keyword");
         // The error will be about unexpected token, not specifically about 'sep'
         // Just verify it fails to parse
@@ -908,13 +908,13 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse new syntax: {:?}", result.err());
 
-        let theory = result.unwrap();
-        assert_eq!(theory.terms.len(), 1);
+        let language = result.unwrap();
+        assert_eq!(language.terms.len(), 1);
         
-        let rule = &theory.terms[0];
+        let rule = &language.terms[0];
         assert_eq!(rule.label.to_string(), "NVar");
         assert_eq!(rule.category.to_string(), "Name");
         assert!(rule.term_context.is_some());
@@ -943,11 +943,11 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse abstraction syntax: {:?}", result.err());
 
-        let theory = result.unwrap();
-        let rule = &theory.terms[0];
+        let language = result.unwrap();
+        let rule = &language.terms[0];
         
         assert_eq!(rule.label.to_string(), "PInput");
         assert_eq!(rule.category.to_string(), "Proc");
@@ -1007,11 +1007,11 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse multi-abstraction: {:?}", result.err());
 
-        let theory = result.unwrap();
-        let rule = &theory.terms[0];
+        let language = result.unwrap();
+        let rule = &language.terms[0];
         
         let ctx = rule.term_context.as_ref().unwrap();
         assert_eq!(ctx.len(), 2);
@@ -1060,15 +1060,15 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Old syntax should still work: {:?}", result.err());
 
-        let theory = result.unwrap();
-        assert_eq!(theory.terms.len(), 2);
+        let language = result.unwrap();
+        assert_eq!(language.terms.len(), 2);
         
         // Old syntax should have term_context = None
-        assert!(theory.terms[0].term_context.is_none());
-        assert!(theory.terms[1].term_context.is_none());
+        assert!(language.terms[0].term_context.is_none());
+        assert!(language.terms[1].term_context.is_none());
     }
 
     #[test]
@@ -1084,16 +1084,16 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Mixed syntax should work: {:?}", result.err());
 
-        let theory = result.unwrap();
+        let language = result.unwrap();
         
         // First rule: old syntax
-        assert!(theory.terms[0].term_context.is_none());
+        assert!(language.terms[0].term_context.is_none());
         
         // Second rule: new syntax
-        assert!(theory.terms[1].term_context.is_some());
+        assert!(language.terms[1].term_context.is_some());
     }
 
     // =========================================================================
@@ -1112,11 +1112,11 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok());
 
-        let theory = result.unwrap();
-        let rule = &theory.terms[0];
+        let language = result.unwrap();
+        let rule = &language.terms[0];
         
         let pattern = rule.syntax_pattern.as_ref().unwrap();
         
@@ -1153,7 +1153,7 @@ mod tests {
 
     #[test]
     fn test_lalrpop_generation_with_new_syntax() {
-        use crate::codegen::parser::generate_lalrpop_grammar;
+        use crate::gen::syntax::parser::generate_lalrpop_grammar;
         
         // All syntax literals must be quoted strings
         let input = quote! {
@@ -1165,11 +1165,11 @@ mod tests {
             }
         };
 
-        let result = parse2::<TheoryDef>(input);
+        let result = parse2::<LanguageDef>(input);
         assert!(result.is_ok(), "Parse failed: {:?}", result.err());
 
-        let theory = result.unwrap();
-        let grammar = generate_lalrpop_grammar(&theory);
+        let language = result.unwrap();
+        let grammar = generate_lalrpop_grammar(&language);
         
         println!("Generated Grammar:\n{}", grammar);
         
@@ -1201,11 +1201,11 @@ mod tests {
             }
         "#;
 
-        let result = syn::parse_str::<TheoryDef>(input);
+        let result = syn::parse_str::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse #sep: {:?}", result.err());
 
-        let theory = result.unwrap();
-        let rule = &theory.terms[0];
+        let language = result.unwrap();
+        let rule = &language.terms[0];
         
         let pattern = rule.syntax_pattern.as_ref().unwrap();
         
@@ -1234,11 +1234,11 @@ mod tests {
             }
         "#;
 
-        let result = syn::parse_str::<TheoryDef>(input);
+        let result = syn::parse_str::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse method #sep: {:?}", result.err());
 
-        let theory = result.unwrap();
-        let rule = &theory.terms[0];
+        let language = result.unwrap();
+        let rule = &language.terms[0];
         
         let pattern = rule.syntax_pattern.as_ref().unwrap();
         
@@ -1266,11 +1266,11 @@ mod tests {
             }
         "#;
 
-        let result = syn::parse_str::<TheoryDef>(input);
+        let result = syn::parse_str::<LanguageDef>(input);
         assert!(result.is_ok(), "Failed to parse #zip: {:?}", result.err());
 
-        let theory = result.unwrap();
-        let rule = &theory.terms[0];
+        let language = result.unwrap();
+        let rule = &language.terms[0];
         
         let pattern = rule.syntax_pattern.as_ref().unwrap();
         

@@ -2,7 +2,7 @@
 //
 // Demonstrates integer arithmetic evaluation and variable binding in the Calculator theory
 
-use super::{Example, ExampleCategory, TheoryName};
+use super::{Example, ExampleCategory, LanguageName};
 
 pub fn all() -> Vec<&'static Example> {
     vec![
@@ -25,7 +25,7 @@ pub static SIMPLE_NUMBER: Example = Example {
     description: "Single integer literal",
     source: "42",
     category: ExampleCategory::Simple,
-    theory: TheoryName::Calculator,
+    language: LanguageName::Calculator,
 };
 
 pub static ADDITION: Example = Example {
@@ -33,7 +33,7 @@ pub static ADDITION: Example = Example {
     description: "Simple addition of two numbers",
     source: "5 + 3",
     category: ExampleCategory::Simple,
-    theory: TheoryName::Calculator,
+    language: LanguageName::Calculator,
 };
 
 pub static SUBTRACTION: Example = Example {
@@ -41,7 +41,7 @@ pub static SUBTRACTION: Example = Example {
     description: "Simple subtraction",
     source: "10 - 4",
     category: ExampleCategory::Simple,
-    theory: TheoryName::Calculator,
+    language: LanguageName::Calculator,
 };
 
 pub static COMPLEX_EXPRESSION: Example = Example {
@@ -49,7 +49,7 @@ pub static COMPLEX_EXPRESSION: Example = Example {
     description: "Multi-operator expression with left-to-right evaluation",
     source: "10 + 5 - 3 + 2",
     category: ExampleCategory::Simple,
-    theory: TheoryName::Calculator,
+    language: LanguageName::Calculator,
 };
 
 pub static ASSIGNMENT: Example = Example {
@@ -57,7 +57,7 @@ pub static ASSIGNMENT: Example = Example {
     description: "Variable assignment - stores and evaluates expression",
     source: "x = 3 + 2",
     category: ExampleCategory::Simple,
-    theory: TheoryName::Calculator,
+    language: LanguageName::Calculator,
 };
 
 pub static VARIABLE_LOOKUP: Example = Example {
@@ -65,7 +65,7 @@ pub static VARIABLE_LOOKUP: Example = Example {
     description: "Variable reference - retrieves stored value",
     source: "x",
     category: ExampleCategory::Simple,
-    theory: TheoryName::Calculator,
+    language: LanguageName::Calculator,
 };
 
 pub static VARIABLE_IN_EXPR: Example = Example {
@@ -73,5 +73,5 @@ pub static VARIABLE_IN_EXPR: Example = Example {
     description: "Using variables in expressions",
     source: "y = x - 4 + 8",
     category: ExampleCategory::Simple,
-    theory: TheoryName::Calculator,
+    language: LanguageName::Calculator,
 };

@@ -13,22 +13,22 @@ pub struct Example {
     pub description: &'static str,
     pub source: &'static str,
     pub category: ExampleCategory,
-    pub theory: TheoryName,
+    pub language: LanguageName,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TheoryName {
+pub enum LanguageName {
     RhoCalculus,
     AmbientCalculus,
     Calculator,
 }
 
-impl TheoryName {
+impl LanguageName {
     pub fn as_str(&self) -> &'static str {
         match self {
-            TheoryName::RhoCalculus => "rhocalc",
-            TheoryName::AmbientCalculus => "ambient",
-            TheoryName::Calculator => "calculator",
+            LanguageName::RhoCalculus => "rhocalc",
+            LanguageName::AmbientCalculus => "ambient",
+            LanguageName::Calculator => "calculator",
         }
     }
 }
@@ -48,7 +48,7 @@ pub enum ExampleCategory {
 }
 
 impl Example {
-    /// Get all examples across all theories
+    /// Get all examples across all languages
     pub fn all() -> Vec<&'static Example> {
         let mut examples = Vec::new();
         examples.extend(rhocalc::all());
@@ -62,7 +62,7 @@ impl Example {
         Self::all().into_iter().find(|e| e.name == name)
     }
 
-    /// Get examples by category (any theory)
+    /// Get examples by category (any language)
     pub fn by_category(cat: ExampleCategory) -> Vec<&'static Example> {
         Self::all()
             .into_iter()
@@ -70,23 +70,34 @@ impl Example {
             .collect()
     }
 
-    /// Get all examples for a specific theory
-    pub fn by_theory(theory: TheoryName) -> Vec<&'static Example> {
-        match theory {
-            TheoryName::RhoCalculus => rhocalc::all(),
-            TheoryName::AmbientCalculus => ambient::all(),
-            TheoryName::Calculator => calculator::all(),
+    /// Get all examples for a specific language
+    pub fn by_language(language: LanguageName) -> Vec<&'static Example> {
+        match language {
+            LanguageName::RhoCalculus => rhocalc::all(),
+            LanguageName::AmbientCalculus => ambient::all(),
+            LanguageName::Calculator => calculator::all(),
         }
     }
 
-    /// Get examples by theory and category
-    pub fn by_theory_and_category(
-        theory: TheoryName,
+    /// Get examples by language and category
+    pub fn by_language_and_category(
+        language: LanguageName,
         cat: ExampleCategory,
     ) -> Vec<&'static Example> {
         Self::all()
             .into_iter()
-            .filter(|e| e.theory == theory && e.category == cat)
+            .filter(|e| e.language == language && e.category == cat)
+            .collect()
+    }
+    
+    /// Get examples by language name (string) and category
+    pub fn by_language_name_and_category(
+        language_name: &str,
+        cat: ExampleCategory,
+    ) -> Vec<&'static Example> {
+        Self::all()
+            .into_iter()
+            .filter(|e| e.language.as_str().eq_ignore_ascii_case(language_name) && e.category == cat)
             .collect()
     }
 }

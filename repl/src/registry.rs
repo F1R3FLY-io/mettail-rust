@@ -1,60 +1,65 @@
-use crate::theory::Theory;
+use mettail_runtime::Language;
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 
-/// Registry of available theories
-pub struct TheoryRegistry {
-    theories: HashMap<String, Box<dyn Theory>>,
+// Import generated language implementations directly
+use mettail_languages::ambient::AmbientLanguage;
+use mettail_languages::lambda::LambdaLanguage;
+use mettail_languages::rhocalc::RhoCalcLanguage;
+
+/// Registry of available languages
+pub struct LanguageRegistry {
+    languages: HashMap<String, Box<dyn Language>>,
 }
 
-impl TheoryRegistry {
+impl LanguageRegistry {
     /// Create a new registry
     pub fn new() -> Self {
-        Self { theories: HashMap::new() }
+        Self { languages: HashMap::new() }
     }
 
-    /// Register a theory
-    pub fn register(&mut self, theory: Box<dyn Theory>) {
-        let name = theory.name().as_str();
-        self.theories.insert(name.to_string(), theory);
+    /// Register a language
+    pub fn register(&mut self, language: Box<dyn Language>) {
+        let name = language.name().to_lowercase();
+        self.languages.insert(name, language);
     }
 
-    /// Get a theory by name
-    pub fn get(&self, name: &str) -> Result<&dyn Theory> {
-        self.theories
-            .get(name)
+    /// Get a language by name (case-insensitive)
+    pub fn get(&self, name: &str) -> Result<&dyn Language> {
+        self.languages
+            .get(&name.to_lowercase())
             .map(|b| b.as_ref())
-            .ok_or_else(|| anyhow::anyhow!("Theory '{}' not found", name))
+            .ok_or_else(|| anyhow::anyhow!("Language '{}' not found", name))
     }
 
-    /// List all available theories
+    /// List all available languages
     pub fn list(&self) -> Vec<&str> {
-        self.theories.keys().map(|s| s.as_str()).collect()
+        self.languages.values().map(|l| l.name()).collect()
     }
 
-    /// Check if a theory exists
+    /// Check if a language exists (case-insensitive)
     pub fn contains(&self, name: &str) -> bool {
-        self.theories.contains_key(name)
+        self.languages.contains_key(&name.to_lowercase())
     }
 }
 
-impl Default for TheoryRegistry {
+impl Default for LanguageRegistry {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Build the default registry with all available theories
-pub fn build_registry() -> Result<TheoryRegistry> {
-    let mut registry = TheoryRegistry::new();
+/// Build the default registry with all available languages
+pub fn build_registry() -> Result<LanguageRegistry> {
+    let mut registry = LanguageRegistry::new();
 
-    // Register theories
-    registry.register(Box::new(crate::theories::RhoCalculusTheory));
-    registry.register(Box::new(crate::theories::AmbCalculusTheory));
-    // registry.register(Box::new(crate::theories::CalculatorTheory));
+    // Register auto-generated language implementations
+    registry.register(Box::new(AmbientLanguage));
+    registry.register(Box::new(LambdaLanguage));
+    registry.register(Box::new(RhoCalcLanguage));
 
-    if registry.theories.is_empty() {
-        bail!("No theories available.");
+    if registry.languages.is_empty() {
+        bail!("No languages available.");
     }
 
     Ok(registry)

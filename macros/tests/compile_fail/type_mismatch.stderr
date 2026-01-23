@@ -1,5 +1,0 @@
-error: expected identifier
-  --> tests/compile_fail/type_mismatch.rs:13:31
-   |
-13 |         NQuote . Name ::= "@" (Proc) ;
-   |                               ^

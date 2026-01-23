@@ -50,11 +50,11 @@ Transforms theory definitions into executable code through multiple stages:
 
 #### 1. AST (`ast/`)
 ```
-theory! { ... }
+language! { ... }
     ↓ syn::parse
-TheoryDef {
+LanguageDef {
     name: Ident,
-    exports: Vec<Export>,
+    types: Vec<LangType>,
     terms: Vec<GrammarRule>,
     equations: Vec<Equation>,
     rewrites: Vec<RewriteRule>,
@@ -84,11 +84,11 @@ Semantic checking before code generation:
 - `typechecker.rs` - Category inference and checking
 - `error.rs` - Error types and messages
 
-#### 3. Code Generation (`codegen/`)
+#### 3. Code Generation (`gen/`)
 
 Generate Rust code from validated AST:
 
-**`ast_gen.rs`**: Rust enum generation
+**`types/enums.rs`**: Rust enum generation
 ```rust
 pub enum Proc {
     PZero,
@@ -98,12 +98,12 @@ pub enum Proc {
 }
 ```
 
-**`parser/`**: LALRPOP grammar generation
+**`syntax/parser/`**: LALRPOP grammar generation
 - `lalrpop.rs` - Grammar string generation
 - `actions.rs` - Semantic actions
 - `writer.rs` - File writing
 
-**`display.rs`**: Pretty-printing implementation
+**`syntax/display.rs`**: Pretty-printing implementation
 ```rust
 impl fmt::Display for Proc {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -115,7 +115,7 @@ impl fmt::Display for Proc {
 }
 ```
 
-**`subst.rs`**: Substitution functions
+**`term_ops/subst.rs`**: Substitution functions
 ```rust
 impl Proc {
     pub fn substitute_name(&self, var: &Binder<String>, term: &Name) -> Proc {
@@ -124,31 +124,13 @@ impl Proc {
 }
 ```
 
-**`termgen/`**: Term generation
+**`term_gen/`**: Term generation
 - `exhaustive.rs` - All terms at depth N
 - `random.rs` - Random term sampling
 
-#### 4. Ascent Generation (`ascent/`)
+#### 4. Ascent Generation (`datalog/`)
 
 Generate Datalog rules for term rewriting:
-
-**Structure**:
-```
-ascent/
-├── relations.rs       # Relation declarations
-├── categories.rs      # Exploration & deconstruction
-├── equations.rs       # Equality rules
-├── rewrites/          # Base rewrites
-│   ├── clauses.rs        # Rule generation
-│   ├── patterns.rs       # LHS pattern matching
-│   └── rhs.rs            # RHS construction
-└── congruence/        # Congruence rules
-    ├── analysis.rs       # Pattern analysis
-    ├── collection.rs     # Collection congruence
-    ├── regular.rs        # Regular congruence
-    ├── binding.rs        # Binding congruence
-    └── projections.rs    # Projection-based matching
-```
 
 **Generated Relations**:
 - `proc(Proc)` - All reachable terms
