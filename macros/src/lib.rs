@@ -1,65 +1,73 @@
-//! MeTTaIL procedural macro for defining formal language theories
+//! MeTTaIL procedural macro for defining formal languages
 //!
-//! This crate provides the `theory!` macro which defines a formal language with:
+//! This crate provides the `language!` macro which defines a formal language with:
 //! - AST types (Rust enums)
 //! - Parser (LALRPOP-generated)
 //! - Rewrite engine (Ascent-based)
 //! - Term generation and manipulation
+//! - Metadata for REPL introspection
+//! - Language implementation struct
 
 mod ast;
-mod codegen;
-mod utils;
-mod validation;
-
-// Ascent generation modules
-mod ascent; // Organized Ascent generation
+mod gen;
+mod logic;
 
 use proc_macro::TokenStream;
 use proc_macro_error::{abort, proc_macro_error};
 use syn::parse_macro_input;
 
-use ascent::generate_ascent_source;
-use ascent::generate_freshness_functions;
-use ast::TheoryDef;
-use codegen::blockly::{
-    generate_blockly_definitions, write_blockly_blocks, write_blockly_categories,
+use logic::{generate_ascent_source, generate_freshness_functions};
+use ast::language::LanguageDef;
+use gen::{
+    generate_all,
+    generate_language_impl,
+    generate_metadata,
+    generate_lalrpop_grammar,
+    write_grammar_file,
+    generate_blockly_definitions,
+    write_blockly_blocks,
+    write_blockly_categories,
 };
-use codegen::generate_ast;
-use codegen::parser::{generate_lalrpop_grammar, write_grammar_file};
-use validation::validate_theory;
+use ast::validation::validate_language;
 
 #[proc_macro]
 #[proc_macro_error]
-pub fn theory(input: TokenStream) -> TokenStream {
-    let theory_def = parse_macro_input!(input as TheoryDef);
-
-    if let Err(e) = validate_theory(&theory_def) {
+pub fn language(input: TokenStream) -> TokenStream {
+    let language_def = parse_macro_input!(input as LanguageDef);
+    
+    if let Err(e) = validate_language(&language_def) {
         let span = e.span();
         let msg = e.message();
         abort!(span, "{}", msg);
     }
 
-    // Generate the Rust AST types
-    let ast_code = generate_ast(&theory_def);
+    // Generate the Rust AST types and operations
+    let ast_code = generate_all(&language_def);
 
     // Generate freshness functions (needed by Ascent rewrite clauses)
-    let freshness_fns = generate_freshness_functions(&theory_def);
+    let freshness_fns = generate_freshness_functions(&language_def);
 
     // Generate Ascent datalog source (includes rewrites as Ascent clauses)
-    let ascent_code = generate_ascent_source(&theory_def);
+    let ascent_code = generate_ascent_source(&language_def);
+
+    // Generate metadata for REPL introspection
+    let metadata_code = generate_metadata(&language_def);
+
+    // Generate language implementation struct (Term wrapper + Language struct)
+    let language_code = generate_language_impl(&language_def);
 
     // Generate LALRPOP grammar file with precedence handling
-    let grammar = generate_lalrpop_grammar(&theory_def);
-    if let Err(e) = write_grammar_file(&theory_def.name.to_string(), &grammar) {
+    let grammar = generate_lalrpop_grammar(&language_def);
+    if let Err(e) = write_grammar_file(&language_def.name.to_string(), &grammar) {
         eprintln!("Warning: Failed to write LALRPOP grammar: {}", e);
     }
 
     // Generate Blockly block definitions
-    let blockly_output = generate_blockly_definitions(&theory_def);
-    if let Err(e) = write_blockly_blocks(&theory_def.name.to_string(), &blockly_output) {
+    let blockly_output = generate_blockly_definitions(&language_def);
+    if let Err(e) = write_blockly_blocks(&language_def.name.to_string(), &blockly_output) {
         eprintln!("Warning: Failed to write Blockly blocks: {}", e);
     }
-    if let Err(e) = write_blockly_categories(&theory_def.name.to_string(), &blockly_output) {
+    if let Err(e) = write_blockly_categories(&language_def.name.to_string(), &blockly_output) {
         eprintln!("Warning: Failed to write Blockly categories: {}", e);
     }
 
@@ -67,6 +75,8 @@ pub fn theory(input: TokenStream) -> TokenStream {
         #ast_code
         #freshness_fns
         #ascent_code
+        #metadata_code
+        #language_code
     };
 
     TokenStream::from(combined)

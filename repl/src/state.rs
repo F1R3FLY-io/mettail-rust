@@ -1,11 +1,11 @@
-use crate::examples::TheoryName;
-use crate::theory::{AscentResults, Term};
+use mettail_runtime::{AscentResults, Term};
 use anyhow::Result;
+use std::any::Any;
 
 /// The current state of the REPL session
 pub struct ReplState {
-    /// The name of the currently loaded theory
-    theory_name: Option<TheoryName>,
+    /// The name of the currently loaded language
+    language_name: Option<String>,
 
     /// The current term being explored
     current_term: Option<Box<dyn Term>>,
@@ -21,6 +21,9 @@ pub struct ReplState {
 
     /// Cached Ascent results
     ascent_results: Option<AscentResults>,
+    
+    /// Environment for variable bindings (theory-specific type)
+    environment: Option<Box<dyn Any + Send + Sync>>,
 }
 
 /// An entry in the navigation history
@@ -35,28 +38,56 @@ impl ReplState {
     /// Create a new empty state
     pub fn new() -> Self {
         Self {
-            theory_name: None,
+            language_name: None,
             current_term: None,
             current_graph_id: None,
             history: Vec::new(),
             history_idx: 0,
             ascent_results: None,
+            environment: None,
         }
     }
 
-    /// Load a theory by name
-    pub fn load_theory(&mut self, name: TheoryName) {
-        self.theory_name = Some(name);
+    /// Load a language by name
+    pub fn load_language(&mut self, name: &str) {
+        self.language_name = Some(name.to_string());
         self.current_term = None;
         self.current_graph_id = None;
         self.history.clear();
         self.history_idx = 0;
         self.ascent_results = None;
+        self.environment = None;
+    }
+    
+    /// Get the environment (immutable)
+    pub fn environment(&self) -> Option<&(dyn Any + Send + Sync)> {
+        self.environment.as_ref().map(|b| b.as_ref())
+    }
+    
+    /// Get the environment (mutable)
+    pub fn environment_mut(&mut self) -> Option<&mut (dyn Any + Send + Sync)> {
+        self.environment.as_mut().map(|b| b.as_mut())
+    }
+    
+    /// Set the environment
+    pub fn set_environment(&mut self, env: Box<dyn Any + Send + Sync>) {
+        self.environment = Some(env);
+    }
+    
+    /// Ensure environment exists (create if needed)
+    pub fn ensure_environment<F>(&mut self, create: F) -> &mut (dyn Any + Send + Sync)
+    where
+        F: FnOnce() -> Box<dyn Any + Send + Sync>,
+    {
+        if self.environment.is_none() {
+            self.environment = Some(create());
+        }
+        self.environment.as_mut().unwrap().as_mut()
     }
 
-    /// Get the name of the current theory
-    pub fn theory_name(&self) -> Option<TheoryName> {
-        self.theory_name
+    /// Get the name of the current language
+    pub fn language_name(&self) -> Option<&str> {
+        self.language_name.as_deref()
     }
 
     /// Set the current term (without running Ascent - that's done externally now)

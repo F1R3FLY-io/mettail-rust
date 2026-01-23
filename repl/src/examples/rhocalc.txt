@@ -1,0 +1,10 @@
+dup = ^l.{l?x.{{*(x)|l!(*(x))}}}
+rep = ^n.{^a.{^cont.{{$name(dup,n)|n!(a?y.{{$name(cont,y)|$name(dup,n)}})}}}}
+
+id = ^z.{*(z)}
+fwd = ^src.{^dst.{src?x.{dst!(*(x))}}}
+const = ^val.{^n.{n?x.{*(val)}}}
+
+cell = ^loc.{^init.{loc!(init)}}
+read = ^loc.{^ret.{loc?x.{{loc!(*(x)) | ret!(*(x))}}}}
+write = ^loc.{^val.{loc?x.{loc!(val)}}}

@@ -10,7 +10,7 @@ path = "src/main.rs"
 [dependencies]
 # Core MeTTaIL
 mettail-runtime = { path = "../runtime" }
-mettail-theories = { path = "../theories" }
+mettail-languages = { path = "../languages" }
 mettail-macros = { path = "../macros" }
 
 moniker = {workspace = true}

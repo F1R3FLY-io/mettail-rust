@@ -1,0 +1,161 @@
+use proc_macro2::TokenStream;
+use quote::quote;
+use std::collections::HashMap;
+
+/// Generate eval() method for native types
+use crate::ast::grammar::{GrammarItem, GrammarRule};
+use crate::ast::language::{BuiltinOp, LanguageDef, SemanticOperation};
+use crate::gen::{generate_var_label, generate_literal_label, is_integer_rule};
+
+pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
+    let mut impls = Vec::new();
+
+    for lang_type in &language.types {
+        let category = &lang_type.name;
+
+        // Only generate for native types
+        let native_type = match lang_type.native_type.as_ref() {
+            Some(ty) => ty,
+            None => continue,
+        };
+
+        // Find all rules for this category
+        let rules: Vec<&GrammarRule> = language
+            .terms
+            .iter()
+            .filter(|r| r.category == *category)
+            .collect();
+
+        if rules.is_empty() {
+            continue;
+        }
+
+        // Build map of constructor -> semantic operation
+        let mut semantics_map: HashMap<String, BuiltinOp> = HashMap::new();
+        for semantic_rule in &language.semantics {
+            // Find the rule for this constructor
+            if let Some(rule) = rules.iter().find(|r| r.label == semantic_rule.constructor) {
+                if rule.category == *category {
+                    let SemanticOperation::Builtin(op) = &semantic_rule.operation;
+                    semantics_map.insert(semantic_rule.constructor.to_string(), *op);
+                }
+            }
+        }
+
+        // Generate match arms
+        let mut match_arms = Vec::new();
+        
+        // Check for existing rules
+        let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+        
+        // Add arm for auto-generated NumLit if no explicit Integer rule
+        if !has_integer_rule {
+            let literal_label = generate_literal_label(native_type);
+            match_arms.push(quote! {
+                #category::#literal_label(n) => *n,
+            });
+        }
+        
+        // Add arm for auto-generated Var variant if no explicit Var rule
+        let var_label = generate_var_label(category);
+        let panic_msg = format!(
+            "Cannot evaluate {} - variables must be substituted via rewrites first",
+            var_label
+        );
+        match_arms.push(quote! {
+            #category::#var_label(_) => loop { panic!(#panic_msg) },
+        });
+
+        for rule in &rules {
+            let label = &rule.label;
+            let label_str = label.to_string();
+
+            // Check if this is an Integer rule (literal with native type)
+            if is_integer_rule(rule) {
+                match_arms.push(quote! {
+                    #category::#label(n) => *n,
+                });
+            }
+            // Check if this has semantics (operator)
+            else if let Some(op) = semantics_map.get(&label_str) {
+                // Count non-terminal arguments (excluding terminals)
+                let arg_count = rule
+                    .items
+                    .iter()
+                    .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+                    .count();
+
+                if arg_count == 2 {
+                    // Binary operator
+                    let op_token = match op {
+                        BuiltinOp::Add => quote! { + },
+                        BuiltinOp::Sub => quote! { - },
+                        BuiltinOp::Mul => quote! { * },
+                        BuiltinOp::Div => quote! { / },
+                        BuiltinOp::Rem => quote! { % },
+                        BuiltinOp::BitAnd => quote! { & },
+                        BuiltinOp::BitOr => quote! { | },
+                        BuiltinOp::BitXor => quote! { ^ },
+                        BuiltinOp::Shl => quote! { << },
+                        BuiltinOp::Shr => quote! { >> },
+                    };
+
+                    match_arms.push(quote! {
+                        #category::#label(a, b) => a.as_ref().eval() #op_token b.as_ref().eval(),
+                    });
+                } else {
+                    // Unary or other arity - skip for now
+                    continue;
+                }
+            }
+            // Handle rules with recursive self-reference and Var (like Assign . Int ::= Var "=" Int)
+            // These evaluate to the value of the recursive argument
+            else {
+                // Find non-terminals in the rule
+                let non_terminals: Vec<_> = rule
+                    .items
+                    .iter()
+                    .filter_map(|item| match item {
+                        GrammarItem::NonTerminal(nt) => Some(nt.to_string()),
+                        _ => None,
+                    })
+                    .collect();
+
+                // Check if this has Var and a recursive reference
+                let has_var = non_terminals.iter().any(|nt| nt == "Var");
+                let has_recursive = non_terminals.iter().any(|nt| *nt == category.to_string());
+
+                if has_var && has_recursive {
+                    // This is like Assign - evaluate the recursive part
+                    // The constructor has (OrdVar, Box<T>) where T is the recursive part
+                    // Need to dereference the Box to call eval()
+                    match_arms.push(quote! {
+                        #category::#label(_, expr) => expr.as_ref().eval(),
+                    });
+                }
+                // Other constructors without semantics - skip
+            }
+        }
+
+        if !match_arms.is_empty() {
+            let impl_block = quote! {
+                impl #category {
+                    /// Evaluate the expression to its native type value.
+                    /// Variables must be substituted via rewrites before evaluation.
+                    pub fn eval(&self) -> #native_type {
+                        match self {
+                            #(#match_arms)*
+                            _ => panic!("Cannot evaluate expression - contains unevaluated terms. Apply rewrites first."),
+                        }
+                    }
+                }
+            };
+            impls.push(impl_block);
+        }
+    }
+
+    quote! {
+        #(#impls)*
+    }
+}
+
