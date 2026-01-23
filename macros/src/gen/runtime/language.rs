@@ -727,20 +727,31 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
                 Ok(Box::new(#term_name(substituted)))
             }
             
-            fn list_env(&self, env: &dyn std::any::Any) -> Vec<(String, String)> {
+            fn list_env(&self, env: &dyn std::any::Any) -> Vec<(String, String, Option<String>)> {
                 let typed_env = match env.downcast_ref::<#env_name>() {
                     Some(e) => e,
                     None => return Vec::new(),
                 };
                 
                 let mut result = Vec::new();
+                // Iterate in insertion order (IndexMap preserves order)
                 for (name, val) in typed_env.proc.iter() {
-                    result.push((name.clone(), format!("{}", val)));
+                    let comment = typed_env.comments.get(name).cloned();
+                    result.push((name.clone(), format!("{}", val), comment));
                 }
                 for (name, val) in typed_env.name.iter() {
-                    result.push((name.clone(), format!("{}", val)));
+                    let comment = typed_env.comments.get(name).cloned();
+                    result.push((name.clone(), format!("{}", val), comment));
                 }
                 result
+            }
+            
+            fn set_env_comment(&self, env: &mut dyn std::any::Any, name: &str, comment: String) -> Result<(), String> {
+                let typed_env = env
+                    .downcast_mut::<#env_name>()
+                    .ok_or_else(|| "Invalid environment type".to_string())?;
+                typed_env.set_comment(name, comment);
+                Ok(())
             }
             
             fn is_env_empty(&self, env: &dyn std::any::Any) -> bool {

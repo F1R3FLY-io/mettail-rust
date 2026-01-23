@@ -22,6 +22,7 @@ proc-macro-error = { workspace = true }
 ascent = { workspace = true }
 ascent-byods-rels = { workspace = true }
 moniker = { workspace = true }
+indexmap = { workspace = true }
 
 [dev-dependencies]
 trybuild = "1.0"

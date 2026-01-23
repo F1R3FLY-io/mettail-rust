@@ -3,19 +3,22 @@
 //! Generates per-category environment types and a combined environment struct
 //! for storing named term bindings in the REPL.
 //!
+//! Uses `IndexMap` to preserve insertion order for consistent display.
+//!
 //! ## Generated Types
 //!
 //! For a theory with `exports { Proc; Name; }`:
 //!
 //! ```rust,ignore
-//! // Per-category environments
-//! pub struct ProcEnv(pub HashMap<String, Proc>);
-//! pub struct NameEnv(pub HashMap<String, Name>);
+//! // Per-category environments (preserves insertion order)
+//! pub struct ProcEnv(pub IndexMap<String, Proc>);
+//! pub struct NameEnv(pub IndexMap<String, Name>);
 //!
 //! // Combined environment
 //! pub struct RhoCalcEnv {
 //!     pub proc: ProcEnv,
 //!     pub name: NameEnv,
+//!     pub comments: HashMap<String, String>,  // Optional comments per binding
 //! }
 //! ```
 //!
@@ -24,6 +27,7 @@
 //! ```rust,ignore
 //! let mut env = RhoCalcEnv::new();
 //! env.proc.set("p".to_string(), some_proc);
+//! env.comments.insert("p".to_string(), "My comment".to_string());
 //! let substituted = term.substitute_env(&env);
 //! ```
 
@@ -51,14 +55,14 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
         let env_name = format_ident!("{}Env", cat_name);
         
         quote! {
-            /// Per-category environment for storing named term bindings
+            /// Per-category environment for storing named term bindings (preserves insertion order)
             #[derive(Debug, Clone, Default)]
-            pub struct #env_name(pub std::collections::HashMap<String, #cat_name>);
+            pub struct #env_name(pub indexmap::IndexMap<String, #cat_name>);
             
             impl #env_name {
                 /// Create a new empty environment
                 pub fn new() -> Self {
-                    Self(std::collections::HashMap::new())
+                    Self(indexmap::IndexMap::new())
                 }
                 
                 /// Get a term by name
@@ -66,17 +70,17 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
                     self.0.get(name)
                 }
                 
-                /// Set a term binding
+                /// Set a term binding (maintains insertion order for new entries)
                 pub fn set(&mut self, name: String, value: #cat_name) {
                     self.0.insert(name, value);
                 }
                 
-                /// Remove a term binding
+                /// Remove a term binding (maintains order of remaining entries)
                 pub fn remove(&mut self, name: &str) -> Option<#cat_name> {
-                    self.0.remove(name)
+                    self.0.shift_remove(name)
                 }
                 
-                /// Iterate over all bindings
+                /// Iterate over all bindings in insertion order
                 pub fn iter(&self) -> impl Iterator<Item = (&String, &#cat_name)> {
                     self.0.iter()
                 }
@@ -144,25 +148,44 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
         /// Combined environment for all categories in this theory
         #[derive(Debug, Clone, Default)]
         pub struct #env_struct_name {
-            #(#field_defs),*
+            #(#field_defs),*,
+            /// Optional comments for each binding (keyed by binding name)
+            pub comments: std::collections::HashMap<String, String>,
         }
         
         impl #env_struct_name {
             /// Create a new empty environment
             pub fn new() -> Self {
                 Self {
-                    #(#field_defaults),*
+                    #(#field_defaults),*,
+                    comments: std::collections::HashMap::new(),
                 }
             }
             
             /// Clear all bindings from all categories
             pub fn clear(&mut self) {
-                #(#field_clears);*
+                #(#field_clears);*;
+                self.comments.clear();
             }
             
             /// Check if all environments are empty
             pub fn is_empty(&self) -> bool {
                 #(#field_empty_checks)&&*
+            }
+            
+            /// Set a comment for a binding
+            pub fn set_comment(&mut self, name: &str, comment: String) {
+                self.comments.insert(name.to_string(), comment);
+            }
+            
+            /// Get the comment for a binding
+            pub fn get_comment(&self, name: &str) -> Option<&String> {
+                self.comments.get(name)
+            }
+            
+            /// Remove a comment for a binding
+            pub fn remove_comment(&mut self, name: &str) {
+                self.comments.remove(name);
             }
         }
     };
@@ -214,6 +237,12 @@ mod tests {
         // Check for field names
         assert!(output_str.contains("proc"));
         assert!(output_str.contains("name"));
+        
+        // Check for IndexMap usage (order preservation)
+        assert!(output_str.contains("indexmap :: IndexMap"));
+        
+        // Check for comments field
+        assert!(output_str.contains("comments"));
     }
 
     #[test]

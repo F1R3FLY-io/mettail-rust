@@ -37,17 +37,10 @@ language! {
 
         // Application: (M, N)
         App . fun:Proc, arg:Proc |- "(" fun "," arg ")" : Proc;
-
-        // Quote: [M] - lifts a term to a name (for environment support)
-        Quote . p:Proc |- "[" p "]" : Name;
-        
-        // Unquote: ~N - lowers a name back to a term
-        Unquote . n:Name |- "~" n : Proc;
     },
 
     equations {
-        // Quote-unquote cancellation
-        (Unquote (Quote P)) = P;
+        // extensionality?
     },
 
     rewrites {

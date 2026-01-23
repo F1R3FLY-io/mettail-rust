@@ -149,8 +149,8 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
             }).collect();
             
             quote! {
-                /// Substitute variables by name from a map
-                fn #method_name(&self, env_map: &std::collections::HashMap<String, #repl_cat_name>) -> Self {
+                /// Substitute variables by name from a map (preserves insertion order)
+                fn #method_name(&self, env_map: &indexmap::IndexMap<String, #repl_cat_name>) -> Self {
                     if env_map.is_empty() { return self.clone(); }
                     match self {
                         #(#match_arms),*
@@ -543,7 +543,7 @@ fn generate_subst_by_name_arm(
                         let binder = &scope.inner().unsafe_pattern;
                         let body = &scope.inner().unsafe_body;
                         
-                        let filtered_env: std::collections::HashMap<String, #repl_cat> = 
+                        let filtered_env: indexmap::IndexMap<String, #repl_cat> = 
                             if let Some(name) = &binder.0.pretty_name {
                                 env_map.iter()
                                     .filter(|(k, _)| *k != name)
@@ -620,7 +620,7 @@ fn generate_subst_by_name_arm(
                         let bound_names: std::collections::HashSet<String> = binders.iter()
                             .filter_map(|b| b.0.pretty_name.clone())
                             .collect();
-                        let filtered_env: std::collections::HashMap<String, #repl_cat> = env_map.iter()
+                        let filtered_env: indexmap::IndexMap<String, #repl_cat> = env_map.iter()
                             .filter(|(k, _)| !bound_names.contains(*k))
                             .map(|(k, v)| (k.clone(), v.clone()))
                             .collect();

@@ -419,7 +419,20 @@ impl Repl {
                 println!("  {}", "(empty)".dimmed());
             } else {
                 let bindings = language.list_env(env);
-                for (name, value) in bindings {
+                let mut last_comment: Option<&str> = None;
+                
+                for (name, value, comment) in &bindings {
+                    // Print section comment if it's different from the last one
+                    if let Some(c) = comment {
+                        if last_comment != Some(c.as_str()) {
+                            println!();
+                            println!("  {}", format!("// {}", c).dimmed());
+                            last_comment = Some(c.as_str());
+                        }
+                    } else if last_comment.is_some() {
+                        // No comment on this item, reset section tracking
+                        last_comment = None;
+                    }
                     println!("  {} = {}", name.cyan(), value.green());
                 }
             }
@@ -557,12 +570,26 @@ impl Repl {
         
         let mut count = 0;
         let mut errors = Vec::new();
+        // Track the most recent comment block to associate with the next definition
+        let mut pending_comment: Option<String> = None;
         
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
             
-            // Skip empty lines and comments
-            if line.is_empty() || line.starts_with("//") || line.starts_with('#') {
+            // Handle empty lines - they break comment association
+            if line.is_empty() {
+                continue;
+            }
+            
+            // Handle comments - collect them for the next definition
+            if line.starts_with("//") {
+                let comment_text = line.trim_start_matches("//").trim();
+                pending_comment = Some(comment_text.to_string());
+                continue;
+            }
+            if line.starts_with('#') {
+                let comment_text = line.trim_start_matches('#').trim();
+                pending_comment = Some(comment_text.to_string());
                 continue;
             }
             
@@ -575,6 +602,10 @@ impl Repl {
                             if let Err(e) = language.add_to_env(env, &name, term.as_ref()) {
                                 errors.push(format!("Line {}: {}", line_num + 1, e));
                             } else {
+                                // Store the comment if there was one
+                                if let Some(comment) = pending_comment.take() {
+                                    let _ = language.set_env_comment(env, &name, comment);
+                                }
                                 count += 1;
                             }
                         }
@@ -586,6 +617,9 @@ impl Repl {
             } else {
                 errors.push(format!("Line {}: Invalid assignment syntax", line_num + 1));
             }
+            
+            // Clear pending comment after processing a definition (whether successful or not)
+            pending_comment = None;
         }
         
         // Report errors if any

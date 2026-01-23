@@ -147,8 +147,13 @@ pub trait Language: Send + Sync {
     /// Apply environment substitution to a term
     fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String>;
     
-    /// List all environment bindings as (name, display) pairs
-    fn list_env(&self, env: &dyn Any) -> Vec<(String, String)>;
+    /// List all environment bindings as (name, display, optional_comment) tuples
+    /// 
+    /// Returns bindings in insertion order, with any associated comments.
+    fn list_env(&self, env: &dyn Any) -> Vec<(String, String, Option<String>)>;
+    
+    /// Set a comment for a binding in the environment
+    fn set_env_comment(&self, env: &mut dyn Any, name: &str, comment: String) -> Result<(), String>;
     
     /// Check if the environment is empty
     fn is_env_empty(&self, env: &dyn Any) -> bool;

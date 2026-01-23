@@ -38,3 +38,4 @@ rand = "0.8"
 ascent = { version = "0.8" }
 ascent-byods-rels = { version = "0.8" }
 moniker = { version = "0.5", features = ["moniker-derive"] }
+indexmap = "2.0"
