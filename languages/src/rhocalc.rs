@@ -15,7 +15,6 @@ language! {
     },
 
     terms {
-        // PZero . Proc ::= "0" ;
         PZero . |- "0" : Proc;
 
         PDrop . n:Name |- "*" "(" n ")" : Proc ;
@@ -27,7 +26,6 @@ language! {
         PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] 
             |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
 
-        // PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
         PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
 
         NQuote . p:Proc |- "@" "(" p ")" : Name ;

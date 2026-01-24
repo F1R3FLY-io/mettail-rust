@@ -60,38 +60,65 @@ The interactive REPL supports term exploration, step-by-step rewriting, and high
 ```
 $ cargo run
 mettail> lang rhocalc
-Loading theory: rhocalc
-  ✓ 8 definitions from repl/src/examples/rhocalc.txt
+Loading language: rhocalc
+  [8 definitions from repl/src/examples/rhocalc.txt]
+✓ Language loaded successfully!
+Use 'exec <term>' to execute a program.
 
-rhocalc> env
+RhoCalc> env
+
 Environment:
-  dup = ^l.{l?x.{{*(x) | l!(*(x))}}}
-  rep = ^n.{^a.{^cont.{{$name(dup, n) | n!(a?y.{{$name(cont, y) | $name(dup, n)}})}}}}
+  dup = ^l.{l?x.{{l!(*(x)) | *(x)}}}
+  rep = ^n.{^a.{^cont.{{n!(a?y.{{$name(cont, y) | $name(dup, n)}}) | $name(dup, n)}}}}
   id = ^z.{*(z)}
   fwd = ^src.{^dst.{src?x.{dst!(*(x))}}}
+  const = ^val.{^n.{n?x.{*(val)}}}
+  cell = ^loc.{^init.{loc!(init)}}
+  read = ^loc.{^ret.{loc?x.{{ret!(*(x)) | loc!(*(x))}}}}
+  write = ^loc.{^val.{loc?x.{loc!(val)}}}
 
-rhocalc> exec { server!(request) | $name($name($name(rep, server), a?y.{$name(id, y)}), id) }
+RhoCalc> exec { server!(request) | $proc($name($name(rep, location), server), id) }
+
 Parsing... ✓
 Substituting environment... ✓
-Running Ascent... Time taken: 45.2ms
+Running Ascent... Time taken: 200.190083ms
 Done!
 
 Computed:
-  - 40 terms
-  - 33 rewrites
-  - 16 normal forms
+  - 101 terms
+  - 64 rewrites
+  - 46 normal forms
 
-rhocalc> apply 0
-Applied rewrite →
-  { $name(id, @(request)) | server?y.{{$name(id, y) | $name(dup, server)}} }
+Current term:
+{ $proc($name($name(^n. { ^a. { ^cont. {  { n!(a?y. {  { $name(cont, y) | $name(^l. { l?x. {  { l!(*(x)) | *(x) } } }, n) } }) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, n) } } } }, location), server), ^z. { *(z) }) 
+| server!(request) }
 
-rhocalc> apply 0
-Applied rewrite →
-  { server?y.{{$name(id, y) | $name(dup, server)}} | *(@(request)) }
+RhoCalc> rewrites
 
-rhocalc> apply 0
+Rewrites available from current term:
+
+  0) →
+     { $proc($name(^a. { ^cont. {  { location!(a?y. {  { $name(cont, y) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, location) } }) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, location) } } }, server), ^z. { *(z) }) 
+     | server!(request) }
+
+
+RhoCalc> apply 0
+
 Applied rewrite →
-  { server?y.{{$name(id, y) | $name(dup, server)}} | request }
+  { $proc($name(^a. { ^cont. {  { location!(a?y. {  { $name(cont, y) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, location) } }) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, location) } } }, server), ^z. { *(z) }) 
+  | server!(request) }
+
+...
+
+RhoCalc> apply 0
+
+Applied rewrite →
+  { location!(*(@(server?y. {  { $name(^z. { *(z) }, y) | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, location) } }))) 
+  | server?y.
+      { 
+          { $name(^z. { *(z) }, y) 
+          | $name(^l. { l?x. {  { *(x) | l!(*(x)) } } }, location) } } 
+  | server!(request) }
 ```
 
 ---
