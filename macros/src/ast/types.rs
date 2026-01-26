@@ -513,7 +513,36 @@ fn parse_hol_grammar_rule(input: ParseStream, label: Ident) -> SynResult<Grammar
     let _ = input.parse::<Token![:]>()?;
     let return_type = input.parse::<Ident>()?;
 
-    // For now, just consume semicolon (code block parsing in next step)
+    // Parse optional Rust code block: ![code]
+    let rust_code = if input.peek(Token![!]) && input.peek2(syn::token::Bracket) {
+        let _ = input.parse::<Token![!]>()?;
+        let content;
+        syn::bracketed!(content in input);
+        let code = content.parse::<syn::Expr>()?;
+        Some(RustCodeBlock { code })
+    } else {
+        None
+    };
+
+    // Parse optional evaluation mode: fold, step, both
+    let eval_mode = if input.peek(Ident) {
+        let mode_ident = input.parse::<Ident>()?;
+        match mode_ident.to_string().as_str() {
+            "fold" => Some(EvalMode::Fold),
+            "step" => Some(EvalMode::Step),
+            "both" => Some(EvalMode::Both),
+            _ => {
+                return Err(syn::Error::new(
+                    mode_ident.span(),
+                    "expected evaluation mode: fold, step, or both",
+                ))
+            },
+        }
+    } else {
+        None
+    };
+
+    // Consume semicolon
     let _ = input.parse::<Token![;]>()?;
 
     // Infer binding structure
@@ -529,8 +558,8 @@ fn parse_hol_grammar_rule(input: ParseStream, label: Ident) -> SynResult<Grammar
         bindings,
         parameters,
         return_type: Some(return_type),
-        rust_code: None,
-        eval_mode: None,
+        rust_code,
+        eval_mode,
     })
 }
 

@@ -214,13 +214,28 @@ pub fn generate_rewrite_rules(theory: &TheoryDef) -> TokenStream {
 
 /// Generate semantic evaluation rules for constructors with semantics
 /// For example: Add (NumLit a) (NumLit b) => NumLit(a + b)
+/// Respects eval_mode: only generates if Fold or Both (or unspecified)
 fn generate_semantic_rules(theory: &TheoryDef) -> Vec<TokenStream> {
-    use crate::ast::SemanticOperation;
+    use crate::ast::{SemanticOperation, EvalMode};
 
     let mut rules = Vec::new();
 
     for semantic in &theory.semantics {
         let constructor_name = &semantic.constructor;
+        
+        // Check eval_mode for this rule
+        let should_generate_folding = if let Some(rule) = theory.terms.iter().find(|r| r.label == *constructor_name) {
+            match rule.eval_mode {
+                Some(EvalMode::Step) => false, // Step-only: no folding
+                Some(EvalMode::Fold) | Some(EvalMode::Both) | None => true, // Fold or Both or default
+            }
+        } else {
+            true // Default to generating if rule not found
+        };
+        
+        if !should_generate_folding {
+            continue; // Skip folding rule generation for this constructor
+        }
 
         // Extract the operator
         let op_token = match &semantic.operation {

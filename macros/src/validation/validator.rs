@@ -41,13 +41,25 @@ pub fn validate_theory(theory: &TheoryDef) -> Result<(), ValidationError> {
         }
 
         // Check that all non-terminal items reference valid categories
-        // Valid means: exported OR defined as a result type OR built-in (like Var)
+        // Valid means: exported OR defined as a result type OR built-in (like Var) OR parameter name (HOL syntax)
+        
+        // Build set of parameter names for HOL syntax
+        let param_names: HashSet<_> = rule
+            .parameters
+            .iter()
+            .map(|p| p.name.to_string())
+            .collect();
+        
         for item in &rule.items {
             match item {
                 GrammarItem::NonTerminal(ident) => {
                     let ref_name = ident.to_string();
                     // Built-in types are always valid
                     if ref_name == "Var" || ref_name == "Integer" {
+                        continue;
+                    }
+                    // HOL syntax: parameter references are valid
+                    if param_names.contains(&ref_name) {
                         continue;
                     }
                     // Must be either exported or defined (or both)

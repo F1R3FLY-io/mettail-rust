@@ -87,13 +87,25 @@ fn generate_congruence_rules(theory: &TheoryDef) -> Vec<TokenStream> {
             continue;
         }
 
+        // Build parameter map for HOL syntax
+        let param_map: std::collections::HashMap<String, syn::Ident> = grammar_rule
+            .parameters
+            .iter()
+            .map(|p| (p.name.to_string(), p.param_type.clone()))
+            .collect();
+
         // Collect non-terminal arguments and their categories
         let mut args = Vec::new();
         let mut arg_categories = Vec::new();
 
         for item in &grammar_rule.items {
             if let crate::ast::GrammarItem::NonTerminal(cat) = item {
-                args.push(cat);
+                // HOL syntax: resolve parameter names to their types
+                let resolved_cat = param_map
+                    .get(&cat.to_string())
+                    .cloned()
+                    .unwrap_or_else(|| cat.clone());
+                args.push(resolved_cat);
                 arg_categories.push(cat);
             }
         }

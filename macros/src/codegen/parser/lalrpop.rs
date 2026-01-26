@@ -250,17 +250,31 @@ fn generate_category_production(
 fn is_infix_rule(rule: &GrammarRule) -> bool {
     // An infix rule has the pattern: NonTerm (Terminal | NonTerm)+ NonTerm
     // where the first and last non-terminals are the same as the rule's category
+    // For HOL syntax: parameter names resolve to their types
     if rule.items.len() < 3 {
         return false;
     }
 
-    // Check if first item is the same category
-    let first_match = matches!(&rule.items[0],
-        GrammarItem::NonTerminal(nt) if nt == &rule.category);
+    // Build parameter map for HOL syntax
+    let param_map: std::collections::HashMap<String, String> = rule
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.to_string()))
+        .collect();
 
-    // Check if last item is the same category
+    // Helper to resolve a NonTerminal to its effective type
+    let resolve_type = |nt: &syn::Ident| -> String {
+        let nt_str = nt.to_string();
+        param_map.get(&nt_str).cloned().unwrap_or(nt_str)
+    };
+
+    // Check if first item is the same category (or resolves to it)
+    let first_match = matches!(&rule.items[0],
+        GrammarItem::NonTerminal(nt) if resolve_type(nt) == rule.category.to_string());
+
+    // Check if last item is the same category (or resolves to it)
     let last_match = matches!(rule.items.last(),
-        Some(GrammarItem::NonTerminal(nt)) if nt == &rule.category);
+        Some(GrammarItem::NonTerminal(nt)) if resolve_type(nt) == rule.category.to_string());
 
     // Check if there's a terminal in the middle (the operator)
     let has_terminal = rule.items[1..rule.items.len() - 1]
@@ -438,6 +452,19 @@ fn generate_infix_alternative(rule: &GrammarRule, cat_str: &str) -> String {
     let label = &rule.label;
     let category = &rule.category;
 
+    // Build parameter map for HOL syntax
+    let param_map: std::collections::HashMap<String, String> = rule
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.to_string()))
+        .collect();
+
+    // Helper to resolve a NonTerminal to its effective type
+    let resolve_type = |nt: &syn::Ident| -> String {
+        let nt_str = nt.to_string();
+        param_map.get(&nt_str).cloned().unwrap_or(nt_str)
+    };
+
     // Pattern: <left:Cat> "op" <right:CatAtom>
     // This ensures left-associativity
     let mut pattern = format!("<left:{}Infix>", cat_str);
@@ -452,11 +479,11 @@ fn generate_infix_alternative(rule: &GrammarRule, cat_str: &str) -> String {
             GrammarItem::Terminal(term) => {
                 pattern.push_str(&format!(" \"{}\"", term));
             },
-            GrammarItem::NonTerminal(nt) if nt == category && i == rule.items.len() - 1 => {
+            GrammarItem::NonTerminal(nt) if resolve_type(nt) == category.to_string() && i == rule.items.len() - 1 => {
                 // Last item - use Atom tier to avoid ambiguity
                 pattern.push_str(&format!(" <right:{}Atom>", cat_str));
             },
-            GrammarItem::NonTerminal(nt) if nt == category => {
+            GrammarItem::NonTerminal(nt) if resolve_type(nt) == category.to_string() => {
                 // Middle recursive reference - shouldn't happen in binary infix
                 pattern.push_str(&format!(" <mid{}>", i));
             },
@@ -724,6 +751,13 @@ fn generate_sequence_alternative(rule: &GrammarRule) -> String {
         return generate_binder_alternative(rule);
     }
 
+    // Build map of parameter names to types for HOL syntax
+    let param_map: std::collections::HashMap<String, String> = rule
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.to_string()))
+        .collect();
+
     let mut pattern = String::new();
     let mut args = Vec::new();
     let mut field_idx = 0;
@@ -735,12 +769,18 @@ fn generate_sequence_alternative(rule: &GrammarRule) -> String {
             },
             GrammarItem::NonTerminal(nt) => {
                 let var_name = format!("f{}", field_idx);
+                let nt_str = nt.to_string();
 
-                if nt.to_string() == "Var" {
+                if nt_str == "Var" {
                     // Var should parse as Ident, then convert to OrdVar
                     pattern.push_str(&format!(" <{}:Ident>", var_name));
                     args.push(format!("mettail_runtime::OrdVar(Var::Free(mettail_runtime::get_or_create_var({})))", var_name));
+                } else if let Some(param_type) = param_map.get(&nt_str) {
+                    // HOL syntax: this is a parameter reference, use the parameter's type
+                    pattern.push_str(&format!(" <{}:{}>", var_name, param_type));
+                    args.push(format!("Box::new({})", var_name));
                 } else {
+                    // Regular non-terminal
                     pattern.push_str(&format!(" <{}:{}>", var_name, nt));
                     args.push(format!("Box::new({})", var_name));
                 }

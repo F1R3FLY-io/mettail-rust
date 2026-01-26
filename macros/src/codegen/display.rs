@@ -105,13 +105,42 @@ fn generate_display_arm(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
         return generate_binder_display_arm(rule, theory);
     }
 
-    // Collect field names and their types
+    // Build parameter map for HOL syntax
+    let param_map: std::collections::HashMap<String, syn::Ident> = rule
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.clone()))
+        .collect();
+
+    // Collect resolved types for parameters (we'll store them separately)
+    let resolved_types: Vec<syn::Ident> = rule
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            GrammarItem::NonTerminal(ident) => {
+                // HOL syntax: resolve parameter names to their types
+                let resolved_ident = param_map
+                    .get(&ident.to_string())
+                    .cloned()
+                    .unwrap_or_else(|| ident.clone());
+                Some(resolved_ident)
+            },
+            _ => None,
+        })
+        .collect();
+
+    // Collect field names and their types (using references into resolved_types)
+    let mut resolved_idx = 0;
     let fields: Vec<(String, Option<&syn::Ident>)> = rule
         .items
         .iter()
         .enumerate()
         .filter_map(|(i, item)| match item {
-            GrammarItem::NonTerminal(ident) => Some((format!("f{}", i), Some(ident))),
+            GrammarItem::NonTerminal(_) => {
+                let result = Some((format!("f{}", i), resolved_types.get(resolved_idx)));
+                resolved_idx += 1;
+                result
+            },
             GrammarItem::Collection { .. } => Some((format!("f{}", i), None)), // Collection field
             _ => None,
         })

@@ -346,10 +346,19 @@ fn generate_scope_substitution_arm(
         _ => panic!("Binding index doesn't point to a Binder"),
     };
 
-    let body_cat = match &rule.items[body_idx] {
+    let body_cat_raw = match &rule.items[body_idx] {
         GrammarItem::NonTerminal(cat) => cat,
         _ => panic!("Body index doesn't point to a NonTerminal"),
     };
+    // HOL syntax: resolve parameter names to their types
+    let param_map: std::collections::HashMap<String, syn::Ident> = rule
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.clone()))
+        .collect();
+    let body_cat = param_map
+        .get(&body_cat_raw.to_string())
+        .unwrap_or(body_cat_raw);
 
     // Generate pattern bindings for all fields (in grammar order)
     // Track which position is the scope
@@ -422,7 +431,17 @@ fn generate_scope_substitution_arm(
 
                 match field_item {
                     Some(GrammarItem::NonTerminal(field_cat)) => {
-                        let field_cat_str = field_cat.to_string();
+                        // HOL syntax: resolve parameter names to their types
+                        let param_map: std::collections::HashMap<String, syn::Ident> = rule
+                            .parameters
+                            .iter()
+                            .map(|p| (p.name.to_string(), p.param_type.clone()))
+                            .collect();
+                        let resolved_cat = param_map
+                            .get(&field_cat.to_string())
+                            .cloned()
+                            .unwrap_or_else(|| field_cat.clone());
+                        let field_cat_str = resolved_cat.to_string();
                         let subst_method = if field_cat_str == replacement_cat_str {
                             quote! { substitute }
                         } else {
@@ -563,6 +582,13 @@ fn generate_regular_substitution_arm(
         }
     }
 
+    // Build parameter map for HOL syntax
+    let param_map: std::collections::HashMap<String, syn::Ident> = rule
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.clone()))
+        .collect();
+
     // Count total fields (non-terminals excluding Var, and collections)
     #[derive(Clone)]
     enum FieldInfo {
@@ -578,7 +604,12 @@ fn generate_regular_substitution_arm(
         .iter()
         .filter_map(|item| match item {
             GrammarItem::NonTerminal(ident) if ident.to_string() != "Var" => {
-                Some(FieldInfo::NonTerminal(ident.clone()))
+                // HOL syntax: resolve parameter names to their types
+                let resolved_ident = param_map
+                    .get(&ident.to_string())
+                    .cloned()
+                    .unwrap_or_else(|| ident.clone());
+                Some(FieldInfo::NonTerminal(resolved_ident))
             },
             GrammarItem::Collection { element_type, coll_type, .. } => {
                 Some(FieldInfo::Collection {

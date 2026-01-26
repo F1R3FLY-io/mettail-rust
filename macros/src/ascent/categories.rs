@@ -106,14 +106,26 @@ fn generate_deconstruction_for_constructor(
         return generate_collection_deconstruction(category, constructor);
     }
 
-    // Count non-terminal fields
+    // Build parameter map for HOL syntax
+    let param_map: std::collections::HashMap<String, Ident> = constructor
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.clone()))
+        .collect();
+
+    // Count non-terminal fields (resolving parameter names for HOL syntax)
     let non_terminals: Vec<_> = constructor
         .items
         .iter()
         .enumerate()
         .filter_map(|(i, item)| {
             if let crate::ast::GrammarItem::NonTerminal(ident) = item {
-                Some((i, ident))
+                // HOL syntax: resolve parameter names to their types
+                let resolved_ident = param_map
+                    .get(&ident.to_string())
+                    .cloned()
+                    .unwrap_or_else(|| ident.clone());
+                Some((i, resolved_ident))
             } else {
                 None
             }
@@ -267,10 +279,17 @@ fn generate_projection_seeding_rules(category: &Ident, theory: &TheoryDef) -> Ve
 fn generate_regular_deconstruction(
     category: &Ident,
     constructor: &GrammarRule,
-    non_terminals: &[(usize, &Ident)],
+    non_terminals: &[(usize, Ident)],
 ) -> Option<TokenStream> {
     let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
     let label = &constructor.label;
+
+    // Build parameter map for HOL syntax
+    let param_map: std::collections::HashMap<String, Ident> = constructor
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.clone()))
+        .collect();
 
     // Generate field names
     let field_names: Vec<_> = (0..non_terminals.len())
@@ -284,11 +303,18 @@ fn generate_regular_deconstruction(
         .zip(&field_names)
         .filter_map(|((_, field_type), field_name)| {
             let field_type_str = field_type.to_string();
+            // HOL syntax: resolve parameter names to their types
+            let resolved_type = param_map
+                .get(&field_type_str)
+                .cloned()
+                .unwrap_or_else(|| field_type.clone());
+            let resolved_type_str = resolved_type.to_string();
+            
             // Skip Var and Integer - they are special built-in types, not categories
-            if field_type_str == "Var" || field_type_str == "Integer" {
+            if resolved_type_str == "Var" || resolved_type_str == "Integer" {
                 return None;
             }
-            let field_type_lower = format_ident!("{}", field_type_str.to_lowercase());
+            let field_type_lower = format_ident!("{}", resolved_type_str.to_lowercase());
             // In Ascent pattern matching, fields are &Box<T>
             // Clone the Box to get Box<T>, then use as_ref() to get &T, then clone to get T
             Some(quote! {

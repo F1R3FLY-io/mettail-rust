@@ -139,6 +139,13 @@ fn generate_variant(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
         return generate_binder_variant(rule);
     }
 
+    // Build parameter map for HOL syntax
+    let param_map: std::collections::HashMap<String, syn::Ident> = rule
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.clone()))
+        .collect();
+
     // Count non-terminal and collection items (these become fields)
     #[derive(Clone)]
     enum FieldType {
@@ -153,7 +160,14 @@ fn generate_variant(rule: &GrammarRule, theory: &TheoryDef) -> TokenStream {
         .items
         .iter()
         .filter_map(|item| match item {
-            GrammarItem::NonTerminal(ident) => Some(FieldType::NonTerminal(ident.clone())),
+            GrammarItem::NonTerminal(ident) => {
+                // HOL syntax: resolve parameter names to their types
+                let resolved_ident = param_map
+                    .get(&ident.to_string())
+                    .cloned()
+                    .unwrap_or_else(|| ident.clone());
+                Some(FieldType::NonTerminal(resolved_ident))
+            },
             GrammarItem::Collection { coll_type, element_type, .. } => {
                 Some(FieldType::Collection {
                     coll_type: coll_type.clone(),
@@ -600,11 +614,16 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
         }
 
         // Build map of constructor -> semantic operation
+        // Skip rules that already have HOL syntax with Rust code blocks
         let mut semantics_map: HashMap<String, BuiltinOp> = HashMap::new();
         for semantic_rule in &theory.semantics {
             // Find the rule for this constructor
             if let Some(rule) = rules.iter().find(|r| r.label == semantic_rule.constructor) {
                 if rule.category == *category {
+                    // Skip if this rule already has HOL Rust code block
+                    if rule.rust_code.is_some() {
+                        continue;
+                    }
                     let crate::ast::SemanticOperation::Builtin(op) = &semantic_rule.operation;
                     semantics_map.insert(semantic_rule.constructor.to_string(), *op);
                 }
@@ -645,6 +664,70 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
                 match_arms.push(quote! {
                     #category::#label(_) => loop { panic!(#panic_msg) },
                 });
+            }
+            // HOL syntax: Check if this has a Rust code block
+            else if let Some(ref rust_code_block) = rule.rust_code {
+                // Generate parameter patterns and eval bindings
+                // Parameters map to constructor fields
+                let param_count = rule.parameters.len();
+                
+                // Generate parameter bindings: a, b, c, ...
+                let param_names: Vec<_> = rule.parameters.iter()
+                    .map(|p| &p.name)
+                    .collect();
+                
+                // Generate parameter evaluation bindings
+                // For native types: let param_name = param_name.as_ref().eval();
+                let param_bindings: Vec<_> = param_names.iter()
+                    .map(|name| {
+                        quote! { let #name = #name.as_ref().eval(); }
+                    })
+                    .collect();
+                
+                // Generate match pattern based on parameter count
+                let rust_code = &rust_code_block.code;
+                let match_arm = match param_count {
+                    0 => quote! {
+                        #category::#label => #rust_code,
+                    },
+                    1 => {
+                        let p0 = &param_names[0];
+                        quote! {
+                            #category::#label(#p0) => {
+                                #(#param_bindings)*
+                                #rust_code
+                            },
+                        }
+                    },
+                    2 => {
+                        let p0 = &param_names[0];
+                        let p1 = &param_names[1];
+                        quote! {
+                            #category::#label(#p0, #p1) => {
+                                #(#param_bindings)*
+                                #rust_code
+                            },
+                        }
+                    },
+                    3 => {
+                        let p0 = &param_names[0];
+                        let p1 = &param_names[1];
+                        let p2 = &param_names[2];
+                        quote! {
+                            #category::#label(#p0, #p1, #p2) => {
+                                #(#param_bindings)*
+                                #rust_code
+                            },
+                        }
+                    },
+                    _ => {
+                        // For more than 3 parameters, use variadic pattern
+                        // This is a fallback; most operations have 1-3 parameters
+                        continue;
+                    }
+                };
+                
+                match_arms.push(match_arm);
             }
             // Check if this has semantics (operator)
             else if let Some(op) = semantics_map.get(&label_str) {
