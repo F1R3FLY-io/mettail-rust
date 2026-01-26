@@ -1289,12 +1289,20 @@ mod tests {
             }],
             terms: vec![
                 GrammarRule {
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                     label: parse_quote!(Zero),
                     category: parse_quote!(Elem),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
                 },
                 GrammarRule {
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                     label: parse_quote!(Plus),
                     category: parse_quote!(Elem),
                     items: vec![
@@ -1336,12 +1344,20 @@ mod tests {
             ],
             terms: vec![
                 GrammarRule {
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                     label: parse_quote!(PZero),
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
                 },
                 GrammarRule {
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                     label: parse_quote!(NQuote),
                     category: parse_quote!(Name),
                     items: vec![
@@ -1385,12 +1401,20 @@ mod tests {
             ],
             terms: vec![
                 GrammarRule {
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                     label: parse_quote!(PZero),
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
                 },
                 GrammarRule {
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                     label: parse_quote!(NQuote),
                     category: parse_quote!(Name),
                     items: vec![
@@ -1464,12 +1488,20 @@ mod tests {
             }],
             terms: vec![
                 GrammarRule {
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                     label: parse_quote!(PZero),
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
                 },
                 GrammarRule {
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                     label: parse_quote!(PVar),
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],

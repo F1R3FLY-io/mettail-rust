@@ -156,7 +156,8 @@ pub struct Export {
 }
 
 /// Grammar rule
-/// Label . Category ::= Item Item Item ;
+/// Old syntax: Label . Category ::= Item Item Item ;
+/// HOL syntax: Label . param:Type, ... |- Item Item Item:ReturnType ![code] mode;
 pub struct GrammarRule {
     pub label: Ident,
     pub category: Ident,
@@ -164,6 +165,14 @@ pub struct GrammarRule {
     /// Binding structure: (binder_index, vec![body_indices])
     /// e.g., (0, vec![1]) means item 0 binds in item 1
     pub bindings: Vec<(usize, Vec<usize>)>,
+    /// HOL syntax: typed parameters
+    pub parameters: Vec<TypedParameter>,
+    /// HOL syntax: return type (category name)
+    pub return_type: Option<Ident>,
+    /// HOL syntax: Rust code implementation
+    pub rust_code: Option<RustCodeBlock>,
+    /// HOL syntax: evaluation mode (fold/step/both)
+    pub eval_mode: Option<EvalMode>,
 }
 
 /// Item in a grammar rule
@@ -191,6 +200,34 @@ pub enum CollectionType {
     HashBag,
     HashSet,
     Vec,
+}
+
+/// Typed parameter for HOL syntax
+/// Example: a:Int, b:Float
+#[derive(Debug, Clone)]
+pub struct TypedParameter {
+    pub name: Ident,
+    /// Type can be either an exported category or a native Rust type
+    pub param_type: Ident,
+}
+
+/// Rust code block for HOL syntax
+/// Example: ![a + b]
+#[derive(Debug, Clone)]
+pub struct RustCodeBlock {
+    /// Parsed Rust expression
+    pub code: syn::Expr,
+}
+
+/// Evaluation mode for HOL syntax
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvalMode {
+    /// Only constant folding
+    Fold,
+    /// Only step-by-step (congruence rules)
+    Step,
+    /// Both folding and congruence (default)
+    Both,
 }
 
 // Implement Parse for TheoryDef
@@ -386,9 +423,30 @@ fn parse_terms(input: ParseStream) -> SynResult<Vec<GrammarRule>> {
 }
 
 fn parse_grammar_rule(input: ParseStream) -> SynResult<GrammarRule> {
-    // Parse: Label . Category ::= ...
+    // Parse: Label . (Category or parameters)
     let label = input.parse::<Ident>()?;
     let _ = input.parse::<Token![.]>()?;
+
+    // Check if this is HOL syntax (has parameters) or old syntax
+    // HOL:  Label . param:Type, ... |- ...
+    // Old:  Label . Category ::= ...
+    // The key difference: HOL has : after first identifier, old has ::
+    let fork = input.fork();
+    let _first_ident = fork.parse::<Ident>()?;
+    // HOL syntax has single colon (not ::), so check peek(:) but NOT peek2(:)
+    let is_hol_syntax = fork.peek(Token![:]) && !fork.peek2(Token![:]);
+
+    if is_hol_syntax {
+        // HOL syntax: Label . param1:Type1, param2:Type2 |- items:ReturnType ;
+        parse_hol_grammar_rule(input, label)
+    } else {
+        // Old syntax: Label . Category ::= items ;
+        parse_old_grammar_rule(input, label)
+    }
+}
+
+/// Parse old-style grammar rule: Label . Category ::= Item Item Item ;
+fn parse_old_grammar_rule(input: ParseStream, label: Ident) -> SynResult<GrammarRule> {
     let category = input.parse::<Ident>()?;
 
     // Parse ::= (as two colons followed by equals)
@@ -398,31 +456,7 @@ fn parse_grammar_rule(input: ParseStream) -> SynResult<GrammarRule> {
     // Parse items until semicolon
     let mut items = Vec::new();
     while !input.peek(Token![;]) {
-        if input.peek(syn::LitStr) {
-            // Terminal: string literal
-            let lit = input.parse::<syn::LitStr>()?;
-            items.push(GrammarItem::Terminal(lit.value()));
-        } else if input.peek(Token![<]) {
-            // Binder: <Category>
-            let _ = input.parse::<Token![<]>()?;
-            let cat = input.parse::<Ident>()?;
-            let _ = input.parse::<Token![>]>()?;
-            items.push(GrammarItem::Binder { category: cat });
-        } else {
-            // Check if this is a collection type (HashBag, HashSet, Vec)
-            let ident = input.parse::<Ident>()?;
-            let ident_str = ident.to_string();
-
-            if (ident_str == "HashBag" || ident_str == "HashSet" || ident_str == "Vec")
-                && input.peek(syn::token::Paren)
-            {
-                // Collection: HashBag(Proc) sep "|" [delim "[" "]"]
-                items.push(parse_collection(ident, input)?);
-            } else {
-                // NonTerminal: identifier
-                items.push(GrammarItem::NonTerminal(ident));
-            }
-        }
+        items.push(parse_grammar_item(input)?);
     }
 
     let _ = input.parse::<Token![;]>()?;
@@ -430,7 +464,103 @@ fn parse_grammar_rule(input: ParseStream) -> SynResult<GrammarRule> {
     // Infer binding structure: each Binder binds in the next NonTerminal
     let bindings = infer_bindings(&items);
 
-    Ok(GrammarRule { label, category, items, bindings })
+    Ok(GrammarRule {
+        label,
+        category,
+        items,
+        bindings,
+        parameters: Vec::new(),
+        return_type: None,
+        rust_code: None,
+        eval_mode: None,
+    })
+}
+
+/// Parse HOL-style grammar rule: Label . param:Type, ... |- Item Item:ReturnType ;
+fn parse_hol_grammar_rule(input: ParseStream, label: Ident) -> SynResult<GrammarRule> {
+    // Parse parameters: param1:Type1, param2:Type2, ...
+    let mut parameters = Vec::new();
+    loop {
+        let param_name = input.parse::<Ident>()?;
+        let _ = input.parse::<Token![:]>()?;
+        let param_type = input.parse::<Ident>()?;
+        parameters.push(TypedParameter {
+            name: param_name,
+            param_type,
+        });
+
+        // Check for comma (more parameters) or |- (start of grammar items)
+        if input.peek(Token![,]) {
+            let _ = input.parse::<Token![,]>()?;
+        } else {
+            break;
+        }
+    }
+
+    // Parse |- separator
+    let _ = input.parse::<Token![|]>()?;
+    let _ = input.parse::<Token![-]>()?;
+
+    // Parse grammar items until we hit colon (return type marker)
+    let mut items = Vec::new();
+    while !input.peek(Token![:]) || input.peek2(Token![:]) {
+        // Keep parsing if we see :: (for old-style items we might still encounter)
+        // But stop at single : which indicates return type
+        items.push(parse_grammar_item(input)?);
+    }
+
+    // Parse :ReturnType
+    let _ = input.parse::<Token![:]>()?;
+    let return_type = input.parse::<Ident>()?;
+
+    // For now, just consume semicolon (code block parsing in next step)
+    let _ = input.parse::<Token![;]>()?;
+
+    // Infer binding structure
+    let bindings = infer_bindings(&items);
+
+    // Category is the return type for HOL syntax
+    let category = return_type.clone();
+
+    Ok(GrammarRule {
+        label,
+        category,
+        items,
+        bindings,
+        parameters,
+        return_type: Some(return_type),
+        rust_code: None,
+        eval_mode: None,
+    })
+}
+
+/// Parse a single grammar item (terminal, non-terminal, binder, or collection)
+fn parse_grammar_item(input: ParseStream) -> SynResult<GrammarItem> {
+    if input.peek(syn::LitStr) {
+        // Terminal: string literal
+        let lit = input.parse::<syn::LitStr>()?;
+        Ok(GrammarItem::Terminal(lit.value()))
+    } else if input.peek(Token![<]) {
+        // Binder: <Category>
+        let _ = input.parse::<Token![<]>()?;
+        let cat = input.parse::<Ident>()?;
+        let _ = input.parse::<Token![>]>()?;
+        Ok(GrammarItem::Binder { category: cat })
+    } else {
+        // Check if this is a collection type (HashBag, HashSet, Vec)
+        let ident = input.parse::<Ident>()?;
+        let ident_str = ident.to_string();
+
+        if (ident_str == "HashBag" || ident_str == "HashSet" || ident_str == "Vec")
+            && input.peek(syn::token::Paren)
+        {
+            // Collection: HashBag(Proc) sep "|" [delim "[" "]"]
+            parse_collection(ident, input)
+        } else {
+            // NonTerminal: identifier
+            Ok(GrammarItem::NonTerminal(ident))
+        }
+    }
 }
 
 /// Infer binding structure from items

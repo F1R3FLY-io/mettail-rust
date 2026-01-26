@@ -1009,6 +1009,10 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
                 GrammarRule {
                     label: parse_quote!(NQuote),
@@ -1018,6 +1022,10 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Proc)),
                     ],
                     bindings: vec![],
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
                 // No Var rules explicitly defined
             ],
@@ -1067,12 +1075,20 @@ mod tests {
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::Terminal("0".to_string())],
                     bindings: vec![],
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
                 GrammarRule {
                     label: parse_quote!(PVar),
                     category: parse_quote!(Proc),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
                     bindings: vec![],
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
                 // Var rule explicitly defined
             ],
@@ -1117,6 +1133,10 @@ mod tests {
                 GrammarItem::NonTerminal(parse_quote!(Int)),
             ],
             bindings: vec![],
+            parameters: Vec::new(),
+            return_type: None,
+            rust_code: None,
+            eval_mode: None,
         };
 
         println!("Testing Assign rule: items = {:?}", assign_rule.items);
@@ -1133,6 +1153,10 @@ mod tests {
             category: parse_quote!(Int),
             items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
             bindings: vec![],
+            parameters: Vec::new(),
+            return_type: None,
+            rust_code: None,
+            eval_mode: None,
         };
 
         assert!(
@@ -1159,12 +1183,20 @@ mod tests {
                     category: parse_quote!(Int),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Var))],
                     bindings: vec![],
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
                 GrammarRule {
                     label: parse_quote!(NumLit),
                     category: parse_quote!(Int),
                     items: vec![GrammarItem::NonTerminal(parse_quote!(Integer))],
                     bindings: vec![],
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
                 GrammarRule {
                     label: parse_quote!(Add),
@@ -1175,6 +1207,10 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Int)),
                     ],
                     bindings: vec![],
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
                 GrammarRule {
                     label: parse_quote!(Assign),
@@ -1185,6 +1221,10 @@ mod tests {
                         GrammarItem::NonTerminal(parse_quote!(Int)),
                     ],
                     bindings: vec![],
+                    parameters: Vec::new(),
+                    return_type: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
             ],
             equations: vec![],
