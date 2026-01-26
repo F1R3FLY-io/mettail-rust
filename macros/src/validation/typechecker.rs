@@ -356,6 +356,162 @@ impl TypeChecker {
     pub fn has_category(&self, name: &str) -> bool {
         self.categories.contains_key(name)
     }
+
+    /// Resolve a parameter type to its native Rust type
+    /// For HOL syntax: param:Type -> resolve Type to native type
+    /// Returns (is_category, native_type_string)
+    pub fn resolve_parameter_type(
+        &self,
+        param_type: &str,
+        theory: &TheoryDef,
+    ) -> Result<(bool, String), ValidationError> {
+        // First check if it's an exported category
+        if let Some(export) = theory.exports.iter().find(|e| e.name.to_string() == param_type) {
+            if let Some(ref native_type) = export.native_type {
+                // Category with native type mapping
+                return Ok((true, quote::quote!(#native_type).to_string()));
+            } else {
+                // Category without native type - use category itself
+                return Ok((true, param_type.to_string()));
+            }
+        }
+
+        // Check if it's a direct native Rust type (i64, f64, String, bool, etc.)
+        // These don't need to be exported categories
+        match param_type {
+            "i64" | "i32" | "f64" | "f32" | "bool" | "String" | "str" => {
+                Ok((false, param_type.to_string()))
+            },
+            _ => {
+                // Unknown type - this is an error
+                Err(ValidationError::UnknownConstructor {
+                    name: format!("type '{}'", param_type),
+                    span: proc_macro2::Span::call_site(),
+                })
+            },
+        }
+    }
+
+    /// Validate HOL syntax parameters for a grammar rule
+    /// Ensures parameter types are valid (either exported categories or native types)
+    pub fn validate_hol_parameters(
+        &self,
+        rule: &GrammarRule,
+        theory: &TheoryDef,
+    ) -> Result<(), ValidationError> {
+        // If no parameters, nothing to validate (old syntax)
+        if rule.parameters.is_empty() {
+            return Ok(());
+        }
+
+        // Validate each parameter type
+        for param in &rule.parameters {
+            let param_type_str = param.param_type.to_string();
+            self.resolve_parameter_type(&param_type_str, theory).map_err(|_| {
+                ValidationError::UnknownConstructor {
+                    name: format!(
+                        "parameter type '{}' in rule '{}'",
+                        param_type_str,
+                        rule.label
+                    ),
+                    span: param.param_type.span(),
+                }
+            })?;
+        }
+
+        // Check for duplicate parameter names
+        let mut seen = std::collections::HashSet::new();
+        for param in &rule.parameters {
+            let name = param.name.to_string();
+            if !seen.insert(name.clone()) {
+                return Err(ValidationError::TypeError {
+                    expected: "unique parameter names".to_string(),
+                    found: format!("duplicate parameter '{}'", name),
+                    context: format!("rule '{}'", rule.label),
+                    span: param.name.span(),
+                });
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Validate return type for HOL syntax
+    /// Return type must match an exported category
+    pub fn validate_return_type(
+        &self,
+        rule: &GrammarRule,
+        theory: &TheoryDef,
+    ) -> Result<(), ValidationError> {
+        // If no return type specified (old syntax), use the category field
+        let return_type = match &rule.return_type {
+            Some(rt) => rt.to_string(),
+            None => return Ok(()), // Old syntax, skip validation
+        };
+
+        // Return type must be an exported category
+        if !theory.exports.iter().any(|e| e.name.to_string() == return_type) {
+            return Err(ValidationError::UnknownConstructor {
+                name: format!(
+                    "return type '{}' in rule '{}' (not an exported category)",
+                    return_type, rule.label
+                ),
+                span: rule.return_type.as_ref().unwrap().span(),
+            });
+        }
+
+        // Return type should match the rule's category
+        if return_type != rule.category.to_string() {
+            return Err(ValidationError::TypeError {
+                expected: return_type.clone(),
+                found: rule.category.to_string(),
+                context: format!("rule '{}' return type vs category mismatch", rule.label),
+                span: rule.category.span(),
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Validate parameter count matches grammar items
+    /// In HOL syntax, the number of parameters should match non-terminal items
+    pub fn validate_parameter_count(
+        &self,
+        rule: &GrammarRule,
+    ) -> Result<(), ValidationError> {
+        // Only validate if using HOL syntax (has parameters)
+        if rule.parameters.is_empty() {
+            return Ok(());
+        }
+
+        // Count non-terminal items (these become parameters in HOL syntax)
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| {
+                matches!(
+                    item,
+                    GrammarItem::NonTerminal(_)
+                        | GrammarItem::Binder { .. }
+                        | GrammarItem::Collection { .. }
+                )
+            })
+            .count();
+
+        if rule.parameters.len() != non_terminal_count {
+            return Err(ValidationError::TypeError {
+                expected: format!("{} parameters", non_terminal_count),
+                found: format!("{} parameters", rule.parameters.len()),
+                context: format!(
+                    "rule '{}' - parameter count must match grammar items",
+                    rule.label
+                ),
+                span: rule.label.span(),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]

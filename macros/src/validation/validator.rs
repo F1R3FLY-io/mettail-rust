@@ -104,6 +104,18 @@ pub fn validate_theory(theory: &TheoryDef) -> Result<(), ValidationError> {
     // Type-check rewrite rules
     type_checker.validate_rewrites(&theory.rewrites)?;
 
+    // Validate HOL syntax for each rule (Steps 2.1, 2.2, 2.4)
+    for rule in &theory.terms {
+        // Validate parameter types (Step 2.1)
+        type_checker.validate_hol_parameters(rule, theory)?;
+        
+        // Validate return type (Step 2.2)
+        type_checker.validate_return_type(rule, theory)?;
+        
+        // Validate parameter count matches grammar (Step 2.4)
+        type_checker.validate_parameter_count(rule)?;
+    }
+
     Ok(())
 }
 

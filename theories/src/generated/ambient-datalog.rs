@@ -139,7 +139,7 @@ eq_proc(p0, p1) <--
 
 bag.remove(& p0_elem_0);
 
-bag }, let x = binder_0.clone(), let rest = p0_rest.clone(), let p = body_0.clone(), if is_fresh(& x, & rest), let p1 = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(x.clone(), Box :: new(Proc :: PPar({ let mut bag = mettail_runtime :: HashBag :: new();
+bag }, let rest = p0_rest.clone(), let x = binder_0.clone(), let p = body_0.clone(), if is_fresh(& x, & rest), let p1 = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(x.clone(), Box :: new(Proc :: PPar({ let mut bag = mettail_runtime :: HashBag :: new();
 
 bag.insert(p.clone());
 
@@ -155,9 +155,9 @@ eq_proc(p0, p1) <--
     if let Proc :: PNew(p0_f1_inner_f0) = p0_f1_inner,
     let binder_1 = p0_f1_inner_f0.inner().unsafe_pattern.clone(),
     let body_1 = p0_f1_inner_f0.inner().unsafe_body.as_ref().clone(),
-    let p = body_1.clone(),
     let n = p0_f0_val.clone(),
     let x = binder_1.clone(),
+    let p = body_1.clone(),
     if is_fresh(& x, & p),
     let p1 = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(x.clone(), Box :: new(Proc :: PIn(Box :: new(n.clone()), Box :: new(p.clone())))))).normalize();
 
@@ -169,9 +169,9 @@ eq_proc(p0, p1) <--
     if let Proc :: PNew(p0_f1_inner_f0) = p0_f1_inner,
     let binder_1 = p0_f1_inner_f0.inner().unsafe_pattern.clone(),
     let body_1 = p0_f1_inner_f0.inner().unsafe_body.as_ref().clone(),
-    let x = binder_1.clone(),
     let n = p0_f0_val.clone(),
     let p = body_1.clone(),
+    let x = binder_1.clone(),
     if is_fresh(& x, & p),
     let p1 = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(x.clone(), Box :: new(Proc :: POut(Box :: new(n.clone()), Box :: new(p.clone())))))).normalize();
 
@@ -183,9 +183,9 @@ eq_proc(p0, p1) <--
     if let Proc :: PNew(p0_f1_inner_f0) = p0_f1_inner,
     let binder_1 = p0_f1_inner_f0.inner().unsafe_pattern.clone(),
     let body_1 = p0_f1_inner_f0.inner().unsafe_body.as_ref().clone(),
-    let x = binder_1.clone(),
-    let n = p0_f0_val.clone(),
     let p = body_1.clone(),
+    let n = p0_f0_val.clone(),
+    let x = binder_1.clone(),
     if is_fresh(& x, & p),
     let p1 = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(x.clone(), Box :: new(Proc :: POpen(Box :: new(n.clone()), Box :: new(p.clone())))))).normalize();
 
@@ -236,9 +236,9 @@ Proc :: insert_into_ppar(& mut bag, Proc :: PAmb(Box :: new(s_f0_val.clone()), B
 
 bag })).normalize();
 
-relation pamb_proj_c3_b0_p0(Proc, Proc, mettail_runtime :: HashBag < Proc > , Name, Name, Proc);
+relation pamb_proj_c3_b0_p0(Proc, mettail_runtime :: HashBag < Proc > , Name, Name, Proc, Proc);
 
-pamb_proj_c3_b0_p0(parent.clone(), p.clone(), rest.clone(), n.clone(), m.clone(), elem.clone()) <--
+pamb_proj_c3_b0_p0(parent.clone(), rest.clone(), n.clone(), m.clone(), p.clone(), elem.clone()) <--
     proc(parent),
     if let Proc :: PPar(ref bag_field) = parent,
     for (elem, _count) in bag_field.iter(),
@@ -254,7 +254,7 @@ pamb_proj_c3_b0_p0(parent.clone(), p.clone(), rest.clone(), n.clone(), m.clone()
 
 bag.remove(& elem_f1_inner_f0_elem_0);
 
-bag }, let p = elem_f1_inner_f0_elem_0_f1_val.clone(), let rest = elem_f1_inner_f0_rest.clone(), let n = elem_f0_val.clone(), let m = elem_f1_inner_f0_elem_0_f0_val.clone();
+bag }, let rest = elem_f1_inner_f0_rest.clone(), let n = elem_f0_val.clone(), let m = elem_f1_inner_f0_elem_0_f0_val.clone(), let p = elem_f1_inner_f0_elem_0_f1_val.clone();
 
 relation pamb_proj_c3_b0_p1(Proc, Name, Proc, Proc);
 
@@ -266,9 +266,9 @@ pamb_proj_c3_b0_p1(parent.clone(), cap_m.clone(), cap_r.clone(), elem.clone()) <
     let cap_m = (* * f0).clone(),
     let cap_r = (* * f1).clone();
 
-relation pamb_proj_c3_b1_p0(Proc, Name, Proc, Proc, mettail_runtime :: HashBag < Proc > , Name, Proc);
+relation pamb_proj_c3_b1_p0(Proc, Proc, Name, Name, mettail_runtime :: HashBag < Proc > , Proc, Proc);
 
-pamb_proj_c3_b1_p0(parent.clone(), m.clone(), p.clone(), r.clone(), rest.clone(), n.clone(), elem.clone()) <--
+pamb_proj_c3_b1_p0(parent.clone(), p.clone(), m.clone(), n.clone(), rest.clone(), r.clone(), elem.clone()) <--
     proc(parent),
     if let Proc :: PPar(ref bag_field) = parent,
     for (elem, _count) in bag_field.iter(),
@@ -289,7 +289,7 @@ pamb_proj_c3_b1_p0(parent.clone(), m.clone(), p.clone(), r.clone(), rest.clone()
 
 bag.remove(& elem_f1_inner_f0_elem_0_f1_inner_f0_elem_0);
 
-bag }, for (elem_f1_inner_f0_elem_1, _count_elem_f1_inner_f0_1) in elem_f1_inner_f0.iter(), if & elem_f1_inner_f0_elem_1 != & elem_f1_inner_f0_elem_0, let m = elem_f1_inner_f0_elem_0_f1_inner_f0_elem_0_f0_val.clone(), let p = elem_f1_inner_f0_elem_0_f1_inner_f0_elem_0_f1_val.clone(), let r = elem_f1_inner_f0_elem_1.clone(), let rest = elem_f1_inner_f0_elem_0_f1_inner_f0_rest.clone(), let n = elem_f1_inner_f0_elem_0_f0_val.clone();
+bag }, for (elem_f1_inner_f0_elem_1, _count_elem_f1_inner_f0_1) in elem_f1_inner_f0.iter(), if & elem_f1_inner_f0_elem_1 != & elem_f1_inner_f0_elem_0, let p = elem_f1_inner_f0_elem_0_f1_inner_f0_elem_0_f1_val.clone(), let m = elem_f1_inner_f0_elem_0_f1_inner_f0_elem_0_f0_val.clone(), let n = elem_f1_inner_f0_elem_0_f0_val.clone(), let rest = elem_f1_inner_f0_elem_0_f1_inner_f0_rest.clone(), let r = elem_f1_inner_f0_elem_1.clone();
 
 relation popen_proj_c3_b2_p0(Proc, Name, Proc, Proc);
 
@@ -331,7 +331,7 @@ pamb_proj_c3_r1(parent.clone(), rewrite_field.clone(), elem.clone()) <--
     let rewrite_field = (* * rewrite_field_box).clone();
 
 rw_proc(parent, result) <--
-    pamb_proj_c3_b0_p0(parent, cap_p_p0, cap_rest_p0, cap_n_p0, cap_m_p0, elem_0),
+    pamb_proj_c3_b0_p0(parent, cap_rest_p0, cap_n_p0, cap_m_p0, cap_p_p0, elem_0),
     pamb_proj_c3_b0_p1(parent, cap_m_p1, cap_r_p1, elem_1),
     eq_name(cap_m_p0.clone(), cap_m_p1.clone()),
     let rhs_term = Proc :: PAmb(Box :: new(cap_m_p0.clone()), Box :: new(Proc :: PPar({ let mut bag = mettail_runtime :: HashBag :: new();
@@ -357,7 +357,7 @@ Proc :: insert_into_ppar(& mut bag_result, rhs_term);
 bag_result }).normalize();
 
 rw_proc(parent, result) <--
-    pamb_proj_c3_b1_p0(parent, cap_m_p0, cap_p_p0, cap_r_p0, cap_rest_p0, cap_n_p0, elem_0),
+    pamb_proj_c3_b1_p0(parent, cap_p_p0, cap_m_p0, cap_n_p0, cap_rest_p0, cap_r_p0, elem_0),
     let rhs_term = Proc :: PPar({ let mut bag = mettail_runtime :: HashBag :: new();
 
 Proc :: insert_into_ppar(& mut bag, Proc :: PAmb(Box :: new(cap_n_p0.clone()), Box :: new(Proc :: PPar({ let mut bag = (cap_rest_p0.clone()).clone();
