@@ -790,6 +790,30 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
             }
         }
 
+        // Add match arms for auto-generated variants
+        // Check if there's an auto-generated Var variant (NVar)
+        let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
+        if !has_var_rule {
+            // Auto-generated NVar variant needs a match arm
+            let var_label = generate_var_label(category);
+            let panic_msg = format!(
+                "Cannot evaluate {} - variables must be substituted via rewrites first",
+                var_label
+            );
+            match_arms.push(quote! {
+                #category::#var_label(_) => loop { panic!(#panic_msg) },
+            });
+        }
+
+        // Add match arm for auto-generated Assign variant
+        // Assign(OrdVar, Box<T>) evaluates to the value of the RHS
+        let has_assign = has_assign_rule(category, theory);
+        if !has_assign {
+            match_arms.push(quote! {
+                #category::Assign(_, expr) => expr.as_ref().eval(),
+            });
+        }
+
         if !match_arms.is_empty() {
             let impl_block = quote! {
                 impl #category {

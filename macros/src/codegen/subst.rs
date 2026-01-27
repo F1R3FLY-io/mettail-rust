@@ -46,6 +46,13 @@ fn find_all_substitutable_categories(rules: &[GrammarRule]) -> std::collections:
     let mut cats = std::collections::HashSet::new();
 
     for rule in rules {
+        // Build parameter map for HOL syntax
+        let param_map: std::collections::HashMap<String, syn::Ident> = rule
+            .parameters
+            .iter()
+            .map(|p| (p.name.to_string(), p.param_type.clone()))
+            .collect();
+
         // Add binder categories
         if !rule.bindings.is_empty() {
             let (binder_idx, _) = &rule.bindings[0];
@@ -58,7 +65,12 @@ fn find_all_substitutable_categories(rules: &[GrammarRule]) -> std::collections:
         for item in &rule.items {
             match item {
                 GrammarItem::NonTerminal(cat) => {
-                    let cat_str = cat.to_string();
+                    // HOL syntax: resolve parameter names to their types
+                    let resolved_cat = param_map
+                        .get(&cat.to_string())
+                        .cloned()
+                        .unwrap_or_else(|| cat.clone());
+                    let cat_str = resolved_cat.to_string();
                     if cat_str != "Var" {
                         cats.insert(cat_str);
                     }

@@ -6,106 +6,106 @@ ascent_source! {
     calculator_source:
 
     // Relations
-relation int(Int);
+relation int (Int);
 
-#[ds(crate :: eqrel)] relation eq_int(Int, Int);
+# [ds (crate :: eqrel)] relation eq_int (Int , Int);
 
-relation rw_int(Int, Int);
+relation rw_int (Int , Int);
 
-relation env_var_int(String, i64);
+relation env_var_int (String , i64);
 
 
     // Category rules
-int(c1) <--
-    int(c0),
-    rw_int(c0, c1);
+int (c1) <--
+    int (c0),
+    rw_int (c0 , c1);
 
-int(field_0.as_ref().clone()),
-int(field_1.as_ref().clone()) <--
-    int(t),
-    if let Int :: Add(field_0, field_1) = t;
+int (field_0 . as_ref () . clone ()),
+int (field_1 . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: Add (field_0 , field_1) = t;
 
-int(field_0.as_ref().clone()),
-int(field_1.as_ref().clone()) <--
-    int(t),
-    if let Int :: Sub(field_0, field_1) = t;
+int (field_0 . as_ref () . clone ()),
+int (field_1 . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: Sub (field_0 , field_1) = t;
 
-int(rhs.as_ref().clone()) <--
-    int(t),
-    if let Int :: Assign(_, rhs) = t;
+int (rhs . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: Assign (_ , rhs) = t;
 
 
     // Equation rules
-eq_int(t.clone(), t.clone()) <--
-    int(t);
+eq_int (t . clone () , t . clone ()) <--
+    int (t);
 
-eq_int(Int :: Add(Box :: new(x0.clone()), Box :: new(x1.clone())), Int :: Add(Box :: new(y0.clone()), Box :: new(y1.clone()))) <--
-    int(x0),
-    int(y0),
-    eq_int(x0.clone(), y0.clone()),
-    int(x1),
-    int(y1),
-    eq_int(x1.clone(), y1.clone());
+eq_int (Int :: Add (Box :: new (x0 . clone ()) , Box :: new (x1 . clone ())) , Int :: Add (Box :: new (y0 . clone ()) , Box :: new (y1 . clone ()))) <--
+    int (x0),
+    int (y0),
+    eq_int (x0 . clone () , y0 . clone ()),
+    int (x1),
+    int (y1),
+    eq_int (x1 . clone () , y1 . clone ());
 
-eq_int(Int :: Sub(Box :: new(x0.clone()), Box :: new(x1.clone())), Int :: Sub(Box :: new(y0.clone()), Box :: new(y1.clone()))) <--
-    int(x0),
-    int(y0),
-    eq_int(x0.clone(), y0.clone()),
-    int(x1),
-    int(y1),
-    eq_int(x1.clone(), y1.clone());
+eq_int (Int :: Sub (Box :: new (x0 . clone ()) , Box :: new (x1 . clone ())) , Int :: Sub (Box :: new (y0 . clone ()) , Box :: new (y1 . clone ()))) <--
+    int (x0),
+    int (y0),
+    eq_int (x0 . clone () , y0 . clone ()),
+    int (x1),
+    int (y1),
+    eq_int (x1 . clone () , y1 . clone ());
 
 
     // Rewrite rules
-rw_int(s, t) <--
-    int(s),
-    if let Int :: Add(left, right) = s,
-    if let Int :: NumLit(a) = left.as_ref(),
-    if let Int :: NumLit(b) = right.as_ref(),
-    let t = Int :: NumLit(a + b);
+rw_int (s , t) <--
+    int (s),
+    if let Int :: Add (left , right) = s,
+    if let Int :: NumLit (a) = left . as_ref (),
+    if let Int :: NumLit (b) = right . as_ref (),
+    let t = Int :: NumLit (a + b);
 
-rw_int(s, t) <--
-    int(s),
-    if let Int :: Sub(left, right) = s,
-    if let Int :: NumLit(a) = left.as_ref(),
-    if let Int :: NumLit(b) = right.as_ref(),
-    let t = Int :: NumLit(a - b);
+rw_int (s , t) <--
+    int (s),
+    if let Int :: Sub (left , right) = s,
+    if let Int :: NumLit (a) = left . as_ref (),
+    if let Int :: NumLit (b) = right . as_ref (),
+    let t = Int :: NumLit (a - b);
 
-rw_int(s, t) <--
-    int(s),
-    if let Int :: Add(s0, r) = s,
-    rw_int(* * s0, t0),
-    let t = Int :: Add(Box :: new(t0.clone()), r.clone());
+rw_int (s , t) <--
+    int (s),
+    if let Int :: Add (s0 , r) = s,
+    rw_int (* * s0 , t0),
+    let t = Int :: Add (Box :: new (t0 . clone ()) , r . clone ());
 
-rw_int(s, t) <--
-    int(s),
-    if let Int :: Add(l, s0) = s,
-    rw_int(* * s0, t0),
-    let t = Int :: Add(l.clone(), Box :: new(t0.clone()));
+rw_int (s , t) <--
+    int (s),
+    if let Int :: Add (l , s0) = s,
+    rw_int (* * s0 , t0),
+    let t = Int :: Add (l . clone () , Box :: new (t0 . clone ()));
 
-rw_int(s, t) <--
-    int(s),
-    if let Int :: Sub(s0, r) = s,
-    rw_int(* * s0, t0),
-    let t = Int :: Sub(Box :: new(t0.clone()), r.clone());
+rw_int (s , t) <--
+    int (s),
+    if let Int :: Sub (s0 , r) = s,
+    rw_int (* * s0 , t0),
+    let t = Int :: Sub (Box :: new (t0 . clone ()) , r . clone ());
 
-rw_int(s, t) <--
-    int(s),
-    if let Int :: Sub(l, s0) = s,
-    rw_int(* * s0, t0),
-    let t = Int :: Sub(l.clone(), Box :: new(t0.clone()));
+rw_int (s , t) <--
+    int (s),
+    if let Int :: Sub (l , s0) = s,
+    rw_int (* * s0 , t0),
+    let t = Int :: Sub (l . clone () , Box :: new (t0 . clone ()));
 
-rw_int(s, t) <--
-    int(s),
-    if let Int :: IVar(ord_var) = s,
-    if let Some(var_name) = match ord_var { mettail_runtime :: OrdVar(mettail_runtime :: Var :: Free(ref fv)) => { fv.pretty_name.clone() } _ => None },
-    env_var_int(var_name, v),
-    let t = Int :: NumLit(* v);
+rw_int (s , t) <--
+    int (s),
+    if let Int :: IVar (ord_var) = s,
+    if let Some (var_name) = match ord_var {mettail_runtime :: OrdVar (mettail_runtime :: Var :: Free (ref fv)) => {fv . pretty_name . clone ()} _ => None},
+    env_var_int (var_name , v),
+    let t = Int :: NumLit (* v);
 
-rw_int(assign_s, assign_t) <--
-    int(assign_s),
-    if let Int :: Assign(x, s) = assign_s,
-    rw_int((* * s).clone(), t),
-    let assign_t = Int :: Assign(x.clone(), Box :: new(t.clone()));
+rw_int (assign_s , assign_t) <--
+    int (assign_s),
+    if let Int :: Assign (x , s) = assign_s,
+    rw_int ((* * s) . clone () , t),
+    let assign_t = Int :: Assign (x . clone () , Box :: new (t . clone ()));
 
 }

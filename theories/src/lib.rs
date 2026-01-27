@@ -5,7 +5,7 @@
 
 pub mod ambient;
 pub mod calculator;
-// pub mod hol_test; // Temporarily disabled
+pub mod hol_test;
 pub mod rhocalc;
 
 // Re-export eqrel for the generated Ascent code
@@ -16,7 +16,7 @@ pub use ascent_byods_rels::eqrel;
 // This makes rhocalc_source and ambient_source accessible as mettail_theories::rhocalc_source
 pub use ambient::ambient_source;
 pub use calculator::calculator_source;
-// pub use hol_test::holtest_source; // Temporarily disabled
+pub use hol_test::holtest_source;
 pub use rhocalc::rhocalc_source;
 
 // Note: Both rhocalc and ambient export Proc and Name types
