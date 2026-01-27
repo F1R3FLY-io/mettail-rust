@@ -37,10 +37,10 @@ language! {
 
     rewrites {
         (PPar {(PInput n ^x.p), (POutput n q), ...rest})
-            ~> (PPar {(subst ^x.p (NQuote q)), ...rest});
+            ~> (PPar {(eval ^x.p (NQuote q)), ...rest});
 
         (PPar {(PInputs ns scope), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest}) 
-            ~> (PPar {(subst scope qs.*map(|q| (NQuote q))), ...rest});
+            ~> (PPar {(eval scope qs.*map(|q| (NQuote q))), ...rest});
 
         (PDrop (NQuote P)) ~> P;
 

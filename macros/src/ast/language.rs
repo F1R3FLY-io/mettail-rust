@@ -1,26 +1,17 @@
 use syn::{Ident, Type, Token, parse::{Parse, ParseStream}, Result as SynResult};
 
 use super::grammar::{GrammarRule, parse_terms};
-use super::pattern::{Pattern, PatternTerm, term_to_pattern, pattern_to_term};
-use super::term::Term;
+use super::pattern::{Pattern, PatternTerm};
 
 /// Top-level theory definition
 /// theory! { name: Foo, params: ..., types { ... }, terms { ... }, equations { ... }, rewrites { ... }, semantics { ... } }
 pub struct LanguageDef {
     pub name: Ident,
-    pub params: Vec<LanguageParam>,
     pub types: Vec<LangType>,
     pub terms: Vec<GrammarRule>,
     pub equations: Vec<Equation>,
     pub rewrites: Vec<RewriteRule>,
     pub semantics: Vec<SemanticRule>,
-}
-
-/// Language parameter (for generic languages)
-/// params: (cm: CommutativeMonoid)
-pub struct LanguageParam {
-    pub name: Ident,
-    pub ty: Type,
 }
 
 
@@ -62,18 +53,6 @@ pub enum Condition {
     },
 }
 
-/// Environment action to create facts when a rewrite fires
-#[derive(Debug, Clone)]
-pub enum EnvAction {
-    /// Create a fact: then env_var(x, v)
-    CreateFact {
-        /// Relation name (e.g., "env_var")
-        relation: Ident,
-        /// Arguments to the relation (e.g., ["x", "v"])
-        args: Vec<Ident>,
-    },
-}
-
 /// Rewrite rule with optional freshness conditions and optional congruence premise
 /// Base: (LHS) => (RHS) or if x # Q then (LHS) => (RHS)
 /// Congruence: if S => T then (LHS) => (RHS)
@@ -88,24 +67,6 @@ pub struct RewriteRule {
     pub left: Pattern,
     /// RHS pattern - the result of the rewrite (can use metasyntax)
     pub right: Pattern,
-    /// Environment actions to create facts when rewrite fires
-    pub env_actions: Vec<EnvAction>,
-}
-
-impl RewriteRule {
-    /// Get the underlying PatternTerm from the LHS pattern (if it's a Term variant)
-    pub fn left_as_pattern_term(&self) -> Option<&PatternTerm> {
-        match &self.left {
-            Pattern::Term(pt) => Some(pt),
-            Pattern::Collection { .. } | Pattern::Map { .. } | Pattern::Zip { .. } => None,
-        }
-    }
-    
-    /// Try to convert the LHS pattern to a Term
-    /// Returns None for Collection/Map/Zip patterns (which have no direct Term equivalent)
-    pub fn left_to_term(&self) -> Option<Term> {
-        pattern_to_term(&self.left)
-    }
 }
 
 /// Semantic rule for operator evaluation
@@ -140,16 +101,12 @@ pub enum BuiltinOp {
 
 
 /// Export: category name, optionally with native Rust type
-/// exports { Elem; Name; ![i32] as Int; }
+/// types { Elem; Name; ![i32] as Int; }
 pub struct LangType {
     pub name: Ident,
     /// Optional native Rust type (e.g., `i32` for `![i32] as Int`)
     pub native_type: Option<Type>,
 }
-
-// =============================================================================
-// LanguageDef helper methods
-// =============================================================================
 
 use super::grammar::GrammarItem;
 
@@ -159,23 +116,9 @@ impl LanguageDef {
         self.terms.iter().find(|r| &r.label == name)
     }
 
-    /// Get all constructors for a category
-    pub fn constructors_for(&self, category: &Ident) -> Vec<&GrammarRule> {
-        self.terms.iter()
-            .filter(|r| &r.category == category)
-            .collect()
-    }
-
     /// Get the category that a constructor produces
     pub fn category_of_constructor(&self, constructor: &Ident) -> Option<&Ident> {
         self.get_constructor(constructor).map(|r| &r.category)
-    }
-
-    /// Check if a constructor has a collection field
-    pub fn is_collection_constructor(&self, name: &Ident) -> bool {
-        self.get_constructor(name)
-            .map(|r| r.items.iter().any(|i| matches!(i, GrammarItem::Collection { .. })))
-            .unwrap_or(false)
     }
 
     /// Get the element type of a collection constructor
@@ -191,24 +134,11 @@ impl LanguageDef {
         })
     }
 
-    /// Check if a constructor has binders
-    pub fn has_binders(&self, name: &Ident) -> bool {
-        self.get_constructor(name)
-            .map(|r| !r.bindings.is_empty())
-            .unwrap_or(false)
-    }
-
     /// Get the type definition for a category
     pub fn get_type(&self, category: &Ident) -> Option<&LangType> {
         self.types.iter().find(|t| &t.name == category)
     }
 
-    /// Check if a category has a native type
-    pub fn category_has_native_type(&self, category: &Ident) -> bool {
-        self.get_type(category)
-            .map(|e| e.native_type.is_some())
-            .unwrap_or(false)
-    }
 }
 
 // Implement Parse for LanguageDef
@@ -223,19 +153,7 @@ impl Parse for LanguageDef {
         let name = input.parse::<Ident>()?;
         let _ = input.parse::<Token![,]>()?;
 
-        // Parse: params: (...) (optional)
-        let params = if input.peek(Ident) {
-            let lookahead = input.fork().parse::<Ident>()?;
-            if lookahead == "params" {
-                parse_params(input)?
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
-        // Parse: exports { ... }
+        // Parse: types { ... }
         let types = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
             if lookahead == "types" {
@@ -297,7 +215,6 @@ impl Parse for LanguageDef {
 
         Ok(LanguageDef {
             name,
-            params,
             types,
             terms,
             equations,
@@ -305,38 +222,6 @@ impl Parse for LanguageDef {
             semantics,
         })
     }
-}
-
-fn parse_params(input: ParseStream) -> SynResult<Vec<LanguageParam>> {
-    let params_ident = input.parse::<Ident>()?;
-    if params_ident != "params" {
-        return Err(syn::Error::new(params_ident.span(), "expected 'params'"));
-    }
-
-    let _ = input.parse::<Token![:]>()?;
-
-    let content;
-    syn::parenthesized!(content in input);
-
-    let mut params = Vec::new();
-    while !content.is_empty() {
-        let name = content.parse::<Ident>()?;
-        let _ = content.parse::<Token![:]>()?;
-        let ty = content.parse::<Type>()?;
-
-        params.push(LanguageParam { name, ty });
-
-        if content.peek(Token![,]) {
-            let _ = content.parse::<Token![,]>()?;
-        }
-    }
-
-    // Optional comma after closing paren
-    if input.peek(Token![,]) {
-        let _ = input.parse::<Token![,]>()?;
-    }
-
-    Ok(params)
 }
 
 fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
@@ -544,12 +429,12 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
 
         // Check if this is a substitution (beta reduction)
         // New unified syntax: (subst lamterm repl) where lamterm is ^x.body or ^[xs].body or a variable
-        // Old syntax (backward compat): (subst term var repl)
-        if constructor == "subst" {
+        // Old syntax (backward compat): (eval term var repl)
+        if constructor == "eval" {
             let first = parse_pattern(&content)?;
             
             if content.is_empty() {
-                return Err(syn::Error::new(constructor.span(), "subst requires at least 2 arguments"));
+                return Err(syn::Error::new(constructor.span(), "eval requires at least 2 arguments"));
             }
             
             let second = parse_pattern(&content)?;
@@ -588,13 +473,13 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
                     Pattern::Term(PatternTerm::Var(v)) => v.clone(),
                     _ => return Err(syn::Error::new(
                         constructor.span(), 
-                        "In 3-arg subst syntax (subst term var repl), second argument must be a variable name"
+                        "In 3-arg eval syntax (subst term var repl), second argument must be a variable name"
                     )),
                 };
                 let replacement = parse_pattern(&content)?;
                 
                 if !content.is_empty() {
-                    return Err(syn::Error::new(constructor.span(), "subst takes 2 or 3 arguments"));
+                    return Err(syn::Error::new(constructor.span(), "eval takes 2 or 3 arguments"));
                 }
                 
                 return Ok(Pattern::Term(PatternTerm::Subst {
@@ -603,23 +488,6 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
                     replacement: Box::new(replacement),
                 }));
             }
-        }
-
-        // Check if this is a multi-substitution (legacy syntax, still supported)
-        if constructor == "multisubst" {
-            // Parse: (multisubst scope r0 r1 r2 ...)
-            let scope = parse_pattern(&content)?;
-
-            // Parse remaining arguments as replacement patterns
-            let mut replacements = Vec::new();
-            while !content.is_empty() {
-                replacements.push(parse_pattern(&content)?);
-            }
-
-            return Ok(Pattern::Term(PatternTerm::MultiSubst {
-                scope: Box::new(scope),
-                replacements,
-            }));
         }
 
         // Parse arguments as nested patterns
@@ -812,11 +680,6 @@ fn parse_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Pattern)> {
     Ok((params, body))
 }
 
-/// Backwards compatibility alias
-pub fn parse_lhs_pattern(input: ParseStream) -> SynResult<Pattern> {
-    parse_pattern(input)
-}
-
 fn parse_rewrites(input: ParseStream) -> SynResult<Vec<RewriteRule>> {
     let rewrites_ident = input.parse::<Ident>()?;
     if rewrites_ident != "rewrites" {
@@ -959,8 +822,6 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
     // Parse right-hand side as pattern (can use metasyntax)
     let right = parse_pattern(input)?;
 
-    // Parse optional environment actions: then env_var(x, v)
-    let mut env_actions = Vec::new();
     while input.peek(Ident) {
         // Check if next token is "then"
         let lookahead = input.fork();
@@ -969,7 +830,6 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
                 input.parse::<Ident>()?; // consume "then"
 
                 // Parse relation name and arguments: env_var(x, v)
-                let relation = input.parse::<Ident>()?;
                 let args_content;
                 syn::parenthesized!(args_content in input);
 
@@ -980,8 +840,6 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
                         let _ = args_content.parse::<Token![,]>()?;
                     }
                 }
-
-                env_actions.push(EnvAction::CreateFact { relation, args });
             } else {
                 break;
             }
@@ -1000,7 +858,6 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
         premise,
         left,
         right,
-        env_actions,
     })
 }
 

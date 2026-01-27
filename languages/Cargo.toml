@@ -22,6 +22,9 @@ indexmap = { workspace = true }
 [build-dependencies]
 lalrpop = { workspace = true }
 
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
 # TODO: Re-enable after Pattern refactor complete
 [[bin]]
 name = "ambient_tests"
@@ -30,3 +33,7 @@ path = "tests/ambient_tests.rs"
 [[bin]]
 name = "rhocalc_tests"
 path = "tests/rhocalc_tests.rs"
+
+[[bench]]
+name = "rhocalc_bench"
+harness = false

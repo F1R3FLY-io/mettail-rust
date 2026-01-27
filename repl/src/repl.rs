@@ -766,16 +766,6 @@ impl Repl {
                     .map_err(|e| anyhow::anyhow!("{}", e))?;
                 println!("{}", "✓".green());
                 
-                // Show substituted term if different
-                let orig_str = format!("{}", term);
-                let subst_str = format!("{}", substituted);
-                if orig_str != subst_str {
-                    println!("{}", "Substituted:".bold());
-                    let formatted = format_term_pretty(&subst_str);
-                    println!("{}", formatted.cyan());
-                    println!();
-                }
-                
                 substituted
             } else {
                 term

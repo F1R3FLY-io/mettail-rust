@@ -130,7 +130,10 @@ fn format_ascent_source(
 /// - **Base rewrites**: Rules without premises (S => T)
 /// - **Explicit congruences**: Rules with premises (if S => T then LHS => RHS)
 /// - **Semantic evaluation**: Rules for built-in operators (Add, Sub, etc.)
-/// - **Beta reduction**: Rules for Apply variants (ApplyName(LamName(...), arg) => ...)
+///
+/// Note: Beta-reduction is NOT generated as rewrite rules. Instead, it happens
+/// immediately via `normalize()` when terms are created. This makes beta-reduction
+/// "invisible" - users don't see it as a separate reduction step.
 ///
 /// Note: Rewrite congruences are NOT auto-generated. Users explicitly control
 /// where rewrites propagate by writing `if S => T then ...` rules.
@@ -149,81 +152,10 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     // These are user-declared rules that control where rewrites propagate
     let congruence_rules = generate_all_explicit_congruences(language);
     rules.extend(congruence_rules);
-    
-    // Generate beta reduction rules for Apply variants
-    let beta_rules = generate_beta_reduction_rules(language);
-    rules.extend(beta_rules);
 
     quote! {
         #(#rules)*
     }
-}
-
-/// Generate beta reduction rules for Apply variants
-/// 
-/// For each Apply{Domain} variant, generates:
-/// - ApplyDomain(LamDomain(scope), arg) => body[binder := arg]
-/// - MApplyDomain(MLamDomain(scope), args) => body[binders := args]
-fn generate_beta_reduction_rules(language: &LanguageDef) -> Vec<TokenStream> {
-    let mut rules = Vec::new();
-    
-    // For each category (codomain)
-    for codomain_lang_type in &language.types {
-        if codomain_lang_type.native_type.is_some() {
-            continue;
-        }
-        
-        let codomain = &codomain_lang_type.name;
-        let codomain_lower = codomain.to_string().to_lowercase();
-        let rw_relation = syn::Ident::new(&format!("rw_{}", codomain_lower), proc_macro2::Span::call_site());
-        let cat_relation = syn::Ident::new(&codomain_lower, proc_macro2::Span::call_site());
-        
-        // For each domain type
-        for domain_lang_type in &language.types {
-            if domain_lang_type.native_type.is_some() {
-                continue;
-            }
-            
-            let domain = &domain_lang_type.name;
-            let domain_lower = domain.to_string().to_lowercase();
-            let subst_method = syn::Ident::new(&format!("substitute_{}", domain_lower), proc_macro2::Span::call_site());
-            let multi_subst_method = syn::Ident::new(&format!("multi_substitute_{}", domain_lower), proc_macro2::Span::call_site());
-            
-            let apply_variant = syn::Ident::new(&format!("Apply{}", domain), proc_macro2::Span::call_site());
-            let lam_variant = syn::Ident::new(&format!("Lam{}", domain), proc_macro2::Span::call_site());
-            let mapply_variant = syn::Ident::new(&format!("MApply{}", domain), proc_macro2::Span::call_site());
-            let mlam_variant = syn::Ident::new(&format!("MLam{}", domain), proc_macro2::Span::call_site());
-            
-            // Single-argument beta reduction:
-            // ApplyDomain(LamDomain(scope), arg) => body[binder := arg]
-            rules.push(quote! {
-                #rw_relation(s.clone(), t) <--
-                    #cat_relation(s),
-                    if let #codomain::#apply_variant(ref lam_box, ref arg_box) = s,
-                    if let #codomain::#lam_variant(ref scope) = **lam_box,
-                    let t = {
-                        let (binder, body) = scope.clone().unbind();
-                        (*body).#subst_method(&binder.0, &**arg_box)
-                    };
-            });
-            
-            // Multi-argument beta reduction:
-            // MApplyDomain(MLamDomain(scope), args) => body[binders := args]
-            rules.push(quote! {
-                #rw_relation(s.clone(), t) <--
-                    #cat_relation(s),
-                    if let #codomain::#mapply_variant(ref lam_box, ref args) = s,
-                    if let #codomain::#mlam_variant(ref scope) = **lam_box,
-                    let t = {
-                        let (binders, body) = scope.clone().unbind();
-                        let vars: Vec<_> = binders.iter().map(|b| &b.0).collect();
-                        (*body).#multi_subst_method(&vars, args)
-                    };
-            });
-        }
-    }
-    
-    rules
 }
 
 /// Generate semantic evaluation rules for constructors with semantics

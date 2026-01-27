@@ -7,7 +7,7 @@
 //!
 //! ## Generated Types
 //!
-//! For a theory with `exports { Proc; Name; }`:
+//! For a theory with `types { Proc; Name; }`:
 //!
 //! ```rust,ignore
 //! // Per-category environments (preserves insertion order)
@@ -207,7 +207,6 @@ mod tests {
     fn test_generate_environments() {
         let language = LanguageDef {
             name: parse_quote!(RhoCalc),
-            params: vec![],
             types: vec![
                 LangType {
                     name: parse_quote!(Proc),
@@ -250,7 +249,6 @@ mod tests {
         // Native types should be excluded (they don't have variables)
         let language = LanguageDef {
             name: parse_quote!(Calculator),
-            params: vec![],
             types: vec![
                 LangType {
                     name: parse_quote!(Int),

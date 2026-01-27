@@ -4,7 +4,7 @@
 //! 
 //! ## Generated Methods
 //! 
-//! For each category `Cat` with exports `{Cat, Other, ...}`:
+//! For each category `Cat` with types `{Cat, Other, ...}`:
 //! - `substitute(var, replacement) -> Self` - single variable substitution
 //! - `subst(vars, repls) -> Self` - multi-variable simultaneous substitution  
 //! - `subst_other(vars, repls) -> Self` - cross-category substitution
@@ -1580,7 +1580,6 @@ mod tests {
 
         let language = LanguageDef {
             name: parse_quote!(Test),
-            params: vec![],
             types: vec![LangType {
                 name: parse_quote!(Proc),
                 native_type: None,
@@ -1599,7 +1598,6 @@ mod tests {
     fn test_generate_simple_substitution() {
         let language = LanguageDef {
             name: parse_quote!(Test),
-            params: vec![],
             types: vec![LangType {
                 name: parse_quote!(Elem),
                 native_type: None,

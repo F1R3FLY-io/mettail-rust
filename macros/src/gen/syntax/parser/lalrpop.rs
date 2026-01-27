@@ -13,7 +13,7 @@ use crate::gen::native::{has_native_type, native_type_to_string};
 fn generate_native_type_tokens(language: &LanguageDef) -> String {
     let mut tokens = String::new();
 
-    // Check all exports for native types and generate appropriate token parsers
+    // Check all types for native types and generate appropriate token parsers
     for lang_type in &language.types {
         if let Some(ref native_type) = lang_type.native_type {
             let type_str = native_type_to_string(native_type);
@@ -58,7 +58,7 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
     // Add use statements for runtime helpers. Only include what's needed
     let has_binders = language.terms.iter().any(|r| !r.bindings.is_empty());
 
-    // Check if any category needs Var (i.e., has non-native exports OR has Var rules)
+    // Check if any category needs Var (i.e., has non-native types OR has Var rules)
     let needs_var = language.types.iter().any(|t| t.native_type.is_none())
         || language.terms.iter().any(is_var_rule);
 
@@ -84,9 +84,9 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
     // When used in library modules, LALRPOP will handle the paths correctly
     let mut type_names: Vec<String> = language.types.iter().map(|t| t.name.to_string()).collect();
     
-    // Add VarCategory for lambda type inference (only if there are non-native exports)
-    let has_non_native_exports = language.types.iter().any(|t| t.native_type.is_none());
-    if has_non_native_exports {
+    // Add VarCategory for lambda type inference (only if there are non-native types)
+    let has_non_native_types = language.types.iter().any(|t| t.native_type.is_none());
+    if has_non_native_types {
         type_names.push("VarCategory".to_string());
     }
 
@@ -115,7 +115,7 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
     // Generate native type token parsers if needed
     grammar.push_str(&generate_native_type_tokens(language));
 
-    // Generate productions for each exported category
+    // Generate productions for each type
     for lang_type in &language.types {
         let cat_name = &lang_type.name;
 

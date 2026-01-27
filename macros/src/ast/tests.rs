@@ -9,14 +9,12 @@ mod tests {
     use crate::ast::types::{TypeExpr, CollectionType};
     use crate::ast::grammar::{GrammarItem, TermParam};
     use crate::ast::grammar::{SyntaxExpr, PatternOp};
-    use crate::ast::term::Term;
-    use crate::ast::types::{TypeContext, TypeError, ConstructorSig};
 
     #[test]
     fn parse_hashbag_simple() {
         let input = quote! {
             name: TestBag,
-            exports { Elem }
+            types { Elem }
             terms {
                 EBag . Elem ::= HashBag(Elem) sep "|" ;
                 EZero . Elem ::= "0" ;
@@ -55,15 +53,13 @@ mod tests {
     fn parse_parenthesized_collection_freshness() {
         let input = quote! {
             name: TestFresh,
-            exports { Proc Name }
+            types { Proc Name }
             terms {
                 PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
                 PNew . Proc ::= "new(" <Name> "," Proc ")" ;
-                PVar . Proc ::= Var ;
-                NVar . Name ::= Var ;
             }
             equations {
-                if (x # ...rest) then (PPar {(PNew x P), ...rest}) == (PNew x (PPar {P, ...rest}));
+                if (x # ...rest) then (PPar {(PNew x P), ...rest}) = (PNew x (PPar {P, ...rest}));
             }
         };
 
@@ -83,7 +79,7 @@ mod tests {
     fn parse_collection_with_delimiters() {
         let input = quote! {
             name: TestList,
-            exports { Elem }
+            types { Elem }
             terms {
                 EList . Elem ::= Vec(Elem) sep "," delim "[" "]" ;
             }
@@ -109,7 +105,7 @@ mod tests {
     fn parse_hashset_collection() {
         let input = quote! {
             name: TestSet,
-            exports { Elem }
+            types { Elem }
             terms {
                 ESet . Elem ::= HashSet(Elem) sep "," delim "{" "}" ;
             }
@@ -135,7 +131,7 @@ mod tests {
     fn parse_collection_error_empty_separator() {
         let input = quote! {
             name: TestBad,
-            exports { Elem }
+            types { Elem }
             terms {
                 EBag . Elem ::= HashBag(Elem) sep "" ;
             }
@@ -151,7 +147,7 @@ mod tests {
     fn parse_collection_error_missing_sep() {
         let input = quote! {
             name: TestBad,
-            exports { Elem }
+            types { Elem }
             terms {
                 EBag . Elem ::= HashBag(Elem) "|" ;
             }
@@ -286,243 +282,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn type_expr_equality() {
-        // Same types should be equal
-        let ty1 = TypeExpr::base("Name");
-        let ty2 = TypeExpr::base("Name");
-        assert_eq!(ty1, ty2);
-
-        // Different base types should not be equal
-        let ty3 = TypeExpr::base("Proc");
-        assert_ne!(ty1, ty3);
-
-        // Arrow types
-        let arr1 = TypeExpr::arrow(TypeExpr::base("Name"), TypeExpr::base("Proc"));
-        let arr2 = TypeExpr::arrow(TypeExpr::base("Name"), TypeExpr::base("Proc"));
-        assert_eq!(arr1, arr2);
-
-        // Different arrows should not be equal
-        let arr3 = TypeExpr::arrow(TypeExpr::base("Proc"), TypeExpr::base("Name"));
-        assert_ne!(arr1, arr3);
-    }
-
-    #[test]
-    fn type_expr_display() {
-        let base = TypeExpr::base("Name");
-        assert_eq!(format!("{}", base), "Name");
-
-        let arrow = TypeExpr::arrow(TypeExpr::base("Name"), TypeExpr::base("Proc"));
-        assert_eq!(format!("{}", arrow), "[Name -> Proc]");
-
-        let multi = TypeExpr::arrow(
-            TypeExpr::multi_binder(TypeExpr::base("Name")),
-            TypeExpr::base("Proc"),
-        );
-        assert_eq!(format!("{}", multi), "[Name* -> Proc]");
-
-        let standalone_multi = TypeExpr::multi_binder(TypeExpr::base("Name"));
-        assert_eq!(format!("{}", standalone_multi), "Name*");
-
-        let coll = TypeExpr::collection(CollectionType::Vec, TypeExpr::base("Name"));
-        assert_eq!(format!("{}", coll), "Vec(Name)");
-    }
-
-    // =========================================================================
-    // Expr Lambda Tests
-    // =========================================================================
-
-    use syn::parse::Parser;
-
-    // =========================================================================
-    // Expr free_vars, substitute, apply Tests
-    // =========================================================================
-
-    fn make_var(name: &str) -> Term {
-        Term::Var(Ident::new(name, proc_macro2::Span::call_site()))
-    }
-
-    fn make_lambda(binder: &str, body: Term) -> Term {
-        Term::Lambda {
-            binder: Ident::new(binder, proc_macro2::Span::call_site()),
-            body: Box::new(body),
-        }
-    }
-
-    fn make_apply(constructor: &str, args: Vec<Term>) -> Term {
-        Term::Apply {
-            constructor: Ident::new(constructor, proc_macro2::Span::call_site()),
-            args,
-        }
-    }
-
-    #[test]
-    fn test_free_vars_var() {
-        let expr = make_var("x");
-        let fv = expr.free_vars();
-        assert_eq!(fv.len(), 1);
-        assert!(fv.contains("x"));
-    }
-
-    #[test]
-    fn test_free_vars_apply() {
-        // PPar(x, y) has free vars {x, y}
-        let expr = make_apply("PPar", vec![make_var("x"), make_var("y")]);
-        let fv = expr.free_vars();
-        assert_eq!(fv.len(), 2);
-        assert!(fv.contains("x"));
-        assert!(fv.contains("y"));
-    }
-
-    #[test]
-    fn test_free_vars_lambda() {
-        // ^x.y has free vars {y} (x is bound)
-        let expr = make_lambda("x", make_var("y"));
-        let fv = expr.free_vars();
-        assert_eq!(fv.len(), 1);
-        assert!(fv.contains("y"));
-        assert!(!fv.contains("x"));
-    }
-
-    #[test]
-    fn test_free_vars_lambda_bound() {
-        // ^x.x has no free vars (x is bound)
-        let expr = make_lambda("x", make_var("x"));
-        let fv = expr.free_vars();
-        assert_eq!(fv.len(), 0);
-    }
-
-    #[test]
-    fn test_free_vars_nested_lambda() {
-        // ^x.^y.z has free vars {z}
-        let expr = make_lambda("x", make_lambda("y", make_var("z")));
-        let fv = expr.free_vars();
-        assert_eq!(fv.len(), 1);
-        assert!(fv.contains("z"));
-    }
-
-    #[test]
-    fn test_substitute_var_match() {
-        // x[y/x] = y
-        let expr = make_var("x");
-        let var = Ident::new("x", proc_macro2::Span::call_site());
-        let replacement = make_var("y");
-        
-        let result = expr.substitute(&var, &replacement);
-        assert!(matches!(result, Term::Var(v) if v == "y"));
-    }
-
-    #[test]
-    fn test_substitute_var_no_match() {
-        // x[z/y] = x
-        let expr = make_var("x");
-        let var = Ident::new("y", proc_macro2::Span::call_site());
-        let replacement = make_var("z");
-        
-        let result = expr.substitute(&var, &replacement);
-        assert!(matches!(result, Term::Var(v) if v == "x"));
-    }
-
-    #[test]
-    fn test_substitute_apply() {
-        // PPar(x, y)[z/x] = PPar(z, y)
-        let expr = make_apply("PPar", vec![make_var("x"), make_var("y")]);
-        let var = Ident::new("x", proc_macro2::Span::call_site());
-        let replacement = make_var("z");
-        
-        let result = expr.substitute(&var, &replacement);
-        match result {
-            Term::Apply { constructor, args } => {
-                assert_eq!(constructor.to_string(), "PPar");
-                assert!(matches!(&args[0], Term::Var(v) if v == "z"));
-                assert!(matches!(&args[1], Term::Var(v) if v == "y"));
-            }
-            _ => panic!("Expected Apply"),
-        }
-    }
-
-    #[test]
-    fn test_substitute_lambda_shadowing() {
-        // (^x.x)[y/x] = ^x.x (x is shadowed by binder)
-        let expr = make_lambda("x", make_var("x"));
-        let var = Ident::new("x", proc_macro2::Span::call_site());
-        let replacement = make_var("y");
-        
-        let result = expr.substitute(&var, &replacement);
-        match result {
-            Term::Lambda { binder, body } => {
-                assert_eq!(binder.to_string(), "x");
-                assert!(matches!(*body, Term::Var(v) if v == "x"));
-            }
-            _ => panic!("Expected Lambda"),
-        }
-    }
-
-    #[test]
-    fn test_substitute_lambda_body() {
-        // (^x.y)[z/y] = ^x.z
-        let expr = make_lambda("x", make_var("y"));
-        let var = Ident::new("y", proc_macro2::Span::call_site());
-        let replacement = make_var("z");
-        
-        let result = expr.substitute(&var, &replacement);
-        match result {
-            Term::Lambda { binder, body } => {
-                assert_eq!(binder.to_string(), "x");
-                assert!(matches!(*body, Term::Var(v) if v == "z"));
-            }
-            _ => panic!("Expected Lambda"),
-        }
-    }
-
-    #[test]
-    fn test_apply_lambda() {
-        // (^x.PPar(x, y))(z) = PPar(z, y)
-        let lambda = make_lambda("x", make_apply("PPar", vec![make_var("x"), make_var("y")]));
-        let arg = make_var("z");
-        
-        let result = lambda.apply(&arg).expect("apply should succeed");
-        match result {
-            Term::Apply { constructor, args } => {
-                assert_eq!(constructor.to_string(), "PPar");
-                assert!(matches!(&args[0], Term::Var(v) if v == "z"));
-                assert!(matches!(&args[1], Term::Var(v) if v == "y"));
-            }
-            _ => panic!("Expected Apply"),
-        }
-    }
-
-    #[test]
-    fn test_apply_nested_lambda() {
-        // (^x.^y.PPar(x, y))(a) = ^y.PPar(a, y)
-        let lambda = make_lambda("x", make_lambda("y", make_apply("PPar", vec![make_var("x"), make_var("y")])));
-        let arg = make_var("a");
-        
-        let result = lambda.apply(&arg).expect("apply should succeed");
-        match result {
-            Term::Lambda { binder, body } => {
-                assert_eq!(binder.to_string(), "y");
-                match *body {
-                    Term::Apply { ref args, .. } => {
-                        assert!(matches!(&args[0], Term::Var(v) if v == "a"));
-                        assert!(matches!(&args[1], Term::Var(v) if v == "y"));
-                    }
-                    _ => panic!("Expected Apply in body"),
-                }
-            }
-            _ => panic!("Expected Lambda"),
-        }
-    }
-
-    #[test]
-    fn test_apply_non_lambda_fails() {
-        let expr = make_var("x");
-        let arg = make_var("y");
-        
-        let result = expr.apply(&arg);
-        assert!(result.is_err());
-    }
-
     // =========================================================================
     // TypeContext and Type Checking Tests
     // =========================================================================
@@ -538,119 +297,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_type_context_empty() {
-        let ctx = TypeContext::new();
-        assert!(!ctx.contains("x"));
-        assert!(ctx.lookup("x").is_none());
-    }
-
-    #[test]
-    fn test_type_context_with_var() {
-        let ctx = TypeContext::new();
-        let name_type = make_base_type("Name");
-        let extended = ctx.with_var("x", name_type.clone());
-        
-        assert!(extended.contains("x"));
-        assert_eq!(extended.lookup("x"), Some(&name_type));
-        
-        // Original context should be unchanged
-        assert!(!ctx.contains("x"));
-    }
-
-    #[test]
-    fn test_infer_type_var_bound() {
-        let ctx = TypeContext::new().with_var("x", make_base_type("Name"));
-        let expr = make_var("x");
-        
-        let result = expr.infer_type(&ctx);
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), make_base_type("Name"));
-    }
-
-    #[test]
-    fn test_infer_type_var_unbound() {
-        let ctx = TypeContext::new();
-        let expr = make_var("x");
-        
-        let result = expr.infer_type(&ctx);
-        assert!(result.is_err());
-        match result {
-            Err(TypeError::UnboundVariable(v)) => assert_eq!(v, "x"),
-            _ => panic!("Expected UnboundVariable error"),
-        }
-    }
-
-    #[test]
-    fn test_check_type_lambda() {
-        // Check that ^x.x : [Name -> Name]
-        let lambda = make_lambda("x", make_var("x"));
-        let arrow_type = make_arrow_type(make_base_type("Name"), make_base_type("Name"));
-        let ctx = TypeContext::new();
-        
-        let result = lambda.check_type(&arrow_type, &ctx);
-        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
-    }
-
-    #[test]
-    fn test_check_type_lambda_body_uses_binder() {
-        // ^x.PPar(x, y) : [Name -> Proc] in context where y:Proc
-        // But we can't fully check Apply yet, so this will fail with CannotInfer
-        let lambda = make_lambda("x", make_apply("PPar", vec![make_var("x"), make_var("y")]));
-        let arrow_type = make_arrow_type(make_base_type("Name"), make_base_type("Proc"));
-        let ctx = TypeContext::new().with_var("y", make_base_type("Proc"));
-        
-        let result = lambda.check_type(&arrow_type, &ctx);
-        // This will fail because Apply type inference isn't implemented yet
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_check_type_nested_lambda() {
-        // Check that ^x.^y.y : [A -> [B -> B]]
-        let inner = make_lambda("y", make_var("y"));
-        let outer = make_lambda("x", inner);
-        
-        let inner_arrow = make_arrow_type(make_base_type("B"), make_base_type("B"));
-        let outer_arrow = make_arrow_type(make_base_type("A"), inner_arrow);
-        let ctx = TypeContext::new();
-        
-        let result = outer.check_type(&outer_arrow, &ctx);
-        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
-    }
-
-    #[test]
-    fn test_apply_typed() {
-        // Apply (^x.x : [Name -> Name]) to (n : Name) = n
-        let lambda = make_lambda("x", make_var("x"));
-        let arg = make_var("n");
-        let func_type = make_arrow_type(make_base_type("Name"), make_base_type("Name"));
-        let ctx = TypeContext::new().with_var("n", make_base_type("Name"));
-        
-        let result = lambda.apply_typed(&arg, &ctx, &func_type);
-        assert!(result.is_ok());
-        assert!(matches!(result.unwrap(), Term::Var(v) if v == "n"));
-    }
-
-    #[test]
-    fn test_apply_typed_wrong_arg_type() {
-        // Apply (^x.x : [Name -> Name]) to (p : Proc) should fail
-        let lambda = make_lambda("x", make_var("x"));
-        let arg = make_var("p");
-        let func_type = make_arrow_type(make_base_type("Name"), make_base_type("Name"));
-        let ctx = TypeContext::new().with_var("p", make_base_type("Proc")); // Wrong type!
-        
-        let result = lambda.apply_typed(&arg, &ctx, &func_type);
-        assert!(result.is_err());
-        match result {
-            Err(TypeError::TypeMismatch { expected, found, .. }) => {
-                assert_eq!(expected, make_base_type("Name"));
-                assert_eq!(found, make_base_type("Proc"));
-            }
-            _ => panic!("Expected TypeMismatch error"),
-        }
-    }
-
     // =========================================================================
     // Constructor Signature and Apply Type Inference Tests
     // =========================================================================
@@ -662,237 +308,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_constructor_sig_creation() {
-        let sig = ConstructorSig::new(
-            vec![make_base_type("Name"), make_base_type("Proc")],
-            make_base_type("Proc")
-        );
-        assert_eq!(sig.arg_types.len(), 2);
-        assert_eq!(sig.result_type, make_base_type("Proc"));
-    }
-
-    #[test]
-    fn test_context_with_constructor() {
-        let ctx = TypeContext::new()
-            .with_constructor("PPar", ConstructorSig::new(
-                vec![make_base_type("Proc"), make_base_type("Proc")],
-                make_base_type("Proc")
-            ));
-        
-        let sig = ctx.lookup_constructor("PPar");
-        assert!(sig.is_some());
-        assert_eq!(sig.unwrap().arg_types.len(), 2);
-    }
-
-    #[test]
-    fn test_infer_type_apply_simple() {
-        // PPar(p, q) : Proc where p:Proc, q:Proc
-        let ctx = TypeContext::new()
-            .with_var("p", make_base_type("Proc"))
-            .with_var("q", make_base_type("Proc"))
-            .with_constructor("PPar", ConstructorSig::new(
-                vec![make_base_type("Proc"), make_base_type("Proc")],
-                make_base_type("Proc")
-            ));
-        
-        let expr = make_apply("PPar", vec![make_var("p"), make_var("q")]);
-        let result = expr.infer_type(&ctx);
-        
-        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
-        assert_eq!(result.unwrap(), make_base_type("Proc"));
-    }
-
-    #[test]
-    fn test_infer_type_apply_with_name() {
-        // POut(n, p) : Proc where n:Name, p:Proc
-        let ctx = TypeContext::new()
-            .with_var("n", make_base_type("Name"))
-            .with_var("p", make_base_type("Proc"))
-            .with_constructor("POut", ConstructorSig::new(
-                vec![make_base_type("Name"), make_base_type("Proc")],
-                make_base_type("Proc")
-            ));
-        
-        let expr = make_apply("POut", vec![make_var("n"), make_var("p")]);
-        let result = expr.infer_type(&ctx);
-        
-        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
-        assert_eq!(result.unwrap(), make_base_type("Proc"));
-    }
-
-    #[test]
-    fn test_infer_type_apply_wrong_arg_type() {
-        // PPar(n, p) should fail if n:Name (expected Proc)
-        let ctx = TypeContext::new()
-            .with_var("n", make_base_type("Name"))
-            .with_var("p", make_base_type("Proc"))
-            .with_constructor("PPar", ConstructorSig::new(
-                vec![make_base_type("Proc"), make_base_type("Proc")],
-                make_base_type("Proc")
-            ));
-        
-        let expr = make_apply("PPar", vec![make_var("n"), make_var("p")]);
-        let result = expr.infer_type(&ctx);
-        
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_infer_type_apply_wrong_arity() {
-        // PPar(p) with only 1 arg should fail
-        let ctx = TypeContext::new()
-            .with_var("p", make_base_type("Proc"))
-            .with_constructor("PPar", ConstructorSig::new(
-                vec![make_base_type("Proc"), make_base_type("Proc")],
-                make_base_type("Proc")
-            ));
-        
-        let expr = make_apply("PPar", vec![make_var("p")]);
-        let result = expr.infer_type(&ctx);
-        
-        assert!(result.is_err());
-        match result {
-            Err(TypeError::CannotInfer(msg)) => {
-                assert!(msg.contains("expects 2 arguments, got 1"));
-            }
-            _ => panic!("Expected CannotInfer error about arity"),
-        }
-    }
-
-    #[test]
-    fn test_infer_type_apply_unknown_constructor() {
-        let ctx = TypeContext::new()
-            .with_var("p", make_base_type("Proc"));
-        
-        let expr = make_apply("Unknown", vec![make_var("p")]);
-        let result = expr.infer_type(&ctx);
-        
-        assert!(result.is_err());
-        match result {
-            Err(TypeError::CannotInfer(msg)) => {
-                assert!(msg.contains("not found"));
-            }
-            _ => panic!("Expected CannotInfer error"),
-        }
-    }
-
-    // =========================================================================
-    // Collection-typed Lambda Tests: ^xs.p:[Vec(Name) -> Proc]
-    // =========================================================================
-
-    #[test]
-    fn test_check_type_lambda_with_collection_domain() {
-        // ^xs.POut(x, PNil) : [Vec(Name) -> Proc]
-        // This binds xs to a Vec(Name), so xs:Vec(Name) in the body
-        let lambda = make_lambda("xs", make_apply("PNil", vec![]));
-        let domain = make_collection_type(CollectionType::Vec, make_base_type("Name"));
-        let arrow_type = make_arrow_type(domain.clone(), make_base_type("Proc"));
-        let ctx = TypeContext::new()
-            .with_constructor("PNil", ConstructorSig::new(vec![], make_base_type("Proc")));
-        
-        let result = lambda.check_type(&arrow_type, &ctx);
-        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
-    }
-
-    #[test]
-    fn test_check_type_lambda_collection_domain_using_binder() {
-        // ^xs.Fold(xs) : [Vec(Name) -> Proc]
-        // Body uses xs, which has type Vec(Name)
-        let lambda = make_lambda("xs", make_apply("Fold", vec![make_var("xs")]));
-        let domain = make_collection_type(CollectionType::Vec, make_base_type("Name"));
-        let arrow_type = make_arrow_type(domain.clone(), make_base_type("Proc"));
-        let ctx = TypeContext::new()
-            .with_constructor("Fold", ConstructorSig::new(
-                vec![make_collection_type(CollectionType::Vec, make_base_type("Name"))],
-                make_base_type("Proc")
-            ));
-        
-        let result = lambda.check_type(&arrow_type, &ctx);
-        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
-    }
-
-    // =========================================================================
-    // Multi-Lambda Tests: ^[xs].p:[Name* -> Proc]
-    // =========================================================================
-
-    fn make_multi_lambda(binder_strs: &[&str], body: Term) -> Term {
-        Term::MultiLambda {
-            binders: binder_strs.iter()
-                .map(|s| Ident::new(s, proc_macro2::Span::call_site()))
-                .collect(),
-            body: Box::new(body),
-        }
-    }
-
-    #[test]
-    fn test_check_type_multi_lambda() {
-        // ^[xs].p : [Name* -> Proc]
-        // xs binds multiple Names, body should be Proc
-        let multi_lambda = make_multi_lambda(&["xs"], make_apply("PNil", vec![]));
-        let multi_domain = TypeExpr::MultiBinder(Box::new(make_base_type("Name")));
-        let arrow_type = make_arrow_type(multi_domain, make_base_type("Proc"));
-        let ctx = TypeContext::new()
-            .with_constructor("PNil", ConstructorSig::new(vec![], make_base_type("Proc")));
-        
-        let result = multi_lambda.check_type(&arrow_type, &ctx);
-        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
-    }
-
-    #[test]
-    fn test_check_type_multi_lambda_non_multi_domain_fails() {
-        // ^[xs].p with non-multi domain should fail
-        let multi_lambda = make_multi_lambda(&["xs"], make_var("p"));
-        let arrow_type = make_arrow_type(make_base_type("Name"), make_base_type("Proc"));
-        let ctx = TypeContext::new().with_var("p", make_base_type("Proc"));
-        
-        let result = multi_lambda.check_type(&arrow_type, &ctx);
-        assert!(result.is_err());
-        match result {
-            Err(TypeError::CannotInfer(msg)) => {
-                assert!(msg.contains("multi-binder domain"), "Error message: {}", msg);
-            }
-            _ => panic!("Expected CannotInfer error about multi-binder domain"),
-        }
-    }
-
-    // =========================================================================
-    // Lambda with Apply body - now works with constructor signatures
-    // =========================================================================
-
-    #[test]
-    fn test_check_type_lambda_body_with_apply() {
-        // ^x.PPar(x, y) : [Proc -> Proc] in context where y:Proc
-        // This should now PASS with constructor signatures
-        let lambda = make_lambda("x", make_apply("PPar", vec![make_var("x"), make_var("y")]));
-        let arrow_type = make_arrow_type(make_base_type("Proc"), make_base_type("Proc"));
-        let ctx = TypeContext::new()
-            .with_var("y", make_base_type("Proc"))
-            .with_constructor("PPar", ConstructorSig::new(
-                vec![make_base_type("Proc"), make_base_type("Proc")],
-                make_base_type("Proc")
-            ));
-        
-        let result = lambda.check_type(&arrow_type, &ctx);
-        assert!(result.is_ok(), "Expected Ok, got {:?}", result);
-    }
-
-    #[test]
-    fn test_check_type_lambda_apply_type_mismatch() {
-        // ^x.PPar(x, n) : [Proc -> Proc] where n:Name should FAIL
-        let lambda = make_lambda("x", make_apply("PPar", vec![make_var("x"), make_var("n")]));
-        let arrow_type = make_arrow_type(make_base_type("Proc"), make_base_type("Proc"));
-        let ctx = TypeContext::new()
-            .with_var("n", make_base_type("Name")) // Wrong type!
-            .with_constructor("PPar", ConstructorSig::new(
-                vec![make_base_type("Proc"), make_base_type("Proc")],
-                make_base_type("Proc")
-            ));
-        
-        let result = lambda.check_type(&arrow_type, &ctx);
-        assert!(result.is_err());
-    }
-
     // =========================================================================
     // New Constructor Syntax Tests (Judgement-style)
     // =========================================================================
@@ -902,7 +317,7 @@ mod tests {
         // Simple parameter: n:Name |- n : Name ;
         let input = quote! {
             name: TestSimple,
-            exports { Name }
+            types { Name }
             terms {
                 NVar . n:Name |- n : Name ;
             }
@@ -937,7 +352,7 @@ mod tests {
         // All syntax literals must be quoted strings; only parameter references are unquoted
         let input = quote! {
             name: TestAbs,
-            exports { Proc Name }
+            types { Proc Name }
             terms {
                 PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
             }
@@ -1001,7 +416,7 @@ mod tests {
         // All syntax literals must be quoted strings
         let input = quote! {
             name: TestMulti,
-            exports { Proc Name }
+            types { Proc Name }
             terms {
                 PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "inputs" "(" xs "," ns ")" "{" p "}" : Proc ;
             }
@@ -1053,7 +468,7 @@ mod tests {
         // Old syntax should still work
         let input = quote! {
             name: TestOld,
-            exports { Proc Name }
+            types { Proc Name }
             terms {
                 PZero . Proc ::= "0" ;
                 PInput . Proc ::= "for" "(" Name "->" <Name> ")" "{" Proc "}" ;
@@ -1076,8 +491,8 @@ mod tests {
         // Mix of old and new syntax
         // All syntax literals must be quoted strings
         let input = quote! {
-            name: TestMixed,
-            exports { Proc Name }
+            name: TestMixed,    
+            types { Proc Name }
             terms {
                 PZero . Proc ::= "0" ;
                 PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
@@ -1106,7 +521,7 @@ mod tests {
         // All syntax literals must be quoted strings
         let input = quote! {
             name: TestPattern,
-            exports { Proc Name }
+            types { Proc Name }
             terms {
                 PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
             }
@@ -1158,7 +573,7 @@ mod tests {
         // All syntax literals must be quoted strings
         let input = quote! {
             name: TestGrammar,
-            exports { Proc Name }
+            types { Proc Name }
             terms {
                 PZero . Proc ::= "0" ;
                 PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
@@ -1195,14 +610,14 @@ mod tests {
         // Note: Can't use quote! because # has special meaning there
         let input = r#"
             name: TestSep,
-            exports { Proc }
+            types { Proc }
             terms {
-                PPar . ps:HashBag(Proc) |- "{" #sep(ps, "|") "}" : Proc ;
+                PPar . ps:HashBag(Proc) |- "{" *sep(ps, "|") "}" : Proc ;
             }
         "#;
 
         let result = syn::parse_str::<LanguageDef>(input);
-        assert!(result.is_ok(), "Failed to parse #sep: {:?}", result.err());
+        assert!(result.is_ok(), "Failed to parse *sep: {:?}", result.err());
 
         let language = result.unwrap();
         let rule = &language.terms[0];
@@ -1228,14 +643,14 @@ mod tests {
         // ps.#sep("|") method chain syntax
         let input = r#"
             name: TestSepMethod,
-            exports { Proc }
+            types { Proc }
             terms {
-                PPar . ps:HashBag(Proc) |- "{" ps.#sep("|") "}" : Proc ;
+                PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc ;
             }
         "#;
 
         let result = syn::parse_str::<LanguageDef>(input);
-        assert!(result.is_ok(), "Failed to parse method #sep: {:?}", result.err());
+        assert!(result.is_ok(), "Failed to parse method *sep: {:?}", result.err());
 
         let language = result.unwrap();
         let rule = &language.terms[0];
@@ -1260,9 +675,9 @@ mod tests {
         // #zip(ns, xs) syntax
         let input = r#"
             name: TestZip,
-            exports { Proc Name }
+            types { Proc Name }
             terms {
-                PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "for" "(" #zip(ns, xs) ")" "{" p "}" : Proc ;
+                PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] |- "for" "(" *zip(ns, xs) ")" "{" p "}" : Proc ;
             }
         "#;
 

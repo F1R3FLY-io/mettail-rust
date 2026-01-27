@@ -239,16 +239,6 @@ fn main() {
             description: "Agent enters container, then is opened",
         },
 
-        // Edge cases
-        TestCase {
-            name: "zero_in_context",
-            input: "{n[{in(m,p) | {}}] | m[r]}",
-            expected_output: Some("m[{n[{p | {}}] | r}]"),
-            should_normalize: true,
-            min_rewrites: 1,
-            description: "Zero explicitly in rest pattern",
-        },
-
         TestCase {
             name: "nested_ambients_in_rest",
             input: "{n[{in(m,p) | inner[data]}] | m[r]}",

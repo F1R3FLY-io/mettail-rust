@@ -7,7 +7,7 @@
 //! 1. The relation they write to (`eq_cat` vs `rw_cat`)
 //! 2. Whether they're bidirectional (equations) or directional (rewrites)
 
-use crate::ast::pattern::{Pattern, AscentClauses};
+use crate::ast::pattern::{Pattern, AscentClauses, VariableBinding};
 use crate::ast::language::{LanguageDef, Condition, FreshnessCondition, FreshnessTarget};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -87,12 +87,13 @@ pub fn generate_rule_clause_with_category(
     let clauses = &lhs_clauses.clauses;
     let eq_checks = &lhs_clauses.equational_checks;
     
+    // Wrap RHS expression with .normalize() for immediate beta-reduction
     if condition_clauses.is_empty() && eq_checks.is_empty() {
         quote! {
             #relation_name(#lhs_var.clone(), #rhs_var) <--
                 #cat_lower(#lhs_var),
                 #(#clauses,)*
-                let #rhs_var = #rhs_expr;
+                let #rhs_var = (#rhs_expr).normalize();
         }
     } else if eq_checks.is_empty() {
         quote! {
@@ -100,7 +101,7 @@ pub fn generate_rule_clause_with_category(
                 #cat_lower(#lhs_var),
                 #(#clauses,)*
                 #(#condition_clauses,)*
-                let #rhs_var = #rhs_expr;
+                let #rhs_var = (#rhs_expr).normalize();
         }
     } else if condition_clauses.is_empty() {
         quote! {
@@ -108,7 +109,7 @@ pub fn generate_rule_clause_with_category(
                 #cat_lower(#lhs_var),
                 #(#clauses,)*
                 #(#eq_checks,)*
-                let #rhs_var = #rhs_expr;
+                let #rhs_var = (#rhs_expr).normalize();
         }
     } else {
         quote! {
@@ -117,7 +118,7 @@ pub fn generate_rule_clause_with_category(
                 #(#clauses,)*
                 #(#eq_checks,)*
                 #(#condition_clauses,)*
-                let #rhs_var = #rhs_expr;
+                let #rhs_var = (#rhs_expr).normalize();
         }
     }
 }
@@ -133,9 +134,14 @@ pub fn generate_rule_clause_with_category(
 fn generate_condition_clauses(
     conditions: &[Condition],
     lhs_clauses: &AscentClauses,
-) -> (Vec<TokenStream>, std::collections::HashMap<String, TokenStream>) {
+) -> (Vec<TokenStream>, std::collections::HashMap<String, VariableBinding>) {
     let mut clauses = Vec::new();
     let mut env_bindings = std::collections::HashMap::new();
+    
+    // Get a default lang_type from existing bindings
+    let default_lang_type = lhs_clauses.bindings.values().next()
+        .map(|b| b.lang_type.clone())
+        .unwrap_or_else(|| format_ident!("Unknown"));
     
     for cond in conditions {
         match cond {
@@ -154,14 +160,14 @@ fn generate_condition_clauses(
                 
                 // Get binding for var_arg from LHS
                 let var_arg_name = var_arg.to_string();
-                let var_binding = lhs_clauses.bindings.get(&var_arg_name)
-                    .cloned()
+                let var_binding_expr = lhs_clauses.bindings.get(&var_arg_name)
+                    .map(|b| b.expression.clone())
                     .unwrap_or_else(|| quote! { #var_arg });
                 
                 // Generate code to extract variable name from OrdVar
                 let var_name_extraction = quote! {
                     {
-                        let var_name_opt = match #var_binding {
+                        let var_name_opt = match #var_binding_expr {
                             mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv)) => {
                                 fv.pretty_name.clone()
                             }
@@ -180,7 +186,11 @@ fn generate_condition_clauses(
                 
                 // Add to env_bindings with dereference - Ascent binds relation values by reference
                 // So if env_var is (String, i32), val_binding_name is &i32, and we need *val_binding_name
-                env_bindings.insert(val_arg.to_string(), quote! { *#val_binding_name });
+                env_bindings.insert(val_arg.to_string(), VariableBinding {
+                    expression: quote! { *#val_binding_name },
+                    lang_type: default_lang_type.clone(),
+                    scope_kind: None,
+                });
             }
         }
     }
@@ -194,12 +204,12 @@ fn generate_freshness_clause(
     lhs_clauses: &AscentClauses,
 ) -> Option<TokenStream> {
     let var_name = freshness.var.to_string();
-    let var_binding = lhs_clauses.bindings.get(&var_name)?;
+    let var_binding = &lhs_clauses.bindings.get(&var_name)?.expression;
     
     match &freshness.term {
         FreshnessTarget::Var(term_var) => {
             let term_name = term_var.to_string();
-            let term_binding = lhs_clauses.bindings.get(&term_name)?;
+            let term_binding = &lhs_clauses.bindings.get(&term_name)?.expression;
             
             // Generate: if !term_binding.free_vars().contains(&var_binding)
             // var_binding is a FreeVar<String> from a binder
@@ -210,7 +220,7 @@ fn generate_freshness_clause(
         }
         FreshnessTarget::CollectionRest(rest_var) => {
             let rest_name = rest_var.to_string();
-            let rest_binding = lhs_clauses.bindings.get(&rest_name)?;
+            let rest_binding = &lhs_clauses.bindings.get(&rest_name)?.expression;
             
             // Check freshness in all elements of the rest collection
             // var_binding is a FreeVar<String> from a binder

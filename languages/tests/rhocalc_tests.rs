@@ -50,7 +50,7 @@ fn run_test(test: &TestCase) -> Result<(), String> {
     rewrites.sort_by(|a, b| a.0.cmp(&b.0));
 
     println!("\nEquations:");
-    let mut eq_count = 0;
+    let eq_count = 0;
     // for (lhs, rhs) in prog.__eq_proc_ind_common.iter_all_added() {
     //     if lhs.to_string() != rhs.to_string() {
     //         println!("  {} = {}", lhs, rhs);

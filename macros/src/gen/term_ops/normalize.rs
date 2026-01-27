@@ -1,7 +1,7 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
 use crate::ast::language::LanguageDef;
-use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
+use crate::ast::grammar::{GrammarItem, TermParam};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -96,13 +96,20 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate normalize functions that recursively flatten nested collections
+/// and perform immediate beta-reduction.
 pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
     use quote::format_ident;
 
     let mut impls = Vec::new();
 
     for lang_type in &language.types {
+        // Skip native types
+        if lang_type.native_type.is_some() {
+            continue;
+        }
+        
         let category = &lang_type.name;
+        let category_lower = category.to_string().to_lowercase();
 
         // Find all rules for this category
         let rules_for_category: Vec<_> = language
@@ -117,12 +124,15 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                 .iter()
                 .any(|item| matches!(item, GrammarItem::Collection { .. }))
         });
+        
+        // Generate beta-reduction arms for Apply/Lam variants
+        let beta_reduction_arms = generate_beta_reduction_arms(category, &category_lower, language);
 
-        // If no collections, generate a simple normalize that just clones
-        if !has_collections {
+        // If no collections and no beta-reduction, generate a simple normalize
+        if !has_collections && beta_reduction_arms.is_empty() {
             let impl_block = quote! {
                 impl #category {
-                    /// Normalize (no-op for categories without collections)
+                    /// Normalize (no-op for categories without collections or beta-redexes)
                     pub fn normalize(&self) -> Self {
                         self.clone()
                     }
@@ -169,9 +179,17 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                         }
                     })
                 } else if has_multi_binder {
-                    // Multi-binder constructor: just clone (no collection flattening)
+                    // Multi-binder constructor: normalize the scope body
                     Some(quote! {
-                        #category::#label(field_0, scope) => self.clone()
+                        #category::#label(field_0, scope) => {
+                            #category::#label(
+                                field_0.clone(),
+                                mettail_runtime::Scope::from_parts_unsafe(
+                                    scope.inner().unsafe_pattern.clone(),
+                                    Box::new(scope.inner().unsafe_body.as_ref().normalize())
+                                )
+                            )
+                        }
                     })
                 } else if rule.bindings.is_empty() {
                     // For non-collection, non-binder constructors
@@ -223,8 +241,48 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                             },
                         }
                     } else {
-                        // Multiple fields - skip for now (too complex)
-                        None
+                        // Multiple fields - generate normalization for each
+                        let field_names: Vec<_> = (0..fields.len())
+                            .map(|i| format_ident!("f{}", i))
+                            .collect();
+                        
+                        let normalized_fields: Vec<_> = fields.iter()
+                            .enumerate()
+                            .map(|(i, field)| {
+                                let field_name = &field_names[i];
+                                match field {
+                                    GrammarItem::NonTerminal(field_cat) => {
+                                        // Check if field is same category or another normalizable type
+                                        let field_cat_str = field_cat.to_string();
+                                        if field_cat == category {
+                                            // Same category - normalize recursively (boxed)
+                                            quote! { Box::new(#field_name.as_ref().normalize()) }
+                                        } else if field_cat_str == "Var" {
+                                            // Var field - not boxed, just clone
+                                            quote! { #field_name.clone() }
+                                        } else if language.types.iter().any(|t| t.name == *field_cat && t.native_type.is_none()) {
+                                            // Another non-native category - normalize it (boxed)
+                                            quote! { Box::new(#field_name.as_ref().normalize()) }
+                                        } else {
+                                            // Native type or unknown - just clone (boxed)
+                                            quote! { #field_name.clone() }
+                                        }
+                                    }
+                                    GrammarItem::Collection { .. } => {
+                                        // Collection field - just clone for now
+                                        // (collection flattening is handled separately)
+                                        quote! { #field_name.clone() }
+                                    }
+                                    _ => quote! { #field_name.clone() }
+                                }
+                            })
+                            .collect();
+                        
+                        Some(quote! {
+                            #category::#label(#(#field_names),*) => {
+                                #category::#label(#(#normalized_fields),*)
+                            }
+                        })
                     }
                 } else {
                     // Binder constructor
@@ -287,12 +345,14 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
 
         let impl_block = quote! {
             impl #category {
-                /// Recursively normalize this term by flattening any nested collections.
+                /// Recursively normalize this term by:
+                /// 1. Flattening nested collections (e.g., `PPar({PPar({a, b}), c})` becomes `PPar({a, b, c})`)
+                /// 2. Performing immediate beta-reduction (e.g., `Apply(Lam(^x.body), arg)` becomes `body[arg/x]`)
                 ///
-                /// For example, `PPar({PPar({a, b}), c})` becomes `PPar({a, b, c})`.
-                /// This ensures that collection constructors are always in canonical flat form.
+                /// This ensures terms are always in canonical form with beta-redexes reduced.
                 pub fn normalize(&self) -> Self {
                     match self {
+                        #(#beta_reduction_arms,)*
                         #(#match_arms,)*
                         #fallback
                     }
@@ -306,4 +366,91 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
     quote! {
         #(#impls)*
     }
+}
+
+/// Generate match arms for beta-reduction of Apply/Lam variants
+fn generate_beta_reduction_arms(
+    category: &syn::Ident,
+    category_lower: &str,
+    language: &LanguageDef,
+) -> Vec<TokenStream> {
+    use quote::format_ident;
+    
+    let mut arms = Vec::new();
+    
+    // For each domain type, generate beta-reduction arms
+    for domain_lang_type in &language.types {
+        // Skip native types
+        if domain_lang_type.native_type.is_some() {
+            continue;
+        }
+        
+        let domain = &domain_lang_type.name;
+        let domain_lower = domain.to_string().to_lowercase();
+        
+        // Variant names
+        let apply_variant = format_ident!("Apply{}", domain);
+        let lam_variant = format_ident!("Lam{}", domain);
+        let mapply_variant = format_ident!("MApply{}", domain);
+        let mlam_variant = format_ident!("MLam{}", domain);
+        
+        // Substitution method names
+        let subst_method = format_ident!("substitute_{}", domain_lower);
+        let multi_subst_method = format_ident!("multi_substitute_{}", domain_lower);
+        
+        // Single-argument beta reduction:
+        // ApplyDomain(LamDomain(scope), arg) => body[binder := arg].normalize()
+        arms.push(quote! {
+            #category::#apply_variant(lam_box, arg_box) => {
+                // First normalize the function position
+                let lam_normalized = lam_box.as_ref().normalize();
+                match &lam_normalized {
+                    #category::#lam_variant(scope) => {
+                        // Beta-reduce: unbind and substitute
+                        let (binder, body) = scope.clone().unbind();
+                        // Normalize the argument before substitution, then normalize the result
+                        let arg_normalized = arg_box.as_ref().normalize();
+                        (*body).#subst_method(&binder.0, &arg_normalized).normalize()
+                    }
+                    _ => {
+                        // Not a beta-redex after normalization: return normalized subterms
+                        #category::#apply_variant(
+                            Box::new(lam_normalized),
+                            Box::new(arg_box.as_ref().normalize())
+                        )
+                    }
+                }
+            }
+        });
+        
+        // Multi-argument beta reduction:
+        // MApplyDomain(MLamDomain(scope), args) => body[binders := args].normalize()
+        arms.push(quote! {
+            #category::#mapply_variant(lam_box, args) => {
+                // First normalize the function position
+                let lam_normalized = lam_box.as_ref().normalize();
+                match &lam_normalized {
+                    #category::#mlam_variant(scope) => {
+                        // Beta-reduce: unbind and substitute all binders
+                        let (binders, body) = scope.clone().unbind();
+                        let vars: Vec<_> = binders.iter().map(|b| &b.0).collect();
+                        // Normalize arguments before substitution
+                        let args_normalized: Vec<_> = args.iter()
+                            .map(|a| a.normalize())
+                            .collect();
+                        (*body).#multi_subst_method(&vars, &args_normalized).normalize()
+                    }
+                    _ => {
+                        // Not a beta-redex after normalization: return normalized subterms
+                        #category::#mapply_variant(
+                            Box::new(lam_normalized),
+                            args.iter().map(|a| a.normalize()).collect()
+                        )
+                    }
+                }
+            }
+        });
+    }
+    
+    arms
 }

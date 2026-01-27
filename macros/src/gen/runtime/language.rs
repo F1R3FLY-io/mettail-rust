@@ -6,6 +6,7 @@
 
 use crate::ast::language::LanguageDef;
 use crate::ast::grammar::GrammarItem;
+use crate::gen::generate_var_label;
 use proc_macro2::TokenStream;
 use quote::{quote, format_ident};
 use syn::Ident;
@@ -129,7 +130,8 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
                 use ascent::*;
                 
-                let initial = term.0.clone();
+                // Normalize the initial term to perform immediate beta-reduction
+                let initial = term.0.clone().normalize();
                 
                 let prog = ascent_run! {
                     include_source!(#ascent_source);
@@ -614,12 +616,12 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
         }
     }
     
-    // PVar handling for free variables
-    let pvar_label = format_ident!("PVar");
+    // Variable handling for free variables (e.g., PVar for Proc, NVar for Name, TVar for Term)
+    let var_label = generate_var_label(primary_type);
     let primary_type_str = primary_type.to_string();
     
     quote! {
-        #primary_type::#pvar_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
+        #primary_type::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
             if let Some(name) = &fv.pretty_name {
                 if !seen.contains(name) {
                     seen.insert(name.clone());
@@ -634,7 +636,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                 }
             }
         }
-        #primary_type::#pvar_label(_) => {}
+        #primary_type::#var_label(_) => {}
         #(#lambda_arms)*
         #(#constructor_arms)*
         _ => {}
@@ -642,12 +644,37 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
 }
 
 /// Generate the Language trait implementation
-fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, name_str: &str, _name_lower: &str, _language: &LanguageDef) -> TokenStream {
+fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, name_str: &str, _name_lower: &str, language: &LanguageDef) -> TokenStream {
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
     let metadata_name = format_ident!("{}Metadata", name);
     let env_name = format_ident!("{}Env", name);
-    let _ = primary_type; // Used in type context
+    
+    // Get non-native categories for environment field access
+    let categories: Vec<_> = language.types.iter()
+        .filter(|t| t.native_type.is_none())
+        .map(|t| &t.name)
+        .collect();
+    
+    // Generate field name for primary type (lowercase)
+    let primary_field = format_ident!("{}", primary_type.to_string().to_lowercase());
+    
+    // Generate remove_from_env checks for all type fields
+    let remove_checks: Vec<TokenStream> = categories.iter().map(|cat| {
+        let field = format_ident!("{}", cat.to_string().to_lowercase());
+        quote! { typed_env.#field.remove(name).is_some() }
+    }).collect();
+    
+    // Generate list_env iterations for all type fields
+    let list_iterations: Vec<TokenStream> = categories.iter().map(|cat| {
+        let field = format_ident!("{}", cat.to_string().to_lowercase());
+        quote! {
+            for (name, val) in typed_env.#field.iter() {
+                let comment = typed_env.comments.get(name).cloned();
+                result.push((name.clone(), format!("{}", val), comment));
+            }
+        }
+    }).collect();
     
     quote! {
         impl mettail_runtime::Language for #language_name {
@@ -692,7 +719,7 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
                 
                 // Add to primary type environment
-                typed_env.proc.set(name.to_string(), typed_term.0.clone());
+                typed_env.#primary_field.set(name.to_string(), typed_term.0.clone());
                 Ok(())
             }
             
@@ -702,8 +729,7 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
                     .ok_or_else(|| "Invalid environment type".to_string())?;
                 
                 // Try to remove from all type environments
-                let removed = typed_env.proc.remove(name).is_some() 
-                    || typed_env.name.remove(name).is_some();
+                let removed = #(#remove_checks)||*;
                 Ok(removed)
             }
             
@@ -735,14 +761,7 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
                 
                 let mut result = Vec::new();
                 // Iterate in insertion order (IndexMap preserves order)
-                for (name, val) in typed_env.proc.iter() {
-                    let comment = typed_env.comments.get(name).cloned();
-                    result.push((name.clone(), format!("{}", val), comment));
-                }
-                for (name, val) in typed_env.name.iter() {
-                    let comment = typed_env.comments.get(name).cloned();
-                    result.push((name.clone(), format!("{}", val), comment));
-                }
+                #(#list_iterations)*
                 result
             }
             

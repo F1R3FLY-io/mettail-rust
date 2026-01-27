@@ -8,7 +8,7 @@ use ascent::*;
 
 theory! {
     name: SpaceCalc,
-    exports {
+    types {
         Proc
         Name
     },

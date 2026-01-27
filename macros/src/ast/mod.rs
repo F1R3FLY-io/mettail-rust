@@ -17,7 +17,6 @@
 //! their respective modules.
 
 
-pub mod term;
 pub mod pattern;
 pub mod types;
 pub mod grammar;

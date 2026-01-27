@@ -57,28 +57,6 @@ pub enum TermParam {
     },
 }
 
-
-
-impl TermParam {
-    /// Get the name(s) this parameter introduces
-    pub fn names(&self) -> Vec<&Ident> {
-        match self {
-            TermParam::Simple { name, .. } => vec![name],
-            TermParam::Abstraction { binder, body, .. } => vec![binder, body],
-            TermParam::MultiAbstraction { binder, body, .. } => vec![binder, body],
-        }
-    }
-    
-    /// Get the type of this parameter
-    pub fn ty(&self) -> &TypeExpr {
-        match self {
-            TermParam::Simple { ty, .. } => ty,
-            TermParam::Abstraction { ty, .. } => ty,
-            TermParam::MultiAbstraction { ty, .. } => ty,
-        }
-    }
-}
-
 /// Syntax expression in patterns (can include meta-operations)
 /// 
 /// Example: `"for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}"`

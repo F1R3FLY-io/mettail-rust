@@ -13,7 +13,7 @@
 
 use super::TypeChecker;
 use super::ValidationError;
-use crate::ast::{language::{Equation, LanguageDef, LangType, FreshnessTarget, Condition, EnvAction, FreshnessCondition}, grammar::{GrammarItem, GrammarRule}, term::Term, language::RewriteRule, pattern::{Pattern, PatternTerm}};
+use crate::ast::{language::{Equation, LanguageDef, FreshnessTarget, Condition}, grammar::{GrammarItem}, language::RewriteRule, pattern::{Pattern, PatternTerm}};
 use std::collections::HashSet;
 
 pub fn validate_language(language: &LanguageDef) -> Result<(), ValidationError> {
@@ -177,57 +177,6 @@ fn validate_pattern_term(pt: &PatternTerm, language: &LanguageDef) -> Result<(),
     }
 }
 
-fn validate_expr(expr: &Term, language: &LanguageDef) -> Result<(), ValidationError> {
-    match expr {
-        Term::Var(_) => Ok(()), // Variables are always OK
-        Term::Apply { constructor, args } => {
-            // Check that constructor references a known rule
-            let constructor_name = constructor.to_string();
-            let found = language
-                .terms
-                .iter()
-                .any(|r| r.label.to_string() == constructor_name);
-
-            if !found {
-                return Err(ValidationError::UnknownConstructor {
-                    name: constructor_name,
-                    span: constructor.span(),
-                });
-            }
-
-            // Recursively validate arguments
-            for arg in args {
-                validate_expr(arg, language)?;
-            }
-
-            Ok(())
-        },
-        Term::Subst { term, var: _, replacement } => {
-            // Validate the term being substituted into
-            validate_expr(term, language)?;
-
-            // Validate the replacement expression
-            validate_expr(replacement, language)?;
-
-            // var is just an identifier, no validation needed
-            Ok(())
-        },
-
-        // Lambda expressions - validate body
-        Term::Lambda { body, .. } => validate_expr(body, language),
-        Term::MultiLambda { body, .. } => validate_expr(body, language),
-        
-        // MultiSubst - validate scope and each replacement expression
-        Term::MultiSubst { scope, replacements } => {
-            validate_expr(scope, language)?;
-            for repl in replacements {
-                validate_expr(repl, language)?;
-            }
-            Ok(())
-        },
-    }
-}
-
 /// Validate freshness conditions in an equation
 ///
 /// Checks that:
@@ -340,21 +289,6 @@ fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
         }
     }
 
-    // Validate environment actions
-    for action in &rw.env_actions {
-        let EnvAction::CreateFact { args, .. } = action;
-        // All arguments in env_actions must be bound variables in the rewrite
-        for arg in args {
-            let arg_name = arg.to_string();
-            if !rewrite_vars.contains(&arg_name) {
-                return Err(ValidationError::FreshnessVariableNotInEquation {
-                    var: arg_name,
-                    span: arg.span(),
-                });
-            }
-        }
-    }
-
     Ok(())
 }
 
@@ -431,50 +365,5 @@ fn collect_pattern_term_vars(pt: &PatternTerm, vars: &mut HashSet<String>) {
                 collect_pattern_vars(repl, vars);
             }
         }
-    }
-}
-
-/// Collect all variable names from an expression
-fn collect_vars(expr: &Term, vars: &mut HashSet<String>) {
-    match expr {
-        Term::Var(ident) => {
-            vars.insert(ident.to_string());
-        },
-        Term::Apply { args, .. } => {
-            for arg in args {
-                collect_vars(arg, vars);
-            }
-        },
-        Term::Subst { term, var, replacement } => {
-            // Collect from the term being substituted into
-            collect_vars(term, vars);
-            // The substitution variable itself
-            vars.insert(var.to_string());
-            // Collect from the replacement
-            collect_vars(replacement, vars);
-        },
-        // Lambda expressions - collect from body, binder is bound not free
-        Term::Lambda { binder, body } => {
-            // Don't include the bound variable, only free vars in body
-            let mut body_vars = HashSet::new();
-            collect_vars(body, &mut body_vars);
-            body_vars.remove(&binder.to_string());
-            vars.extend(body_vars);
-        },
-        Term::MultiLambda { binders, body } => {
-            let mut body_vars = HashSet::new();
-            collect_vars(body, &mut body_vars);
-            for binder in binders {
-                body_vars.remove(&binder.to_string());
-            }
-            vars.extend(body_vars);
-        },
-        Term::MultiSubst { scope, replacements } => {
-            // collect from scope and each replacement expression
-            collect_vars(scope, vars);
-            for repl in replacements {
-                collect_vars(repl, vars);
-            }
-        },
     }
 }
