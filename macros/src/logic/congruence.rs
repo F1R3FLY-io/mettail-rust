@@ -17,7 +17,22 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
-/// Process an explicit congruence rule: `if S => T then LHS => RHS`
+pub fn generate_all_explicit_congruences(language: &LanguageDef) -> Vec<TokenStream> {
+    let mut rules = Vec::new();
+    
+    for rewrite in &language.rewrites {
+        // Only process rules with congruence premise
+        if rewrite.is_congruence_rule() {
+            if let Some(rule) = generate_explicit_congruence(rewrite, language) {
+                rules.push(rule);
+            }
+        }
+    }
+    
+    rules
+}
+
+/// Process an explicit congruence rule: `| S ~> T |- LHS ~> RHS`
 ///
 /// This is the main entry point that replaces the scattered code in
 /// analysis.rs, binding.rs, collection.rs, regular.rs, projections.rs.
@@ -25,8 +40,8 @@ pub fn generate_explicit_congruence(
     rule: &RewriteRule,
     language: &LanguageDef,
 ) -> Option<TokenStream> {
-    // Must have a premise (if S => T then)
-    let (source_var, _target_var) = rule.premise.as_ref()?;
+    // Must have a congruence premise (S ~> T)
+    let (source_var, _target_var) = rule.congruence_premise()?;
     
     // Analyze LHS to find where source_var appears and in what context
     let context = find_rewrite_context(&rule.left, source_var, language)?;

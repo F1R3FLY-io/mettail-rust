@@ -3,7 +3,7 @@
 //! Generates relation declarations for categories, equality, rewrites,
 //! and collection projections.
 
-use crate::ast::language::{LanguageDef, Condition, RewriteRule};
+use crate::ast::language::{LanguageDef};
 use crate::ast::grammar::TermParam;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -89,22 +89,4 @@ fn generate_collection_projection_relations(language: &LanguageDef) -> Vec<Token
     }
 
     relations
-}
-
-/// Extract the category from a rewrite rule (from LHS)
-fn extract_category_from_rewrite(
-    rewrite: &RewriteRule,
-    language: &LanguageDef,
-) -> Option<proc_macro2::Ident> {
-    // Try to extract category from LHS pattern
-    if let Some(constructor) = rewrite.left.constructor_name() {
-            // Find the rule with this constructor
-            language
-                .terms
-                .iter()
-            .find(|r| &r.label == constructor)
-                .map(|rule| rule.category.clone())
-    } else {
-        None
-    }
 }

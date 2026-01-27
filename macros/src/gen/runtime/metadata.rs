@@ -5,7 +5,7 @@
 
 use crate::ast::{
     grammar::{GrammarItem, GrammarRule, TermParam, SyntaxExpr, PatternOp},
-    language::{LanguageDef, Equation, RewriteRule, Condition, FreshnessTarget},
+    language::{LanguageDef, Equation, RewriteRule, Condition, FreshnessTarget, Premise},
     pattern::{Pattern, PatternTerm},
     types::{TypeExpr, CollectionType},
 };
@@ -359,14 +359,25 @@ fn generate_equation_defs(language: &LanguageDef) -> TokenStream {
 /// Generate a single EquationDef
 fn generate_equation_def(eq: &Equation, language: &LanguageDef) -> TokenStream {
     // Convert conditions to strings
-    let conditions: Vec<String> = eq.conditions
+    let conditions: Vec<String> = eq.premises
         .iter()
         .map(|c| {
-            let target = match &c.term {
-                FreshnessTarget::Var(v) => v.to_string(),
-                FreshnessTarget::CollectionRest(v) => format!("...{}", v),
-            };
-            format!("{} # {}", c.var, target)
+            match c {
+                Premise::Freshness(fc) => {
+                    let target = match &fc.term {
+                        FreshnessTarget::Var(v) => v.to_string(),
+                        FreshnessTarget::CollectionRest(v) => format!("...{}", v),
+                    };
+                    format!("{} # {}", fc.var, target)
+                }
+                Premise::RelationQuery { relation, args } => {
+                    let args_str: Vec<_> = args.iter().map(|a| a.to_string()).collect();
+                    format!("{}({})", relation, args_str.join(", "))
+                }
+                Premise::Congruence { source, target } => {
+                    format!("{} ~> {}", source, target)
+                }
+            }
         })
         .collect();
     
@@ -407,19 +418,13 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
     let name = quote! { None };
     
     // Convert conditions to strings
-    let conditions: Vec<String> = rw.conditions
+    let conditions: Vec<String> = rw.premises
         .iter()
-        .filter_map(|c| match c {
-            Condition::Freshness(fc) => {
-                let target = match &fc.term {
-                    FreshnessTarget::Var(v) => v.to_string(),
-                    FreshnessTarget::CollectionRest(v) => format!("...{}", v),
-                };
-                Some(format!("{} # {}", fc.var, target))
-            }
-            Condition::EnvQuery { relation, args } => {
-                let args_str: Vec<_> = args.iter().map(|a| a.to_string()).collect();
-                Some(format!("{}({})", relation, args_str.join(", ")))
+        .map(|c| {
+            match c {
+                Premise::Freshness(fc) => format!("{} # {}", fc.var, fc.term.to_string()),
+                Premise::RelationQuery { relation, args } => format!("{}({})", relation, args.iter().map(|a| a.to_string()).collect::<Vec<String>>().join(", ")),
+                Premise::Congruence { source, target } => format!("{} ~> {}", source, target),
             }
         })
         .collect();
@@ -430,14 +435,16 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
         .collect();
     
     // Convert premise if present
-    let premise = match &rw.premise {
-        Some((s, t)) => {
-            let s_str = s.to_string();
-            let t_str = t.to_string();
-            quote! { Some((#s_str, #t_str)) }
+    // find the first congruence premise
+    let premise = rw.premises.iter().find_map(|p| {
+        if let Premise::Congruence { source, target } = p {
+            let source_str = source.to_string();
+            let target_str = target.to_string();
+            Some(quote! { Some((#source_str, #target_str)) })
+        } else {
+            None
         }
-        None => quote! { None },
-    };
+    }).unwrap_or(quote! { None });
     
     // Convert patterns to user syntax
     let lhs = pattern_to_user_syntax(&rw.left, language);
@@ -445,7 +452,7 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
     
     quote! {
         mettail_runtime::RewriteDef {
-            name: #name,
+            name: #name,    
             conditions: &[#(#conditions_tokens),*],
             premise: #premise,
             lhs: #lhs,

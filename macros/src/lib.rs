@@ -16,7 +16,7 @@ use proc_macro::TokenStream;
 use proc_macro_error::{abort, proc_macro_error};
 use syn::parse_macro_input;
 
-use logic::{generate_ascent_source, generate_freshness_functions};
+use logic::{generate_ascent_source, rules::generate_freshness_functions};
 use ast::language::LanguageDef;
 use gen::{
     generate_all,

@@ -17,7 +17,7 @@
 //! 3. **Equation Rules**: Add reflexivity, congruence, and user-defined equalities
 //! 4. **Rewrite Rules**: Base rewrites + congruence rules (propagate through constructors)
 
-use crate::ast::{language::{LanguageDef, BuiltinOp, SemanticOperation}, grammar::GrammarItem};
+use crate::{ast::{grammar::GrammarItem, language::{BuiltinOp, LanguageDef, SemanticOperation}}, logic::rules::generate_base_rewrites};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
@@ -27,7 +27,6 @@ mod relations;
 mod writer;
 
 pub mod congruence;
-pub mod rewrites;
 pub mod rules;
 
 // Re-export key functions
@@ -37,8 +36,6 @@ pub use relations::generate_relations;
 
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
-
-pub use rewrites::{generate_freshness_functions, generate_rewrite_clauses};
 
 /// Main entry point: Generate complete Ascent source for a theory
 pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
@@ -141,7 +138,7 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     let mut rules = Vec::new();
 
     // Generate base rewrite clauses (no premise)
-    let base_rewrite_clauses = generate_rewrite_clauses(language);
+    let base_rewrite_clauses = generate_base_rewrites(language);
     rules.extend(base_rewrite_clauses);
 
     // Generate semantic evaluation rules (for operators with semantics)

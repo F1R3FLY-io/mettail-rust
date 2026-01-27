@@ -26,9 +26,9 @@ language! {
     },
 
     rewrites {
-        (App (Lam fun) arg) ~> (eval fun arg);
-        if M0 ~> M1 then (App M0 N) ~> (App M1 N);
-        if N0 ~> N1 then (App M N0) ~> (App M N1);
-        if S ~> T then (Lam ^x.S) ~> (Lam ^x.T);
+        Beta . |- (App (Lam fun) arg) ~> (eval fun arg);
+        AppCongL . | M0 ~> M1 |- (App M0 N) ~> (App M1 N);
+        AppCongR . | N0 ~> N1 |- (App M N0) ~> (App M N1);
+        LamCong . | S ~> T |- (Lam ^x.S) ~> (Lam ^x.T);
     },
 }

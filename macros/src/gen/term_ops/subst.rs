@@ -123,8 +123,6 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
     
     let impls: Vec<TokenStream> = categories.iter().map(|export| {
         let cat_name = &export.name;
-        let cat_field = format_ident!("{}", cat_name.to_string().to_lowercase());
-        let subst_by_name_method = format_ident!("subst_by_name_{}", cat_name.to_string().to_lowercase());
         
         // Collect all category fields for cross-category substitution
         let all_subst_calls: Vec<TokenStream> = categories.iter().map(|cat| {
@@ -469,7 +467,7 @@ fn generate_subst_by_name_arm(
             }
         }
 
-        VariantKind::Collection { label, element_cat, coll_type } => {
+        VariantKind::Collection { label, coll_type, .. } => {
             let method = format_ident!("subst_by_name_{}", repl_cat.to_string().to_lowercase());
             
             match coll_type {
@@ -502,7 +500,7 @@ fn generate_subst_by_name_arm(
             }
         }
 
-        VariantKind::Binder { label, pre_scope_fields, binder_cat, body_cat } => {
+        VariantKind::Binder { label, pre_scope_fields, binder_cat, .. } => {
             let body_method = format_ident!("subst_by_name_{}", repl_cat.to_string().to_lowercase());
             let should_filter = binder_cat == repl_cat;
             
@@ -576,7 +574,7 @@ fn generate_subst_by_name_arm(
             }
         }
 
-        VariantKind::MultiBinder { label, pre_scope_fields, binder_cat, body_cat } => {
+        VariantKind::MultiBinder { label, pre_scope_fields, binder_cat, .. } => {
             let body_method = format_ident!("subst_by_name_{}", repl_cat.to_string().to_lowercase());
             let should_filter = binder_cat == repl_cat;
             

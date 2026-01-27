@@ -5,5 +5,3 @@
 //! variants for variables and literals.
 
 pub mod enums;
-
-pub use enums::generate_ast_enums;

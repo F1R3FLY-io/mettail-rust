@@ -231,6 +231,16 @@ fn generate_freshness_clause(
     }
 }
 
+/// Convert Premise to Condition for backward compatibility with generate_rule_clause
+fn premise_to_condition(premise: &crate::ast::language::Premise) -> Option<Condition> {
+    match premise {
+        crate::ast::language::Premise::Freshness(f) => Some(Condition::Freshness(f.clone())),
+        crate::ast::language::Premise::RelationQuery { relation, args } => 
+            Some(Condition::EnvQuery { relation: relation.clone(), args: args.clone() }),
+        crate::ast::language::Premise::Congruence { .. } => None, // Handled separately
+    }
+}
+
 /// Generate all equation rules for a theory.
 pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
@@ -243,9 +253,9 @@ pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
         if let Some(category) = category {
             let eq_rel = format_ident!("eq_{}", category.to_string().to_lowercase());
             
-            // Convert freshness conditions to Condition enum
-            let conditions: Vec<Condition> = eq.conditions.iter()
-                .map(|f| Condition::Freshness(f.clone()))
+            // Convert premises to Conditions (filter out any congruence - invalid for equations)
+            let conditions: Vec<Condition> = eq.premises.iter()
+                .filter_map(premise_to_condition)
                 .collect();
             
             // Forward direction: left => right
@@ -275,12 +285,12 @@ pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
 
 /// Generate all base rewrite rules for a theory.
 /// (Congruence rules are handled separately.)
-pub fn generate_rewrite_rules(language: &LanguageDef) -> Vec<TokenStream> {
+pub fn generate_base_rewrites(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
     
     for rw in &language.rewrites {
-        // Skip congruence rules (those with premise)
-        if rw.premise.is_some() {
+        // Skip congruence rules (those with a congruence premise)
+        if rw.is_congruence_rule() {
             continue;
         }
         
@@ -288,10 +298,15 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> Vec<TokenStream> {
         if let Some(category) = rw.left.category(language) {
             let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
             
+            // Convert premises to Conditions
+            let conditions: Vec<Condition> = rw.premises.iter()
+                .filter_map(premise_to_condition)
+                .collect();
+            
             rules.push(generate_rule_clause(
                 &rw.left,
                 &rw.right,
-                &rw.conditions,
+                &conditions,
                 &rw_rel,
                 language,
             ));
@@ -301,25 +316,24 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> Vec<TokenStream> {
     rules
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ast::pattern::PatternTerm;
-    use quote::format_ident;
-    
-    #[test]
-    fn test_duplicate_var_detection() {
-        // Pattern: (Cons P P) - P appears twice
-        let pattern = Pattern::Term(PatternTerm::Apply {
-            constructor: format_ident!("Cons"),
-            args: vec![
-                Pattern::Term(PatternTerm::Var(format_ident!("P"))),
-                Pattern::Term(PatternTerm::Var(format_ident!("P"))),
-            ],
-        });
-        
-        let duplicates = pattern.duplicate_vars();
-        assert!(duplicates.contains("P"));
-        assert_eq!(duplicates.len(), 1);
+pub fn generate_freshness_functions(_language: &LanguageDef) -> TokenStream {
+    quote! {
+        pub fn is_fresh<T>(binder: &mettail_runtime::Binder<String>, term: &T) -> bool
+        where
+            T: mettail_runtime::BoundTerm<String>
+        {
+            use mettail_runtime::BoundTerm;
+
+            let mut is_fresh = true;
+            term.visit_vars(&mut |v| {
+                if let mettail_runtime::Var::Free(fv) = v {
+                    if fv == &binder.0 {
+                        is_fresh = false;
+                    }
+                }
+            });
+
+            is_fresh
+        }
     }
 }

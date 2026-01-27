@@ -1,7 +1,6 @@
 // Helper module for writing generated LALRPOP grammars to files
 // This is used during macro expansion or build process
 
-use crate::ast::language::LanguageDef;
 use std::fs;
 use std::path::Path;
 
@@ -35,9 +34,4 @@ pub fn write_grammar_file(language_name: &str, grammar_content: &str) -> std::io
 
     eprintln!("Generated LALRPOP grammar: {}", file_path.display());
     Ok(())
-}
-
-/// Generate grammar file path for a theory
-pub fn grammar_file_name(language: &LanguageDef) -> String {
-    format!("{}.lalrpop", language.name.to_string().to_lowercase())
 }

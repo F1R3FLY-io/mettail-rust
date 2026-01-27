@@ -5,7 +5,7 @@
 
 #![allow(clippy::cmp_owned)]
 
-use crate::ast::{grammar::{GrammarItem, GrammarRule, TermParam, SyntaxExpr, PatternOp}, types::{TypeExpr, CollectionType}, language::{LanguageDef, LangType}};
+use crate::ast::{grammar::{GrammarItem, GrammarRule, TermParam, SyntaxExpr, PatternOp}, types::{TypeExpr}, language::{LanguageDef}};
 use crate::gen::{generate_var_label, generate_literal_label, is_var_rule, is_integer_rule};
 use crate::gen::native::has_native_type;
 use proc_macro2::TokenStream;
@@ -471,13 +471,12 @@ fn generate_pattern_op_display(
 fn generate_chained_sep_display_code(source: &PatternOp, separator: &str) -> TokenStream {
     // Extract Map and Zip info from the chain
     if let PatternOp::Map { source: map_source, params, body } = source {
-        if let PatternOp::Zip { left, right, .. } = map_source.as_ref() {
+        if let PatternOp::Zip { left, .. } = map_source.as_ref() {
             // We have #zip(left, right).#map(|params...| body).#sep(separator)
             // For multi-binder display, left is collection (ns), right is binders (xs)
             // params are [n, x] and body describes how to format each pair
             
             let left_name = left.to_string();
-            let right_name = right.to_string();
             let left_ident = syn::Ident::new(&left_name, proc_macro2::Span::call_site());
             
             // Generate format code for each pair based on the body
@@ -548,7 +547,6 @@ fn generate_map_body_format(params: &[syn::Ident], body: &[SyntaxExpr]) -> Token
             SyntaxExpr::Op(_) => {
                 // Nested ops not expected in map body
             }
-            _ => {}
         }
     }
     

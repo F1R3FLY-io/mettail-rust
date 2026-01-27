@@ -11,7 +11,7 @@
     clippy::unnecessary_filter_map
 )]
 
-use crate::ast::{language::LanguageDef, grammar::{GrammarItem, GrammarRule, TermParam}};
+use crate::ast::{language::LanguageDef, grammar::{GrammarItem, GrammarRule}};
 use crate::gen::term_gen::is_lang_type;
 use proc_macro2::TokenStream;
 use quote::quote;

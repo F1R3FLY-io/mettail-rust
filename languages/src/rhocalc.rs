@@ -21,8 +21,6 @@ language! {
 
         POutput . n:Name, q:Proc |- n "!" "(" q ")" : Proc ;
         
-        PInput . n:Name, ^x.p:[Name -> Proc] |- n "?" x "." "{" p "}" : Proc ;
-
         PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] 
             |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
 
@@ -32,18 +30,15 @@ language! {
     },
 
     equations {
-        (NQuote (PDrop N)) = N ;
+        QuoteDrop . |- (NQuote (PDrop N)) = N ;
     },
 
     rewrites {
-        (PPar {(PInput n ^x.p), (POutput n q), ...rest})
-            ~> (PPar {(eval ^x.p (NQuote q)), ...rest});
+        Comm . |- (PPar {(PInputs ns cont), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest}) 
+            ~> (PPar {(eval cont qs.*map(|q| (NQuote q))), ...rest});
 
-        (PPar {(PInputs ns scope), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest}) 
-            ~> (PPar {(eval scope qs.*map(|q| (NQuote q))), ...rest});
+        Exec . |- (PDrop (NQuote P)) ~> P;
 
-        (PDrop (NQuote P)) ~> P;
-
-        if S ~> T then (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+        ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
     },
 }

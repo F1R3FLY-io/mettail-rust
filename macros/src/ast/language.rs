@@ -2,6 +2,8 @@ use syn::{Ident, Type, Token, parse::{Parse, ParseStream}, Result as SynResult};
 
 use super::grammar::{GrammarRule, parse_terms};
 use super::pattern::{Pattern, PatternTerm};
+use std::fmt::Display;
+use std::fmt;
 
 /// Top-level theory definition
 /// theory! { name: Foo, params: ..., types { ... }, terms { ... }, equations { ... }, rewrites { ... }, semantics { ... } }
@@ -15,11 +17,40 @@ pub struct LanguageDef {
 }
 
 
-/// Equation with optional freshness conditions
-/// if x # Q then (LHS) == (RHS)
-/// Both LHS and RHS are patterns (symmetric, can use metasyntax)
+/// A typed parameter in the type context
+/// Example: `P:Proc` in `Rule . P:Proc | ... |- ...`
+#[derive(Debug, Clone)]
+pub struct TypedParam {
+    pub name: Ident,
+    pub ty: super::types::TypeExpr,
+}
+
+/// A premise in a propositional context (part of a conjunction)
+/// Used in both equations and rewrites for unified judgement syntax
+#[derive(Debug, Clone)]
+pub enum Premise {
+    /// Freshness: x # P (x is fresh in P)
+    Freshness(FreshnessCondition),
+    
+    /// Congruence: S ~> T (if S rewrites to T)
+    /// Only valid in rewrites, not equations
+    Congruence { source: Ident, target: Ident },
+    
+    /// Relation query: rel(arg1, arg2, ...) 
+    /// Currently used for env_var(x, v), extensible to arbitrary relations
+    RelationQuery { relation: Ident, args: Vec<Ident> },
+}
+
+/// Equation in unified judgement syntax
+/// Syntax: Name . type_context | prop_context |- lhs = rhs ;
+/// Example: ScopeExtrusion . | x # ...rest |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest})) ;
 pub struct Equation {
-    pub conditions: Vec<FreshnessCondition>,
+    /// Rule name (required)
+    pub name: Ident,
+    /// Explicit type bindings (optional)
+    pub type_context: Vec<TypedParam>,
+    /// Premises (freshness, relation queries - NOT congruence)
+    pub premises: Vec<Premise>,
     pub left: Pattern,
     pub right: Pattern,
 }
@@ -31,6 +62,15 @@ pub enum FreshnessTarget {
     Var(Ident),
     /// Collection rest binding (e.g., `...rest`)
     CollectionRest(Ident),
+}
+
+impl Display for FreshnessTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FreshnessTarget::Var(v) => write!(f, "{}", v),
+            FreshnessTarget::CollectionRest(v) => write!(f, "...{}", v),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -53,20 +93,39 @@ pub enum Condition {
     },
 }
 
-/// Rewrite rule with optional freshness conditions and optional congruence premise
-/// Base: (LHS) => (RHS) or if x # Q then (LHS) => (RHS)
-/// Congruence: if S => T then (LHS) => (RHS)
-/// Environment: if env_var(x, v) then (LHS) => (RHS)
-/// Fact creation: (LHS) => (RHS) then env_var(x, v)
+/// Rewrite rule in unified judgement syntax
+/// Syntax: Name . type_context | prop_context |- lhs ~> rhs ;
+/// Example: ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest}) ;
 pub struct RewriteRule {
-    pub conditions: Vec<Condition>,
-    /// Optional congruence premise: (source_var, target_var)
-    /// if S => T then ... represents Some(("S", "T"))
-    pub premise: Option<(Ident, Ident)>,
+    /// Rule name (required)
+    pub name: Ident,
+    /// Explicit type bindings (optional)
+    pub type_context: Vec<TypedParam>,
+    /// Premises (freshness, congruence, relation queries)
+    pub premises: Vec<Premise>,
     /// LHS pattern - can be Term or Collection (with metasyntax)
     pub left: Pattern,
     /// RHS pattern - the result of the rewrite (can use metasyntax)
     pub right: Pattern,
+}
+
+impl RewriteRule {
+    /// Extract the congruence premise (S ~> T), if any.
+    /// For backward compatibility with code that expects `premise: Option<(Ident, Ident)>`.
+    pub fn congruence_premise(&self) -> Option<(&Ident, &Ident)> {
+        self.premises.iter().find_map(|p| {
+            if let Premise::Congruence { source, target } = p {
+                Some((source, target))
+            } else {
+                None
+            }
+        })
+    }
+    
+    /// Check if this is a congruence rule (has a Premise::Congruence)
+    pub fn is_congruence_rule(&self) -> bool {
+        self.congruence_premise().is_some()
+    }
 }
 
 /// Semantic rule for operator evaluation
@@ -289,71 +348,128 @@ fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
     Ok(equations)
 }
 
-fn parse_equation(input: ParseStream) -> SynResult<Equation> {
-    // Parse optional freshness conditions: if x # Q then
-    let mut conditions = Vec::new();
-
-    if input.peek(Token![if]) {
-        let _ = input.parse::<Token![if]>()?;
-
-        // Support parenthesized freshness: if (x # ...rest) then
-        if input.peek(syn::token::Paren) {
-            let paren_content;
-            syn::parenthesized!(paren_content in input);
-
-            let var = paren_content.parse::<Ident>()?;
-            let _ = paren_content.parse::<Token![#]>()?;
-
-            let term = if paren_content.peek(Token![...]) {
-                let _ = paren_content.parse::<Token![...]>()?;
-                FreshnessTarget::CollectionRest(paren_content.parse::<Ident>()?)
-            } else {
-                FreshnessTarget::Var(paren_content.parse::<Ident>()?)
-            };
-
-            let then_kw = input.parse::<Ident>()?;
-            if then_kw != "then" {
-                return Err(syn::Error::new(then_kw.span(), "expected 'then'"));
-            }
-
-            conditions.push(FreshnessCondition { var, term });
+/// Parse a single premise in the propositional context
+/// Grammar: freshness | congruence | relation_query
+///   freshness  ::= ident "#" (ident | "..." ident)
+///   congruence ::= ident "~>" ident
+///   relation   ::= ident "(" (ident ("," ident)*)? ")"
+fn parse_premise(input: ParseStream) -> SynResult<Premise> {
+    let first = input.parse::<Ident>()?;
+    
+    if input.peek(Token![#]) {
+        // Freshness: x # target
+        let _ = input.parse::<Token![#]>()?;
+        let term = if input.peek(Token![...]) {
+            let _ = input.parse::<Token![...]>()?;
+            FreshnessTarget::CollectionRest(input.parse::<Ident>()?)
         } else {
-            // Non-parenthesized: allow multiple comma-separated freshness conditions
-            loop {
-                let var = input.parse::<Ident>()?;
-                let _ = input.parse::<Token![#]>()?;
-
-                let term = if input.peek(Token![...]) {
-                    let _ = input.parse::<Token![...]>()?;
-                    FreshnessTarget::CollectionRest(input.parse::<Ident>()?)
-                } else {
-                    FreshnessTarget::Var(input.parse::<Ident>()?)
-                };
-
-                conditions.push(FreshnessCondition { var, term });
-
-                // Check for 'then' or continue with more conditions
-                if input.peek(Ident) {
-                    let lookahead = input.fork().parse::<Ident>()?;
-                    if lookahead == "then" {
-                        let _ = input.parse::<Ident>()?; // consume 'then'
-                        break;
-                    }
-                }
-
-                if input.peek(Token![,]) {
-                    let _ = input.parse::<Token![,]>()?;
-                    // Continue parsing more conditions
-                } else {
-                    return Err(syn::Error::new(
-                        input.span(),
-                        "expected 'then' or ',' after freshness condition",
-                    ));
-                }
+            FreshnessTarget::Var(input.parse::<Ident>()?)
+        };
+        Ok(Premise::Freshness(FreshnessCondition { var: first, term }))
+    } else if input.peek(Token![~]) && input.peek2(Token![>]) {
+        // Congruence: S ~> T
+        let _ = input.parse::<Token![~]>()?;
+        let _ = input.parse::<Token![>]>()?;
+        let target = input.parse::<Ident>()?;
+        Ok(Premise::Congruence { source: first, target })
+    } else if input.peek(syn::token::Paren) {
+        // Relation query: rel(args)
+        let args_content;
+        syn::parenthesized!(args_content in input);
+        let mut args = Vec::new();
+        while !args_content.is_empty() {
+            args.push(args_content.parse::<Ident>()?);
+            if args_content.peek(Token![,]) {
+                let _ = args_content.parse::<Token![,]>()?;
             }
         }
+        Ok(Premise::RelationQuery { relation: first, args })
+    } else {
+        Err(syn::Error::new(first.span(), 
+            "expected premise: 'x # term', 'S ~> T', or 'rel(args)'"))
     }
+}
 
+/// Parse a typed parameter: name:Type
+fn parse_typed_param(input: ParseStream) -> SynResult<TypedParam> {
+    let name = input.parse::<Ident>()?;
+    let _ = input.parse::<Token![:]>()?;
+    let ty = input.parse::<super::types::TypeExpr>()?;
+    Ok(TypedParam { name, ty })
+}
+
+/// Parse rule contexts in judgement form:
+///   type_context | prop_context |-
+/// 
+/// Grammar:
+///   contexts   ::= type_ctx? ("|" prop_ctx)? "|-"
+///   type_ctx   ::= typed_param ("," typed_param)*
+///   prop_ctx   ::= premise ("," premise)*
+fn parse_rule_contexts(input: ParseStream) -> SynResult<(Vec<TypedParam>, Vec<Premise>)> {
+    let mut type_context = Vec::new();
+    let mut premises = Vec::new();
+    
+    let mut in_prop_context = false;
+    
+    loop {
+        // Check for "|-" (end of contexts)
+        if input.peek(Token![|]) && input.peek2(Token![-]) {
+            break;
+        }
+        
+        // Check for "|" (separator between type and prop contexts)
+        if input.peek(Token![|]) && !input.peek2(Token![-]) {
+            let _ = input.parse::<Token![|]>()?;
+            in_prop_context = true;
+            continue;
+        }
+        
+        if in_prop_context {
+            // Parse premise
+            premises.push(parse_premise(input)?);
+        } else {
+            // Could be type_ctx param OR first premise (if no explicit type_ctx)
+            // Disambiguate: type param has ":" after name, premise has "#", "~>", or "("
+            let fork = input.fork();
+            let _ = fork.parse::<Ident>()?;
+            
+            if fork.peek(Token![:]) && !fork.peek(Token![::]) {
+                // Type parameter: name:Type
+                type_context.push(parse_typed_param(input)?);
+            } else {
+                // Not a type param, switch to prop_context
+                in_prop_context = true;
+                premises.push(parse_premise(input)?);
+            }
+        }
+        
+        // Check for comma (more items) or end
+        if input.peek(Token![,]) {
+            let _ = input.parse::<Token![,]>()?;
+        } else {
+            break;
+        }
+    }
+    
+    // Consume "|-"
+    if input.peek(Token![|]) && input.peek2(Token![-]) {
+        let _ = input.parse::<Token![|]>()?;
+        let _ = input.parse::<Token![-]>()?;
+    } else {
+        return Err(input.error("expected '|-' after contexts"));
+    }
+    
+    Ok((type_context, premises))
+}
+
+fn parse_equation(input: ParseStream) -> SynResult<Equation> {
+    // Parse: Name .
+    let name = input.parse::<Ident>()?;
+    let _ = input.parse::<Token![.]>()?;
+    
+    // Parse contexts and turnstile
+    let (type_context, premises) = parse_rule_contexts(input)?;
+    
     // Parse left-hand side as pattern
     let left = parse_pattern(input)?;
 
@@ -366,7 +482,7 @@ fn parse_equation(input: ParseStream) -> SynResult<Equation> {
     // Parse semicolon
     let _ = input.parse::<Token![;]>()?;
 
-    Ok(Equation { conditions, left, right })
+    Ok(Equation { name, type_context, premises, left, right })
 }
 
 
@@ -695,11 +811,8 @@ fn parse_rewrites(input: ParseStream) -> SynResult<Vec<RewriteRule>> {
         while content.peek(Token![/]) && content.peek2(Token![/]) {
             let _ = content.parse::<Token![/]>()?;
             let _ = content.parse::<Token![/]>()?;
-            // Skip until end of line - consume tokens until we see something we recognize
-            while !content.is_empty()
-                && !content.peek(syn::token::Paren)
-                && !content.peek(Token![if])
-            {
+            // Skip until end of line - consume tokens until we see an identifier (rule name)
+            while !content.is_empty() && !content.peek(Ident) {
                 let _ = content.parse::<proc_macro2::TokenTree>()?;
             }
         }
@@ -720,133 +833,22 @@ fn parse_rewrites(input: ParseStream) -> SynResult<Vec<RewriteRule>> {
 }
 
 fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
-    // Parse optional freshness conditions: if x # Q then
-    // OR congruence premise: if S => T then
-    let mut conditions = Vec::new();
-    let mut premise = None;
-
-    while input.peek(Token![if]) {
-        let _ = input.parse::<Token![if]>()?;
-
-        // Check if this is an environment query: if env_var(x, v) then
-        if input.peek(Ident) && input.peek2(syn::token::Paren) {
-            // Parse: env_var(x, v)
-            let relation = input.parse::<Ident>()?;
-            let args_content;
-            syn::parenthesized!(args_content in input);
-
-            let mut args = Vec::new();
-            while !args_content.is_empty() {
-                args.push(args_content.parse::<Ident>()?);
-                if args_content.peek(Token![,]) {
-                    let _ = args_content.parse::<Token![,]>()?;
-                }
-            }
-
-            let then_kw = input.parse::<Ident>()?;
-            if then_kw != "then" {
-                return Err(syn::Error::new(then_kw.span(), "expected 'then'"));
-            }
-
-            conditions.push(Condition::EnvQuery { relation, args });
-        }
-        // Allow either parenthesized freshness clause: if (x # ...rest) then
-        // or the original forms: if x # P then  OR congruence: if S => T then
-        else if input.peek(syn::token::Paren) {
-            let paren_content;
-            syn::parenthesized!(paren_content in input);
-
-            // Inside parentheses we expect a single freshness condition: var # term
-            let var = paren_content.parse::<Ident>()?;
-            let _ = paren_content.parse::<Token![#]>()?;
-
-            let term = if paren_content.peek(Token![...]) {
-                let _ = paren_content.parse::<Token![...]>()?;
-                let rest_ident = paren_content.parse::<Ident>()?;
-                FreshnessTarget::CollectionRest(rest_ident)
-            } else {
-                FreshnessTarget::Var(paren_content.parse::<Ident>()?)
-            };
-
-            // After parentheses we expect 'then'
-            let then_kw = input.parse::<Ident>()?;
-            if then_kw != "then" {
-                return Err(syn::Error::new(then_kw.span(), "expected 'then'"));
-            }
-
-            conditions.push(Condition::Freshness(FreshnessCondition { var, term }));
-        } else {
-            // Not parenthesized - could be congruence premise or freshness
-            let var = input.parse::<Ident>()?;
-
-            // Check if this is a congruence premise (if S => T then) or freshness (if x # Q then)
-            if input.peek(Token![~]) && input.peek2(Token![>]) {
-                // Congruence premise: if S ~> T then
-                let _ = input.parse::<Token![~]>()?;
-                let _ = input.parse::<Token![>]>()?;
-                let target = input.parse::<Ident>()?;
-                let then_kw = input.parse::<Ident>()?;
-                if then_kw != "then" {
-                    return Err(syn::Error::new(then_kw.span(), "expected 'then'"));
-                }
-
-                premise = Some((var, target));
-            } else {
-                // Freshness condition: if x # Q then
-                let _ = input.parse::<Token![#]>()?;
-
-                let term = if input.peek(Token![...]) {
-                    let _ = input.parse::<Token![...]>()?;
-                    FreshnessTarget::CollectionRest(input.parse::<Ident>()?)
-                } else {
-                    FreshnessTarget::Var(input.parse::<Ident>()?)
-                };
-
-                let then_kw = input.parse::<Ident>()?;
-                if then_kw != "then" {
-                    return Err(syn::Error::new(then_kw.span(), "expected 'then'"));
-                }
-
-                conditions.push(Condition::Freshness(FreshnessCondition { var, term }));
-            }
-        }
-    }
+    // Parse: Name .
+    let name = input.parse::<Ident>()?;
+    let _ = input.parse::<Token![.]>()?;
+    
+    // Parse contexts and turnstile
+    let (type_context, premises) = parse_rule_contexts(input)?;
 
     // Parse left-hand side pattern
     let left = parse_pattern(input)?;
 
-    // Parse =>
+    // Parse ~>
     let _ = input.parse::<Token![~]>()?;
     let _ = input.parse::<Token![>]>()?;
 
     // Parse right-hand side as pattern (can use metasyntax)
     let right = parse_pattern(input)?;
-
-    while input.peek(Ident) {
-        // Check if next token is "then"
-        let lookahead = input.fork();
-        if let Ok(then_kw) = lookahead.parse::<Ident>() {
-            if then_kw == "then" {
-                input.parse::<Ident>()?; // consume "then"
-
-                // Parse relation name and arguments: env_var(x, v)
-                let args_content;
-                syn::parenthesized!(args_content in input);
-
-                let mut args = Vec::new();
-                while !args_content.is_empty() {
-                    args.push(args_content.parse::<Ident>()?);
-                    if args_content.peek(Token![,]) {
-                        let _ = args_content.parse::<Token![,]>()?;
-                    }
-                }
-            } else {
-                break;
-            }
-        } else {
-            break;
-        }
-    }
 
     // Optional semicolon
     if input.peek(Token![;]) {
@@ -854,8 +856,9 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
     }
 
     Ok(RewriteRule {
-        conditions,
-        premise,
+        name,
+        type_context,
+        premises,
         left,
         right,
     })

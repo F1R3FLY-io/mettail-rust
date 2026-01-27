@@ -27,34 +27,29 @@ language! {
         PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
     },
     equations {
-        (PNew ^x.(PNew ^y.P)) = (PNew ^y.(PNew ^x.P));
-        if x # ...rest then
-        (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest}));
-        if x # P then
-        (PIn N (PNew ^x.P)) = (PNew ^x.(PIn N P));
-        if x # P then
-        (POut N (PNew ^x.P)) = (PNew ^x.(POut N P));
-        if x # P then
-        (POpen N (PNew ^x.P)) = (PNew ^x.(POpen N P));
-        if x # P then
-        (PAmb N (PNew ^x.P)) = (PNew ^x.(PAmb N P));
+        NewComm . |- (PNew ^x.(PNew ^y.P)) = (PNew ^y.(PNew ^x.P));
+        ScopeExtrusion . | x # ...rest |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest}));
+        InNew . | x # P |- (PIn N (PNew ^x.P)) = (PNew ^x.(PIn N P));
+        OutNew . | x # P |- (POut N (PNew ^x.P)) = (PNew ^x.(POut N P));
+        OpenNew . | x # P |- (POpen N (PNew ^x.P)) = (PNew ^x.(POpen N P));
+        AmbNew . | x # P |- (PAmb N (PNew ^x.P)) = (PNew ^x.(PAmb N P));
     },
     rewrites {
         // {n[{in(m,p), ...q}], m[r]} => {m[{n[{p, ...q}], r}]}
-        (PPar {(PAmb N (PPar {(PIn M P) , ...rest1})) , (PAmb M R), ...rest2})
+        InRule . |- (PPar {(PAmb N (PPar {(PIn M P) , ...rest1})) , (PAmb M R), ...rest2})
             ~> (PPar {(PAmb M (PPar {(PAmb N (PPar {P , ...rest1})), R})), ...rest2});
 
         // m[{n[{out(m,p), ...q}], r}] => {n[{p, ...q}], m[r]}
-        (PAmb M (PPar {(PAmb N (PPar {(POut M P), ...rest1})), R, ...rest2}))
+        OutRule . |- (PAmb M (PPar {(PAmb N (PPar {(POut M P), ...rest1})), R, ...rest2}))
             ~> (PPar {(PAmb N (PPar {P, ...rest1})), (PAmb M R), ...rest2});
 
         // {open(n,p), n[q]} => {p, q}
-        (PPar {(POpen N P), (PAmb N Q), ...rest})
+        OpenRule . |- (PPar {(POpen N P), (PAmb N Q), ...rest})
             ~> (PPar {P,Q, ...rest});
 
-        if S ~> T then (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+        ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
 
-        if S ~> T then (PNew ^x.S) ~> (PNew ^x.T);
-        if S ~> T then (PAmb N S) ~> (PAmb N T);
+        NewCong . | S ~> T |- (PNew ^x.S) ~> (PNew ^x.T);
+        AmbCong . | S ~> T |- (PAmb N S) ~> (PAmb N T);
     }
 }

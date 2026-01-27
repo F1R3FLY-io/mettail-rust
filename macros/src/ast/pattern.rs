@@ -278,14 +278,6 @@ impl Pattern {
         }
     }
     
-    /// Get variables that appear more than once (need equational matching on LHS)
-    pub fn duplicate_vars(&self) -> HashSet<String> {
-        self.var_occurrences()
-            .into_iter()
-            .filter(|(_, count)| *count > 1)
-            .map(|(var, _)| var)
-            .collect()
-    }
 }
 
 impl PatternTerm {

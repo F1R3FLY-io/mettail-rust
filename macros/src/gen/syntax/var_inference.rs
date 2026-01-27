@@ -70,7 +70,7 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
         
         // Generate match arms for full type inference (including function types)
         let mut type_match_arms: Vec<TokenStream> = rules.iter().filter_map(|rule| {
-            generate_var_type_inference_arm(rule, &cat_names, cat_name, language)
+            generate_var_type_inference_arm(rule, &cat_names)
         }).collect();
         
         // Add arm for Var variant - returns base type
@@ -414,8 +414,6 @@ fn generate_var_inference_arm(
 fn generate_var_type_inference_arm(
     rule: &GrammarRule,
     all_cats: &[&syn::Ident],
-    context_cat: &syn::Ident,
-    _language: &LanguageDef,
 ) -> Option<TokenStream> {
     let category = &rule.category;
     let label = &rule.label;

@@ -13,7 +13,7 @@
 
 use super::TypeChecker;
 use super::ValidationError;
-use crate::ast::{language::{Equation, LanguageDef, FreshnessTarget, Condition}, grammar::{GrammarItem}, language::RewriteRule, pattern::{Pattern, PatternTerm}};
+use crate::ast::{language::{Equation, LanguageDef, FreshnessTarget, Premise}, grammar::{GrammarItem}, language::RewriteRule, pattern::{Pattern, PatternTerm}};
 use std::collections::HashSet;
 
 pub fn validate_language(language: &LanguageDef) -> Result<(), ValidationError> {
@@ -191,39 +191,46 @@ fn validate_equation_freshness(eq: &Equation) -> Result<(), ValidationError> {
     collect_pattern_vars(&eq.right, &mut equation_vars);
 
     // Validate each freshness condition
-    for cond in &eq.conditions {
-        let var_name = cond.var.to_string();
-        let (term_name, term_span) = match &cond.term {
-            FreshnessTarget::Var(id) => (id.to_string(), id.span()),
-            FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
-        };
+    for cond in &eq.premises {
+        match cond {
+            Premise::Freshness(freshness) => {
+                let var_name = freshness.var.to_string();
+                let (term_name, term_span) = match &freshness.term {
+                    FreshnessTarget::Var(id) => (id.to_string(), id.span()),
+                    FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
+                };
 
-        // Check that the variable appears in the equation
-        if !equation_vars.contains(&var_name) {
-            return Err(ValidationError::FreshnessVariableNotInEquation {
-                var: var_name,
-                span: cond.var.span(),
-            });
+                // Check that the variable appears in the equation
+                if !equation_vars.contains(&var_name) {
+                    return Err(ValidationError::FreshnessVariableNotInEquation {
+                        var: var_name,
+                        span: freshness.var.span(),
+                    });
+                }
+
+                // Check that the term variable appears in the equation
+                if !equation_vars.contains(&term_name) {
+                    return Err(ValidationError::FreshnessTermNotInEquation {
+                        var: var_name,
+                        term: term_name,
+                        span: term_span,
+                    });
+                }
+
+                // Check that x does not appear free in term
+                // For now, we do a simple check: if term is a variable, x != term
+                // More sophisticated checking will be added with scoping
+                if var_name == term_name {
+                    return Err(ValidationError::FreshnessSelfReference {
+                        var: var_name,
+                        span: freshness.var.span(),
+                    });
+                }
+            },
+            _ => {},
         }
 
-        // Check that the term variable appears in the equation
-        if !equation_vars.contains(&term_name) {
-            return Err(ValidationError::FreshnessTermNotInEquation {
-                var: var_name,
-                term: term_name,
-                span: term_span,
-            });
-        }
-
-        // Check that x does not appear free in term
-        // For now, we do a simple check: if term is a variable, x != term
-        // More sophisticated checking will be added with scoping
-        if var_name == term_name {
-            return Err(ValidationError::FreshnessSelfReference {
-                var: var_name,
-                span: cond.var.span(),
-            });
-        }
+        
     }
 
     Ok(())
@@ -238,9 +245,9 @@ fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
     collect_pattern_vars(&rw.right, &mut rewrite_vars);
 
     // Validate each condition
-    for cond in &rw.conditions {
+    for cond in &rw.premises {
         match cond {
-            Condition::Freshness(freshness) => {
+            Premise::Freshness(freshness) => {
                 let var_name = freshness.var.to_string();
                 let (term_name, term_span) = match &freshness.term {
                     FreshnessTarget::Var(id) => (id.to_string(), id.span()),
@@ -272,20 +279,7 @@ fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
                     });
                 }
             },
-            Condition::EnvQuery { relation: _, args } => {
-                // Validate that the first arg (variable name) appears in the rewrite
-                // The second arg (value) is bound from the query, so it doesn't need to appear
-                if let Some(first_arg) = args.first() {
-                    let arg_name = first_arg.to_string();
-                    if !rewrite_vars.contains(&arg_name) {
-                        return Err(ValidationError::FreshnessVariableNotInEquation {
-                            var: arg_name,
-                            span: first_arg.span(),
-                        });
-                    }
-                }
-                // Other args (like the value) are bound from the query, so they don't need validation
-            },
+            _ => {},
         }
     }
 

@@ -109,7 +109,6 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
         }
         
         let category = &lang_type.name;
-        let category_lower = category.to_string().to_lowercase();
 
         // Find all rules for this category
         let rules_for_category: Vec<_> = language
@@ -126,7 +125,7 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
         });
         
         // Generate beta-reduction arms for Apply/Lam variants
-        let beta_reduction_arms = generate_beta_reduction_arms(category, &category_lower, language);
+        let beta_reduction_arms = generate_beta_reduction_arms(category, language);
 
         // If no collections and no beta-reduction, generate a simple normalize
         if !has_collections && beta_reduction_arms.is_empty() {
@@ -371,7 +370,6 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
 /// Generate match arms for beta-reduction of Apply/Lam variants
 fn generate_beta_reduction_arms(
     category: &syn::Ident,
-    category_lower: &str,
     language: &LanguageDef,
 ) -> Vec<TokenStream> {
     use quote::format_ident;

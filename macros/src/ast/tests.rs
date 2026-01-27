@@ -5,7 +5,7 @@ mod tests {
         parse2,
         Ident,
     };
-    use crate::ast::language::{LanguageDef, FreshnessTarget};
+    use crate::ast::language::{LanguageDef};
     use crate::ast::types::{TypeExpr, CollectionType};
     use crate::ast::grammar::{GrammarItem, TermParam};
     use crate::ast::grammar::{SyntaxExpr, PatternOp};
@@ -46,32 +46,6 @@ mod tests {
                 assert!(delimiters.is_none());
             },
             _ => panic!("Expected Collection item"),
-        }
-    }
-
-    #[test]
-    fn parse_parenthesized_collection_freshness() {
-        let input = quote! {
-            name: TestFresh,
-            types { Proc Name }
-            terms {
-                PPar . Proc ::= HashBag(Proc) sep "|" delim "{" "}" ;
-                PNew . Proc ::= "new(" <Name> "," Proc ")" ;
-            }
-            equations {
-                if (x # ...rest) then (PPar {(PNew x P), ...rest}) = (PNew x (PPar {P, ...rest}));
-            }
-        };
-
-        let result = parse2::<LanguageDef>(input);
-        assert!(result.is_ok(), "Failed to parse parenthesized freshness: {:?}", result.err());
-        let language = result.unwrap();
-        assert_eq!(language.equations.len(), 1);
-        let eq = &language.equations[0];
-        assert_eq!(eq.conditions.len(), 1);
-        match &eq.conditions[0].term {
-            FreshnessTarget::CollectionRest(id) => assert_eq!(id.to_string(), "rest"),
-            other => panic!("Expected CollectionRest freshness target, got: {:?}", other),
         }
     }
 

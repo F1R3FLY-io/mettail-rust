@@ -10,8 +10,6 @@ use syn::Ident;
 
 pub mod eval;
 
-pub use eval::generate_eval_method;
-
 /// Check if a category has a native type and return it
 pub fn has_native_type<'a>(category: &Ident, language: &'a LanguageDef) -> Option<&'a syn::Type> {
     language
