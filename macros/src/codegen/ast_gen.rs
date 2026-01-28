@@ -684,18 +684,20 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
                     })
                     .collect();
                 
-                // Generate match pattern based on parameter count
+                // Emit rust_code as a trailing expression: wrap in parens so the block
+                // is unambiguously expression-typed (avoids "expected T, found ()" when
+                // the last token is parsed as a statement).
                 let rust_code = &rust_code_block.code;
                 let match_arm = match param_count {
                     0 => quote! {
-                        #category::#label => #rust_code,
+                        #category::#label => (#rust_code),
                     },
                     1 => {
                         let p0 = &param_names[0];
                         quote! {
                             #category::#label(#p0) => {
                                 #(#param_bindings)*
-                                #rust_code
+                                (#rust_code)
                             },
                         }
                     },
@@ -705,7 +707,7 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
                         quote! {
                             #category::#label(#p0, #p1) => {
                                 #(#param_bindings)*
-                                #rust_code
+                                (#rust_code)
                             },
                         }
                     },
@@ -716,7 +718,7 @@ fn generate_eval_method(theory: &TheoryDef) -> TokenStream {
                         quote! {
                             #category::#label(#p0, #p1, #p2) => {
                                 #(#param_bindings)*
-                                #rust_code
+                                (#rust_code)
                             },
                         }
                     },

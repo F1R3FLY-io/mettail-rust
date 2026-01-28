@@ -298,12 +298,25 @@ fn generate_simple_constructor_case(
 ) -> TokenStream {
     let label = &rule.label;
 
-    // Get argument categories
+    // HOL syntax: resolve parameter names to category types
+    let param_map: std::collections::HashMap<String, Ident> = rule
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.clone()))
+        .collect();
+
+    // Get argument categories (resolve param names for HOL)
     let arg_cats: Vec<Ident> = rule
         .items
         .iter()
         .filter_map(|item| match item {
-            GrammarItem::NonTerminal(nt) => Some(nt.clone()),
+            GrammarItem::NonTerminal(nt) => {
+                let resolved = param_map
+                    .get(&nt.to_string())
+                    .cloned()
+                    .unwrap_or_else(|| nt.clone());
+                Some(resolved)
+            },
             _ => None,
         })
         .collect();

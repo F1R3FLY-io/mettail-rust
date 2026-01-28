@@ -19,7 +19,8 @@ theory! {
         // Literals (NumLit) are now auto-generated for native types - no explicit declaration needed
         // No need for "NumLit . Int ::= Integer" - it's automatic!
 
-        Add . Int ::= Int "+" Int ;
+        // HOL syntax with rust_code
+        Add . a:Int, b:Int |- a "+" b:Int ![a + b];
         Sub . Int ::= Int "-" Int ;
 
         // Assign is now automatically generated for all categories
@@ -35,7 +36,7 @@ theory! {
         if S => T then (Sub L S) => (Sub L T);
     },
     semantics {
-        Add: +,
+        Add: +,  // folding rule for ascent; eval uses HOL ![a + b]
         Sub: -,
     }
 }

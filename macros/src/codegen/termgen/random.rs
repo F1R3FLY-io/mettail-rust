@@ -294,11 +294,24 @@ fn generate_random_simple_constructor(
 ) -> TokenStream {
     let label = &rule.label;
 
+    // HOL syntax: resolve parameter names to category types
+    let param_map: std::collections::HashMap<String, Ident> = rule
+        .parameters
+        .iter()
+        .map(|p| (p.name.to_string(), p.param_type.clone()))
+        .collect();
+
     let arg_cats: Vec<Ident> = rule
         .items
         .iter()
         .filter_map(|item| match item {
-            GrammarItem::NonTerminal(nt) => Some(nt.clone()),
+            GrammarItem::NonTerminal(nt) => {
+                let resolved = param_map
+                    .get(&nt.to_string())
+                    .cloned()
+                    .unwrap_or_else(|| nt.clone());
+                Some(resolved)
+            },
             _ => None,
         })
         .collect();

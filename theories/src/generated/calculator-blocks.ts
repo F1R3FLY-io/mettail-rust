@@ -14,12 +14,12 @@ const definitions = [
 			{
 				type: "input_value",
 				name: "ARG1",
-				check: "Int",
+				check: "a",
 			},
 			{
 				type: "input_value",
 				name: "ARG2",
-				check: "Int",
+				check: "b",
 			},
 		],
 		inputsInline: true,
