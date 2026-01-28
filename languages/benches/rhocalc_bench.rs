@@ -30,7 +30,7 @@ fn gen_comm_pairs(n: usize) -> String {
         return "0".to_string();
     }
     let pairs: Vec<_> = (0..n)
-        .map(|i| format!("c{}!(0) | c{}?x.{{*(x)}}", i, i))
+        .map(|i| format!("c{}!(0) | (c{}?x).{{*(x)}}", i, i))
         .collect();
     format!("{{{}}}", pairs.join(" | "))
 }
@@ -42,7 +42,7 @@ fn gen_pipeline(depth: usize) -> String {
         return "0".to_string();
     }
     if depth == 1 {
-        return "{a!(0) | a?x.{*(x)}}".to_string();
+        return "{a!(0) | (a?x).{*(x)}}".to_string();
     }
     
     let channels: Vec<char> = ('a'..='z').take(depth).collect();
@@ -51,11 +51,11 @@ fn gen_pipeline(depth: usize) -> String {
     for i in 0..depth - 1 {
         let curr = channels[i];
         let next = channels[i + 1];
-        parts.push(format!("{}?x.{{{}!(*(x))}}", curr, next));
+        parts.push(format!("({}?x).{{{}!(*(x))}}", curr, next));
     }
     
     let last = channels[depth - 1];
-    parts.push(format!("{}?x.{{*(x)}}", last));
+    parts.push(format!("({}?x).{{*(x)}}", last));
     
     format!("{{{}}}", parts.join(" | "))
 }
@@ -64,10 +64,10 @@ fn gen_pipeline(depth: usize) -> String {
 /// {c!(0) | c!(1) | ... | c?x.{*(x)}}
 fn gen_race(n_senders: usize) -> String {
     if n_senders == 0 {
-        return "c?x.{*(x)}".to_string();
+        return "(c?x).{*(x)}".to_string();
     }
-    let senders: Vec<_> = (0..n_senders).map(|i| format!("c!({})", i)).collect();
-    format!("{{c?x.{{*(x)}} | {}}}", senders.join(" | "))
+    let senders: Vec<_> = (0..n_senders).map(|i| format!("c!(p{})", i)).collect();
+    format!("{{(c?x).{{*(x)}} | {}}}", senders.join(" | "))
 }
 
 /// Generate 1 sender to n receivers (choice)
@@ -77,7 +77,7 @@ fn gen_choice(n_receivers: usize) -> String {
         return "c!(0)".to_string();
     }
     let receivers: Vec<_> = (0..n_receivers)
-        .map(|i| format!("c?x.{{out{}!(*(x))}}", i))
+        .map(|i| format!("(c?x).{{out{}!(*(x))}}", i))
         .collect();
     format!("{{c!(0) | {}}}", receivers.join(" | "))
 }
@@ -90,10 +90,10 @@ fn gen_fanout(n: usize) -> String {
     }
     let channels: Vec<char> = ('a'..='z').take(n).collect();
     let outputs: Vec<_> = channels.iter().map(|c| format!("{}!(*(x))", c)).collect();
-    let receivers: Vec<_> = channels.iter().map(|c| format!("{}?y.{{*(y)}}", c)).collect();
+    let receivers: Vec<_> = channels.iter().map(|c| format!("({}?y).{{*(y)}}", c)).collect();
     
     format!(
-        "{{bcast!(0) | bcast?x.{{{{{}}}}} | {}}}",
+        "{{bcast!(0) | (bcast?x).{{{{{}}}}} | {}}}",
         outputs.join(" | "),
         receivers.join(" | ")
     )
@@ -129,7 +129,7 @@ fn gen_join(n: usize) -> String {
 /// Replication environment definitions (must be pre-substituted)
 const REP_ENV: &str = r#"
 dup = ^l.{l?x.{{*(x)|l!(*(x))}}}
-rep = ^n.{^a.{^cont.{{$name(dup,n)|n!(a?y.{{$name(cont,y)|$name(dup,n)}})}}}}
+rep = ^n.{^a.{^cont.{{$name(dup,n)|n!((a?y).{{$name(cont,y)|$name(dup,n)}})}}}}
 id = ^z.{*(z)}
 "#;
 
@@ -155,6 +155,8 @@ fn run_rhocalc(input: &str) -> BenchMetrics {
     let parser = rhocalc::ProcParser::new();
     let term = parser.parse(input).expect("Parse failed");
     let term = term.normalize();
+
+    println!("input: {}", input);
     
     // Create environment and substitute if needed
     let term = if input.contains('$') {
@@ -351,52 +353,52 @@ fn bench_replication_basic(c: &mut Criterion) {
 
 criterion_group! {
     name = size_scaling;
-    config = Criterion::default().sample_size(50);
+    config = Criterion::default().sample_size(10);
     targets = bench_size_parallel_zeros, bench_size_comm_pairs
 }
 
 criterion_group! {
     name = depth_scaling;
-    config = Criterion::default().sample_size(50);
+    config = Criterion::default().sample_size(10);
     targets = bench_depth_pipeline
 }
 
 criterion_group! {
     name = nondeterminism;
-    config = Criterion::default().sample_size(50);
+    config = Criterion::default().sample_size(10);
     targets = bench_ndet_race, bench_ndet_choice
 }
 
 criterion_group! {
     name = parallelism;
-    config = Criterion::default().sample_size(50);
+    config = Criterion::default().sample_size(10);
     targets = bench_parallel_fanout
 }
 
 criterion_group! {
     name = reflection;
-    config = Criterion::default().sample_size(50);
+    config = Criterion::default().sample_size(10);
     targets = bench_reflect_nested
 }
 
 criterion_group! {
     name = join_patterns;
-    config = Criterion::default().sample_size(50);
+    config = Criterion::default().sample_size(10);
     targets = bench_join_channels
 }
 
 criterion_group! {
     name = replication;
-    config = Criterion::default().sample_size(30);
+    config = Criterion::default().sample_size(10);
     targets = bench_replication_basic
 }
 
 criterion_main!(
-    size_scaling,
-    depth_scaling,
-    nondeterminism,
-    parallelism,
-    reflection,
+    // size_scaling,
+    // depth_scaling,
+    // nondeterminism,
+    // parallelism,
+    // reflection,
     join_patterns,
     replication
 );

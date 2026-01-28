@@ -21,6 +21,7 @@ use std::collections::HashSet;
 /// * `conditions` - Freshness/env conditions
 /// * `relation_name` - Target relation (`eq_proc` or `rw_proc`)
 /// * `theory` - Theory definition
+/// * `use_equation_matching` - If true, match via `eq_cat(s_orig, s)` instead of `cat(s)`
 ///
 /// # Example
 /// For equation `(PDrop (NQuote P)) == P`:
@@ -33,21 +34,34 @@ use std::collections::HashSet;
 ///     let p = f0_f0.clone(),
 ///     let t = p.clone();
 /// ```
+///
+/// For rewrites with equation matching:
+/// ```text
+/// rw_proc(s_orig.clone(), t) <--
+///     eq_proc(s_orig, s),  // match via equation
+///     if let Proc::Pattern(...) = s,
+///     let t = ...;
+/// ```
 pub fn generate_rule_clause(
     left: &Pattern,
     right: &Pattern,
     conditions: &[Condition],
     relation_name: &syn::Ident,
     language: &LanguageDef,
+    use_equation_matching: bool,
 ) -> TokenStream {
     // 1. Determine category from LHS
     let category = left.category(language)
         .expect("Cannot determine category from LHS pattern");
-    generate_rule_clause_with_category(left, right, conditions, relation_name, category, language)
+    generate_rule_clause_with_category(left, right, conditions, relation_name, category, language, use_equation_matching)
 }
 
 /// Generate a rule clause with an explicitly provided category.
 /// Useful when the LHS is a variable and category must come from context.
+///
+/// When `use_equation_matching` is true, the rule matches via `eq_cat(s_orig, s)`
+/// instead of `cat(s)`, enabling rewrites to apply to equation-equivalent terms
+/// without needing expensive closure rules.
 pub fn generate_rule_clause_with_category(
     left: &Pattern,
     right: &Pattern,
@@ -55,8 +69,10 @@ pub fn generate_rule_clause_with_category(
     relation_name: &syn::Ident,
     category: &syn::Ident,
     language: &LanguageDef,
+    use_equation_matching: bool,
 ) -> TokenStream {
     let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
+    let eq_rel = format_ident!("eq_{}", category.to_string().to_lowercase());
     
     // 2. Find duplicate variables for equational matching
     let mut all_vars = left.var_occurrences();
@@ -87,38 +103,89 @@ pub fn generate_rule_clause_with_category(
     let clauses = &lhs_clauses.clauses;
     let eq_checks = &lhs_clauses.equational_checks;
     
+    // For equation matching, use eq_cat(s_orig, s) instead of cat(s)
+    // This allows rewrites to apply to equation-equivalent terms directly,
+    // avoiding the need for expensive closure rules like:
+    //   rw_proc(s1, t) <-- rw_proc(s0, t), eq_proc(s0, s1)
+    let source_var = format_ident!("s_orig");
+    
     // Wrap RHS expression with .normalize() for immediate beta-reduction
-    if condition_clauses.is_empty() && eq_checks.is_empty() {
-        quote! {
-            #relation_name(#lhs_var.clone(), #rhs_var) <--
-                #cat_lower(#lhs_var),
-                #(#clauses,)*
-                let #rhs_var = (#rhs_expr).normalize();
-        }
-    } else if eq_checks.is_empty() {
-        quote! {
-            #relation_name(#lhs_var.clone(), #rhs_var) <--
-                #cat_lower(#lhs_var),
-                #(#clauses,)*
-                #(#condition_clauses,)*
-                let #rhs_var = (#rhs_expr).normalize();
-        }
-    } else if condition_clauses.is_empty() {
-        quote! {
-            #relation_name(#lhs_var.clone(), #rhs_var) <--
-                #cat_lower(#lhs_var),
-                #(#clauses,)*
-                #(#eq_checks,)*
-                let #rhs_var = (#rhs_expr).normalize();
+    if use_equation_matching {
+        // Rewrite rules: match via equation relation
+        if condition_clauses.is_empty() && eq_checks.is_empty() {
+            quote! {
+                #relation_name(#source_var.clone(), #rhs_var) <--
+                    #eq_rel(#source_var, #lhs_var),
+                    #(#clauses,)*
+                    let #rhs_var = (#rhs_expr).normalize();
+            }
+        } else if eq_checks.is_empty() {
+            quote! {
+                #relation_name(#source_var.clone(), #rhs_var) <--
+                    #eq_rel(#source_var, #lhs_var),
+                    #(#clauses,)*
+                    #(#condition_clauses,)*
+                    let #rhs_var = (#rhs_expr).normalize();
+            }
+        } else if condition_clauses.is_empty() {
+            quote! {
+                #relation_name(#source_var.clone(), #rhs_var) <--
+                    #eq_rel(#source_var, #lhs_var),
+                    #(#clauses,)*
+                    #(#eq_checks,)*
+                    let #rhs_var = (#rhs_expr).normalize();
+            }
+        } else {
+            quote! {
+                #relation_name(#source_var.clone(), #rhs_var) <--
+                    #eq_rel(#source_var, #lhs_var),
+                    #(#clauses,)*
+                    #(#eq_checks,)*
+                    #(#condition_clauses,)*
+                    let #rhs_var = (#rhs_expr).normalize();
+            }
         }
     } else {
-        quote! {
-            #relation_name(#lhs_var.clone(), #rhs_var) <--
-                #cat_lower(#lhs_var),
-                #(#clauses,)*
-                #(#eq_checks,)*
-                #(#condition_clauses,)*
-                let #rhs_var = (#rhs_expr).normalize();
+        // Equation rules: match directly on category relation
+        // Also add the produced term to proc, enabling:
+        // 1. Deconstruction of equation-produced terms
+        // 2. Reflexivity for equation-produced terms (so rewrites can match via eq_proc)
+        if condition_clauses.is_empty() && eq_checks.is_empty() {
+            quote! {
+                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
+                #cat_lower(#rhs_var.clone()) <--
+                    #cat_lower(#lhs_var),
+                    #(#clauses,)*
+                    let #rhs_var = (#rhs_expr).normalize();
+            }
+        } else if eq_checks.is_empty() {
+            quote! {
+                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
+                #cat_lower(#rhs_var.clone()) <--
+                    #cat_lower(#lhs_var),
+                    #(#clauses,)*
+                    #(#condition_clauses,)*
+                    let #rhs_var = (#rhs_expr).normalize();
+            }
+        } else if condition_clauses.is_empty() {
+            quote! {
+                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
+                #cat_lower(#rhs_var.clone()) <--
+                    #cat_lower(#lhs_var),
+                    #(#clauses,)*
+                    #(#eq_checks,)*
+                    let #rhs_var = (#rhs_expr).normalize();
+            }
+        } else {
+            quote! {
+                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
+                #cat_lower(#rhs_var.clone()) <--
+                    #cat_lower(#lhs_var),
+                    #(#clauses,)*
+                    #(#eq_checks,)*
+                    #(#condition_clauses,)*
+                    let #rhs_var = (#rhs_expr).normalize();
+            }
         }
     }
 }
@@ -242,6 +309,8 @@ fn premise_to_condition(premise: &crate::ast::language::Premise) -> Option<Condi
 }
 
 /// Generate all equation rules for a theory.
+/// Equation rules use direct category matching (not equation matching)
+/// because they define the base equations that feed into the eq_* relations.
 pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
     
@@ -259,24 +328,33 @@ pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 .collect();
             
             // Forward direction: left => right
-            rules.push(generate_rule_clause_with_category(
-                &eq.left,
-                &eq.right,
-                &conditions,
-                &eq_rel,
-                category,
-                language,
-            ));
+            // Skip if LHS is just a variable (would match everything)
+            if !eq.left.is_just_variable() {
+                rules.push(generate_rule_clause_with_category(
+                    &eq.left,
+                    &eq.right,
+                    &conditions,
+                    &eq_rel,
+                    category,
+                    language,
+                    false, // equations don't use equation matching
+                ));
+            }
             
             // Backward direction: right => left (equations are symmetric)
-            rules.push(generate_rule_clause_with_category(
-                &eq.right,
-                &eq.left,
-                &conditions,
-                &eq_rel,
-                category,
-                language,
-            ));
+            // Skip if RHS is just a variable (would match everything and create infinite terms)
+            // Example: @(*N) == N — the backward direction N => @(*N) would loop forever
+            if !eq.right.is_just_variable() {
+                rules.push(generate_rule_clause_with_category(
+                    &eq.right,
+                    &eq.left,
+                    &conditions,
+                    &eq_rel,
+                    category,
+                    language,
+                    false, // equations don't use equation matching
+                ));
+            }
         }
     }
     
@@ -285,6 +363,11 @@ pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
 
 /// Generate all base rewrite rules for a theory.
 /// (Congruence rules are handled separately.)
+///
+/// Rewrite rules use equation matching: they iterate over `eq_cat(s_orig, s)`
+/// instead of `cat(s)`, allowing rewrites to apply to equation-equivalent terms
+/// without needing expensive closure rules like:
+///   rw_proc(s1, t) <-- rw_proc(s0, t), eq_proc(s0, s1)
 pub fn generate_base_rewrites(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
     
@@ -303,12 +386,14 @@ pub fn generate_base_rewrites(language: &LanguageDef) -> Vec<TokenStream> {
                 .filter_map(premise_to_condition)
                 .collect();
             
+            // use_equation_matching: true - rewrites match via equation relation
             rules.push(generate_rule_clause(
                 &rw.left,
                 &rw.right,
                 &conditions,
                 &rw_rel,
                 language,
+                true, // rewrites use equation matching
             ));
         }
     }

@@ -202,6 +202,13 @@ impl Pattern {
         }
     }
     
+    /// Check if this pattern is just a variable (no constructor or structure)
+    /// Used to avoid generating equation rules that match everything.
+    /// Example: For equation `@(*N) == N`, the RHS `N` is just a variable,
+    /// so we shouldn't generate the backward direction N => @(*N).
+    pub fn is_just_variable(&self) -> bool {
+        matches!(self, Pattern::Term(PatternTerm::Var(_)))
+    }
 
     /// Get the constructor name if this is a constructor application
     /// NOTE: Collection patterns no longer have constructors - they get it from enclosing Apply

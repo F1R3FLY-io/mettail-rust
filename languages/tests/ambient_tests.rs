@@ -31,19 +31,12 @@ fn run_test(test: &TestCase) -> Result<(), String> {
         include_source!(ambient_source);
         proc(p) <-- for p in [input_term.clone()];
 
-        relation redex_eq(Proc);
-        redex_eq(q.clone()) <-- eq_proc(input_term.clone(), q);
-        proc(q) <-- redex_eq(q);
-
         relation path(Proc, Proc);
         path(p1, p2) <-- rw_proc(p1,p2);
         path(p1, p3) <-- path(p1,p2), path(p2,p3);
 
         relation is_normal_form(Proc);
         is_normal_form(t.clone()) <-- proc(t), !rw_proc(t.clone(),_);
-
-        relation path_full(Proc, Proc);
-        path_full(input_term.clone(), z.clone()) <-- is_normal_form(z), path(input_term.clone(), z.clone());
     };
 
     let mut rewrites: Vec<_> = prog.rw_proc.iter().collect();

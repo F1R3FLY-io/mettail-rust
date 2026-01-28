@@ -22,12 +22,28 @@ pub fn generate_category_rules(language: &LanguageDef) -> TokenStream {
         let cat = &lang_type.name;
         let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
         let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
+        let eq_rel = format_ident!("eq_{}", cat.to_string().to_lowercase());
 
-        // Expand via rewrites ONLY (not via equality)
-        // This prevents exponential term explosion from eq + exploration feedback loop
+        // Expand via rewrites: add rewritten terms to enable further exploration
         rules.push(quote! {
             #cat_lower(c1) <-- #cat_lower(c0), #rw_rel(c0, c1);
         });
+
+
+        // PERFORMANCE OPTIMIZATION (2026-01-27):
+        // The following closure rules were too slow because they computed O(R × E²) rewrites:
+        //   cat(t) <-- cat(s), eq_cat(s, t)
+        //   rw_cat(s1, t) <-- rw_cat(s0, t), eq_cat(s0, s1)
+        //   rw_cat(s, t1) <-- rw_cat(s, t0), eq_cat(t0, t1)
+        //
+        // Instead, rewrite rules now use inline equation matching:
+        //   rw_cat(s_orig, t) <-- eq_cat(s_orig, s), [pattern match s], ...
+        //
+        // This computes the same semantics but with O(R × E) complexity instead of O(R × E²).
+        // See docs/design/exploring/01-27-equation-computation.md for details.
+        //
+        // User-defined equation rules directly add their produced terms to proc (see rules.rs).
+        // This avoids iterating over all equation pairs (which includes O(|proc|²) congruence pairs).
 
         // Generate deconstruction rules for this category
         let deconstruct_rules = generate_deconstruction_rules(cat, language);
