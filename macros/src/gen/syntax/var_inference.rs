@@ -19,14 +19,24 @@ use crate::gen::{generate_var_label, is_var_rule};
 /// - `infer_var_category` for backward compatibility (returns base category)
 /// - `infer_var_type` for full type inference (returns function types)
 pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
-    // Get non-native categories
-    let categories: Vec<_> = language.types.iter()
-        .filter(|e| e.native_type.is_none())
-        .collect();
-    
+    // All categories (needed for Env and type inference even when native_type is set)
+    let categories: Vec<_> = language.types.iter().collect();
+
     if categories.is_empty() {
         return quote! {};
     }
+
+    // Categories that have binder rules (Abstraction/MultiAbstraction) - only these get Apply/Lam arms
+    let categories_with_binders: std::collections::HashSet<_> = language
+        .terms
+        .iter()
+        .filter(|r| {
+            r.term_context.as_ref().map_or(false, |ctx| {
+                ctx.iter().any(|p| matches!(p, TermParam::Abstraction { .. } | TermParam::MultiAbstraction { .. }))
+            })
+        })
+        .map(|r| r.category.to_string())
+        .collect();
     
     // Generate an enum for the possible categories
     let cat_variants: Vec<TokenStream> = categories.iter()
@@ -83,8 +93,20 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
             }
         });
         
-        // Generate arms for Apply variants - detect function position usage
-        for domain in &cat_names {
+        // Generate arms for Apply/Lam variants only for non-native domains
+        // (native-only categories don't have Apply/Lam variants in their enum)
+        let non_native_domains: Vec<_> = cat_names
+            .iter()
+            .filter(|c| {
+                language
+                    .types
+                    .iter()
+                    .find(|t| t.name.to_string() == c.to_string())
+                    .map(|t| t.native_type.is_none())
+                    .unwrap_or(false)
+            })
+            .collect();
+        for domain in &non_native_domains {
             let apply_variant = syn::Ident::new(&format!("Apply{}", domain), proc_macro2::Span::call_site());
             type_match_arms.push(quote! {
                 #cat_name::#apply_variant(ref lam, ref arg) => {

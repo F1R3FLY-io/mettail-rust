@@ -650,11 +650,8 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
     let metadata_name = format_ident!("{}Metadata", name);
     let env_name = format_ident!("{}Env", name);
     
-    // Get non-native categories for environment field access
-    let categories: Vec<_> = language.types.iter()
-        .filter(|t| t.native_type.is_none())
-        .map(|t| &t.name)
-        .collect();
+    // All categories for environment field access (include native so e.g. Calculator can list/remove Int bindings)
+    let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
     
     // Generate field name for primary type (lowercase)
     let primary_field = format_ident!("{}", primary_type.to_string().to_lowercase());

@@ -2,8 +2,9 @@
 
 use crate::ast::language::LanguageDef;
 use crate::ast::grammar::{GrammarItem, TermParam};
+use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use std::collections::HashMap;
 
 /// For each constructor with a collection field, generates a helper function that automatically flattens nested collections of the same type.
@@ -103,11 +104,6 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
     let mut impls = Vec::new();
 
     for lang_type in &language.types {
-        // Skip native types
-        if lang_type.native_type.is_some() {
-            continue;
-        }
-        
         let category = &lang_type.name;
 
         // Find all rules for this category
@@ -116,6 +112,78 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
             .iter()
             .filter(|rule| rule.category == *category)
             .collect();
+
+        // Native types: generate simple recursive normalize (no beta-reduction, no collections)
+        if lang_type.native_type.is_some() {
+            let has_integer_rule = rules_for_category.iter().any(|r| is_integer_rule(r));
+            let has_var_rule = rules_for_category.iter().any(|r| is_var_rule(r));
+            let mut match_arms: Vec<TokenStream> = rules_for_category
+                .iter()
+                .filter_map(|rule| {
+                    if is_var_rule(rule) || is_integer_rule(rule) {
+                        return None;
+                    }
+                    let label = &rule.label;
+                    let fields: Vec<_> = rule
+                        .items
+                        .iter()
+                        .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+                        .collect();
+                    if fields.is_empty() {
+                        return Some(quote! { #category::#label => self.clone() });
+                    }
+                    let field_names: Vec<_> = (0..fields.len())
+                        .map(|i| format_ident!("f{}", i))
+                        .collect();
+                    let field_patterns: Vec<_> = field_names.iter().map(|n| quote! { ref #n }).collect();
+                    let normalized_fields: Vec<_> = fields
+                        .iter()
+                        .zip(field_names.iter())
+                        .map(|(item, name)| {
+                            if let GrammarItem::NonTerminal(field_cat) = item {
+                                if field_cat == category {
+                                    quote! { Box::new(#name.as_ref().normalize()) }
+                                } else {
+                                    quote! { #name.clone() }
+                                }
+                            } else {
+                                quote! { #name.clone() }
+                            }
+                        })
+                        .collect();
+                    Some(quote! {
+                        #category::#label(#(#field_patterns),*) => {
+                            #category::#label(#(#normalized_fields),*)
+                        }
+                    })
+                })
+                .collect();
+            if !has_integer_rule {
+                let literal_label = generate_literal_label(lang_type.native_type.as_ref().unwrap());
+                match_arms.push(quote! {
+                    #category::#literal_label(_) => self.clone()
+                });
+            }
+            if !has_var_rule {
+                let var_label = generate_var_label(category);
+                match_arms.push(quote! {
+                    #category::#var_label(_) => self.clone()
+                });
+            }
+            let impl_block = quote! {
+                impl #category {
+                    /// Recursively normalize subterms (no beta-reduction for native-type categories)
+                    pub fn normalize(&self) -> Self {
+                        match self {
+                            #(#match_arms),*,
+                            _ => self.clone()
+                        }
+                    }
+                }
+            };
+            impls.push(impl_block);
+            continue;
+        }
 
         // Find collection constructors
         let has_collections = rules_for_category.iter().any(|rule| {

@@ -4,7 +4,7 @@
 // Each language is defined in its own module using the language! macro.
 
 pub mod ambient;
-// pub mod calculator;
+pub mod calculator;
 pub mod lambda;
 pub mod rhocalc;
 
@@ -14,7 +14,7 @@ pub use ascent_byods_rels::eqrel;
 
 // Re-export the aliased macro names from the modules
 pub use ambient::ambient_source;
-// pub use calculator::calculator_source;
+pub use calculator::calculator_source;
 pub use lambda::lambda_source;
 pub use rhocalc::rhocalc_source;
 

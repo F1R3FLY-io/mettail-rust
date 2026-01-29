@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 // Import generated language implementations directly
 use mettail_languages::ambient::AmbientLanguage;
+use mettail_languages::calculator::CalculatorLanguage;
 use mettail_languages::lambda::LambdaLanguage;
 use mettail_languages::rhocalc::RhoCalcLanguage;
 
@@ -55,6 +56,7 @@ pub fn build_registry() -> Result<LanguageRegistry> {
 
     // Register auto-generated language implementations
     registry.register(Box::new(AmbientLanguage));
+    registry.register(Box::new(CalculatorLanguage));
     registry.register(Box::new(LambdaLanguage));
     registry.register(Box::new(RhoCalcLanguage));
 

@@ -39,12 +39,10 @@ use crate::ast::language::LanguageDef;
 /// Generate environment types for all exported categories
 pub fn generate_environments(language: &LanguageDef) -> TokenStream {
     let language_name = &language.name;
-    
-    // Filter to only categories without native types (native types like i32 don't have variables)
-    let categories: Vec<_> = language.types.iter()
-        .filter(|t| t.native_type.is_none())
-        .collect();
-    
+
+    // Include all categories (terms can have variables via IVar etc. even when native_type is set)
+    let categories: Vec<_> = language.types.iter().collect();
+
     if categories.is_empty() {
         return quote! {};
     }

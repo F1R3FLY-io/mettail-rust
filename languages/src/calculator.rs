@@ -18,10 +18,10 @@ language! {
     equations {
     },
     rewrites {
-        if S ~> T then (Add S R) ~> (Add T R);
-        if S ~> T then (Add L S) ~> (Add L T);
-        if S ~> T then (Sub S R) ~> (Sub T R);
-        if S ~> T then (Sub L S) ~> (Sub L T);
+        AddCongL . | S ~> T |- (Add S R) ~> (Add T R);
+        AddCongR . | S ~> T |- (Add L S) ~> (Add L T);
+        SubCongL . | S ~> T |- (Sub S R) ~> (Sub T R);
+        SubCongR . | S ~> T |- (Sub L S) ~> (Sub L T);
     },
     semantics {
         Add: +,

@@ -412,14 +412,15 @@ fn parse_syntax_pattern(input: ParseStream) -> SynResult<Vec<SyntaxExpr>> {
     Ok(exprs)
 }
 
-/// Check if we're at the end of a syntax pattern (`: Type ;`)
+/// Check if we're at the end of a syntax pattern (`: Type` optionally followed by `;` or `![code]`)
 fn is_end_of_syntax_pattern(input: ParseStream) -> bool {
     if input.peek(Token![:]) {
         let fork = input.fork();
         let _ = fork.parse::<Token![:]>();
         if fork.peek(Ident) {
             let _ = fork.parse::<Ident>();
-            return fork.peek(Token![;]);
+            // End of pattern: either `;` or optional `![code]` / eval_mode
+            return fork.peek(Token![;]) || fork.peek(Token![!]);
         }
     }
     false
