@@ -159,11 +159,11 @@ fn generate_category_production(
     let (var_terminal_rules, non_var_terminal_rules): (Vec<&GrammarRule>, Vec<&GrammarRule>) =
         rules.iter().copied().partition(|r| is_var_terminal_rule(r));
 
-    // Classify remaining rules by type
+    // Classify remaining rules by type (both old BNFC infix and HOL infix need tiered production)
     let (infix_rules, other_rules): (Vec<&GrammarRule>, Vec<&GrammarRule>) = non_var_terminal_rules
         .iter()
         .copied()
-        .partition(|r| is_infix_rule(r));
+        .partition(|r| is_infix_rule(r) || is_hol_infix_rule(r));
 
     // If we have infix operators or var+terminal rules, generate tiered rules for precedence
     if !infix_rules.is_empty() || !var_terminal_rules.is_empty() {
@@ -205,6 +205,47 @@ fn is_infix_rule(rule: &GrammarRule) -> bool {
     first_match && last_match && has_terminal
 }
 
+/// Check if a HOL-style rule is binary infix (e.g., a:Int, b:Int |- a "+" b : Int)
+/// Such rules need tiered production for left-associativity and precedence.
+fn is_hol_infix_rule(rule: &GrammarRule) -> bool {
+    let (term_context, syntax_pattern) = match (&rule.term_context, &rule.syntax_pattern) {
+        (Some(tc), Some(sp)) => (tc, sp),
+        _ => return false,
+    };
+    // Pattern must be exactly [Param, Literal, Param]
+    if syntax_pattern.len() != 3 {
+        return false;
+    }
+    let (left_param, right_param) = match (&syntax_pattern[0], &syntax_pattern[1], &syntax_pattern[2]) {
+        (SyntaxExpr::Param(l), SyntaxExpr::Literal(_op), SyntaxExpr::Param(r)) => (l, r),
+        _ => return false,
+    };
+    // Both params must have type equal to rule.category (compare by string for robustness)
+    let param_ty = |name: &syn::Ident| -> Option<&syn::Ident> {
+        let name_str = name.to_string();
+        term_context.iter().find_map(|p| {
+            if let TermParam::Simple { name: n, ty } = p {
+                if n.to_string() == name_str {
+                    if let TypeExpr::Base(t) = ty {
+                        return Some(t);
+                    }
+                }
+            }
+            None
+        })
+    };
+    let left_ty = match param_ty(left_param) {
+        Some(t) => t,
+        None => return false,
+    };
+    let right_ty = match param_ty(right_param) {
+        Some(t) => t,
+        None => return false,
+    };
+    let cat_str = rule.category.to_string();
+    left_ty.to_string() == cat_str && right_ty.to_string() == cat_str
+}
+
 /// Generate tiered production for handling precedence
 fn generate_tiered_production(
     category: &syn::Ident,
@@ -239,7 +280,12 @@ fn generate_tiered_production(
     // Generate left-recursive rules for infix operators
     for rule in infix_rules.iter() {
         production.push_str("    ");
-        production.push_str(&generate_infix_alternative(rule, &cat_str));
+        let alt = if is_hol_infix_rule(rule) {
+            generate_hol_infix_alternative(rule, &cat_str)
+        } else {
+            generate_infix_alternative(rule, &cat_str)
+        };
+        production.push_str(&alt);
         production.push_str(",\n");
     }
 
@@ -301,6 +347,24 @@ fn generate_tiered_production(
 
     production.push_str("\n};\n");
     production
+}
+
+/// Generate alternative for HOL-style infix rule (left-associative)
+/// Pattern is [Param, Literal, Param]; produces <left:CatInfix> "op" <right:CatAtom> => ...
+fn generate_hol_infix_alternative(rule: &GrammarRule, cat_str: &str) -> String {
+    let label = &rule.label;
+    let category = &rule.category;
+    let syntax_pattern = rule.syntax_pattern.as_ref().expect("HOL infix rule has syntax_pattern");
+    let op_str = match &syntax_pattern[1] {
+        SyntaxExpr::Literal(s) => s.as_str(),
+        _ => panic!("HOL infix pattern[1] must be Literal"),
+    };
+    // Escape " and \ for LALRPOP string literal
+    let escaped = op_str.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "<left:{}Infix> \"{}\" <right:{}Atom> => {}::{}(Box::new(left), Box::new(right))",
+        cat_str, escaped, cat_str, category, label
+    )
 }
 
 /// Generate alternative for infix operator (left-associative)

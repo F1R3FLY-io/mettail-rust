@@ -12,8 +12,9 @@ language! {
         ![i32] as Int
     },
     terms {
-        Add . Int ::= Int "+" Int ;
-        Sub . Int ::= Int "-" Int ;
+        Add . a:Int, b:Int |- a "+" b : Int ![a + b] step;
+        Sub . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
+        Up . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
     },
     equations {
     },
@@ -23,8 +24,4 @@ language! {
         SubCongL . | S ~> T |- (Sub S R) ~> (Sub T R);
         SubCongR . | S ~> T |- (Sub L S) ~> (Sub L T);
     },
-    semantics {
-        Add: +,
-        Sub: -,
-    }
 }
