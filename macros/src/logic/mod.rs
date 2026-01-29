@@ -17,6 +17,8 @@
 //! 3. **Equation Rules**: Add reflexivity, congruence, and user-defined equalities
 //! 4. **Rewrite Rules**: Base rewrites + congruence rules (propagate through constructors)
 
+use crate::ast::types::EvalMode;
+use crate::gen::{generate_literal_label, is_integer_rule};
 use crate::{ast::{grammar::GrammarItem, language::{BuiltinOp, LanguageDef, SemanticOperation}}, logic::rules::generate_base_rewrites};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
@@ -157,12 +159,25 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
 
 /// Generate semantic evaluation rules for constructors with semantics
 /// For example: Add (NumLit a) (NumLit b) => NumLit(a + b)
+/// Respects eval_mode: only generates folding if Fold, Both, or unspecified (skip if Step).
 fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
-
     let mut rules = Vec::new();
 
     for semantic in &language.semantics {
         let constructor_name = &semantic.constructor;
+
+        // Check eval_mode for this rule: skip folding if Step-only
+        let should_generate_folding = if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
+            match rule.eval_mode {
+                Some(EvalMode::Step) => false,
+                Some(EvalMode::Fold) | Some(EvalMode::Both) | None => true,
+            }
+        } else {
+            true
+        };
+        if !should_generate_folding {
+            continue;
+        }
 
         // Extract the operator
         let op_token = match &semantic.operation {
@@ -213,6 +228,58 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 });
             }
         }
+    }
+
+    // Generate folding rules for rules that have HOL rust_code but are not in semantics
+    // e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
+    let native_type_for = |category: &Ident| {
+        language
+            .types
+            .iter()
+            .find(|t| t.name == *category)
+            .and_then(|t| t.native_type.as_ref())
+    };
+    for rule in &language.terms {
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if language
+            .semantics
+            .iter()
+            .any(|s| s.constructor == rule.label)
+        {
+            continue;
+        }
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .count();
+        if non_terminal_count != 2 {
+            continue;
+        }
+        let category = &rule.category;
+        let Some(_native_type) = native_type_for(category) else {
+            continue;
+        };
+        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
+        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
+        let label = &rule.label;
+        let num_lit_label = language
+            .terms
+            .iter()
+            .find(|r| r.category == *category && is_integer_rule(r))
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| generate_literal_label(_native_type));
+        let rust_code = &rule.rust_code.as_ref().unwrap().code;
+        rules.push(quote! {
+            #rw_rel(s, t) <--
+                #cat_rel(s),
+                if let #category::#label(left, right) = s,
+                if let #category::#num_lit_label(a) = left.as_ref(),
+                if let #category::#num_lit_label(b) = right.as_ref(),
+                let t = #category::#num_lit_label((#rust_code));
+        });
     }
 
     rules

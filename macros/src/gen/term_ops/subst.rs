@@ -1574,6 +1574,8 @@ mod tests {
             bindings: vec![],
             term_context: None,
             syntax_pattern: None,
+            rust_code: None,
+            eval_mode: None,
         };
 
         let language = LanguageDef {
@@ -1608,6 +1610,8 @@ mod tests {
                     bindings: vec![],
                     term_context: None,
                     syntax_pattern: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
                 GrammarRule {
                     label: parse_quote!(EVar),
@@ -1616,6 +1620,8 @@ mod tests {
                     bindings: vec![],
                     term_context: None,
                     syntax_pattern: None,
+                    rust_code: None,
+                    eval_mode: None,
                 },
             ],
             equations: vec![],

@@ -3,7 +3,7 @@ use syn::{
     Ident, Result as SynResult, Token,
 };
 
-use super::types::{CollectionType, TypeExpr};
+use super::types::{CollectionType, EvalMode, RustCodeBlock, TypeExpr};
 
 /// Item in a grammar rule
 #[derive(Debug, Clone, PartialEq)]
@@ -129,6 +129,11 @@ pub struct GrammarRule {
     /// Concrete syntax pattern: `"for" "(" x "<-" n ")" "{" p "}"`
     /// Can include pattern operations like `ps.#sep("|")`
     pub syntax_pattern: Option<Vec<SyntaxExpr>>,
+
+    /// HOL syntax: optional Rust code implementation, e.g. `![a + b]`
+    pub rust_code: Option<RustCodeBlock>,
+    /// HOL syntax: evaluation mode (fold / step / both)
+    pub eval_mode: Option<EvalMode>,
 }
 
 pub fn parse_terms(input: ParseStream) -> SynResult<Vec<GrammarRule>> {
@@ -228,17 +233,19 @@ fn parse_grammar_rule_old(label: Ident, input: ParseStream) -> SynResult<Grammar
     // Infer binding structure: each Binder binds in the next NonTerminal
     let bindings = infer_bindings(&items);
 
-    Ok(GrammarRule { 
-        label, 
-        category, 
-        items, 
+    Ok(GrammarRule {
+        label,
+        category,
+        items,
         bindings,
         term_context: None,
         syntax_pattern: None,
+        rust_code: None,
+        eval_mode: None,
     })
 }
 
-/// Parse new judgement-style syntax: `Label . context |- pattern : Type ;`
+/// Parse new judgement-style syntax: `Label . context |- pattern : Type [ ![code] mode ] ;`
 fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<GrammarRule> {
     // Parse term context: param, param, ...
     let term_context = parse_term_context(input)?;
@@ -257,6 +264,35 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
     let _ = input.parse::<Token![:]>()?;
     let category = input.parse::<Ident>()?;
     
+    // Parse optional Rust code block: ![code]
+    let rust_code = if input.peek(Token![!]) && input.peek2(syn::token::Bracket) {
+        let _ = input.parse::<Token![!]>()?;
+        let content;
+        syn::bracketed!(content in input);
+        let code = content.parse::<syn::Expr>()?;
+        Some(RustCodeBlock { code })
+    } else {
+        None
+    };
+
+    // Parse optional evaluation mode: fold, step, both
+    let eval_mode = if input.peek(syn::Ident) {
+        let mode_ident = input.parse::<syn::Ident>()?;
+        match mode_ident.to_string().as_str() {
+            "fold" => Some(EvalMode::Fold),
+            "step" => Some(EvalMode::Step),
+            "both" => Some(EvalMode::Both),
+            _ => {
+                return Err(syn::Error::new(
+                    mode_ident.span(),
+                    "expected evaluation mode: fold, step, or both",
+                ));
+            }
+        }
+    } else {
+        None
+    };
+    
     // Parse ;
     let _ = input.parse::<Token![;]>()?;
     
@@ -270,6 +306,8 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
         bindings,
         term_context: Some(term_context),
         syntax_pattern: Some(syntax_pattern),
+        rust_code,
+        eval_mode,
     })
 }
 

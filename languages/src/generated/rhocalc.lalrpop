@@ -21,17 +21,6 @@ pub Proc: Proc = {
     "0" => Proc::PZero,
     "*" "(" <n:Name> ")" => Proc::PDrop(Box::new(n)),
     <n:Name> "!" "(" <q:Proc> ")" => Proc::POutput(Box::new(n), Box::new(q)),
-    <n:Name> "?" <x:Ident> "." "{" <p:Proc> "}" => {
-        use mettail_runtime::BoundTerm;
-        let free_vars = p.free_vars();
-        let binder = if let Some(fv) = free_vars.iter().find(|fv| fv.pretty_name.as_deref() == Some(&x)) {
-            Binder((*fv).clone())
-        } else {
-            Binder(mettail_runtime::get_or_create_var(x))
-        };
-        let scope = Scope::new(binder, Box::new(p));
-        Proc::PInput(Box::new(n), scope)
-    },
     "(" <__pairs_v:((Name "?" Ident) ",")*> <__pair_e:(Name "?" Ident)?> ")" "." "{" <p:Proc> "}" => {
         let mut ns = Vec::new();
 let mut __binder_strs = Vec::new();

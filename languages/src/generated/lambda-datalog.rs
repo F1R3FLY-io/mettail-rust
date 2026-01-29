@@ -6,305 +6,111 @@ ascent_source! {
     lambda_source:
 
     // Relations
-relation proc(Proc);
+relation term(Term);
 
-relation name(Name);
+#[ds(crate :: eqrel)] relation eq_term(Term, Term);
 
-#[ds(crate :: eqrel)] relation eq_proc(Proc, Proc);
-
-#[ds(crate :: eqrel)] relation eq_name(Name, Name);
-
-relation rw_proc(Proc, Proc);
-
-relation rw_name(Name, Name);
+relation rw_term(Term, Term);
 
 
     // Category rules
-proc(c1) <--
-    proc(c0),
-    rw_proc(c0, c1);
+term(c1) <--
+    term(c0),
+    rw_term(c0, c1);
 
-proc(body_value) <--
-    proc(t),
-    if let Proc :: Lam(scope) = t,
+term(body_value) <--
+    term(t),
+    if let Term :: Lam(scope) = t,
     let body_value = scope.inner().unsafe_body.as_ref().clone();
 
-proc(field_0.as_ref().clone()),
-proc(field_1.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: App(field_0, field_1) = t;
+term(field_0.as_ref().clone()),
+term(field_1.as_ref().clone()) <--
+    term(t),
+    if let Term :: App(field_0, field_1) = t;
 
-proc(lam.as_ref().clone()),
-proc(arg.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: ApplyProc(lam, arg) = t;
+term(lam.as_ref().clone()),
+term(arg.as_ref().clone()) <--
+    term(t),
+    if let Term :: ApplyTerm(lam, arg) = t;
 
-proc(lam.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: MApplyProc(lam, _) = t;
+term(lam.as_ref().clone()) <--
+    term(t),
+    if let Term :: MApplyTerm(lam, _) = t;
 
-proc(arg.clone()) <--
-    proc(t),
-    if let Proc :: MApplyProc(_, args) = t,
+term(arg.clone()) <--
+    term(t),
+    if let Term :: MApplyTerm(_, args) = t,
     for arg in args.iter();
 
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: LamProc(scope) = t;
+term((* scope.inner().unsafe_body).clone()) <--
+    term(t),
+    if let Term :: LamTerm(scope) = t;
 
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: MLamProc(scope) = t;
+term((* scope.inner().unsafe_body).clone()) <--
+    term(t),
+    if let Term :: MLamTerm(scope) = t;
 
-proc(lam.as_ref().clone()),
-name(arg.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: ApplyName(lam, arg) = t;
+rw_term(Term :: ApplyTerm(lam.clone(), arg.clone()), Term :: ApplyTerm(Box :: new(lam_new.clone()), arg.clone())) <--
+    term(t),
+    if let Term :: ApplyTerm(ref lam, ref arg) = t,
+    rw_term(lam.as_ref().clone(), lam_new);
 
-proc(lam.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: MApplyName(lam, _) = t;
+rw_term(Term :: ApplyTerm(lam.clone(), arg.clone()), Term :: ApplyTerm(lam.clone(), Box :: new(arg_new.clone()))) <--
+    term(t),
+    if let Term :: ApplyTerm(ref lam, ref arg) = t,
+    rw_term(arg.as_ref().clone(), arg_new);
 
-name(arg.clone()) <--
-    proc(t),
-    if let Proc :: MApplyName(_, args) = t,
-    for arg in args.iter();
-
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: LamName(scope) = t;
-
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: MLamName(scope) = t;
-
-rw_proc(Proc :: ApplyProc(lam.clone(), arg.clone()), Proc :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
-    proc(t),
-    if let Proc :: ApplyProc(ref lam, ref arg) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
-
-rw_proc(Proc :: ApplyProc(lam.clone(), arg.clone()), Proc :: ApplyProc(lam.clone(), Box :: new(arg_new.clone()))) <--
-    proc(t),
-    if let Proc :: ApplyProc(ref lam, ref arg) = t,
-    rw_proc(arg.as_ref().clone(), arg_new);
-
-rw_proc(Proc :: MApplyProc(lam.clone(), args.clone()), Proc :: MApplyProc(Box :: new(lam_new.clone()), args.clone())) <--
-    proc(t),
-    if let Proc :: MApplyProc(ref lam, ref args) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
-
-rw_proc(Proc :: ApplyName(lam.clone(), arg.clone()), Proc :: ApplyName(Box :: new(lam_new.clone()), arg.clone())) <--
-    proc(t),
-    if let Proc :: ApplyName(ref lam, ref arg) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
-
-rw_proc(Proc :: ApplyName(lam.clone(), arg.clone()), Proc :: ApplyName(lam.clone(), Box :: new(arg_new.clone()))) <--
-    proc(t),
-    if let Proc :: ApplyName(ref lam, ref arg) = t,
-    rw_name(arg.as_ref().clone(), arg_new);
-
-rw_proc(Proc :: MApplyName(lam.clone(), args.clone()), Proc :: MApplyName(Box :: new(lam_new.clone()), args.clone())) <--
-    proc(t),
-    if let Proc :: MApplyName(ref lam, ref args) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
-
-name(c1) <--
-    name(c0),
-    rw_name(c0, c1);
-
-name(lam.as_ref().clone()),
-proc(arg.as_ref().clone()) <--
-    name(t),
-    if let Name :: ApplyProc(lam, arg) = t;
-
-name(lam.as_ref().clone()) <--
-    name(t),
-    if let Name :: MApplyProc(lam, _) = t;
-
-proc(arg.clone()) <--
-    name(t),
-    if let Name :: MApplyProc(_, args) = t,
-    for arg in args.iter();
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: LamProc(scope) = t;
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: MLamProc(scope) = t;
-
-name(lam.as_ref().clone()),
-name(arg.as_ref().clone()) <--
-    name(t),
-    if let Name :: ApplyName(lam, arg) = t;
-
-name(lam.as_ref().clone()) <--
-    name(t),
-    if let Name :: MApplyName(lam, _) = t;
-
-name(arg.clone()) <--
-    name(t),
-    if let Name :: MApplyName(_, args) = t,
-    for arg in args.iter();
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: LamName(scope) = t;
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: MLamName(scope) = t;
-
-rw_name(Name :: ApplyProc(lam.clone(), arg.clone()), Name :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
-    name(t),
-    if let Name :: ApplyProc(ref lam, ref arg) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
-
-rw_name(Name :: ApplyProc(lam.clone(), arg.clone()), Name :: ApplyProc(lam.clone(), Box :: new(arg_new.clone()))) <--
-    name(t),
-    if let Name :: ApplyProc(ref lam, ref arg) = t,
-    rw_proc(arg.as_ref().clone(), arg_new);
-
-rw_name(Name :: MApplyProc(lam.clone(), args.clone()), Name :: MApplyProc(Box :: new(lam_new.clone()), args.clone())) <--
-    name(t),
-    if let Name :: MApplyProc(ref lam, ref args) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
-
-rw_name(Name :: ApplyName(lam.clone(), arg.clone()), Name :: ApplyName(Box :: new(lam_new.clone()), arg.clone())) <--
-    name(t),
-    if let Name :: ApplyName(ref lam, ref arg) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
-
-rw_name(Name :: ApplyName(lam.clone(), arg.clone()), Name :: ApplyName(lam.clone(), Box :: new(arg_new.clone()))) <--
-    name(t),
-    if let Name :: ApplyName(ref lam, ref arg) = t,
-    rw_name(arg.as_ref().clone(), arg_new);
-
-rw_name(Name :: MApplyName(lam.clone(), args.clone()), Name :: MApplyName(Box :: new(lam_new.clone()), args.clone())) <--
-    name(t),
-    if let Name :: MApplyName(ref lam, ref args) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
+rw_term(Term :: MApplyTerm(lam.clone(), args.clone()), Term :: MApplyTerm(Box :: new(lam_new.clone()), args.clone())) <--
+    term(t),
+    if let Term :: MApplyTerm(ref lam, ref args) = t,
+    rw_term(lam.as_ref().clone(), lam_new);
 
 
     // Equation rules
-eq_proc(t.clone(), t.clone()) <--
-    proc(t);
+eq_term(t.clone(), t.clone()) <--
+    term(t);
 
-eq_name(t.clone(), t.clone()) <--
-    name(t);
-
-eq_proc(s.clone(), t.clone()) <--
-    proc(s),
-    if let Proc :: App(ref s_f0, ref s_f1) = s,
-    proc(t),
-    if let Proc :: App(ref t_f0, ref t_f1) = t,
-    eq_proc(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_proc(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_term(s.clone(), t.clone()) <--
+    term(s),
+    if let Term :: App(ref s_f0, ref s_f1) = s,
+    term(t),
+    if let Term :: App(ref t_f0, ref t_f1) = t,
+    eq_term(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_term(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
 
     // Rewrite rules
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: App(ref s_f0, ref s_f1) = s,
+rw_term(s_orig.clone(), t) <--
+    eq_term(s_orig, s),
+    if let Term :: App(ref s_f0, ref s_f1) = s,
     let s_f0_deref = & * * s_f0,
-    if let Proc :: Lam(ref s_f0_deref_f0) = s_f0_deref,
+    if let Term :: Lam(ref s_f0_deref_f0) = s_f0_deref,
     let s_f0_deref_f0_binder = s_f0_deref_f0.unsafe_pattern().clone(),
     let s_f0_deref_f0_body_boxed = s_f0_deref_f0.unsafe_body(),
     let s_f0_deref_f0_body = & * * s_f0_deref_f0_body_boxed,
     let s_f1_deref = & * * s_f1,
-    if let Proc :: Lam(ref s_f1_deref_f0) = s_f1_deref,
-    let s_f1_deref_f0_binder = s_f1_deref_f0.unsafe_pattern().clone(),
-    let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
-    let s_f1_deref_f0_body = & * * s_f1_deref_f0_body_boxed,
-    let t = { let __scope = mettail_runtime :: Scope :: from_parts_unsafe(s_f0_deref_f0_binder.clone().clone(), Box :: new((s_f0_deref_f0_body.clone()).clone()));
+    let t = ({ let (__binder, __body) = ((s_f0_deref_f0.clone()).clone()).unbind();
 
-let (__fresh_binder, __fresh_body) = __scope.unbind();
+(* __body).substitute_term(& __binder.0, & (s_f1_deref.clone()).clone()) }).normalize();
 
-__fresh_body.substitute_proc(& __fresh_binder.0, & Proc :: Lam(mettail_runtime :: Scope :: from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box :: new((s_f1_deref_f0_body.clone()).clone())))) };
+rw_term(lhs, rhs) <--
+    term(lhs),
+    if let Term :: App(ref x0, ref x1) = lhs,
+    rw_term((* * x0).clone(), t),
+    let rhs = Term :: App(Box :: new(t.clone()), x1.clone());
 
-rw_proc(lhs, rhs) <--
-    proc(lhs),
-    if let Proc :: App(ref x0, ref x1) = lhs,
-    rw_proc((* * x0).clone(), t),
-    let rhs = Proc :: App(Box :: new(t.clone()), x1.clone());
+rw_term(lhs, rhs) <--
+    term(lhs),
+    if let Term :: App(ref x0, ref x1) = lhs,
+    rw_term((* * x1).clone(), t),
+    let rhs = Term :: App(x0.clone(), Box :: new(t.clone()));
 
-rw_proc(lhs, rhs) <--
-    proc(lhs),
-    if let Proc :: App(ref x0, ref x1) = lhs,
-    rw_proc((* * x1).clone(), t),
-    let rhs = Proc :: App(x0.clone(), Box :: new(t.clone()));
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: ApplyProc(ref lam_box, ref arg_box) = s,
-    if let Proc :: LamProc(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_proc(& binder.0, & * * arg_box) };
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: MApplyProc(ref lam_box, ref args) = s,
-    if let Proc :: MLamProc(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_proc(& vars, args) };
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: ApplyName(ref lam_box, ref arg_box) = s,
-    if let Proc :: LamName(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_name(& binder.0, & * * arg_box) };
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: MApplyName(ref lam_box, ref args) = s,
-    if let Proc :: MLamName(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_name(& vars, args) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: ApplyProc(ref lam_box, ref arg_box) = s,
-    if let Name :: LamProc(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_proc(& binder.0, & * * arg_box) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: MApplyProc(ref lam_box, ref args) = s,
-    if let Name :: MLamProc(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_proc(& vars, args) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: ApplyName(ref lam_box, ref arg_box) = s,
-    if let Name :: LamName(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_name(& binder.0, & * * arg_box) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: MApplyName(ref lam_box, ref args) = s,
-    if let Name :: MLamName(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_name(& vars, args) };
+rw_term(lhs, rhs) <--
+    term(lhs),
+    if let Term :: Lam(ref scope) = lhs,
+    let binder = scope.unsafe_pattern().clone(),
+    let body = scope.unsafe_body(),
+    rw_term((* * body).clone(), body_rewritten),
+    let rhs = Term :: Lam(mettail_runtime :: Scope :: from_parts_unsafe(binder.clone(), Box :: new(body_rewritten.clone())));
 
 }

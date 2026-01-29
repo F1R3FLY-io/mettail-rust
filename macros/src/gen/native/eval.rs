@@ -3,9 +3,29 @@ use quote::quote;
 use std::collections::HashMap;
 
 /// Generate eval() method for native types
-use crate::ast::grammar::{GrammarItem, GrammarRule};
+use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{BuiltinOp, LanguageDef, SemanticOperation};
 use crate::gen::{generate_var_label, generate_literal_label, is_integer_rule};
+
+/// Extract parameter names from term_context in the same order as generated variant fields.
+/// Used for rust_code eval arms: param names match constructor field names.
+fn term_context_param_names(term_context: &[TermParam]) -> Vec<syn::Ident> {
+    let mut names = Vec::new();
+    for p in term_context {
+        match p {
+            TermParam::Simple { name, .. } => names.push(name.clone()),
+            TermParam::Abstraction { binder, body, .. } => {
+                names.push(binder.clone());
+                names.push(body.clone());
+            }
+            TermParam::MultiAbstraction { binder, body, .. } => {
+                names.push(binder.clone());
+                names.push(body.clone());
+            }
+        }
+    }
+    names
+}
 
 pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
     let mut impls = Vec::new();
@@ -31,11 +51,11 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         }
 
         // Build map of constructor -> semantic operation
+        // Skip rules that already have HOL Rust code blocks (they get their own eval arms)
         let mut semantics_map: HashMap<String, BuiltinOp> = HashMap::new();
         for semantic_rule in &language.semantics {
-            // Find the rule for this constructor
             if let Some(rule) = rules.iter().find(|r| r.label == semantic_rule.constructor) {
-                if rule.category == *category {
+                if rule.category == *category && rule.rust_code.is_none() {
                     let SemanticOperation::Builtin(op) = &semantic_rule.operation;
                     semantics_map.insert(semantic_rule.constructor.to_string(), *op);
                 }
@@ -75,6 +95,57 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 match_arms.push(quote! {
                     #category::#label(n) => *n,
                 });
+            }
+            // HOL syntax: rule with Rust code block - generate eval from rust_code
+            else if let Some(ref rust_code_block) = rule.rust_code {
+                let param_names = rule
+                    .term_context
+                    .as_ref()
+                    .map(|ctx| term_context_param_names(ctx))
+                    .unwrap_or_default();
+                let param_count = param_names.len();
+                let param_bindings: Vec<_> = param_names
+                    .iter()
+                    .map(|name| quote! { let #name = #name.as_ref().eval(); })
+                    .collect();
+                let rust_code = &rust_code_block.code;
+                let match_arm = match param_count {
+                    0 => quote! {
+                        #category::#label => (#rust_code),
+                    },
+                    1 => {
+                        let p0 = &param_names[0];
+                        quote! {
+                            #category::#label(#p0) => {
+                                #(#param_bindings)*
+                                (#rust_code)
+                            },
+                        }
+                    }
+                    2 => {
+                        let p0 = &param_names[0];
+                        let p1 = &param_names[1];
+                        quote! {
+                            #category::#label(#p0, #p1) => {
+                                #(#param_bindings)*
+                                (#rust_code)
+                            },
+                        }
+                    }
+                    3 => {
+                        let p0 = &param_names[0];
+                        let p1 = &param_names[1];
+                        let p2 = &param_names[2];
+                        quote! {
+                            #category::#label(#p0, #p1, #p2) => {
+                                #(#param_bindings)*
+                                (#rust_code)
+                            },
+                        }
+                    }
+                    _ => continue, // 4+ params: skip or extend later
+                };
+                match_arms.push(match_arm);
             }
             // Check if this has semantics (operator)
             else if let Some(op) = semantics_map.get(&label_str) {

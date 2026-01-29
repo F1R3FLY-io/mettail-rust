@@ -251,7 +251,8 @@ eq_proc(s.clone(), t.clone()) <--
     eq_name(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_proc(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PNew(ref s_f0) = s,
     let s_f0_binder = s_f0.unsafe_pattern().clone(),
@@ -261,9 +262,10 @@ eq_proc(s.clone(), t) <--
     let s_f0_body_f0_binder = s_f0_body_f0.unsafe_pattern().clone(),
     let s_f0_body_f0_body_boxed = s_f0_body_f0.unsafe_body(),
     let s_f0_body_f0_body = & * * s_f0_body_f0_body_boxed,
-    let t = Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_body_f0_binder.clone().clone(), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f0_body.clone()).clone()))))));
+    let t = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_body_f0_binder.clone().clone(), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f0_body.clone()).clone()))))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PNew(ref s_f0) = s,
     let s_f0_binder = s_f0.unsafe_pattern().clone(),
@@ -273,9 +275,10 @@ eq_proc(s.clone(), t) <--
     let s_f0_body_f0_binder = s_f0_body_f0.unsafe_pattern().clone(),
     let s_f0_body_f0_body_boxed = s_f0_body_f0.unsafe_body(),
     let s_f0_body_f0_body = & * * s_f0_body_f0_body_boxed,
-    let t = Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_body_f0_binder.clone().clone(), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f0_body.clone()).clone()))))));
+    let t = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_body_f0_binder.clone().clone(), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f0_body.clone()).clone()))))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PPar(ref s_f0) = s,
     for (s_f0_e0, _count_0) in s_f0.iter(),
@@ -287,13 +290,14 @@ eq_proc(s.clone(), t) <--
 
 bag.remove(& s_f0_e0);
 
-bag }, if s_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime :: BoundTerm :: free_vars(elem).contains(& s_f0_e0_f0_binder.0.clone())), let t = Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_e0_f0_binder.clone().clone(), Box :: new(Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
+bag }, if s_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime :: BoundTerm :: free_vars(elem).contains(& s_f0_e0_f0_binder.0.clone())), let t = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_e0_f0_binder.clone().clone(), Box :: new(Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
 
 Proc :: insert_into_ppar(& mut bag, (s_f0_e0_f0_body.clone()).clone());
 
-bag }))));
+bag }))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PNew(ref s_f0) = s,
     let s_f0_binder = s_f0.unsafe_pattern().clone(),
@@ -305,13 +309,14 @@ eq_proc(s.clone(), t) <--
 
 bag.remove(& s_f0_body_f0_e0);
 
-bag }, if s_f0_body_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime :: BoundTerm :: free_vars(elem).contains(& s_f0_binder.0.clone())), let t = Proc :: PPar({ let mut bag = (s_f0_body_f0_rest.clone()).clone();
+bag }, if s_f0_body_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime :: BoundTerm :: free_vars(elem).contains(& s_f0_binder.0.clone())), let t = (Proc :: PPar({ let mut bag = (s_f0_body_f0_rest.clone()).clone();
 
 Proc :: insert_into_ppar(& mut bag, Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f0_e0.clone()).clone()))));
 
-bag });
+bag })).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PIn(ref s_f0, ref s_f1) = s,
     let s_f0_deref = & * * s_f0,
@@ -321,9 +326,10 @@ eq_proc(s.clone(), t) <--
     let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
     let s_f1_deref_f0_body = & * * s_f1_deref_f0_body_boxed,
     if ! mettail_runtime :: BoundTerm :: free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
-    let t = Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box :: new(Proc :: PIn(Box :: new((s_f0_deref.clone()).clone()), Box :: new((s_f1_deref_f0_body.clone()).clone())))));
+    let t = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box :: new(Proc :: PIn(Box :: new((s_f0_deref.clone()).clone()), Box :: new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PNew(ref s_f0) = s,
     let s_f0_binder = s_f0.unsafe_pattern().clone(),
@@ -333,9 +339,10 @@ eq_proc(s.clone(), t) <--
     let s_f0_body_f0_deref = & * * s_f0_body_f0,
     let s_f0_body_f1_deref = & * * s_f0_body_f1,
     if ! mettail_runtime :: BoundTerm :: free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
-    let t = Proc :: PIn(Box :: new((s_f0_body_f0_deref.clone()).clone()), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f1_deref.clone()).clone())))));
+    let t = (Proc :: PIn(Box :: new((s_f0_body_f0_deref.clone()).clone()), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: POut(ref s_f0, ref s_f1) = s,
     let s_f0_deref = & * * s_f0,
@@ -345,9 +352,10 @@ eq_proc(s.clone(), t) <--
     let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
     let s_f1_deref_f0_body = & * * s_f1_deref_f0_body_boxed,
     if ! mettail_runtime :: BoundTerm :: free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
-    let t = Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box :: new(Proc :: POut(Box :: new((s_f0_deref.clone()).clone()), Box :: new((s_f1_deref_f0_body.clone()).clone())))));
+    let t = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box :: new(Proc :: POut(Box :: new((s_f0_deref.clone()).clone()), Box :: new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PNew(ref s_f0) = s,
     let s_f0_binder = s_f0.unsafe_pattern().clone(),
@@ -357,9 +365,10 @@ eq_proc(s.clone(), t) <--
     let s_f0_body_f0_deref = & * * s_f0_body_f0,
     let s_f0_body_f1_deref = & * * s_f0_body_f1,
     if ! mettail_runtime :: BoundTerm :: free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
-    let t = Proc :: POut(Box :: new((s_f0_body_f0_deref.clone()).clone()), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f1_deref.clone()).clone())))));
+    let t = (Proc :: POut(Box :: new((s_f0_body_f0_deref.clone()).clone()), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: POpen(ref s_f0, ref s_f1) = s,
     let s_f0_deref = & * * s_f0,
@@ -369,9 +378,10 @@ eq_proc(s.clone(), t) <--
     let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
     let s_f1_deref_f0_body = & * * s_f1_deref_f0_body_boxed,
     if ! mettail_runtime :: BoundTerm :: free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
-    let t = Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box :: new(Proc :: POpen(Box :: new((s_f0_deref.clone()).clone()), Box :: new((s_f1_deref_f0_body.clone()).clone())))));
+    let t = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box :: new(Proc :: POpen(Box :: new((s_f0_deref.clone()).clone()), Box :: new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PNew(ref s_f0) = s,
     let s_f0_binder = s_f0.unsafe_pattern().clone(),
@@ -381,9 +391,10 @@ eq_proc(s.clone(), t) <--
     let s_f0_body_f0_deref = & * * s_f0_body_f0,
     let s_f0_body_f1_deref = & * * s_f0_body_f1,
     if ! mettail_runtime :: BoundTerm :: free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
-    let t = Proc :: POpen(Box :: new((s_f0_body_f0_deref.clone()).clone()), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f1_deref.clone()).clone())))));
+    let t = (Proc :: POpen(Box :: new((s_f0_body_f0_deref.clone()).clone()), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PAmb(ref s_f0, ref s_f1) = s,
     let s_f0_deref = & * * s_f0,
@@ -393,9 +404,10 @@ eq_proc(s.clone(), t) <--
     let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
     let s_f1_deref_f0_body = & * * s_f1_deref_f0_body_boxed,
     if ! mettail_runtime :: BoundTerm :: free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
-    let t = Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box :: new(Proc :: PAmb(Box :: new((s_f0_deref.clone()).clone()), Box :: new((s_f1_deref_f0_body.clone()).clone())))));
+    let t = (Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box :: new(Proc :: PAmb(Box :: new((s_f0_deref.clone()).clone()), Box :: new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
 
-eq_proc(s.clone(), t) <--
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
     proc(s),
     if let Proc :: PNew(ref s_f0) = s,
     let s_f0_binder = s_f0.unsafe_pattern().clone(),
@@ -405,12 +417,12 @@ eq_proc(s.clone(), t) <--
     let s_f0_body_f0_deref = & * * s_f0_body_f0,
     let s_f0_body_f1_deref = & * * s_f0_body_f1,
     if ! mettail_runtime :: BoundTerm :: free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
-    let t = Proc :: PAmb(Box :: new((s_f0_body_f0_deref.clone()).clone()), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f1_deref.clone()).clone())))));
+    let t = (Proc :: PAmb(Box :: new((s_f0_body_f0_deref.clone()).clone()), Box :: new(Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(s_f0_binder.clone().clone(), Box :: new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
 
 
     // Rewrite rules
-rw_proc(s.clone(), t) <--
-    proc(s),
+rw_proc(s_orig.clone(), t) <--
+    eq_proc(s_orig, s),
     if let Proc :: PPar(ref s_f0) = s,
     for (s_f0_e0, _count_0) in s_f0.iter(),
     if let Proc :: PAmb(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
@@ -431,7 +443,7 @@ bag.remove(& s_f0_e0);
 
 bag.remove(& s_f0_e1);
 
-bag }, eq_name(s_f0_e0_f1_deref_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()), let t = Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
+bag }, eq_name(s_f0_e0_f1_deref_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()), let t = (Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
 
 Proc :: insert_into_ppar(& mut bag, Proc :: PAmb(Box :: new((s_f0_e0_f1_deref_f0_e0_f0_deref.clone()).clone()), Box :: new(Proc :: PPar({ let mut bag = mettail_runtime :: HashBag :: new();
 
@@ -445,10 +457,10 @@ Proc :: insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone());
 
 bag }))));
 
-bag });
+bag })).normalize();
 
-rw_proc(s.clone(), t) <--
-    proc(s),
+rw_proc(s_orig.clone(), t) <--
+    eq_proc(s_orig, s),
     if let Proc :: PAmb(ref s_f0, ref s_f1) = s,
     let s_f0_deref = & * * s_f0,
     let s_f1_deref = & * * s_f1,
@@ -472,7 +484,7 @@ bag.remove(& s_f1_deref_f0_e0);
 
 bag.remove(& s_f1_deref_f0_e1);
 
-bag }, eq_name(s_f0_deref.clone(), s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref.clone()), let t = Proc :: PPar({ let mut bag = (s_f1_deref_f0_rest.clone()).clone();
+bag }, eq_name(s_f0_deref.clone(), s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref.clone()), let t = (Proc :: PPar({ let mut bag = (s_f1_deref_f0_rest.clone()).clone();
 
 Proc :: insert_into_ppar(& mut bag, Proc :: PAmb(Box :: new((s_f1_deref_f0_e0_f0_deref.clone()).clone()), Box :: new(Proc :: PPar({ let mut bag = (s_f1_deref_f0_e0_f1_deref_f0_rest.clone()).clone();
 
@@ -482,10 +494,10 @@ bag }))));
 
 Proc :: insert_into_ppar(& mut bag, Proc :: PAmb(Box :: new((s_f0_deref.clone()).clone()), Box :: new((s_f1_deref_f0_e1.clone()).clone())));
 
-bag });
+bag })).normalize();
 
-rw_proc(s.clone(), t) <--
-    proc(s),
+rw_proc(s_orig.clone(), t) <--
+    eq_proc(s_orig, s),
     if let Proc :: PPar(ref s_f0) = s,
     for (s_f0_e0, _count_0) in s_f0.iter(),
     if let Proc :: POpen(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
@@ -502,13 +514,13 @@ bag.remove(& s_f0_e0);
 
 bag.remove(& s_f0_e1);
 
-bag }, eq_name(s_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()), let t = Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
+bag }, eq_name(s_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()), let t = (Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
 
 Proc :: insert_into_ppar(& mut bag, (s_f0_e0_f1_deref.clone()).clone());
 
 Proc :: insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone());
 
-bag });
+bag })).normalize();
 
 rw_proc(parent, result) <--
     proc(parent),
@@ -536,77 +548,5 @@ rw_proc(lhs, rhs) <--
     if let Proc :: PAmb(ref x0, ref x1) = lhs,
     rw_proc((* * x1).clone(), t),
     let rhs = Proc :: PAmb(x0.clone(), Box :: new(t.clone()));
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: ApplyProc(ref lam_box, ref arg_box) = s,
-    if let Proc :: LamProc(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_proc(& binder.0, & * * arg_box) };
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: MApplyProc(ref lam_box, ref args) = s,
-    if let Proc :: MLamProc(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_proc(& vars, args) };
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: ApplyName(ref lam_box, ref arg_box) = s,
-    if let Proc :: LamName(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_name(& binder.0, & * * arg_box) };
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: MApplyName(ref lam_box, ref args) = s,
-    if let Proc :: MLamName(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_name(& vars, args) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: ApplyProc(ref lam_box, ref arg_box) = s,
-    if let Name :: LamProc(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_proc(& binder.0, & * * arg_box) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: MApplyProc(ref lam_box, ref args) = s,
-    if let Name :: MLamProc(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_proc(& vars, args) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: ApplyName(ref lam_box, ref arg_box) = s,
-    if let Name :: LamName(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_name(& binder.0, & * * arg_box) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: MApplyName(ref lam_box, ref args) = s,
-    if let Name :: MLamName(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_name(& vars, args) };
 
 }

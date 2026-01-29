@@ -7,7 +7,7 @@ import * as Blockly from "blockly/core";
 const definitions = [
 	// Lam: ... ...
 	{
-		type: "proc_lam",
+		type: "term_lam",
 		tooltip: "Lam: ... ...",
 		message0: "%1 %2",
 		args0: [
@@ -18,36 +18,34 @@ const definitions = [
 			},
 			{
 				type: "input_statement",
-				name: "BODY",
-				check: "Proc",
+				name: "ARG2",
+				check: "Term",
 			},
 		],
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
+		output: "Term",
+		colour: "5191e0",
 	},
 
 	// App: ... ...
 	{
-		type: "proc_app",
+		type: "term_app",
 		tooltip: "App: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
 				type: "input_value",
-				name: "BODY",
-				check: "Proc",
+				name: "ARG1",
+				check: "Term",
 			},
 			{
 				type: "input_value",
-				name: "MESSAGE",
-				check: "Proc",
+				name: "ARG2",
+				check: "Term",
 			},
 		],
 		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
+		output: "Term",
+		colour: "5191e0",
 	}
 ];
 

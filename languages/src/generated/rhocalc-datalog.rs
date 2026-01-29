@@ -35,12 +35,6 @@ proc(field_1.as_ref().clone()) <--
     proc(t),
     if let Proc :: POutput(field_0, field_1) = t;
 
-name(field_0.as_ref().clone()),
-proc(body.clone()) <--
-    proc(t),
-    if let Proc :: PInput(field_0, scope_field) = t,
-    let body = (* scope_field.inner().unsafe_body).clone();
-
 proc(lam.as_ref().clone()),
 proc(arg.as_ref().clone()) <--
     proc(t),
@@ -235,52 +229,19 @@ eq_name(s.clone(), t.clone()) <--
     if let Name :: NQuote(ref t_f0) = t,
     eq_proc(s_f0.as_ref().clone(), t_f0.as_ref().clone());
 
-eq_name(s.clone(), t) <--
+eq_name(s.clone(), t.clone()),
+name(t.clone()) <--
     name(s),
     if let Name :: NQuote(ref s_f0) = s,
     let s_f0_deref = & * * s_f0,
     if let Proc :: PDrop(ref s_f0_deref_f0) = s_f0_deref,
     let s_f0_deref_f0_deref = & * * s_f0_deref_f0,
-    let t = (s_f0_deref_f0_deref.clone()).clone();
-
-eq_name(s.clone(), t) <--
-    name(s),
-    let t = Name :: NQuote(Box :: new(Proc :: PDrop(Box :: new((s.clone()).clone()))));
+    let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
 
     // Rewrite rules
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: PPar(ref s_f0) = s,
-    for (s_f0_e0, _count_0) in s_f0.iter(),
-    if let Proc :: PInput(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
-    let s_f0_e0_f0_deref = & * * s_f0_e0_f0,
-    let s_f0_e0_f1_binder = s_f0_e0_f1.unsafe_pattern().clone(),
-    let s_f0_e0_f1_body_boxed = s_f0_e0_f1.unsafe_body(),
-    let s_f0_e0_f1_body = & * * s_f0_e0_f1_body_boxed,
-    for (s_f0_e1, _count_1) in s_f0.iter(),
-    if & s_f0_e1 != & s_f0_e0,
-    if let Proc :: POutput(ref s_f0_e1_f0, ref s_f0_e1_f1) = s_f0_e1,
-    let s_f0_e1_f0_deref = & * * s_f0_e1_f0,
-    let s_f0_e1_f1_deref = & * * s_f0_e1_f1,
-    let s_f0_rest = { let mut bag = s_f0.clone();
-
-bag.remove(& s_f0_e0);
-
-bag.remove(& s_f0_e1);
-
-bag }, eq_name(s_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()), let t = Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
-
-Proc :: insert_into_ppar(& mut bag, { let __scope = mettail_runtime :: Scope :: from_parts_unsafe(s_f0_e0_f1_binder.clone().clone(), Box :: new((s_f0_e0_f1_body.clone()).clone()));
-
-let (__fresh_binder, __fresh_body) = __scope.unbind();
-
-__fresh_body.substitute_name(& __fresh_binder.0, & Name :: NQuote(Box :: new((s_f0_e1_f1_deref.clone()).clone()))) });
-
-bag });
-
-rw_proc(s.clone(), t) <--
-    proc(s),
+rw_proc(s_orig.clone(), t) <--
+    eq_proc(s_orig, s),
     if let Proc :: PPar(ref s_f0) = s,
     for (s_f0_e0, _count_0) in s_f0.iter(),
     if let Proc :: PInputs(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
@@ -313,7 +274,7 @@ let __ctx_vec : Vec < _ > = s_f0.iter().collect();
 
 for __idx in __map_matched_indices_1.iter() { if let Some((elem, _)) = __ctx_vec.get(* __idx) { bag.remove(elem);
 
-} } bag }, let t = Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
+} } bag }, let t = (Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
 
 Proc :: insert_into_ppar(& mut bag, { let (__binders, __body) = ((s_f0_e0_f1.clone()).clone()).unbind();
 
@@ -325,15 +286,15 @@ __map_coll.iter().map(| __elem | Name :: NQuote(Box :: new((__elem).clone()))).c
 
 (* __body).multi_substitute_name(& __vars, & __repls) });
 
-bag });
+bag })).normalize();
 
-rw_proc(s.clone(), t) <--
-    proc(s),
+rw_proc(s_orig.clone(), t) <--
+    eq_proc(s_orig, s),
     if let Proc :: PDrop(ref s_f0) = s,
     let s_f0_deref = & * * s_f0,
     if let Name :: NQuote(ref s_f0_deref_f0) = s_f0_deref,
     let s_f0_deref_f0_deref = & * * s_f0_deref_f0,
-    let t = (s_f0_deref_f0_deref.clone()).clone();
+    let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
 rw_proc(parent, result) <--
     proc(parent),
@@ -347,77 +308,5 @@ new_bag.remove(elem);
 Proc :: insert_into_ppar(& mut new_bag, elem_rewritten.clone());
 
 new_bag });
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: ApplyProc(ref lam_box, ref arg_box) = s,
-    if let Proc :: LamProc(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_proc(& binder.0, & * * arg_box) };
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: MApplyProc(ref lam_box, ref args) = s,
-    if let Proc :: MLamProc(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_proc(& vars, args) };
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: ApplyName(ref lam_box, ref arg_box) = s,
-    if let Proc :: LamName(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_name(& binder.0, & * * arg_box) };
-
-rw_proc(s.clone(), t) <--
-    proc(s),
-    if let Proc :: MApplyName(ref lam_box, ref args) = s,
-    if let Proc :: MLamName(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_name(& vars, args) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: ApplyProc(ref lam_box, ref arg_box) = s,
-    if let Name :: LamProc(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_proc(& binder.0, & * * arg_box) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: MApplyProc(ref lam_box, ref args) = s,
-    if let Name :: MLamProc(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_proc(& vars, args) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: ApplyName(ref lam_box, ref arg_box) = s,
-    if let Name :: LamName(ref scope) = * * lam_box,
-    let t = { let (binder, body) = scope.clone().unbind();
-
-(* body).substitute_name(& binder.0, & * * arg_box) };
-
-rw_name(s.clone(), t) <--
-    name(s),
-    if let Name :: MApplyName(ref lam_box, ref args) = s,
-    if let Name :: MLamName(ref scope) = * * lam_box,
-    let t = { let (binders, body) = scope.clone().unbind();
-
-let vars : Vec < _ > = binders.iter().map(| b | & b.0).collect();
-
-(* body).multi_substitute_name(& vars, args) };
 
 }

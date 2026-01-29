@@ -145,3 +145,26 @@ fn parse_type_atom(input: ParseStream) -> SynResult<TypeExpr> {
     Ok(TypeExpr::Base(ident))
 }
 
+//=============================================================================
+// HOL RUST CODE BLOCKS AND EVAL MODE
+//=============================================================================
+
+/// Rust code block for HOL syntax in grammar rules
+/// Example: `![a + b]` in `Add . a:Int, b:Int |- a "+" b:Int ![a + b] fold;`
+#[derive(Debug, Clone)]
+pub struct RustCodeBlock {
+    /// Parsed Rust expression
+    pub code: syn::Expr,
+}
+
+/// Evaluation mode for HOL syntax (when to apply constant folding vs congruence)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvalMode {
+    /// Only constant folding
+    Fold,
+    /// Only step-by-step (congruence rules)
+    Step,
+    /// Both folding and congruence (default)
+    Both,
+}
+

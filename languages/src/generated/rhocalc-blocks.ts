@@ -56,33 +56,6 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Input: ... ... ...
-	{
-		type: "proc_input",
-		tooltip: "Input: ... ... ...",
-		message0: "%1 %2 %3",
-		args0: [
-			{
-				type: "input_value",
-				name: "CHANNEL",
-				check: "Name",
-			},
-			{
-				type: "field_input",
-				name: "VAR",
-				text: "x",
-			},
-			{
-				type: "input_statement",
-				name: "ARG3",
-				check: "Proc",
-			},
-		],
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
 	// Inputs: ... ...
 	{
 		type: "proc_inputs",

@@ -13,7 +13,6 @@ export const categoryInfo = {
 			"PZero",
 			"PDrop",
 			"POutput",
-			"PInput",
 			"PInputs",
 			"PPar"
 		],
