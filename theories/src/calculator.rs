@@ -21,6 +21,7 @@ theory! {
 
         // HOL syntax with rust_code
         Add . a:Int, b:Int |- a "+" b:Int ![a + b];
+        Up  . a:Int, b:Int |- a "~" b:Int ![2 * a + 3 * b];
         Sub . Int ::= Int "-" Int ;
 
         // Assign is now automatically generated for all categories
@@ -29,9 +30,11 @@ theory! {
     },
     rewrites {
         // Variable substitution and Assign congruence are now auto-generated
-        // Congruence rules: propagate rewrites through Add and Sub
+        // Congruence rules: propagate rewrites through Add, Up, and Sub
         if S => T then (Add S R) => (Add T R);
         if S => T then (Add L S) => (Add L T);
+        if S => T then (Up S R) => (Up T R);
+        if S => T then (Up L S) => (Up L T);
         if S => T then (Sub S R) => (Sub T R);
         if S => T then (Sub L S) => (Sub L T);
     },

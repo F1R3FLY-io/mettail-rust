@@ -19,8 +19,8 @@
 
 use crate::{
     ast::TheoryDef,
-    codegen::{generate_literal_label, generate_var_label, is_var_rule},
-    utils::print_rule,
+    codegen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule},
+    utils::{has_native_type, print_rule},
 };
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
@@ -287,6 +287,57 @@ fn generate_semantic_rules(theory: &TheoryDef) -> Vec<TokenStream> {
                 });
             }
         }
+    }
+
+    // Generate folding rules for binary terms that have HOL rust_code but are not in semantics.
+    // For example: Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2 * a + 3 * b].
+    for rule in &theory.terms {
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if theory
+            .semantics
+            .iter()
+            .any(|s| s.constructor == rule.label)
+        {
+            continue; // Already generated from semantics block
+        }
+        let non_terminals: Vec<_> = rule
+            .items
+            .iter()
+            .filter_map(|item| {
+                if let crate::ast::GrammarItem::NonTerminal(_) = item {
+                    Some(())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        if non_terminals.len() != 2 {
+            continue;
+        }
+        let category = &rule.category;
+        let Some(native_type) = has_native_type(category, theory) else {
+            continue;
+        };
+        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
+        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
+        let label = &rule.label;
+        let num_lit_label = theory
+            .terms
+            .iter()
+            .find(|r| r.category == *category && is_integer_rule(r))
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| generate_literal_label(native_type));
+        let rust_code = &rule.rust_code.as_ref().expect("checked above").code;
+        rules.push(quote! {
+            #rw_rel(s, t) <--
+                #cat_rel(s),
+                if let #category::#label(left, right) = s,
+                if let #category::#num_lit_label(a) = left.as_ref(),
+                if let #category::#num_lit_label(b) = right.as_ref(),
+                let t = #category::#num_lit_label((#rust_code));
+        });
     }
 
     rules

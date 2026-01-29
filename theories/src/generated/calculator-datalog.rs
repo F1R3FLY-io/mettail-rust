@@ -28,6 +28,11 @@ int(field_1.as_ref().clone()) <--
 int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
     int(t),
+    if let Int :: Up(field_0, field_1) = t;
+
+int(field_0.as_ref().clone()),
+int(field_1.as_ref().clone()) <--
+    int(t),
     if let Int :: Sub(field_0, field_1) = t;
 
 int(rhs.as_ref().clone()) <--
@@ -40,6 +45,14 @@ eq_int(t.clone(), t.clone()) <--
     int(t);
 
 eq_int(Int :: Add(Box :: new(x0.clone()), Box :: new(x1.clone())), Int :: Add(Box :: new(y0.clone()), Box :: new(y1.clone()))) <--
+    int(x0),
+    int(y0),
+    eq_int(x0.clone(), y0.clone()),
+    int(x1),
+    int(y1),
+    eq_int(x1.clone(), y1.clone());
+
+eq_int(Int :: Up(Box :: new(x0.clone()), Box :: new(x1.clone())), Int :: Up(Box :: new(y0.clone()), Box :: new(y1.clone()))) <--
     int(x0),
     int(y0),
     eq_int(x0.clone(), y0.clone()),
@@ -73,6 +86,13 @@ rw_int(s, t) <--
 
 rw_int(s, t) <--
     int(s),
+    if let Int :: Up(left, right) = s,
+    if let Int :: NumLit(a) = left.as_ref(),
+    if let Int :: NumLit(b) = right.as_ref(),
+    let t = Int :: NumLit((2 * a + 3 * b));
+
+rw_int(s, t) <--
+    int(s),
     if let Int :: Add(s0, r) = s,
     rw_int(* * s0, t0),
     let t = Int :: Add(Box :: new(t0.clone()), r.clone());
@@ -82,6 +102,18 @@ rw_int(s, t) <--
     if let Int :: Add(l, s0) = s,
     rw_int(* * s0, t0),
     let t = Int :: Add(l.clone(), Box :: new(t0.clone()));
+
+rw_int(s, t) <--
+    int(s),
+    if let Int :: Up(s0, r) = s,
+    rw_int(* * s0, t0),
+    let t = Int :: Up(Box :: new(t0.clone()), r.clone());
+
+rw_int(s, t) <--
+    int(s),
+    if let Int :: Up(l, s0) = s,
+    rw_int(* * s0, t0),
+    let t = Int :: Up(l.clone(), Box :: new(t0.clone()));
 
 rw_int(s, t) <--
     int(s),

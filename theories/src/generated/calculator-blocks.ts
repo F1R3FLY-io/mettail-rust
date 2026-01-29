@@ -27,6 +27,28 @@ const definitions = [
 		colour: "51b0e0",
 	},
 
+	// Up: ... ~ ...
+	{
+		type: "int_up",
+		tooltip: "Up: ... ~ ...",
+		message0: "%1 ~ %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "a",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "b",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
 	// Sub: ... - ...
 	{
 		type: "int_sub",

@@ -32,6 +32,7 @@ pub Int: Int = {
 
 IntInfix: Int = {
     <left:IntInfix> "+" <right:IntAtom> => Int::Add(Box::new(left), Box::new(right)),
+    <left:IntInfix> "~" <right:IntAtom> => Int::Up(Box::new(left), Box::new(right)),
     <left:IntInfix> "-" <right:IntAtom> => Int::Sub(Box::new(left), Box::new(right)),
     <IntAtom>
 };
