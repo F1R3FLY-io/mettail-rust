@@ -792,12 +792,25 @@ impl Repl {
         println!("  - {} normal forms", results.normal_forms().len());
         println!();
 
+        // After exec, show the result: a normal form reachable from the initial term
+        let initial_id = term.term_id();
+        if let Some(nf) = results.normal_form_reachable_from(initial_id) {
+            let result_term = language
+                .parse_term(&nf.display)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("{}", "Current term (result):".bold());
+            let formatted = format_term_pretty(&nf.display);
+            println!("{}", formatted.cyan());
+            println!();
+            self.state.set_term_with_id(result_term, results.clone(), nf.term_id)?;
+            return Ok(());
+        }
+
+        // No reachable normal form (e.g. initial term not in graph): show initial term
         println!("{}", "Current term:".bold());
         let formatted = format_term_pretty(&format!("{}", term));
         println!("{}", formatted.cyan());
         println!();
-
-        // Store in state
         self.state.set_term(term, results)?;
 
         Ok(())

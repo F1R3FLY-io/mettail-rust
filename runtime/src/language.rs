@@ -236,6 +236,34 @@ impl AscentResults {
             .collect()
     }
 
+    /// Find a normal form reachable from the given term by following rewrites.
+    /// Returns the first normal form reached (BFS). If the start term is already
+    /// a normal form, returns it. Returns `None` if the term is not in the graph.
+    pub fn normal_form_reachable_from(&self, start_id: u64) -> Option<&TermInfo> {
+        let term_by_id = |id: u64| self.all_terms.iter().find(|t| t.term_id == id);
+        let start = term_by_id(start_id)?;
+        if start.is_normal_form {
+            return Some(start);
+        }
+        let mut visited = std::collections::HashSet::new();
+        let mut queue = std::collections::VecDeque::from([start_id]);
+        visited.insert(start_id);
+        while let Some(id) = queue.pop_front() {
+            for rw in self.rewrites_from(id) {
+                let to_id = rw.to_id;
+                if visited.insert(to_id) {
+                    if let Some(info) = term_by_id(to_id) {
+                        if info.is_normal_form {
+                            return Some(info);
+                        }
+                        queue.push_back(to_id);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     /// Get the equivalence class containing a term
     pub fn equiv_class(&self, term_id: u64) -> Option<&EquivClass> {
         self.equivalences

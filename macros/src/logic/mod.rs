@@ -250,6 +250,11 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
         {
             continue;
         }
+        // Respect eval_mode: skip folding when Step-only (same as semantics loop)
+        match rule.eval_mode {
+            Some(EvalMode::Step) => continue,
+            Some(EvalMode::Fold) | Some(EvalMode::Both) | None => {}
+        }
         let non_terminal_count = rule
             .items
             .iter()

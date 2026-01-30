@@ -14,7 +14,7 @@ language! {
     terms {
         Add . a:Int, b:Int |- a "+" b : Int ![a + b] step;
         Sub . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
-        Up . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
+        Up . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] both;
     },
     equations {
     },
