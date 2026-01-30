@@ -129,6 +129,7 @@ impl Repl {
                 std::process::exit(0);
             },
             "exec" => self.cmd_exec_term(line.strip_prefix("exec").unwrap()),
+            "step" => self.cmd_step_term(line.strip_prefix("step").unwrap()),
             _ => {
                 anyhow::bail!(
                     "Unknown command: '{}'. Type 'help' for available commands.",
@@ -180,7 +181,8 @@ impl Repl {
         println!("    {}              Show language information", "{lang_name}> info".green());
         println!();
         println!("{}", "  Term Input:".yellow());
-        println!("    {}    Execute a program", "exec <term>".green());
+        println!("    {}    Execute a program (direct evaluation → result)", "exec <term>".green());
+        println!("    {}    Step-by-step: show initial term, use {} to reduce", "step <term>".green(), "apply 0".cyan());
         println!("    {}    Load example program", "example <name>".green());
         println!("    {}    List available examples", "list-examples".green());
         println!();
@@ -201,7 +203,7 @@ impl Repl {
         println!("    {}           List rewrites from current term", "rewrites".green());
         println!("    {}         List all rewrites", "rewrites-all".green());
         println!("    {}        Show normal forms", "normal-forms".green());
-        println!("    {} Apply rewrite N", "apply <N>".green());
+        println!("    {} Apply one rewrite from current term (use after {})", "apply <N>".green(), "step".cyan());
         println!("    {}              Go to normal form N", "goto <N>".green());
         println!();
         println!("{}", "  General:".yellow());
@@ -255,7 +257,8 @@ impl Repl {
         println!();
 
         println!("{} Language loaded successfully!", "✓".green());
-        println!("Use {} to execute a program.", "'exec <term>'".cyan());
+        println!("  {}  direct evaluation (result)", "'exec <term>'".cyan());
+        println!("  {}  step-by-step, then {} to reduce", "'step <term>'".cyan(), "apply 0".cyan());
         println!();
 
         Ok(())
@@ -812,6 +815,72 @@ impl Repl {
         println!("{}", formatted.cyan());
         println!();
         self.state.set_term(term, results)?;
+
+        Ok(())
+    }
+
+    /// Step-by-step execution: run Ascent but leave current term at the initial term
+    /// so the user can type `apply 0` to apply one rewrite at a time.
+    fn cmd_step_term(&mut self, term_str: &str) -> Result<()> {
+        let language_name = self
+            .state
+            .language_name()
+            .ok_or_else(|| anyhow::anyhow!("No language loaded. Use 'lang <language>' first."))?;
+
+        let language = self.registry.get(language_name)?;
+
+        println!();
+        print!("Parsing... ");
+
+        let term = language.parse_term_for_env(term_str)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        println!("{}", "✓".green());
+
+        let term = if let Some(env) = self.state.environment() {
+            if !language.is_env_empty(env) {
+                print!("Substituting environment... ");
+                let substituted = language.substitute_env(term.as_ref(), env)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                println!("{}", "✓".green());
+                substituted
+            } else {
+                term
+            }
+        } else {
+            term
+        };
+
+        print!("Running Ascent... ");
+        let start_time = Instant::now();
+        let results = language.run_ascent(term.as_ref())
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
+        let end_time = Instant::now();
+        println!("Time taken: {:?}", end_time.duration_since(start_time));
+        println!("{}", "Done!".green());
+
+        println!();
+        println!("Computed:");
+        println!("  - {} terms", results.all_terms.len());
+        println!("  - {} rewrites", results.rewrites.len());
+        println!("  - {} normal forms", results.normal_forms().len());
+        println!();
+
+        // Always show initial term so user can apply rewrites one by one
+        let initial_id = term.term_id();
+        let available = results.rewrites_from(initial_id).len();
+
+        println!("{}", "Current term (initial):".bold());
+        let formatted = format_term_pretty(&format!("{}", term));
+        println!("{}", formatted.cyan());
+        println!();
+        self.state.set_term_with_id(term, results, initial_id)?;
+
+        if available > 0 {
+            println!("  Use {} to apply a rewrite ({} available).", "apply 0".cyan(), available);
+        } else {
+            println!("  No rewrites from this term (already a normal form).");
+        }
+        println!();
 
         Ok(())
     }

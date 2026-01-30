@@ -3,8 +3,9 @@
 //! Generates relation declarations for categories, equality, rewrites,
 //! and collection projections.
 
-use crate::ast::language::{LanguageDef};
+use crate::ast::language::LanguageDef;
 use crate::ast::grammar::TermParam;
+use crate::ast::types::EvalMode;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -38,6 +39,20 @@ pub fn generate_relations(language: &LanguageDef) -> TokenStream {
         relations.push(quote! {
             relation #rw_rel(#cat, #cat);
         });
+    }
+
+    // Fold (big-step eval) relations for categories that have fold-mode constructors
+    for lang_type in &language.types {
+        let cat = &lang_type.name;
+        let has_fold = language.terms.iter().any(|r| {
+            r.category == *cat && r.eval_mode == Some(EvalMode::Fold)
+        });
+        if has_fold {
+            let fold_rel = format_ident!("fold_{}", cat.to_string().to_lowercase());
+            relations.push(quote! {
+                relation #fold_rel(#cat, #cat);
+            });
+        }
     }
 
     // Collection projection relations (automatic)

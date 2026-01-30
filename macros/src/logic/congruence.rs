@@ -19,7 +19,7 @@ use syn::Ident;
 
 pub fn generate_all_explicit_congruences(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
-    
+
     for rewrite in &language.rewrites {
         // Only process rules with congruence premise
         if rewrite.is_congruence_rule() {
@@ -28,7 +28,7 @@ pub fn generate_all_explicit_congruences(language: &LanguageDef) -> Vec<TokenStr
             }
         }
     }
-    
+
     rules
 }
 

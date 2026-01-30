@@ -19,7 +19,13 @@
 
 use crate::ast::types::EvalMode;
 use crate::gen::{generate_literal_label, is_integer_rule};
-use crate::{ast::{grammar::GrammarItem, language::{BuiltinOp, LanguageDef, SemanticOperation}}, logic::rules::generate_base_rewrites};
+use crate::{
+    ast::{
+        grammar::GrammarItem,
+        language::{BuiltinOp, LanguageDef, SemanticOperation},
+    },
+    logic::rules::generate_base_rewrites,
+};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
@@ -147,6 +153,10 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     let semantic_rules = generate_semantic_rules(language);
     rules.extend(semantic_rules);
 
+    // Generate big-step fold rules (one rewrite per fold-mode constructor)
+    let fold_rules = generate_fold_big_step_rules(language);
+    rules.extend(fold_rules);
+
     // Generate explicit congruence rules (with premise: if S => T then ...)
     // These are user-declared rules that control where rewrites propagate
     let congruence_rules = generate_all_explicit_congruences(language);
@@ -159,24 +169,18 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
 
 /// Generate semantic evaluation rules for constructors with semantics
 /// For example: Add (NumLit a) (NumLit b) => NumLit(a + b)
-/// Respects eval_mode: only generates folding if Fold or unspecified (skip if Step).
+/// Only for step mode (or unspecified); fold mode uses big-step rules instead.
 fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     for semantic in &language.semantics {
         let constructor_name = &semantic.constructor;
 
-        // Check eval_mode for this rule: skip folding if Step-only
-        let should_generate_folding = if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
-            match rule.eval_mode {
-                Some(EvalMode::Step) => false,
-                Some(EvalMode::Fold) | None => true,
+        // Skip fold-mode: they use big-step rules instead of small-step folding
+        if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
+            if rule.eval_mode == Some(EvalMode::Fold) {
+                continue;
             }
-        } else {
-            true
-        };
-        if !should_generate_folding {
-            continue;
         }
 
         // Extract the operator
@@ -250,10 +254,9 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
         {
             continue;
         }
-        // Respect eval_mode: skip folding when Step-only (same as semantics loop)
-        match rule.eval_mode {
-            Some(EvalMode::Step) => continue,
-            Some(EvalMode::Fold) | None => {}
+        // Skip fold-mode: they use big-step rules instead
+        if rule.eval_mode == Some(EvalMode::Fold) {
+            continue;
         }
         let non_terminal_count = rule
             .items
@@ -285,6 +288,113 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 if let #category::#num_lit_label(b) = right.as_ref(),
                 let t = #category::#num_lit_label((#rust_code));
         });
+    }
+
+    rules
+}
+
+/// Generate big-step fold rules for constructors with eval_mode Fold.
+/// fold_<cat>(t, v) computes the value term v of t; one rw_<cat>(s, t) step for whole expression.
+fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
+    let mut rules = Vec::new();
+
+    let native_type_for = |category: &Ident| {
+        language
+            .types
+            .iter()
+            .find(|t| t.name == *category)
+            .and_then(|t| t.native_type.as_ref())
+    };
+
+    for lang_type in &language.types {
+        let category = &lang_type.name;
+        let Some(native_type) = native_type_for(category) else {
+            continue;
+        };
+        let has_fold = language
+            .terms
+            .iter()
+            .any(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold));
+        if !has_fold {
+            continue;
+        }
+
+        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
+        let fold_rel = format_ident!("fold_{}", category.to_string().to_lowercase());
+        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
+        let num_lit = language
+            .terms
+            .iter()
+            .find(|r| r.category == *category && is_integer_rule(r))
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| generate_literal_label(native_type));
+
+        // fold_<cat>(t, t) for literals
+        rules.push(quote! {
+            #fold_rel(t.clone(), t.clone()) <--
+                #cat_rel(t),
+                if let #category::#num_lit(_) = t;
+        });
+
+        // fold_<cat>(s, res) for each constructor with semantics or rust_code (so we can compute recursively)
+        for rule in &language.terms {
+            if rule.category != *category {
+                continue;
+            }
+            let non_terminal_count = rule
+                .items
+                .iter()
+                .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+                .count();
+            if non_terminal_count != 2 {
+                continue;
+            }
+            let label = &rule.label;
+
+            let res_expr = if let Some(sem) = language.semantics.iter().find(|s| s.constructor == rule.label) {
+                let op_token = match &sem.operation {
+                    SemanticOperation::Builtin(builtin_op) => match builtin_op {
+                        BuiltinOp::Add => quote! { a + b },
+                        BuiltinOp::Sub => quote! { a - b },
+                        BuiltinOp::Mul => quote! { a * b },
+                        BuiltinOp::Div => quote! { a / b },
+                        BuiltinOp::Rem => quote! { a % b },
+                        _ => continue,
+                    },
+                };
+                quote! { #category::#num_lit(#op_token) }
+            } else if let Some(ref rust_block) = rule.rust_code {
+                let rust_code = &rust_block.code;
+                quote! { #category::#num_lit((#rust_code)) }
+            } else {
+                continue;
+            };
+
+            rules.push(quote! {
+                #fold_rel(s, res) <--
+                    #cat_rel(s),
+                    if let #category::#label(left, right) = s,
+                    #fold_rel(left.as_ref().clone(), lv),
+                    #fold_rel(right.as_ref().clone(), rv),
+                    if let #category::#num_lit(a) = &lv,
+                    if let #category::#num_lit(b) = &rv,
+                    let res = #res_expr;
+            });
+        }
+
+        // rw_<cat>(s, t) for fold-mode constructors only (one big step)
+        for rule in &language.terms {
+            if rule.category != *category || rule.eval_mode != Some(EvalMode::Fold) {
+                continue;
+            }
+            let label = &rule.label;
+            rules.push(quote! {
+                #rw_rel(s, t) <--
+                    #cat_rel(s),
+                    if let #category::#label(_, _) = s,
+                    #fold_rel(s, t);
+            });
+        }
     }
 
     rules
