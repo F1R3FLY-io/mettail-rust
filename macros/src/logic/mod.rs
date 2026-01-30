@@ -159,7 +159,7 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
 
 /// Generate semantic evaluation rules for constructors with semantics
 /// For example: Add (NumLit a) (NumLit b) => NumLit(a + b)
-/// Respects eval_mode: only generates folding if Fold, Both, or unspecified (skip if Step).
+/// Respects eval_mode: only generates folding if Fold or unspecified (skip if Step).
 fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
@@ -170,7 +170,7 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
         let should_generate_folding = if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
             match rule.eval_mode {
                 Some(EvalMode::Step) => false,
-                Some(EvalMode::Fold) | Some(EvalMode::Both) | None => true,
+                Some(EvalMode::Fold) | None => true,
             }
         } else {
             true
@@ -253,7 +253,7 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
         // Respect eval_mode: skip folding when Step-only (same as semantics loop)
         match rule.eval_mode {
             Some(EvalMode::Step) => continue,
-            Some(EvalMode::Fold) | Some(EvalMode::Both) | None => {}
+            Some(EvalMode::Fold) | None => {}
         }
         let non_terminal_count = rule
             .items

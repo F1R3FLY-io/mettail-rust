@@ -164,7 +164,5 @@ pub enum EvalMode {
     Fold,
     /// Only step-by-step (congruence rules)
     Step,
-    /// Both folding and congruence (default)
-    Both,
 }
 

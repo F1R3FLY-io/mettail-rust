@@ -132,7 +132,7 @@ pub struct GrammarRule {
 
     /// HOL syntax: optional Rust code implementation, e.g. `![a + b]`
     pub rust_code: Option<RustCodeBlock>,
-    /// HOL syntax: evaluation mode (fold / step / both)
+    /// HOL syntax: evaluation mode (fold / step)
     pub eval_mode: Option<EvalMode>,
 }
 
@@ -275,17 +275,16 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
         None
     };
 
-    // Parse optional evaluation mode: fold, step, both
+    // Parse optional evaluation mode: fold, step
     let eval_mode = if input.peek(syn::Ident) {
         let mode_ident = input.parse::<syn::Ident>()?;
         match mode_ident.to_string().as_str() {
             "fold" => Some(EvalMode::Fold),
             "step" => Some(EvalMode::Step),
-            "both" => Some(EvalMode::Both),
             _ => {
                 return Err(syn::Error::new(
                     mode_ident.span(),
-                    "expected evaluation mode: fold, step, or both",
+                    "expected evaluation mode: fold or step",
                 ));
             }
         }
