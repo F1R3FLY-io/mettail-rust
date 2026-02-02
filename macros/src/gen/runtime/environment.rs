@@ -259,7 +259,7 @@ mod tests {
 
     #[test]
     fn test_generate_environments_with_native_type() {
-        // Native types should be excluded (they don't have variables)
+        // Native types are included (terms can have variables via IVar etc. even when native_type is set)
         let language = LanguageDef {
             name: parse_quote!(Calculator),
             types: vec![LangType {
@@ -275,7 +275,8 @@ mod tests {
         let output = generate_environments(&language);
         let output_str = output.to_string();
 
-        // Should be empty since Int is a native type
-        assert!(!output_str.contains("IntEnv"));
+        // IntEnv is generated so Calculator can list/remove Int bindings (e.g. IVar)
+        assert!(output_str.contains("IntEnv"));
+        assert!(output_str.contains("CalculatorEnv"));
     }
 }
