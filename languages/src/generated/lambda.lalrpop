@@ -13,7 +13,7 @@ Comma<T>: Vec<T> = {
     }
 };
 
-Ident: String = {
+Ident: std::string::String = {
     r"[a-zA-Z_][a-zA-Z0-9_]*" => <>.to_string(),
 };
 
@@ -31,7 +31,7 @@ pub Term: Term = {
     },
     "(" <fun:Term> "," <arg:Term> ")" => Term::App(Box::new(fun), Box::new(arg))
 ,
-    <v:Ident> => Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v)))),
+    <v:Ident> => Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
     "^" <x:Ident> "." "{" <body:Term> "}" => {
         let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(x.clone()));
         // Infer binder type from usage in body (supports higher-order types)

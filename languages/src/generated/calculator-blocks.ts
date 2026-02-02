@@ -5,6 +5,67 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
+	// Comp: ... ...
+	{
+		type: "bool_comp",
+		tooltip: "Comp: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Len: ...
+	{
+		type: "int_len",
+		tooltip: "Len: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Add Str: ... ...
+	{
+		type: "str_add_str",
+		tooltip: "Add Str: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Str",
+		colour: "51e05f",
+	},
+
 	// Add: ... ...
 	{
 		type: "int_add",
@@ -53,6 +114,28 @@ const definitions = [
 	{
 		type: "int_up",
 		tooltip: "Up: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Up1: ... ...
+	{
+		type: "int_up1",
+		tooltip: "Up1: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{

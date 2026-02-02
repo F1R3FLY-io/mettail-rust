@@ -13,7 +13,7 @@ Comma<T>: Vec<T> = {
     }
 };
 
-Ident: String = {
+Ident: std::string::String = {
     r"[a-zA-Z_][a-zA-Z0-9_]*" => <>.to_string(),
 };
 
@@ -45,7 +45,7 @@ pub Proc: Proc = {
         Proc::PPar(coll)
     }
 ,
-    <v:Ident> => Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v)))),
+    <v:Ident> => Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
     "^" <x:Ident> "." "{" <body:Proc> "}" => {
         let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(x.clone()));
         // Infer binder type from usage in body (supports higher-order types)
@@ -88,6 +88,6 @@ pub Proc: Proc = {
 
 pub Name: Name = {
 
-    <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))
+    <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
 };
 

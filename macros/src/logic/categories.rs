@@ -28,8 +28,9 @@ pub fn generate_category_rules(language: &LanguageDef) -> TokenStream {
         let _eq_rel = format_ident!("eq_{}", cat.to_string().to_lowercase());
 
         // Expand via rewrites: add rewritten terms to enable further exploration
+        // Clone c1 so we insert an owned value; Ascent may bind c1 by reference (e.g. &Str).
         rules.push(quote! {
-            #cat_lower(c1) <-- #cat_lower(c0), #rw_rel(c0, c1);
+            #cat_lower(c1.clone()) <-- #cat_lower(c0), #rw_rel(c0, c1);
         });
 
         // PERFORMANCE OPTIMIZATION (2026-01-27):
@@ -403,8 +404,9 @@ fn generate_projection_seeding_rules(category: &Ident, language: &LanguageDef) -
                     format_ident!("{}_contains", constructor_label.to_string().to_lowercase());
 
                 // Generate seeding rule: elem_cat(elem) <-- contains_rel(_parent, elem);
+                // Clone elem so we insert owned; Ascent may bind elem by reference.
                 rules.push(quote! {
-                    #elem_cat_lower(elem) <-- #rel_name(_parent, elem);
+                    #elem_cat_lower(elem.clone()) <-- #rel_name(_parent, elem);
                 });
 
                 // Only handle one collection per constructor

@@ -25,7 +25,7 @@
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::ast::types::{CollectionType, TypeExpr};
-use crate::gen::native::has_native_type;
+use crate::gen::native::{has_native_type, native_type_to_string};
 use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -204,7 +204,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
             let variants = collect_category_variants(cat_name, language);
             let match_arms: Vec<TokenStream> = variants
                 .iter()
-                .map(|variant| generate_unify_freevars_arm(cat_name, variant))
+                .map(|variant| generate_unify_freevars_arm(cat_name, variant, language))
                 .collect();
 
             quote! {
@@ -226,7 +226,11 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate a match arm for unify_freevars
-fn generate_unify_freevars_arm(category: &Ident, variant: &VariantKind) -> TokenStream {
+fn generate_unify_freevars_arm(
+    category: &Ident,
+    variant: &VariantKind,
+    language: &LanguageDef,
+) -> TokenStream {
     match variant {
         VariantKind::Var { label } => {
             // For Var variants, look up and replace with canonical FreeVar from VAR_CACHE
@@ -241,7 +245,22 @@ fn generate_unify_freevars_arm(category: &Ident, variant: &VariantKind) -> Token
         },
 
         VariantKind::Literal { label } => {
-            quote! { #category::#label(v) => #category::#label(*v) }
+            // String is not Copy; use clone() for str/String to avoid E0507
+            let literal_arm = language
+                .types
+                .iter()
+                .find(|t| &t.name == category)
+                .and_then(|t| t.native_type.as_ref())
+                .map(|ty| {
+                    let type_str = native_type_to_string(ty);
+                    if type_str == "str" || type_str == "String" {
+                        quote! { #category::#label(v) => #category::#label(v.clone()) }
+                    } else {
+                        quote! { #category::#label(v) => #category::#label(*v) }
+                    }
+                })
+                .unwrap_or_else(|| quote! { #category::#label(v) => #category::#label(*v) });
+            literal_arm
         },
 
         VariantKind::Nullary { label } => {

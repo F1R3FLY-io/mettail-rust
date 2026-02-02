@@ -22,7 +22,7 @@ relation ppar_contains(Proc, Proc);
 
 
     // Category rules
-proc(c1) <--
+proc(c1.clone()) <--
     proc(c0),
     rw_proc(c0, c1);
 
@@ -100,7 +100,7 @@ ppar_contains(parent.clone(), elem.clone()) <--
     if let Proc :: PPar(ref bag_field) = parent,
     for (elem, _count) in bag_field.iter();
 
-proc(elem) <--
+proc(elem.clone()) <--
     ppar_contains(_parent, elem);
 
 rw_proc(Proc :: ApplyProc(lam.clone(), arg.clone()), Proc :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
@@ -133,7 +133,7 @@ rw_proc(Proc :: MApplyName(lam.clone(), args.clone()), Proc :: MApplyName(Box ::
     if let Proc :: MApplyName(ref lam, ref args) = t,
     rw_proc(lam.as_ref().clone(), lam_new);
 
-name(c1) <--
+name(c1.clone()) <--
     name(c0),
     rw_name(c0, c1);
 
@@ -522,7 +522,7 @@ Proc :: insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone());
 
 bag })).normalize();
 
-rw_proc(parent, result) <--
+rw_proc(parent.clone(), result) <--
     proc(parent),
     if let Proc :: PPar(ref bag) = parent,
     for (elem, _count) in bag.iter(),
@@ -535,7 +535,7 @@ Proc :: insert_into_ppar(& mut new_bag, elem_rewritten.clone());
 
 new_bag });
 
-rw_proc(lhs, rhs) <--
+rw_proc(lhs.clone(), rhs) <--
     proc(lhs),
     if let Proc :: PNew(ref scope) = lhs,
     let binder = scope.unsafe_pattern().clone(),
@@ -543,7 +543,7 @@ rw_proc(lhs, rhs) <--
     rw_proc((* * body).clone(), body_rewritten),
     let rhs = Proc :: PNew(mettail_runtime :: Scope :: from_parts_unsafe(binder.clone(), Box :: new(body_rewritten.clone())));
 
-rw_proc(lhs, rhs) <--
+rw_proc(lhs.clone(), rhs) <--
     proc(lhs),
     if let Proc :: PAmb(ref x0, ref x1) = lhs,
     rw_proc((* * x1).clone(), t),

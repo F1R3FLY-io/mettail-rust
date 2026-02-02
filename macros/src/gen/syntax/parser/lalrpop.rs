@@ -33,7 +33,8 @@ fn generate_native_type_tokens(language: &LanguageDef) -> String {
                 tokens.push_str("    r\"[0-9]+\" => <>.parse().unwrap_or(0),\n");
                 tokens.push_str("};\n\n");
             } else if type_str == "f32" || type_str == "f64" {
-                tokens.push_str(&format!("Float: {} = {{\n", type_str));
+                // Token name FloatLiteral to avoid collision with category Float
+                tokens.push_str(&format!("FloatLiteral: {} = {{\n", type_str));
                 tokens.push_str("    r\"[0-9]+\\.[0-9]+\" => <>.parse().unwrap_or(0.0),\n");
                 tokens.push_str("};\n\n");
             } else if type_str == "bool" {
@@ -41,6 +42,13 @@ fn generate_native_type_tokens(language: &LanguageDef) -> String {
                 tokens.push_str("    \"true\" => true,\n");
                 tokens.push_str("    \"false\" => false,\n");
                 tokens.push_str("};\n\n");
+            } else if type_str == "str" || type_str == "String" {
+                // Quoted string literal: single regex to avoid ambiguity with Integer/digits
+                tokens.push_str("StringLiteral: std::string::String = {\n");
+                tokens.push_str(
+                    r##"    r#""[^"]*""# => <>.trim_matches('"').to_string(),"##,
+                );
+                tokens.push_str("\n};\n\n");
             }
             // Add more native types as needed
         }
@@ -127,7 +135,7 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
     grammar.push_str("};\n\n");
 
     // Add identifier token definition (needed for binders and variables)
-    grammar.push_str("Ident: String = {\n");
+    grammar.push_str("Ident: std::string::String = {\n");
     grammar.push_str("    r\"[a-zA-Z_][a-zA-Z0-9_]*\" => <>.to_string(),\n");
     grammar.push_str("};\n\n");
 
@@ -348,9 +356,8 @@ fn generate_tiered_production(
 
         if i < filtered_other_rules.len() - 1 {
             production.push_str(",\n");
-        } else {
-            production.push('\n');
         }
+        // Last rule: no trailing newline so auto-alternatives can add ",\n    <Var>"
     }
 
     // Check if there's an explicit Integer rule (NumLit . Cat ::= Integer)
@@ -458,7 +465,7 @@ fn generate_var_terminal_alternative(rule: &GrammarRule, cat_str: &str) -> Strin
                 if nt.to_string() == "Var" {
                     // Var should parse as Ident, then convert to OrdVar
                     pattern.push_str(&format!(" <{}:Ident>", var_name));
-                    args.push(format!("mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var({})))", var_name));
+                    args.push(format!("mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var({}.clone())))", var_name));
                 } else if nt == category {
                     // Recursive reference: use CatInfix to avoid circular reference
                     pattern.push_str(&format!(" <{}:{}Infix>", var_name, cat_str));
@@ -1423,11 +1430,21 @@ fn generate_action(analyzed: &AnalyzedRule, category: &syn::Ident, label: &syn::
 fn capture_to_arg(capture: &Capture) -> String {
     match &capture.usage {
         CaptureUsage::Boxed => format!("Box::new({})", capture.var_name),
-        CaptureUsage::Direct => capture.var_name.clone(),
-        CaptureUsage::AsVar => format!(
-            "mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var({})))",
-            capture.var_name
-        ),
+        CaptureUsage::Direct => {
+            // StringLiteral (std::string::String) may be passed by ref when reducing; clone to avoid move
+            if capture.nonterminal == "StringLiteral" {
+                format!("{}.clone()", capture.var_name)
+            } else {
+                capture.var_name.clone()
+            }
+        },
+        CaptureUsage::AsVar => {
+            // Ident is std::string::String; LALRPOP may pass by ref when reducing - clone to avoid move
+            format!(
+                "mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var({}.clone())))",
+                capture.var_name
+            )
+        },
         CaptureUsage::Binder | CaptureUsage::Body => capture.var_name.clone(),
     }
 }
@@ -1630,9 +1647,12 @@ fn generate_auto_alternatives(
                 ));
                 result.push_str(&format!("    <i:Integer> => {}::{}(i)", cat_str, literal_label));
             } else if type_str == "f32" || type_str == "f64" {
-                result.push_str(&format!("    <f:Float> => {}::{}(f)", cat_str, literal_label));
+                result.push_str(&format!("    <f:FloatLiteral> => {}::{}(f)", cat_str, literal_label));
             } else if type_str == "bool" {
                 result.push_str(&format!("    <b:Boolean> => {}::{}(b)", cat_str, literal_label));
+            } else if type_str == "str" || type_str == "String" {
+                // Clone to avoid "cannot move out of a shared reference" - LALRPOP may pass symbol by ref when reducing
+                result.push_str(&format!("    <s:StringLiteral> => {}::{}(s.clone())", cat_str, literal_label));
             }
             needs_comma = true;
         }
@@ -1647,7 +1667,7 @@ fn generate_auto_alternatives(
             result.push('\n');
         }
         result.push_str(&format!(
-            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v))))",
+            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
             cat_str, var_label
         ));
         needs_comma = true;

@@ -9,13 +9,15 @@ use crate::ast::{
     pattern::{Pattern, PatternTerm},
     types::{CollectionType, TypeExpr},
 };
-use proc_macro2::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
+use syn::LitStr;
 
 /// Generate metadata struct and impl for a language
 pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
     let name = &language.name;
     let name_str = name.to_string();
+    let name_lit = LitStr::new(&name_str, name.span());
     let metadata_name = format_ident!("{}Metadata", name);
 
     // Generate type definitions
@@ -35,7 +37,7 @@ pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
         pub struct #metadata_name;
 
         impl mettail_runtime::LanguageMetadata for #metadata_name {
-            fn name(&self) -> &'static str { #name_str }
+            fn name(&self) -> &'static str { #name_lit }
 
             fn types(&self) -> &'static [mettail_runtime::TypeDef] {
                 #type_defs
@@ -64,18 +66,20 @@ fn generate_type_defs(language: &LanguageDef) -> TokenStream {
         .enumerate()
         .map(|(i, ty)| {
             let name = ty.name.to_string();
+            let name_lit = LitStr::new(&name, ty.name.span());
             let is_primary = i == 0;
             let native_type = match &ty.native_type {
                 Some(t) => {
                     let t_str = quote!(#t).to_string();
-                    quote! { Some(#t_str) }
+                    let t_lit = LitStr::new(&t_str, Span::call_site());
+                    quote! { Some(#t_lit) }
                 },
                 None => quote! { None },
             };
 
             quote! {
                 mettail_runtime::TypeDef {
-                    name: #name,
+                    name: #name_lit,
                     native_type: #native_type,
                     is_primary: #is_primary,
                 }
@@ -109,6 +113,11 @@ fn generate_term_def(rule: &GrammarRule, language: &LanguageDef) -> TokenStream 
     // Generate user syntax
     let syntax = term_to_user_syntax(rule, language);
 
+    // Use LitStr for static string fields to avoid moving String in generated code
+    let name_lit = LitStr::new(&name, rule.label.span());
+    let type_name_lit = LitStr::new(&type_name, rule.category.span());
+    let syntax_lit = LitStr::new(&syntax, rule.label.span());
+
     // Generate field definitions
     let fields = generate_field_defs(rule);
 
@@ -117,9 +126,9 @@ fn generate_term_def(rule: &GrammarRule, language: &LanguageDef) -> TokenStream 
 
     quote! {
         mettail_runtime::TermDef {
-            name: #name,
-            type_name: #type_name,
-            syntax: #syntax,
+            name: #name_lit,
+            type_name: #type_name_lit,
+            syntax: #syntax_lit,
             description: #description,
             fields: #fields,
         }
@@ -233,10 +242,12 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                 TermParam::Simple { name, ty } => {
                     let name_str = name.to_string();
                     let ty_str = type_expr_to_string(ty);
+                    let name_lit = LitStr::new(&name_str, name.span());
+                    let ty_lit = LitStr::new(&ty_str, Span::call_site());
                     quote! {
                         mettail_runtime::FieldDef {
-                            name: #name_str,
-                            ty: #ty_str,
+                            name: #name_lit,
+                            ty: #ty_lit,
                             is_binder: false,
                         }
                     }
@@ -244,10 +255,12 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                 TermParam::Abstraction { binder, body, ty } => {
                     let name_str = format!("^{}.{}", binder, body);
                     let ty_str = type_expr_to_string(ty);
+                    let name_lit = LitStr::new(&name_str, binder.span());
+                    let ty_lit = LitStr::new(&ty_str, Span::call_site());
                     quote! {
                         mettail_runtime::FieldDef {
-                            name: #name_str,
-                            ty: #ty_str,
+                            name: #name_lit,
+                            ty: #ty_lit,
                             is_binder: true,
                         }
                     }
@@ -255,10 +268,12 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                 TermParam::MultiAbstraction { binder, body, ty } => {
                     let name_str = format!("^[{}].{}", binder, body);
                     let ty_str = type_expr_to_string(ty);
+                    let name_lit = LitStr::new(&name_str, binder.span());
+                    let ty_lit = LitStr::new(&ty_str, Span::call_site());
                     quote! {
                         mettail_runtime::FieldDef {
-                            name: #name_str,
-                            ty: #ty_str,
+                            name: #name_lit,
+                            ty: #ty_lit,
                             is_binder: true,
                         }
                     }
@@ -281,10 +296,12 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                 {
                     let name_str = format!("f{}", i);
                     let ty_str = nt.to_string();
+                    let name_lit = LitStr::new(&name_str, Span::call_site());
+                    let ty_lit = LitStr::new(&ty_str, Span::call_site());
                     Some(quote! {
                         mettail_runtime::FieldDef {
-                            name: #name_str,
-                            ty: #ty_str,
+                            name: #name_lit,
+                            ty: #ty_lit,
                             is_binder: false,
                         }
                     })
@@ -300,10 +317,12 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                         },
                         element_type
                     );
+                    let name_lit = LitStr::new(&name_str, Span::call_site());
+                    let ty_lit = LitStr::new(&ty_str, Span::call_site());
                     Some(quote! {
                         mettail_runtime::FieldDef {
-                            name: #name_str,
-                            ty: #ty_str,
+                            name: #name_lit,
+                            ty: #ty_lit,
                             is_binder: false,
                         }
                     })
@@ -312,10 +331,12 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
                     // Use lowercase category as placeholder name
                     let name_str = category.to_string().to_lowercase();
                     let ty_str = category.to_string();
+                    let name_lit = LitStr::new(&name_str, category.span());
+                    let ty_lit = LitStr::new(&ty_str, category.span());
                     Some(quote! {
                         mettail_runtime::FieldDef {
-                            name: #name_str,
-                            ty: #ty_str,
+                            name: #name_lit,
+                            ty: #ty_lit,
                             is_binder: true,
                         }
                     })
@@ -386,17 +407,25 @@ fn generate_equation_def(eq: &Equation, language: &LanguageDef) -> TokenStream {
         })
         .collect();
 
-    let conditions_tokens: Vec<TokenStream> = conditions.iter().map(|s| quote! { #s }).collect();
+    let conditions_tokens: Vec<TokenStream> = conditions
+        .iter()
+        .map(|s| {
+            let lit = LitStr::new(s, Span::call_site());
+            quote! { #lit }
+        })
+        .collect();
 
-    // Convert patterns to user syntax
+    // Convert patterns to user syntax (use LitStr for static str fields)
     let lhs = pattern_to_user_syntax(&eq.left, language);
     let rhs = pattern_to_user_syntax(&eq.right, language);
+    let lhs_lit = LitStr::new(&lhs, Span::call_site());
+    let rhs_lit = LitStr::new(&rhs, Span::call_site());
 
     quote! {
         mettail_runtime::EquationDef {
             conditions: &[#(#conditions_tokens),*],
-            lhs: #lhs,
-            rhs: #rhs,
+            lhs: #lhs_lit,
+            rhs: #rhs_lit,
         }
     }
 }
@@ -438,10 +467,15 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
         })
         .collect();
 
-    let conditions_tokens: Vec<TokenStream> = conditions.iter().map(|s| quote! { #s }).collect();
+    let conditions_tokens: Vec<TokenStream> = conditions
+        .iter()
+        .map(|s| {
+            let lit = LitStr::new(s, Span::call_site());
+            quote! { #lit }
+        })
+        .collect();
 
-    // Convert premise if present
-    // find the first congruence premise
+    // Convert premise if present (use LitStr for static str)
     let premise = rw
         .premises
         .iter()
@@ -449,24 +483,28 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
             if let Premise::Congruence { source, target } = p {
                 let source_str = source.to_string();
                 let target_str = target.to_string();
-                Some(quote! { Some((#source_str, #target_str)) })
+                let source_lit = LitStr::new(&source_str, source.span());
+                let target_lit = LitStr::new(&target_str, target.span());
+                Some(quote! { Some((#source_lit, #target_lit)) })
             } else {
                 None
             }
         })
         .unwrap_or(quote! { None });
 
-    // Convert patterns to user syntax
+    // Convert patterns to user syntax (use LitStr for static str fields)
     let lhs = pattern_to_user_syntax(&rw.left, language);
     let rhs = pattern_to_user_syntax(&rw.right, language);
+    let lhs_lit = LitStr::new(&lhs, Span::call_site());
+    let rhs_lit = LitStr::new(&rhs, Span::call_site());
 
     quote! {
         mettail_runtime::RewriteDef {
             name: #name,
             conditions: &[#(#conditions_tokens),*],
             premise: #premise,
-            lhs: #lhs,
-            rhs: #rhs,
+            lhs: #lhs_lit,
+            rhs: #rhs_lit,
         }
     }
 }

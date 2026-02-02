@@ -14,7 +14,7 @@ relation rw_term(Term, Term);
 
 
     // Category rules
-term(c1) <--
+term(c1.clone()) <--
     term(c0),
     rw_term(c0, c1);
 
@@ -93,19 +93,19 @@ rw_term(s_orig.clone(), t) <--
 
 (* __body).substitute_term(& __binder.0, & (s_f1_deref.clone()).clone()) }).normalize();
 
-rw_term(lhs, rhs) <--
+rw_term(lhs.clone(), rhs) <--
     term(lhs),
     if let Term :: App(ref x0, ref x1) = lhs,
     rw_term((* * x0).clone(), t),
     let rhs = Term :: App(Box :: new(t.clone()), x1.clone());
 
-rw_term(lhs, rhs) <--
+rw_term(lhs.clone(), rhs) <--
     term(lhs),
     if let Term :: App(ref x0, ref x1) = lhs,
     rw_term((* * x1).clone(), t),
     let rhs = Term :: App(x0.clone(), Box :: new(t.clone()));
 
-rw_term(lhs, rhs) <--
+rw_term(lhs.clone(), rhs) <--
     term(lhs),
     if let Term :: Lam(ref scope) = lhs,
     let binder = scope.unsafe_pattern().clone(),

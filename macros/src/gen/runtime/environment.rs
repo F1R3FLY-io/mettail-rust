@@ -57,7 +57,7 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
             quote! {
                 /// Per-category environment for storing named term bindings (preserves insertion order)
                 #[derive(Debug, Clone, Default)]
-                pub struct #env_name(pub indexmap::IndexMap<String, #cat_name>);
+                pub struct #env_name(pub indexmap::IndexMap<std::string::String, #cat_name>);
 
                 impl #env_name {
                     /// Create a new empty environment
@@ -71,7 +71,7 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
                     }
 
                     /// Set a term binding (maintains insertion order for new entries)
-                    pub fn set(&mut self, name: String, value: #cat_name) {
+                    pub fn set(&mut self, name: std::string::String, value: #cat_name) {
                         self.0.insert(name, value);
                     }
 
@@ -81,7 +81,7 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
                     }
 
                     /// Iterate over all bindings in insertion order
-                    pub fn iter(&self) -> impl Iterator<Item = (&String, &#cat_name)> {
+                    pub fn iter(&self) -> impl Iterator<Item = (&std::string::String, &#cat_name)> {
                         self.0.iter()
                     }
 
@@ -163,7 +163,7 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
         pub struct #env_struct_name {
             #(#field_defs),*,
             /// Optional comments for each binding (keyed by binding name)
-            pub comments: std::collections::HashMap<String, String>,
+            pub comments: std::collections::HashMap<std::string::String, std::string::String>,
         }
 
         impl #env_struct_name {
@@ -187,12 +187,12 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
             }
 
             /// Set a comment for a binding
-            pub fn set_comment(&mut self, name: &str, comment: String) {
+            pub fn set_comment(&mut self, name: &str, comment: std::string::String) {
                 self.comments.insert(name.to_string(), comment);
             }
 
             /// Get the comment for a binding
-            pub fn get_comment(&self, name: &str) -> Option<&String> {
+            pub fn get_comment(&self, name: &str) -> Option<&std::string::String> {
                 self.comments.get(name)
             }
 

@@ -275,7 +275,7 @@ fn generate_collection_congruence(
     let insert_helper = format_ident!("insert_into_{}", constructor.to_string().to_lowercase());
 
     Some(quote! {
-        #rw_rel(parent, result) <--
+        #rw_rel(parent.clone(), result) <--
             #cat_lower(parent),
             if let #category::#constructor(ref bag) = parent,
             for (elem, _count) in bag.iter(),
@@ -319,7 +319,7 @@ fn generate_binding_congruence(
         // Simple case: just the scope (like PNew)
         // Use unsafe accessors to preserve binder identity (prevents infinite loops)
         Some(quote! {
-            #rw_rel(lhs, rhs) <--
+            #rw_rel(lhs.clone(), rhs) <--
                 #cat_lower(lhs),
                 if let #category::#constructor(ref scope) = lhs,
                 let binder = scope.unsafe_pattern().clone(),
@@ -346,7 +346,7 @@ fn generate_binding_congruence(
             .collect();
 
         Some(quote! {
-            #rw_rel(lhs, rhs) <--
+            #rw_rel(lhs.clone(), rhs) <--
                 #cat_lower(lhs),
                 if let #category::#constructor(#(ref #vars),*) = lhs,
                 let binder = #scope_var.unsafe_pattern().clone(),
@@ -414,7 +414,7 @@ fn generate_simple_congruence(
         .collect();
 
     Some(quote! {
-        #rw_rel(lhs, rhs) <--
+        #rw_rel(lhs.clone(), rhs) <--
             #cat_lower(lhs),
             if let #category::#constructor(#(ref #vars),*) = lhs,
             #field_rw_rel(#s_expr, #t_var),

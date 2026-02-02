@@ -10,11 +10,18 @@ language! {
     name: Calculator,
     types {
         ![i32] as Int
+        // Float (f64) omitted: Ascent Datalog requires Eq/Hash on relation types, which f64 does not implement
+        ![bool] as Bool
+        ![str] as Str
     },
     terms {
+        Comp . a:Bool, b:Bool |- a "&&" b : Bool ![a && b] step;
+        Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
+        AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
         Add . a:Int, b:Int |- a "+" b : Int ![a + b] step;
         Sub . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
         Up . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
+        Up1 . a:Int, b:Int |- a "%" b : Int ![5 * a + 5 * b] fold;
     },
     equations {
     },
@@ -23,5 +30,7 @@ language! {
         AddCongR . | S ~> T |- (Add L S) ~> (Add L T);
         SubCongL . | S ~> T |- (Sub S R) ~> (Sub T R);
         SubCongR . | S ~> T |- (Sub L S) ~> (Sub L T);
+        AddStrCongL . | S ~> T |- (AddStr S R) ~> (AddStr T R);
+        AddStrCongR . | S ~> T |- (AddStr L S) ~> (AddStr L T);
     },
 }

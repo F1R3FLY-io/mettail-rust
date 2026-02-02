@@ -5,6 +5,7 @@ use std::collections::HashMap;
 /// Generate eval() method for native types
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{BuiltinOp, LanguageDef, SemanticOperation};
+use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule};
 
 /// Extract parameter names from term_context in the same order as generated variant fields.
@@ -68,12 +69,17 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         // Check for existing rules
         let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
 
-        // Add arm for auto-generated NumLit if no explicit Integer rule
+        // Add arm for auto-generated literal if no explicit Integer rule
         if !has_integer_rule {
             let literal_label = generate_literal_label(native_type);
-            match_arms.push(quote! {
-                #category::#literal_label(n) => *n,
-            });
+            let type_str = native_type_to_string(native_type);
+            // String is not Copy; use clone() for str/String
+            let literal_arm = if type_str == "str" || type_str == "String" {
+                quote! { #category::#literal_label(n) => n.clone(), }
+            } else {
+                quote! { #category::#literal_label(n) => *n, }
+            };
+            match_arms.push(literal_arm);
         }
 
         // Add arm for auto-generated Var variant if no explicit Var rule
@@ -209,11 +215,17 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         }
 
         if !match_arms.is_empty() {
+            // str is unsized; use String as return type for eval()
+            let return_type = if native_type_to_string(native_type) == "str" {
+                quote! { std::string::String }
+            } else {
+                quote! { #native_type }
+            };
             let impl_block = quote! {
                 impl #category {
                     /// Evaluate the expression to its native type value.
                     /// Variables must be substituted via rewrites before evaluation.
-                    pub fn eval(&self) -> #native_type {
+                    pub fn eval(&self) -> #return_type {
                         match self {
                             #(#match_arms)*
                             _ => panic!("Cannot evaluate expression - contains unevaluated terms. Apply rewrites first."),

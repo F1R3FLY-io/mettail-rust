@@ -156,6 +156,7 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
         "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => quote::format_ident!("NumLit"),
         "f32" | "f64" => quote::format_ident!("FloatLit"),
         "bool" => quote::format_ident!("BoolLit"),
+        "str" | "String" => quote::format_ident!("StringLit"),
         _ => quote::format_ident!("Lit"), // Generic fallback
     }
 }

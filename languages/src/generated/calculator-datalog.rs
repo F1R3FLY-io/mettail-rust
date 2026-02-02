@@ -8,17 +8,33 @@ ascent_source! {
     // Relations
 relation int(Int);
 
+relation bool(Bool);
+
+relation str(Str);
+
 #[ds(crate :: eqrel)] relation eq_int(Int, Int);
 
+#[ds(crate :: eqrel)] relation eq_bool(Bool, Bool);
+
+#[ds(crate :: eqrel)] relation eq_str(Str, Str);
+
 relation rw_int(Int, Int);
+
+relation rw_bool(Bool, Bool);
+
+relation rw_str(Str, Str);
 
 relation fold_int(Int, Int);
 
 
     // Category rules
-int(c1) <--
+int(c1.clone()) <--
     int(c0),
     rw_int(c0, c1);
+
+str(field_0.as_ref().clone()) <--
+    int(t),
+    if let Int :: Len(field_0) = t;
 
 int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
@@ -35,10 +51,62 @@ int(field_1.as_ref().clone()) <--
     int(t),
     if let Int :: Up(field_0, field_1) = t;
 
+int(field_0.as_ref().clone()),
+int(field_1.as_ref().clone()) <--
+    int(t),
+    if let Int :: Up1(field_0, field_1) = t;
+
+bool(c1.clone()) <--
+    bool(c0),
+    rw_bool(c0, c1);
+
+bool(field_0.as_ref().clone()),
+bool(field_1.as_ref().clone()) <--
+    bool(t),
+    if let Bool :: Comp(field_0, field_1) = t;
+
+str(c1.clone()) <--
+    str(c0),
+    rw_str(c0, c1);
+
+str(field_0.as_ref().clone()),
+str(field_1.as_ref().clone()) <--
+    str(t),
+    if let Str :: AddStr(field_0, field_1) = t;
+
 
     // Equation rules
 eq_int(t.clone(), t.clone()) <--
     int(t);
+
+eq_bool(t.clone(), t.clone()) <--
+    bool(t);
+
+eq_str(t.clone(), t.clone()) <--
+    str(t);
+
+eq_bool(s.clone(), t.clone()) <--
+    bool(s),
+    if let Bool :: Comp(ref s_f0, ref s_f1) = s,
+    bool(t),
+    if let Bool :: Comp(ref t_f0, ref t_f1) = t,
+    eq_bool(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_bool(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: Len(ref s_f0) = s,
+    int(t),
+    if let Int :: Len(ref t_f0) = t,
+    eq_str(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_str(s.clone(), t.clone()) <--
+    str(s),
+    if let Str :: AddStr(ref s_f0, ref s_f1) = s,
+    str(t),
+    if let Str :: AddStr(ref t_f0, ref t_f1) = t,
+    eq_str(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_str(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
 eq_int(s.clone(), t.clone()) <--
     int(s),
@@ -64,78 +132,151 @@ eq_int(s.clone(), t.clone()) <--
     eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
+eq_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: Up1(ref s_f0, ref s_f1) = s,
+    int(t),
+    if let Int :: Up1(ref t_f0, ref t_f1) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
 
     // Rewrite rules
-rw_int(s, t) <--
+rw_bool(s.clone(), t) <--
+    bool(s),
+    if let Bool :: Comp(left, right) = s,
+    if let Bool :: BoolLit(a_ref) = left.as_ref(),
+    if let Bool :: BoolLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Bool :: BoolLit((a && b));
+
+rw_str(s.clone(), t) <--
+    str(s),
+    if let Str :: AddStr(left, right) = s,
+    if let Str :: StringLit(a_ref) = left.as_ref(),
+    if let Str :: StringLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Str :: StringLit(({ let mut x = a.clone();
+
+x.push_str(& b);
+
+x }));
+
+rw_int(s.clone(), t) <--
     int(s),
     if let Int :: Add(left, right) = s,
-    if let Int :: NumLit(a) = left.as_ref(),
-    if let Int :: NumLit(b) = right.as_ref(),
+    if let Int :: NumLit(a_ref) = left.as_ref(),
+    if let Int :: NumLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
     let t = Int :: NumLit((a + b));
+
+rw_int(orig.clone(), t) <--
+    int(orig),
+    if let Int :: Len(inner) = orig,
+    if let Str :: StringLit(s_ref) = inner.as_ref(),
+    let s = s_ref.clone(),
+    let t = Int :: NumLit((s.len() as i32));
 
 fold_int(t.clone(), t.clone()) <--
     int(t),
     if let Int :: NumLit(_) = t;
 
-fold_int(s, res) <--
+fold_int(s.clone(), res) <--
     int(s),
     if let Int :: Add(left, right) = s,
     fold_int(left.as_ref().clone(), lv),
     fold_int(right.as_ref().clone(), rv),
-    if let Int :: NumLit(a) = & lv,
-    if let Int :: NumLit(b) = & rv,
+    if let Int :: NumLit(a_ref) = & lv,
+    if let Int :: NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
     let res = Int :: NumLit((a + b));
 
-fold_int(s, res) <--
+fold_int(s.clone(), res) <--
     int(s),
     if let Int :: Sub(left, right) = s,
     fold_int(left.as_ref().clone(), lv),
     fold_int(right.as_ref().clone(), rv),
-    if let Int :: NumLit(a) = & lv,
-    if let Int :: NumLit(b) = & rv,
+    if let Int :: NumLit(a_ref) = & lv,
+    if let Int :: NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
     let res = Int :: NumLit((a - b));
 
-fold_int(s, res) <--
+fold_int(s.clone(), res) <--
     int(s),
     if let Int :: Up(left, right) = s,
     fold_int(left.as_ref().clone(), lv),
     fold_int(right.as_ref().clone(), rv),
-    if let Int :: NumLit(a) = & lv,
-    if let Int :: NumLit(b) = & rv,
+    if let Int :: NumLit(a_ref) = & lv,
+    if let Int :: NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
     let res = Int :: NumLit((2 * a + 3 * b));
 
-rw_int(s, t) <--
+fold_int(s.clone(), res) <--
+    int(s),
+    if let Int :: Up1(left, right) = s,
+    fold_int(left.as_ref().clone(), lv),
+    fold_int(right.as_ref().clone(), rv),
+    if let Int :: NumLit(a_ref) = & lv,
+    if let Int :: NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Int :: NumLit((5 * a + 5 * b));
+
+rw_int(s.clone(), t.clone()) <--
     int(s),
     if let Int :: Sub(_, _) = s,
     fold_int(s, t);
 
-rw_int(s, t) <--
+rw_int(s.clone(), t.clone()) <--
     int(s),
     if let Int :: Up(_, _) = s,
     fold_int(s, t);
 
-rw_int(lhs, rhs) <--
+rw_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: Up1(_, _) = s,
+    fold_int(s, t);
+
+rw_int(lhs.clone(), rhs) <--
     int(lhs),
     if let Int :: Add(ref x0, ref x1) = lhs,
     rw_int((* * x0).clone(), t),
     let rhs = Int :: Add(Box :: new(t.clone()), x1.clone());
 
-rw_int(lhs, rhs) <--
+rw_int(lhs.clone(), rhs) <--
     int(lhs),
     if let Int :: Add(ref x0, ref x1) = lhs,
     rw_int((* * x1).clone(), t),
     let rhs = Int :: Add(x0.clone(), Box :: new(t.clone()));
 
-rw_int(lhs, rhs) <--
+rw_int(lhs.clone(), rhs) <--
     int(lhs),
     if let Int :: Sub(ref x0, ref x1) = lhs,
     rw_int((* * x0).clone(), t),
     let rhs = Int :: Sub(Box :: new(t.clone()), x1.clone());
 
-rw_int(lhs, rhs) <--
+rw_int(lhs.clone(), rhs) <--
     int(lhs),
     if let Int :: Sub(ref x0, ref x1) = lhs,
     rw_int((* * x1).clone(), t),
     let rhs = Int :: Sub(x0.clone(), Box :: new(t.clone()));
+
+rw_str(lhs.clone(), rhs) <--
+    str(lhs),
+    if let Str :: AddStr(ref x0, ref x1) = lhs,
+    rw_str((* * x0).clone(), t),
+    let rhs = Str :: AddStr(Box :: new(t.clone()), x1.clone());
+
+rw_str(lhs.clone(), rhs) <--
+    str(lhs),
+    if let Str :: AddStr(ref x0, ref x1) = lhs,
+    rw_str((* * x1).clone(), t),
+    let rhs = Str :: AddStr(x0.clone(), Box :: new(t.clone()));
 
 }

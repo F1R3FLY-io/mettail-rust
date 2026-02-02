@@ -9,7 +9,8 @@ use crate::ast::language::LanguageDef;
 use crate::gen::generate_var_label;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::Ident;
+use proc_macro2::Span;
+use syn::{Ident, LitStr};
 
 /// Generate the complete language implementation
 pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
@@ -24,11 +25,19 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
         .map(|t| &t.name)
         .expect("Language must have at least one type");
 
-    let term_wrapper = generate_term_wrapper(name, primary_type);
-    let language_struct =
-        generate_language_struct(name, primary_type, &name_str, &name_lower, language);
-    let language_trait_impl =
-        generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language);
+    let (term_wrapper, language_struct, language_trait_impl) = if language.types.len() > 1 {
+        (
+            generate_term_wrapper_multi(name, language),
+            generate_language_struct_multi(name, &name_str, &name_lower, language),
+            generate_language_trait_impl_multi(name, &name_str, &name_lower, language),
+        )
+    } else {
+        (
+            generate_term_wrapper(name, primary_type),
+            generate_language_struct(name, primary_type, &name_str, &name_lower, language),
+            generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language),
+        )
+    };
 
     quote! {
         #term_wrapper
@@ -45,6 +54,125 @@ fn generate_term_wrapper(name: &syn::Ident, primary_type: &syn::Ident) -> TokenS
         /// Wrapper for the primary type that implements `mettail_runtime::Term`
         #[derive(Clone)]
         pub struct #term_name(pub #primary_type);
+
+        impl mettail_runtime::Term for #term_name {
+            fn clone_box(&self) -> Box<dyn mettail_runtime::Term> {
+                Box::new(self.clone())
+            }
+
+            fn term_id(&self) -> u64 {
+                use std::collections::hash_map::DefaultHasher;
+                use std::hash::{Hash, Hasher};
+                let mut hasher = DefaultHasher::new();
+                self.0.hash(&mut hasher);
+                hasher.finish()
+            }
+
+            fn term_eq(&self, other: &dyn mettail_runtime::Term) -> bool {
+                if let Some(other_term) = other.as_any().downcast_ref::<#term_name>() {
+                    self.0 == other_term.0
+                } else {
+                    false
+                }
+            }
+
+            fn as_any(&self) -> &dyn std::any::Any {
+                self
+            }
+        }
+
+        impl std::fmt::Display for #term_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+
+        impl std::fmt::Debug for #term_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{:?}", self.0)
+            }
+        }
+    }
+}
+
+/// Generate the Term wrapper with an enum when the language has multiple types
+/// (any combination of built-in or user-defined types, e.g. Int/Bool/Str or Proc/Name).
+fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> TokenStream {
+    let term_name = format_ident!("{}Term", name);
+    let inner_enum_name = format_ident!("{}TermInner", name);
+
+    let enum_variants: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            quote! { #cat(#cat) }
+        })
+        .collect();
+
+    let display_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            quote! { #inner_enum_name::#cat(v) => write!(f, "{}", v) }
+        })
+        .collect();
+    let debug_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            quote! { #inner_enum_name::#cat(v) => write!(f, "{:?}", v) }
+        })
+        .collect();
+
+    let env_name = format_ident!("{}Env", name);
+    let substitute_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env(env)) }
+        })
+        .collect();
+
+    quote! {
+        /// Inner term enum for multi-category languages (one variant per type in the language).
+        #[derive(Clone, PartialEq, Eq, Hash)]
+        pub enum #inner_enum_name {
+            #(#enum_variants),*
+        }
+
+        impl #inner_enum_name {
+            /// Substitute environment bindings into the term.
+            pub fn substitute_env(&self, env: &#env_name) -> Self {
+                match self {
+                    #(#substitute_arms),*
+                }
+            }
+        }
+
+        impl std::fmt::Display for #inner_enum_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    #(#display_arms),*
+                }
+            }
+        }
+
+        impl std::fmt::Debug for #inner_enum_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    #(#debug_arms),*
+                }
+            }
+        }
+
+        /// Wrapper for the term that implements `mettail_runtime::Term`
+        #[derive(Clone)]
+        pub struct #term_name(pub #inner_enum_name);
 
         impl mettail_runtime::Term for #term_name {
             fn clone_box(&self) -> Box<dyn mettail_runtime::Term> {
@@ -122,13 +250,13 @@ fn generate_language_struct(
 
         impl #language_name {
             /// Parse a term from a string (clears var cache for fresh evaluation)
-            pub fn parse(input: &str) -> Result<#term_name, String> {
+            pub fn parse(input: &str) -> Result<#term_name, std::string::String> {
                 mettail_runtime::clear_var_cache();
                 Self::parse_preserving_vars(input)
             }
 
             /// Parse a term without clearing var cache (for environment sharing)
-            pub fn parse_preserving_vars(input: &str) -> Result<#term_name, String> {
+            pub fn parse_preserving_vars(input: &str) -> Result<#term_name, std::string::String> {
                 let parser = #parser_mod::#parser_name::new();
                 parser
                     .parse(input)
@@ -260,7 +388,7 @@ fn generate_language_struct(
                 root_term: &#primary_type,
                 term: &#primary_type,
                 result: &mut Vec<mettail_runtime::VarTypeInfo>,
-                seen: &mut std::collections::HashSet<String>,
+                seen: &mut std::collections::HashSet<std::string::String>,
             ) {
                 Self::collect_all_vars_impl(root_term, term, result, seen);
             }
@@ -273,7 +401,7 @@ fn generate_language_struct(
                 root_term: &#primary_type,
                 term: &#primary_type,
                 result: &mut Vec<mettail_runtime::VarTypeInfo>,
-                seen: &mut std::collections::HashSet<String>,
+                seen: &mut std::collections::HashSet<std::string::String>,
             ) {
                 match term {
                     #var_collection_impl
@@ -296,7 +424,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
     let mut lambda_arms: Vec<TokenStream> = Vec::new();
 
     for domain in &categories {
-        let domain_str = domain.to_string();
+        let domain_lit = LitStr::new(&domain.to_string(), domain.span());
         let lam_variant = format_ident!("Lam{}", domain);
         let mlam_variant = format_ident!("MLam{}", domain);
 
@@ -311,7 +439,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                         // Infer the binder's type from how it's used in the body
                         let var_type = body.infer_var_type(name)
                             .map(|t| Self::inferred_to_term_type(&t))
-                            .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_str.to_string()));
+                            .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
                         result.push(mettail_runtime::VarTypeInfo {
                             name: name.clone(),
                             ty: var_type,
@@ -335,7 +463,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                             // Infer the binder's type from how it's used in the body
                             let var_type = body.infer_var_type(name)
                                 .map(|t| Self::inferred_to_term_type(&t))
-                                .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_str.to_string()));
+                                .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
                             result.push(mettail_runtime::VarTypeInfo {
                                 name: name.clone(),
                                 ty: var_type,
@@ -477,6 +605,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                         } else {
                                             "Name".to_string()
                                         };
+                                        let domain_lit = LitStr::new(&domain_str, Span::call_site());
 
                                         recurse_calls.push(quote! {
                                             // Extract binder from scope using unbind
@@ -486,7 +615,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                                     seen.insert(name.clone());
                                                     let var_type = body.infer_var_type(name)
                                                         .map(|t| Self::inferred_to_term_type(&t))
-                                                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_str.to_string()));
+                                                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
                                                     result.push(mettail_runtime::VarTypeInfo {
                                                         name: name.clone(),
                                                         ty: var_type,
@@ -518,6 +647,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                         } else {
                                             "Name".to_string()
                                         };
+                                        let domain_lit = LitStr::new(&domain_str, Span::call_site());
 
                                         recurse_calls.push(quote! {
                                             // Extract binders from multi-scope using unbind
@@ -528,7 +658,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                                         seen.insert(name.clone());
                                                         let var_type = body.infer_var_type(name)
                                                             .map(|t| Self::inferred_to_term_type(&t))
-                                                            .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_str.to_string()));
+                                                            .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
                                                         result.push(mettail_runtime::VarTypeInfo {
                                                             name: name.clone(),
                                                             ty: var_type,
@@ -580,7 +710,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                         GrammarItem::Binder { category } => {
                             // Binder + next NonTerminal = one Scope field
                             let field_name = &field_names[field_idx];
-                            let domain_str = category.to_string();
+                            let domain_lit = LitStr::new(&category.to_string(), category.span());
 
                             // Skip to the body item
                             item_idx += 1;
@@ -596,7 +726,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                                     seen.insert(name.clone());
                                                     let var_type = body.infer_var_type(name)
                                                         .map(|t| Self::inferred_to_term_type(&t))
-                                                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_str.to_string()));
+                                                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()));
                                                     result.push(mettail_runtime::VarTypeInfo {
                                                         name: name.clone(),
                                                         ty: var_type,
@@ -634,7 +764,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
 
     // Variable handling for free variables (e.g., PVar for Proc, NVar for Name, TVar for Term)
     let var_label = generate_var_label(primary_type);
-    let primary_type_str = primary_type.to_string();
+    let primary_type_lit = LitStr::new(&primary_type.to_string(), primary_type.span());
 
     quote! {
         #primary_type::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
@@ -644,7 +774,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                     // Try to infer type from usage in root term
                     let var_type = root_term.infer_var_type(name)
                         .map(|t| Self::inferred_to_term_type(&t))
-                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#primary_type_str.to_string()));
+                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#primary_type_lit.to_string()));
                     result.push(mettail_runtime::VarTypeInfo {
                         name: name.clone(),
                         ty: var_type,
@@ -656,6 +786,111 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
         #(#lambda_arms)*
         #(#constructor_arms)*
         _ => {}
+    }
+}
+
+/// Generate the Language struct when the language has multiple types (multi-category parse and run).
+fn generate_language_struct_multi(
+    name: &syn::Ident,
+    _name_str: &str,
+    name_lower: &str,
+    language: &LanguageDef,
+) -> TokenStream {
+    let language_name = format_ident!("{}Language", name);
+    let term_name = format_ident!("{}Term", name);
+    let inner_enum_name = format_ident!("{}TermInner", name);
+    let env_name = format_ident!("{}Env", name);
+    let parser_mod = format_ident!("{}", name_lower);
+    let ascent_source = format_ident!("{}_source", name_lower);
+
+    // Parse: try each category's parser in order; first success wins. Keep last error for message.
+    let parse_tries: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let parser_name = format_ident!("{}Parser", cat);
+            let variant = format_ident!("{}", cat);
+            quote! {
+                match #parser_mod::#parser_name::new().parse(input) {
+                    Ok(t) => return Ok(#term_name(#inner_enum_name::#variant(t))),
+                    Err(e) => last_err = Some(format!("{:?}", e)),
+                }
+            }
+        })
+        .collect();
+
+    // run_ascent_typed: match on variant, seed the right relation, run, collect from that relation.
+    // Term IDs must match the wrapper's term_id() which hashes the inner enum (e.g. CalculatorTermInner::Str(t)),
+    // so we hash the enum variant wrapping each term for TermInfo and Rewrite.
+    let run_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
+            let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
+            let variant = format_ident!("{}", cat);
+            quote! {
+                #inner_enum_name::#variant(inner) => {
+                    use ascent::*;
+                    let initial = inner.clone().normalize();
+                    let prog = ascent_run! {
+                        include_source!(#ascent_source);
+                        #cat_lower(initial.clone());
+                    };
+                    let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
+                    let rewrites: Vec<(#cat, #cat)> = prog.#rw_rel.iter().map(|(from, to)| (from.clone(), to.clone())).collect();
+                    let term_infos: Vec<mettail_runtime::TermInfo> = all_terms.iter().map(|t| {
+                        let wrapped = #inner_enum_name::#variant(t.clone());
+                        let term_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut hasher = DefaultHasher::new(); wrapped.hash(&mut hasher); hasher.finish() };
+                        let has_rewrites = rewrites.iter().any(|(from, _)| from == t);
+                        mettail_runtime::TermInfo { term_id, display: format!("{}", t), is_normal_form: !has_rewrites }
+                    }).collect();
+                    let rewrite_list: Vec<mettail_runtime::Rewrite> = rewrites.iter().map(|(from, to)| {
+                        use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher};
+                        let w_from = #inner_enum_name::#variant(from.clone());
+                        let w_to = #inner_enum_name::#variant(to.clone());
+                        let mut h1 = DefaultHasher::new(); let mut h2 = DefaultHasher::new();
+                        w_from.hash(&mut h1); w_to.hash(&mut h2);
+                        mettail_runtime::Rewrite { from_id: h1.finish(), to_id: h2.finish(), rule_name: Some("rewrite".to_string()) }
+                    }).collect();
+                    mettail_runtime::AscentResults { all_terms: term_infos, rewrites: rewrite_list, equivalences: Vec::new() }
+                }
+            }
+        })
+        .collect();
+
+    quote! {
+        /// Language implementation struct (multi-category: one parser/relation per type).
+        pub struct #language_name;
+
+        impl #language_name {
+            /// Parse a term from a string (clears var cache). Tries each category parser in order.
+            pub fn parse(input: &str) -> Result<#term_name, std::string::String> {
+                mettail_runtime::clear_var_cache();
+                Self::parse_preserving_vars(input)
+            }
+
+            /// Parse without clearing var cache. Tries each category parser in order.
+            pub fn parse_preserving_vars(input: &str) -> Result<#term_name, std::string::String> {
+                let mut last_err = None;
+                #(#parse_tries)*
+                Err(last_err.unwrap_or_else(|| "Parse error".to_string()))
+            }
+
+            /// Run Ascent on a typed term (seeds the relation for the term's category).
+            pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
+                match &term.0 {
+                    #(#run_arms),*
+                }
+            }
+
+            /// Create a new empty environment
+            pub fn create_env() -> #env_name {
+                #env_name::new()
+            }
+        }
     }
 }
 
@@ -671,6 +906,9 @@ fn generate_language_trait_impl(
     let term_name = format_ident!("{}Term", name);
     let metadata_name = format_ident!("{}Metadata", name);
     let env_name = format_ident!("{}Env", name);
+
+    // Use a string literal for fn name() to avoid moving String (quote! #name_str can expand to a move)
+    let name_lit = LitStr::new(name_str, name.span());
 
     // All categories for environment field access (include native so e.g. Calculator can list/remove Int bindings)
     let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
@@ -704,24 +942,24 @@ fn generate_language_trait_impl(
     quote! {
         impl mettail_runtime::Language for #language_name {
             fn name(&self) -> &'static str {
-                #name_str
+                #name_lit
             }
 
             fn metadata(&self) -> &'static dyn mettail_runtime::LanguageMetadata {
                 &#metadata_name
             }
 
-            fn parse_term(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, String> {
+            fn parse_term(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
                 #language_name::parse(input)
                     .map(|t| Box::new(t) as Box<dyn mettail_runtime::Term>)
             }
 
-            fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, String> {
+            fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
                 #language_name::parse_preserving_vars(input)
                     .map(|t| Box::new(t) as Box<dyn mettail_runtime::Term>)
             }
 
-            fn run_ascent(&self, term: &dyn mettail_runtime::Term) -> Result<mettail_runtime::AscentResults, String> {
+            fn run_ascent(&self, term: &dyn mettail_runtime::Term) -> Result<mettail_runtime::AscentResults, std::string::String> {
                 let typed_term = term
                     .as_any()
                     .downcast_ref::<#term_name>()
@@ -733,7 +971,7 @@ fn generate_language_trait_impl(
                 Box::new(#language_name::create_env())
             }
 
-            fn add_to_env(&self, env: &mut dyn std::any::Any, name: &str, term: &dyn mettail_runtime::Term) -> Result<(), String> {
+            fn add_to_env(&self, env: &mut dyn std::any::Any, name: &str, term: &dyn mettail_runtime::Term) -> Result<(), std::string::String> {
                 let typed_env = env
                     .downcast_mut::<#env_name>()
                     .ok_or_else(|| "Invalid environment type".to_string())?;
@@ -748,7 +986,7 @@ fn generate_language_trait_impl(
                 Ok(())
             }
 
-            fn remove_from_env(&self, env: &mut dyn std::any::Any, name: &str) -> Result<bool, String> {
+            fn remove_from_env(&self, env: &mut dyn std::any::Any, name: &str) -> Result<bool, std::string::String> {
                 let typed_env = env
                     .downcast_mut::<#env_name>()
                     .ok_or_else(|| "Invalid environment type".to_string())?;
@@ -764,7 +1002,7 @@ fn generate_language_trait_impl(
                 }
             }
 
-            fn substitute_env(&self, term: &dyn mettail_runtime::Term, env: &dyn std::any::Any) -> Result<Box<dyn mettail_runtime::Term>, String> {
+            fn substitute_env(&self, term: &dyn mettail_runtime::Term, env: &dyn std::any::Any) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
                 let typed_env = env
                     .downcast_ref::<#env_name>()
                     .ok_or_else(|| "Invalid environment type".to_string())?;
@@ -778,7 +1016,7 @@ fn generate_language_trait_impl(
                 Ok(Box::new(#term_name(substituted)))
             }
 
-            fn list_env(&self, env: &dyn std::any::Any) -> Vec<(String, String, Option<String>)> {
+            fn list_env(&self, env: &dyn std::any::Any) -> Vec<(std::string::String, std::string::String, Option<std::string::String>)> {
                 let typed_env = match env.downcast_ref::<#env_name>() {
                     Some(e) => e,
                     None => return Vec::new(),
@@ -790,7 +1028,7 @@ fn generate_language_trait_impl(
                 result
             }
 
-            fn set_env_comment(&self, env: &mut dyn std::any::Any, name: &str, comment: String) -> Result<(), String> {
+            fn set_env_comment(&self, env: &mut dyn std::any::Any, name: &str, comment: std::string::String) -> Result<(), std::string::String> {
                 let typed_env = env
                     .downcast_mut::<#env_name>()
                     .ok_or_else(|| "Invalid environment type".to_string())?;
@@ -833,13 +1071,190 @@ fn generate_language_trait_impl(
     }
 }
 
+/// Generate the Language trait implementation when the language has multiple types (enum term).
+fn generate_language_trait_impl_multi(
+    name: &syn::Ident,
+    name_str: &str,
+    _name_lower: &str,
+    language: &LanguageDef,
+) -> TokenStream {
+    let language_name = format_ident!("{}Language", name);
+    let term_name = format_ident!("{}Term", name);
+    let inner_enum_name = format_ident!("{}TermInner", name);
+    let metadata_name = format_ident!("{}Metadata", name);
+    let env_name = format_ident!("{}Env", name);
+    let name_lit = LitStr::new(name_str, name.span());
+
+    let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
+    let remove_checks: Vec<TokenStream> = categories
+        .iter()
+        .map(|cat| {
+            let field = format_ident!("{}", cat.to_string().to_lowercase());
+            quote! { typed_env.#field.remove(name).is_some() }
+        })
+        .collect();
+    let list_iterations: Vec<TokenStream> = categories
+        .iter()
+        .map(|cat| {
+            let field = format_ident!("{}", cat.to_string().to_lowercase());
+            quote! {
+                for (name, val) in typed_env.#field.iter() {
+                    let comment = typed_env.comments.get(name).cloned();
+                    result.push((name.clone(), format!("{}", val), comment));
+                }
+            }
+        })
+        .collect();
+
+    // add_to_env: match on term.0 and set the right env field
+    let add_to_env_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let field = format_ident!("{}", cat.to_string().to_lowercase());
+            let variant = format_ident!("{}", cat);
+            quote! { #inner_enum_name::#variant(t) => typed_env.#field.set(name.to_string(), t.clone()) }
+        })
+        .collect();
+
+    // infer_term_type: match and return Base(category name)
+    let infer_term_type_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let cat_str = cat.to_string();
+            let variant = format_ident!("{}", cat);
+            let lit = LitStr::new(&cat_str, cat.span());
+            quote! { #inner_enum_name::#variant(_) => mettail_runtime::TermType::Base(#lit.to_string()) }
+        })
+        .collect();
+
+    quote! {
+        impl mettail_runtime::Language for #language_name {
+            fn name(&self) -> &'static str {
+                #name_lit
+            }
+
+            fn metadata(&self) -> &'static dyn mettail_runtime::LanguageMetadata {
+                &#metadata_name
+            }
+
+            fn parse_term(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
+                #language_name::parse(input)
+                    .map(|t| Box::new(t) as Box<dyn mettail_runtime::Term>)
+            }
+
+            fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
+                #language_name::parse_preserving_vars(input)
+                    .map(|t| Box::new(t) as Box<dyn mettail_runtime::Term>)
+            }
+
+            fn run_ascent(&self, term: &dyn mettail_runtime::Term) -> Result<mettail_runtime::AscentResults, std::string::String> {
+                let typed_term = term
+                    .as_any()
+                    .downcast_ref::<#term_name>()
+                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                Ok(#language_name::run_ascent_typed(typed_term))
+            }
+
+            fn create_env(&self) -> Box<dyn std::any::Any + Send + Sync> {
+                Box::new(#language_name::create_env())
+            }
+
+            fn add_to_env(&self, env: &mut dyn std::any::Any, name: &str, term: &dyn mettail_runtime::Term) -> Result<(), std::string::String> {
+                let typed_env = env
+                    .downcast_mut::<#env_name>()
+                    .ok_or_else(|| "Invalid environment type".to_string())?;
+                let typed_term = term
+                    .as_any()
+                    .downcast_ref::<#term_name>()
+                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                match &typed_term.0 {
+                    #(#add_to_env_arms),*
+                }
+                Ok(())
+            }
+
+            fn remove_from_env(&self, env: &mut dyn std::any::Any, name: &str) -> Result<bool, std::string::String> {
+                let typed_env = env
+                    .downcast_mut::<#env_name>()
+                    .ok_or_else(|| "Invalid environment type".to_string())?;
+                let removed = #(#remove_checks)||*;
+                Ok(removed)
+            }
+
+            fn clear_env(&self, env: &mut dyn std::any::Any) {
+                if let Some(typed_env) = env.downcast_mut::<#env_name>() {
+                    typed_env.clear();
+                }
+            }
+
+            fn substitute_env(&self, term: &dyn mettail_runtime::Term, env: &dyn std::any::Any) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
+                let typed_env = env
+                    .downcast_ref::<#env_name>()
+                    .ok_or_else(|| "Invalid environment type".to_string())?;
+                let typed_term = term
+                    .as_any()
+                    .downcast_ref::<#term_name>()
+                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                let substituted = typed_term.0.substitute_env(typed_env);
+                Ok(Box::new(#term_name(substituted)))
+            }
+
+            fn list_env(&self, env: &dyn std::any::Any) -> Vec<(std::string::String, std::string::String, Option<std::string::String>)> {
+                let typed_env = match env.downcast_ref::<#env_name>() {
+                    Some(e) => e,
+                    None => return Vec::new(),
+                };
+                let mut result = Vec::new();
+                #(#list_iterations)*
+                result
+            }
+
+            fn set_env_comment(&self, env: &mut dyn std::any::Any, name: &str, comment: std::string::String) -> Result<(), std::string::String> {
+                let typed_env = env
+                    .downcast_mut::<#env_name>()
+                    .ok_or_else(|| "Invalid environment type".to_string())?;
+                typed_env.set_comment(name, comment);
+                Ok(())
+            }
+
+            fn is_env_empty(&self, env: &dyn std::any::Any) -> bool {
+                env.downcast_ref::<#env_name>()
+                    .map(|e| e.is_empty())
+                    .unwrap_or(true)
+            }
+
+            fn infer_term_type(&self, term: &dyn mettail_runtime::Term) -> mettail_runtime::TermType {
+                let typed_term = match term.as_any().downcast_ref::<#term_name>() {
+                    Some(t) => t,
+                    None => return mettail_runtime::TermType::Unknown,
+                };
+                match &typed_term.0 {
+                    #(#infer_term_type_arms),*
+                }
+            }
+
+            fn infer_var_types(&self, _term: &dyn mettail_runtime::Term) -> Vec<mettail_runtime::VarTypeInfo> {
+                Vec::new()
+            }
+
+            fn infer_var_type(&self, _term: &dyn mettail_runtime::Term, _var_name: &str) -> Option<mettail_runtime::TermType> {
+                None
+            }
+        }
+    }
+}
+
 /// Generate the type inference helper for the primary type
 ///
 /// This handles detecting lambda variants and building the full function type.
 /// The domain type is inferred from how the binder is USED in the body,
 /// not just from the lambda variant.
 fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef) -> TokenStream {
-    let primary_type_str = primary_type.to_string();
+    let primary_type_lit = LitStr::new(&primary_type.to_string(), primary_type.span());
 
     // Get all non-native categories for lambda variant detection
     let categories: Vec<_> = language
@@ -853,7 +1268,7 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
     let mut lambda_arms: Vec<TokenStream> = Vec::new();
 
     for domain in &categories {
-        let domain_str = domain.to_string();
+        let domain_lit = LitStr::new(&domain.to_string(), domain.span());
         let lam_variant = format_ident!("Lam{}", domain);
         let mlam_variant = format_ident!("MLam{}", domain);
 
@@ -873,10 +1288,10 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
                     // Use infer_var_type to get the actual type from usage
                     body.infer_var_type(name)
                         .map(|t| Self::inferred_to_term_type(&t))
-                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_str.to_string()))
+                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#domain_lit.to_string()))
                 } else {
                     // Fallback to the variant's domain type
-                    mettail_runtime::TermType::Base(#domain_str.to_string())
+                    mettail_runtime::TermType::Base(#domain_lit.to_string())
                 };
 
                 mettail_runtime::TermType::Arrow(
@@ -892,7 +1307,7 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
                 let (_binders, body) = scope.clone().unbind();
                 let body_type = Self::infer_term_type_typed(&body);
                 mettail_runtime::TermType::MultiArrow(
-                    Box::new(mettail_runtime::TermType::Base(#domain_str.to_string())),
+                    Box::new(mettail_runtime::TermType::Base(#domain_lit.to_string())),
                     Box::new(body_type),
                 )
             }
@@ -903,7 +1318,7 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
         match term {
             #(#lambda_arms)*
             // Non-lambda terms have the primary type as their type
-            _ => mettail_runtime::TermType::Base(#primary_type_str.to_string()),
+            _ => mettail_runtime::TermType::Base(#primary_type_lit.to_string()),
         }
     }
 }

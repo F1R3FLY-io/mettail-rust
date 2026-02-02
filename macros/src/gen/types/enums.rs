@@ -5,6 +5,7 @@ use crate::ast::{
     language::LanguageDef,
     types::{CollectionType, TypeExpr},
 };
+use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -36,13 +37,18 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             generate_variant(rule, language)
         }).collect();
 
-        // Auto-generate NumLit variant for native types without explicit Integer rule
+        // Auto-generate literal variant for native types without explicit Integer rule
         if let Some(native_type) = &lang_type.native_type {
             if !has_integer_rule {
                 let literal_label = generate_literal_label(native_type);
-                let native_type_cloned = native_type.clone();
+                // str is unsized; use String for the variant payload
+                let payload_type = if native_type_to_string(native_type) == "str" {
+                    quote! { std::string::String }
+                } else {
+                    quote! { #native_type }
+                };
                 variants.push(quote! {
-                    #literal_label(#native_type_cloned)
+                    #literal_label(#payload_type)
                 });
             }
         }
@@ -103,8 +109,18 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             });
         }
 
+        // f64/f32 don't implement Eq, Ord, Hash; omit those derives for float categories
+        let has_float = lang_type.native_type.as_ref().map_or(false, |t| {
+            let s = native_type_to_string(t);
+            s == "f32" || s == "f64"
+        });
+        let derives = if has_float {
+            quote! { #[derive(Debug, Clone, PartialEq, PartialOrd, mettail_runtime::BoundTerm)] }
+        } else {
+            quote! { #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, mettail_runtime::BoundTerm)] }
+        };
         quote! {
-            #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, mettail_runtime::BoundTerm)]
+            #derives
             pub enum #cat_name {
                 #(#variants),*
             }

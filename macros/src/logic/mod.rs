@@ -17,7 +17,8 @@
 //! 3. **Equation Rules**: Add reflexivity, congruence, and user-defined equalities
 //! 4. **Rewrite Rules**: Base rewrites + congruence rules (propagate through constructors)
 
-use crate::ast::types::EvalMode;
+use crate::ast::grammar::TermParam;
+use crate::ast::types::{EvalMode, TypeExpr};
 use crate::gen::{generate_literal_label, is_integer_rule};
 use crate::{
     ast::{
@@ -221,13 +222,17 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
                 let num_lit = format_ident!("NumLit");
 
-                // Pattern: rw_cat(s, t) with body that matches and extracts a, b
+                // Pattern: rw_cat(s, t) with body that matches and extracts a, b.
+                // Bind a,b by clone so non-Copy types (e.g. bool) are passed by value.
+                // Clone s so we insert owned; Ascent may bind s by reference (e.g. &Str).
                 rules.push(quote! {
-                    #rw_rel(s, t) <--
+                    #rw_rel(s.clone(), t) <--
                         #cat_rel(s),
                         if let #category::#label(left, right) = s,
-                        if let #category::#num_lit(a) = left.as_ref(),
-                        if let #category::#num_lit(b) = right.as_ref(),
+                        if let #category::#num_lit(a_ref) = left.as_ref(),
+                        if let #category::#num_lit(b_ref) = right.as_ref(),
+                        let a = a_ref.clone(),
+                        let b = b_ref.clone(),
                         let t = #category::#num_lit(a #op_token b);
                 });
             }
@@ -281,11 +286,78 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
             .unwrap_or_else(|| generate_literal_label(_native_type));
         let rust_code = &rule.rust_code.as_ref().unwrap().code;
         rules.push(quote! {
-            #rw_rel(s, t) <--
+            #rw_rel(s.clone(), t) <--
                 #cat_rel(s),
                 if let #category::#label(left, right) = s,
-                if let #category::#num_lit_label(a) = left.as_ref(),
-                if let #category::#num_lit_label(b) = right.as_ref(),
+                if let #category::#num_lit_label(a_ref) = left.as_ref(),
+                if let #category::#num_lit_label(b_ref) = right.as_ref(),
+                let a = a_ref.clone(),
+                let b = b_ref.clone(),
+                let t = #category::#num_lit_label((#rust_code));
+        });
+    }
+
+    // Unary step rules: one argument from another category (e.g. Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step)
+    for rule in &language.terms {
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if language
+            .semantics
+            .iter()
+            .any(|s| s.constructor == rule.label)
+        {
+            continue;
+        }
+        if rule.eval_mode == Some(EvalMode::Fold) {
+            continue;
+        }
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .count();
+        if non_terminal_count != 1 {
+            continue;
+        }
+        let Some(ref term_context) = rule.term_context else {
+            continue;
+        };
+        let [TermParam::Simple { name: param_name, ty: ref param_ty }] = term_context.as_slice() else {
+            continue;
+        };
+        let TypeExpr::Base(arg_category) = param_ty else {
+            continue;
+        };
+        let category = &rule.category;
+        let Some(result_native) = native_type_for(category) else {
+            continue;
+        };
+        let Some(arg_lang_type) = language.types.iter().find(|t| t.name == *arg_category) else {
+            continue;
+        };
+        let Some(ref arg_native) = arg_lang_type.native_type else {
+            continue;
+        };
+        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
+        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
+        let label = &rule.label;
+        let num_lit_label = language
+            .terms
+            .iter()
+            .find(|r| r.category == *category && is_integer_rule(r))
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| generate_literal_label(result_native));
+        let arg_lit_label = generate_literal_label(arg_native);
+        let rust_code = &rule.rust_code.as_ref().unwrap().code;
+        // Use a different name for the term so the param (e.g. s) can be bound for rust_code without shadowing
+        let term_var = format_ident!("orig");
+        rules.push(quote! {
+            #rw_rel(#term_var.clone(), t) <--
+                #cat_rel(#term_var),
+                if let #category::#label(inner) = #term_var,
+                if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
+                let #param_name = s_ref.clone(),
                 let t = #category::#num_lit_label((#rust_code));
         });
     }
@@ -375,13 +447,15 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
             };
 
             rules.push(quote! {
-                #fold_rel(s, res) <--
+                #fold_rel(s.clone(), res) <--
                     #cat_rel(s),
                     if let #category::#label(left, right) = s,
                     #fold_rel(left.as_ref().clone(), lv),
                     #fold_rel(right.as_ref().clone(), rv),
-                    if let #category::#num_lit(a) = &lv,
-                    if let #category::#num_lit(b) = &rv,
+                    if let #category::#num_lit(a_ref) = &lv,
+                    if let #category::#num_lit(b_ref) = &rv,
+                    let a = a_ref.clone(),
+                    let b = b_ref.clone(),
                     let res = #res_expr;
             });
         }
@@ -393,7 +467,7 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
             }
             let label = &rule.label;
             rules.push(quote! {
-                #rw_rel(s, t) <--
+                #rw_rel(s.clone(), t.clone()) <--
                     #cat_rel(s),
                     if let #category::#label(_, _) = s,
                     #fold_rel(s, t);

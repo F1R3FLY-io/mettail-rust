@@ -266,12 +266,12 @@ fn generate_condition_clauses(
                     #relation(var_name, #val_binding_name)
                 });
 
-                // Add to env_bindings with dereference - Ascent binds relation values by reference
-                // So if env_var is (String, i32), val_binding_name is &i32, and we need *val_binding_name
+                // Add to env_bindings - Ascent binds relation values by reference.
+                // Use .clone() so we don't move out of a shared reference (E0507 for String etc).
                 env_bindings.insert(
                     val_arg.to_string(),
                     VariableBinding {
-                        expression: quote! { *#val_binding_name },
+                        expression: quote! { (#val_binding_name).clone() },
                         lang_type: default_lang_type.clone(),
                         scope_kind: None,
                     },
