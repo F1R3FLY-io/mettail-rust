@@ -1,9 +1,12 @@
-use syn::{Ident, Type, Token, parse::{Parse, ParseStream}, Result as SynResult};
+use syn::{
+    parse::{Parse, ParseStream},
+    Ident, Result as SynResult, Token, Type,
+};
 
-use super::grammar::{GrammarRule, parse_terms};
+use super::grammar::{parse_terms, GrammarRule};
 use super::pattern::{Pattern, PatternTerm};
-use std::fmt::Display;
 use std::fmt;
+use std::fmt::Display;
 
 /// Top-level theory definition
 /// theory! { name: Foo, params: ..., types { ... }, terms { ... }, equations { ... }, rewrites { ... }, semantics { ... } }
@@ -16,10 +19,10 @@ pub struct LanguageDef {
     pub semantics: Vec<SemanticRule>,
 }
 
-
 /// A typed parameter in the type context
 /// Example: `P:Proc` in `Rule . P:Proc | ... |- ...`
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct TypedParam {
     pub name: Ident,
     pub ty: super::types::TypeExpr,
@@ -31,12 +34,12 @@ pub struct TypedParam {
 pub enum Premise {
     /// Freshness: x # P (x is fresh in P)
     Freshness(FreshnessCondition),
-    
+
     /// Congruence: S ~> T (if S rewrites to T)
     /// Only valid in rewrites, not equations
     Congruence { source: Ident, target: Ident },
-    
-    /// Relation query: rel(arg1, arg2, ...) 
+
+    /// Relation query: rel(arg1, arg2, ...)
     /// Currently used for env_var(x, v), extensible to arbitrary relations
     RelationQuery { relation: Ident, args: Vec<Ident> },
 }
@@ -44,6 +47,7 @@ pub enum Premise {
 /// Equation in unified judgement syntax
 /// Syntax: Name . type_context | prop_context |- lhs = rhs ;
 /// Example: ScopeExtrusion . | x # ...rest |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest})) ;
+#[allow(dead_code)]
 pub struct Equation {
     /// Rule name (required)
     pub name: Ident,
@@ -96,6 +100,7 @@ pub enum Condition {
 /// Rewrite rule in unified judgement syntax
 /// Syntax: Name . type_context | prop_context |- lhs ~> rhs ;
 /// Example: ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest}) ;
+#[allow(dead_code)]
 pub struct RewriteRule {
     /// Rule name (required)
     pub name: Ident,
@@ -121,7 +126,7 @@ impl RewriteRule {
             }
         })
     }
-    
+
     /// Check if this is a congruence rule (has a Premise::Congruence)
     pub fn is_congruence_rule(&self) -> bool {
         self.congruence_premise().is_some()
@@ -157,7 +162,6 @@ pub enum BuiltinOp {
     Shl,    // <<
     Shr,    // >>
 }
-
 
 /// Export: category name, optionally with native Rust type
 /// types { Elem; Name; ![i32] as Int; }
@@ -197,7 +201,6 @@ impl LanguageDef {
     pub fn get_type(&self, category: &Ident) -> Option<&LangType> {
         self.types.iter().find(|t| &t.name == category)
     }
-
 }
 
 // Implement Parse for LanguageDef
@@ -325,7 +328,6 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
     Ok(types)
 }
 
-
 fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
     let eq_ident = input.parse::<Ident>()?;
     if eq_ident != "equations" {
@@ -355,7 +357,7 @@ fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
 ///   relation   ::= ident "(" (ident ("," ident)*)? ")"
 fn parse_premise(input: ParseStream) -> SynResult<Premise> {
     let first = input.parse::<Ident>()?;
-    
+
     if input.peek(Token![#]) {
         // Freshness: x # target
         let _ = input.parse::<Token![#]>()?;
@@ -385,8 +387,10 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
         }
         Ok(Premise::RelationQuery { relation: first, args })
     } else {
-        Err(syn::Error::new(first.span(), 
-            "expected premise: 'x # term', 'S ~> T', or 'rel(args)'"))
+        Err(syn::Error::new(
+            first.span(),
+            "expected premise: 'x # term', 'S ~> T', or 'rel(args)'",
+        ))
     }
 }
 
@@ -400,7 +404,7 @@ fn parse_typed_param(input: ParseStream) -> SynResult<TypedParam> {
 
 /// Parse rule contexts in judgement form:
 ///   type_context | prop_context |-
-/// 
+///
 /// Grammar:
 ///   contexts   ::= type_ctx? ("|" prop_ctx)? "|-"
 ///   type_ctx   ::= typed_param ("," typed_param)*
@@ -408,22 +412,22 @@ fn parse_typed_param(input: ParseStream) -> SynResult<TypedParam> {
 fn parse_rule_contexts(input: ParseStream) -> SynResult<(Vec<TypedParam>, Vec<Premise>)> {
     let mut type_context = Vec::new();
     let mut premises = Vec::new();
-    
+
     let mut in_prop_context = false;
-    
+
     loop {
         // Check for "|-" (end of contexts)
         if input.peek(Token![|]) && input.peek2(Token![-]) {
             break;
         }
-        
+
         // Check for "|" (separator between type and prop contexts)
         if input.peek(Token![|]) && !input.peek2(Token![-]) {
             let _ = input.parse::<Token![|]>()?;
             in_prop_context = true;
             continue;
         }
-        
+
         if in_prop_context {
             // Parse premise
             premises.push(parse_premise(input)?);
@@ -432,7 +436,7 @@ fn parse_rule_contexts(input: ParseStream) -> SynResult<(Vec<TypedParam>, Vec<Pr
             // Disambiguate: type param has ":" after name, premise has "#", "~>", or "("
             let fork = input.fork();
             let _ = fork.parse::<Ident>()?;
-            
+
             if fork.peek(Token![:]) && !fork.peek(Token![::]) {
                 // Type parameter: name:Type
                 type_context.push(parse_typed_param(input)?);
@@ -442,7 +446,7 @@ fn parse_rule_contexts(input: ParseStream) -> SynResult<(Vec<TypedParam>, Vec<Pr
                 premises.push(parse_premise(input)?);
             }
         }
-        
+
         // Check for comma (more items) or end
         if input.peek(Token![,]) {
             let _ = input.parse::<Token![,]>()?;
@@ -450,7 +454,7 @@ fn parse_rule_contexts(input: ParseStream) -> SynResult<(Vec<TypedParam>, Vec<Pr
             break;
         }
     }
-    
+
     // Consume "|-"
     if input.peek(Token![|]) && input.peek2(Token![-]) {
         let _ = input.parse::<Token![|]>()?;
@@ -458,7 +462,7 @@ fn parse_rule_contexts(input: ParseStream) -> SynResult<(Vec<TypedParam>, Vec<Pr
     } else {
         return Err(input.error("expected '|-' after contexts"));
     }
-    
+
     Ok((type_context, premises))
 }
 
@@ -466,10 +470,10 @@ fn parse_equation(input: ParseStream) -> SynResult<Equation> {
     // Parse: Name .
     let name = input.parse::<Ident>()?;
     let _ = input.parse::<Token![.]>()?;
-    
+
     // Parse contexts and turnstile
     let (type_context, premises) = parse_rule_contexts(input)?;
-    
+
     // Parse left-hand side as pattern
     let left = parse_pattern(input)?;
 
@@ -482,9 +486,14 @@ fn parse_equation(input: ParseStream) -> SynResult<Equation> {
     // Parse semicolon
     let _ = input.parse::<Token![;]>()?;
 
-    Ok(Equation { name, type_context, premises, left, right })
+    Ok(Equation {
+        name,
+        type_context,
+        premises,
+        left,
+        right,
+    })
 }
-
 
 /// Parse a pattern (for LHS and RHS of rules)
 /// Returns Pattern which can include Collection for {P, Q, ...rest} patterns
@@ -494,7 +503,7 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
     if input.peek(Token![*]) {
         return parse_metasyntax_pattern(input);
     }
-    
+
     // Parse collection pattern: {P, Q, ...rest}
     if input.peek(syn::token::Brace) {
         let content;
@@ -548,13 +557,16 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
         // Old syntax (backward compat): (eval term var repl)
         if constructor == "eval" {
             let first = parse_pattern(&content)?;
-            
+
             if content.is_empty() {
-                return Err(syn::Error::new(constructor.span(), "eval requires at least 2 arguments"));
+                return Err(syn::Error::new(
+                    constructor.span(),
+                    "eval requires at least 2 arguments",
+                ));
             }
-            
+
             let second = parse_pattern(&content)?;
-            
+
             if content.is_empty() {
                 // New syntax: (subst lamterm repl) - 2 args
                 // lamterm can be ^x.body (Lambda), ^[xs].body (MultiLambda), or a variable
@@ -566,14 +578,14 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
                             var: binder.clone(),
                             replacement: Box::new(second),
                         }));
-                    }
+                    },
                     Pattern::Term(PatternTerm::MultiLambda { .. }) => {
                         // Multi-lambda: use MultiSubst with single replacement (will be collection)
                         return Ok(Pattern::Term(PatternTerm::MultiSubst {
                             scope: Box::new(first),
                             replacements: vec![second],
                         }));
-                    }
+                    },
                     _ => {
                         // Variable or other pattern: treat as scope, use MultiSubst
                         // This handles both single and multi at runtime via unbind
@@ -581,23 +593,23 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
                             scope: Box::new(first),
                             replacements: vec![second],
                         }));
-                    }
+                    },
                 }
             } else {
                 // Old syntax: (subst term var repl) - 3 args (backward compatibility)
                 let var = match &second {
                     Pattern::Term(PatternTerm::Var(v)) => v.clone(),
                     _ => return Err(syn::Error::new(
-                        constructor.span(), 
+                        constructor.span(),
                         "In 3-arg eval syntax (subst term var repl), second argument must be a variable name"
                     )),
                 };
                 let replacement = parse_pattern(&content)?;
-                
+
                 if !content.is_empty() {
                     return Err(syn::Error::new(constructor.span(), "eval takes 2 or 3 arguments"));
                 }
-                
+
                 return Ok(Pattern::Term(PatternTerm::Subst {
                     term: Box::new(first),
                     var,
@@ -615,10 +627,7 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
         }
 
         // Create Apply PatternTerm with Pattern args
-        Ok(Pattern::Term(PatternTerm::Apply {
-            constructor,
-            args,
-        }))
+        Ok(Pattern::Term(PatternTerm::Apply { constructor, args }))
     } else if input.peek(Token![^]) {
         // Lambda patterns - parse directly to support collections in body
         input.parse::<Token![^]>()?;
@@ -627,9 +636,9 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
         if input.peek(syn::token::Bracket) {
             let content;
             syn::bracketed!(content in input);
-            
+
             // Parse comma-separated list of binders
-            let binders: syn::punctuated::Punctuated<Ident, Token![,]> = 
+            let binders: syn::punctuated::Punctuated<Ident, Token![,]> =
                 content.parse_terminated(Ident::parse, Token![,])?;
             let binders: Vec<Ident> = binders.into_iter().collect();
 
@@ -639,10 +648,7 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
             // Parse body as pattern (supports collections)
             let body = parse_pattern(input)?;
 
-            return Ok(Pattern::Term(PatternTerm::MultiLambda {
-                binders,
-                body: Box::new(body),
-            }));
+            return Ok(Pattern::Term(PatternTerm::MultiLambda { binders, body: Box::new(body) }));
         }
 
         // Single binder: ^x.body
@@ -650,20 +656,17 @@ pub fn parse_pattern(input: ParseStream) -> SynResult<Pattern> {
         input.parse::<Token![.]>()?;
         let body = parse_pattern(input)?;
 
-        Ok(Pattern::Term(PatternTerm::Lambda {
-            binder,
-            body: Box::new(body),
-        }))
+        Ok(Pattern::Term(PatternTerm::Lambda { binder, body: Box::new(body) }))
     } else {
         // Just a variable - but check for chained metasyntax like `var.#map(...)`
         let var = input.parse::<Ident>()?;
         let base = Pattern::Term(PatternTerm::Var(var));
-        
+
         // Check for chained method-style metasyntax: var.#map(...)
         if input.peek(Token![.]) && input.peek2(Token![*]) {
             return parse_chained_metasyntax(input, base);
         }
-        
+
         Ok(base)
     }
 }
@@ -673,46 +676,46 @@ fn parse_metasyntax_pattern(input: ParseStream) -> SynResult<Pattern> {
     input.parse::<Token![*]>()?;
     let op_name = input.parse::<Ident>()?;
     let op_str = op_name.to_string();
-    
+
     match op_str.as_str() {
         "zip" => {
             // #zip(coll1, coll2)
             let content;
             syn::parenthesized!(content in input);
-            
+
             let coll1 = parse_pattern(&content)?;
             content.parse::<Token![,]>()?;
             let coll2 = parse_pattern(&content)?;
-            
+
             let base = Pattern::Zip {
                 first: Box::new(coll1),
                 second: Box::new(coll2),
             };
-            
+
             // Check for chained metasyntax: #zip(a, b).#map(|x, y| ...)
             if input.peek(Token![.]) && input.peek2(Token![*]) {
                 parse_chained_metasyntax(input, base)
             } else {
                 Ok(base)
             }
-        }
+        },
         "map" => {
             // #map(coll, |params| body) - prefix form
             let content;
             syn::parenthesized!(content in input);
-            
+
             let collection = parse_pattern(&content)?;
             content.parse::<Token![,]>()?;
-            
+
             // Parse closure: |params| body
             let (params, body) = parse_closure(&content)?;
-            
+
             Ok(Pattern::Map {
                 collection: Box::new(collection),
                 params,
                 body: Box::new(body),
             })
-        }
+        },
         _ => Err(syn::Error::new(
             op_name.span(),
             format!("Unknown metasyntax operator: #{}", op_str),
@@ -726,46 +729,46 @@ fn parse_chained_metasyntax(input: ParseStream, base: Pattern) -> SynResult<Patt
     input.parse::<Token![*]>()?;
     let op_name = input.parse::<Ident>()?;
     let op_str = op_name.to_string();
-    
+
     match op_str.as_str() {
         "map" => {
             // base.#map(|params| body)
             let content;
             syn::parenthesized!(content in input);
-            
+
             let (params, body) = parse_closure(&content)?;
-            
+
             let result = Pattern::Map {
                 collection: Box::new(base),
                 params,
                 body: Box::new(body),
             };
-            
+
             // Check for more chaining
             if input.peek(Token![.]) && input.peek2(Token![*]) {
                 parse_chained_metasyntax(input, result)
             } else {
                 Ok(result)
             }
-        }
+        },
         "zip" => {
             // base.#zip(other) - less common but supported
             let content;
             syn::parenthesized!(content in input);
-            
+
             let other = parse_pattern(&content)?;
-            
+
             let result = Pattern::Zip {
                 first: Box::new(base),
                 second: Box::new(other),
             };
-            
+
             if input.peek(Token![.]) && input.peek2(Token![*]) {
                 parse_chained_metasyntax(input, result)
             } else {
                 Ok(result)
             }
-        }
+        },
         _ => Err(syn::Error::new(
             op_name.span(),
             format!("Unknown chained metasyntax operator: #{}", op_str),
@@ -776,7 +779,7 @@ fn parse_chained_metasyntax(input: ParseStream, base: Pattern) -> SynResult<Patt
 /// Parse a closure: |params| body or |param1, param2| body
 fn parse_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Pattern)> {
     input.parse::<Token![|]>()?;
-    
+
     // Parse comma-separated params
     let mut params = Vec::new();
     while !input.peek(Token![|]) {
@@ -787,12 +790,12 @@ fn parse_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Pattern)> {
             break;
         }
     }
-    
+
     input.parse::<Token![|]>()?;
-    
+
     // Parse body as pattern
     let body = parse_pattern(input)?;
-    
+
     Ok((params, body))
 }
 
@@ -836,7 +839,7 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
     // Parse: Name .
     let name = input.parse::<Ident>()?;
     let _ = input.parse::<Token![.]>()?;
-    
+
     // Parse contexts and turnstile
     let (type_context, premises) = parse_rule_contexts(input)?;
 

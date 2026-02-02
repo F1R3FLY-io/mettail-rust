@@ -1,7 +1,4 @@
-use syn::{
-    parse::ParseStream,
-    Ident, Result as SynResult, Token,
-};
+use syn::{parse::ParseStream, Ident, Result as SynResult, Token};
 
 use super::types::{CollectionType, EvalMode, RustCodeBlock, TypeExpr};
 
@@ -25,7 +22,7 @@ pub enum GrammarItem {
 }
 
 /// Parameter in term context of a constructor declaration
-/// 
+///
 /// Examples:
 /// - `n:Name` → Simple parameter
 /// - `^x.p:[Name -> Proc]` → Abstraction binding x in p
@@ -33,32 +30,21 @@ pub enum GrammarItem {
 #[derive(Debug, Clone)]
 pub enum TermParam {
     /// Simple typed parameter: `n:Name`
-    Simple { 
-        name: Ident, 
-        ty: TypeExpr,
-    },
+    Simple { name: Ident, ty: TypeExpr },
     /// Abstraction parameter: `^x.p:[Name -> Proc]`
     /// - `binder` is the bound variable (x)
     /// - `body` is the parameter name for the body (p)
     /// - `ty` is the function type [Name -> Proc]
-    Abstraction {
-        binder: Ident,
-        body: Ident,
-        ty: TypeExpr,
-    },
+    Abstraction { binder: Ident, body: Ident, ty: TypeExpr },
     /// Multi-binder abstraction: `^[xs].p:[Name* -> Proc]`
     /// - `binder` represents multiple bound variables (xs = x0, x1, ...)
     /// - `body` is the parameter name for the body (p)
     /// - `ty` is the function type [Name* -> Proc]
-    MultiAbstraction {
-        binder: Ident,
-        body: Ident,
-        ty: TypeExpr,
-    },
+    MultiAbstraction { binder: Ident, body: Ident, ty: TypeExpr },
 }
 
 /// Syntax expression in patterns (can include meta-operations)
-/// 
+///
 /// Example: `"for" "(" #zip(ns,xs).#map(|n,x| x "<-" n).#sep(",") ")" "{" p "}"`
 #[derive(Debug, Clone)]
 pub enum SyntaxExpr {
@@ -71,13 +57,13 @@ pub enum SyntaxExpr {
 }
 
 /// Pattern operation (compile-time meta-syntax)
-/// 
+///
 /// These operations generate grammar rules and display code at compile time.
 #[derive(Debug, Clone)]
 pub enum PatternOp {
     /// #sep(coll, "sep") or coll.#sep("sep") or chain.#sep(",")
     /// Generates: `(<elem> "sep")* <elem>?` in grammar
-    /// 
+    ///
     /// For simple collections: source=None, collection=coll_name
     /// For chained operations: source=Some(Map/Zip), collection ignored
     Sep {
@@ -88,41 +74,36 @@ pub enum PatternOp {
     },
     /// #zip(a, b) - pairs corresponding elements
     /// Used with #map to generate paired patterns
-    Zip {
-        left: Ident,
-        right: Ident,
-    },
+    Zip { left: Ident, right: Ident },
     /// #map(source, |x| expr) or source.#map(|x| expr)
     /// Transforms each element according to the pattern
     Map {
-        source: Box<PatternOp>,  // Can be Zip result or collection ref
-        params: Vec<Ident>,       // Closure parameters
-        body: Vec<SyntaxExpr>,    // Pattern body
+        source: Box<PatternOp>, // Can be Zip result or collection ref
+        params: Vec<Ident>,     // Closure parameters
+        body: Vec<SyntaxExpr>,  // Pattern body
     },
     /// #opt(expr) - optional element
     /// Generates: `(expr)?` in grammar
-    Opt {
-        inner: Vec<SyntaxExpr>,
-    },
+    Opt { inner: Vec<SyntaxExpr> },
     /// Variable reference (for chaining: coll.#sep)
     Var(Ident),
 }
 
 /// Grammar rule - supports both old BNFC-style and new judgement-style syntax
-/// 
+///
 /// Old style: `Label . Category ::= Item Item Item ;`
 /// New style: `Label . context |- pattern : Type ;`
 #[derive(Debug, Clone)]
 pub struct GrammarRule {
     pub label: Ident,
-    pub category: Ident,  // Result type
-    
+    pub category: Ident, // Result type
+
     // Old syntax (BNFC-style) - used when term_context is None
     pub items: Vec<GrammarItem>,
     /// Binding structure: (binder_index, vec![body_indices])
     /// e.g., (0, vec![1]) means item 0 binds in item 1
     pub bindings: Vec<(usize, Vec<usize>)>,
-    
+
     // New syntax (judgement-style) - used when term_context is Some
     /// Term context with typed parameters: `n:Name, ^x.p:[Name -> Proc]`
     pub term_context: Option<Vec<TermParam>>,
@@ -162,13 +143,13 @@ fn parse_grammar_rule(input: ParseStream) -> SynResult<GrammarRule> {
     // Parse: Label .
     let label = input.parse::<Ident>()?;
     let _ = input.parse::<Token![.]>()?;
-    
+
     // Look ahead to determine syntax style:
     // - Old: `Category ::= ...` (Ident followed by ::)
     // - New: `context |- pattern : Type` (Ident followed by :)
     //
     // Key difference: old uses `::=` (double colon), new uses `:` (single colon) for typing
-    
+
     let is_old_syntax = {
         let fork = input.fork();
         // Parse the category/first-param identifier
@@ -180,7 +161,7 @@ fn parse_grammar_rule(input: ParseStream) -> SynResult<GrammarRule> {
             false
         }
     };
-    
+
     if is_old_syntax {
         // OLD SYNTAX: Label . Category ::= items ;
         parse_grammar_rule_old(label, input)
@@ -249,21 +230,21 @@ fn parse_grammar_rule_old(label: Ident, input: ParseStream) -> SynResult<Grammar
 fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<GrammarRule> {
     // Parse term context: param, param, ...
     let term_context = parse_term_context(input)?;
-    
+
     // Parse |- (as | followed by -)
     if !input.peek(Token![|]) {
         return Err(input.error("expected '|-' after term context"));
     }
     let _ = input.parse::<Token![|]>()?;
     let _ = input.parse::<Token![-]>()?;
-    
+
     // Parse syntax pattern until : Type
     let syntax_pattern = parse_syntax_pattern(input)?;
-    
+
     // Parse : Type
     let _ = input.parse::<Token![:]>()?;
     let category = input.parse::<Ident>()?;
-    
+
     // Parse optional Rust code block: ![code]
     let rust_code = if input.peek(Token![!]) && input.peek2(syn::token::Bracket) {
         let _ = input.parse::<Token![!]>()?;
@@ -286,18 +267,18 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
                     mode_ident.span(),
                     "expected evaluation mode: fold or step",
                 ));
-            }
+            },
         }
     } else {
         None
     };
-    
+
     // Parse ;
     let _ = input.parse::<Token![;]>()?;
-    
+
     // Convert term_context to items and bindings for backward compatibility
     let (items, bindings) = convert_term_context_to_items(&term_context);
-    
+
     Ok(GrammarRule {
         label,
         category,
@@ -313,17 +294,17 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
 /// Parse term context: `n:Name, ^x.p:[Name -> Proc]`
 fn parse_term_context(input: ParseStream) -> SynResult<Vec<TermParam>> {
     let mut params = Vec::new();
-    
+
     loop {
-        // Check for end of context (|-) 
+        // Check for end of context (|-)
         if input.peek(Token![|]) {
             break;
         }
-        
+
         // Parse a parameter
         let param = parse_term_param(input)?;
         params.push(param);
-        
+
         // Check for comma separator
         if input.peek(Token![,]) {
             let _ = input.parse::<Token![,]>()?;
@@ -331,12 +312,12 @@ fn parse_term_context(input: ParseStream) -> SynResult<Vec<TermParam>> {
             break;
         }
     }
-    
+
     Ok(params)
 }
 
 /// Parse a single term parameter
-/// 
+///
 /// - `n:Name` → Simple
 /// - `^x.p:[Name -> Proc]` → Abstraction
 /// - `^[xs].p:[Name* -> Proc]` → MultiAbstraction
@@ -344,9 +325,9 @@ fn parse_term_param(input: ParseStream) -> SynResult<TermParam> {
     if input.peek(Token![^]) {
         // Abstraction: ^x.p:Type or ^[xs].p:Type
         let _ = input.parse::<Token![^]>()?;
-        
+
         let is_multi = input.peek(syn::token::Bracket);
-        
+
         let binder = if is_multi {
             // ^[xs].p - multi-binder
             let content;
@@ -356,17 +337,17 @@ fn parse_term_param(input: ParseStream) -> SynResult<TermParam> {
             // ^x.p - single binder
             input.parse::<Ident>()?
         };
-        
+
         // Parse .
         let _ = input.parse::<Token![.]>()?;
-        
+
         // Parse body name
         let body = input.parse::<Ident>()?;
-        
+
         // Parse :Type
         let _ = input.parse::<Token![:]>()?;
         let ty = input.parse::<TypeExpr>()?;
-        
+
         if is_multi {
             Ok(TermParam::MultiAbstraction { binder, body, ty })
         } else {
@@ -377,37 +358,37 @@ fn parse_term_param(input: ParseStream) -> SynResult<TermParam> {
         let name = input.parse::<Ident>()?;
         let _ = input.parse::<Token![:]>()?;
         let ty = input.parse::<TypeExpr>()?;
-        
+
         Ok(TermParam::Simple { name, ty })
     }
 }
 
 /// Parse syntax pattern until we hit `:` followed by an identifier (the type)
-/// 
+///
 /// Syntax patterns use quoted strings for all literals:
 ///   `"for" "(" x "<-" n ")" "{" p "}"`
-/// 
+///
 /// Pattern operations:
 ///   - `#sep(coll, "sep")` or `coll.#sep("sep")` - separated list
 ///   - `#zip(a, b)` - pair collections
 ///   - `#map(source, |x| expr)` or `source.#map(|x| expr)` - transform
 ///   - `#opt(expr)` - optional
-/// 
+///
 /// - Quoted strings become `Literal` tokens (keywords, punctuation, operators)
 /// - Unquoted identifiers become `Param` tokens (parameter references only)
 /// - `#name(...)` or `ident.#name(...)` become pattern operations
 fn parse_syntax_pattern(input: ParseStream) -> SynResult<Vec<SyntaxExpr>> {
     let mut exprs = Vec::new();
-    
+
     loop {
         // Check if we've reached `: Type` at the end
         if is_end_of_syntax_pattern(input) {
             break;
         }
-        
+
         exprs.push(parse_syntax_expr(input)?);
     }
-    
+
     Ok(exprs)
 }
 
@@ -431,28 +412,28 @@ fn parse_syntax_expr(input: ParseStream) -> SynResult<SyntaxExpr> {
     if input.peek(Token![*]) {
         return parse_pattern_op_expr(input);
     }
-    
+
     // Check for identifier (could be param or start of method chain)
     if input.peek(Ident) {
         let id = input.parse::<Ident>()?;
-        
+
         // Check for method chain: ident.#name(...)
         if input.peek(Token![.]) && input.peek2(Token![*]) {
             let _ = input.parse::<Token![.]>()?;
             let op = parse_pattern_op_with_receiver(input, PatternOp::Var(id))?;
             return Ok(SyntaxExpr::Op(op));
         }
-        
+
         // Just a parameter reference
         return Ok(SyntaxExpr::Param(id));
     }
-    
+
     // String literal
     if input.peek(syn::LitStr) {
         let lit = input.parse::<syn::LitStr>()?;
         return Ok(SyntaxExpr::Literal(lit.value()));
     }
-    
+
     Err(syn::Error::new(
         input.span(),
         "Expected parameter reference (identifier), quoted literal (string), or pattern operation (#sep, #map, etc.)"
@@ -470,27 +451,32 @@ fn parse_pattern_op(input: ParseStream) -> SynResult<PatternOp> {
     let _ = input.parse::<Token![*]>()?;
     let name = input.parse::<Ident>()?;
     let name_str = name.to_string();
-    
+
     let content;
     syn::parenthesized!(content in input);
-    
+
     let op = match name_str.as_str() {
         "sep" => parse_sep_op(&content)?,
         "zip" => parse_zip_op(&content)?,
         "map" => parse_map_op(&content)?,
         "opt" => parse_opt_op(&content)?,
-        _ => return Err(syn::Error::new(
-            name.span(),
-            format!("Unknown pattern operation: #{}. Expected #sep, #zip, #map, or #opt", name_str)
-        )),
+        _ => {
+            return Err(syn::Error::new(
+                name.span(),
+                format!(
+                    "Unknown pattern operation: #{}. Expected #sep, #zip, #map, or #opt",
+                    name_str
+                ),
+            ))
+        },
     };
-    
+
     // Check for method chain continuation: .#name(...)
     if input.peek(Token![.]) && input.peek2(Token![*]) {
         let _ = input.parse::<Token![.]>()?;
         return parse_pattern_op_with_receiver(input, op);
     }
-    
+
     Ok(op)
 }
 
@@ -499,15 +485,15 @@ fn parse_pattern_op_with_receiver(input: ParseStream, receiver: PatternOp) -> Sy
     let _ = input.parse::<Token![*]>()?;
     let name = input.parse::<Ident>()?;
     let name_str = name.to_string();
-    
+
     let content;
     syn::parenthesized!(content in input);
-    
+
     let op = match name_str.as_str() {
         "sep" => {
             // receiver.#sep("sep") - receiver must be a collection or result of map
             let separator = content.parse::<syn::LitStr>()?.value();
-            
+
             // Extract collection name from receiver
             let collection = match &receiver {
                 PatternOp::Var(id) => id.clone(),
@@ -518,35 +504,38 @@ fn parse_pattern_op_with_receiver(input: ParseStream, receiver: PatternOp) -> Sy
                         separator,
                         source: Some(Box::new(receiver)),
                     });
-                }
-                _ => return Err(syn::Error::new(
-                    name.span(),
-                    "#sep receiver must be a collection parameter or result of #map/#zip"
-                )),
+                },
+                _ => {
+                    return Err(syn::Error::new(
+                        name.span(),
+                        "#sep receiver must be a collection parameter or result of #map/#zip",
+                    ))
+                },
             };
             PatternOp::Sep { collection, separator, source: None }
-        }
+        },
         "map" => {
             // receiver.#map(|x| expr)
             let (params, body) = parse_map_closure(&content)?;
-            PatternOp::Map {
-                source: Box::new(receiver),
-                params,
-                body,
-            }
-        }
-        _ => return Err(syn::Error::new(
-            name.span(),
-            format!("Cannot chain #{} after pattern operation. Expected #sep or #map", name_str)
-        )),
+            PatternOp::Map { source: Box::new(receiver), params, body }
+        },
+        _ => {
+            return Err(syn::Error::new(
+                name.span(),
+                format!(
+                    "Cannot chain #{} after pattern operation. Expected #sep or #map",
+                    name_str
+                ),
+            ))
+        },
     };
-    
+
     // Check for further chaining
     if input.peek(Token![.]) && input.peek2(Token![*]) {
         let _ = input.parse::<Token![.]>()?;
         return parse_pattern_op_with_receiver(input, op);
     }
-    
+
     Ok(op)
 }
 
@@ -575,24 +564,20 @@ fn parse_map_op(content: ParseStream) -> SynResult<PatternOp> {
         let id = content.parse::<Ident>()?;
         PatternOp::Var(id)
     };
-    
+
     let _ = content.parse::<Token![,]>()?;
     let (params, body) = parse_map_closure(content)?;
-    
-    Ok(PatternOp::Map {
-        source: Box::new(source),
-        params,
-        body,
-    })
+
+    Ok(PatternOp::Map { source: Box::new(source), params, body })
 }
 
 /// Parse |x| expr or |x, y| expr (closure in #map)
 fn parse_map_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Vec<SyntaxExpr>)> {
     let _ = input.parse::<Token![|]>()?;
-    
+
     let mut params = Vec::new();
     params.push(input.parse::<Ident>()?);
-    
+
     while input.peek(Token![,]) {
         let _ = input.parse::<Token![,]>()?;
         if input.peek(Token![|]) {
@@ -600,15 +585,15 @@ fn parse_map_closure(input: ParseStream) -> SynResult<(Vec<Ident>, Vec<SyntaxExp
         }
         params.push(input.parse::<Ident>()?);
     }
-    
+
     let _ = input.parse::<Token![|]>()?;
-    
+
     // Parse body - could be multiple syntax exprs
     let mut body = Vec::new();
     while !input.is_empty() {
         body.push(parse_syntax_expr(input)?);
     }
-    
+
     Ok((params, body))
 }
 
@@ -622,10 +607,12 @@ fn parse_opt_op(content: ParseStream) -> SynResult<PatternOp> {
 }
 
 /// Convert term context to old-style items and bindings for backward compatibility
-fn convert_term_context_to_items(term_context: &[TermParam]) -> (Vec<GrammarItem>, Vec<(usize, Vec<usize>)>) {
+fn convert_term_context_to_items(
+    term_context: &[TermParam],
+) -> (Vec<GrammarItem>, Vec<(usize, Vec<usize>)>) {
     let mut items = Vec::new();
     let mut bindings = Vec::new();
-    
+
     for param in term_context {
         match param {
             TermParam::Simple { ty, .. } => {
@@ -643,31 +630,31 @@ fn convert_term_context_to_items(term_context: &[TermParam]) -> (Vec<GrammarItem
                         });
                     }
                 }
-            }
+            },
             TermParam::Abstraction { ty, .. } => {
                 // Abstraction: ^x.p:[Name -> Proc]
                 // This becomes: Binder for Name, NonTerminal for Proc
                 if let TypeExpr::Arrow { domain, codomain } = ty {
                     let binder_idx = items.len();
-                    
+
                     if let TypeExpr::Base(binder_type) = domain.as_ref() {
                         items.push(GrammarItem::Binder { category: binder_type.clone() });
                     }
-                    
+
                     let body_idx = items.len();
                     if let TypeExpr::Base(body_type) = codomain.as_ref() {
                         items.push(GrammarItem::NonTerminal(body_type.clone()));
                     }
-                    
+
                     bindings.push((binder_idx, vec![body_idx]));
                 }
-            }
+            },
             TermParam::MultiAbstraction { ty, .. } => {
                 // Multi-abstraction: ^[xs].p:[Name* -> Proc]
                 // This needs special handling for multiple binders
                 if let TypeExpr::Arrow { domain, codomain } = ty {
                     let binder_idx = items.len();
-                    
+
                     if let TypeExpr::MultiBinder(inner) = domain.as_ref() {
                         if let TypeExpr::Base(binder_type) = inner.as_ref() {
                             // For now, represent as a single Binder
@@ -675,18 +662,18 @@ fn convert_term_context_to_items(term_context: &[TermParam]) -> (Vec<GrammarItem
                             items.push(GrammarItem::Binder { category: binder_type.clone() });
                         }
                     }
-                    
+
                     let body_idx = items.len();
                     if let TypeExpr::Base(body_type) = codomain.as_ref() {
                         items.push(GrammarItem::NonTerminal(body_type.clone()));
                     }
-                    
+
                     bindings.push((binder_idx, vec![body_idx]));
                 }
-            }
+            },
         }
     }
-    
+
     (items, bindings)
 }
 

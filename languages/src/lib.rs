@@ -3,6 +3,12 @@
 // This crate contains the core language definitions used across examples and the REPL.
 // Each language is defined in its own module using the language! macro.
 
+#![allow(
+    clippy::cloned_ref_to_slice_refs,
+    clippy::type_complexity,
+    unused_imports, // generated LALRPOP code may include unused imports
+)]
+
 pub mod ambient;
 pub mod calculator;
 pub mod lambda;

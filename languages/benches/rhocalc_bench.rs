@@ -44,19 +44,19 @@ fn gen_pipeline(depth: usize) -> String {
     if depth == 1 {
         return "{a!(0) | (a?x).{*(x)}}".to_string();
     }
-    
+
     let channels: Vec<char> = ('a'..='z').take(depth).collect();
     let mut parts = vec![format!("{}!(0)", channels[0])];
-    
+
     for i in 0..depth - 1 {
         let curr = channels[i];
         let next = channels[i + 1];
         parts.push(format!("({}?x).{{{}!(*(x))}}", curr, next));
     }
-    
+
     let last = channels[depth - 1];
     parts.push(format!("({}?x).{{*(x)}}", last));
-    
+
     format!("{{{}}}", parts.join(" | "))
 }
 
@@ -90,8 +90,11 @@ fn gen_fanout(n: usize) -> String {
     }
     let channels: Vec<char> = ('a'..='z').take(n).collect();
     let outputs: Vec<_> = channels.iter().map(|c| format!("{}!(*(x))", c)).collect();
-    let receivers: Vec<_> = channels.iter().map(|c| format!("({}?y).{{*(y)}}", c)).collect();
-    
+    let receivers: Vec<_> = channels
+        .iter()
+        .map(|c| format!("({}?y).{{*(y)}}", c))
+        .collect();
+
     format!(
         "{{bcast!(0) | (bcast?x).{{{{{}}}}} | {}}}",
         outputs.join(" | "),
@@ -117,7 +120,7 @@ fn gen_join(n: usize) -> String {
     let bindings: Vec<_> = (0..n).map(|i| format!("c{}?x{}", i, i)).collect();
     let drops: Vec<_> = (0..n).map(|i| format!("*(x{})", i)).collect();
     let senders: Vec<_> = (0..n).map(|i| format!("c{}!(v{})", i, i)).collect();
-    
+
     format!(
         "{{({}).{{{{{}}}}} | {}}}",
         bindings.join(", "),
@@ -157,12 +160,12 @@ fn run_rhocalc(input: &str) -> BenchMetrics {
     let term = term.normalize();
 
     println!("input: {}", input);
-    
+
     // Create environment and substitute if needed
     let term = if input.contains('$') {
         // Parse and substitute environment
         let mut env = RhoCalcEnv::new();
-        
+
         // Parse environment definitions
         for line in REP_ENV.lines() {
             let line = line.trim();
@@ -178,15 +181,15 @@ fn run_rhocalc(input: &str) -> BenchMetrics {
                 }
             }
         }
-        
+
         term.substitute_env(&env)
     } else {
         term
     };
-    
+
     let term = RhoCalcTerm(term);
     let results = RhoCalcLanguage::run_ascent_typed(&term);
-    
+
     BenchMetrics {
         term_count: results.all_terms.len(),
         rewrite_count: results.rewrites.len(),
@@ -201,7 +204,7 @@ fn run_rhocalc(input: &str) -> BenchMetrics {
 fn bench_size_parallel_zeros(c: &mut Criterion) {
     let mut group = c.benchmark_group("size/parallel_zeros");
     group.measurement_time(Duration::from_secs(5));
-    
+
     for n in [1, 2, 5, 10, 20, 50].iter() {
         let input = gen_parallel_zeros(*n);
         group.throughput(Throughput::Elements(*n as u64));
@@ -215,7 +218,7 @@ fn bench_size_parallel_zeros(c: &mut Criterion) {
 fn bench_size_comm_pairs(c: &mut Criterion) {
     let mut group = c.benchmark_group("size/comm_pairs");
     group.measurement_time(Duration::from_secs(10));
-    
+
     for n in [1, 2, 3, 4, 5, 6].iter() {
         let input = gen_comm_pairs(*n);
         group.throughput(Throughput::Elements(*n as u64));
@@ -233,7 +236,7 @@ fn bench_size_comm_pairs(c: &mut Criterion) {
 fn bench_depth_pipeline(c: &mut Criterion) {
     let mut group = c.benchmark_group("depth/pipeline");
     group.measurement_time(Duration::from_secs(5));
-    
+
     for depth in [2, 3, 4, 5, 6, 8, 10].iter() {
         let input = gen_pipeline(*depth);
         group.throughput(Throughput::Elements(*depth as u64));
@@ -251,7 +254,7 @@ fn bench_depth_pipeline(c: &mut Criterion) {
 fn bench_ndet_race(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndet/race");
     group.measurement_time(Duration::from_secs(5));
-    
+
     for n in [1, 2, 3, 4, 5].iter() {
         let input = gen_race(*n);
         group.throughput(Throughput::Elements(*n as u64));
@@ -265,7 +268,7 @@ fn bench_ndet_race(c: &mut Criterion) {
 fn bench_ndet_choice(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndet/choice");
     group.measurement_time(Duration::from_secs(5));
-    
+
     for n in [1, 2, 3, 4, 5].iter() {
         let input = gen_choice(*n);
         group.throughput(Throughput::Elements(*n as u64));
@@ -283,7 +286,7 @@ fn bench_ndet_choice(c: &mut Criterion) {
 fn bench_parallel_fanout(c: &mut Criterion) {
     let mut group = c.benchmark_group("parallel/fanout");
     group.measurement_time(Duration::from_secs(5));
-    
+
     for n in [2, 3, 4, 5, 6, 8].iter() {
         let input = gen_fanout(*n);
         group.throughput(Throughput::Elements(*n as u64));
@@ -301,7 +304,7 @@ fn bench_parallel_fanout(c: &mut Criterion) {
 fn bench_reflect_nested(c: &mut Criterion) {
     let mut group = c.benchmark_group("reflect/nested");
     group.measurement_time(Duration::from_secs(5));
-    
+
     for depth in [1, 2, 3, 4, 5, 6, 8, 10].iter() {
         let input = gen_nested_reflect(*depth);
         group.throughput(Throughput::Elements(*depth as u64));
@@ -319,7 +322,7 @@ fn bench_reflect_nested(c: &mut Criterion) {
 fn bench_join_channels(c: &mut Criterion) {
     let mut group = c.benchmark_group("join/channels");
     group.measurement_time(Duration::from_secs(5));
-    
+
     for n in [2, 3, 4, 5, 6].iter() {
         let input = gen_join(*n);
         group.throughput(Throughput::Elements(*n as u64));
@@ -338,12 +341,10 @@ fn bench_replication_basic(c: &mut Criterion) {
     let mut group = c.benchmark_group("replication");
     group.measurement_time(Duration::from_secs(10));
     group.sample_size(30);
-    
+
     let input = gen_replication_base();
-    group.bench_function("basic", |b| {
-        b.iter(|| run_rhocalc(black_box(input)))
-    });
-    
+    group.bench_function("basic", |b| b.iter(|| run_rhocalc(black_box(input))));
+
     group.finish();
 }
 

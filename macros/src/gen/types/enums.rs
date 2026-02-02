@@ -1,7 +1,11 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use crate::gen::{generate_var_label, generate_literal_label, is_integer_rule, is_var_rule};
-use crate::ast::{language::LanguageDef, grammar::{GrammarItem, GrammarRule, TermParam}, types::{TypeExpr, CollectionType}};
+use crate::ast::{
+    grammar::{GrammarItem, GrammarRule, TermParam},
+    language::LanguageDef,
+    types::{CollectionType, TypeExpr},
+};
+use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -58,9 +62,9 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             if domain_lang_type.native_type.is_some() {
                 continue;
             }
-            
+
             let domain_name = &domain_lang_type.name;
-            
+
             // Single-binder lambda: Lam{Domain}
             let lam_variant = syn::Ident::new(
                 &format!("Lam{}", domain_name),
@@ -69,7 +73,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             variants.push(quote! {
                 #lam_variant(mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#cat_name>>)
             });
-            
+
             // Multi-binder lambda: MLam{Domain}
             let mlam_variant = syn::Ident::new(
                 &format!("MLam{}", domain_name),
@@ -78,7 +82,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             variants.push(quote! {
                 #mlam_variant(mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#cat_name>>)
             });
-            
+
             // Application variant: Apply{Domain}
             // Represents unevaluated application of a lambda to an argument
             let apply_variant = syn::Ident::new(
@@ -88,7 +92,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             variants.push(quote! {
                 #apply_variant(Box<#cat_name>, Box<#domain_name>)
             });
-            
+
             // Multi-application variant: MApply{Domain}
             let mapply_variant = syn::Ident::new(
                 &format!("MApply{}", domain_name),
@@ -221,16 +225,19 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate variant from new term_context syntax
-fn generate_variant_from_term_context(label: &syn::Ident, term_context: &[TermParam]) -> TokenStream {
+fn generate_variant_from_term_context(
+    label: &syn::Ident,
+    term_context: &[TermParam],
+) -> TokenStream {
     let mut fields: Vec<TokenStream> = Vec::new();
-    
+
     for param in term_context {
         match param {
             TermParam::Simple { ty, .. } => {
                 // Simple parameter: generate appropriate field type
                 let field_type = type_expr_to_field_type(ty);
                 fields.push(field_type);
-            }
+            },
             TermParam::Abstraction { ty, .. } => {
                 // Single abstraction: ^x.p:[A -> B]
                 // Generates: Scope<Binder<String>, Box<B>>
@@ -240,7 +247,7 @@ fn generate_variant_from_term_context(label: &syn::Ident, term_context: &[TermPa
                         mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#body_type>>
                     });
                 }
-            }
+            },
             TermParam::MultiAbstraction { ty, .. } => {
                 // Multi-abstraction: ^[xs].p:[Name* -> B]
                 // Generates: Scope<Vec<Binder<String>>, Box<B>>
@@ -250,10 +257,10 @@ fn generate_variant_from_term_context(label: &syn::Ident, term_context: &[TermPa
                         mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#body_type>>
                     });
                 }
-            }
+            },
         }
     }
-    
+
     if fields.is_empty() {
         // Unit variant
         quote! { #label }
@@ -345,7 +352,7 @@ fn type_expr_to_field_type(ty: &TypeExpr) -> TokenStream {
             } else {
                 quote! { Box<#ident> }
             }
-        }
+        },
         TypeExpr::Collection { coll_type, element } => {
             let elem_type = type_expr_to_rust_type(element);
             match coll_type {
@@ -353,16 +360,16 @@ fn type_expr_to_field_type(ty: &TypeExpr) -> TokenStream {
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
             }
-        }
+        },
         TypeExpr::Arrow { .. } => {
             // Arrow types in simple params shouldn't happen, but handle gracefully
             quote! { Box<dyn std::any::Any> }
-        }
+        },
         TypeExpr::MultiBinder(inner) => {
             // MultiBinder in simple context: Vec<T>
             let inner_type = type_expr_to_rust_type(inner);
             quote! { Vec<#inner_type> }
-        }
+        },
     }
 }
 
@@ -371,7 +378,7 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
     match ty {
         TypeExpr::Base(ident) => {
             quote! { #ident }
-        }
+        },
         TypeExpr::Collection { coll_type, element } => {
             let elem_type = type_expr_to_rust_type(element);
             match coll_type {
@@ -379,15 +386,15 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
             }
-        }
+        },
         TypeExpr::Arrow { domain, codomain } => {
             let dom = type_expr_to_rust_type(domain);
             let cod = type_expr_to_rust_type(codomain);
             quote! { (#dom -> #cod) }
-        }
+        },
         TypeExpr::MultiBinder(inner) => {
             let inner_type = type_expr_to_rust_type(inner);
             quote! { Vec<#inner_type> }
-        }
+        },
     }
 }

@@ -1,7 +1,7 @@
 // Generated LALRPOP grammar for theory: RhoCalc
 // This file is auto-generated - do not edit manually
 
-use mettail_runtime::{Var, Binder, Scope, HashBag};
+use mettail_runtime::{Binder, Scope, HashBag};
 use super::{Proc, Name, VarCategory};
 
 grammar;

@@ -4,11 +4,11 @@
 //! - `{Name}Term` wrapper implementing `mettail_runtime::Term`
 //! - `{Name}Language` struct implementing `mettail_runtime::Language`
 
-use crate::ast::language::LanguageDef;
 use crate::ast::grammar::GrammarItem;
+use crate::ast::language::LanguageDef;
 use crate::gen::generate_var_label;
 use proc_macro2::TokenStream;
-use quote::{quote, format_ident};
+use quote::{format_ident, quote};
 use syn::Ident;
 
 /// Generate the complete language implementation
@@ -16,16 +16,20 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
     let name = &language.name;
     let name_str = name.to_string();
     let name_lower = name_str.to_lowercase();
-    
+
     // Get the primary type (first type in the language)
-    let primary_type = language.types.first()
+    let primary_type = language
+        .types
+        .first()
         .map(|t| &t.name)
         .expect("Language must have at least one type");
-    
+
     let term_wrapper = generate_term_wrapper(name, primary_type);
-    let language_struct = generate_language_struct(name, primary_type, &name_str, &name_lower, language);
-    let language_trait_impl = generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language);
-    
+    let language_struct =
+        generate_language_struct(name, primary_type, &name_str, &name_lower, language);
+    let language_trait_impl =
+        generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language);
+
     quote! {
         #term_wrapper
         #language_struct
@@ -36,17 +40,17 @@ pub fn generate_language_impl(language: &LanguageDef) -> TokenStream {
 /// Generate the Term wrapper struct
 fn generate_term_wrapper(name: &syn::Ident, primary_type: &syn::Ident) -> TokenStream {
     let term_name = format_ident!("{}Term", name);
-    
+
     quote! {
         /// Wrapper for the primary type that implements `mettail_runtime::Term`
         #[derive(Clone)]
         pub struct #term_name(pub #primary_type);
-        
+
         impl mettail_runtime::Term for #term_name {
             fn clone_box(&self) -> Box<dyn mettail_runtime::Term> {
                 Box::new(self.clone())
             }
-            
+
             fn term_id(&self) -> u64 {
                 use std::collections::hash_map::DefaultHasher;
                 use std::hash::{Hash, Hasher};
@@ -54,7 +58,7 @@ fn generate_term_wrapper(name: &syn::Ident, primary_type: &syn::Ident) -> TokenS
                 self.0.hash(&mut hasher);
                 hasher.finish()
             }
-            
+
             fn term_eq(&self, other: &dyn mettail_runtime::Term) -> bool {
                 if let Some(other_term) = other.as_any().downcast_ref::<#term_name>() {
                     self.0 == other_term.0
@@ -62,18 +66,18 @@ fn generate_term_wrapper(name: &syn::Ident, primary_type: &syn::Ident) -> TokenS
                     false
                 }
             }
-            
+
             fn as_any(&self) -> &dyn std::any::Any {
                 self
             }
         }
-        
+
         impl std::fmt::Display for #term_name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{}", self.0)
             }
         }
-        
+
         impl std::fmt::Debug for #term_name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{:?}", self.0)
@@ -83,7 +87,13 @@ fn generate_term_wrapper(name: &syn::Ident, primary_type: &syn::Ident) -> TokenS
 }
 
 /// Generate the Language struct with helper methods
-fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_str: &str, name_lower: &str, language: &LanguageDef) -> TokenStream {
+fn generate_language_struct(
+    name: &syn::Ident,
+    primary_type: &syn::Ident,
+    _name_str: &str,
+    name_lower: &str,
+    language: &LanguageDef,
+) -> TokenStream {
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
     let _metadata_name = format_ident!("{}Metadata", name);
@@ -91,32 +101,32 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
     let parser_name = format_ident!("{}Parser", primary_type);
     let parser_mod = format_ident!("{}", name_lower);
     let ascent_source = format_ident!("{}_source", name_lower);
-    
+
     // Primary type relation names (lowercase)
     let primary_lower = primary_type.to_string().to_lowercase();
     let primary_relation = format_ident!("{}", primary_lower);
     let rw_relation = format_ident!("rw_{}", primary_lower);
     let _primary_type_str = primary_type.to_string();
-    
+
     // Generate type inference helper
     let type_inference_impl = generate_type_inference_helpers(primary_type, language);
-    
+
     // Generate variable collection implementation
     let var_collection_impl = generate_var_collection_impl(primary_type, language);
-    
+
     quote! {
         /// Language implementation struct
-        /// 
+        ///
         /// Auto-generated by the `language!` macro. Implements `mettail_runtime::Language`.
         pub struct #language_name;
-        
+
         impl #language_name {
             /// Parse a term from a string (clears var cache for fresh evaluation)
             pub fn parse(input: &str) -> Result<#term_name, String> {
                 mettail_runtime::clear_var_cache();
                 Self::parse_preserving_vars(input)
             }
-            
+
             /// Parse a term without clearing var cache (for environment sharing)
             pub fn parse_preserving_vars(input: &str) -> Result<#term_name, String> {
                 let parser = #parser_mod::#parser_name::new();
@@ -125,32 +135,32 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
                     .map(#term_name)
                     .map_err(|e| format!("Parse error: {:?}", e))
             }
-            
+
             /// Run Ascent on a typed term
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
                 use ascent::*;
-                
+
                 // Normalize the initial term to perform immediate beta-reduction
                 let initial = term.0.clone().normalize();
-                
+
                 let prog = ascent_run! {
                     include_source!(#ascent_source);
-                    
+
                     #primary_relation(initial.clone());
                 };
-                
+
                 // Extract results
                 let all_terms: Vec<#primary_type> = prog.#primary_relation
                     .iter()
                     .map(|(p,)| p.clone())
                     .collect();
-                    
+
                 let rewrites: Vec<(#primary_type, #primary_type)> = prog
                     .#rw_relation
                     .iter()
                     .map(|(from, to)| (from.clone(), to.clone()))
                     .collect();
-                
+
                 // Build term info
                 let mut term_infos = Vec::new();
                 for t in &all_terms {
@@ -168,7 +178,7 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
                         is_normal_form: !has_rewrites,
                     });
                 }
-                
+
                 // Build rewrite list
                 let rewrite_list: Vec<mettail_runtime::Rewrite> = rewrites
                     .iter()
@@ -186,21 +196,21 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
                         }
                     })
                     .collect();
-                
+
                 mettail_runtime::AscentResults {
                     all_terms: term_infos,
                     rewrites: rewrite_list,
                     equivalences: Vec::new(),
                 }
             }
-            
+
             /// Create a new empty environment
             pub fn create_env() -> #env_name {
                 #env_name::new()
             }
-            
+
             // === Type Inference Helpers ===
-            
+
             /// Convert InferredType to TermType
             fn inferred_to_term_type(t: &InferredType) -> mettail_runtime::TermType {
                 match t {
@@ -215,12 +225,12 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
                     ),
                 }
             }
-            
+
             /// Infer the type of a term (typed version)
             pub fn infer_term_type_typed(term: &#primary_type) -> mettail_runtime::TermType {
                 #type_inference_impl
             }
-            
+
             /// Infer the type of a variable in a term (typed version)
             /// This finds both free and bound variables.
             pub fn infer_var_type_typed(term: &#primary_type, var_name: &str) -> Option<mettail_runtime::TermType> {
@@ -234,7 +244,7 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
                     .find(|v| v.name == var_name)
                     .map(|v| v.ty)
             }
-            
+
             /// Get all variable types in a term (typed version)
             /// This includes both bound variables (from lambdas) and free variables.
             pub fn infer_var_types_typed(term: &#primary_type) -> Vec<mettail_runtime::VarTypeInfo> {
@@ -243,19 +253,19 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
                 Self::collect_all_vars_with_types(term, term, &mut result, &mut seen);
                 result
             }
-            
+
             /// Collect all variables (bound and free) with their types
             /// `root_term` is the original term for context, `term` is current position
             fn collect_all_vars_with_types(
                 root_term: &#primary_type,
-                term: &#primary_type, 
+                term: &#primary_type,
                 result: &mut Vec<mettail_runtime::VarTypeInfo>,
                 seen: &mut std::collections::HashSet<String>,
             ) {
                 Self::collect_all_vars_impl(root_term, term, result, seen);
             }
         }
-        
+
         // Variable collection implementation with proper term traversal
         #[allow(unused_variables, unreachable_patterns)]
         impl #language_name {
@@ -275,19 +285,21 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
 
 /// Generate the collect_all_vars_impl method with proper traversal
 fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) -> TokenStream {
-    let categories: Vec<_> = language.types.iter()
+    let categories: Vec<_> = language
+        .types
+        .iter()
         .filter(|t| t.native_type.is_none())
         .map(|t| &t.name)
         .collect();
-    
+
     // Generate lambda handling arms
     let mut lambda_arms: Vec<TokenStream> = Vec::new();
-    
+
     for domain in &categories {
         let domain_str = domain.to_string();
         let lam_variant = format_ident!("Lam{}", domain);
         let mlam_variant = format_ident!("MLam{}", domain);
-        
+
         // LamX variant - extract binder and recurse into body
         lambda_arms.push(quote! {
             #primary_type::#lam_variant(scope) => {
@@ -310,7 +322,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                 Self::collect_all_vars_impl(root_term, body.as_ref(), result, seen);
             }
         });
-        
+
         // MLamX variant - extract all binders and recurse into body
         lambda_arms.push(quote! {
             #primary_type::#mlam_variant(scope) => {
@@ -335,7 +347,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                 Self::collect_all_vars_impl(root_term, body.as_ref(), result, seen);
             }
         });
-        
+
         // ApplyX variant - only recurse into lam (which has type Proc)
         // The arg has the domain type, not the primary type
         let apply_variant = format_ident!("Apply{}", domain);
@@ -345,7 +357,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                 // Note: _arg is of type #domain, not #primary_type, so we can't recurse on it here
             }
         });
-        
+
         // MApplyX variant - only recurse into lam
         let mapply_variant = format_ident!("MApply{}", domain);
         lambda_arms.push(quote! {
@@ -355,25 +367,28 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
             }
         });
     }
-    
+
     // Generate arms for constructor variants from grammar
     let mut constructor_arms: Vec<TokenStream> = Vec::new();
-    
+
     for rule in &language.terms {
         if rule.category != *primary_type {
             continue;
         }
-        
+
         let label = &rule.label;
-        
+
         // Skip if handled above (lambdas, applies)
         let label_str = label.to_string();
-        if label_str.starts_with("Lam") || label_str.starts_with("MLam") 
-            || label_str.starts_with("Apply") || label_str.starts_with("MApply")
-            || label_str.ends_with("Var") {
+        if label_str.starts_with("Lam")
+            || label_str.starts_with("MLam")
+            || label_str.starts_with("Apply")
+            || label_str.starts_with("MApply")
+            || label_str.ends_with("Var")
+        {
             continue;
         }
-        
+
         // Use term_context if available for accurate field count
         // Each TermParam becomes one field (abstractions become Scope fields)
         let field_count = if let Some(ctx) = &rule.term_context {
@@ -393,13 +408,13 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                         // Binder + next NonTerminal = one Scope field
                         count += 1;
                         skip_next = true;
-                    }
-                    GrammarItem::Terminal(_) => {}
+                    },
+                    GrammarItem::Terminal(_) => {},
                 }
             }
             count
         };
-        
+
         if field_count == 0 {
             // Unit variant
             constructor_arms.push(quote! {
@@ -407,32 +422,31 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
             });
         } else {
             // Generate field patterns and recursion
-            let field_names: Vec<_> = (0..field_count)
-                .map(|i| format_ident!("f{}", i))
-                .collect();
-            
-            let field_patterns: Vec<TokenStream> = field_names.iter()
-                .map(|n| quote! { ref #n })
-                .collect();
-            
+            let field_names: Vec<_> = (0..field_count).map(|i| format_ident!("f{}", i)).collect();
+
+            let field_patterns: Vec<TokenStream> =
+                field_names.iter().map(|n| quote! { ref #n }).collect();
+
             // Generate recursion for each field based on type from term_context
             let mut recurse_calls: Vec<TokenStream> = Vec::new();
-            
+
             if let Some(ctx) = &rule.term_context {
                 for (i, param) in ctx.iter().enumerate() {
                     let field_name = &field_names[i];
                     use crate::ast::grammar::TermParam;
                     use crate::ast::types::TypeExpr;
-                    
+
                     match param {
                         TermParam::Simple { ty, .. } => {
                             // Check if type is primary type or contains it
                             match ty {
-                                TypeExpr::Base(ident) if ident.to_string() == primary_type.to_string() => {
+                                TypeExpr::Base(ident)
+                                    if ident.to_string() == primary_type.to_string() =>
+                                {
                                     recurse_calls.push(quote! {
                                         Self::collect_all_vars_impl(root_term, #field_name.as_ref(), result, seen);
                                     });
-                                }
+                                },
                                 TypeExpr::Collection { element, .. } => {
                                     if let TypeExpr::Base(ident) = element.as_ref() {
                                         if ident.to_string() == primary_type.to_string() {
@@ -443,17 +457,18 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                             });
                                         }
                                     }
-                                }
-                                _ => {}
+                                },
+                                _ => {},
                             }
-                        }
+                        },
                         TermParam::Abstraction { ty, .. } => {
                             // Scope field with single binder - recurse into body
                             if let TypeExpr::Arrow { codomain, .. } = ty {
                                 if let TypeExpr::Base(ident) = codomain.as_ref() {
                                     if ident.to_string() == primary_type.to_string() {
                                         // Also extract binder info from scope
-                                        let domain_str = if let TypeExpr::Arrow { domain, .. } = ty {
+                                        let domain_str = if let TypeExpr::Arrow { domain, .. } = ty
+                                        {
                                             if let TypeExpr::Base(d) = domain.as_ref() {
                                                 d.to_string()
                                             } else {
@@ -462,7 +477,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                         } else {
                                             "Name".to_string()
                                         };
-                                        
+
                                         recurse_calls.push(quote! {
                                             // Extract binder from scope using unbind
                                             let (binder, body) = #field_name.clone().unbind();
@@ -483,13 +498,14 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                     }
                                 }
                             }
-                        }
+                        },
                         TermParam::MultiAbstraction { ty, .. } => {
                             // Scope field with multi-binder - recurse into body
                             if let TypeExpr::Arrow { codomain, .. } = ty {
                                 if let TypeExpr::Base(ident) = codomain.as_ref() {
                                     if ident.to_string() == primary_type.to_string() {
-                                        let domain_str = if let TypeExpr::Arrow { domain, .. } = ty {
+                                        let domain_str = if let TypeExpr::Arrow { domain, .. } = ty
+                                        {
                                             if let TypeExpr::MultiBinder(inner) = domain.as_ref() {
                                                 if let TypeExpr::Base(d) = inner.as_ref() {
                                                     d.to_string()
@@ -502,7 +518,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                         } else {
                                             "Name".to_string()
                                         };
-                                        
+
                                         recurse_calls.push(quote! {
                                             // Extract binders from multi-scope using unbind
                                             let (binders, body) = #field_name.clone().unbind();
@@ -525,7 +541,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                     }
                                 }
                             }
-                        }
+                        },
                     }
                 }
             } else {
@@ -547,7 +563,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                             }
                             field_idx += 1;
                             item_idx += 1;
-                        }
+                        },
                         GrammarItem::Collection { element_type, .. } => {
                             let field_name = &field_names[field_idx];
                             let elem_str = element_type.to_string();
@@ -560,12 +576,12 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                             }
                             field_idx += 1;
                             item_idx += 1;
-                        }
+                        },
                         GrammarItem::Binder { category } => {
                             // Binder + next NonTerminal = one Scope field
                             let field_name = &field_names[field_idx];
                             let domain_str = category.to_string();
-                            
+
                             // Skip to the body item
                             item_idx += 1;
                             if item_idx < rule.items.len() {
@@ -594,14 +610,14 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                             }
                             field_idx += 1;
                             item_idx += 1;
-                        }
+                        },
                         GrammarItem::Terminal(_) => {
                             item_idx += 1;
-                        }
+                        },
                     }
                 }
             }
-            
+
             if recurse_calls.is_empty() {
                 constructor_arms.push(quote! {
                     #primary_type::#label(#(#field_patterns),*) => {}
@@ -615,11 +631,11 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
             }
         }
     }
-    
+
     // Variable handling for free variables (e.g., PVar for Proc, NVar for Name, TVar for Term)
     let var_label = generate_var_label(primary_type);
     let primary_type_str = primary_type.to_string();
-    
+
     quote! {
         #primary_type::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
             if let Some(name) = &fv.pretty_name {
@@ -644,55 +660,67 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
 }
 
 /// Generate the Language trait implementation
-fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, name_str: &str, _name_lower: &str, language: &LanguageDef) -> TokenStream {
+fn generate_language_trait_impl(
+    name: &syn::Ident,
+    primary_type: &syn::Ident,
+    name_str: &str,
+    _name_lower: &str,
+    language: &LanguageDef,
+) -> TokenStream {
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
     let metadata_name = format_ident!("{}Metadata", name);
     let env_name = format_ident!("{}Env", name);
-    
+
     // All categories for environment field access (include native so e.g. Calculator can list/remove Int bindings)
     let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
-    
+
     // Generate field name for primary type (lowercase)
     let primary_field = format_ident!("{}", primary_type.to_string().to_lowercase());
-    
+
     // Generate remove_from_env checks for all type fields
-    let remove_checks: Vec<TokenStream> = categories.iter().map(|cat| {
-        let field = format_ident!("{}", cat.to_string().to_lowercase());
-        quote! { typed_env.#field.remove(name).is_some() }
-    }).collect();
-    
+    let remove_checks: Vec<TokenStream> = categories
+        .iter()
+        .map(|cat| {
+            let field = format_ident!("{}", cat.to_string().to_lowercase());
+            quote! { typed_env.#field.remove(name).is_some() }
+        })
+        .collect();
+
     // Generate list_env iterations for all type fields
-    let list_iterations: Vec<TokenStream> = categories.iter().map(|cat| {
-        let field = format_ident!("{}", cat.to_string().to_lowercase());
-        quote! {
-            for (name, val) in typed_env.#field.iter() {
-                let comment = typed_env.comments.get(name).cloned();
-                result.push((name.clone(), format!("{}", val), comment));
+    let list_iterations: Vec<TokenStream> = categories
+        .iter()
+        .map(|cat| {
+            let field = format_ident!("{}", cat.to_string().to_lowercase());
+            quote! {
+                for (name, val) in typed_env.#field.iter() {
+                    let comment = typed_env.comments.get(name).cloned();
+                    result.push((name.clone(), format!("{}", val), comment));
+                }
             }
-        }
-    }).collect();
-    
+        })
+        .collect();
+
     quote! {
         impl mettail_runtime::Language for #language_name {
             fn name(&self) -> &'static str {
                 #name_str
             }
-            
+
             fn metadata(&self) -> &'static dyn mettail_runtime::LanguageMetadata {
                 &#metadata_name
             }
-            
+
             fn parse_term(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, String> {
                 #language_name::parse(input)
                     .map(|t| Box::new(t) as Box<dyn mettail_runtime::Term>)
             }
-            
+
             fn parse_term_for_env(&self, input: &str) -> Result<Box<dyn mettail_runtime::Term>, String> {
                 #language_name::parse_preserving_vars(input)
                     .map(|t| Box::new(t) as Box<dyn mettail_runtime::Term>)
             }
-            
+
             fn run_ascent(&self, term: &dyn mettail_runtime::Term) -> Result<mettail_runtime::AscentResults, String> {
                 let typed_term = term
                     .as_any()
@@ -700,68 +728,68 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
                 Ok(#language_name::run_ascent_typed(typed_term))
             }
-            
+
             fn create_env(&self) -> Box<dyn std::any::Any + Send + Sync> {
                 Box::new(#language_name::create_env())
             }
-            
+
             fn add_to_env(&self, env: &mut dyn std::any::Any, name: &str, term: &dyn mettail_runtime::Term) -> Result<(), String> {
                 let typed_env = env
                     .downcast_mut::<#env_name>()
                     .ok_or_else(|| "Invalid environment type".to_string())?;
-                
+
                 let typed_term = term
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                
+
                 // Add to primary type environment
                 typed_env.#primary_field.set(name.to_string(), typed_term.0.clone());
                 Ok(())
             }
-            
+
             fn remove_from_env(&self, env: &mut dyn std::any::Any, name: &str) -> Result<bool, String> {
                 let typed_env = env
                     .downcast_mut::<#env_name>()
                     .ok_or_else(|| "Invalid environment type".to_string())?;
-                
+
                 // Try to remove from all type environments
                 let removed = #(#remove_checks)||*;
                 Ok(removed)
             }
-            
+
             fn clear_env(&self, env: &mut dyn std::any::Any) {
                 if let Some(typed_env) = env.downcast_mut::<#env_name>() {
                     typed_env.clear();
                 }
             }
-            
+
             fn substitute_env(&self, term: &dyn mettail_runtime::Term, env: &dyn std::any::Any) -> Result<Box<dyn mettail_runtime::Term>, String> {
                 let typed_env = env
                     .downcast_ref::<#env_name>()
                     .ok_or_else(|| "Invalid environment type".to_string())?;
-                
+
                 let typed_term = term
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                
+
                 let substituted = typed_term.0.substitute_env(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
-            
+
             fn list_env(&self, env: &dyn std::any::Any) -> Vec<(String, String, Option<String>)> {
                 let typed_env = match env.downcast_ref::<#env_name>() {
                     Some(e) => e,
                     None => return Vec::new(),
                 };
-                
+
                 let mut result = Vec::new();
                 // Iterate in insertion order (IndexMap preserves order)
                 #(#list_iterations)*
                 result
             }
-            
+
             fn set_env_comment(&self, env: &mut dyn std::any::Any, name: &str, comment: String) -> Result<(), String> {
                 let typed_env = env
                     .downcast_mut::<#env_name>()
@@ -769,15 +797,15 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
                 typed_env.set_comment(name, comment);
                 Ok(())
             }
-            
+
             fn is_env_empty(&self, env: &dyn std::any::Any) -> bool {
                 env.downcast_ref::<#env_name>()
                     .map(|e| e.is_empty())
                     .unwrap_or(true)
             }
-            
+
             // === Type Inference Methods ===
-            
+
             fn infer_term_type(&self, term: &dyn mettail_runtime::Term) -> mettail_runtime::TermType {
                 let typed_term = match term.as_any().downcast_ref::<#term_name>() {
                     Some(t) => t,
@@ -785,7 +813,7 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
                 };
                 #language_name::infer_term_type_typed(&typed_term.0)
             }
-            
+
             fn infer_var_types(&self, term: &dyn mettail_runtime::Term) -> Vec<mettail_runtime::VarTypeInfo> {
                 let typed_term = match term.as_any().downcast_ref::<#term_name>() {
                     Some(t) => t,
@@ -793,7 +821,7 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
                 };
                 #language_name::infer_var_types_typed(&typed_term.0)
             }
-            
+
             fn infer_var_type(&self, term: &dyn mettail_runtime::Term, var_name: &str) -> Option<mettail_runtime::TermType> {
                 let typed_term = match term.as_any().downcast_ref::<#term_name>() {
                     Some(t) => t,
@@ -806,27 +834,29 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
 }
 
 /// Generate the type inference helper for the primary type
-/// 
+///
 /// This handles detecting lambda variants and building the full function type.
 /// The domain type is inferred from how the binder is USED in the body,
 /// not just from the lambda variant.
 fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef) -> TokenStream {
     let primary_type_str = primary_type.to_string();
-    
+
     // Get all non-native categories for lambda variant detection
-    let categories: Vec<_> = language.types.iter()
+    let categories: Vec<_> = language
+        .types
+        .iter()
         .filter(|t| t.native_type.is_none())
         .map(|t| &t.name)
         .collect();
-    
+
     // Generate match arms for lambda variants
     let mut lambda_arms: Vec<TokenStream> = Vec::new();
-    
+
     for domain in &categories {
         let domain_str = domain.to_string();
         let lam_variant = format_ident!("Lam{}", domain);
         let mlam_variant = format_ident!("MLam{}", domain);
-        
+
         // Single lambda: Lam{Domain}(scope) -> [inferred_domain -> body_type]
         // We infer the domain type from how the binder is USED in the body
         lambda_arms.push(quote! {
@@ -834,10 +864,10 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
                 // Use unbind to get binder and body with proper types
                 let (binder, body) = scope.clone().unbind();
                 let body_type = Self::infer_term_type_typed(&body);
-                
+
                 // Get the binder name to infer its type from usage
                 let binder_name = binder.0.pretty_name.as_ref();
-                
+
                 // Infer the binder's type from how it's used in the body
                 let domain_type = if let Some(name) = binder_name {
                     // Use infer_var_type to get the actual type from usage
@@ -848,14 +878,14 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
                     // Fallback to the variant's domain type
                     mettail_runtime::TermType::Base(#domain_str.to_string())
                 };
-                
+
                 mettail_runtime::TermType::Arrow(
                     Box::new(domain_type),
                     Box::new(body_type),
                 )
             }
         });
-        
+
         // Multi lambda: MLam{Domain}(scope) -> [Domain* -> body_type]
         lambda_arms.push(quote! {
             #primary_type::#mlam_variant(scope) => {
@@ -868,7 +898,7 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
             }
         });
     }
-    
+
     quote! {
         match term {
             #(#lambda_arms)*

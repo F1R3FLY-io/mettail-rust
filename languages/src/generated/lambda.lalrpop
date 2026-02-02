@@ -1,7 +1,7 @@
 // Generated LALRPOP grammar for theory: Lambda
 // This file is auto-generated - do not edit manually
 
-use mettail_runtime::{Var, Binder, Scope};
+use mettail_runtime::{Binder, Scope};
 use super::{Term, VarCategory};
 
 grammar;

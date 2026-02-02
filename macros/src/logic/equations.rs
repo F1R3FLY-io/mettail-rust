@@ -5,8 +5,8 @@
 //! - Equality congruence rules (if args equal, constructed terms equal)
 //! - User-defined equation rules
 
-use crate::logic::rules as unified_rules;
 use crate::ast::{grammar::GrammarItem, language::LanguageDef};
+use crate::logic::rules as unified_rules;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -54,7 +54,7 @@ fn generate_reflexivity_rules(language: &LanguageDef) -> Vec<TokenStream> {
 /// Generate demand-driven congruence rules for equality.
 ///
 /// For terms that already exist: if their args are equal, then the terms are equal.
-/// 
+///
 /// Unlike the original approach which synthesizes new terms:
 ///   eq(Op(x), Op(y)) <-- eq(x, y)  // Creates new terms!
 ///
@@ -102,15 +102,17 @@ fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
         }
 
         // Skip constructors with Var or Integer arguments
+        let var_ident = format_ident!("Var");
+        let int_ident = format_ident!("Integer");
         if args
             .iter()
-            .any(|cat| cat.to_string() == "Var" || cat.to_string() == "Integer")
+            .any(|cat| **cat == var_ident || **cat == int_ident)
         {
             continue;
         }
 
         let label = &grammar_rule.label;
-        
+
         // Generate field names for pattern matching
         let s_fields: Vec<Ident> = (0..args.len()).map(|i| format_ident!("s_f{}", i)).collect();
         let t_fields: Vec<Ident> = (0..args.len()).map(|i| format_ident!("t_f{}", i)).collect();
@@ -120,7 +122,9 @@ fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
         let t_pattern = quote! { #category::#label(#(ref #t_fields),*) };
 
         // Build equality checks for each field
-        let eq_checks: Vec<TokenStream> = args.iter().zip(s_fields.iter().zip(t_fields.iter()))
+        let eq_checks: Vec<TokenStream> = args
+            .iter()
+            .zip(s_fields.iter().zip(t_fields.iter()))
             .map(|(arg_cat, (s_f, t_f))| {
                 let eq_arg_rel = format_ident!("eq_{}", arg_cat.to_string().to_lowercase());
                 quote! { #eq_arg_rel(#s_f.as_ref().clone(), #t_f.as_ref().clone()) }

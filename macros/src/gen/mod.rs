@@ -19,16 +19,16 @@
 
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-pub mod types;
-pub mod syntax;
-pub mod term_ops;
+pub mod blockly;
 pub mod native;
 pub mod runtime;
+pub mod syntax;
 pub mod term_gen;
-pub mod blockly;
+pub mod term_ops;
+pub mod types;
 
-use crate::ast::language::LanguageDef;
 use crate::ast::grammar::{GrammarItem, GrammarRule};
+use crate::ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
@@ -50,14 +50,14 @@ pub use syntax::parser::{generate_lalrpop_grammar, write_grammar_file};
 /// - Native type evaluation
 /// - Variable inference for parsing
 pub fn generate_all(language: &LanguageDef) -> TokenStream {
-    use types::enums::generate_ast_enums;
-    use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
-    use term_ops::subst::{generate_substitution, generate_env_substitution};
+    use native::eval::generate_eval_method;
     use runtime::environment::generate_environments;
     use syntax::display::generate_display;
-    use term_gen::{generate_term_generation, generate_random_generation};
-    use native::eval::generate_eval_method;
     use syntax::var_inference::generate_var_category_inference;
+    use term_gen::{generate_random_generation, generate_term_generation};
+    use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
+    use term_ops::subst::{generate_env_substitution, generate_substitution};
+    use types::enums::generate_ast_enums;
 
     let ast_enums = generate_ast_enums(language);
     let flatten_helpers = generate_flatten_helpers(language);

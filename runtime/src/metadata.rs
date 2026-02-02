@@ -5,29 +5,31 @@
 //! The REPL uses this to display the `info` command output.
 
 /// Trait for accessing static language metadata
-/// 
+///
 /// Implemented by generated `{LanguageName}Metadata` structs.
 pub trait LanguageMetadata: 'static + Send + Sync {
     /// The language name (e.g., "RhoCalc")
     fn name(&self) -> &'static str;
-    
+
     /// Type definitions (first is primary)
     fn types(&self) -> &'static [TypeDef];
-    
+
     /// Term (constructor) definitions
     fn terms(&self) -> &'static [TermDef];
-    
+
     /// Equation definitions
     fn equations(&self) -> &'static [EquationDef];
-    
+
     /// Rewrite rule definitions
     fn rewrites(&self) -> &'static [RewriteDef];
-    
+
     /// Get the primary type (first type in the language)
     fn primary_type(&self) -> &'static TypeDef {
-        self.types().first().expect("language must have at least one type")
+        self.types()
+            .first()
+            .expect("language must have at least one type")
     }
-    
+
     /// Get terms for a specific type
     fn terms_for_type(&self, type_name: &str) -> Vec<&'static TermDef> {
         self.terms()
@@ -42,10 +44,10 @@ pub trait LanguageMetadata: 'static + Send + Sync {
 pub struct TypeDef {
     /// Type name (e.g., "Proc", "Name")
     pub name: &'static str,
-    
+
     /// Native Rust type if this is a primitive (e.g., "i32")
     pub native_type: Option<&'static str>,
-    
+
     /// Whether this is the primary type (first in declaration order)
     pub is_primary: bool,
 }
@@ -55,16 +57,16 @@ pub struct TypeDef {
 pub struct TermDef {
     /// Constructor name (e.g., "PInput", "NQuote")
     pub name: &'static str,
-    
+
     /// The type this constructor produces (e.g., "Proc")
     pub type_name: &'static str,
-    
+
     /// User syntax representation (e.g., "n?x.{p}")
     pub syntax: &'static str,
-    
+
     /// Optional description (from doc comments)
     pub description: Option<&'static str>,
-    
+
     /// Field definitions
     pub fields: &'static [FieldDef],
 }
@@ -74,10 +76,10 @@ pub struct TermDef {
 pub struct FieldDef {
     /// Field name (e.g., "n", "p", "x")
     pub name: &'static str,
-    
+
     /// Field type (e.g., "Name", "Proc", "[Name -> Proc]")
     pub ty: &'static str,
-    
+
     /// Whether this field is a binder
     pub is_binder: bool,
 }
@@ -87,10 +89,10 @@ pub struct FieldDef {
 pub struct EquationDef {
     /// Freshness conditions (e.g., ["x # P"])
     pub conditions: &'static [&'static str],
-    
+
     /// Left-hand side in user syntax
     pub lhs: &'static str,
-    
+
     /// Right-hand side in user syntax
     pub rhs: &'static str,
 }
@@ -100,17 +102,17 @@ pub struct EquationDef {
 pub struct RewriteDef {
     /// Optional rule name (e.g., "communication")
     pub name: Option<&'static str>,
-    
+
     /// Freshness conditions
     pub conditions: &'static [&'static str],
-    
+
     /// Congruence premise: if (S, T) then S ~> T
     pub premise: Option<(&'static str, &'static str)>,
-    
+
     /// Left-hand side in user syntax
     pub lhs: &'static str,
-    
-    /// Right-hand side in user syntax  
+
+    /// Right-hand side in user syntax
     pub rhs: &'static str,
 }
 
@@ -119,7 +121,7 @@ impl RewriteDef {
     pub fn is_congruence(&self) -> bool {
         self.premise.is_some()
     }
-    
+
     /// Check if this is a base rewrite (no premise)
     pub fn is_base(&self) -> bool {
         self.premise.is_none()

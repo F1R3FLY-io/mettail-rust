@@ -493,7 +493,6 @@ fn main() {
         // =====================================================================
         // PHASE 11: Multi-Communication Tests (Join Patterns)
         // =====================================================================
-
         TestCase {
             name: "multi_comm_basic",
             input: "{(c1?x, c2?y).{*(x)} | c1!(p) | c2!(q)}",
@@ -502,7 +501,6 @@ fn main() {
             min_rewrites: 1,
             description: "Basic multi-communication: receive on two channels, use first",
         },
-
         TestCase {
             name: "multi_comm_both_vars",
             input: "{(c1?x, c2?y).{{*(x) | *(y)}} | c1!(p) | c2!(q)}",
@@ -511,7 +509,6 @@ fn main() {
             min_rewrites: 1,
             description: "Multi-communication using both received values",
         },
-
         TestCase {
             name: "multi_comm_three_channels",
             input: "{(a?x, b?y, c?z).{{*(x) | *(y) | *(z)}} | a!(p) | b!(q) | c!(r)}",
@@ -520,7 +517,6 @@ fn main() {
             min_rewrites: 1,
             description: "Multi-communication on three channels",
         },
-
         TestCase {
             name: "multi_comm_forward",
             input: "{(c1?x, c2?y).{out!(*(x))} | c1!(data) | c2!(ignored)}",
@@ -529,7 +525,6 @@ fn main() {
             min_rewrites: 1,
             description: "Multi-comm with forwarding on one channel",
         },
-
         TestCase {
             name: "multi_comm_join",
             input: "{(c?x, c?y).{{*(x) | *(y)}} | c!(a) | c!(b)}",
@@ -538,7 +533,6 @@ fn main() {
             min_rewrites: 1,
             description: "Join pattern: two receives on same channel",
         },
-
         TestCase {
             name: "multi_comm_with_parallel",
             input: "{(c1?x, c2?y).{*(x)} | c1!(p) | c2!(q)}",

@@ -1,7 +1,6 @@
 /// Pretty-printing utilities for terms
 ///
 /// Provides indented multi-line formatting for complex terms.
-
 fn indent_str(level: usize) -> String {
     "    ".repeat(level)
 }

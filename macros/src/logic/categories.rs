@@ -8,8 +8,11 @@
 //! - Collection projections (extracting elements from collections)
 //! - Congruence rules for equality
 
-use crate::ast::{grammar::{GrammarRule, GrammarItem}, language::LanguageDef};
 use crate::ast::grammar::TermParam;
+use crate::ast::{
+    grammar::{GrammarItem, GrammarRule},
+    language::LanguageDef,
+};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -22,13 +25,12 @@ pub fn generate_category_rules(language: &LanguageDef) -> TokenStream {
         let cat = &lang_type.name;
         let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
         let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
-        let eq_rel = format_ident!("eq_{}", cat.to_string().to_lowercase());
+        let _eq_rel = format_ident!("eq_{}", cat.to_string().to_lowercase());
 
         // Expand via rewrites: add rewritten terms to enable further exploration
         rules.push(quote! {
             #cat_lower(c1) <-- #cat_lower(c0), #rw_rel(c0, c1);
         });
-
 
         // PERFORMANCE OPTIMIZATION (2026-01-27):
         // The following closure rules were too slow because they computed O(R × E²) rewrites:
@@ -57,7 +59,7 @@ pub fn generate_category_rules(language: &LanguageDef) -> TokenStream {
         // This adds collection elements to their category relations
         let seeding_rules = generate_projection_seeding_rules(cat, language);
         rules.extend(seeding_rules);
-        
+
         // Generate rewrite congruence rules for auto-generated Apply/Lam variants
         let congruence_rules = generate_auto_variant_congruence(cat, language);
         rules.extend(congruence_rules);
@@ -80,11 +82,12 @@ fn generate_deconstruction_rules(category: &Ident, language: &LanguageDef) -> Ve
         .collect();
 
     for constructor in constructors {
-        if let Some(rule) = generate_deconstruction_for_constructor(category, constructor, language) {
+        if let Some(rule) = generate_deconstruction_for_constructor(category, constructor, language)
+        {
             rules.push(rule);
         }
     }
-    
+
     // Generate deconstruction rules for auto-generated variants (Apply, Lam, etc.)
     let auto_deconstruct = generate_auto_variant_deconstruction(category, language);
     rules.extend(auto_deconstruct);
@@ -93,19 +96,24 @@ fn generate_deconstruction_rules(category: &Ident, language: &LanguageDef) -> Ve
 }
 
 /// Generate deconstruction rules for auto-generated variants (Apply, Lam, MApply, MLam)
-fn generate_auto_variant_deconstruction(category: &Ident, language: &LanguageDef) -> Vec<TokenStream> {
+fn generate_auto_variant_deconstruction(
+    category: &Ident,
+    language: &LanguageDef,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
     let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
 
     // Get all non-native categories for domain types
-    let domain_cats: Vec<_> = language.types.iter()
+    let domain_cats: Vec<_> = language
+        .types
+        .iter()
         .filter(|t| t.native_type.is_none())
         .map(|t| &t.name)
         .collect();
-    
+
     for domain in &domain_cats {
         let domain_lower = format_ident!("{}", domain.to_string().to_lowercase());
-        
+
         // ApplyX(lam, arg) - extract both lam (same category) and arg (domain category)
         let apply_variant = format_ident!("Apply{}", domain);
         rules.push(quote! {
@@ -114,7 +122,7 @@ fn generate_auto_variant_deconstruction(category: &Ident, language: &LanguageDef
                 #cat_lower(t),
                 if let #category::#apply_variant(lam, arg) = t;
         });
-        
+
         // MApplyX(lam, args) - extract lam and all args
         let mapply_variant = format_ident!("MApply{}", domain);
         rules.push(quote! {
@@ -128,7 +136,7 @@ fn generate_auto_variant_deconstruction(category: &Ident, language: &LanguageDef
                 if let #category::#mapply_variant(_, args) = t,
                 for arg in args.iter();
         });
-        
+
         // LamX(scope) - extract body from scope
         let lam_variant = format_ident!("Lam{}", domain);
         rules.push(quote! {
@@ -136,7 +144,7 @@ fn generate_auto_variant_deconstruction(category: &Ident, language: &LanguageDef
                 #cat_lower(t),
                 if let #category::#lam_variant(scope) = t;
         });
-        
+
         // MLamX(scope) - extract body from scope
         let mlam_variant = format_ident!("MLam{}", domain);
         rules.push(quote! {
@@ -145,16 +153,16 @@ fn generate_auto_variant_deconstruction(category: &Ident, language: &LanguageDef
                 if let #category::#mlam_variant(scope) = t;
         });
     }
-    
+
     rules
 }
 
 /// Generate rewrite congruence rules for auto-generated Apply variants
-/// 
+///
 /// These rules propagate rewrites through applications:
 /// - If lam rewrites in ApplyX(lam, arg), the whole ApplyX rewrites
 /// - If arg rewrites in ApplyX(lam, arg), the whole ApplyX rewrites
-/// 
+///
 /// Note: We do NOT propagate rewrites through lambda bodies (LamX, MLamX)
 /// because lambdas are suspended computations - their bodies shouldn't
 /// reduce until they are applied.
@@ -162,16 +170,18 @@ fn generate_auto_variant_congruence(category: &Ident, language: &LanguageDef) ->
     let mut rules = Vec::new();
     let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
     let rw_cat = format_ident!("rw_{}", category.to_string().to_lowercase());
-    
+
     // Get all non-native categories for domain types
-    let domain_cats: Vec<_> = language.types.iter()
+    let domain_cats: Vec<_> = language
+        .types
+        .iter()
         .filter(|t| t.native_type.is_none())
         .map(|t| &t.name)
         .collect();
-    
+
     for domain in &domain_cats {
         let rw_domain = format_ident!("rw_{}", domain.to_string().to_lowercase());
-        
+
         // ApplyX(lam, arg) - congruence for lam rewriting
         let apply_variant = format_ident!("Apply{}", domain);
         rules.push(quote! {
@@ -183,7 +193,7 @@ fn generate_auto_variant_congruence(category: &Ident, language: &LanguageDef) ->
                 if let #category::#apply_variant(ref lam, ref arg) = t,
                 #rw_cat(lam.as_ref().clone(), lam_new);
         });
-        
+
         // ApplyX(lam, arg) - congruence for arg rewriting
         rules.push(quote! {
             #rw_cat(
@@ -194,7 +204,7 @@ fn generate_auto_variant_congruence(category: &Ident, language: &LanguageDef) ->
                 if let #category::#apply_variant(ref lam, ref arg) = t,
                 #rw_domain(arg.as_ref().clone(), arg_new);
         });
-        
+
         // MApplyX(lam, args) - congruence for lam rewriting
         let mapply_variant = format_ident!("MApply{}", domain);
         rules.push(quote! {
@@ -207,7 +217,7 @@ fn generate_auto_variant_congruence(category: &Ident, language: &LanguageDef) ->
                 #rw_cat(lam.as_ref().clone(), lam_new);
         });
     }
-    
+
     rules
 }
 
@@ -309,13 +319,14 @@ fn generate_collection_projection_population(
 
     for constructor in constructors {
         // Skip multi-binder constructors (they have term_context with MultiAbstraction)
-        let is_multi_binder = constructor.term_context.as_ref().map_or(false, |ctx| {
-            ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        let is_multi_binder = constructor.term_context.as_ref().is_some_and(|ctx| {
+            ctx.iter()
+                .any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
         });
         if is_multi_binder {
             continue;
         }
-        
+
         // Check if this constructor has a collection field
         for item in &constructor.items {
             if let GrammarItem::Collection { element_type, .. } = item {
@@ -371,13 +382,14 @@ fn generate_projection_seeding_rules(category: &Ident, language: &LanguageDef) -
 
     for constructor in constructors {
         // Skip multi-binder constructors
-        let is_multi_binder = constructor.term_context.as_ref().map_or(false, |ctx| {
-            ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        let is_multi_binder = constructor.term_context.as_ref().is_some_and(|ctx| {
+            ctx.iter()
+                .any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
         });
         if is_multi_binder {
             continue;
         }
-        
+
         // Check if this constructor has a collection field
         for item in &constructor.items {
             if let GrammarItem::Collection { element_type, .. } = item {

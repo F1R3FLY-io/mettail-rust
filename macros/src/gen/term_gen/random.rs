@@ -11,7 +11,10 @@
     clippy::unnecessary_filter_map
 )]
 
-use crate::ast::{language::LanguageDef, grammar::{GrammarItem, GrammarRule, TermParam}};
+use crate::ast::{
+    grammar::{GrammarItem, GrammarRule, TermParam},
+    language::LanguageDef,
+};
 use crate::gen::term_gen::is_lang_type;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -215,15 +218,16 @@ fn generate_random_depth_d(
 
     for rule in rules {
         // Check if this is a multi-binder rule (skip random generation for now)
-        let is_multi_binder = rule.term_context.as_ref().map_or(false, |ctx| {
-            ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        let is_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
+            ctx.iter()
+                .any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
         });
-        
+
         if is_multi_binder {
             // TODO: Implement proper random generation for multi-binder constructors
             continue;
         }
-        
+
         // Check if this has collections
         let has_collections = rule
             .items
@@ -232,7 +236,8 @@ fn generate_random_depth_d(
 
         if has_collections {
             // Handle collection constructors
-            constructor_cases.push(generate_random_collection_constructor(cat_name, rule, language));
+            constructor_cases
+                .push(generate_random_collection_constructor(cat_name, rule, language));
             continue;
         }
 

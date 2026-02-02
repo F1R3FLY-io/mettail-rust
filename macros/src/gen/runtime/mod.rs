@@ -5,6 +5,6 @@
 //! - `metadata` - `{Name}Metadata` for REPL introspection
 //! - `environment` - `{Name}Env` for storing variable bindings
 
+pub mod environment;
 pub mod language;
 pub mod metadata;
-pub mod environment;

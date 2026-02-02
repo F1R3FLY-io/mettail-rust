@@ -1,4 +1,7 @@
-use syn::{Ident, Token, parse::{Parse, ParseStream}, Result as SynResult};
+use syn::{
+    parse::{Parse, ParseStream},
+    Ident, Result as SynResult, Token,
+};
 
 /// Collection type specifier
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +58,7 @@ impl std::fmt::Display for TypeExpr {
                     CollectionType::HashSet => "HashSet",
                 };
                 write!(f, "{}({})", coll_name, element)
-            }
+            },
         }
     }
 }
@@ -112,17 +115,14 @@ fn parse_type_atom(input: ParseStream) -> SynResult<TypeExpr> {
                     _ => unreachable!(),
                 };
 
-                return Ok(TypeExpr::Collection {
-                    coll_type,
-                    element: Box::new(element),
-                });
+                return Ok(TypeExpr::Collection { coll_type, element: Box::new(element) });
             }
         }
     }
 
     // Check for arrow type: [Domain -> Codomain]
     if input.peek(syn::token::Bracket) {
-    let content;
+        let content;
         syn::bracketed!(content in input);
 
         // Parse domain (which may itself be a bracketed type or include *)
@@ -165,4 +165,3 @@ pub enum EvalMode {
     /// Only step-by-step (congruence rules)
     Step,
 }
-

@@ -20,8 +20,8 @@ language! {
         PDrop . n:Name |- "*" "(" n ")" : Proc ;
 
         POutput . n:Name, q:Proc |- n "!" "(" q ")" : Proc ;
-        
-        PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] 
+
+        PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
             |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
 
         PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
@@ -34,7 +34,7 @@ language! {
     },
 
     rewrites {
-        Comm . |- (PPar {(PInputs ns cont), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest}) 
+        Comm . |- (PPar {(PInputs ns cont), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
             ~> (PPar {(eval cont qs.*map(|q| (NQuote q))), ...rest});
 
         Exec . |- (PDrop (NQuote P)) ~> P;

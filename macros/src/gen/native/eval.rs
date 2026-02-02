@@ -5,7 +5,7 @@ use std::collections::HashMap;
 /// Generate eval() method for native types
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{BuiltinOp, LanguageDef, SemanticOperation};
-use crate::gen::{generate_var_label, generate_literal_label, is_integer_rule};
+use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule};
 
 /// Extract parameter names from term_context in the same order as generated variant fields.
 /// Used for rust_code eval arms: param names match constructor field names.
@@ -17,11 +17,11 @@ fn term_context_param_names(term_context: &[TermParam]) -> Vec<syn::Ident> {
             TermParam::Abstraction { binder, body, .. } => {
                 names.push(binder.clone());
                 names.push(body.clone());
-            }
+            },
             TermParam::MultiAbstraction { binder, body, .. } => {
                 names.push(binder.clone());
                 names.push(body.clone());
-            }
+            },
         }
     }
     names
@@ -64,10 +64,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
         // Generate match arms
         let mut match_arms = Vec::new();
-        
+
         // Check for existing rules
         let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
-        
+
         // Add arm for auto-generated NumLit if no explicit Integer rule
         if !has_integer_rule {
             let literal_label = generate_literal_label(native_type);
@@ -75,7 +75,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 #category::#literal_label(n) => *n,
             });
         }
-        
+
         // Add arm for auto-generated Var variant if no explicit Var rule
         let var_label = generate_var_label(category);
         let panic_msg = format!(
@@ -121,7 +121,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 (#rust_code)
                             },
                         }
-                    }
+                    },
                     2 => {
                         let p0 = &param_names[0];
                         let p1 = &param_names[1];
@@ -131,7 +131,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 (#rust_code)
                             },
                         }
-                    }
+                    },
                     3 => {
                         let p0 = &param_names[0];
                         let p1 = &param_names[1];
@@ -142,7 +142,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                                 (#rust_code)
                             },
                         }
-                    }
+                    },
                     _ => continue, // 4+ params: skip or extend later
                 };
                 match_arms.push(match_arm);
@@ -229,4 +229,3 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         #(#impls)*
     }
 }
-

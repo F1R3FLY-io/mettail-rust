@@ -351,7 +351,11 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
             }
             let label = &rule.label;
 
-            let res_expr = if let Some(sem) = language.semantics.iter().find(|s| s.constructor == rule.label) {
+            let res_expr = if let Some(sem) = language
+                .semantics
+                .iter()
+                .find(|s| s.constructor == rule.label)
+            {
                 let op_token = match &sem.operation {
                     SemanticOperation::Builtin(builtin_op) => match builtin_op {
                         BuiltinOp::Add => quote! { a + b },

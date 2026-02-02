@@ -1,5 +1,5 @@
-use mettail_runtime::Language;
 use anyhow::{bail, Result};
+use mettail_runtime::Language;
 use std::collections::HashMap;
 
 // Import generated language implementations directly

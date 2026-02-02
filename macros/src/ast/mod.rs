@@ -16,11 +16,10 @@
 //! the focused modules. A future refactor will move definitions to
 //! their respective modules.
 
-
-pub mod pattern;
-pub mod types;
 pub mod grammar;
 pub mod language;
+pub mod pattern;
+pub mod types;
 
 pub mod tests;
 pub mod validation;

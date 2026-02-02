@@ -10,8 +10,8 @@
 //! `eq(x,y) => eq(f(x), f(y))` for all constructors is always sound.
 
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
+use crate::ast::language::{LanguageDef, RewriteRule};
 use crate::ast::pattern::{Pattern, PatternTerm};
-use crate::ast::language::{RewriteRule, LanguageDef};
 use crate::ast::types::TypeExpr;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -42,27 +42,48 @@ pub fn generate_explicit_congruence(
 ) -> Option<TokenStream> {
     // Must have a congruence premise (S ~> T)
     let (source_var, _target_var) = rule.congruence_premise()?;
-    
+
     // Analyze LHS to find where source_var appears and in what context
     let context = find_rewrite_context(&rule.left, source_var, language)?;
-    
+
     // Generate appropriate congruence based on context
     match context {
-        RewriteContext::Collection { 
-            category, constructor, element_category, has_rest 
-        } => {
-            generate_collection_congruence(&category, &constructor, &element_category, has_rest, language)
-        }
-        RewriteContext::Binding { 
-            category, constructor, field_idx, body_category 
-        } => {
-            generate_binding_congruence(&category, &constructor, field_idx, &body_category, language)
-        }
-        RewriteContext::Simple { 
-            category, constructor, field_idx, field_category 
-        } => {
-            generate_simple_congruence(&category, &constructor, field_idx, &field_category, language)
-        }
+        RewriteContext::Collection {
+            category,
+            constructor,
+            element_category,
+            has_rest,
+        } => generate_collection_congruence(
+            &category,
+            &constructor,
+            &element_category,
+            has_rest,
+            language,
+        ),
+        RewriteContext::Binding {
+            category,
+            constructor,
+            field_idx,
+            body_category,
+        } => generate_binding_congruence(
+            &category,
+            &constructor,
+            field_idx,
+            &body_category,
+            language,
+        ),
+        RewriteContext::Simple {
+            category,
+            constructor,
+            field_idx,
+            field_category,
+        } => generate_simple_congruence(
+            &category,
+            &constructor,
+            field_idx,
+            &field_category,
+            language,
+        ),
     }
 }
 
@@ -119,7 +140,7 @@ fn find_rewrite_context_in_term(
         PatternTerm::Apply { constructor, args } => {
             let rule = language.get_constructor(constructor)?;
             let category = rule.category.clone();
-            
+
             // Check each argument for the source variable
             let mut field_idx = 0;
             for item in rule.items.iter() {
@@ -142,33 +163,33 @@ fn find_rewrite_context_in_term(
                             }
                         }
                         field_idx += 1;
-                    }
+                    },
                     GrammarItem::Collection { element_type, .. } => {
-                        if let Some(arg) = args.get(field_idx) {
+                        if let Some(Pattern::Collection { elements, rest, .. }) =
+                            args.get(field_idx)
+                        {
                             // Check if this is a collection pattern containing source_var
-                            if let Pattern::Collection { elements, rest, .. } = arg {
-                                for elem in elements {
-                                    if let Pattern::Term(PatternTerm::Var(v)) = elem {
-                                        if v == source_var {
-                                            return Some(RewriteContext::Collection {
-                                                category,
-                                                constructor: constructor.clone(),
-                                                element_category: element_type.clone(),
-                                                has_rest: rest.is_some(),
-                                            });
-                                        }
+                            for elem in elements {
+                                if let Pattern::Term(PatternTerm::Var(v)) = elem {
+                                    if v == source_var {
+                                        return Some(RewriteContext::Collection {
+                                            category,
+                                            constructor: constructor.clone(),
+                                            element_category: element_type.clone(),
+                                            has_rest: rest.is_some(),
+                                        });
                                     }
                                 }
                             }
                         }
                         field_idx += 1;
-                    }
+                    },
                     GrammarItem::Binder { category: _binder_domain } => {
                         // Note: _binder_domain is the domain type (e.g., Name)
                         // We need the codomain type (e.g., Proc) for the body
                         let actual_body_category = get_binder_body_category(rule, field_idx)
                             .unwrap_or_else(|| rule.category.clone());
-                        
+
                         if let Some(arg) = args.get(field_idx) {
                             // Check if body contains source_var
                             if let Pattern::Term(PatternTerm::Lambda { body, .. }) = arg {
@@ -192,17 +213,15 @@ fn find_rewrite_context_in_term(
                             }
                         }
                         field_idx += 1;
-                    }
+                    },
                     GrammarItem::Terminal(_) => {
                         // Skip terminals
-                    }
+                    },
                 }
             }
             None
-        }
-        PatternTerm::Lambda { body, .. } => {
-            find_rewrite_context(body, source_var, language)
-        }
+        },
+        PatternTerm::Lambda { body, .. } => find_rewrite_context(body, source_var, language),
         _ => None,
     }
 }
@@ -213,11 +232,11 @@ fn pattern_contains_var(pattern: &Pattern, var: &Ident) -> bool {
         Pattern::Term(PatternTerm::Var(v)) => v == var,
         Pattern::Term(PatternTerm::Apply { args, .. }) => {
             args.iter().any(|a| pattern_contains_var(a, var))
-        }
+        },
         Pattern::Term(PatternTerm::Lambda { body, .. }) => pattern_contains_var(body, var),
         Pattern::Collection { elements, .. } => {
             elements.iter().any(|e| pattern_contains_var(e, var))
-        }
+        },
         _ => false,
     }
 }
@@ -254,7 +273,7 @@ fn generate_collection_congruence(
     let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
     let elem_rw_rel = format_ident!("rw_{}", element_category.to_string().to_lowercase());
     let insert_helper = format_ident!("insert_into_{}", constructor.to_string().to_lowercase());
-    
+
     Some(quote! {
         #rw_rel(parent, result) <--
             #cat_lower(parent),
@@ -292,10 +311,10 @@ fn generate_binding_congruence(
     let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
     let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
     let body_rw_rel = format_ident!("rw_{}", body_category.to_string().to_lowercase());
-    
+
     let rule = language.get_constructor(constructor)?;
     let n = count_nonterminal_fields(rule);
-    
+
     if n == 1 {
         // Simple case: just the scope (like PNew)
         // Use unsafe accessors to preserve binder identity (prevents infinite loops)
@@ -315,7 +334,7 @@ fn generate_binding_congruence(
         // Use unsafe accessors to preserve binder identity
         let vars: Vec<Ident> = (0..n).map(|i| format_ident!("x{}", i)).collect();
         let scope_var = &vars[field_idx];
-        
+
         let recon_args: Vec<TokenStream> = vars.iter().enumerate()
             .map(|(i, v)| {
                 if i == field_idx {
@@ -325,7 +344,7 @@ fn generate_binding_congruence(
                 }
             })
             .collect();
-        
+
         Some(quote! {
             #rw_rel(lhs, rhs) <--
                 #cat_lower(lhs),
@@ -359,26 +378,28 @@ fn generate_simple_congruence(
     let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
     let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
     let field_rw_rel = format_ident!("rw_{}", field_category.to_string().to_lowercase());
-    
+
     let rule = language.get_constructor(constructor)?;
     let n = count_nonterminal_fields(rule);
     let vars: Vec<Ident> = (0..n).map(|i| format_ident!("x{}", i)).collect();
-    
+
     let s_var = &vars[field_idx];
     let t_var = format_ident!("t");
-    
+
     // Determine if field needs Box (recursive type)
     let needs_box = is_recursive_field(rule, field_idx);
-    
+
     // Source expression (dereference if boxed)
     let s_expr = if needs_box {
         quote! { (**#s_var).clone() }
     } else {
         quote! { (*#s_var).clone() }
     };
-    
+
     // Reconstruction arguments
-    let recon_args: Vec<TokenStream> = vars.iter().enumerate()
+    let recon_args: Vec<TokenStream> = vars
+        .iter()
+        .enumerate()
         .map(|(i, v)| {
             if i == field_idx {
                 if needs_box {
@@ -391,7 +412,7 @@ fn generate_simple_congruence(
             }
         })
         .collect();
-    
+
     Some(quote! {
         #rw_rel(lhs, rhs) <--
             #cat_lower(lhs),
@@ -406,7 +427,7 @@ fn generate_simple_congruence(
 // =============================================================================
 
 /// Count actual AST fields in a grammar rule
-/// 
+///
 /// This accounts for the fact that:
 /// - New syntax (term_context): Abstraction = 1 Scope field
 /// - Old syntax with bindings: Binder + body NonTerminal = 1 Scope field
@@ -415,12 +436,12 @@ fn count_nonterminal_fields(rule: &GrammarRule) -> usize {
     if let Some(ref term_context) = rule.term_context {
         return term_context.len();
     }
-    
+
     // Old syntax with explicit bindings - binder and body combine into one Scope
     if !rule.bindings.is_empty() {
         let (binder_idx, body_indices) = &rule.bindings[0];
         let body_idx = body_indices[0];
-        
+
         let mut count = 0;
         for (i, item) in rule.items.iter().enumerate() {
             if i == *binder_idx {
@@ -432,20 +453,18 @@ fn count_nonterminal_fields(rule: &GrammarRule) -> usize {
                 match item {
                     GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. } => {
                         count += 1;
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         }
         return count;
     }
-    
+
     // Regular rule - count non-terminals and collections
-    rule.items.iter()
-        .filter(|item| matches!(
-            item,
-            GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }
-        ))
+    rule.items
+        .iter()
+        .filter(|item| matches!(item, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
         .count()
 }
 
@@ -459,38 +478,35 @@ fn is_recursive_field(rule: &GrammarRule, field_idx: usize) -> bool {
                     return cat == &rule.category;
                 }
                 idx += 1;
-            }
+            },
             GrammarItem::Collection { .. } | GrammarItem::Binder { .. } => {
                 idx += 1;
-            }
-            GrammarItem::Terminal(_) => {}
+            },
+            GrammarItem::Terminal(_) => {},
         }
     }
     false
 }
 
 /// Get the body category for a binder at the given field index
-/// 
+///
 /// For new syntax (term_context): extracts codomain from Arrow type
 /// For old syntax: looks at the next NonTerminal after the Binder
 fn get_binder_body_category(rule: &GrammarRule, field_idx: usize) -> Option<Ident> {
     // New syntax uses term_context
     if let Some(ref term_context) = rule.term_context {
-        if let Some(param) = term_context.get(field_idx) {
-            match param {
-                TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
-                    if let TypeExpr::Arrow { codomain, .. } = ty {
-                        if let TypeExpr::Base(body_type) = codomain.as_ref() {
-                            return Some(body_type.clone());
-                        }
-                    }
+        if let Some(TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. }) =
+            term_context.get(field_idx)
+        {
+            if let TypeExpr::Arrow { codomain, .. } = ty {
+                if let TypeExpr::Base(body_type) = codomain.as_ref() {
+                    return Some(body_type.clone());
                 }
-                _ => {}
             }
         }
         return None;
     }
-    
+
     // Old syntax - find the NonTerminal that the binder binds into
     if !rule.bindings.is_empty() {
         for (binder_idx, body_indices) in &rule.bindings {
@@ -501,18 +517,23 @@ fn get_binder_body_category(rule: &GrammarRule, field_idx: usize) -> Option<Iden
                     if idx == field_idx {
                         // Found the binder - get the body type
                         if let Some(&body_item_idx) = body_indices.first() {
-                            if let Some(GrammarItem::NonTerminal(body_cat)) = rule.items.get(body_item_idx) {
+                            if let Some(GrammarItem::NonTerminal(body_cat)) =
+                                rule.items.get(body_item_idx)
+                            {
                                 return Some(body_cat.clone());
                             }
                         }
                     }
                     idx += 1;
-                } else if matches!(item, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }) {
+                } else if matches!(
+                    item,
+                    GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }
+                ) {
                     idx += 1;
                 }
             }
         }
     }
-    
+
     None
 }

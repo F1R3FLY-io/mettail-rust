@@ -5,9 +5,13 @@
 
 #![allow(clippy::cmp_owned)]
 
-use crate::ast::{grammar::{GrammarItem, GrammarRule, TermParam, SyntaxExpr, PatternOp}, types::{TypeExpr}, language::{LanguageDef}};
-use crate::gen::{generate_var_label, generate_literal_label, is_var_rule, is_integer_rule};
+use crate::ast::{
+    grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam},
+    language::LanguageDef,
+    types::TypeExpr,
+};
 use crate::gen::native::has_native_type;
+use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -66,7 +70,7 @@ fn generate_display_impl(
     let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
     if let Some(native_type) = has_native_type(category, language) {
         if !has_integer_rule {
-            let literal_arm = generate_auto_literal_display_arm(category, &native_type);
+            let literal_arm = generate_auto_literal_display_arm(category, native_type);
             match_arms.push(literal_arm);
         }
     }
@@ -77,14 +81,12 @@ fn generate_display_impl(
         if domain_lang_type.native_type.is_some() {
             continue;
         }
-        
+
         let domain_name = &domain_lang_type.name;
-        
+
         // Single-binder lambda: Lam{Domain}
-        let lam_variant = syn::Ident::new(
-            &format!("Lam{}", domain_name),
-            proc_macro2::Span::call_site()
-        );
+        let lam_variant =
+            syn::Ident::new(&format!("Lam{}", domain_name), proc_macro2::Span::call_site());
         match_arms.push(quote! {
             #category::#lam_variant(scope) => {
                 let (binder, body) = scope.clone().unbind();
@@ -92,12 +94,10 @@ fn generate_display_impl(
                 write!(f, "^{}.{{{}}}", var_name, body)
             }
         });
-        
+
         // Multi-binder lambda: MLam{Domain}
-        let mlam_variant = syn::Ident::new(
-            &format!("MLam{}", domain_name),
-            proc_macro2::Span::call_site()
-        );
+        let mlam_variant =
+            syn::Ident::new(&format!("MLam{}", domain_name), proc_macro2::Span::call_site());
         match_arms.push(quote! {
             #category::#mlam_variant(scope) => {
                 let (binders, body) = scope.clone().unbind();
@@ -107,24 +107,20 @@ fn generate_display_impl(
                 write!(f, "^[{}].{{{}}}", names.join(","), body)
             }
         });
-        
+
         // Application: Apply{Domain} - display as $domain(lam, arg)
-        let apply_variant = syn::Ident::new(
-            &format!("Apply{}", domain_name),
-            proc_macro2::Span::call_site()
-        );
+        let apply_variant =
+            syn::Ident::new(&format!("Apply{}", domain_name), proc_macro2::Span::call_site());
         let domain_lower = domain_name.to_string().to_lowercase();
         match_arms.push(quote! {
             #category::#apply_variant(lam, arg) => {
                 write!(f, "${}({}, {})", #domain_lower, lam, arg)
             }
         });
-        
+
         // Multi-application: MApply{Domain} - display as $$domain(lam, args...)
-        let mapply_variant = syn::Ident::new(
-            &format!("MApply{}", domain_name),
-            proc_macro2::Span::call_site()
-        );
+        let mapply_variant =
+            syn::Ident::new(&format!("MApply{}", domain_name), proc_macro2::Span::call_site());
         match_arms.push(quote! {
             #category::#mapply_variant(lam, args) => {
                 let arg_strs: Vec<_> = args.iter().map(|a| a.to_string()).collect();
@@ -258,9 +254,9 @@ fn generate_display_arm(rule: &GrammarRule, language: &LanguageDef) -> TokenStre
 
 /// Generate display for a constructor using new syntax_pattern
 fn generate_syntax_pattern_display_arm(
-    rule: &GrammarRule, 
-    syntax_pattern: &[SyntaxExpr], 
-    term_context: &[TermParam]
+    rule: &GrammarRule,
+    syntax_pattern: &[SyntaxExpr],
+    term_context: &[TermParam],
 ) -> TokenStream {
     let category = &rule.category;
     let label = &rule.label;
@@ -272,7 +268,7 @@ fn generate_syntax_pattern_display_arm(
     let mut is_multi_binder = false;
     let mut abstraction_binder: Option<String> = None;
     let mut abstraction_body: Option<String> = None;
-    
+
     for param in term_context {
         match param {
             TermParam::Simple { name, ty } => {
@@ -309,7 +305,7 @@ fn generate_syntax_pattern_display_arm(
 
     // Build format string and args from syntax pattern
     let mut format_parts: Vec<TokenStream> = Vec::new();
-    
+
     for expr in syntax_pattern {
         match expr {
             SyntaxExpr::Literal(s) => {
@@ -318,7 +314,7 @@ fn generate_syntax_pattern_display_arm(
             },
             SyntaxExpr::Param(id) => {
                 let name = id.to_string();
-                
+
                 // Check if this is the binder from an abstraction
                 if Some(&name) == abstraction_binder.as_ref() {
                     format_parts.push(quote! { write!(f, "{}", binder_name)?; });
@@ -334,7 +330,8 @@ fn generate_syntax_pattern_display_arm(
                 }
             },
             SyntaxExpr::Op(op) => {
-                let op_code = generate_pattern_op_display(op, &abstraction_binder, &abstraction_body);
+                let op_code =
+                    generate_pattern_op_display(op, &abstraction_binder, &abstraction_body);
                 format_parts.push(op_code);
             },
         }
@@ -346,10 +343,10 @@ fn generate_syntax_pattern_display_arm(
         .iter()
         .map(|name| syn::Ident::new(name, proc_macro2::Span::call_site()))
         .collect();
-    
+
     if has_abstraction {
         field_idents.push(syn::Ident::new("scope", proc_macro2::Span::call_site()));
-        
+
         if is_multi_binder {
             // Multi-binder: scope.unbind() returns (Vec<Binder>, body)
             // For display with #zip().#map().#sep(), handled by generate_chained_sep_display
@@ -423,7 +420,8 @@ fn generate_pattern_op_display(
             if let Some(chain_source) = source {
                 return generate_chained_sep_display_code(chain_source, separator);
             }
-            let coll_ident = syn::Ident::new(&collection.to_string(), proc_macro2::Span::call_site());
+            let coll_ident =
+                syn::Ident::new(&collection.to_string(), proc_macro2::Span::call_site());
             let sep_with_spaces = format!(" {} ", separator);
             quote! {
                 {
@@ -437,33 +435,35 @@ fn generate_pattern_op_display(
                     }
                 }
             }
-        }
+        },
         PatternOp::Var(id) => {
             let ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
             quote! { write!(f, "{}", #ident)?; }
-        }
+        },
         PatternOp::Opt { inner } => {
             // For optional, we'd need to know if the value is present
             // This requires more context - for now, just display the inner if non-empty
-            let inner_parts: Vec<TokenStream> = inner.iter().map(|expr| {
-                match expr {
+            let inner_parts: Vec<TokenStream> = inner
+                .iter()
+                .map(|expr| match expr {
                     SyntaxExpr::Literal(s) => {
                         let escaped = s.replace('{', "{{").replace('}', "}}");
                         quote! { write!(f, #escaped)?; }
-                    }
+                    },
                     SyntaxExpr::Param(id) => {
-                        let ident = syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
+                        let ident =
+                            syn::Ident::new(&id.to_string(), proc_macro2::Span::call_site());
                         quote! { write!(f, "{}", #ident)?; }
-                    }
+                    },
                     SyntaxExpr::Op(op) => generate_pattern_op_display(op, &None, &None),
-                }
-            }).collect();
+                })
+                .collect();
             quote! { #(#inner_parts)* }
-        }
+        },
         PatternOp::Zip { .. } | PatternOp::Map { .. } => {
             // Zip and Map are typically chained with Sep, not standalone
             quote! { /* zip/map should be chained with #sep */ }
-        }
+        },
     }
 }
 
@@ -475,17 +475,17 @@ fn generate_chained_sep_display_code(source: &PatternOp, separator: &str) -> Tok
             // We have #zip(left, right).#map(|params...| body).#sep(separator)
             // For multi-binder display, left is collection (ns), right is binders (xs)
             // params are [n, x] and body describes how to format each pair
-            
+
             let left_name = left.to_string();
             let left_ident = syn::Ident::new(&left_name, proc_macro2::Span::call_site());
-            
+
             // Generate format code for each pair based on the body
             let format_code = generate_map_body_format(params, body);
-            
+
             // Check if right is binder_names (xs from multi-binder)
             // The binder_names Vec is available from the scope.unbind() in the enclosing block
             let sep_str = format!("{} ", separator);
-            
+
             return quote! {
                 {
                     let mut first = true;
@@ -499,7 +499,7 @@ fn generate_chained_sep_display_code(source: &PatternOp, separator: &str) -> Tok
             };
         }
     }
-    
+
     // Fallback
     quote! { /* unhandled chained pattern */ }
 }
@@ -511,21 +511,21 @@ fn generate_map_body_format(params: &[syn::Ident], body: &[SyntaxExpr]) -> Token
     // We map:
     //   - first param (n) -> item (from the collection)
     //   - second param (x) -> binder_name (from binder_names)
-    
+
     let mut format_parts: Vec<TokenStream> = Vec::new();
-    
+
     for expr in body {
         match expr {
             SyntaxExpr::Literal(s) => {
                 format_parts.push(quote! { write!(f, #s)?; });
-            }
+            },
             SyntaxExpr::Param(id) => {
                 let id_str = id.to_string();
                 // Check which param this corresponds to
                 if params.len() >= 2 {
                     let first_param = params[0].to_string();
                     let second_param = params[1].to_string();
-                    
+
                     if id_str == first_param {
                         // First param maps to the collection item
                         format_parts.push(quote! { write!(f, "{}", item)?; });
@@ -543,13 +543,13 @@ fn generate_map_body_format(params: &[syn::Ident], body: &[SyntaxExpr]) -> Token
                     let ident = syn::Ident::new(&id_str, proc_macro2::Span::call_site());
                     format_parts.push(quote! { write!(f, "{}", #ident)?; });
                 }
-            }
+            },
             SyntaxExpr::Op(_) => {
                 // Nested ops not expected in map body
-            }
+            },
         }
     }
-    
+
     quote! { #(#format_parts)* }
 }
 
@@ -772,7 +772,10 @@ fn generate_auto_var_display_arm(category: &syn::Ident) -> TokenStream {
 }
 
 /// Generate display match arm for an auto-generated literal variant (NumLit, etc.)
-fn generate_auto_literal_display_arm(category: &syn::Ident, native_type: &syn::Type) -> TokenStream {
+fn generate_auto_literal_display_arm(
+    category: &syn::Ident,
+    native_type: &syn::Type,
+) -> TokenStream {
     let literal_label = generate_literal_label(native_type);
 
     quote! {
