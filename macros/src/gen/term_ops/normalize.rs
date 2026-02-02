@@ -4,7 +4,7 @@ use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 use std::collections::HashMap;
 
 /// For each constructor with a collection field, generates a helper function that automatically flattens nested collections of the same type.
@@ -116,7 +116,7 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
             .collect();
 
         // Native types: generate simple recursive normalize (no beta-reduction, no collections)
-        if lang_type.native_type.is_some() {
+        if let Some(ref native_type) = lang_type.native_type {
             let has_integer_rule = rules_for_category.iter().any(|r| is_integer_rule(r));
             let has_var_rule = rules_for_category.iter().any(|r| is_var_rule(r));
             let mut match_arms: Vec<TokenStream> = rules_for_category
@@ -161,7 +161,7 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                 })
                 .collect();
             if !has_integer_rule {
-                let literal_label = generate_literal_label(lang_type.native_type.as_ref().unwrap());
+                let literal_label = generate_literal_label(native_type);
                 match_arms.push(quote! {
                     #category::#literal_label(_) => self.clone()
                 });
