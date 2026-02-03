@@ -88,6 +88,6 @@ pub Proc: Proc = {
 
 pub Name: Name = {
 
-    <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
+    "name:" <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
 };
 

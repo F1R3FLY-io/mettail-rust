@@ -272,28 +272,82 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
             continue;
         }
         let category = &rule.category;
-        let Some(_native_type) = native_type_for(category) else {
+        let Some(result_native) = native_type_for(category) else {
             continue;
         };
         let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
         let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
         let label = &rule.label;
-        let num_lit_label = language
+        let result_lit_label = language
             .terms
             .iter()
             .find(|r| r.category == *category && is_integer_rule(r))
             .map(|r| r.label.clone())
-            .unwrap_or_else(|| generate_literal_label(_native_type));
+            .unwrap_or_else(|| generate_literal_label(result_native));
         let rust_code = &rule.rust_code.as_ref().unwrap().code;
+
+        // Use argument types from term_context when present, so cross-category rules
+        // (e.g. Eq . a:Int, b:Int |- ... : Bool) use the correct literal patterns.
+        let arg_labels = if let Some(ref term_ctx) = rule.term_context {
+            let simple: Vec<_> = term_ctx
+                .iter()
+                .filter_map(|p| match p {
+                    TermParam::Simple { ty, .. } => Some(ty),
+                    _ => None,
+                })
+                .collect();
+            if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
+                (simple.get(0), simple.get(1))
+            {
+                let left_type = language.types.iter().find(|t| t.name == *left_ty);
+                let right_type = language.types.iter().find(|t| t.name == *right_ty);
+                match (left_type.and_then(|t| t.native_type.as_ref()), right_type.and_then(|t| t.native_type.as_ref())) {
+                    (Some(left_nat), Some(right_nat)) => {
+                        let left_lit = language
+                            .terms
+                            .iter()
+                            .find(|r| r.category == *left_ty && is_integer_rule(r))
+                            .map(|r| r.label.clone())
+                            .unwrap_or_else(|| generate_literal_label(left_nat));
+                        let right_lit = language
+                            .terms
+                            .iter()
+                            .find(|r| r.category == *right_ty && is_integer_rule(r))
+                            .map(|r| r.label.clone())
+                            .unwrap_or_else(|| generate_literal_label(right_nat));
+                        Some((left_ty.clone(), left_lit, right_ty.clone(), right_lit))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let (left_cat, left_lit_label, right_cat, right_lit_label) = match arg_labels {
+            Some((lc, ll, rc, rl)) => (lc, ll, rc, rl),
+            None => {
+                // Same-category binary: both operands and result are in category
+                (
+                    category.clone(),
+                    result_lit_label.clone(),
+                    category.clone(),
+                    result_lit_label.clone(),
+                )
+            }
+        };
+
         rules.push(quote! {
             #rw_rel(s.clone(), t) <--
                 #cat_rel(s),
                 if let #category::#label(left, right) = s,
-                if let #category::#num_lit_label(a_ref) = left.as_ref(),
-                if let #category::#num_lit_label(b_ref) = right.as_ref(),
+                if let #left_cat::#left_lit_label(a_ref) = left.as_ref(),
+                if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
                 let a = a_ref.clone(),
                 let b = b_ref.clone(),
-                let t = #category::#num_lit_label((#rust_code));
+                let t = #category::#result_lit_label((#rust_code));
         });
     }
 

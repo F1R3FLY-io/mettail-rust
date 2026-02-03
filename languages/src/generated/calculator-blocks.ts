@@ -5,6 +5,28 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
+	// Eq: ... ...
+	{
+		type: "bool_eq",
+		tooltip: "Eq: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
 	// Not: ...
 	{
 		type: "bool_not",

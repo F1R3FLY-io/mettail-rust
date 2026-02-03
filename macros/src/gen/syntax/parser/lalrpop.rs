@@ -286,7 +286,8 @@ fn generate_tiered_production(
     let cat_str = category.to_string();
     let mut production = String::new();
 
-    // Top-level rule: handle var+terminal rules first (most specific), then delegate to infix
+    // Top-level rule: handle var+terminal rules first (most specific), then delegate to infix.
+    // Low precedence on <CatInfix> so that when we see an infix op (e.g. "+") we shift rather than reduce (fixes shift/reduce conflict).
     production.push_str(&format!("pub {}: {} = {{\n", cat_str, cat_str));
 
     // Add var+terminal rules at top level (highest specificity - tried first)
@@ -298,15 +299,21 @@ fn generate_tiered_production(
         }
     }
 
-    // Then delegate to infix tier
+    // Then delegate to infix tier (low precedence so infix ops prefer shift)
+    production.push_str("    #[precedence(level=\"2\")]\n");
     production.push_str(&format!("    <{}Infix>\n", cat_str));
     production.push_str("};\n\n");
 
-    // Infix tier - handles left-associative operators
+    // Infix tier - atom at level 0 first (LALRPOP disallows assoc on the first precedence level), then infix at level 1 with assoc
     production.push_str(&format!("{}Infix: {} = {{\n", cat_str, cat_str));
+
+    // Base case first with precedence 0 so that level 1 can use associativity
+    production.push_str("    #[precedence(level=\"0\")]\n");
+    production.push_str(&format!("    <{}Atom>,\n", cat_str));
 
     // Generate left-recursive rules for infix operators
     for rule in infix_rules.iter() {
+        production.push_str("    #[precedence(level=\"1\")] #[assoc(side=\"left\")]\n");
         production.push_str("    ");
         let alt = if is_hol_infix_rule(rule) {
             generate_hol_infix_alternative(rule, &cat_str)
@@ -316,9 +323,7 @@ fn generate_tiered_production(
         production.push_str(&alt);
         production.push_str(",\n");
     }
-
-    // Base case - delegate to atom tier
-    production.push_str(&format!("    <{}Atom>\n", cat_str));
+    // Remove trailing comma from last infix rule (LALRPOP allows trailing comma)
     production.push_str("};\n\n");
 
     // Atom tier - handles non-infix constructs and parentheses
@@ -1685,18 +1690,46 @@ fn generate_auto_alternatives(
         }
     }
 
-    // Auto-generate Var alternative if not explicitly defined
+    // Auto-generate Var alternative if not explicitly defined.
+    // When multiple categories get Var (Ident), only the first (by type order) gets bare Ident
+    // to avoid reduce-reduce conflict; others use a prefix e.g. "bool:" <v:Ident>, "str:" <v:Ident>.
     if !has_var_rule {
+        let categories_with_auto_var: Vec<String> = language
+            .types
+            .iter()
+            .filter(|t| {
+                !language
+                    .terms
+                    .iter()
+                    .any(|r| r.category == t.name && is_var_rule(r))
+            })
+            .map(|t| t.name.to_string())
+            .collect();
+        let only_first_gets_bare_ident =
+            categories_with_auto_var.len() <= 1
+                || categories_with_auto_var
+                    .first()
+                    .map(|s| s.as_str())
+                    == Some(cat_str.as_str());
         let var_label = generate_var_label(category);
         if needs_comma {
             result.push_str(",\n");
         } else {
             result.push('\n');
         }
-        result.push_str(&format!(
-            "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
-            cat_str, var_label
-        ));
+        if only_first_gets_bare_ident {
+            result.push_str(&format!(
+                "    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
+                cat_str, var_label
+            ));
+        } else {
+            let prefix_lit = format!("{}:", cat_str.to_string().to_lowercase());
+            let prefix_escaped = prefix_lit.replace('\\', "\\\\").replace('"', "\\\"");
+            result.push_str(&format!(
+                "    \"{}\" <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
+                prefix_escaped, cat_str, var_label
+            ));
+        }
         needs_comma = true;
     }
 

@@ -4,6 +4,7 @@
 export const categoryInfo = {
 	Bool: {
 		constructors: [
+			"Eq",
 			"Not",
 			"Comp"
 		],

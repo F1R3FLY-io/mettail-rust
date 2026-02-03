@@ -60,6 +60,11 @@ bool(c1.clone()) <--
     bool(c0),
     rw_bool(c0, c1);
 
+int(field_0.as_ref().clone()),
+int(field_1.as_ref().clone()) <--
+    bool(t),
+    if let Bool :: Eq(field_0, field_1) = t;
+
 bool(field_0.as_ref().clone()) <--
     bool(t),
     if let Bool :: Not(field_0) = t;
@@ -93,6 +98,14 @@ eq_bool(t.clone(), t.clone()) <--
 
 eq_str(t.clone(), t.clone()) <--
     str(t);
+
+eq_bool(s.clone(), t.clone()) <--
+    bool(s),
+    if let Bool :: Eq(ref s_f0, ref s_f1) = s,
+    bool(t),
+    if let Bool :: Eq(ref t_f0, ref t_f1) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
 eq_bool(s.clone(), t.clone()) <--
     bool(s),
@@ -166,6 +179,15 @@ eq_int(s.clone(), t.clone()) <--
 
 
     // Rewrite rules
+rw_bool(s.clone(), t) <--
+    bool(s),
+    if let Bool :: Eq(left, right) = s,
+    if let Int :: NumLit(a_ref) = left.as_ref(),
+    if let Int :: NumLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Bool :: BoolLit((a == b));
+
 rw_int(s.clone(), t) <--
     int(s),
     if let Int :: Pow(left, right) = s,

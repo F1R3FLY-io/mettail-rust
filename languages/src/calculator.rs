@@ -15,6 +15,7 @@ language! {
         ![str] as Str
     },
     terms {
+        Eq . a:Int, b:Int |- a "==" b : Bool ![a == b] step;
         Not . a:Bool |- "not" a : Bool ![{match a {
             true => false,
             false => true,
