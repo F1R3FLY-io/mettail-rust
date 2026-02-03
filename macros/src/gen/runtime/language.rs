@@ -138,6 +138,44 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         })
         .collect();
 
+    // Cross-category variable resolution: if after substitution we still have a variable,
+    // look it up in other categories (e.g. "x" parsed as Int but bound as Bool -> use Bool value).
+    let var_label_per_cat: Vec<(Ident, Ident)> = language
+        .types
+        .iter()
+        .map(|t| (t.name.clone(), generate_var_label(&t.name)))
+        .collect();
+    let cross_resolve_arms: Vec<TokenStream> = var_label_per_cat
+        .iter()
+        .map(|(cat, var_label)| {
+            let other_lookups: Vec<TokenStream> = language
+                .types
+                .iter()
+                .filter(|t| t.name != *cat)
+                .map(|t| {
+                    let variant = format_ident!("{}", t.name);
+                    let field = format_ident!("{}", t.name.to_string().to_lowercase());
+                    quote! {
+                        if let Some(val) = env.#field.get(&name) {
+                            return #inner_enum_name::#variant(val.clone());
+                        }
+                    }
+                })
+                .collect();
+            quote! {
+                #inner_enum_name::#cat(#cat::#var_label(v)) => {
+                    let name = match &v.0 {
+                        mettail_runtime::Var::Free(fv) => fv.pretty_name.as_ref().map(|s| s.to_string()),
+                        mettail_runtime::Var::Bound(bv) => bv.pretty_name.as_ref().map(|s| s.to_string()),
+                    };
+                    if let Some(name) = name {
+                        #(#other_lookups)*
+                    }
+                }
+            }
+        })
+        .collect();
+
     quote! {
         /// Inner term enum for multi-category languages (one variant per type in the language).
         #[derive(Clone, PartialEq, Eq, Hash)]
@@ -147,10 +185,18 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
 
         impl #inner_enum_name {
             /// Substitute environment bindings into the term.
+            /// Variables are resolved by name; if a variable is bound in another category
+            /// (e.g. "x" parsed as Int but x = true in env), the bound value is used.
             pub fn substitute_env(&self, env: &#env_name) -> Self {
-                match self {
+                let substituted = match self {
                     #(#substitute_arms),*
+                };
+                // Cross-category: if still a variable, try resolving from other categories
+                match &substituted {
+                    #(#cross_resolve_arms)*
+                    _ => {}
                 }
+                substituted
             }
         }
 
