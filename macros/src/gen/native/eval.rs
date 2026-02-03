@@ -63,17 +63,24 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             }
         }
 
-        // Generate match arms
-        let mut match_arms = Vec::new();
-
-        // Check for existing rules
+        // Literal label for try_fold_to_literal (resolve once)
         let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+        let literal_label = if has_integer_rule {
+            rules
+                .iter()
+                .find(|r| is_integer_rule(r))
+                .map(|r| r.label.clone())
+                .unwrap_or_else(|| generate_literal_label(native_type))
+        } else {
+            generate_literal_label(native_type)
+        };
+
+        // Generate match arms for eval()
+        let mut match_arms = Vec::new();
 
         // Add arm for auto-generated literal if no explicit Integer rule
         if !has_integer_rule {
-            let literal_label = generate_literal_label(native_type);
             let type_str = native_type_to_string(native_type);
-            // String is not Copy; use clone() for str/String
             let literal_arm = if type_str == "str" || type_str == "String" {
                 quote! { #category::#literal_label(n) => n.clone(), }
             } else {
@@ -92,6 +99,22 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             #category::#var_label(_) => loop { panic!(#panic_msg) },
         });
 
+        // Match arms for try_eval() -> Option<T> (Var and catch-all => None, rest => Some(...))
+        let mut try_eval_arms: Vec<TokenStream> = Vec::new();
+
+        if !has_integer_rule {
+            let type_str = native_type_to_string(native_type);
+            let try_literal_arm = if type_str == "str" || type_str == "String" {
+                quote! { #category::#literal_label(n) => Some(n.clone()), }
+            } else {
+                quote! { #category::#literal_label(n) => Some(*n), }
+            };
+            try_eval_arms.push(try_literal_arm);
+        }
+        try_eval_arms.push(quote! {
+            #category::#var_label(_) => None,
+        });
+
         for rule in &rules {
             let label = &rule.label;
             let label_str = label.to_string();
@@ -100,6 +123,9 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             if is_integer_rule(rule) {
                 match_arms.push(quote! {
                     #category::#label(n) => *n,
+                });
+                try_eval_arms.push(quote! {
+                    #category::#label(n) => Some(*n),
                 });
             }
             // HOL syntax: rule with Rust code block - generate eval from rust_code
@@ -113,6 +139,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 let param_bindings: Vec<_> = param_names
                     .iter()
                     .map(|name| quote! { let #name = #name.as_ref().eval(); })
+                    .collect();
+                let try_param_bindings: Vec<_> = param_names
+                    .iter()
+                    .map(|name| quote! { let #name = #name.as_ref().try_eval()?; })
                     .collect();
                 let rust_code = &rust_code_block.code;
                 let match_arm = match param_count {
@@ -152,6 +182,41 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     _ => continue, // 4+ params: skip or extend later
                 };
                 match_arms.push(match_arm);
+                let try_arm = match param_count {
+                    0 => quote! { #category::#label => Some((#rust_code)), },
+                    1 => {
+                        let p0 = &param_names[0];
+                        quote! {
+                            #category::#label(#p0) => {
+                                #(#try_param_bindings)*
+                                Some((#rust_code))
+                            },
+                        }
+                    },
+                    2 => {
+                        let p0 = &param_names[0];
+                        let p1 = &param_names[1];
+                        quote! {
+                            #category::#label(#p0, #p1) => {
+                                #(#try_param_bindings)*
+                                Some((#rust_code))
+                            },
+                        }
+                    },
+                    3 => {
+                        let p0 = &param_names[0];
+                        let p1 = &param_names[1];
+                        let p2 = &param_names[2];
+                        quote! {
+                            #category::#label(#p0, #p1, #p2) => {
+                                #(#try_param_bindings)*
+                                Some((#rust_code))
+                            },
+                        }
+                    },
+                    _ => continue,
+                };
+                try_eval_arms.push(try_arm);
             }
             // Check if this has semantics (operator)
             else if let Some(op) = semantics_map.get(&label_str) {
@@ -180,8 +245,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     match_arms.push(quote! {
                         #category::#label(a, b) => a.as_ref().eval() #op_token b.as_ref().eval(),
                     });
+                    try_eval_arms.push(quote! {
+                        #category::#label(a, b) => Some(a.as_ref().try_eval()? #op_token b.as_ref().try_eval()?),
+                    });
                 } else {
-                    // Unary or other arity - skip for now
                     continue;
                 }
             }
@@ -203,24 +270,23 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 let has_recursive = non_terminals.iter().any(|nt| *nt == category.to_string());
 
                 if has_var && has_recursive {
-                    // This is like Assign - evaluate the recursive part
-                    // The constructor has (OrdVar, Box<T>) where T is the recursive part
-                    // Need to dereference the Box to call eval()
                     match_arms.push(quote! {
                         #category::#label(_, expr) => expr.as_ref().eval(),
                     });
+                    try_eval_arms.push(quote! {
+                        #category::#label(_, expr) => expr.as_ref().try_eval(),
+                    });
                 }
-                // Other constructors without semantics - skip
             }
         }
 
         if !match_arms.is_empty() {
-            // str is unsized; use String as return type for eval()
             let return_type = if native_type_to_string(native_type) == "str" {
                 quote! { std::string::String }
             } else {
                 quote! { #native_type }
             };
+            try_eval_arms.push(quote! { _ => None, });
             let impl_block = quote! {
                 impl #category {
                     /// Evaluate the expression to its native type value.
@@ -230,6 +296,16 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                             #(#match_arms)*
                             _ => panic!("Cannot evaluate expression - contains unevaluated terms. Apply rewrites first."),
                         }
+                    }
+                    /// Like eval but returns None for unevaluable terms (e.g. Var) instead of panicking.
+                    pub fn try_eval(&self) -> std::option::Option<#return_type> {
+                        match self {
+                            #(#try_eval_arms)*
+                        }
+                    }
+                    /// If this term is fully evaluable, return its value as a literal; otherwise None.
+                    pub fn try_fold_to_literal(&self) -> std::option::Option<Self> {
+                        self.try_eval().map(|v| #category::#literal_label(v))
                     }
                 }
             };

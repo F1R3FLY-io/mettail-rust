@@ -835,6 +835,19 @@ impl Repl {
             term
         };
 
+        // Direct eval path: if term is fully evaluable, bypass Ascent
+        if let Some(result_term) = language.try_direct_eval(term.as_ref()) {
+            let result_id = result_term.term_id();
+            let results = AscentResults::from_single_term(result_term.as_ref());
+            println!();
+            println!("{}", "Current term (result):".bold());
+            let formatted = format_term_pretty(&format!("{}", result_term));
+            println!("{}", formatted.cyan());
+            println!();
+            self.state.set_term_with_id(result_term, results, result_id)?;
+            return Ok(());
+        }
+
         print!("Running Ascent... ");
 
         let start_time = Instant::now();

@@ -6,7 +6,7 @@
 
 use crate::ast::grammar::GrammarItem;
 use crate::ast::language::LanguageDef;
-use crate::gen::generate_var_label;
+use crate::gen::{generate_literal_label, generate_var_label};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use proc_macro2::Span;
@@ -310,12 +310,11 @@ fn generate_language_struct(
                     .map_err(|e| format!("Parse error: {:?}", e))
             }
 
-            /// Run Ascent on a typed term
+            /// Run Ascent on a typed term (seeds with term as-is so step-by-step rewrites are visible)
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
                 use ascent::*;
 
-                // Normalize the initial term to perform immediate beta-reduction
-                let initial = term.0.clone().normalize();
+                let initial = term.0.clone();
 
                 let prog = ascent_run! {
                     include_source!(#ascent_source);
@@ -880,7 +879,7 @@ fn generate_language_struct_multi(
             quote! {
                 #inner_enum_name::#variant(inner) => {
                     use ascent::*;
-                    let initial = inner.clone().normalize();
+                    let initial = inner.clone();
                     let prog = ascent_run! {
                         include_source!(#ascent_source);
                         #cat_lower(initial.clone());
@@ -985,6 +984,21 @@ fn generate_language_trait_impl(
         })
         .collect();
 
+    // try_direct_eval: only for single-type languages whose primary type has native_type
+    let primary_lang_type = language.types.first().expect("at least one type");
+    let try_direct_eval_method: TokenStream = if primary_lang_type.native_type.is_some() {
+        let literal_label = generate_literal_label(primary_lang_type.native_type.as_ref().unwrap());
+        quote! {
+            fn try_direct_eval(&self, term: &dyn mettail_runtime::Term) -> Option<Box<dyn mettail_runtime::Term>> {
+                let typed_term = term.as_any().downcast_ref::<#term_name>()?;
+                let v = typed_term.0.try_eval()?;
+                Some(Box::new(#term_name(#primary_type::#literal_label(v))))
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     quote! {
         impl mettail_runtime::Language for #language_name {
             fn name(&self) -> &'static str {
@@ -1012,6 +1026,8 @@ fn generate_language_trait_impl(
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
                 Ok(#language_name::run_ascent_typed(typed_term))
             }
+
+            #try_direct_eval_method
 
             fn create_env(&self) -> Box<dyn std::any::Any + Send + Sync> {
                 Box::new(#language_name::create_env())
@@ -1177,6 +1193,35 @@ fn generate_language_trait_impl_multi(
         })
         .collect();
 
+    // try_direct_eval for multi-type: only when at least one type has native_type
+    let try_direct_eval_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .filter_map(|t| {
+            let native_ty = t.native_type.as_ref()?;
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            let literal_label = generate_literal_label(native_ty);
+            Some(quote! {
+                #inner_enum_name::#variant(inner) => inner.try_eval().map(|v| #term_name(#inner_enum_name::#variant(#cat::#literal_label(v))))
+            })
+        })
+        .collect();
+    let try_direct_eval_method: TokenStream = if try_direct_eval_arms.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            fn try_direct_eval(&self, term: &dyn mettail_runtime::Term) -> Option<Box<dyn mettail_runtime::Term>> {
+                let typed_term = term.as_any().downcast_ref::<#term_name>()?;
+                let result = match &typed_term.0 {
+                    #(#try_direct_eval_arms),*,
+                    _ => None,
+                }?;
+                Some(Box::new(result))
+            }
+        }
+    };
+
     quote! {
         impl mettail_runtime::Language for #language_name {
             fn name(&self) -> &'static str {
@@ -1204,6 +1249,8 @@ fn generate_language_trait_impl_multi(
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
                 Ok(#language_name::run_ascent_typed(typed_term))
             }
+
+            #try_direct_eval_method
 
             fn create_env(&self) -> Box<dyn std::any::Any + Send + Sync> {
                 Box::new(#language_name::create_env())

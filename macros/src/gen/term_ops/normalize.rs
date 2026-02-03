@@ -174,12 +174,14 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
             }
             let impl_block = quote! {
                 impl #category {
-                    /// Recursively normalize subterms (no beta-reduction for native-type categories)
+                    /// Recursively normalize subterms (no beta-reduction for native-type categories).
+                    /// If the reconstructed term is fully evaluable, folds it to a literal (constant folding).
                     pub fn normalize(&self) -> Self {
-                        match self {
+                        let reconstructed = match self {
                             #(#match_arms),*,
                             _ => self.clone()
-                        }
+                        };
+                        reconstructed.try_fold_to_literal().unwrap_or(reconstructed)
                     }
                 }
             };

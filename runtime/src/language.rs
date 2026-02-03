@@ -125,6 +125,14 @@ pub trait Language: Send + Sync {
     /// Run Ascent on a term and return results
     fn run_ascent(&self, term: &dyn Term) -> Result<AscentResults, String>;
 
+    /// If the term is fully evaluable (no free variables), evaluate it and return the result term.
+    /// Otherwise return `None` (e.g. term contains vars, or language has no native eval).
+    /// Default: `None` so languages without native types need not implement.
+    fn try_direct_eval(&self, term: &dyn Term) -> Option<Box<dyn Term>> {
+        let _ = term;
+        None
+    }
+
     /// Format a term as a string
     fn format_term(&self, term: &dyn Term) -> String {
         format!("{}", term)
@@ -219,6 +227,19 @@ impl AscentResults {
     pub fn empty() -> Self {
         Self {
             all_terms: Vec::new(),
+            rewrites: Vec::new(),
+            equivalences: Vec::new(),
+        }
+    }
+
+    /// Create minimal results for a single term (e.g. after direct eval). One term, no rewrites.
+    pub fn from_single_term(term: &dyn Term) -> Self {
+        Self {
+            all_terms: vec![TermInfo {
+                term_id: term.term_id(),
+                display: format!("{}", term),
+                is_normal_form: true,
+            }],
             rewrites: Vec::new(),
             equivalences: Vec::new(),
         }
