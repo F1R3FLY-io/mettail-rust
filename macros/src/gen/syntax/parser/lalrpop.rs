@@ -350,9 +350,10 @@ fn generate_tiered_production(
     }
 
     // Add non-infix rules (excluding var+terminal rules, which are handled at top level)
+    // Use Atom for same-category params to avoid ambiguity with Infix tier
     for (i, rule) in filtered_other_rules.iter().enumerate() {
         production.push_str("    ");
-        production.push_str(&generate_rule_alternative_with_language(rule, Some(language)));
+        production.push_str(&generate_rule_alternative_with_language(rule, Some(language), true));
 
         if i < filtered_other_rules.len() - 1 {
             production.push_str(",\n");
@@ -503,11 +504,11 @@ fn generate_simple_production(
     // Production header: pub CategoryName: CategoryName = {
     production.push_str(&format!("pub {}: {} = {{\n", category, category));
 
-    // Generate alternative for each rule
+    // Generate alternative for each rule (no Atom tier, so don't use CatAtom for same-category)
     for (i, rule) in rules.iter().enumerate() {
         production.push_str("    ");
         // Pass theory context for native type detection
-        production.push_str(&generate_rule_alternative_with_language(rule, Some(language)));
+        production.push_str(&generate_rule_alternative_with_language(rule, Some(language), false));
 
         if i < rules.len() - 1 {
             production.push_str(",\n");
@@ -535,9 +536,12 @@ fn generate_simple_production(
 /// Generate a LALRPOP alternative for a single grammar rule
 ///
 /// This is the main entry point - delegates to unified analyze/generate flow.
+/// When use_atom_for_same_category is true (Atom tier in tiered production),
+/// same-category params use CatAtom to avoid shift/reduce ambiguity.
 fn generate_rule_alternative_with_language(
     rule: &GrammarRule,
     _language: Option<&LanguageDef>,
+    use_atom_for_same_category: bool,
 ) -> String {
     let cat_str = rule.category.to_string();
 
@@ -581,7 +585,7 @@ fn generate_rule_alternative_with_language(
     }
 
     // All rules go through unified analyze/generate flow
-    let analyzed = analyze_rule(rule, &cat_str);
+    let analyzed = analyze_rule(rule, &cat_str, use_atom_for_same_category);
     generate_alternative(&analyzed, &rule.category, &rule.label)
 }
 
@@ -678,24 +682,6 @@ struct AnalyzedRule {
 ///
 /// This is the single entry point for converting any GrammarRule into
 /// the unified AnalyzedRule representation.
-fn analyze_rule(rule: &GrammarRule, cat_str: &str) -> AnalyzedRule {
-    // Check for new judgement-style syntax first
-    if let (Some(ref term_context), Some(ref syntax_pattern)) =
-        (&rule.term_context, &rule.syntax_pattern)
-    {
-        return analyze_pattern_rule(rule, term_context, syntax_pattern);
-    }
-
-    // Handle old BNFC-style rules
-    if rule.items.len() == 1 {
-        analyze_single_item_rule(rule)
-    } else if !rule.bindings.is_empty() {
-        analyze_binder_rule(rule)
-    } else {
-        analyze_sequence_rule(rule, cat_str)
-    }
-}
-
 /// Analyze a single-item rule
 fn analyze_single_item_rule(rule: &GrammarRule) -> AnalyzedRule {
     match &rule.items[0] {
@@ -815,6 +801,28 @@ fn analyze_sequence_rule(rule: &GrammarRule, _cat_str: &str) -> AnalyzedRule {
     }
 }
 
+/// Analyze a grammar rule to produce an AnalyzedRule
+///
+/// When use_atom_for_same_category is true (Atom tier), same-category params
+/// use CatAtom to avoid ambiguity with the Infix tier.
+fn analyze_rule(rule: &GrammarRule, cat_str: &str, use_atom_for_same_category: bool) -> AnalyzedRule {
+    // Check for new judgement-style syntax first
+    if let (Some(ref term_context), Some(ref syntax_pattern)) =
+        (&rule.term_context, &rule.syntax_pattern)
+    {
+        return analyze_pattern_rule(rule, term_context, syntax_pattern, use_atom_for_same_category);
+    }
+
+    // Handle old BNFC-style rules
+    if rule.items.len() == 1 {
+        analyze_single_item_rule(rule)
+    } else if !rule.bindings.is_empty() {
+        analyze_binder_rule(rule)
+    } else {
+        analyze_sequence_rule(rule, cat_str)
+    }
+}
+
 /// Analyze a rule with binders
 fn analyze_binder_rule(rule: &GrammarRule) -> AnalyzedRule {
     let (binder_idx, body_indices) = &rule.bindings[0];
@@ -925,12 +933,22 @@ fn analyze_collection_rule(
 }
 
 /// Analyze a pattern-style rule (new judgement syntax)
+///
+/// When use_atom_for_same_category is true and a parameter's type is the same
+/// as the rule's category, we use CatAtom instead of Cat. This avoids
+/// shift/reduce ambiguities in the Atom tier (e.g. "!" Bool vs BoolInfix "&&" BoolAtom).
 fn analyze_pattern_rule(
-    _rule: &GrammarRule,
+    rule: &GrammarRule,
     term_context: &[TermParam],
     syntax_pattern: &[SyntaxExpr],
+    use_atom_for_same_category: bool,
 ) -> AnalyzedRule {
     let param_types = build_param_types(term_context);
+    let rule_category = if use_atom_for_same_category {
+        rule.category.to_string()
+    } else {
+        String::new()
+    };
 
     let mut pattern_parts = Vec::new();
     let mut captures = Vec::new();
@@ -943,6 +961,7 @@ fn analyze_pattern_rule(
         analyze_syntax_expr_with_collections(
             expr,
             &param_types,
+            &rule_category,
             &mut pattern_parts,
             &mut captures,
             &mut binder_var,
@@ -972,10 +991,14 @@ fn analyze_pattern_rule(
 }
 
 /// Analyze a single syntax expression (with collection tracking)
+///
+/// When rule_category is set and a Simple param's type equals it, we use CatAtom
+/// instead of Cat so Atom-tier rules (e.g. unary prefix) stay unambiguous.
 #[allow(clippy::too_many_arguments)]
 fn analyze_syntax_expr_with_collections(
     expr: &SyntaxExpr,
     param_types: &std::collections::HashMap<String, ParamInfo>,
+    rule_category: &str,
     pattern_parts: &mut Vec<String>,
     captures: &mut Vec<Capture>,
     binder_var: &mut Option<String>,
@@ -992,7 +1015,10 @@ fn analyze_syntax_expr_with_collections(
             if let Some(info) = param_types.get(&name) {
                 match info.kind {
                     ParamKind::Simple => {
-                        let nonterminal = type_to_nonterminal(&info.ty);
+                        let mut nonterminal = type_to_nonterminal(&info.ty);
+                        if !rule_category.is_empty() && nonterminal == rule_category {
+                            nonterminal = format!("{}Atom", rule_category);
+                        }
                         pattern_parts.push(format!("<{}:{}>", name, nonterminal));
                         captures.push(Capture {
                             var_name: name,
@@ -1072,6 +1098,7 @@ fn analyze_syntax_expr(
     analyze_syntax_expr_with_collections(
         expr,
         param_types,
+        "", // no rule context: don't apply Atom-tier same-category rule
         pattern_parts,
         captures,
         binder_var,

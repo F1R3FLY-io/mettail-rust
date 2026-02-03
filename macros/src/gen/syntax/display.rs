@@ -306,10 +306,21 @@ fn generate_syntax_pattern_display_arm(
     // Build format string and args from syntax pattern
     let mut format_parts: Vec<TokenStream> = Vec::new();
 
-    for expr in syntax_pattern {
+    for (i, expr) in syntax_pattern.iter().enumerate() {
         match expr {
             SyntaxExpr::Literal(s) => {
-                let escaped = s.replace('{', "{{").replace('}', "}}");
+                let next_param = syntax_pattern.get(i + 1).map(|e| matches!(e, SyntaxExpr::Param(_)));
+                let prev_param = i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
+                let is_word = s.chars().all(|c| c.is_alphabetic());
+                let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
+                    (" ", " ") // infix op: spaces around (e.g. " && ")
+                } else if next_param == Some(true) && is_word {
+                    ("", " ") // word then param: trailing space (e.g. "not ")
+                } else {
+                    ("", "")
+                };
+                let raw = format!("{}{}{}", prefix, s, suffix);
+                let escaped = raw.replace('{', "{{").replace('}', "}}");
                 format_parts.push(quote! { write!(f, #escaped)?; });
             },
             SyntaxExpr::Param(id) => {

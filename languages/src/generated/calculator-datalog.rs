@@ -32,6 +32,11 @@ int(c1.clone()) <--
     int(c0),
     rw_int(c0, c1);
 
+int(field_0.as_ref().clone()),
+int(field_1.as_ref().clone()) <--
+    int(t),
+    if let Int :: Pow(field_0, field_1) = t;
+
 str(field_0.as_ref().clone()) <--
     int(t),
     if let Int :: Len(field_0) = t;
@@ -49,16 +54,15 @@ int(field_1.as_ref().clone()) <--
 int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
     int(t),
-    if let Int :: Up(field_0, field_1) = t;
-
-int(field_0.as_ref().clone()),
-int(field_1.as_ref().clone()) <--
-    int(t),
-    if let Int :: Up1(field_0, field_1) = t;
+    if let Int :: CustomOp(field_0, field_1) = t;
 
 bool(c1.clone()) <--
     bool(c0),
     rw_bool(c0, c1);
+
+bool(field_0.as_ref().clone()) <--
+    bool(t),
+    if let Bool :: Not(field_0) = t;
 
 bool(field_0.as_ref().clone()),
 bool(field_1.as_ref().clone()) <--
@@ -68,6 +72,11 @@ bool(field_1.as_ref().clone()) <--
 str(c1.clone()) <--
     str(c0),
     rw_str(c0, c1);
+
+str(field_0.as_ref().clone()),
+str(field_1.as_ref().clone()) <--
+    str(t),
+    if let Str :: Concat(field_0, field_1) = t;
 
 str(field_0.as_ref().clone()),
 str(field_1.as_ref().clone()) <--
@@ -87,6 +96,21 @@ eq_str(t.clone(), t.clone()) <--
 
 eq_bool(s.clone(), t.clone()) <--
     bool(s),
+    if let Bool :: Not(ref s_f0) = s,
+    bool(t),
+    if let Bool :: Not(ref t_f0) = t,
+    eq_bool(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: Pow(ref s_f0, ref s_f1) = s,
+    int(t),
+    if let Int :: Pow(ref t_f0, ref t_f1) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_bool(s.clone(), t.clone()) <--
+    bool(s),
     if let Bool :: Comp(ref s_f0, ref s_f1) = s,
     bool(t),
     if let Bool :: Comp(ref t_f0, ref t_f1) = t,
@@ -99,6 +123,14 @@ eq_int(s.clone(), t.clone()) <--
     int(t),
     if let Int :: Len(ref t_f0) = t,
     eq_str(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_str(s.clone(), t.clone()) <--
+    str(s),
+    if let Str :: Concat(ref s_f0, ref s_f1) = s,
+    str(t),
+    if let Str :: Concat(ref t_f0, ref t_f1) = t,
+    eq_str(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_str(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
 eq_str(s.clone(), t.clone()) <--
     str(s),
@@ -126,22 +158,23 @@ eq_int(s.clone(), t.clone()) <--
 
 eq_int(s.clone(), t.clone()) <--
     int(s),
-    if let Int :: Up(ref s_f0, ref s_f1) = s,
+    if let Int :: CustomOp(ref s_f0, ref s_f1) = s,
     int(t),
-    if let Int :: Up(ref t_f0, ref t_f1) = t,
-    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
-
-eq_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: Up1(ref s_f0, ref s_f1) = s,
-    int(t),
-    if let Int :: Up1(ref t_f0, ref t_f1) = t,
+    if let Int :: CustomOp(ref t_f0, ref t_f1) = t,
     eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
 
     // Rewrite rules
+rw_int(s.clone(), t) <--
+    int(s),
+    if let Int :: Pow(left, right) = s,
+    if let Int :: NumLit(a_ref) = left.as_ref(),
+    if let Int :: NumLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Int :: NumLit((a.pow(b as u32)));
+
 rw_bool(s.clone(), t) <--
     bool(s),
     if let Bool :: Comp(left, right) = s,
@@ -150,6 +183,15 @@ rw_bool(s.clone(), t) <--
     let a = a_ref.clone(),
     let b = b_ref.clone(),
     let t = Bool :: BoolLit((a && b));
+
+rw_str(s.clone(), t) <--
+    str(s),
+    if let Str :: Concat(left, right) = s,
+    if let Str :: StringLit(a_ref) = left.as_ref(),
+    if let Str :: StringLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Str :: StringLit(([a, b].concat()));
 
 rw_str(s.clone(), t) <--
     str(s),
@@ -173,6 +215,13 @@ rw_int(s.clone(), t) <--
     let b = b_ref.clone(),
     let t = Int :: NumLit((a + b));
 
+rw_bool(orig.clone(), t) <--
+    bool(orig),
+    if let Bool :: Not(inner) = orig,
+    if let Bool :: BoolLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Bool :: BoolLit(({ match a { true => false, false => true, } }));
+
 rw_int(orig.clone(), t) <--
     int(orig),
     if let Int :: Len(inner) = orig,
@@ -183,6 +232,17 @@ rw_int(orig.clone(), t) <--
 fold_int(t.clone(), t.clone()) <--
     int(t),
     if let Int :: NumLit(_) = t;
+
+fold_int(s.clone(), res) <--
+    int(s),
+    if let Int :: Pow(left, right) = s,
+    fold_int(left.as_ref().clone(), lv),
+    fold_int(right.as_ref().clone(), rv),
+    if let Int :: NumLit(a_ref) = & lv,
+    if let Int :: NumLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Int :: NumLit((a.pow(b as u32)));
 
 fold_int(s.clone(), res) <--
     int(s),
@@ -208,7 +268,7 @@ fold_int(s.clone(), res) <--
 
 fold_int(s.clone(), res) <--
     int(s),
-    if let Int :: Up(left, right) = s,
+    if let Int :: CustomOp(left, right) = s,
     fold_int(left.as_ref().clone(), lv),
     fold_int(right.as_ref().clone(), rv),
     if let Int :: NumLit(a_ref) = & lv,
@@ -217,17 +277,6 @@ fold_int(s.clone(), res) <--
     let b = b_ref.clone(),
     let res = Int :: NumLit((2 * a + 3 * b));
 
-fold_int(s.clone(), res) <--
-    int(s),
-    if let Int :: Up1(left, right) = s,
-    fold_int(left.as_ref().clone(), lv),
-    fold_int(right.as_ref().clone(), rv),
-    if let Int :: NumLit(a_ref) = & lv,
-    if let Int :: NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = Int :: NumLit((5 * a + 5 * b));
-
 rw_int(s.clone(), t.clone()) <--
     int(s),
     if let Int :: Sub(_, _) = s,
@@ -235,12 +284,7 @@ rw_int(s.clone(), t.clone()) <--
 
 rw_int(s.clone(), t.clone()) <--
     int(s),
-    if let Int :: Up(_, _) = s,
-    fold_int(s, t);
-
-rw_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: Up1(_, _) = s,
+    if let Int :: CustomOp(_, _) = s,
     fold_int(s, t);
 
 rw_int(lhs.clone(), rhs) <--
@@ -278,5 +322,23 @@ rw_str(lhs.clone(), rhs) <--
     if let Str :: AddStr(ref x0, ref x1) = lhs,
     rw_str((* * x1).clone(), t),
     let rhs = Str :: AddStr(x0.clone(), Box :: new(t.clone()));
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: Comp(ref x0, ref x1) = lhs,
+    rw_bool((* * x0).clone(), t),
+    let rhs = Bool :: Comp(Box :: new(t.clone()), x1.clone());
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: Comp(ref x0, ref x1) = lhs,
+    rw_bool((* * x1).clone(), t),
+    let rhs = Bool :: Comp(x0.clone(), Box :: new(t.clone()));
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: Not(ref x0) = lhs,
+    rw_bool((* * x0).clone(), t),
+    let rhs = Bool :: Not(Box :: new(t.clone()));
 
 }

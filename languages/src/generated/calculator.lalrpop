@@ -34,10 +34,10 @@ pub Int: Int = {
 };
 
 IntInfix: Int = {
+    <left:IntInfix> "^" <right:IntAtom> => Int::Pow(Box::new(left), Box::new(right)),
     <left:IntInfix> "+" <right:IntAtom> => Int::Add(Box::new(left), Box::new(right)),
     <left:IntInfix> "-" <right:IntAtom> => Int::Sub(Box::new(left), Box::new(right)),
-    <left:IntInfix> "~" <right:IntAtom> => Int::Up(Box::new(left), Box::new(right)),
-    <left:IntInfix> "%" <right:IntAtom> => Int::Up1(Box::new(left), Box::new(right)),
+    <left:IntInfix> "~" <right:IntAtom> => Int::CustomOp(Box::new(left), Box::new(right)),
     <IntAtom>
 };
 
@@ -60,6 +60,7 @@ BoolInfix: Bool = {
 
 BoolAtom: Bool = {
     "(" <Bool> ")",
+    "not" <a:BoolAtom> => Bool::Not(Box::new(a)),
     <b:Boolean> => Bool::BoolLit(b),
     <v:Ident> => Bool::BVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
 };
@@ -69,6 +70,7 @@ pub Str: Str = {
 };
 
 StrInfix: Str = {
+    <left:StrInfix> "++" <right:StrAtom> => Str::Concat(Box::new(left), Box::new(right)),
     <left:StrInfix> "+" <right:StrAtom> => Str::AddStr(Box::new(left), Box::new(right)),
     <StrAtom>
 };

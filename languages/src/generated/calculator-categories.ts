@@ -4,22 +4,24 @@
 export const categoryInfo = {
 	Bool: {
 		constructors: [
+			"Not",
 			"Comp"
 		],
 		colour: "7a51e0",
 	},
 	Int: {
 		constructors: [
+			"Pow",
 			"Len",
 			"Add",
 			"Sub",
-			"Up",
-			"Up1"
+			"CustomOp"
 		],
 		colour: "51b0e0",
 	},
 	Str: {
 		constructors: [
+			"Concat",
 			"AddStr"
 		],
 		colour: "51e05f",

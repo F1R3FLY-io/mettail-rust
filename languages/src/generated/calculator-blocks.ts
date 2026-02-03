@@ -5,6 +5,45 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
+	// Not: ...
+	{
+		type: "bool_not",
+		tooltip: "Not: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Pow: ... ...
+	{
+		type: "int_pow",
+		tooltip: "Pow: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
 	// Comp: ... ...
 	{
 		type: "bool_comp",
@@ -42,6 +81,28 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
+	},
+
+	// Concat: ... ...
+	{
+		type: "str_concat",
+		tooltip: "Concat: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Str",
+		colour: "51e05f",
 	},
 
 	// Add Str: ... ...
@@ -110,32 +171,10 @@ const definitions = [
 		colour: "51b0e0",
 	},
 
-	// Up: ... ...
+	// Custom Op: ... ...
 	{
-		type: "int_up",
-		tooltip: "Up: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Up1: ... ...
-	{
-		type: "int_up1",
-		tooltip: "Up1: ... ...",
+		type: "int_custom_op",
+		tooltip: "Custom Op: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
