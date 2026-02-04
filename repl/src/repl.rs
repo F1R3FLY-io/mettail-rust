@@ -4,10 +4,65 @@ use crate::registry::LanguageRegistry;
 use crate::state::ReplState;
 use anyhow::Result;
 use colored::Colorize;
-use mettail_runtime::{AscentResults, TermInfo};
+use mettail_runtime::{AscentResults, Language, TermInfo};
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
+use std::any::Any;
 use std::time::Instant;
+
+/// Replace whole-word occurrences of env-bound identifiers in the input with their display form.
+/// This allows `x && true` to work when `x = true`, even though the grammar requires `bool:x` for
+/// Bool variables (only Int gets bare Ident to avoid reduce-reduce conflicts).
+fn pre_substitute_env(input: &str, language: &dyn Language, env: &dyn Any) -> String {
+    let bindings = language.list_env(env);
+    if bindings.is_empty() {
+        return input.to_string();
+    }
+    // Sort by name length descending so "foobar" is replaced before "foo"
+    let mut bindings: Vec<_> = bindings.into_iter().map(|(n, d, _)| (n, d)).collect();
+    bindings.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+    let mut result = input.to_string();
+    for (name, display) in bindings {
+        result = replace_whole_word(&result, &name, &display);
+    }
+    result
+}
+
+/// Replace whole-word occurrences of `needle` with `replacement`.
+/// Word boundary: preceded/followed by non-identifier char or start/end.
+fn replace_whole_word(haystack: &str, needle: &str, replacement: &str) -> String {
+    if needle.is_empty() {
+        return haystack.to_string();
+    }
+    let mut result = String::with_capacity(haystack.len());
+    let mut i = 0;
+    let haystack_bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    let n_len = needle_bytes.len();
+
+    while i <= haystack.len().saturating_sub(n_len) {
+        if haystack[i..].starts_with(needle) {
+            let at_start = i == 0;
+            let at_end = i + n_len == haystack.len();
+            let prev_ok = at_start || !is_identifier_char(haystack_bytes[i - 1]);
+            let next_ok = at_end || !is_identifier_char(haystack_bytes[i + n_len]);
+            if prev_ok && next_ok {
+                result.push_str(replacement);
+                i += n_len;
+                continue;
+            }
+        }
+        result.push(char::from(haystack_bytes[i]));
+        i += 1;
+    }
+    result.push_str(&haystack[i..]);
+    result
+}
+
+fn is_identifier_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
 
 /// The main REPL
 pub struct Repl {
@@ -811,10 +866,22 @@ impl Repl {
         println!();
         print!("Parsing... ");
 
+        // Pre-substitute env-bound identifiers into input (so `x && true` works when x = true,
+        // since Bool requires `bool:x` in the grammar but we substitute `x` → `true` before parse)
+        let parse_input = if let Some(env) = self.state.environment() {
+            if !language.is_env_empty(env) {
+                pre_substitute_env(term_str, language, env)
+            } else {
+                term_str.to_string()
+            }
+        } else {
+            term_str.to_string()
+        };
+
         // Parse the term using parse_term_for_env to share FreeVar IDs with environment
         // This ensures that variables like `a` in the input match `a` from substituted env terms
         let term = language
-            .parse_term_for_env(term_str)
+            .parse_term_for_env(&parse_input)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         println!("{}", "✓".green());
 
@@ -905,8 +972,19 @@ impl Repl {
         println!();
         print!("Parsing... ");
 
+        // Pre-substitute env-bound identifiers into input
+        let parse_input = if let Some(env) = self.state.environment() {
+            if !language.is_env_empty(env) {
+                pre_substitute_env(term_str, language, env)
+            } else {
+                term_str.to_string()
+            }
+        } else {
+            term_str.to_string()
+        };
+
         let term = language
-            .parse_term_for_env(term_str)
+            .parse_term_for_env(&parse_input)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         println!("{}", "✓".green());
 
