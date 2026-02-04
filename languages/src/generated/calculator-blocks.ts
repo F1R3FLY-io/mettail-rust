@@ -27,6 +27,50 @@ const definitions = [
 		colour: "7a51e0",
 	},
 
+	// Eq Bool: ... ...
+	{
+		type: "bool_eq_bool",
+		tooltip: "Eq Bool: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Eq Str: ... ...
+	{
+		type: "bool_eq_str",
+		tooltip: "Eq Str: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
 	// Not: ...
 	{
 		type: "bool_not",

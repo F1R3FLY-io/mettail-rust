@@ -386,23 +386,25 @@ fn generate_simple_congruence(
     let s_var = &vars[field_idx];
     let t_var = format_ident!("t");
 
-    // Determine if field needs Box (recursive type)
+    // Determine if field is stored as Box in the AST (recursive or cross-category both use Box)
     let needs_box = is_recursive_field(rule, field_idx);
+    let rewritten_field_is_boxed = field_is_boxed_in_ast(rule, field_idx);
 
-    // Source expression (dereference if boxed)
-    let s_expr = if needs_box {
+    // Source expression: pass the inner value to the rewrite relation (rw_cat expects the term type, not Box)
+    let s_expr = if needs_box || rewritten_field_is_boxed {
         quote! { (**#s_var).clone() }
     } else {
         quote! { (*#s_var).clone() }
     };
 
-    // Reconstruction arguments
+    // Reconstruction: vars from the pattern are already &Box<T>, so clone() gives Box<T>.
+    // Only the rewritten field (t_var) is a bare value and must be wrapped in Box::new when the AST expects Box.
     let recon_args: Vec<TokenStream> = vars
         .iter()
         .enumerate()
         .map(|(i, v)| {
             if i == field_idx {
-                if needs_box {
+                if rewritten_field_is_boxed {
                     quote! { Box::new(#t_var.clone()) }
                 } else {
                     quote! { #t_var.clone() }
@@ -466,6 +468,41 @@ fn count_nonterminal_fields(rule: &GrammarRule) -> usize {
         .iter()
         .filter(|item| matches!(item, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
         .count()
+}
+
+/// Check if the AST stores this field as Box<T> (so reconstruction must use Box::new).
+///
+/// For term_context rules, Simple params with Base type become Box<ident>.
+/// For old syntax, NonTerminal items become Box<cat>. Collections/Scope are not simple Box.
+fn field_is_boxed_in_ast(rule: &GrammarRule, field_idx: usize) -> bool {
+    if let Some(ref term_context) = rule.term_context {
+        if let Some(TermParam::Simple { ty: TypeExpr::Base(_), .. }) = term_context.get(field_idx) {
+            return true;
+        }
+        // Abstraction/MultiAbstraction => Scope (not a single Box for the param)
+        // Collection => Vec/HashBag/etc.
+        return false;
+    }
+    // Old syntax: NonTerminal and Collection count as fields; NonTerminal => Box<cat>
+    let mut idx = 0;
+    for item in &rule.items {
+        match item {
+            GrammarItem::NonTerminal(_) => {
+                if idx == field_idx {
+                    return true;
+                }
+                idx += 1;
+            },
+            GrammarItem::Collection { .. } | GrammarItem::Binder { .. } => {
+                if idx == field_idx {
+                    return false;
+                }
+                idx += 1;
+            },
+            GrammarItem::Terminal(_) => {},
+        }
+    }
+    false
 }
 
 /// Check if a field is recursive (same category as constructor result)

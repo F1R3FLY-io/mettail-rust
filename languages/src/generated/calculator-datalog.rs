@@ -65,6 +65,16 @@ int(field_1.as_ref().clone()) <--
     bool(t),
     if let Bool :: Eq(field_0, field_1) = t;
 
+bool(field_0.as_ref().clone()),
+bool(field_1.as_ref().clone()) <--
+    bool(t),
+    if let Bool :: EqBool(field_0, field_1) = t;
+
+str(field_0.as_ref().clone()),
+str(field_1.as_ref().clone()) <--
+    bool(t),
+    if let Bool :: EqStr(field_0, field_1) = t;
+
 bool(field_0.as_ref().clone()) <--
     bool(t),
     if let Bool :: Not(field_0) = t;
@@ -106,6 +116,22 @@ eq_bool(s.clone(), t.clone()) <--
     if let Bool :: Eq(ref t_f0, ref t_f1) = t,
     eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_bool(s.clone(), t.clone()) <--
+    bool(s),
+    if let Bool :: EqBool(ref s_f0, ref s_f1) = s,
+    bool(t),
+    if let Bool :: EqBool(ref t_f0, ref t_f1) = t,
+    eq_bool(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_bool(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_bool(s.clone(), t.clone()) <--
+    bool(s),
+    if let Bool :: EqStr(ref s_f0, ref s_f1) = s,
+    bool(t),
+    if let Bool :: EqStr(ref t_f0, ref t_f1) = t,
+    eq_str(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_str(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
 eq_bool(s.clone(), t.clone()) <--
     bool(s),
@@ -184,6 +210,24 @@ rw_bool(s.clone(), t) <--
     if let Bool :: Eq(left, right) = s,
     if let Int :: NumLit(a_ref) = left.as_ref(),
     if let Int :: NumLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Bool :: BoolLit((a == b));
+
+rw_bool(s.clone(), t) <--
+    bool(s),
+    if let Bool :: EqBool(left, right) = s,
+    if let Bool :: BoolLit(a_ref) = left.as_ref(),
+    if let Bool :: BoolLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Bool :: BoolLit((a == b));
+
+rw_bool(s.clone(), t) <--
+    bool(s),
+    if let Bool :: EqStr(left, right) = s,
+    if let Str :: StringLit(a_ref) = left.as_ref(),
+    if let Str :: StringLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
     let t = Bool :: BoolLit((a == b));
@@ -362,5 +406,41 @@ rw_bool(lhs.clone(), rhs) <--
     if let Bool :: Not(ref x0) = lhs,
     rw_bool((* * x0).clone(), t),
     let rhs = Bool :: Not(Box :: new(t.clone()));
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: Eq(ref x0, ref x1) = lhs,
+    rw_int((* * x0).clone(), t),
+    let rhs = Bool :: Eq(Box :: new(t.clone()), x1.clone());
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: Eq(ref x0, ref x1) = lhs,
+    rw_int((* * x1).clone(), t),
+    let rhs = Bool :: Eq(x0.clone(), Box :: new(t.clone()));
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: EqBool(ref x0, ref x1) = lhs,
+    rw_bool((* * x0).clone(), t),
+    let rhs = Bool :: EqBool(Box :: new(t.clone()), x1.clone());
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: EqBool(ref x0, ref x1) = lhs,
+    rw_bool((* * x1).clone(), t),
+    let rhs = Bool :: EqBool(x0.clone(), Box :: new(t.clone()));
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: EqStr(ref x0, ref x1) = lhs,
+    rw_str((* * x0).clone(), t),
+    let rhs = Bool :: EqStr(Box :: new(t.clone()), x1.clone());
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: EqStr(ref x0, ref x1) = lhs,
+    rw_str((* * x1).clone(), t),
+    let rhs = Bool :: EqStr(x0.clone(), Box :: new(t.clone()));
 
 }

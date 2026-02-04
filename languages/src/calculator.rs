@@ -16,6 +16,8 @@ language! {
     },
     terms {
         Eq . a:Int, b:Int |- a "==" b : Bool ![a == b] step;
+        EqBool . a:Bool, b:Bool |- a "==" b : Bool ![a == b] step;
+        EqStr . a:Str, b:Str |- a "==" b : Bool ![a == b] step;
         Not . a:Bool |- "not" a : Bool ![{match a {
             true => false,
             false => true,
@@ -41,5 +43,11 @@ language! {
         CompCongL . | S ~> T |- (Comp S R) ~> (Comp T R);
         CompCongR . | S ~> T |- (Comp L S) ~> (Comp L T);
         NotCong . | S ~> T |- (Not S) ~> (Not T);
+        EqCongL . | S ~> T |- (Eq S R) ~> (Eq T R);
+        EqCongR . | S ~> T |- (Eq L S) ~> (Eq L T);
+        EqBoolCongL . | S ~> T |- (EqBool S R) ~> (EqBool T R);
+        EqBoolCongR . | S ~> T |- (EqBool L S) ~> (EqBool L T);
+        EqStrCongL . | S ~> T |- (EqStr S R) ~> (EqStr T R);
+        EqStrCongR . | S ~> T |- (EqStr L S) ~> (EqStr L T);
     },
 }

@@ -232,8 +232,11 @@ fn is_infix_rule(rule: &GrammarRule) -> bool {
     first_match && last_match && has_terminal
 }
 
-/// Check if a HOL-style rule is binary infix (e.g., a:Int, b:Int |- a "+" b : Int)
+/// Check if a HOL-style rule is binary infix (e.g., a:Int, b:Int |- a "+" b : Int).
 /// Such rules need tiered production for left-associativity and precedence.
+///
+/// Cross-category binary rules (e.g. Int == Int -> Bool) must NOT be infix: both
+/// param types must equal the rule's result category, so they stay in the Atom tier.
 fn is_hol_infix_rule(rule: &GrammarRule) -> bool {
     let (term_context, syntax_pattern) = match (&rule.term_context, &rule.syntax_pattern) {
         (Some(tc), Some(sp)) => (tc, sp),
@@ -248,7 +251,8 @@ fn is_hol_infix_rule(rule: &GrammarRule) -> bool {
             (SyntaxExpr::Param(l), SyntaxExpr::Literal(_op), SyntaxExpr::Param(r)) => (l, r),
             _ => return false,
         };
-    // Both params must have type equal to rule.category (compare by string for robustness)
+    // Both params must have type equal to rule.category (result type). If not, this is
+    // a cross-category rule (e.g. Eq . a:Int, b:Int -> Bool) and must not be infix.
     let param_ty = |name: &syn::Ident| -> Option<&syn::Ident> {
         let name_str = name.to_string();
         term_context.iter().find_map(|p| {
@@ -384,13 +388,48 @@ fn generate_tiered_production(
 
 /// Generate alternative for HOL-style infix rule (left-associative)
 /// Pattern is [Param, Literal, Param]; produces <left:CatInfix> "op" <right:CatAtom> => ...
+///
+/// Defensive: only emit when both param types equal the rule's category, so we never
+/// emit Category::Label(left, right) when left/right are actually a different category.
 fn generate_hol_infix_alternative(rule: &GrammarRule, cat_str: &str) -> String {
     let label = &rule.label;
     let category = &rule.category;
-    let syntax_pattern = rule
-        .syntax_pattern
-        .as_ref()
-        .expect("HOL infix rule has syntax_pattern");
+    let (term_context, syntax_pattern) = match (&rule.term_context, &rule.syntax_pattern) {
+        (Some(tc), Some(sp)) => (tc, sp),
+        _ => panic!("generate_hol_infix_alternative requires term_context and syntax_pattern"),
+    };
+    if syntax_pattern.len() != 3 {
+        panic!("HOL infix pattern must have exactly 3 elements");
+    }
+    let (left_param, right_param) = match (&syntax_pattern[0], &syntax_pattern[1], &syntax_pattern[2]) {
+        (SyntaxExpr::Param(l), SyntaxExpr::Literal(_), SyntaxExpr::Param(r)) => (l, r),
+        _ => panic!("HOL infix pattern must be [Param, Literal, Param]"),
+    };
+    let param_ty = |name: &syn::Ident| -> Option<&syn::Ident> {
+        let name_str = name.to_string();
+        term_context.iter().find_map(|p| {
+            if let TermParam::Simple { name: n, ty } = p {
+                if n.to_string() == name_str {
+                    if let TypeExpr::Base(t) = ty {
+                        return Some(t);
+                    }
+                }
+            }
+            None
+        })
+    };
+    let left_ty = param_ty(left_param).expect("left param must have type in term_context");
+    let right_ty = param_ty(right_param).expect("right param must have type in term_context");
+    if left_ty.to_string() != cat_str || right_ty.to_string() != cat_str {
+        panic!(
+            "infix rule {} has operands {} and {} but result category {}; \
+             cross-category rules (e.g. Int == Int -> Bool) must not use infix tier",
+            label,
+            left_ty,
+            right_ty,
+            cat_str
+        );
+    }
     let op_str = match &syntax_pattern[1] {
         SyntaxExpr::Literal(s) => s.as_str(),
         _ => panic!("HOL infix pattern[1] must be Literal"),

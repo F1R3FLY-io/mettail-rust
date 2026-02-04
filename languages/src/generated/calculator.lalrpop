@@ -64,12 +64,15 @@ BoolInfix: Bool = {
     #[precedence(level="0")]
     <BoolAtom>,
     #[precedence(level="1")] #[assoc(side="left")]
+    <left:BoolInfix> "==" <right:BoolAtom> => Bool::EqBool(Box::new(left), Box::new(right)),
+    #[precedence(level="1")] #[assoc(side="left")]
     <left:BoolInfix> "&&" <right:BoolAtom> => Bool::Comp(Box::new(left), Box::new(right)),
 };
 
 BoolAtom: Bool = {
     "(" <Bool> ")",
     <a:Int> "==" <b:Int> => Bool::Eq(Box::new(a), Box::new(b)),
+    <a:Str> "==" <b:Str> => Bool::EqStr(Box::new(a), Box::new(b)),
     "not" <a:BoolAtom> => Bool::Not(Box::new(a)),
     <b:Boolean> => Bool::BoolLit(b),
     "bool:" <v:Ident> => Bool::BVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))

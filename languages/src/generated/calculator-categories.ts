@@ -5,6 +5,8 @@ export const categoryInfo = {
 	Bool: {
 		constructors: [
 			"Eq",
+			"EqBool",
+			"EqStr",
 			"Not",
 			"Comp"
 		],
