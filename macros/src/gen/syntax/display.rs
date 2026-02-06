@@ -11,7 +11,7 @@ use crate::ast::{
     types::TypeExpr,
 };
 use crate::gen::native::has_native_type;
-use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -67,9 +67,9 @@ fn generate_display_impl(
     }
 
     // Check if NumLit variant was auto-generated (for native types)
-    let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+    let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
     if let Some(native_type) = has_native_type(category, language) {
-        if !has_integer_rule {
+        if !has_literal_rule {
             let literal_arm = generate_auto_literal_display_arm(category, native_type);
             match_arms.push(literal_arm);
         }

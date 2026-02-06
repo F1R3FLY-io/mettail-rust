@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{BuiltinOp, LanguageDef, SemanticOperation};
 use crate::gen::native::native_type_to_string;
-use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule};
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal};
 
 /// Extract parameter names from term_context in the same order as generated variant fields.
 /// Used for rust_code eval arms: param names match constructor field names.
@@ -64,11 +64,11 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         }
 
         // Literal label for try_fold_to_literal (resolve once)
-        let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
-        let literal_label = if has_integer_rule {
+        let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
+        let literal_label = if has_literal_rule {
             rules
                 .iter()
-                .find(|r| is_integer_rule(r))
+                .find(|r| is_literal_rule(r))
                 .map(|r| r.label.clone())
                 .unwrap_or_else(|| generate_literal_label(native_type))
         } else {
@@ -78,8 +78,8 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         // Generate match arms for eval()
         let mut match_arms = Vec::new();
 
-        // Add arm for auto-generated literal if no explicit Integer rule
-        if !has_integer_rule {
+        // Add arm for auto-generated literal if no explicit literal rule
+        if !has_literal_rule {
             let type_str = native_type_to_string(native_type);
             let literal_arm = if type_str == "str" || type_str == "String" {
                 quote! { #category::#literal_label(n) => n.clone(), }
@@ -102,7 +102,7 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         // Match arms for try_eval() -> Option<T> (Var and catch-all => None, rest => Some(...))
         let mut try_eval_arms: Vec<TokenStream> = Vec::new();
 
-        if !has_integer_rule {
+        if !has_literal_rule {
             let type_str = native_type_to_string(native_type);
             let try_literal_arm = if type_str == "str" || type_str == "String" {
                 quote! { #category::#literal_label(n) => Some(n.clone()), }
@@ -119,14 +119,24 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             let label = &rule.label;
             let label_str = label.to_string();
 
-            // Check if this is an Integer rule (literal with native type)
-            if is_integer_rule(rule) {
-                match_arms.push(quote! {
-                    #category::#label(n) => *n,
-                });
-                try_eval_arms.push(quote! {
-                    #category::#label(n) => Some(*n),
-                });
+            // Literal rule: copy or clone depending on nonterminal (StringLiteral => clone)
+            if is_literal_rule(rule) {
+                let use_clone = literal_rule_nonterminal(rule).as_deref() == Some("StringLiteral");
+                if use_clone {
+                    match_arms.push(quote! {
+                        #category::#label(n) => n.clone(),
+                    });
+                    try_eval_arms.push(quote! {
+                        #category::#label(n) => Some(n.clone()),
+                    });
+                } else {
+                    match_arms.push(quote! {
+                        #category::#label(n) => *n,
+                    });
+                    try_eval_arms.push(quote! {
+                        #category::#label(n) => Some(*n),
+                    });
+                }
             }
             // HOL syntax: rule with Rust code block - generate eval from rust_code
             else if let Some(ref rust_code_block) = rule.rust_code {

@@ -15,6 +15,7 @@ use crate::ast::{
     grammar::{GrammarItem, GrammarRule, TermParam},
     language::LanguageDef,
 };
+use crate::gen::is_literal_nonterminal;
 use crate::gen::term_gen::is_lang_type;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -137,7 +138,7 @@ fn generate_random_depth_0(
             // Nullary constructor
             cases.push(quote! { #cat_name::#label });
         } else if non_terminals.len() == 1 {
-            // Check if it's a Var or Integer constructor
+            // Check if it's a Var or literal constructor (Integer, Boolean, StringLiteral, FloatLiteral)
             if let GrammarItem::NonTerminal(nt) = non_terminals[0] {
                 let nt_str = nt.to_string();
                 if nt_str == "Var" {
@@ -162,12 +163,32 @@ fn generate_random_depth_0(
                             )
                         }
                     });
-                } else if nt_str == "Integer" {
-                    // Integer literals - generate random native values
-                    cases.push(quote! {
-                        let val = rng.gen_range(-100i32..100i32);
-                        #cat_name::#label(val)
-                    });
+                } else if is_literal_nonterminal(&nt_str) {
+                    // Literal rules - generate random native values
+                    let literal_case = match nt_str.as_str() {
+                        "Integer" => quote! {
+                            let val = rng.gen_range(-100i32..100i32);
+                            #cat_name::#label(val)
+                        },
+                        "Boolean" => quote! {
+                            let val: bool = rng.gen();
+                            #cat_name::#label(val)
+                        },
+                        "FloatLiteral" => quote! {
+                            let val = rng.gen_range(-100.0f64..100.0f64);
+                            #cat_name::#label(val)
+                        },
+                        "StringLiteral" => quote! {
+                            let len = rng.gen_range(0..20usize);
+                            let val = (0..len).map(|_| {
+                                let idx = rng.gen_range(0..26u8);
+                                (b'a' + idx) as char
+                            }).collect::<String>();
+                            #cat_name::#label(val)
+                        },
+                        _ => continue,
+                    };
+                    cases.push(literal_case);
                 }
             }
         }
@@ -256,10 +277,10 @@ fn generate_random_depth_d(
             continue;
         }
 
-        // Skip Var and Integer constructors at depth > 0 (they're depth 0 only)
+        // Skip Var and literal constructors at depth > 0 (they're depth 0 only)
         if non_terminals.len() == 1 {
             let nt_str = non_terminals[0].to_string();
-            if nt_str == "Var" || nt_str == "Integer" {
+            if nt_str == "Var" || is_literal_nonterminal(&nt_str) {
                 continue;
             }
         }

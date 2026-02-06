@@ -19,7 +19,7 @@
 
 use crate::ast::grammar::TermParam;
 use crate::ast::types::{EvalMode, TypeExpr};
-use crate::gen::{generate_literal_label, is_integer_rule};
+use crate::gen::{generate_literal_label, is_literal_rule};
 use crate::{
     ast::{
         grammar::GrammarItem,
@@ -281,7 +281,7 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
         let result_lit_label = language
             .terms
             .iter()
-            .find(|r| r.category == *category && is_integer_rule(r))
+            .find(|r| r.category == *category && is_literal_rule(r))
             .map(|r| r.label.clone())
             .unwrap_or_else(|| generate_literal_label(result_native));
         let rust_code = &rule.rust_code.as_ref().unwrap().code;
@@ -306,13 +306,13 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
                         let left_lit = language
                             .terms
                             .iter()
-                            .find(|r| r.category == *left_ty && is_integer_rule(r))
+                            .find(|r| r.category == *left_ty && is_literal_rule(r))
                             .map(|r| r.label.clone())
                             .unwrap_or_else(|| generate_literal_label(left_nat));
                         let right_lit = language
                             .terms
                             .iter()
-                            .find(|r| r.category == *right_ty && is_integer_rule(r))
+                            .find(|r| r.category == *right_ty && is_literal_rule(r))
                             .map(|r| r.label.clone())
                             .unwrap_or_else(|| generate_literal_label(right_nat));
                         Some((left_ty.clone(), left_lit, right_ty.clone(), right_lit))
@@ -399,7 +399,7 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
         let num_lit_label = language
             .terms
             .iter()
-            .find(|r| r.category == *category && is_integer_rule(r))
+            .find(|r| r.category == *category && is_literal_rule(r))
             .map(|r| r.label.clone())
             .unwrap_or_else(|| generate_literal_label(result_native));
         let arg_lit_label = generate_literal_label(arg_native);
@@ -451,7 +451,7 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
         let num_lit = language
             .terms
             .iter()
-            .find(|r| r.category == *category && is_integer_rule(r))
+            .find(|r| r.category == *category && is_literal_rule(r))
             .map(|r| r.label.clone())
             .unwrap_or_else(|| generate_literal_label(native_type));
 

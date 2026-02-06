@@ -26,7 +26,7 @@ use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::ast::types::{CollectionType, TypeExpr};
 use crate::gen::native::{has_native_type, native_type_to_string};
-use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -827,8 +827,8 @@ fn rule_to_variant_kind(rule: &GrammarRule, _language: &LanguageDef) -> VariantK
         return VariantKind::Var { label };
     }
 
-    // Check for Integer/Literal rule
-    if is_integer_rule(rule) {
+    // Check for literal rule (Integer, Boolean, StringLiteral, FloatLiteral)
+    if is_literal_rule(rule) {
         return VariantKind::Literal { label };
     }
 

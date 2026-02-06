@@ -14,7 +14,10 @@ use crate::ast::{
 /// Collection parameter: (name, coll_type, mapped_info)
 type CollectionParamInfo = (String, CollectionType, Option<(usize, usize)>);
 use crate::gen::native::{has_native_type, native_type_to_string};
-use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
+use crate::gen::{
+    generate_literal_label, generate_var_label, is_float_literal_rule, is_integer_literal_rule,
+    is_literal_rule, is_var_rule,
+};
 
 /// Generate token parser for native type if needed
 fn generate_native_type_tokens(language: &LanguageDef) -> String {
@@ -343,16 +346,23 @@ fn generate_tiered_production(
         .copied()
         .collect();
 
-    // Add unary minus support for native integer types (before other rules for precedence)
+    // Add unary minus support for signed numeric types (Integer, FloatLiteral) before other rules for precedence
     if let Some(native_type) = has_native_type(category, language) {
         let type_str = native_type_to_string(native_type);
         if type_str == "i32" || type_str == "i64" {
-            // Find the Integer rule (for integer literals)
-            if let Some(integer_rule) = filtered_other_rules.iter().find(|r| is_integer_rule(r)) {
-                let integer_label = integer_rule.label.to_string();
+            if let Some(rule) = filtered_other_rules.iter().find(|r| is_integer_literal_rule(r)) {
+                let label = rule.label.to_string();
                 production.push_str(&format!(
                     "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    cat_str, integer_label
+                    cat_str, label
+                ));
+            }
+        } else if type_str == "f32" || type_str == "f64" {
+            if let Some(rule) = filtered_other_rules.iter().find(|r| is_float_literal_rule(r)) {
+                let label = rule.label.to_string();
+                production.push_str(&format!(
+                    "    \"-\" <f:FloatLiteral> => {}::{}(-f),\n",
+                    cat_str, label
                 ));
             }
         }
@@ -370,14 +380,14 @@ fn generate_tiered_production(
         // Last rule: no trailing newline so auto-alternatives can add ",\n    <Var>"
     }
 
-    // Check if there's an explicit Integer rule (NumLit . Cat ::= Integer)
-    let has_integer_rule = filtered_other_rules.iter().any(|r| is_integer_rule(r));
+    // Check if there's an explicit literal rule (any of Integer, Boolean, StringLiteral, FloatLiteral)
+    let has_literal_rule = filtered_other_rules.iter().any(|r| is_literal_rule(r));
 
     // Add auto-generated alternatives (Var and literal rules)
     production.push_str(&generate_auto_alternatives(
         category,
         has_var_rule,
-        has_integer_rule,
+        has_literal_rule,
         language,
         !filtered_other_rules.is_empty(), // needs_leading_comma
     ));
@@ -561,14 +571,14 @@ fn generate_simple_production(
         }
     }
 
-    // Check if there's an explicit Integer rule (NumLit . Cat ::= Integer)
-    let has_integer_rule = rules.iter().any(|r| is_integer_rule(r));
+    // Check if there's an explicit literal rule (any of Integer, Boolean, StringLiteral, FloatLiteral)
+    let has_literal_rule = rules.iter().any(|r| is_literal_rule(r));
 
     // Add auto-generated alternatives (Var and literal rules)
     production.push_str(&generate_auto_alternatives(
         category,
         has_var_rule,
-        has_integer_rule,
+        has_literal_rule,
         language,
         !rules.is_empty(), // needs_leading_comma
     ));
@@ -742,6 +752,15 @@ fn analyze_single_item_rule(rule: &GrammarRule) -> AnalyzedRule {
             captures: vec![Capture {
                 var_name: "i".to_string(),
                 nonterminal: "Integer".to_string(),
+                usage: CaptureUsage::Direct,
+            }],
+            action_kind: ActionKind::Simple,
+        },
+        GrammarItem::NonTerminal(nt) if nt.to_string() == "FloatLiteral" => AnalyzedRule {
+            pattern: "<f:FloatLiteral>".to_string(),
+            captures: vec![Capture {
+                var_name: "f".to_string(),
+                nonterminal: "FloatLiteral".to_string(),
                 usage: CaptureUsage::Direct,
             }],
             action_kind: ActionKind::Simple,
@@ -1692,7 +1711,7 @@ fn generate_multi_binder_action(
 fn generate_auto_alternatives(
     category: &syn::Ident,
     has_var_rule: bool,
-    has_integer_rule: bool,
+    has_literal_rule: bool,
     language: &LanguageDef,
     needs_leading_comma: bool,
 ) -> String {
@@ -1703,7 +1722,7 @@ fn generate_auto_alternatives(
     // Auto-generate literal parser for native types (if not explicitly declared)
     if let Some(native_type) = has_native_type(category, language) {
         let type_str = native_type_to_string(native_type);
-        if !has_integer_rule {
+        if !has_literal_rule {
             let literal_label = generate_literal_label(native_type);
 
             if needs_comma {
@@ -1718,6 +1737,11 @@ fn generate_auto_alternatives(
                 ));
                 result.push_str(&format!("    <i:Integer> => {}::{}(i)", cat_str, literal_label));
             } else if type_str == "f32" || type_str == "f64" {
+                // Add unary minus support for negative floats
+                result.push_str(&format!(
+                    "    \"-\" <f:FloatLiteral> => {}::{}(-f),\n",
+                    cat_str, literal_label
+                ));
                 result.push_str(&format!("    <f:FloatLiteral> => {}::{}(f)", cat_str, literal_label));
             } else if type_str == "bool" {
                 result.push_str(&format!("    <b:Boolean> => {}::{}(b)", cat_str, literal_label));

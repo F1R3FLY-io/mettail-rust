@@ -9,6 +9,7 @@ use crate::ast::{
     pattern::{Pattern, PatternTerm},
     types::{CollectionType, TypeExpr},
 };
+use crate::gen::is_literal_nonterminal;
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
 use syn::LitStr;
@@ -292,7 +293,7 @@ fn generate_field_defs(rule: &GrammarRule) -> TokenStream {
         .filter_map(|(i, item)| {
             match item {
                 GrammarItem::NonTerminal(nt)
-                    if nt.to_string() != "Var" && nt.to_string() != "Integer" =>
+                    if nt.to_string() != "Var" && !is_literal_nonterminal(&nt.to_string()) =>
                 {
                     let name_str = format!("f{}", i);
                     let ty_str = nt.to_string();

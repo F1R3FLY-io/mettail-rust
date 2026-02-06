@@ -2,7 +2,7 @@
 
 use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::language::LanguageDef;
-use crate::gen::{generate_literal_label, generate_var_label, is_integer_rule, is_var_rule};
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -117,12 +117,12 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
 
         // Native types: generate simple recursive normalize (no beta-reduction, no collections)
         if let Some(ref native_type) = lang_type.native_type {
-            let has_integer_rule = rules_for_category.iter().any(|r| is_integer_rule(r));
+            let has_literal_rule = rules_for_category.iter().any(|r| is_literal_rule(r));
             let has_var_rule = rules_for_category.iter().any(|r| is_var_rule(r));
             let mut match_arms: Vec<TokenStream> = rules_for_category
                 .iter()
                 .filter_map(|rule| {
-                    if is_var_rule(rule) || is_integer_rule(rule) {
+                    if is_var_rule(rule) || is_literal_rule(rule) {
                         return None;
                     }
                     let label = &rule.label;
@@ -160,7 +160,7 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                     })
                 })
                 .collect();
-            if !has_integer_rule {
+            if !has_literal_rule {
                 let literal_label = generate_literal_label(native_type);
                 match_arms.push(quote! {
                     #category::#literal_label(_) => self.clone()

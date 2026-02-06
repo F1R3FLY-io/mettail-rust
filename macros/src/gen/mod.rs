@@ -122,12 +122,49 @@ pub fn is_var_rule(rule: &GrammarRule) -> bool {
         && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if ident.to_string() == "Var")
 }
 
-/// Checks if a rule is an Integer rule (single item, NonTerminal "Integer")
-/// Used for native integer type handling in theory definitions
+/// Names of nonterminals that represent native literal tokens in the generated grammar.
+const LITERAL_NONTERMINALS: &[&str] = &["Integer", "Boolean", "StringLiteral", "FloatLiteral"];
+
+/// Returns true if the given nonterminal name is a known literal type (Integer, Boolean, StringLiteral, FloatLiteral).
+pub fn is_literal_nonterminal(name: &str) -> bool {
+    LITERAL_NONTERMINALS.contains(&name)
+}
+
+/// Checks if a rule is a literal rule (single item, NonTerminal one of Integer/Boolean/StringLiteral/FloatLiteral).
+/// Used for native type handling in theory definitions; all native literal types are treated uniformly.
 #[allow(clippy::cmp_owned)]
-pub fn is_integer_rule(rule: &GrammarRule) -> bool {
+pub fn is_literal_rule(rule: &GrammarRule) -> bool {
     rule.items.len() == 1
-        && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if ident.to_string() == "Integer")
+        && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if is_literal_nonterminal(&ident.to_string()))
+}
+
+/// Returns the nonterminal name when the rule is a literal rule (Integer, Boolean, StringLiteral, FloatLiteral).
+/// Used for payload-type selection (clone vs copy) and for signed-numeric logic (unary minus).
+#[allow(clippy::cmp_owned)]
+pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<String> {
+    match rule.items.first()? {
+        GrammarItem::NonTerminal(ident) => {
+            let name = ident.to_string();
+            if is_literal_nonterminal(&name) {
+                Some(name)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// True when the rule is the Integer literal rule (for signed-numeric behavior like unary minus).
+#[allow(clippy::cmp_owned)]
+pub fn is_integer_literal_rule(rule: &GrammarRule) -> bool {
+    literal_rule_nonterminal(rule).as_deref() == Some("Integer")
+}
+
+/// True when the rule is the FloatLiteral literal rule (for signed-numeric behavior like unary minus).
+#[allow(clippy::cmp_owned)]
+pub fn is_float_literal_rule(rule: &GrammarRule) -> bool {
+    literal_rule_nonterminal(rule).as_deref() == Some("FloatLiteral")
 }
 
 /// Generate the Var variant label for a category
