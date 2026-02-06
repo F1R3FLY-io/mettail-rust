@@ -23,6 +23,16 @@ pub trait LanguageMetadata: 'static + Send + Sync {
     /// Rewrite rule definitions
     fn rewrites(&self) -> &'static [RewriteDef];
     
+    /// Custom logic relation definitions
+    fn logic_relations(&self) -> &'static [LogicRelationDef] {
+        &[]
+    }
+    
+    /// Custom logic rule definitions  
+    fn logic_rules(&self) -> &'static [LogicRuleDef] {
+        &[]
+    }
+    
     /// Get the primary type (first type in the language)
     fn primary_type(&self) -> &'static TypeDef {
         self.types().first().expect("language must have at least one type")
@@ -124,4 +134,24 @@ impl RewriteDef {
     pub fn is_base(&self) -> bool {
         self.premise.is_none()
     }
+}
+
+/// Definition of a custom logic relation
+#[derive(Debug, Clone, Copy)]
+pub struct LogicRelationDef {
+    /// Relation name (e.g., "path", "can_send")
+    pub name: &'static str,
+    
+    /// Parameter type names (e.g., ["Proc", "Proc"])
+    pub param_types: &'static [&'static str],
+    
+    /// Optional description (from comment)
+    pub description: Option<&'static str>,
+}
+
+/// Definition of a custom logic rule
+#[derive(Debug, Clone, Copy)]
+pub struct LogicRuleDef {
+    /// The rule in Ascent syntax (formatted for display)
+    pub rule: &'static str,
 }

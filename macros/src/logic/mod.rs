@@ -46,6 +46,9 @@ pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
     let category_rules = generate_category_rules(language);
     let equation_rules = generate_equation_rules(language);
     let rewrite_rules = generate_rewrite_rules(language);
+    let custom_logic = language.logic.as_ref()
+        .map(|l| l.content.clone())
+        .unwrap_or_default();
 
     let result = quote! {
         ::ascent::ascent_source! {
@@ -58,6 +61,8 @@ pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
             #equation_rules
 
             #rewrite_rules
+
+            #custom_logic
         }
     };
 
@@ -69,6 +74,7 @@ pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
         &category_rules,
         &equation_rules,
         &rewrite_rules,
+        &custom_logic,
     );
 
     // Write to file for inspection
@@ -87,6 +93,7 @@ fn format_ascent_source(
     category_rules: &TokenStream,
     equation_rules: &TokenStream,
     rewrite_rules: &TokenStream,
+    custom_logic: &TokenStream,
 ) -> String {
     let mut output = String::new();
 
@@ -115,6 +122,15 @@ fn format_ascent_source(
     output.push_str("\n    // Rewrite rules\n");
     for line in rewrite_rules.to_string().split(';') {
         output.push_str(&print_rule(line));
+    }
+
+    // Custom logic (user-defined relations and rules)
+    let custom_str = custom_logic.to_string();
+    if !custom_str.trim().is_empty() {
+        output.push_str("\n    // Custom logic\n");
+        for line in custom_str.split(';') {
+            output.push_str(&print_rule(line));
+        }
     }
 
     output.push_str("}\n");

@@ -14,10 +14,11 @@ mettail-macros = { path = "../macros" }
 mettail-runtime = { path = "../runtime" }
 moniker = { workspace = true }
 lalrpop-util = { workspace = true, features = ["lexer"] }
-ascent = { workspace = true }
 rand = { workspace = true }
-ascent-byods-rels = { workspace = true }
 indexmap = { workspace = true }
+
+ascent = { workspace = true }
+ascent-byods-rels = { workspace = true }
 
 [build-dependencies]
 lalrpop = { workspace = true }

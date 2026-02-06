@@ -538,15 +538,13 @@ impl Pattern {
                 // Map on LHS: search for elements in a collection where each element
                 // matches the body pattern after binding the params
                 //
-                // Special case: when collection is a Zip, this is a correlated search
-                // #zip(ns, qs).#map(|n, q| (POutput n q)) means:
-                //   - ns is already bound (e.g., from PInputs)
-                //   - For each n in ns, find matching (POutput n q) in search_context
-                //   - Collect all q's into qs
-                
+                // Special case: when collection is a Zip, this is a correlated search.
+                // #zip(first, second).#map(|a, b| Body(a, b)): first is bound from context;
+                // for each a in first we search search_context for elements matching Body(a, b),
+                // and collect b's into second. We enumerate all valid matchings (one context
+                // element per first element, distinct indices) so rules fire for every possibility.
                 if let Pattern::Zip { first, second } = collection.as_ref() {
-                    // Correlated search: Zip + Map
-                    // first (ns) is bound, second (qs) will collect results
+                    // Correlated search: Zip + Map. First is bound; second collects from matches.
                     
                     let Some(ctx) = search_context else {
                         panic!("Zip+Map pattern requires search_context from enclosing Collection");
@@ -569,18 +567,11 @@ impl Pattern {
                         .unwrap()
                         .clone();
                     
-                    // params should be [n, q] for the body pattern
                     if params.len() != 2 {
                         panic!("Zip+Map requires exactly 2 params, got {}", params.len());
                     }
-                    let first_param = &params[0]; // n - iterates over first (ns)
-                    let second_param = &params[1]; // q - extracted from matches
-                    
-                    // Generate the body's match pattern to extract constructor info
-                    // We need to generate a pattern match that:
-                    // 1. Iterates over first (ns)
-                    // 2. For each n, searches ctx for matching body pattern
-                    // 3. Extracts q from match and collects into second (qs)
+                    let first_param = &params[0]; // bound to each element of first
+                    let second_param = &params[1]; // extracted from matching context element
                     
                     let iter_idx = *iter_counter;
                     *iter_counter += 1;
@@ -596,11 +587,6 @@ impl Pattern {
                         scope_kind: None,
                     });
                     
-                    // Generate the correlated search as a let expression
-                    // This collects results from searching ctx for each element of first
-                    
-                    // We need to inline the body pattern match as an if-let
-                    // For now, assume body is a constructor pattern like (POutput n q)
                     let (constructor, body_args) = match body.as_ref() {
                         Pattern::Term(PatternTerm::Apply { constructor, args }) => {
                             (constructor.clone(), args.clone())
@@ -633,48 +619,39 @@ impl Pattern {
                     let first_field = &field_vars[first_idx];
                     let second_field = &field_vars[second_idx];
                     
-                    // Generate the correlated search
-                    // Note: fields are Box<T>, so we dereference with &**field
-                    // first_elem is &Name from Vec<Name>.iter()
-                    // 
-                    // IMPORTANT: Track matched elements to:
-                    // 1. Handle join patterns where the same channel appears multiple times
-                    // 2. Allow parent Collection to remove ALL matched elements from rest
+                    // Generate the correlated search. Fields are Box<T> (deref &**).
+                    // Enumerate all valid matchings: one context element per first element,
+                    // distinct indices, so the rule fires once per possibility (e.g. multiple
+                    // sends on the same name yield multiple rewrites).
                     let matched_indices_var = format_ident!("__map_matched_indices_{}", iter_idx);
+                    let all_matchings_var = format_ident!("__all_matchings_{}", iter_idx);
                     
-                    // Generate correlated search that returns BOTH the collected values
-                    // AND the set of matched indices (for rest calculation)
-                    // Ascent doesn't support `let mut` or type annotations, so we
-                    // compute both in a single block and destructure the tuple result.
+                    // 1) Build candidates: per first-element, list of (context_index, payload) for matching body
                     result.clauses.push(quote! {
-                        let (#collected_var, #matched_indices_var) = {
+                        let #all_matchings_var = {
                             let __ctx_vec: Vec<_> = #ctx.iter().collect();
-                            let mut __results = Vec::new();
-                            let mut __matched = std::collections::HashSet::new();
-                            
+                            let mut __candidates = Vec::new();
                             for #first_elem in #first_binding.iter() {
-                                let mut __found = None;
+                                let mut __row = Vec::new();
                                 for (__idx, (#search_elem, _)) in __ctx_vec.iter().enumerate() {
-                                    if __matched.contains(&__idx) {
-                                        continue;
-                                    }
                                     if let #category::#constructor(#(ref #field_vars),*) = #search_elem {
                                         if &**#first_field == #first_elem {
-                                            __found = Some((__idx, (**#second_field).clone()));
-                                            break;
+                                            __row.push((__idx, (**#second_field).clone()));
                                         }
                                     }
                                 }
-                                if let Some((__idx, __val)) = __found {
-                                    __matched.insert(__idx);
-                                    __results.push(__val);
-                                }
+                                __candidates.push(__row);
                             }
-                            (__results, __matched)
+                            mettail_runtime::enumerate_matchings(&__candidates)
                         }
                     });
                     
-                    // Verify all elements matched (qs.len() == ns.len())
+                    // 2) For each valid matching, bind collected payloads and matched indices
+                    result.clauses.push(quote! {
+                        for (#collected_var, #matched_indices_var) in #all_matchings_var.into_iter()
+                    });
+                    
+                    // One payload per first-element (full matching)
                     result.clauses.push(quote! {
                         if #collected_var.len() == #first_binding.len()
                     });

@@ -189,6 +189,18 @@ pub struct AscentResults {
 
     /// Equivalence classes (terms related by equations)
     pub equivalences: Vec<EquivClass>,
+    
+    /// Custom relations: name -> relation data
+    pub custom_relations: std::collections::HashMap<String, RelationData>,
+}
+
+/// Data for a custom relation
+#[derive(Debug, Clone)]
+pub struct RelationData {
+    /// Parameter type names (e.g., ["Proc", "Proc"])
+    pub param_types: Vec<String>,
+    /// Tuples as formatted strings (each tuple is a Vec of formatted elements)
+    pub tuples: Vec<Vec<String>>,
 }
 
 /// Information about a term in the rewrite graph
@@ -220,6 +232,7 @@ impl AscentResults {
             all_terms: Vec::new(),
             rewrites: Vec::new(),
             equivalences: Vec::new(),
+            custom_relations: std::collections::HashMap::new(),
         }
     }
 

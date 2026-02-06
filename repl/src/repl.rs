@@ -120,6 +120,8 @@ impl Repl {
             "rewrites-all" => self.cmd_rewrites_all(),
             "equations" => self.cmd_equations(),
             "normal-forms" => self.cmd_normal_forms(),
+            "relations" => self.cmd_relations(),
+            "relation" => self.cmd_relation(&parts[1..]),
             "apply" => self.cmd_apply(&parts[1..]),
             "goto" => self.cmd_goto(&parts[1..]),
             "example" => self.cmd_example(&parts[1..]),
@@ -203,6 +205,10 @@ impl Repl {
         println!("    {}        Show normal forms", "normal-forms".green());
         println!("    {} Apply rewrite N", "apply <N>".green());
         println!("    {}              Go to normal form N", "goto <N>".green());
+        println!();
+        println!("{}", "  Relations:".yellow());
+        println!("    {}         List all computed relations", "relations".green());
+        println!("    {} Show tuples in a relation", "relation <name>".green());
         println!();
         println!("{}", "  General:".yellow());
         println!("    {}              Show this help", "help".green());
@@ -365,6 +371,31 @@ impl Repl {
                 let name_str = rw.name.map(|n| format!("[{}] ", n).cyan().to_string()).unwrap_or_default();
                 
                 println!("  {}{}{} ~> {}", name_str, prefix, rw.lhs.green(), rw.rhs.green());
+            }
+            
+            // Logic - custom relations and rules
+            let logic_relations = meta.logic_relations();
+            let logic_rules = meta.logic_rules();
+            if !logic_relations.is_empty() || !logic_rules.is_empty() {
+                println!();
+                println!("{}", "LOGIC".yellow().bold());
+                
+                // Relations
+                if !logic_relations.is_empty() {
+                    println!("  {}:", "Relations".dimmed());
+                    for rel in logic_relations {
+                        let signature = format!("{}({})", rel.name, rel.param_types.join(", "));
+                        println!("    {}", signature.cyan());
+                    }
+                }
+                
+                // Rules
+                if !logic_rules.is_empty() {
+                    println!("  {}:", "Rules".dimmed());
+                    for rule in logic_rules {
+                        println!("    {}", rule.rule.green());
+                    }
+                }
             }
             
             println!();
@@ -922,6 +953,102 @@ impl Repl {
         }
         println!();
         Ok(())
+    }
+
+    fn cmd_relations(&self) -> Result<()> {
+        let results = self.get_results()?;
+
+        println!();
+        println!("{}", "Computed Relations:".bold());
+        println!();
+
+        // Built-in relations
+        println!("{}", "  Built-in:".yellow());
+        println!("    {} ({} tuples)", "terms".cyan(), results.all_terms.len());
+        println!("    {} ({} tuples)", "rewrites".cyan(), results.rewrites.len());
+        println!("    {} ({} classes)", "equivalences".cyan(), results.equivalences.len());
+
+        // Custom relations
+        if !results.custom_relations.is_empty() {
+            println!();
+            println!("{}", "  Custom:".yellow());
+            for (name, data) in &results.custom_relations {
+                let signature = format!("{}({})", name, data.param_types.join(", "));
+                println!("    {} ({} tuples)", signature.cyan(), data.tuples.len());
+            }
+        }
+
+        println!();
+        println!("Use {} to view tuples in a specific relation.", "'relation <name>'".green());
+        println!();
+        Ok(())
+    }
+
+    fn cmd_relation(&self, args: &[&str]) -> Result<()> {
+        if args.is_empty() {
+            anyhow::bail!("Usage: relation <name>\nUse 'relations' to list available relations.");
+        }
+
+        let name = args[0];
+        let results = self.get_results()?;
+
+        // Check built-in relations first
+        match name {
+            "terms" => {
+                println!();
+                println!("{} ({} tuples):", "terms(Term)".bold(), results.all_terms.len());
+                for term_info in &results.all_terms {
+                    let nf_marker = if term_info.is_normal_form { " [NF]".dimmed() } else { "".into() };
+                    println!("  {}{}", term_info.display.green(), nf_marker);
+                }
+                println!();
+                return Ok(());
+            }
+            "rewrites" => {
+                println!();
+                println!("{} ({} tuples):", "rewrites(Term, Term)".bold(), results.rewrites.len());
+                for rw in &results.rewrites {
+                    let from = results.all_terms.iter().find(|t| t.term_id == rw.from_id);
+                    let to = results.all_terms.iter().find(|t| t.term_id == rw.to_id);
+                    if let (Some(from), Some(to)) = (from, to) {
+                        println!("  {} {} {}", from.display.green(), "→".yellow(), to.display.green());
+                    }
+                }
+                println!();
+                return Ok(());
+            }
+            "equivalences" => {
+                println!();
+                println!("{} ({} classes):", "equivalences".bold(), results.equivalences.len());
+                for equiv in &results.equivalences {
+                    let terms: Vec<_> = equiv.term_ids.iter()
+                        .filter_map(|id| results.all_terms.iter().find(|t| t.term_id == *id))
+                        .map(|t| t.display.as_str())
+                        .collect();
+                    println!("  {}", terms.join(" == ").green());
+                }
+                println!();
+                return Ok(());
+            }
+            _ => {}
+        }
+
+        // Check custom relations
+        if let Some(data) = results.custom_relations.get(name) {
+            println!();
+            let signature = format!("{}({})", name, data.param_types.join(", "));
+            println!("{} ({} tuples):", signature.bold(), data.tuples.len());
+            for tuple in &data.tuples {
+                println!("  ({})", tuple.join(", ").green());
+            }
+            println!();
+            return Ok(());
+        }
+
+        anyhow::bail!(
+            "Unknown relation: '{}'. Use 'relations' to list available relations.",
+            name
+        )
     }
 
     fn cmd_apply(&mut self, args: &[&str]) -> Result<()> {

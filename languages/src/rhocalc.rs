@@ -12,6 +12,7 @@ language! {
     types {
         Proc
         Name
+
     },
 
     terms {
@@ -40,5 +41,32 @@ language! {
         Exec . |- (PDrop (NQuote P)) ~> P;
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+    },
+
+    logic {
+        relation path(Proc, Proc);
+        path(p0, p1) <-- rw_proc(p0, p1);
+        path(p0, p2) <-- path(p0, p1), path(p1, p2);
+
+        relation recvs_on(Proc, Name);
+        recvs_on(p, n.clone()) <--
+            proc(p),
+            if let Proc::PInputs(ref ns, _) = p,
+            for n in ns.iter();
+        
+        recvs_on(parent, n) <--
+            ppar_contains(parent, elem),
+            recvs_on(elem, n);
+        
+        relation loses_recv(Proc, Name);
+        loses_recv(p, n) <--
+            recvs_on(p, n),
+            rw_proc(p, q),
+            !recvs_on(q, n);
+        
+        relation live(Proc, Name);
+        live(p, n) <-- 
+            recvs_on(p, n),
+            !loses_recv(p, n);
     },
 }

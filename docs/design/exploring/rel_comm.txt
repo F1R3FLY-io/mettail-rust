@@ -1,0 +1,10 @@
+
+# proposal : look-anywhere
+
+x!(lambda`app(lam(λx.x), lam(λy.y))`[*]) = 
+
+x!(lambda[s0 = app(lam(λx.x), lam(λy.y))].{
+    results(t0) <--
+        path(s0,t0), !rw(t0,_)
+}.results : Vec<lambda.Term>)
+

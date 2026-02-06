@@ -1,3 +1,4 @@
+use proc_macro2::TokenStream;
 use syn::{Ident, Type, Token, parse::{Parse, ParseStream}, Result as SynResult};
 
 use super::grammar::{GrammarRule, parse_terms};
@@ -6,7 +7,7 @@ use std::fmt::Display;
 use std::fmt;
 
 /// Top-level theory definition
-/// theory! { name: Foo, params: ..., types { ... }, terms { ... }, equations { ... }, rewrites { ... }, semantics { ... } }
+/// theory! { name: Foo, params: ..., types { ... }, terms { ... }, equations { ... }, rewrites { ... }, semantics { ... }, logic { ... } }
 pub struct LanguageDef {
     pub name: Ident,
     pub types: Vec<LangType>,
@@ -14,6 +15,27 @@ pub struct LanguageDef {
     pub equations: Vec<Equation>,
     pub rewrites: Vec<RewriteRule>,
     pub semantics: Vec<SemanticRule>,
+    /// Custom Ascent logic: additional relations and rules
+    pub logic: Option<LogicBlock>,
+}
+
+/// Custom logic block containing relation declarations and rules
+#[derive(Debug, Clone)]
+pub struct LogicBlock {
+    /// Custom relation declarations (parsed for code generation)
+    pub relations: Vec<RelationDecl>,
+    /// All content (relations + rules) as verbatim TokenStream for Ascent
+    pub content: TokenStream,
+}
+
+/// A custom relation declaration
+/// Syntax: relation name(Type1, Type2, ...);
+#[derive(Debug, Clone)]
+pub struct RelationDecl {
+    /// Relation name (e.g., "path")
+    pub name: Ident,
+    /// Parameter types (e.g., [Proc, Proc])
+    pub param_types: Vec<Ident>,
 }
 
 
@@ -272,6 +294,18 @@ impl Parse for LanguageDef {
             Vec::new()
         };
 
+        // Parse: logic { ... }
+        let logic = if input.peek(Ident) {
+            let lookahead = input.fork().parse::<Ident>()?;
+            if lookahead == "logic" {
+                Some(parse_logic(input)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Ok(LanguageDef {
             name,
             types,
@@ -279,6 +313,7 @@ impl Parse for LanguageDef {
             equations,
             rewrites,
             semantics,
+            logic,
         })
     }
 }
@@ -938,4 +973,86 @@ fn parse_semantics(input: ParseStream) -> SynResult<Vec<SemanticRule>> {
     }
 
     Ok(rules)
+}
+
+/// Parse logic block: custom Ascent relations and rules
+/// Syntax: logic { <ascent-syntax> }
+/// 
+/// Extracts relation declarations for code generation while keeping
+/// the full content as verbatim TokenStream for Ascent.
+fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
+    let logic_ident = input.parse::<Ident>()?;
+    if logic_ident != "logic" {
+        return Err(syn::Error::new(logic_ident.span(), "expected 'logic'"));
+    }
+
+    let content;
+    syn::braced!(content in input);
+
+    // Capture the entire content as a TokenStream (passed through verbatim)
+    let tokens: TokenStream = content.parse()?;
+
+    // Extract relation declarations from the token stream
+    let relations = extract_relation_decls(&tokens);
+
+    // Optional comma after closing brace
+    if input.peek(Token![,]) {
+        let _ = input.parse::<Token![,]>()?;
+    }
+
+    Ok(LogicBlock {
+        relations,
+        content: tokens,
+    })
+}
+
+/// Extract relation declarations from a token stream
+/// Looks for patterns like: relation name(Type1, Type2, ...);
+fn extract_relation_decls(tokens: &TokenStream) -> Vec<RelationDecl> {
+    use proc_macro2::TokenTree;
+    
+    let mut relations = Vec::new();
+    let token_vec: Vec<TokenTree> = tokens.clone().into_iter().collect();
+    
+    let mut i = 0;
+    while i < token_vec.len() {
+        // Look for "relation" keyword
+        if let TokenTree::Ident(ident) = &token_vec[i] {
+            if ident == "relation" && i + 2 < token_vec.len() {
+                // Next should be the relation name
+                if let TokenTree::Ident(name) = &token_vec[i + 1] {
+                    // Then a group with parentheses containing types
+                    if let TokenTree::Group(group) = &token_vec[i + 2] {
+                        if group.delimiter() == proc_macro2::Delimiter::Parenthesis {
+                            // Parse the types from the group
+                            let param_types = parse_relation_params(group.stream());
+                            relations.push(RelationDecl {
+                                name: name.clone(),
+                                param_types,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    
+    relations
+}
+
+/// Parse relation parameter types from a token stream like "Proc, Proc"
+fn parse_relation_params(tokens: TokenStream) -> Vec<Ident> {
+    use proc_macro2::TokenTree;
+    
+    let mut params = Vec::new();
+    
+    for token in tokens {
+        if let TokenTree::Ident(ident) = token {
+            params.push(ident);
+        }
+        // Skip punctuation (commas)
+    }
+    
+    params
 }

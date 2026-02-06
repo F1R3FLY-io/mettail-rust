@@ -5,10 +5,8 @@ edition = "2021"
 authors = ["MeTTaIL Contributors"]
 license = "MIT"
 description = "Procedural macros for MeTTaIL - a meta-language framework for defining formal languages"
-repository = "https://github.com/your-username/mettail-rust"
-homepage = "https://github.com/your-username/mettail-rust"
-keywords = ["language", "rewriting", "theory", "macros", "metaprogramming"]
-categories = ["development-tools", "parser-implementations"]
+repository = "https://github.com/f1r3fly-io/mettail-rust"
+homepage = "https://github.com/f1r3fly-io/mettail-rust"
 readme = "../README.md"
 
 [lib]

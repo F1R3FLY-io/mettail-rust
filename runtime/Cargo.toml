@@ -16,3 +16,5 @@ moniker = { workspace = true }
 lalrpop-util = { workspace = true, features = ["lexer"] }
 lazy_static = "1.5"
 rustc-hash = "2.0"
+syn = { workspace = true }
+proc-macro2 = { workspace = true }

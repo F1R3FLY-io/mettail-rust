@@ -23,5 +23,9 @@ pub use metadata::*;
 mod language;
 pub use language::*;
 
+// Matchings enumeration for zip+map correlated search (used by generated rewrite clauses)
+mod matchings;
+pub use matchings::*;
+
 // Re-export LALRPOP utilities for generated parsers
 pub use lalrpop_util::ParseError as LalrpopParseError;

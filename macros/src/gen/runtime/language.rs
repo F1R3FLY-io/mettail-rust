@@ -104,6 +104,9 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
     // Generate variable collection implementation
     let var_collection_impl = generate_var_collection_impl(primary_type, language);
     
+    // Generate custom relation extraction code
+    let custom_relation_extraction = generate_custom_relation_extraction(language);
+    
     quote! {
         /// Language implementation struct
         /// 
@@ -187,10 +190,15 @@ fn generate_language_struct(name: &syn::Ident, primary_type: &syn::Ident, _name_
                     })
                     .collect();
                 
+                // Extract custom relations
+                let mut custom_relations = std::collections::HashMap::new();
+                #custom_relation_extraction
+                
                 mettail_runtime::AscentResults {
                     all_terms: term_infos,
                     rewrites: rewrite_list,
                     equivalences: Vec::new(),
+                    custom_relations,
                 }
             }
             
@@ -650,11 +658,8 @@ fn generate_language_trait_impl(name: &syn::Ident, primary_type: &syn::Ident, na
     let metadata_name = format_ident!("{}Metadata", name);
     let env_name = format_ident!("{}Env", name);
     
-    // Get non-native categories for environment field access
-    let categories: Vec<_> = language.types.iter()
-        .filter(|t| t.native_type.is_none())
-        .map(|t| &t.name)
-        .collect();
+    // All categories for environment field access (include native so e.g. Calculator can list/remove Int bindings)
+    let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
     
     // Generate field name for primary type (lowercase)
     let primary_field = format_ident!("{}", primary_type.to_string().to_lowercase());
@@ -871,12 +876,69 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
             }
         });
     }
-    
     quote! {
         match term {
             #(#lambda_arms)*
             // Non-lambda terms have the primary type as their type
             _ => mettail_runtime::TermType::Base(#primary_type_str.to_string()),
         }
+    }
+}
+
+/// Generate code to extract custom relations from the Ascent program
+/// 
+/// For each relation declared in the logic block, generates code like:
+/// ```ignore
+/// custom_relations.insert("path".to_string(), mettail_runtime::RelationData {
+///     param_types: vec!["Proc".to_string(), "Proc".to_string()],
+///     tuples: prog.path.iter().map(|(a, b)| vec![format!("{}", a), format!("{}", b)]).collect(),
+/// });
+/// ```
+fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
+    let relations = match &language.logic {
+        Some(logic_block) => &logic_block.relations,
+        None => return quote! {},
+    };
+    
+    if relations.is_empty() {
+        return quote! {};
+    }
+    
+    let mut extractions = Vec::new();
+    
+    for rel in relations {
+        let rel_name = &rel.name;
+        let rel_name_str = rel_name.to_string();
+        let param_type_strs: Vec<String> = rel.param_types.iter()
+            .map(|t| t.to_string())
+            .collect();
+        
+        // Generate tuple element names based on arity
+        let arity = rel.param_types.len();
+        let tuple_vars: Vec<syn::Ident> = (0..arity)
+            .map(|i| format_ident!("e{}", i))
+            .collect();
+        
+        // Generate format expressions for each element
+        let format_exprs: Vec<TokenStream> = tuple_vars.iter()
+            .map(|v| quote! { format!("{}", #v) })
+            .collect();
+        
+        extractions.push(quote! {
+            custom_relations.insert(
+                #rel_name_str.to_string(),
+                mettail_runtime::RelationData {
+                    param_types: vec![#(#param_type_strs.to_string()),*],
+                    tuples: prog.#rel_name
+                        .iter()
+                        .map(|(#(#tuple_vars),*)| vec![#(#format_exprs),*])
+                        .collect(),
+                }
+            );
+        });
+    }
+    
+    quote! {
+        #(#extractions)*
     }
 }
