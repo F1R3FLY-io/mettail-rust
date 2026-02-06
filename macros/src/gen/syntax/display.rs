@@ -10,7 +10,7 @@ use crate::ast::{
     language::LanguageDef,
     types::TypeExpr,
 };
-use crate::gen::native::has_native_type;
+use crate::gen::native::{has_native_type, native_type_to_string};
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -783,13 +783,21 @@ fn generate_auto_var_display_arm(category: &syn::Ident) -> TokenStream {
 }
 
 /// Generate display match arm for an auto-generated literal variant (NumLit, etc.)
+/// For str/String we output quoted form so pre-substitution produces a re-parseable string literal (e.g. |y| with y="abc" -> |"abc"|).
 fn generate_auto_literal_display_arm(
     category: &syn::Ident,
     native_type: &syn::Type,
 ) -> TokenStream {
     let literal_label = generate_literal_label(native_type);
+    let type_str = native_type_to_string(native_type);
 
-    quote! {
-        #category::#literal_label(v) => write!(f, "{}", v)
+    if type_str == "str" || type_str == "String" {
+        quote! {
+            #category::#literal_label(v) => write!(f, "\"{}\"", v.replace('\"', "\\\""))
+        }
+    } else {
+        quote! {
+            #category::#literal_label(v) => write!(f, "{}", v)
+        }
     }
 }
