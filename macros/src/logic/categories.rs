@@ -104,13 +104,8 @@ fn generate_auto_variant_deconstruction(
     let mut rules = Vec::new();
     let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
 
-    // Get all non-native categories for domain types
-    let domain_cats: Vec<_> = language
-        .types
-        .iter()
-        .filter(|t| t.native_type.is_none())
-        .map(|t| &t.name)
-        .collect();
+    // Get all categories for domain types (including native, e.g. Int/Bool/Str)
+    let domain_cats: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
     for domain in &domain_cats {
         let domain_lower = format_ident!("{}", domain.to_string().to_lowercase());
@@ -172,13 +167,8 @@ fn generate_auto_variant_congruence(category: &Ident, language: &LanguageDef) ->
     let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
     let rw_cat = format_ident!("rw_{}", category.to_string().to_lowercase());
 
-    // Get all non-native categories for domain types
-    let domain_cats: Vec<_> = language
-        .types
-        .iter()
-        .filter(|t| t.native_type.is_none())
-        .map(|t| &t.name)
-        .collect();
+    // Get all categories for domain types (including native, e.g. Int/Bool/Str)
+    let domain_cats: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
     for domain in &domain_cats {
         let rw_domain = format_ident!("rw_{}", domain.to_string().to_lowercase());

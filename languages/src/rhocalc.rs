@@ -13,6 +13,7 @@ language! {
         Proc
         Name
 
+        ![i32] as Int
     },
 
     terms {
@@ -28,6 +29,8 @@ language! {
         PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
 
         NQuote . p:Proc |- "@" "(" p ")" : Name ;
+
+        Add . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
     },
 
     equations {

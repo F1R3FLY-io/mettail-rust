@@ -6,441 +6,774 @@ ascent_source! {
     calculator_source:
 
     // Relations
-relation int(Int);
+relation int (Int);
 
-relation bool(Bool);
+relation bool (Bool);
 
-relation str(Str);
+relation str (Str);
 
-#[ds(crate :: eqrel)] relation eq_int(Int, Int);
+# [ds (crate :: eqrel)] relation eq_int (Int , Int);
 
-#[ds(crate :: eqrel)] relation eq_bool(Bool, Bool);
+# [ds (crate :: eqrel)] relation eq_bool (Bool , Bool);
 
-#[ds(crate :: eqrel)] relation eq_str(Str, Str);
+# [ds (crate :: eqrel)] relation eq_str (Str , Str);
 
-relation rw_int(Int, Int);
+relation rw_int (Int , Int);
 
-relation rw_bool(Bool, Bool);
+relation rw_bool (Bool , Bool);
 
-relation rw_str(Str, Str);
+relation rw_str (Str , Str);
 
-relation fold_int(Int, Int);
+relation fold_int (Int , Int);
 
 
     // Category rules
-int(c1.clone()) <--
-    int(c0),
-    rw_int(c0, c1);
+int (c1 . clone ()) <--
+    int (c0),
+    rw_int (c0 , c1);
 
-int(field_0.as_ref().clone()),
-int(field_1.as_ref().clone()) <--
-    int(t),
-    if let Int :: Pow(field_0, field_1) = t;
+int (field_0 . as_ref () . clone ()),
+int (field_1 . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: Pow (field_0 , field_1) = t;
 
-str(field_0.as_ref().clone()) <--
-    int(t),
-    if let Int :: Len(field_0) = t;
+str (field_0 . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: Len (field_0) = t;
 
-int(field_0.as_ref().clone()),
-int(field_1.as_ref().clone()) <--
-    int(t),
-    if let Int :: Add(field_0, field_1) = t;
+int (field_0 . as_ref () . clone ()),
+int (field_1 . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: Add (field_0 , field_1) = t;
 
-int(field_0.as_ref().clone()),
-int(field_1.as_ref().clone()) <--
-    int(t),
-    if let Int :: Sub(field_0, field_1) = t;
+int (field_0 . as_ref () . clone ()),
+int (field_1 . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: Sub (field_0 , field_1) = t;
 
-int(field_0.as_ref().clone()),
-int(field_1.as_ref().clone()) <--
-    int(t),
-    if let Int :: CustomOp(field_0, field_1) = t;
+int (field_0 . as_ref () . clone ()),
+int (field_1 . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: CustomOp (field_0 , field_1) = t;
 
-bool(c1.clone()) <--
-    bool(c0),
-    rw_bool(c0, c1);
+int (lam . as_ref () . clone ()),
+int (arg . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: ApplyInt (lam , arg) = t;
 
-int(field_0.as_ref().clone()),
-int(field_1.as_ref().clone()) <--
-    bool(t),
-    if let Bool :: Eq(field_0, field_1) = t;
+int (lam . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: MApplyInt (lam , _) = t;
 
-bool(field_0.as_ref().clone()),
-bool(field_1.as_ref().clone()) <--
-    bool(t),
-    if let Bool :: EqBool(field_0, field_1) = t;
+int (arg . clone ()) <--
+    int (t),
+    if let Int :: MApplyInt (_ , args) = t,
+    for arg in args . iter ();
 
-str(field_0.as_ref().clone()),
-str(field_1.as_ref().clone()) <--
-    bool(t),
-    if let Bool :: EqStr(field_0, field_1) = t;
+int ((* scope . inner () . unsafe_body) . clone ()) <--
+    int (t),
+    if let Int :: LamInt (scope) = t;
 
-bool(field_0.as_ref().clone()) <--
-    bool(t),
-    if let Bool :: Not(field_0) = t;
+int ((* scope . inner () . unsafe_body) . clone ()) <--
+    int (t),
+    if let Int :: MLamInt (scope) = t;
 
-bool(field_0.as_ref().clone()),
-bool(field_1.as_ref().clone()) <--
-    bool(t),
-    if let Bool :: Comp(field_0, field_1) = t;
+int (lam . as_ref () . clone ()),
+bool (arg . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: ApplyBool (lam , arg) = t;
 
-str(c1.clone()) <--
-    str(c0),
-    rw_str(c0, c1);
+int (lam . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: MApplyBool (lam , _) = t;
 
-str(field_0.as_ref().clone()),
-str(field_1.as_ref().clone()) <--
-    str(t),
-    if let Str :: Concat(field_0, field_1) = t;
+bool (arg . clone ()) <--
+    int (t),
+    if let Int :: MApplyBool (_ , args) = t,
+    for arg in args . iter ();
 
-str(field_0.as_ref().clone()),
-str(field_1.as_ref().clone()) <--
-    str(t),
-    if let Str :: AddStr(field_0, field_1) = t;
+int ((* scope . inner () . unsafe_body) . clone ()) <--
+    int (t),
+    if let Int :: LamBool (scope) = t;
+
+int ((* scope . inner () . unsafe_body) . clone ()) <--
+    int (t),
+    if let Int :: MLamBool (scope) = t;
+
+int (lam . as_ref () . clone ()),
+str (arg . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: ApplyStr (lam , arg) = t;
+
+int (lam . as_ref () . clone ()) <--
+    int (t),
+    if let Int :: MApplyStr (lam , _) = t;
+
+str (arg . clone ()) <--
+    int (t),
+    if let Int :: MApplyStr (_ , args) = t,
+    for arg in args . iter ();
+
+int ((* scope . inner () . unsafe_body) . clone ()) <--
+    int (t),
+    if let Int :: LamStr (scope) = t;
+
+int ((* scope . inner () . unsafe_body) . clone ()) <--
+    int (t),
+    if let Int :: MLamStr (scope) = t;
+
+rw_int (Int :: ApplyInt (lam . clone () , arg . clone ()) , Int :: ApplyInt (Box :: new (lam_new . clone ()) , arg . clone ())) <--
+    int (t),
+    if let Int :: ApplyInt (ref lam , ref arg) = t,
+    rw_int (lam . as_ref () . clone () , lam_new);
+
+rw_int (Int :: ApplyInt (lam . clone () , arg . clone ()) , Int :: ApplyInt (lam . clone () , Box :: new (arg_new . clone ()))) <--
+    int (t),
+    if let Int :: ApplyInt (ref lam , ref arg) = t,
+    rw_int (arg . as_ref () . clone () , arg_new);
+
+rw_int (Int :: MApplyInt (lam . clone () , args . clone ()) , Int :: MApplyInt (Box :: new (lam_new . clone ()) , args . clone ())) <--
+    int (t),
+    if let Int :: MApplyInt (ref lam , ref args) = t,
+    rw_int (lam . as_ref () . clone () , lam_new);
+
+rw_int (Int :: ApplyBool (lam . clone () , arg . clone ()) , Int :: ApplyBool (Box :: new (lam_new . clone ()) , arg . clone ())) <--
+    int (t),
+    if let Int :: ApplyBool (ref lam , ref arg) = t,
+    rw_int (lam . as_ref () . clone () , lam_new);
+
+rw_int (Int :: ApplyBool (lam . clone () , arg . clone ()) , Int :: ApplyBool (lam . clone () , Box :: new (arg_new . clone ()))) <--
+    int (t),
+    if let Int :: ApplyBool (ref lam , ref arg) = t,
+    rw_bool (arg . as_ref () . clone () , arg_new);
+
+rw_int (Int :: MApplyBool (lam . clone () , args . clone ()) , Int :: MApplyBool (Box :: new (lam_new . clone ()) , args . clone ())) <--
+    int (t),
+    if let Int :: MApplyBool (ref lam , ref args) = t,
+    rw_int (lam . as_ref () . clone () , lam_new);
+
+rw_int (Int :: ApplyStr (lam . clone () , arg . clone ()) , Int :: ApplyStr (Box :: new (lam_new . clone ()) , arg . clone ())) <--
+    int (t),
+    if let Int :: ApplyStr (ref lam , ref arg) = t,
+    rw_int (lam . as_ref () . clone () , lam_new);
+
+rw_int (Int :: ApplyStr (lam . clone () , arg . clone ()) , Int :: ApplyStr (lam . clone () , Box :: new (arg_new . clone ()))) <--
+    int (t),
+    if let Int :: ApplyStr (ref lam , ref arg) = t,
+    rw_str (arg . as_ref () . clone () , arg_new);
+
+rw_int (Int :: MApplyStr (lam . clone () , args . clone ()) , Int :: MApplyStr (Box :: new (lam_new . clone ()) , args . clone ())) <--
+    int (t),
+    if let Int :: MApplyStr (ref lam , ref args) = t,
+    rw_int (lam . as_ref () . clone () , lam_new);
+
+bool (c1 . clone ()) <--
+    bool (c0),
+    rw_bool (c0 , c1);
+
+int (field_0 . as_ref () . clone ()),
+int (field_1 . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: Eq (field_0 , field_1) = t;
+
+bool (field_0 . as_ref () . clone ()),
+bool (field_1 . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: EqBool (field_0 , field_1) = t;
+
+str (field_0 . as_ref () . clone ()),
+str (field_1 . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: EqStr (field_0 , field_1) = t;
+
+bool (field_0 . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: Not (field_0) = t;
+
+bool (field_0 . as_ref () . clone ()),
+bool (field_1 . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: Comp (field_0 , field_1) = t;
+
+bool (lam . as_ref () . clone ()),
+int (arg . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: ApplyInt (lam , arg) = t;
+
+bool (lam . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: MApplyInt (lam , _) = t;
+
+int (arg . clone ()) <--
+    bool (t),
+    if let Bool :: MApplyInt (_ , args) = t,
+    for arg in args . iter ();
+
+bool ((* scope . inner () . unsafe_body) . clone ()) <--
+    bool (t),
+    if let Bool :: LamInt (scope) = t;
+
+bool ((* scope . inner () . unsafe_body) . clone ()) <--
+    bool (t),
+    if let Bool :: MLamInt (scope) = t;
+
+bool (lam . as_ref () . clone ()),
+bool (arg . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: ApplyBool (lam , arg) = t;
+
+bool (lam . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: MApplyBool (lam , _) = t;
+
+bool (arg . clone ()) <--
+    bool (t),
+    if let Bool :: MApplyBool (_ , args) = t,
+    for arg in args . iter ();
+
+bool ((* scope . inner () . unsafe_body) . clone ()) <--
+    bool (t),
+    if let Bool :: LamBool (scope) = t;
+
+bool ((* scope . inner () . unsafe_body) . clone ()) <--
+    bool (t),
+    if let Bool :: MLamBool (scope) = t;
+
+bool (lam . as_ref () . clone ()),
+str (arg . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: ApplyStr (lam , arg) = t;
+
+bool (lam . as_ref () . clone ()) <--
+    bool (t),
+    if let Bool :: MApplyStr (lam , _) = t;
+
+str (arg . clone ()) <--
+    bool (t),
+    if let Bool :: MApplyStr (_ , args) = t,
+    for arg in args . iter ();
+
+bool ((* scope . inner () . unsafe_body) . clone ()) <--
+    bool (t),
+    if let Bool :: LamStr (scope) = t;
+
+bool ((* scope . inner () . unsafe_body) . clone ()) <--
+    bool (t),
+    if let Bool :: MLamStr (scope) = t;
+
+rw_bool (Bool :: ApplyInt (lam . clone () , arg . clone ()) , Bool :: ApplyInt (Box :: new (lam_new . clone ()) , arg . clone ())) <--
+    bool (t),
+    if let Bool :: ApplyInt (ref lam , ref arg) = t,
+    rw_bool (lam . as_ref () . clone () , lam_new);
+
+rw_bool (Bool :: ApplyInt (lam . clone () , arg . clone ()) , Bool :: ApplyInt (lam . clone () , Box :: new (arg_new . clone ()))) <--
+    bool (t),
+    if let Bool :: ApplyInt (ref lam , ref arg) = t,
+    rw_int (arg . as_ref () . clone () , arg_new);
+
+rw_bool (Bool :: MApplyInt (lam . clone () , args . clone ()) , Bool :: MApplyInt (Box :: new (lam_new . clone ()) , args . clone ())) <--
+    bool (t),
+    if let Bool :: MApplyInt (ref lam , ref args) = t,
+    rw_bool (lam . as_ref () . clone () , lam_new);
+
+rw_bool (Bool :: ApplyBool (lam . clone () , arg . clone ()) , Bool :: ApplyBool (Box :: new (lam_new . clone ()) , arg . clone ())) <--
+    bool (t),
+    if let Bool :: ApplyBool (ref lam , ref arg) = t,
+    rw_bool (lam . as_ref () . clone () , lam_new);
+
+rw_bool (Bool :: ApplyBool (lam . clone () , arg . clone ()) , Bool :: ApplyBool (lam . clone () , Box :: new (arg_new . clone ()))) <--
+    bool (t),
+    if let Bool :: ApplyBool (ref lam , ref arg) = t,
+    rw_bool (arg . as_ref () . clone () , arg_new);
+
+rw_bool (Bool :: MApplyBool (lam . clone () , args . clone ()) , Bool :: MApplyBool (Box :: new (lam_new . clone ()) , args . clone ())) <--
+    bool (t),
+    if let Bool :: MApplyBool (ref lam , ref args) = t,
+    rw_bool (lam . as_ref () . clone () , lam_new);
+
+rw_bool (Bool :: ApplyStr (lam . clone () , arg . clone ()) , Bool :: ApplyStr (Box :: new (lam_new . clone ()) , arg . clone ())) <--
+    bool (t),
+    if let Bool :: ApplyStr (ref lam , ref arg) = t,
+    rw_bool (lam . as_ref () . clone () , lam_new);
+
+rw_bool (Bool :: ApplyStr (lam . clone () , arg . clone ()) , Bool :: ApplyStr (lam . clone () , Box :: new (arg_new . clone ()))) <--
+    bool (t),
+    if let Bool :: ApplyStr (ref lam , ref arg) = t,
+    rw_str (arg . as_ref () . clone () , arg_new);
+
+rw_bool (Bool :: MApplyStr (lam . clone () , args . clone ()) , Bool :: MApplyStr (Box :: new (lam_new . clone ()) , args . clone ())) <--
+    bool (t),
+    if let Bool :: MApplyStr (ref lam , ref args) = t,
+    rw_bool (lam . as_ref () . clone () , lam_new);
+
+str (c1 . clone ()) <--
+    str (c0),
+    rw_str (c0 , c1);
+
+str (field_0 . as_ref () . clone ()),
+str (field_1 . as_ref () . clone ()) <--
+    str (t),
+    if let Str :: Concat (field_0 , field_1) = t;
+
+str (field_0 . as_ref () . clone ()),
+str (field_1 . as_ref () . clone ()) <--
+    str (t),
+    if let Str :: AddStr (field_0 , field_1) = t;
+
+str (lam . as_ref () . clone ()),
+int (arg . as_ref () . clone ()) <--
+    str (t),
+    if let Str :: ApplyInt (lam , arg) = t;
+
+str (lam . as_ref () . clone ()) <--
+    str (t),
+    if let Str :: MApplyInt (lam , _) = t;
+
+int (arg . clone ()) <--
+    str (t),
+    if let Str :: MApplyInt (_ , args) = t,
+    for arg in args . iter ();
+
+str ((* scope . inner () . unsafe_body) . clone ()) <--
+    str (t),
+    if let Str :: LamInt (scope) = t;
+
+str ((* scope . inner () . unsafe_body) . clone ()) <--
+    str (t),
+    if let Str :: MLamInt (scope) = t;
+
+str (lam . as_ref () . clone ()),
+bool (arg . as_ref () . clone ()) <--
+    str (t),
+    if let Str :: ApplyBool (lam , arg) = t;
+
+str (lam . as_ref () . clone ()) <--
+    str (t),
+    if let Str :: MApplyBool (lam , _) = t;
+
+bool (arg . clone ()) <--
+    str (t),
+    if let Str :: MApplyBool (_ , args) = t,
+    for arg in args . iter ();
+
+str ((* scope . inner () . unsafe_body) . clone ()) <--
+    str (t),
+    if let Str :: LamBool (scope) = t;
+
+str ((* scope . inner () . unsafe_body) . clone ()) <--
+    str (t),
+    if let Str :: MLamBool (scope) = t;
+
+str (lam . as_ref () . clone ()),
+str (arg . as_ref () . clone ()) <--
+    str (t),
+    if let Str :: ApplyStr (lam , arg) = t;
+
+str (lam . as_ref () . clone ()) <--
+    str (t),
+    if let Str :: MApplyStr (lam , _) = t;
+
+str (arg . clone ()) <--
+    str (t),
+    if let Str :: MApplyStr (_ , args) = t,
+    for arg in args . iter ();
+
+str ((* scope . inner () . unsafe_body) . clone ()) <--
+    str (t),
+    if let Str :: LamStr (scope) = t;
+
+str ((* scope . inner () . unsafe_body) . clone ()) <--
+    str (t),
+    if let Str :: MLamStr (scope) = t;
+
+rw_str (Str :: ApplyInt (lam . clone () , arg . clone ()) , Str :: ApplyInt (Box :: new (lam_new . clone ()) , arg . clone ())) <--
+    str (t),
+    if let Str :: ApplyInt (ref lam , ref arg) = t,
+    rw_str (lam . as_ref () . clone () , lam_new);
+
+rw_str (Str :: ApplyInt (lam . clone () , arg . clone ()) , Str :: ApplyInt (lam . clone () , Box :: new (arg_new . clone ()))) <--
+    str (t),
+    if let Str :: ApplyInt (ref lam , ref arg) = t,
+    rw_int (arg . as_ref () . clone () , arg_new);
+
+rw_str (Str :: MApplyInt (lam . clone () , args . clone ()) , Str :: MApplyInt (Box :: new (lam_new . clone ()) , args . clone ())) <--
+    str (t),
+    if let Str :: MApplyInt (ref lam , ref args) = t,
+    rw_str (lam . as_ref () . clone () , lam_new);
+
+rw_str (Str :: ApplyBool (lam . clone () , arg . clone ()) , Str :: ApplyBool (Box :: new (lam_new . clone ()) , arg . clone ())) <--
+    str (t),
+    if let Str :: ApplyBool (ref lam , ref arg) = t,
+    rw_str (lam . as_ref () . clone () , lam_new);
+
+rw_str (Str :: ApplyBool (lam . clone () , arg . clone ()) , Str :: ApplyBool (lam . clone () , Box :: new (arg_new . clone ()))) <--
+    str (t),
+    if let Str :: ApplyBool (ref lam , ref arg) = t,
+    rw_bool (arg . as_ref () . clone () , arg_new);
+
+rw_str (Str :: MApplyBool (lam . clone () , args . clone ()) , Str :: MApplyBool (Box :: new (lam_new . clone ()) , args . clone ())) <--
+    str (t),
+    if let Str :: MApplyBool (ref lam , ref args) = t,
+    rw_str (lam . as_ref () . clone () , lam_new);
+
+rw_str (Str :: ApplyStr (lam . clone () , arg . clone ()) , Str :: ApplyStr (Box :: new (lam_new . clone ()) , arg . clone ())) <--
+    str (t),
+    if let Str :: ApplyStr (ref lam , ref arg) = t,
+    rw_str (lam . as_ref () . clone () , lam_new);
+
+rw_str (Str :: ApplyStr (lam . clone () , arg . clone ()) , Str :: ApplyStr (lam . clone () , Box :: new (arg_new . clone ()))) <--
+    str (t),
+    if let Str :: ApplyStr (ref lam , ref arg) = t,
+    rw_str (arg . as_ref () . clone () , arg_new);
+
+rw_str (Str :: MApplyStr (lam . clone () , args . clone ()) , Str :: MApplyStr (Box :: new (lam_new . clone ()) , args . clone ())) <--
+    str (t),
+    if let Str :: MApplyStr (ref lam , ref args) = t,
+    rw_str (lam . as_ref () . clone () , lam_new);
 
 
     // Equation rules
-eq_int(t.clone(), t.clone()) <--
-    int(t);
+eq_int (t . clone () , t . clone ()) <--
+    int (t);
 
-eq_bool(t.clone(), t.clone()) <--
-    bool(t);
+eq_bool (t . clone () , t . clone ()) <--
+    bool (t);
 
-eq_str(t.clone(), t.clone()) <--
-    str(t);
+eq_str (t . clone () , t . clone ()) <--
+    str (t);
 
-eq_bool(s.clone(), t.clone()) <--
-    bool(s),
-    if let Bool :: Eq(ref s_f0, ref s_f1) = s,
-    bool(t),
-    if let Bool :: Eq(ref t_f0, ref t_f1) = t,
-    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_bool (s . clone () , t . clone ()) <--
+    bool (s),
+    if let Bool :: Eq (ref s_f0 , ref s_f1) = s,
+    bool (t),
+    if let Bool :: Eq (ref t_f0 , ref t_f1) = t,
+    eq_int (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_int (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
-eq_bool(s.clone(), t.clone()) <--
-    bool(s),
-    if let Bool :: EqBool(ref s_f0, ref s_f1) = s,
-    bool(t),
-    if let Bool :: EqBool(ref t_f0, ref t_f1) = t,
-    eq_bool(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_bool(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_bool (s . clone () , t . clone ()) <--
+    bool (s),
+    if let Bool :: EqBool (ref s_f0 , ref s_f1) = s,
+    bool (t),
+    if let Bool :: EqBool (ref t_f0 , ref t_f1) = t,
+    eq_bool (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_bool (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
-eq_bool(s.clone(), t.clone()) <--
-    bool(s),
-    if let Bool :: EqStr(ref s_f0, ref s_f1) = s,
-    bool(t),
-    if let Bool :: EqStr(ref t_f0, ref t_f1) = t,
-    eq_str(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_str(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_bool (s . clone () , t . clone ()) <--
+    bool (s),
+    if let Bool :: EqStr (ref s_f0 , ref s_f1) = s,
+    bool (t),
+    if let Bool :: EqStr (ref t_f0 , ref t_f1) = t,
+    eq_str (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_str (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
-eq_bool(s.clone(), t.clone()) <--
-    bool(s),
-    if let Bool :: Not(ref s_f0) = s,
-    bool(t),
-    if let Bool :: Not(ref t_f0) = t,
-    eq_bool(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+eq_bool (s . clone () , t . clone ()) <--
+    bool (s),
+    if let Bool :: Not (ref s_f0) = s,
+    bool (t),
+    if let Bool :: Not (ref t_f0) = t,
+    eq_bool (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ());
 
-eq_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: Pow(ref s_f0, ref s_f1) = s,
-    int(t),
-    if let Int :: Pow(ref t_f0, ref t_f1) = t,
-    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_int (s . clone () , t . clone ()) <--
+    int (s),
+    if let Int :: Pow (ref s_f0 , ref s_f1) = s,
+    int (t),
+    if let Int :: Pow (ref t_f0 , ref t_f1) = t,
+    eq_int (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_int (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
-eq_bool(s.clone(), t.clone()) <--
-    bool(s),
-    if let Bool :: Comp(ref s_f0, ref s_f1) = s,
-    bool(t),
-    if let Bool :: Comp(ref t_f0, ref t_f1) = t,
-    eq_bool(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_bool(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_bool (s . clone () , t . clone ()) <--
+    bool (s),
+    if let Bool :: Comp (ref s_f0 , ref s_f1) = s,
+    bool (t),
+    if let Bool :: Comp (ref t_f0 , ref t_f1) = t,
+    eq_bool (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_bool (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
-eq_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: Len(ref s_f0) = s,
-    int(t),
-    if let Int :: Len(ref t_f0) = t,
-    eq_str(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+eq_int (s . clone () , t . clone ()) <--
+    int (s),
+    if let Int :: Len (ref s_f0) = s,
+    int (t),
+    if let Int :: Len (ref t_f0) = t,
+    eq_str (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ());
 
-eq_str(s.clone(), t.clone()) <--
-    str(s),
-    if let Str :: Concat(ref s_f0, ref s_f1) = s,
-    str(t),
-    if let Str :: Concat(ref t_f0, ref t_f1) = t,
-    eq_str(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_str(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_str (s . clone () , t . clone ()) <--
+    str (s),
+    if let Str :: Concat (ref s_f0 , ref s_f1) = s,
+    str (t),
+    if let Str :: Concat (ref t_f0 , ref t_f1) = t,
+    eq_str (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_str (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
-eq_str(s.clone(), t.clone()) <--
-    str(s),
-    if let Str :: AddStr(ref s_f0, ref s_f1) = s,
-    str(t),
-    if let Str :: AddStr(ref t_f0, ref t_f1) = t,
-    eq_str(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_str(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_str (s . clone () , t . clone ()) <--
+    str (s),
+    if let Str :: AddStr (ref s_f0 , ref s_f1) = s,
+    str (t),
+    if let Str :: AddStr (ref t_f0 , ref t_f1) = t,
+    eq_str (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_str (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
-eq_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: Add(ref s_f0, ref s_f1) = s,
-    int(t),
-    if let Int :: Add(ref t_f0, ref t_f1) = t,
-    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_int (s . clone () , t . clone ()) <--
+    int (s),
+    if let Int :: Add (ref s_f0 , ref s_f1) = s,
+    int (t),
+    if let Int :: Add (ref t_f0 , ref t_f1) = t,
+    eq_int (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_int (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
-eq_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: Sub(ref s_f0, ref s_f1) = s,
-    int(t),
-    if let Int :: Sub(ref t_f0, ref t_f1) = t,
-    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_int (s . clone () , t . clone ()) <--
+    int (s),
+    if let Int :: Sub (ref s_f0 , ref s_f1) = s,
+    int (t),
+    if let Int :: Sub (ref t_f0 , ref t_f1) = t,
+    eq_int (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_int (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
-eq_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: CustomOp(ref s_f0, ref s_f1) = s,
-    int(t),
-    if let Int :: CustomOp(ref t_f0, ref t_f1) = t,
-    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_int (s . clone () , t . clone ()) <--
+    int (s),
+    if let Int :: CustomOp (ref s_f0 , ref s_f1) = s,
+    int (t),
+    if let Int :: CustomOp (ref t_f0 , ref t_f1) = t,
+    eq_int (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
+    eq_int (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
 
 
     // Rewrite rules
-rw_bool(s.clone(), t) <--
-    bool(s),
-    if let Bool :: Eq(left, right) = s,
-    if let Int :: NumLit(a_ref) = left.as_ref(),
-    if let Int :: NumLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Bool :: BoolLit((a == b));
+rw_bool (s . clone () , t) <--
+    bool (s),
+    if let Bool :: Eq (left , right) = s,
+    if let Int :: NumLit (a_ref) = left . as_ref (),
+    if let Int :: NumLit (b_ref) = right . as_ref (),
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let t = Bool :: BoolLit ((a == b));
 
-rw_bool(s.clone(), t) <--
-    bool(s),
-    if let Bool :: EqBool(left, right) = s,
-    if let Bool :: BoolLit(a_ref) = left.as_ref(),
-    if let Bool :: BoolLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Bool :: BoolLit((a == b));
+rw_bool (s . clone () , t) <--
+    bool (s),
+    if let Bool :: EqBool (left , right) = s,
+    if let Bool :: BoolLit (a_ref) = left . as_ref (),
+    if let Bool :: BoolLit (b_ref) = right . as_ref (),
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let t = Bool :: BoolLit ((a == b));
 
-rw_bool(s.clone(), t) <--
-    bool(s),
-    if let Bool :: EqStr(left, right) = s,
-    if let Str :: StringLit(a_ref) = left.as_ref(),
-    if let Str :: StringLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Bool :: BoolLit((a == b));
+rw_bool (s . clone () , t) <--
+    bool (s),
+    if let Bool :: EqStr (left , right) = s,
+    if let Str :: StringLit (a_ref) = left . as_ref (),
+    if let Str :: StringLit (b_ref) = right . as_ref (),
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let t = Bool :: BoolLit ((a == b));
 
-rw_int(s.clone(), t) <--
-    int(s),
-    if let Int :: Pow(left, right) = s,
-    if let Int :: NumLit(a_ref) = left.as_ref(),
-    if let Int :: NumLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Int :: NumLit((a.pow(b as u32)));
+rw_int (s . clone () , t) <--
+    int (s),
+    if let Int :: Pow (left , right) = s,
+    if let Int :: NumLit (a_ref) = left . as_ref (),
+    if let Int :: NumLit (b_ref) = right . as_ref (),
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let t = Int :: NumLit ((a . pow (b as u32)));
 
-rw_bool(s.clone(), t) <--
-    bool(s),
-    if let Bool :: Comp(left, right) = s,
-    if let Bool :: BoolLit(a_ref) = left.as_ref(),
-    if let Bool :: BoolLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Bool :: BoolLit((a && b));
+rw_bool (s . clone () , t) <--
+    bool (s),
+    if let Bool :: Comp (left , right) = s,
+    if let Bool :: BoolLit (a_ref) = left . as_ref (),
+    if let Bool :: BoolLit (b_ref) = right . as_ref (),
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let t = Bool :: BoolLit ((a && b));
 
-rw_str(s.clone(), t) <--
-    str(s),
-    if let Str :: Concat(left, right) = s,
-    if let Str :: StringLit(a_ref) = left.as_ref(),
-    if let Str :: StringLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Str :: StringLit(([a, b].concat()));
+rw_str (s . clone () , t) <--
+    str (s),
+    if let Str :: Concat (left , right) = s,
+    if let Str :: StringLit (a_ref) = left . as_ref (),
+    if let Str :: StringLit (b_ref) = right . as_ref (),
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let t = Str :: StringLit (([a , b] . concat ()));
 
-rw_str(s.clone(), t) <--
-    str(s),
-    if let Str :: AddStr(left, right) = s,
-    if let Str :: StringLit(a_ref) = left.as_ref(),
-    if let Str :: StringLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Str :: StringLit(({ let mut x = a.clone();
+rw_str (s . clone () , t) <--
+    str (s),
+    if let Str :: AddStr (left , right) = s,
+    if let Str :: StringLit (a_ref) = left . as_ref (),
+    if let Str :: StringLit (b_ref) = right . as_ref (),
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let t = Str :: StringLit (({let mut x = a . clone ();
 
-x.push_str(& b);
+x . push_str (& b);
 
-x }));
+x}));
 
-rw_int(s.clone(), t) <--
-    int(s),
-    if let Int :: Add(left, right) = s,
-    if let Int :: NumLit(a_ref) = left.as_ref(),
-    if let Int :: NumLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Int :: NumLit((a + b));
+rw_int (s . clone () , t) <--
+    int (s),
+    if let Int :: Add (left , right) = s,
+    if let Int :: NumLit (a_ref) = left . as_ref (),
+    if let Int :: NumLit (b_ref) = right . as_ref (),
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let t = Int :: NumLit ((a + b));
 
-rw_bool(orig.clone(), t) <--
-    bool(orig),
-    if let Bool :: Not(inner) = orig,
-    if let Bool :: BoolLit(s_ref) = inner.as_ref(),
-    let a = s_ref.clone(),
-    let t = Bool :: BoolLit(({ match a { true => false, false => true, } }));
+rw_bool (orig . clone () , t) <--
+    bool (orig),
+    if let Bool :: Not (inner) = orig,
+    if let Bool :: BoolLit (s_ref) = inner . as_ref (),
+    let a = s_ref . clone (),
+    let t = Bool :: BoolLit (({match a {true => false , false => true ,}}));
 
-rw_int(orig.clone(), t) <--
-    int(orig),
-    if let Int :: Len(inner) = orig,
-    if let Str :: StringLit(s_ref) = inner.as_ref(),
-    let s = s_ref.clone(),
-    let t = Int :: NumLit((s.len() as i32));
+rw_int (orig . clone () , t) <--
+    int (orig),
+    if let Int :: Len (inner) = orig,
+    if let Str :: StringLit (s_ref) = inner . as_ref (),
+    let s = s_ref . clone (),
+    let t = Int :: NumLit ((s . len () as i32));
 
-fold_int(t.clone(), t.clone()) <--
-    int(t),
-    if let Int :: NumLit(_) = t;
+fold_int (t . clone () , t . clone ()) <--
+    int (t),
+    if let Int :: NumLit (_) = t;
 
-fold_int(s.clone(), res) <--
-    int(s),
-    if let Int :: Pow(left, right) = s,
-    fold_int(left.as_ref().clone(), lv),
-    fold_int(right.as_ref().clone(), rv),
-    if let Int :: NumLit(a_ref) = & lv,
-    if let Int :: NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = Int :: NumLit((a.pow(b as u32)));
+fold_int (s . clone () , res) <--
+    int (s),
+    if let Int :: Pow (left , right) = s,
+    fold_int (left . as_ref () . clone () , lv),
+    fold_int (right . as_ref () . clone () , rv),
+    if let Int :: NumLit (a_ref) = & lv,
+    if let Int :: NumLit (b_ref) = & rv,
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let res = Int :: NumLit ((a . pow (b as u32)));
 
-fold_int(s.clone(), res) <--
-    int(s),
-    if let Int :: Add(left, right) = s,
-    fold_int(left.as_ref().clone(), lv),
-    fold_int(right.as_ref().clone(), rv),
-    if let Int :: NumLit(a_ref) = & lv,
-    if let Int :: NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = Int :: NumLit((a + b));
+fold_int (s . clone () , res) <--
+    int (s),
+    if let Int :: Add (left , right) = s,
+    fold_int (left . as_ref () . clone () , lv),
+    fold_int (right . as_ref () . clone () , rv),
+    if let Int :: NumLit (a_ref) = & lv,
+    if let Int :: NumLit (b_ref) = & rv,
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let res = Int :: NumLit ((a + b));
 
-fold_int(s.clone(), res) <--
-    int(s),
-    if let Int :: Sub(left, right) = s,
-    fold_int(left.as_ref().clone(), lv),
-    fold_int(right.as_ref().clone(), rv),
-    if let Int :: NumLit(a_ref) = & lv,
-    if let Int :: NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = Int :: NumLit((a - b));
+fold_int (s . clone () , res) <--
+    int (s),
+    if let Int :: Sub (left , right) = s,
+    fold_int (left . as_ref () . clone () , lv),
+    fold_int (right . as_ref () . clone () , rv),
+    if let Int :: NumLit (a_ref) = & lv,
+    if let Int :: NumLit (b_ref) = & rv,
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let res = Int :: NumLit ((a - b));
 
-fold_int(s.clone(), res) <--
-    int(s),
-    if let Int :: CustomOp(left, right) = s,
-    fold_int(left.as_ref().clone(), lv),
-    fold_int(right.as_ref().clone(), rv),
-    if let Int :: NumLit(a_ref) = & lv,
-    if let Int :: NumLit(b_ref) = & rv,
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let res = Int :: NumLit((2 * a + 3 * b));
+fold_int (s . clone () , res) <--
+    int (s),
+    if let Int :: CustomOp (left , right) = s,
+    fold_int (left . as_ref () . clone () , lv),
+    fold_int (right . as_ref () . clone () , rv),
+    if let Int :: NumLit (a_ref) = & lv,
+    if let Int :: NumLit (b_ref) = & rv,
+    let a = a_ref . clone (),
+    let b = b_ref . clone (),
+    let res = Int :: NumLit ((2 * a + 3 * b));
 
-rw_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: Sub(_, _) = s,
-    fold_int(s, t);
+rw_int (s . clone () , t . clone ()) <--
+    int (s),
+    if let Int :: Sub (_ , _) = s,
+    fold_int (s , t);
 
-rw_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: CustomOp(_, _) = s,
-    fold_int(s, t);
+rw_int (s . clone () , t . clone ()) <--
+    int (s),
+    if let Int :: CustomOp (_ , _) = s,
+    fold_int (s , t);
 
-rw_int(lhs.clone(), rhs) <--
-    int(lhs),
-    if let Int :: Add(ref x0, ref x1) = lhs,
-    rw_int((* * x0).clone(), t),
-    let rhs = Int :: Add(Box :: new(t.clone()), x1.clone());
+rw_int (lhs . clone () , rhs) <--
+    int (lhs),
+    if let Int :: Add (ref x0 , ref x1) = lhs,
+    rw_int ((* * x0) . clone () , t),
+    let rhs = Int :: Add (Box :: new (t . clone ()) , x1 . clone ());
 
-rw_int(lhs.clone(), rhs) <--
-    int(lhs),
-    if let Int :: Add(ref x0, ref x1) = lhs,
-    rw_int((* * x1).clone(), t),
-    let rhs = Int :: Add(x0.clone(), Box :: new(t.clone()));
+rw_int (lhs . clone () , rhs) <--
+    int (lhs),
+    if let Int :: Add (ref x0 , ref x1) = lhs,
+    rw_int ((* * x1) . clone () , t),
+    let rhs = Int :: Add (x0 . clone () , Box :: new (t . clone ()));
 
-rw_int(lhs.clone(), rhs) <--
-    int(lhs),
-    if let Int :: Sub(ref x0, ref x1) = lhs,
-    rw_int((* * x0).clone(), t),
-    let rhs = Int :: Sub(Box :: new(t.clone()), x1.clone());
+rw_int (lhs . clone () , rhs) <--
+    int (lhs),
+    if let Int :: Sub (ref x0 , ref x1) = lhs,
+    rw_int ((* * x0) . clone () , t),
+    let rhs = Int :: Sub (Box :: new (t . clone ()) , x1 . clone ());
 
-rw_int(lhs.clone(), rhs) <--
-    int(lhs),
-    if let Int :: Sub(ref x0, ref x1) = lhs,
-    rw_int((* * x1).clone(), t),
-    let rhs = Int :: Sub(x0.clone(), Box :: new(t.clone()));
+rw_int (lhs . clone () , rhs) <--
+    int (lhs),
+    if let Int :: Sub (ref x0 , ref x1) = lhs,
+    rw_int ((* * x1) . clone () , t),
+    let rhs = Int :: Sub (x0 . clone () , Box :: new (t . clone ()));
 
-rw_str(lhs.clone(), rhs) <--
-    str(lhs),
-    if let Str :: AddStr(ref x0, ref x1) = lhs,
-    rw_str((* * x0).clone(), t),
-    let rhs = Str :: AddStr(Box :: new(t.clone()), x1.clone());
+rw_str (lhs . clone () , rhs) <--
+    str (lhs),
+    if let Str :: AddStr (ref x0 , ref x1) = lhs,
+    rw_str ((* * x0) . clone () , t),
+    let rhs = Str :: AddStr (Box :: new (t . clone ()) , x1 . clone ());
 
-rw_str(lhs.clone(), rhs) <--
-    str(lhs),
-    if let Str :: AddStr(ref x0, ref x1) = lhs,
-    rw_str((* * x1).clone(), t),
-    let rhs = Str :: AddStr(x0.clone(), Box :: new(t.clone()));
+rw_str (lhs . clone () , rhs) <--
+    str (lhs),
+    if let Str :: AddStr (ref x0 , ref x1) = lhs,
+    rw_str ((* * x1) . clone () , t),
+    let rhs = Str :: AddStr (x0 . clone () , Box :: new (t . clone ()));
 
-rw_bool(lhs.clone(), rhs) <--
-    bool(lhs),
-    if let Bool :: Comp(ref x0, ref x1) = lhs,
-    rw_bool((* * x0).clone(), t),
-    let rhs = Bool :: Comp(Box :: new(t.clone()), x1.clone());
+rw_bool (lhs . clone () , rhs) <--
+    bool (lhs),
+    if let Bool :: Comp (ref x0 , ref x1) = lhs,
+    rw_bool ((* * x0) . clone () , t),
+    let rhs = Bool :: Comp (Box :: new (t . clone ()) , x1 . clone ());
 
-rw_bool(lhs.clone(), rhs) <--
-    bool(lhs),
-    if let Bool :: Comp(ref x0, ref x1) = lhs,
-    rw_bool((* * x1).clone(), t),
-    let rhs = Bool :: Comp(x0.clone(), Box :: new(t.clone()));
+rw_bool (lhs . clone () , rhs) <--
+    bool (lhs),
+    if let Bool :: Comp (ref x0 , ref x1) = lhs,
+    rw_bool ((* * x1) . clone () , t),
+    let rhs = Bool :: Comp (x0 . clone () , Box :: new (t . clone ()));
 
-rw_bool(lhs.clone(), rhs) <--
-    bool(lhs),
-    if let Bool :: Not(ref x0) = lhs,
-    rw_bool((* * x0).clone(), t),
-    let rhs = Bool :: Not(Box :: new(t.clone()));
+rw_bool (lhs . clone () , rhs) <--
+    bool (lhs),
+    if let Bool :: Not (ref x0) = lhs,
+    rw_bool ((* * x0) . clone () , t),
+    let rhs = Bool :: Not (Box :: new (t . clone ()));
 
-rw_bool(lhs.clone(), rhs) <--
-    bool(lhs),
-    if let Bool :: Eq(ref x0, ref x1) = lhs,
-    rw_int((* * x0).clone(), t),
-    let rhs = Bool :: Eq(Box :: new(t.clone()), x1.clone());
+rw_bool (lhs . clone () , rhs) <--
+    bool (lhs),
+    if let Bool :: Eq (ref x0 , ref x1) = lhs,
+    rw_int ((* * x0) . clone () , t),
+    let rhs = Bool :: Eq (Box :: new (t . clone ()) , x1 . clone ());
 
-rw_bool(lhs.clone(), rhs) <--
-    bool(lhs),
-    if let Bool :: Eq(ref x0, ref x1) = lhs,
-    rw_int((* * x1).clone(), t),
-    let rhs = Bool :: Eq(x0.clone(), Box :: new(t.clone()));
+rw_bool (lhs . clone () , rhs) <--
+    bool (lhs),
+    if let Bool :: Eq (ref x0 , ref x1) = lhs,
+    rw_int ((* * x1) . clone () , t),
+    let rhs = Bool :: Eq (x0 . clone () , Box :: new (t . clone ()));
 
-rw_bool(lhs.clone(), rhs) <--
-    bool(lhs),
-    if let Bool :: EqBool(ref x0, ref x1) = lhs,
-    rw_bool((* * x0).clone(), t),
-    let rhs = Bool :: EqBool(Box :: new(t.clone()), x1.clone());
+rw_bool (lhs . clone () , rhs) <--
+    bool (lhs),
+    if let Bool :: EqBool (ref x0 , ref x1) = lhs,
+    rw_bool ((* * x0) . clone () , t),
+    let rhs = Bool :: EqBool (Box :: new (t . clone ()) , x1 . clone ());
 
-rw_bool(lhs.clone(), rhs) <--
-    bool(lhs),
-    if let Bool :: EqBool(ref x0, ref x1) = lhs,
-    rw_bool((* * x1).clone(), t),
-    let rhs = Bool :: EqBool(x0.clone(), Box :: new(t.clone()));
+rw_bool (lhs . clone () , rhs) <--
+    bool (lhs),
+    if let Bool :: EqBool (ref x0 , ref x1) = lhs,
+    rw_bool ((* * x1) . clone () , t),
+    let rhs = Bool :: EqBool (x0 . clone () , Box :: new (t . clone ()));
 
-rw_bool(lhs.clone(), rhs) <--
-    bool(lhs),
-    if let Bool :: EqStr(ref x0, ref x1) = lhs,
-    rw_str((* * x0).clone(), t),
-    let rhs = Bool :: EqStr(Box :: new(t.clone()), x1.clone());
+rw_bool (lhs . clone () , rhs) <--
+    bool (lhs),
+    if let Bool :: EqStr (ref x0 , ref x1) = lhs,
+    rw_str ((* * x0) . clone () , t),
+    let rhs = Bool :: EqStr (Box :: new (t . clone ()) , x1 . clone ());
 
-rw_bool(lhs.clone(), rhs) <--
-    bool(lhs),
-    if let Bool :: EqStr(ref x0, ref x1) = lhs,
-    rw_str((* * x1).clone(), t),
-    let rhs = Bool :: EqStr(x0.clone(), Box :: new(t.clone()));
+rw_bool (lhs . clone () , rhs) <--
+    bool (lhs),
+    if let Bool :: EqStr (ref x0 , ref x1) = lhs,
+    rw_str ((* * x1) . clone () , t),
+    let rhs = Bool :: EqStr (x0 . clone () , Box :: new (t . clone ()));
 
 }

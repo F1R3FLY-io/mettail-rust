@@ -76,9 +76,7 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
     // Add use statements for runtime helpers. Only include what's needed
     let has_binders = language.terms.iter().any(|r| !r.bindings.is_empty());
 
-    // Check if any category needs Var (i.e., has non-native types OR has Var rules)
-    let _needs_var = language.types.iter().any(|t| t.native_type.is_none())
-        || language.terms.iter().any(is_var_rule);
+
 
     // Check if any term uses HashBag collections (for #sep)
     let needs_hashbag = language.terms.iter().any(|r| {
@@ -114,9 +112,8 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
     // When used in library modules, LALRPOP will handle the paths correctly
     let mut type_names: Vec<String> = language.types.iter().map(|t| t.name.to_string()).collect();
 
-    // Add VarCategory for lambda type inference (only if there are non-native types)
-    let has_non_native_types = language.types.iter().any(|t| t.native_type.is_none());
-    if has_non_native_types {
+    // Add VarCategory for lambda/var type inference (for all types, including native)
+    if !language.types.is_empty() {
         type_names.push("VarCategory".to_string());
     }
 
@@ -1799,11 +1796,7 @@ fn generate_auto_alternatives(
     // Auto-generate lambda alternatives
     // ONLY for the FIRST (primary) exported category to avoid grammar ambiguity
     // Other categories can still have lambda VARIANTS but no parser rules
-    let first_export = language
-        .types
-        .iter()
-        .find(|t| t.native_type.is_none())
-        .map(|t| &t.name);
+    let first_export = language.types.first().map(|t| &t.name);
 
     // Only add lambda parser rules if this is the primary category
     let is_primary_category = first_export.map(|f| f == category).unwrap_or(false);
@@ -1813,7 +1806,6 @@ fn generate_auto_alternatives(
         let domain_cats: Vec<_> = language
             .types
             .iter()
-            .filter(|t| t.native_type.is_none())
             .map(|t| &t.name)
             .collect();
 

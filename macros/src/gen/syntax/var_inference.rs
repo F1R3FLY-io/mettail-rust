@@ -99,20 +99,12 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
             }
         });
 
-        // Generate arms for Apply/Lam variants only for non-native domains
-        // (native-only categories don't have Apply/Lam variants in their enum)
-        let non_native_domains: Vec<_> = cat_names
+        // Generate arms for Apply/Lam variants for all domains (including native, e.g. Int/Bool/Str)
+        let domain_cats: Vec<_> = cat_names
             .iter()
-            .filter(|c| {
-                language
-                    .types
-                    .iter()
-                    .find(|t| t.name.to_string() == c.to_string())
-                    .map(|t| t.native_type.is_none())
-                    .unwrap_or(false)
-            })
+            .filter(|c| language.types.iter().any(|t| t.name.to_string() == c.to_string()))
             .collect();
-        for domain in &non_native_domains {
+        for domain in &domain_cats {
             let apply_variant = syn::Ident::new(&format!("Apply{}", domain), proc_macro2::Span::call_site());
             type_match_arms.push(quote! {
                 #cat_name::#apply_variant(ref lam, ref arg) => {

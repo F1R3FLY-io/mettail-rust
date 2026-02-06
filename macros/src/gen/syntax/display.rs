@@ -75,13 +75,8 @@ fn generate_display_impl(
         }
     }
 
-    // Generate display arms for auto-generated lambda variants
+    // Generate display arms for auto-generated lambda variants (including native, e.g. Int/Bool/Str)
     for domain_lang_type in &language.types {
-        // Skip native types
-        if domain_lang_type.native_type.is_some() {
-            continue;
-        }
-
         let domain_name = &domain_lang_type.name;
 
         // Single-binder lambda: Lam{Domain}

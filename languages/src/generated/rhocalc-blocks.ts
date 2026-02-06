@@ -115,6 +115,28 @@ const definitions = [
 		inputsInline: true,
 		output: "Name",
 		colour: "65cda8",
+	},
+
+	// Add: ... ...
+	{
+		type: "int_add",
+		tooltip: "Add: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
 	}
 ];
 

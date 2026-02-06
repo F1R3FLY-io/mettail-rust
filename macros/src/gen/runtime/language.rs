@@ -488,12 +488,7 @@ fn generate_language_struct(
 
 /// Generate the collect_all_vars_impl method with proper traversal
 fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) -> TokenStream {
-    let categories: Vec<_> = language
-        .types
-        .iter()
-        .filter(|t| t.native_type.is_none())
-        .map(|t| &t.name)
-        .collect();
+    let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
     // Generate lambda handling arms
     let mut lambda_arms: Vec<TokenStream> = Vec::new();
@@ -1418,13 +1413,8 @@ fn generate_language_trait_impl_multi(
 fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef) -> TokenStream {
     let primary_type_lit = LitStr::new(&primary_type.to_string(), primary_type.span());
 
-    // Get all non-native categories for lambda variant detection
-    let categories: Vec<_> = language
-        .types
-        .iter()
-        .filter(|t| t.native_type.is_none())
-        .map(|t| &t.name)
-        .collect();
+    // Get all categories for lambda variant detection (including native, e.g. Int/Bool/Str)
+    let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
     // Generate match arms for lambda variants
     let mut lambda_arms: Vec<TokenStream> = Vec::new();

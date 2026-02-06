@@ -684,14 +684,7 @@ fn generate_subst_by_name_arm(
 
 /// Generate substitution impl for a single category
 fn generate_category_substitution(category: &Ident, language: &LanguageDef) -> TokenStream {
-    // Skip native types - they don't have variables
-    if has_native_type(category, language).is_some() {
-        return quote! {
-            impl #category {
-                // Native types don't support substitution - they're values, not variables
-            }
-        };
-    }
+    
 
     // Collect all variants for this category
     let variants = collect_category_variants(category, language);
@@ -735,23 +728,8 @@ fn collect_category_variants(category: &Ident, language: &LanguageDef) -> Vec<Va
         }
     }
 
-    // Auto-generated lambda/Apply variants only for non-native categories
-    // (native-only categories like Int don't have Lam/Apply variants in their enum)
-    let category_is_native = language
-        .get_type(category)
-        .and_then(|t| t.native_type.as_ref())
-        .is_some();
-    if category_is_native {
-        return variants;
-    }
-
-    // Lambda variants for every non-native domain category
+    // Auto-generated lambda/Apply variants for every category (including native, e.g. Int/Bool/Str)
     for domain_lang_type in &language.types {
-        // Skip native types (can't use as lambda binder)
-        if domain_lang_type.native_type.is_some() {
-            continue;
-        }
-
         let domain_name = &domain_lang_type.name;
 
         // Single-binder lambda: Lam{Domain}
@@ -1103,12 +1081,11 @@ fn generate_subst_impl(
         .map(|v| generate_subst_arm(category, v, category))
         .collect();
 
-    // Generate cross-category methods
+    // Generate cross-category methods (including native, e.g. subst_int, subst_bool, subst_str)
     let cross_methods: Vec<TokenStream> = language
         .types
         .iter()
         .filter(|t| t.name != *category)
-        .filter(|t| t.native_type.is_none()) // Skip native types
         .map(|t| {
             let repl_cat = &t.name;
             let repl_cat_lower = repl_cat.to_string().to_lowercase();

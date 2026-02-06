@@ -1,7 +1,7 @@
 // Generated LALRPOP grammar for theory: Calculator
 // This file is auto-generated - do not edit manually
 
-use super::{Int, Bool, Str};
+use super::{Int, Bool, Str, VarCategory};
 
 grammar;
 
@@ -52,7 +52,53 @@ IntAtom: Int = {
     "|" <s:Str> "|" => Int::Len(Box::new(s)),
     "-" <i:Integer> => Int::NumLit(-i),
     <i:Integer> => Int::NumLit(i),
-    <v:Ident> => Int::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
+    <v:Ident> => Int::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
+    "^" <x:Ident> "." "{" <body:Int> "}" => {
+        let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(x.clone()));
+        // Infer binder type from usage in body (supports higher-order types)
+        match body.infer_var_type(&x) {
+            Some(ref t) => match t.base_type() {
+                VarCategory::Int => Int::LamInt(mettail_runtime::Scope::new(binder, Box::new(body))),
+                VarCategory::Bool => Int::LamBool(mettail_runtime::Scope::new(binder, Box::new(body))),
+                VarCategory::Str => Int::LamStr(mettail_runtime::Scope::new(binder, Box::new(body))),
+            },
+            None => panic!("Lambda binder '{}' not used in body", x),
+        }
+    },
+    "^" "[" <xs:Comma<Ident>> "]" "." "{" <body:Int> "}" => {
+        let binder_names: Vec<_> = xs.clone();
+        let binders: Vec<_> = xs.into_iter()
+            .map(|x| mettail_runtime::Binder(mettail_runtime::get_or_create_var(x)))
+            .collect();
+        // Infer binder type from first binder's usage in body
+        let first_binder = binder_names.first().expect("Multi-lambda needs at least one binder");
+        match body.infer_var_type(first_binder) {
+            Some(ref t) => match t.base_type() {
+                VarCategory::Int => Int::MLamInt(mettail_runtime::Scope::new(binders, Box::new(body))),
+                VarCategory::Bool => Int::MLamBool(mettail_runtime::Scope::new(binders, Box::new(body))),
+                VarCategory::Str => Int::MLamStr(mettail_runtime::Scope::new(binders, Box::new(body))),
+            },
+            None => panic!("Lambda binder '{}' not used in body", first_binder),
+        }
+    },
+    "$int" "(" <lam:Int> "," <arg:Int> ")" => {
+        Int::ApplyInt(Box::new(lam), Box::new(arg))
+    },
+    "$bool" "(" <lam:Int> "," <arg:Bool> ")" => {
+        Int::ApplyBool(Box::new(lam), Box::new(arg))
+    },
+    "$str" "(" <lam:Int> "," <arg:Str> ")" => {
+        Int::ApplyStr(Box::new(lam), Box::new(arg))
+    },
+    "$$int(" <lam:Int> "," <args:Comma<Int>> ")" => {
+        Int::MApplyInt(Box::new(lam), args)
+    },
+    "$$bool(" <lam:Int> "," <args:Comma<Bool>> ")" => {
+        Int::MApplyBool(Box::new(lam), args)
+    },
+    "$$str(" <lam:Int> "," <args:Comma<Str>> ")" => {
+        Int::MApplyStr(Box::new(lam), args)
+    }
 };
 
 pub Bool: Bool = {

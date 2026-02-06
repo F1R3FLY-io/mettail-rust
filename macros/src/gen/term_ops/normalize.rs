@@ -334,10 +334,8 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                                         } else if field_cat_str == "Var" {
                                             // Var field - not boxed, just clone
                                             quote! { #field_name.clone() }
-                                        } else if language.types.iter().any(|t| {
-                                            t.name == *field_cat && t.native_type.is_none()
-                                        }) {
-                                            // Another non-native category - normalize it (boxed)
+                                        } else if language.types.iter().any(|t| t.name == *field_cat) {
+                                            // Another category (including native) - normalize it (boxed)
                                             quote! { Box::new(#field_name.as_ref().normalize()) }
                                         } else {
                                             // Native type or unknown - just clone (boxed)
@@ -450,13 +448,8 @@ fn generate_beta_reduction_arms(category: &syn::Ident, language: &LanguageDef) -
 
     let mut arms = Vec::new();
 
-    // For each domain type, generate beta-reduction arms
+    // For each domain type, generate beta-reduction arms (including native, e.g. Int/Bool/Str)
     for domain_lang_type in &language.types {
-        // Skip native types
-        if domain_lang_type.native_type.is_some() {
-            continue;
-        }
-
         let domain = &domain_lang_type.name;
         let domain_lower = domain.to_string().to_lowercase();
 

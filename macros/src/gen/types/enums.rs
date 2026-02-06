@@ -61,14 +61,9 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             });
         }
 
-        // Auto-generate lambda variants for every domain category
+        // Auto-generate lambda variants for every domain category (including native, e.g. Int/Bool/Str)
         // This creates Lam{Domain} and MLam{Domain} for each domain type
         for domain_lang_type in &language.types {
-            // Skip native types (e.g., Int) - can't use as lambda binder
-            if domain_lang_type.native_type.is_some() {
-                continue;
-            }
-
             let domain_name = &domain_lang_type.name;
 
             // Single-binder lambda: Lam{Domain}
