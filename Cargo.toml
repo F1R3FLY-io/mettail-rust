@@ -1,5 +1,5 @@
 [workspace]
-members = ["macros", "runtime", "languages", "repl"]
+members = ["macros", "runtime", "languages", "languages/lang-gen", "repl"]
 resolver = "2"
 
 [package]

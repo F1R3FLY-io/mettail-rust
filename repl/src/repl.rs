@@ -875,114 +875,19 @@ impl Repl {
     }
 
     fn cmd_exec_term(&mut self, term_str: &str) -> Result<()> {
-        // Get the loaded theory name
-        let language_name = self
-            .state
-            .language_name()
-            .ok_or_else(|| anyhow::anyhow!("No language loaded. Use 'lang <language>' first."))?;
-
-        // Get the theory from the registry
-        let language = self.registry.get(language_name)?;
-
-        println!();
-        print!("Parsing... ");
-
-        // Pre-substitute env-bound identifiers into input (so `x && true` works when x = true,
-        // since Bool requires `bool:x` in the grammar but we substitute `x` → `true` before parse)
-        let parse_input = if let Some(env) = self.state.environment() {
-            if !language.is_env_empty(env) {
-                pre_substitute_env(term_str, language, env)
-            } else {
-                term_str.to_string()
-            }
-        } else {
-            term_str.to_string()
-        };
-
-        // Parse the term using parse_term_for_env to share FreeVar IDs with environment
-        // This ensures that variables like `a` in the input match `a` from substituted env terms
-        let term = language
-            .parse_term_for_env(&parse_input)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-        println!("{}", "✓".green());
-
-        // Apply environment substitution if environment exists and is not empty
-        let term = if let Some(env) = self.state.environment() {
-            if !language.is_env_empty(env) {
-                print!("Substituting environment... ");
-                let substituted = language
-                    .substitute_env(term.as_ref(), env)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
-                println!("{}", "✓".green());
-
-                substituted
-            } else {
-                term
-            }
-        } else {
-            term
-        };
-
-        // Direct eval path: if term is fully evaluable, bypass Ascent
-        if let Some(result_term) = language.try_direct_eval(term.as_ref()) {
-            let result_id = result_term.term_id();
-            let results = AscentResults::from_single_term(result_term.as_ref());
-            println!();
-            println!("{}", "Current term (result):".bold());
-            let formatted = format_term_pretty(&format!("{}", result_term));
-            println!("{}", formatted.cyan());
-            println!();
-            self.state.set_term_with_id(result_term, results, result_id)?;
-            return Ok(());
-        }
-
-        print!("Running Ascent... ");
-
-        let start_time = Instant::now();
-        // Run Ascent
-        let results = language
-            .run_ascent(term.as_ref())
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-        let end_time = Instant::now();
-        let duration = end_time.duration_since(start_time);
-        println!("Time taken: {:?}", duration);
-        println!("{}", "Done!".green());
-
-        println!();
-        println!("Computed:");
-        println!("  - {} terms", results.all_terms.len());
-        println!("  - {} rewrites", results.rewrites.len());
-        println!("  - {} normal forms", results.normal_forms().len());
-        println!();
-
-        // After exec, show the result: a normal form reachable from the initial term
-        let initial_id = term.term_id();
-        if let Some(nf) = results.normal_form_reachable_from(initial_id) {
-            let result_term = language
-                .parse_term(&nf.display)
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            println!("{}", "Current term (result):".bold());
-            let formatted = format_term_pretty(&nf.display);
-            println!("{}", formatted.cyan());
-            println!();
-            self.state
-                .set_term_with_id(result_term, results.clone(), nf.term_id)?;
-            return Ok(());
-        }
-
-        // No reachable normal form (e.g. initial term not in graph): show initial term
-        println!("{}", "Current term:".bold());
-        let formatted = format_term_pretty(&format!("{}", term));
-        println!("{}", formatted.cyan());
-        println!();
-        self.state.set_term(term, results)?;
-
-        Ok(())
+        self.exec_or_step_term(term_str.trim(), /* step_mode: */ false)
     }
 
     /// Step-by-step execution: run Ascent but leave current term at the initial term
     /// so the user can type `apply 0` to apply one rewrite at a time.
+    /// Step mode never uses direct eval so the user always sees the initial term and can apply rewrites.
     fn cmd_step_term(&mut self, term_str: &str) -> Result<()> {
+        self.exec_or_step_term(term_str.trim(), /* step_mode: */ true)
+    }
+
+    /// Shared parse + substitute + (optionally) direct-eval + Ascent. When step_mode is true,
+    /// we never use try_direct_eval so the initial term is always shown and rewrites can be applied.
+    fn exec_or_step_term(&mut self, term_str: &str, step_mode: bool) -> Result<()> {
         let language_name = self
             .state
             .language_name()
@@ -993,7 +898,6 @@ impl Repl {
         println!();
         print!("Parsing... ");
 
-        // Pre-substitute env-bound identifiers into input
         let parse_input = if let Some(env) = self.state.environment() {
             if !language.is_env_empty(env) {
                 pre_substitute_env(term_str, language, env)
@@ -1012,9 +916,15 @@ impl Repl {
         let term = if let Some(env) = self.state.environment() {
             if !language.is_env_empty(env) {
                 print!("Substituting environment... ");
-                let substituted = language
-                    .substitute_env(term.as_ref(), env)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                let substituted = if step_mode {
+                    language
+                        .substitute_env_preserve_structure(term.as_ref(), env)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?
+                } else {
+                    language
+                        .substitute_env(term.as_ref(), env)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?
+                };
                 println!("{}", "✓".green());
                 substituted
             } else {
@@ -1023,6 +933,21 @@ impl Repl {
         } else {
             term
         };
+
+        // Direct eval only for exec: step must always run Ascent and show the initial term
+        if !step_mode {
+            if let Some(result_term) = language.try_direct_eval(term.as_ref()) {
+                let result_id = result_term.term_id();
+                let results = AscentResults::from_single_term(result_term.as_ref());
+                println!();
+                println!("{}", "Current term (result):".bold());
+                let formatted = format_term_pretty(&format!("{}", result_term));
+                println!("{}", formatted.cyan());
+                println!();
+                self.state.set_term_with_id(result_term, results, result_id)?;
+                return Ok(());
+            }
+        }
 
         print!("Running Ascent... ");
         let start_time = Instant::now();
@@ -1040,23 +965,42 @@ impl Repl {
         println!("  - {} normal forms", results.normal_forms().len());
         println!();
 
-        // Always show initial term so user can apply rewrites one by one
         let initial_id = term.term_id();
-        let available = results.rewrites_from(initial_id).len();
 
-        println!("{}", "Current term (initial):".bold());
-        let formatted = format_term_pretty(&format!("{}", term));
-        println!("{}", formatted.cyan());
-        println!();
-        self.state.set_term_with_id(term, results, initial_id)?;
-
-        if available > 0 {
-            println!("  Use {} to apply a rewrite ({} available).", "apply 0".cyan(), available);
+        if step_mode {
+            // Step: always show initial term so user can apply rewrites one by one
+            let available = results.rewrites_from(initial_id).len();
+            println!("{}", "Current term (initial):".bold());
+            let formatted = format_term_pretty(&format!("{}", term));
+            println!("{}", formatted.cyan());
+            println!();
+            self.state.set_term_with_id(term, results, initial_id)?;
+            if available > 0 {
+                println!("  Use {} to apply a rewrite ({} available).", "apply 0".cyan(), available);
+            } else {
+                println!("  No rewrites from this term (already a normal form).");
+            }
         } else {
-            println!("  No rewrites from this term (already a normal form).");
+            // Exec: show a normal form reachable from the initial term
+            if let Some(nf) = results.normal_form_reachable_from(initial_id) {
+                let result_term = language
+                    .parse_term(&nf.display)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                println!("{}", "Current term (result):".bold());
+                let formatted = format_term_pretty(&nf.display);
+                println!("{}", formatted.cyan());
+                println!();
+                self.state
+                    .set_term_with_id(result_term, results.clone(), nf.term_id)?;
+                return Ok(());
+            }
+            println!("{}", "Current term:".bold());
+            let formatted = format_term_pretty(&format!("{}", term));
+            println!("{}", formatted.cyan());
+            println!();
+            self.state.set_term(term, results)?;
         }
         println!();
-
         Ok(())
     }
 

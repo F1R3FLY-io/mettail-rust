@@ -164,23 +164,21 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                 /// Iterates until fixed point (no more substitutions possible).
                 /// Finally normalizes FreeVar IDs and flattens any nested collections.
                 pub fn substitute_env(&self, env: &#env_name) -> Self {
+                    self.substitute_env_no_fold(env).normalize()
+                }
+
+                /// Substitute environment variables without constant folding (no normalize).
+                /// Use for step mode so the term tree is preserved and rewrites can be shown.
+                pub fn substitute_env_no_fold(&self, env: &#env_name) -> Self {
                     let mut result = self.clone();
-                    // Iterate until fixed point - keep substituting until no changes
-                    // Use Display format for comparison (more stable than Debug for HashBag)
-                    // Limit iterations to prevent infinite loops
                     for _ in 0..100 {
                         let prev_str = format!("{}", result);
                         #(#all_subst_calls)*
-                        // Check if we've reached fixed point (no more changes)
                         if format!("{}", result) == prev_str {
                             break;
                         }
                     }
-                    // Unify FreeVar IDs by name using VAR_CACHE
-                    // This ensures all variables with the same pretty_name have the same ID
-                    let result = result.unify_freevars();
-                    // Normalize to flatten any nested collections (e.g., PPar inside PPar)
-                    result.normalize()
+                    result.unify_freevars()
                 }
 
                 #(#subst_by_name_methods)*

@@ -138,6 +138,16 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         })
         .collect();
 
+    let substitute_no_fold_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env_no_fold(env)) }
+        })
+        .collect();
+
     // Cross-category variable resolution: if after substitution we still have a variable,
     // look it up in other categories (e.g. "x" parsed as Int but bound as Bool -> use Bool value).
     let var_label_per_cat: Vec<(Ident, Ident)> = language
@@ -192,6 +202,18 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                     #(#substitute_arms),*
                 };
                 // Cross-category: if still a variable, try resolving from other categories
+                match &substituted {
+                    #(#cross_resolve_arms)*
+                    _ => {}
+                }
+                substituted
+            }
+
+            /// Substitute without normalizing (no constant folding). For step mode.
+            pub fn substitute_env_no_fold(&self, env: &#env_name) -> Self {
+                let substituted = match self {
+                    #(#substitute_no_fold_arms),*
+                };
                 match &substituted {
                     #(#cross_resolve_arms)*
                     _ => {}
@@ -1078,6 +1100,18 @@ fn generate_language_trait_impl(
                 Ok(Box::new(#term_name(substituted)))
             }
 
+            fn substitute_env_preserve_structure(&self, term: &dyn mettail_runtime::Term, env: &dyn std::any::Any) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
+                let typed_env = env
+                    .downcast_ref::<#env_name>()
+                    .ok_or_else(|| "Invalid environment type".to_string())?;
+                let typed_term = term
+                    .as_any()
+                    .downcast_ref::<#term_name>()
+                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                let substituted = typed_term.0.substitute_env_no_fold(typed_env);
+                Ok(Box::new(#term_name(substituted)))
+            }
+
             fn list_env(&self, env: &dyn std::any::Any) -> Vec<(std::string::String, std::string::String, Option<std::string::String>)> {
                 let typed_env = match env.downcast_ref::<#env_name>() {
                     Some(e) => e,
@@ -1304,6 +1338,18 @@ fn generate_language_trait_impl_multi(
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
                 let substituted = typed_term.0.substitute_env(typed_env);
+                Ok(Box::new(#term_name(substituted)))
+            }
+
+            fn substitute_env_preserve_structure(&self, term: &dyn mettail_runtime::Term, env: &dyn std::any::Any) -> Result<Box<dyn mettail_runtime::Term>, std::string::String> {
+                let typed_env = env
+                    .downcast_ref::<#env_name>()
+                    .ok_or_else(|| "Invalid environment type".to_string())?;
+                let typed_term = term
+                    .as_any()
+                    .downcast_ref::<#term_name>()
+                    .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                let substituted = typed_term.0.substitute_env_no_fold(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
 

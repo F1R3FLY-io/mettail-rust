@@ -152,8 +152,14 @@ pub trait Language: Send + Sync {
     /// Clear all bindings from the environment
     fn clear_env(&self, env: &mut dyn Any);
 
-    /// Apply environment substitution to a term
+    /// Apply environment substitution to a term (includes normalization/constant folding).
     fn substitute_env(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String>;
+
+    /// Substitute environment variables without normalizing (no constant folding).
+    /// Use for step mode so the term tree is preserved and rewrites can be applied one by one.
+    fn substitute_env_preserve_structure(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String> {
+        self.substitute_env(term, env)
+    }
 
     /// List all environment bindings as (name, display, optional_comment) tuples
     ///

@@ -1,0 +1,14 @@
+[package]
+name = "mettail-lang-gen"
+version = "0.1.0"
+edition = "2021"
+description = "Build-time grammar generator for mettail-languages (writes .lalrpop before LALRPOP runs)"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+mettail-macros = { path = "../../macros" }
+
+[build-dependencies]
+syn = { version = "2.0", features = ["full", "extra-traits"] }
