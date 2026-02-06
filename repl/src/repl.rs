@@ -479,10 +479,21 @@ impl Repl {
 
         let language = self.registry.get(language_name)?;
 
+        // Pre-substitute env-bound identifiers so RHS like `x && (3 == 3)` parses when x is Bool
+        let parse_input = if let Some(env) = self.state.environment() {
+            if !language.is_env_empty(env) {
+                pre_substitute_env(term_str, language, env)
+            } else {
+                term_str.to_string()
+            }
+        } else {
+            term_str.to_string()
+        };
+
         // Parse the term WITHOUT clearing var cache
         // This allows shared variables across env definitions (e.g., same `n` in multiple terms)
         let term = language
-            .parse_term_for_env(term_str)
+            .parse_term_for_env(&parse_input)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Ensure environment exists
@@ -702,8 +713,18 @@ impl Repl {
 
             // Try to parse as assignment
             if let Some((name, term_str)) = Self::parse_assignment(line) {
+                // Pre-substitute so RHS can reference names defined earlier in this file
+                let parse_input = if let Some(env) = self.state.environment() {
+                    if !language.is_env_empty(env) {
+                        pre_substitute_env(&term_str, language, env)
+                    } else {
+                        term_str.to_string()
+                    }
+                } else {
+                    term_str.to_string()
+                };
                 // Parse the term (using parse_term_for_env to share variable IDs)
-                match language.parse_term_for_env(&term_str) {
+                match language.parse_term_for_env(&parse_input) {
                     Ok(term) => {
                         if let Some(env) = self.state.environment_mut() {
                             if let Err(e) = language.add_to_env(env, &name, term.as_ref()) {
