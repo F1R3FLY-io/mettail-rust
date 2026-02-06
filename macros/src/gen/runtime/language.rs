@@ -1168,6 +1168,15 @@ fn generate_language_trait_impl_multi(
         })
         .collect();
 
+    // Before adding: remove name from all category envs so reassigning replaces (e.g. x = 1 then x = true)
+    let remove_before_add: Vec<TokenStream> = categories
+        .iter()
+        .map(|cat| {
+            let field = format_ident!("{}", cat.to_string().to_lowercase());
+            quote! { typed_env.#field.remove(name); }
+        })
+        .collect();
+
     // add_to_env: match on term.0 and set the right env field
     let add_to_env_arms: Vec<TokenStream> = language
         .types
@@ -1264,6 +1273,8 @@ fn generate_language_trait_impl_multi(
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
+                // Remove name from all categories first so reassigning replaces the binding
+                #(#remove_before_add)*
                 match &typed_term.0 {
                     #(#add_to_env_arms),*
                 }
