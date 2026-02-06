@@ -13,7 +13,12 @@
 
 use super::TypeChecker;
 use super::ValidationError;
-use crate::ast::{language::{Equation, LanguageDef, FreshnessTarget, Premise}, grammar::{GrammarItem}, language::RewriteRule, pattern::{Pattern, PatternTerm}};
+use crate::ast::{
+    grammar::GrammarItem,
+    language::RewriteRule,
+    language::{Equation, FreshnessTarget, LanguageDef, Premise},
+    pattern::{Pattern, PatternTerm},
+};
 use std::collections::HashSet;
 
 pub fn validate_language(language: &LanguageDef) -> Result<(), ValidationError> {
@@ -115,24 +120,24 @@ fn validate_pattern(pattern: &Pattern, language: &LanguageDef) -> Result<(), Val
             // NOTE: Collections no longer have constructors - they get context from
             // the enclosing PatternTerm::Apply. Validation of collection type
             // compatibility happens when we process the parent Apply.
-            
+
             // Recursively validate element patterns
             for elem in elements {
                 validate_pattern(elem, language)?;
             }
 
             Ok(())
-        }
+        },
         Pattern::Map { collection, body, .. } => {
             validate_pattern(collection, language)?;
             validate_pattern(body, language)?;
             Ok(())
-        }
+        },
         Pattern::Zip { first, second } => {
             validate_pattern(first, language)?;
             validate_pattern(second, language)?;
             Ok(())
-        }
+        },
     }
 }
 
@@ -159,21 +164,21 @@ fn validate_pattern_term(pt: &PatternTerm, language: &LanguageDef) -> Result<(),
                 validate_pattern(arg, language)?;
             }
             Ok(())
-        }
+        },
         PatternTerm::Lambda { body, .. } => validate_pattern(body, language),
         PatternTerm::MultiLambda { body, .. } => validate_pattern(body, language),
         PatternTerm::Subst { term, replacement, .. } => {
             validate_pattern(term, language)?;
             validate_pattern(replacement, language)?;
             Ok(())
-        }
+        },
         PatternTerm::MultiSubst { scope, replacements } => {
             validate_pattern(scope, language)?;
             for repl in replacements {
                 validate_pattern(repl, language)?;
             }
             Ok(())
-        }
+        },
     }
 }
 
@@ -192,45 +197,40 @@ fn validate_equation_freshness(eq: &Equation) -> Result<(), ValidationError> {
 
     // Validate each freshness condition
     for cond in &eq.premises {
-        match cond {
-            Premise::Freshness(freshness) => {
-                let var_name = freshness.var.to_string();
-                let (term_name, term_span) = match &freshness.term {
-                    FreshnessTarget::Var(id) => (id.to_string(), id.span()),
-                    FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
-                };
+        if let Premise::Freshness(freshness) = cond {
+            let var_name = freshness.var.to_string();
+            let (term_name, term_span) = match &freshness.term {
+                FreshnessTarget::Var(id) => (id.to_string(), id.span()),
+                FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
+            };
 
-                // Check that the variable appears in the equation
-                if !equation_vars.contains(&var_name) {
-                    return Err(ValidationError::FreshnessVariableNotInEquation {
-                        var: var_name,
-                        span: freshness.var.span(),
-                    });
-                }
+            // Check that the variable appears in the equation
+            if !equation_vars.contains(&var_name) {
+                return Err(ValidationError::FreshnessVariableNotInEquation {
+                    var: var_name,
+                    span: freshness.var.span(),
+                });
+            }
 
-                // Check that the term variable appears in the equation
-                if !equation_vars.contains(&term_name) {
-                    return Err(ValidationError::FreshnessTermNotInEquation {
-                        var: var_name,
-                        term: term_name,
-                        span: term_span,
-                    });
-                }
+            // Check that the term variable appears in the equation
+            if !equation_vars.contains(&term_name) {
+                return Err(ValidationError::FreshnessTermNotInEquation {
+                    var: var_name,
+                    term: term_name,
+                    span: term_span,
+                });
+            }
 
-                // Check that x does not appear free in term
-                // For now, we do a simple check: if term is a variable, x != term
-                // More sophisticated checking will be added with scoping
-                if var_name == term_name {
-                    return Err(ValidationError::FreshnessSelfReference {
-                        var: var_name,
-                        span: freshness.var.span(),
-                    });
-                }
-            },
-            _ => {},
+            // Check that x does not appear free in term
+            // For now, we do a simple check: if term is a variable, x != term
+            // More sophisticated checking will be added with scoping
+            if var_name == term_name {
+                return Err(ValidationError::FreshnessSelfReference {
+                    var: var_name,
+                    span: freshness.var.span(),
+                });
+            }
         }
-
-        
     }
 
     Ok(())
@@ -246,40 +246,37 @@ fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
 
     // Validate each condition
     for cond in &rw.premises {
-        match cond {
-            Premise::Freshness(freshness) => {
-                let var_name = freshness.var.to_string();
-                let (term_name, term_span) = match &freshness.term {
-                    FreshnessTarget::Var(id) => (id.to_string(), id.span()),
-                    FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
-                };
+        if let Premise::Freshness(freshness) = cond {
+            let var_name = freshness.var.to_string();
+            let (term_name, term_span) = match &freshness.term {
+                FreshnessTarget::Var(id) => (id.to_string(), id.span()),
+                FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
+            };
 
-                // Check that the variable appears in the rewrite
-                if !rewrite_vars.contains(&var_name) {
-                    return Err(ValidationError::FreshnessVariableNotInEquation {
-                        var: var_name,
-                        span: freshness.var.span(),
-                    });
-                }
+            // Check that the variable appears in the rewrite
+            if !rewrite_vars.contains(&var_name) {
+                return Err(ValidationError::FreshnessVariableNotInEquation {
+                    var: var_name,
+                    span: freshness.var.span(),
+                });
+            }
 
-                // Check that the term variable appears in the rewrite
-                if !rewrite_vars.contains(&term_name) {
-                    return Err(ValidationError::FreshnessTermNotInEquation {
-                        var: var_name,
-                        term: term_name,
-                        span: term_span,
-                    });
-                }
+            // Check that the term variable appears in the rewrite
+            if !rewrite_vars.contains(&term_name) {
+                return Err(ValidationError::FreshnessTermNotInEquation {
+                    var: var_name,
+                    term: term_name,
+                    span: term_span,
+                });
+            }
 
-                // Check that x != term (can't be fresh in itself)
-                if var_name == term_name {
-                    return Err(ValidationError::FreshnessSelfReference {
-                        var: var_name,
-                        span: freshness.var.span(),
-                    });
-                }
-            },
-            _ => {},
+            // Check that x != term (can't be fresh in itself)
+            if var_name == term_name {
+                return Err(ValidationError::FreshnessSelfReference {
+                    var: var_name,
+                    span: freshness.var.span(),
+                });
+            }
         }
     }
 
@@ -297,7 +294,7 @@ fn collect_pattern_vars(pattern: &Pattern, vars: &mut HashSet<String>) {
             if let Some(rest_var) = rest {
                 vars.insert(rest_var.to_string());
             }
-        }
+        },
         Pattern::Map { collection, params, body } => {
             collect_pattern_vars(collection, vars);
             // params are bound, so only collect from body excluding params
@@ -307,11 +304,11 @@ fn collect_pattern_vars(pattern: &Pattern, vars: &mut HashSet<String>) {
                 body_vars.remove(&param.to_string());
             }
             vars.extend(body_vars);
-        }
+        },
         Pattern::Zip { first, second } => {
             collect_pattern_vars(first, vars);
             collect_pattern_vars(second, vars);
-        }
+        },
     }
 }
 
@@ -320,12 +317,12 @@ fn collect_pattern_term_vars(pt: &PatternTerm, vars: &mut HashSet<String>) {
     match pt {
         PatternTerm::Var(ident) => {
             vars.insert(ident.to_string());
-        }
+        },
         PatternTerm::Apply { args, .. } => {
             for arg in args {
                 collect_pattern_vars(arg, vars);
             }
-        }
+        },
         PatternTerm::Lambda { binder, body } => {
             // Include the binder as a valid pattern variable (for freshness conditions)
             vars.insert(binder.to_string());
@@ -334,7 +331,7 @@ fn collect_pattern_term_vars(pt: &PatternTerm, vars: &mut HashSet<String>) {
             collect_pattern_vars(body, &mut body_vars);
             body_vars.remove(&binder.to_string());
             vars.extend(body_vars);
-        }
+        },
         PatternTerm::MultiLambda { binders, body } => {
             // Include all binders as valid pattern variables (for freshness conditions)
             for binder in binders {
@@ -347,17 +344,17 @@ fn collect_pattern_term_vars(pt: &PatternTerm, vars: &mut HashSet<String>) {
                 body_vars.remove(&binder.to_string());
             }
             vars.extend(body_vars);
-        }
+        },
         PatternTerm::Subst { term, var, replacement } => {
             collect_pattern_vars(term, vars);
             vars.insert(var.to_string());
             collect_pattern_vars(replacement, vars);
-        }
+        },
         PatternTerm::MultiSubst { scope, replacements } => {
             collect_pattern_vars(scope, vars);
             for repl in replacements {
                 collect_pattern_vars(repl, vars);
             }
-        }
+        },
     }
 }

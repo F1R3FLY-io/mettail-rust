@@ -1,4 +1,7 @@
-use syn::{Ident, Token, parse::{Parse, ParseStream}, Result as SynResult};
+use syn::{
+    parse::{Parse, ParseStream},
+    Ident, Result as SynResult, Token,
+};
 
 /// Collection type specifier
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -55,7 +58,7 @@ impl std::fmt::Display for TypeExpr {
                     CollectionType::HashSet => "HashSet",
                 };
                 write!(f, "{}({})", coll_name, element)
-            }
+            },
         }
     }
 }
@@ -112,17 +115,14 @@ fn parse_type_atom(input: ParseStream) -> SynResult<TypeExpr> {
                     _ => unreachable!(),
                 };
 
-                return Ok(TypeExpr::Collection {
-                    coll_type,
-                    element: Box::new(element),
-                });
+                return Ok(TypeExpr::Collection { coll_type, element: Box::new(element) });
             }
         }
     }
 
     // Check for arrow type: [Domain -> Codomain]
     if input.peek(syn::token::Bracket) {
-    let content;
+        let content;
         syn::bracketed!(content in input);
 
         // Parse domain (which may itself be a bracketed type or include *)
@@ -145,3 +145,23 @@ fn parse_type_atom(input: ParseStream) -> SynResult<TypeExpr> {
     Ok(TypeExpr::Base(ident))
 }
 
+//=============================================================================
+// HOL RUST CODE BLOCKS AND EVAL MODE
+//=============================================================================
+
+/// Rust code block for HOL syntax in grammar rules
+/// Example: `![a + b]` in `Add . a:Int, b:Int |- a "+" b:Int ![a + b] fold;`
+#[derive(Debug, Clone)]
+pub struct RustCodeBlock {
+    /// Parsed Rust expression
+    pub code: syn::Expr,
+}
+
+/// Evaluation mode for HOL syntax (when to apply constant folding vs congruence)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvalMode {
+    /// Only constant folding
+    Fold,
+    /// Only step-by-step (congruence rules)
+    Step,
+}

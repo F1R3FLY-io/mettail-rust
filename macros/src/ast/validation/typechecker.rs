@@ -1,5 +1,10 @@
 use super::ValidationError;
-use crate::ast::{language::{Equation, LanguageDef}, grammar::{GrammarItem, GrammarRule}, language::RewriteRule, pattern::{Pattern, PatternTerm}};
+use crate::ast::{
+    grammar::{GrammarItem, GrammarRule},
+    language::RewriteRule,
+    language::{Equation, LanguageDef},
+    pattern::{Pattern, PatternTerm},
+};
 use proc_macro2::Span;
 use std::collections::HashMap;
 
@@ -16,6 +21,7 @@ pub struct TypeChecker {
 
 /// Information about a constructor
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct ConstructorType {
     pub name: String,
     pub result_category: String,
@@ -24,12 +30,14 @@ pub struct ConstructorType {
 
 /// Information about a category
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CategoryInfo {
     pub name: String,
     pub exported: bool,
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum TypeError {
     UnknownConstructor(String),
     UnknownCategory(String),
@@ -130,25 +138,25 @@ impl TypeChecker {
             Pattern::Term(pt) => self.infer_type_from_pattern_term(pt, context),
             Pattern::Collection { elements, .. } => {
                 // Collections no longer have constructors - they get their type
-                // from the enclosing PatternTerm::Apply. 
+                // from the enclosing PatternTerm::Apply.
                 // Here we just validate elements and return a placeholder.
                 for elem in elements {
                     let _ = self.infer_type_from_pattern(elem, context)?;
                 }
                 // Collection type is determined by enclosing Apply
                 Ok("Collection".to_string())
-            }
+            },
             Pattern::Map { collection, body, .. } => {
                 // Map doesn't change the type
                 let _ = self.infer_type_from_pattern(collection, context)?;
                 self.infer_type_from_pattern(body, context)
-            }
+            },
             Pattern::Zip { first, second } => {
                 // Zip combines types
                 let _ = self.infer_type_from_pattern(first, context)?;
                 let _ = self.infer_type_from_pattern(second, context)?;
                 Ok("?".to_string())
-            }
+            },
         }
     }
 
@@ -166,7 +174,7 @@ impl TypeChecker {
                 } else {
                     Ok("?".to_string())
                 }
-            }
+            },
             PatternTerm::Apply { constructor, args } => {
                 let ctor_name = constructor.to_string();
                 if let Some(ctor_type) = self.constructors.get(&ctor_name) {
@@ -184,7 +192,7 @@ impl TypeChecker {
                         span: constructor.span(),
                     })
                 }
-            }
+            },
             PatternTerm::Lambda { body, .. } => self.infer_type_from_pattern(body, context),
             PatternTerm::MultiLambda { body, .. } => self.infer_type_from_pattern(body, context),
             PatternTerm::Subst { term, .. } => self.infer_type_from_pattern(term, context),
@@ -265,5 +273,4 @@ impl TypeChecker {
         }
         Ok(())
     }
-
 }

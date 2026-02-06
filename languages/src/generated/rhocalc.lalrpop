@@ -1,0 +1,94 @@
+// Generated LALRPOP grammar for theory: RhoCalc
+// This file is auto-generated - do not edit manually
+
+use mettail_runtime::{Binder, Scope, HashBag};
+use super::{Proc, Name, VarCategory};
+
+grammar;
+
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => { v.push(e); v }
+    }
+};
+
+Ident: std::string::String = {
+    r"[a-zA-Z_][a-zA-Z0-9_]*" => <>.to_string(),
+};
+
+pub Proc: Proc = {
+    "0" => Proc::PZero,
+    "*" "(" <n:Name> ")" => Proc::PDrop(Box::new(n)),
+    <n:Name> "!" "(" <q:Proc> ")" => Proc::POutput(Box::new(n), Box::new(q)),
+    "(" <__pairs_v:((Name "?" Ident) ",")*> <__pair_e:(Name "?" Ident)?> ")" "." "{" <p:Proc> "}" => {
+        let mut ns = Vec::new();
+let mut __binder_strs = Vec::new();
+        for ((__e0, _, __e2), _) in __pairs_v {
+             __binder_strs.push(__e2);
+             ns.push(__e0);
+        }
+        if let Some((__e0, _, __e2)) = __pair_e {
+             __binder_strs.push(__e2);
+             ns.push(__e0);
+        }
+        let __binders: Vec<Binder<String>> = __binder_strs.into_iter()
+.map(|s| Binder(mettail_runtime::get_or_create_var(s)))
+.collect();
+        let __scope = Scope::new(__binders, Box::new(p));
+        Proc::PInputs(ns, __scope)
+    },
+    "{" <ps_v:(<Proc> "|")*> <ps_e:Proc?> "}" => {
+        let mut ps = HashBag::new();
+for item in ps_v { ps.insert(item); }
+if let Some(item) = ps_e { ps.insert(item); }
+        Proc::PPar(ps)
+    }
+,
+    <v:Ident> => Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
+    "^" <x:Ident> "." "{" <body:Proc> "}" => {
+        let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(x.clone()));
+        // Infer binder type from usage in body (supports higher-order types)
+        match body.infer_var_type(&x) {
+            Some(ref t) => match t.base_type() {
+                VarCategory::Proc => Proc::LamProc(mettail_runtime::Scope::new(binder, Box::new(body))),
+                VarCategory::Name => Proc::LamName(mettail_runtime::Scope::new(binder, Box::new(body))),
+            },
+            None => panic!("Lambda binder '{}' not used in body", x),
+        }
+    },
+    "^" "[" <xs:Comma<Ident>> "]" "." "{" <body:Proc> "}" => {
+        let binder_names: Vec<_> = xs.clone();
+        let binders: Vec<_> = xs.into_iter()
+            .map(|x| mettail_runtime::Binder(mettail_runtime::get_or_create_var(x)))
+            .collect();
+        // Infer binder type from first binder's usage in body
+        let first_binder = binder_names.first().expect("Multi-lambda needs at least one binder");
+        match body.infer_var_type(first_binder) {
+            Some(ref t) => match t.base_type() {
+                VarCategory::Proc => Proc::MLamProc(mettail_runtime::Scope::new(binders, Box::new(body))),
+                VarCategory::Name => Proc::MLamName(mettail_runtime::Scope::new(binders, Box::new(body))),
+            },
+            None => panic!("Lambda binder '{}' not used in body", first_binder),
+        }
+    },
+    "$proc" "(" <lam:Proc> "," <arg:Proc> ")" => {
+        Proc::ApplyProc(Box::new(lam), Box::new(arg))
+    },
+    "$name" "(" <lam:Proc> "," <arg:Name> ")" => {
+        Proc::ApplyName(Box::new(lam), Box::new(arg))
+    },
+    "$$proc(" <lam:Proc> "," <args:Comma<Proc>> ")" => {
+        Proc::MApplyProc(Box::new(lam), args)
+    },
+    "$$name(" <lam:Proc> "," <args:Comma<Name>> ")" => {
+        Proc::MApplyName(Box::new(lam), args)
+    }
+};
+
+pub Name: Name = {
+    "@" "(" <p:Proc> ")" => Name::NQuote(Box::new(p))
+,
+    "name:" <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
+};
+

@@ -2,12 +2,67 @@ use crate::examples::{Example, ExampleCategory};
 use crate::pretty::format_term_pretty;
 use crate::registry::LanguageRegistry;
 use crate::state::ReplState;
-use mettail_runtime::{AscentResults, TermInfo};
 use anyhow::Result;
 use colored::Colorize;
+use mettail_runtime::{AscentResults, Language, TermInfo};
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
+use std::any::Any;
 use std::time::Instant;
+
+/// Replace whole-word occurrences of env-bound identifiers in the input with their display form.
+/// This allows `x && true` to work when `x = true`, even though the grammar requires `bool:x` for
+/// Bool variables (only Int gets bare Ident to avoid reduce-reduce conflicts).
+fn pre_substitute_env(input: &str, language: &dyn Language, env: &dyn Any) -> String {
+    let bindings = language.list_env(env);
+    if bindings.is_empty() {
+        return input.to_string();
+    }
+    // Sort by name length descending so "foobar" is replaced before "foo"
+    let mut bindings: Vec<_> = bindings.into_iter().map(|(n, d, _)| (n, d)).collect();
+    bindings.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+
+    let mut result = input.to_string();
+    for (name, display) in bindings {
+        result = replace_whole_word(&result, &name, &display);
+    }
+    result
+}
+
+/// Replace whole-word occurrences of `needle` with `replacement`.
+/// Word boundary: preceded/followed by non-identifier char or start/end.
+fn replace_whole_word(haystack: &str, needle: &str, replacement: &str) -> String {
+    if needle.is_empty() {
+        return haystack.to_string();
+    }
+    let mut result = String::with_capacity(haystack.len());
+    let mut i = 0;
+    let haystack_bytes = haystack.as_bytes();
+    let needle_bytes = needle.as_bytes();
+    let n_len = needle_bytes.len();
+
+    while i <= haystack.len().saturating_sub(n_len) {
+        if haystack[i..].starts_with(needle) {
+            let at_start = i == 0;
+            let at_end = i + n_len == haystack.len();
+            let prev_ok = at_start || !is_identifier_char(haystack_bytes[i - 1]);
+            let next_ok = at_end || !is_identifier_char(haystack_bytes[i + n_len]);
+            if prev_ok && next_ok {
+                result.push_str(replacement);
+                i += n_len;
+                continue;
+            }
+        }
+        result.push(char::from(haystack_bytes[i]));
+        i += 1;
+    }
+    result.push_str(&haystack[i..]);
+    result
+}
+
+fn is_identifier_char(b: u8) -> bool {
+    b.is_ascii_alphanumeric() || b == b'_'
+}
 
 /// The main REPL
 pub struct Repl {
@@ -125,12 +180,13 @@ impl Repl {
             "apply" => self.cmd_apply(&parts[1..]),
             "goto" => self.cmd_goto(&parts[1..]),
             "example" => self.cmd_example(&parts[1..]),
-            "list-examples" => self.cmd_list_examples(&self.state.language_name().unwrap()),
+            "list-examples" => self.cmd_list_examples(self.state.language_name().unwrap()),
             "quit" | "exit" => {
                 println!("Goodbye!");
                 std::process::exit(0);
             },
             "exec" => self.cmd_exec_term(line.strip_prefix("exec").unwrap()),
+            "step" => self.cmd_step_term(line.strip_prefix("step").unwrap()),
             _ => {
                 anyhow::bail!(
                     "Unknown command: '{}'. Type 'help' for available commands.",
@@ -139,14 +195,14 @@ impl Repl {
             },
         }
     }
-    
+
     /// Parse assignment syntax: name = term
     /// Returns (name, term_string) if it's an assignment, None otherwise
     fn parse_assignment(line: &str) -> Option<(String, String)> {
         // Look for = that's not inside parentheses or brackets
         let mut paren_depth = 0;
         let mut bracket_depth = 0;
-        
+
         for (i, ch) in line.char_indices() {
             match ch {
                 '(' | '{' => paren_depth += 1,
@@ -156,17 +212,21 @@ impl Repl {
                 '=' if paren_depth == 0 && bracket_depth == 0 => {
                     let name = line[..i].trim();
                     let term_str = line[i + 1..].trim();
-                    
+
                     // Validate name is a valid identifier (alphanumeric + underscore, starts with letter)
-                    if !name.is_empty() 
-                        && name.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false)
+                    if !name.is_empty()
+                        && name
+                            .chars()
+                            .next()
+                            .map(|c| c.is_alphabetic())
+                            .unwrap_or(false)
                         && name.chars().all(|c| c.is_alphanumeric() || c == '_')
                         && !term_str.is_empty()
                     {
                         return Some((name.to_string(), term_str.to_string()));
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
         None
@@ -182,7 +242,15 @@ impl Repl {
         println!("    {}              Show language information", "{lang_name}> info".green());
         println!();
         println!("{}", "  Term Input:".yellow());
-        println!("    {}    Execute a program", "exec <term>".green());
+        println!(
+            "    {}    Execute a program (direct evaluation → result)",
+            "exec <term>".green()
+        );
+        println!(
+            "    {}    Step-by-step: show initial term, use {} to reduce",
+            "step <term>".green(),
+            "apply 0".cyan()
+        );
         println!("    {}    Load example program", "example <name>".green());
         println!("    {}    List available examples", "list-examples".green());
         println!();
@@ -203,7 +271,11 @@ impl Repl {
         println!("    {}           List rewrites from current term", "rewrites".green());
         println!("    {}         List all rewrites", "rewrites-all".green());
         println!("    {}        Show normal forms", "normal-forms".green());
-        println!("    {} Apply rewrite N", "apply <N>".green());
+        println!(
+            "    {} Apply one rewrite from current term (use after {})",
+            "apply <N>".green(),
+            "step".cyan()
+        );
         println!("    {}              Go to normal form N", "goto <N>".green());
         println!();
         println!("{}", "  Relations:".yellow());
@@ -251,17 +323,22 @@ impl Repl {
             match self.load_env_from_file(&env_file) {
                 Ok(count) if count > 0 => {
                     println!("  [{} definitions from {}]", count, env_file);
-                }
-                Ok(_) => {} // Empty file, no message
+                },
+                Ok(_) => {}, // Empty file, no message
                 Err(e) => {
                     println!("  {} Failed to load {}: {}", "⚠".yellow(), env_file, e);
-                }
+                },
             }
         }
         println!();
 
         println!("{} Language loaded successfully!", "✓".green());
-        println!("Use {} to execute a program.", "'exec <term>'".cyan());
+        println!("  {}  direct evaluation (result)", "'exec <term>'".cyan());
+        println!(
+            "  {}  step-by-step, then {} to reduce",
+            "'step <term>'".cyan(),
+            "apply 0".cyan()
+        );
         println!();
 
         Ok(())
@@ -290,49 +367,62 @@ impl Repl {
         if let Some(language_name) = self.state.language_name() {
             let language = self.registry.get(language_name)?;
             let meta = language.metadata();
-            
+
             println!();
             println!("{}", "═".repeat(70).cyan());
             println!("{:^70}", format!("{} Language", meta.name()).bold());
             println!("{}", "═".repeat(70).cyan());
-            
+
             // Types
             println!();
             println!("{}", "TYPES".yellow().bold());
             for ty in meta.types() {
                 let primary = if ty.is_primary { " (primary)" } else { "" };
-                let native = ty.native_type.map(|t| format!(" = {}", t)).unwrap_or_default();
+                let native = ty
+                    .native_type
+                    .map(|t| format!(" = {}", t))
+                    .unwrap_or_default();
                 println!("  {}{}{}", ty.name.cyan(), native.dimmed(), primary.dimmed());
             }
-            
+
             // Terms grouped by type - format: [Label] syntax:Type -| context
             println!();
             println!("{} ({})", "TERMS".yellow().bold(), meta.terms().len());
             for ty in meta.types() {
-                let terms: Vec<_> = meta.terms().iter()
+                let terms: Vec<_> = meta
+                    .terms()
+                    .iter()
                     .filter(|t| t.type_name == ty.name)
                     .collect();
                 if !terms.is_empty() {
                     println!("  {}:", ty.name);
                     for term in terms {
                         let label = format!("[{}]", term.name).cyan();
-                        
+
                         // Build type context from fields
-                        let ctx: Vec<String> = term.fields.iter()
+                        let ctx: Vec<String> = term
+                            .fields
+                            .iter()
                             .map(|f| format!("{}:{}", f.name, f.ty))
                             .collect();
-                        
+
                         let judgement = if ctx.is_empty() {
                             format!("{}:{}", term.syntax, term.type_name)
                         } else {
-                            format!("{}:{} {} {}", term.syntax, term.type_name, "-|".dimmed(), ctx.join(", "))
+                            format!(
+                                "{}:{} {} {}",
+                                term.syntax,
+                                term.type_name,
+                                "-|".dimmed(),
+                                ctx.join(", ")
+                            )
                         };
-                        
+
                         println!("    {} {}", label, judgement.green());
                     }
                 }
             }
-            
+
             // Equations - format: [conditions] lhs = rhs
             println!();
             println!("{} ({})", "EQUATIONS".yellow().bold(), meta.equations().len());
@@ -344,42 +434,45 @@ impl Repl {
                 };
                 println!("  {}{} = {}", cond_str, eq.lhs.green(), eq.rhs.green());
             }
-            
+
             // Rewrites - format: [premise] lhs ~> rhs
             println!();
             println!("{} ({})", "REWRITES".yellow().bold(), meta.rewrites().len());
             for rw in meta.rewrites() {
                 let mut parts = Vec::new();
-                
+
                 // Add freshness conditions
                 if !rw.conditions.is_empty() {
                     parts.push(rw.conditions.join(", "));
                 }
-                
+
                 // Add premise (congruence rule)
                 if let Some((s, t)) = rw.premise {
                     parts.push(format!("{} ~> {}", s, t));
                 }
-                
+
                 let prefix = if parts.is_empty() {
                     String::new()
                 } else {
                     format!("{} {} ", parts.join(", "), "|-".dimmed())
                 };
-                
+
                 // Add optional name
-                let name_str = rw.name.map(|n| format!("[{}] ", n).cyan().to_string()).unwrap_or_default();
-                
+                let name_str = rw
+                    .name
+                    .map(|n| format!("[{}] ", n).cyan().to_string())
+                    .unwrap_or_default();
+
                 println!("  {}{}{} ~> {}", name_str, prefix, rw.lhs.green(), rw.rhs.green());
             }
-            
+
             // Logic - custom relations and rules
             let logic_relations = meta.logic_relations();
             let logic_rules = meta.logic_rules();
             if !logic_relations.is_empty() || !logic_rules.is_empty() {
                 println!();
                 println!("{}", "LOGIC".yellow().bold());
-                
+
                 // Relations
                 if !logic_relations.is_empty() {
                     println!("  {}:", "Relations".dimmed());
@@ -388,7 +481,7 @@ impl Repl {
                         println!("    {}", signature.cyan());
                     }
                 }
-                
+
                 // Rules
                 if !logic_rules.is_empty() {
                     println!("  {}:", "Rules".dimmed());
@@ -397,7 +490,7 @@ impl Repl {
                     }
                 }
             }
-            
+
             println!();
             println!("{}", "═".repeat(70).cyan());
             println!();
@@ -407,51 +500,63 @@ impl Repl {
         Ok(())
     }
 
-    
     // === Environment Commands ===
-    
+
     fn cmd_assign(&mut self, name: &str, term_str: &str) -> Result<()> {
         let language_name = self
             .state
             .language_name()
             .ok_or_else(|| anyhow::anyhow!("No language loaded. Use 'lang <language>' first."))?;
-        
+
         let language = self.registry.get(language_name)?;
-        
+
+        // Pre-substitute env-bound identifiers so RHS like `x && (3 == 3)` parses when x is Bool
+        let parse_input = if let Some(env) = self.state.environment() {
+            if !language.is_env_empty(env) {
+                pre_substitute_env(term_str, language, env)
+            } else {
+                term_str.to_string()
+            }
+        } else {
+            term_str.to_string()
+        };
+
         // Parse the term WITHOUT clearing var cache
         // This allows shared variables across env definitions (e.g., same `n` in multiple terms)
-        let term = language.parse_term_for_env(term_str)
+        let term = language
+            .parse_term_for_env(&parse_input)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
-        
+
         // Ensure environment exists
         let env = self.state.ensure_environment(|| language.create_env());
-        
+
         // Add to environment
-        language.add_to_env(env, name, term.as_ref())
+        language
+            .add_to_env(env, name, term.as_ref())
             .map_err(|e| anyhow::anyhow!("{}", e))?;
-        
+
         println!("{} {} added to environment", "✓".green(), name.cyan());
         Ok(())
     }
-    
+
     fn cmd_env(&self) -> Result<()> {
         let language_name = self
             .state
             .language_name()
             .ok_or_else(|| anyhow::anyhow!("No language loaded. Use 'lang <language>' first."))?;
-        
+
         let language = self.registry.get(language_name)?;
-        
+
         println!();
         println!("{}", "Environment:".bold());
-        
+
         if let Some(env) = self.state.environment() {
             if language.is_env_empty(env) {
                 println!("  {}", "(empty)".dimmed());
             } else {
                 let bindings = language.list_env(env);
                 let mut last_comment: Option<&str> = None;
-                
+
                 for (name, value, comment) in &bindings {
                     // Print section comment if it's different from the last one
                     if let Some(c) = comment {
@@ -470,27 +575,30 @@ impl Repl {
         } else {
             println!("  {}", "(empty)".dimmed());
         }
-        
+
         println!();
         Ok(())
     }
-    
+
     fn cmd_clear(&mut self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
             anyhow::bail!("Usage: clear <name>");
         }
-        
+
         let name = args[0];
-        
+
         let language_name = self
             .state
             .language_name()
             .ok_or_else(|| anyhow::anyhow!("No language loaded."))?;
-        
+
         let language = self.registry.get(language_name)?;
-        
+
         if let Some(env) = self.state.environment_mut() {
-            if language.remove_from_env(env, name).map_err(|e| anyhow::anyhow!("{}", e))? {
+            if language
+                .remove_from_env(env, name)
+                .map_err(|e| anyhow::anyhow!("{}", e))?
+            {
                 println!("{} {} removed from environment", "✓".green(), name.cyan());
             } else {
                 println!("{} {} not found in environment", "⚠".yellow(), name);
@@ -498,120 +606,130 @@ impl Repl {
         } else {
             println!("{} Environment is empty", "⚠".yellow());
         }
-        
+
         Ok(())
     }
-    
+
     fn cmd_clear_all(&mut self) -> Result<()> {
         let language_name = self
             .state
             .language_name()
             .ok_or_else(|| anyhow::anyhow!("No language loaded."))?;
-        
+
         let language = self.registry.get(language_name)?;
-        
+
         if let Some(env) = self.state.environment_mut() {
             language.clear_env(env);
             println!("{} Environment cleared", "✓".green());
         } else {
             println!("{} Environment is already empty", "⚠".yellow());
         }
-        
+
         Ok(())
     }
-    
+
     /// Save the current term to the environment with a given name
     fn cmd_save(&mut self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
             anyhow::bail!("Usage: save <name>");
         }
-        
+
         let name = args[0];
-        
+
         // Validate name is a valid identifier
-        if !name.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false)
+        if !name
+            .chars()
+            .next()
+            .map(|c| c.is_alphabetic())
+            .unwrap_or(false)
             || !name.chars().all(|c| c.is_alphanumeric() || c == '_')
         {
             anyhow::bail!("Invalid identifier: '{}'", name);
         }
-        
+
         let language_name = self
             .state
             .language_name()
             .ok_or_else(|| anyhow::anyhow!("No language loaded."))?;
-        
+
         // Clone the current term to release the borrow on self.state
         let current_term = self
             .state
             .current_term()
             .ok_or_else(|| anyhow::anyhow!("No current term. Use 'term: <expr>' first."))?
             .clone_box();
-        
+
         let language = self.registry.get(language_name)?;
-        
+
         // Ensure environment exists
         self.state.ensure_environment(|| language.create_env());
-        
+
         // Add the current term to the environment
         if let Some(env) = self.state.environment_mut() {
-            language.add_to_env(env, name, current_term.as_ref())
+            language
+                .add_to_env(env, name, current_term.as_ref())
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             println!("{} {} added to environment", "✓".green(), name.cyan());
         }
-        
+
         Ok(())
     }
-    
+
     /// Load term declarations from a file
     fn cmd_load_env(&mut self, args: &[&str]) -> Result<()> {
         if args.is_empty() {
             anyhow::bail!("Usage: load-env <file>");
         }
-        
+
         let file_path = args[0];
-        
+
         match self.load_env_from_file(file_path) {
             Ok(count) => {
                 if count > 0 {
-                    println!("{} Loaded {} declaration(s) from '{}'", "✓".green(), count, file_path);
+                    println!(
+                        "{} Loaded {} declaration(s) from '{}'",
+                        "✓".green(),
+                        count,
+                        file_path
+                    );
                 } else {
                     println!("{} No declarations found in '{}'", "ℹ".blue(), file_path);
                 }
                 Ok(())
-            }
-            Err(e) => Err(e)
+            },
+            Err(e) => Err(e),
         }
     }
-    
+
     /// Helper to load environment from a file, returns count of loaded declarations
     fn load_env_from_file(&mut self, file_path: &str) -> Result<usize> {
         let language_name = self
             .state
             .language_name()
             .ok_or_else(|| anyhow::anyhow!("No language loaded. Use 'lang <language>' first."))?;
-        
+
         let language = self.registry.get(language_name)?;
-        
+
         // Ensure environment exists
         self.state.ensure_environment(|| language.create_env());
-        
+
         // Read the file
         let content = std::fs::read_to_string(file_path)
             .map_err(|e| anyhow::anyhow!("Failed to read file '{}': {}", file_path, e))?;
-        
+
         let mut count = 0;
         let mut errors = Vec::new();
         // Track the most recent comment block to associate with the next definition
         let mut pending_comment: Option<String> = None;
-        
+
         for (line_num, line) in content.lines().enumerate() {
             let line = line.trim();
-            
+
             // Handle empty lines - they break comment association
             if line.is_empty() {
                 continue;
             }
-            
+
             // Handle comments - collect them for the next definition
             if line.starts_with("//") {
                 let comment_text = line.trim_start_matches("//").trim();
@@ -623,11 +741,21 @@ impl Repl {
                 pending_comment = Some(comment_text.to_string());
                 continue;
             }
-            
+
             // Try to parse as assignment
             if let Some((name, term_str)) = Self::parse_assignment(line) {
+                // Pre-substitute so RHS can reference names defined earlier in this file
+                let parse_input = if let Some(env) = self.state.environment() {
+                    if !language.is_env_empty(env) {
+                        pre_substitute_env(&term_str, language, env)
+                    } else {
+                        term_str.to_string()
+                    }
+                } else {
+                    term_str.to_string()
+                };
                 // Parse the term (using parse_term_for_env to share variable IDs)
-                match language.parse_term_for_env(&term_str) {
+                match language.parse_term_for_env(&parse_input) {
                     Ok(term) => {
                         if let Some(env) = self.state.environment_mut() {
                             if let Err(e) = language.add_to_env(env, &name, term.as_ref()) {
@@ -640,19 +768,24 @@ impl Repl {
                                 count += 1;
                             }
                         }
-                    }
+                    },
                     Err(e) => {
-                        errors.push(format!("Line {}: Failed to parse '{}': {}", line_num + 1, name, e));
-                    }
+                        errors.push(format!(
+                            "Line {}: Failed to parse '{}': {}",
+                            line_num + 1,
+                            name,
+                            e
+                        ));
+                    },
                 }
             } else {
                 errors.push(format!("Line {}: Invalid assignment syntax", line_num + 1));
             }
-            
+
             // Clear pending comment after processing a definition (whether successful or not)
             pending_comment = None;
         }
-        
+
         // Report errors if any
         if !errors.is_empty() {
             println!();
@@ -661,10 +794,9 @@ impl Repl {
                 println!("  {}", error);
             }
         }
-        
+
         Ok(count)
     }
-
 
     fn cmd_term(&mut self) -> Result<()> {
         println!("{}", "Current term:".bold());
@@ -690,14 +822,14 @@ impl Repl {
 
         println!();
         println!("{}", "Term type:".bold());
-        
+
         if let Some(term) = self.state.current_term() {
             let term_type = language.infer_term_type(term);
             println!("  {}", format!("{}", term_type).cyan());
         } else {
             println!("  {}", "(no term loaded)".dimmed());
         }
-        
+
         println!();
         Ok(())
     }
@@ -717,17 +849,20 @@ impl Repl {
         let language = self.registry.get(language_name)?;
 
         println!();
-        
+
         if let Some(term) = self.state.current_term() {
             if let Some(var_type) = language.infer_var_type(term, var_name) {
                 println!("{} : {}", var_name.cyan(), format!("{}", var_type).green());
             } else {
-                println!("{}", format!("Variable '{}' not found in current term", var_name).yellow());
+                println!(
+                    "{}",
+                    format!("Variable '{}' not found in current term", var_name).yellow()
+                );
             }
         } else {
             println!("{}", "(no term loaded)".dimmed());
         }
-        
+
         println!();
         Ok(())
     }
@@ -741,14 +876,14 @@ impl Repl {
         let language = self.registry.get(language_name)?;
 
         println!();
-        
+
         if let Some(term) = self.state.current_term() {
             // Get term type
             let term_type = language.infer_term_type(term);
-            
+
             // Get all variable types
             let var_types = language.infer_var_types(term);
-            
+
             if var_types.is_empty() {
                 println!("{}", "Free variables:".bold());
                 println!("  {}", "(none - all variables are bound)".dimmed());
@@ -758,45 +893,70 @@ impl Repl {
                     println!("  {} : {}", var_info.name.cyan(), format!("{}", var_info.ty).green());
                 }
             }
-            
+
             println!();
             println!("{}", "Term type:".bold());
             println!("  {}", format!("{}", term_type).cyan());
         } else {
             println!("{}", "(no term loaded)".dimmed());
         }
-        
+
         println!();
         Ok(())
     }
 
     fn cmd_exec_term(&mut self, term_str: &str) -> Result<()> {
-        // Get the loaded theory name
+        self.exec_or_step_term(term_str.trim(), /* step_mode: */ false)
+    }
+
+    /// Step-by-step execution: run Ascent but leave current term at the initial term
+    /// so the user can type `apply 0` to apply one rewrite at a time.
+    /// Step mode never uses direct eval so the user always sees the initial term and can apply rewrites.
+    fn cmd_step_term(&mut self, term_str: &str) -> Result<()> {
+        self.exec_or_step_term(term_str.trim(), /* step_mode: */ true)
+    }
+
+    /// Shared parse + substitute + (optionally) direct-eval + Ascent. When step_mode is true,
+    /// we never use try_direct_eval so the initial term is always shown and rewrites can be applied.
+    fn exec_or_step_term(&mut self, term_str: &str, step_mode: bool) -> Result<()> {
         let language_name = self
             .state
             .language_name()
             .ok_or_else(|| anyhow::anyhow!("No language loaded. Use 'lang <language>' first."))?;
 
-        // Get the theory from the registry
         let language = self.registry.get(language_name)?;
 
         println!();
         print!("Parsing... ");
 
-        // Parse the term using parse_term_for_env to share FreeVar IDs with environment
-        // This ensures that variables like `a` in the input match `a` from substituted env terms
-        let term = language.parse_term_for_env(term_str)
+        let parse_input = if let Some(env) = self.state.environment() {
+            if !language.is_env_empty(env) {
+                pre_substitute_env(term_str, language, env)
+            } else {
+                term_str.to_string()
+            }
+        } else {
+            term_str.to_string()
+        };
+
+        let term = language
+            .parse_term_for_env(&parse_input)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         println!("{}", "✓".green());
-        
-        // Apply environment substitution if environment exists and is not empty
+
         let term = if let Some(env) = self.state.environment() {
             if !language.is_env_empty(env) {
                 print!("Substituting environment... ");
-                let substituted = language.substitute_env(term.as_ref(), env)
-                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                let substituted = if step_mode {
+                    language
+                        .substitute_env_preserve_structure(term.as_ref(), env)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?
+                } else {
+                    language
+                        .substitute_env(term.as_ref(), env)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?
+                };
                 println!("{}", "✓".green());
-                
                 substituted
             } else {
                 term
@@ -805,15 +965,28 @@ impl Repl {
             term
         };
 
-        print!("Running Ascent... ");
+        // Direct eval only for exec: step must always run Ascent and show the initial term
+        if !step_mode {
+            if let Some(result_term) = language.try_direct_eval(term.as_ref()) {
+                let result_id = result_term.term_id();
+                let results = AscentResults::from_single_term(result_term.as_ref());
+                println!();
+                println!("{}", "Current term (result):".bold());
+                let formatted = format_term_pretty(&format!("{}", result_term));
+                println!("{}", formatted.cyan());
+                println!();
+                self.state.set_term_with_id(result_term, results, result_id)?;
+                return Ok(());
+            }
+        }
 
+        print!("Running Ascent... ");
         let start_time = Instant::now();
-        // Run Ascent
-        let results = language.run_ascent(term.as_ref())
+        let results = language
+            .run_ascent(term.as_ref())
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         let end_time = Instant::now();
-        let duration = end_time.duration_since(start_time);
-        println!("Time taken: {:?}", duration);
+        println!("Time taken: {:?}", end_time.duration_since(start_time));
         println!("{}", "Done!".green());
 
         println!();
@@ -823,19 +996,49 @@ impl Repl {
         println!("  - {} normal forms", results.normal_forms().len());
         println!();
 
-        println!("{}", "Current term:".bold());
-        let formatted = format_term_pretty(&format!("{}", term));
-        println!("{}", formatted.cyan());
+        let initial_id = term.term_id();
+
+        if step_mode {
+            // Step: always show initial term so user can apply rewrites one by one
+            let available = results.rewrites_from(initial_id).len();
+            println!("{}", "Current term (initial):".bold());
+            let formatted = format_term_pretty(&format!("{}", term));
+            println!("{}", formatted.cyan());
+            println!();
+            self.state.set_term_with_id(term, results, initial_id)?;
+            if available > 0 {
+                println!("  Use {} to apply a rewrite ({} available).", "apply 0".cyan(), available);
+            } else {
+                println!("  No rewrites from this term (already a normal form).");
+            }
+        } else {
+            // Exec: show a normal form reachable from the initial term
+            if let Some(nf) = results.normal_form_reachable_from(initial_id) {
+                let result_term = language
+                    .parse_term(&nf.display)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                println!("{}", "Current term (result):".bold());
+                let formatted = format_term_pretty(&nf.display);
+                println!("{}", formatted.cyan());
+                println!();
+                self.state
+                    .set_term_with_id(result_term, results.clone(), nf.term_id)?;
+                return Ok(());
+            }
+            println!("{}", "Current term:".bold());
+            let formatted = format_term_pretty(&format!("{}", term));
+            println!("{}", formatted.cyan());
+            println!();
+            self.state.set_term(term, results)?;
+        }
         println!();
-
-        // Store in state
-        self.state.set_term(term, results)?;
-
         Ok(())
     }
 
     fn get_results(&self) -> Result<&AscentResults> {
-        self.state.ascent_results().ok_or_else(|| anyhow::anyhow!("No term loaded. Use 'term: <expr>' first."))
+        self.state
+            .ascent_results()
+            .ok_or_else(|| anyhow::anyhow!("No term loaded. Use 'term: <expr>' first."))
     }
 
     fn cmd_equations(&self) -> Result<()> {
@@ -925,7 +1128,8 @@ impl Repl {
 
     fn term_by_id(&self, id: u64) -> Result<&TermInfo> {
         let results = self.get_results()?;
-        results.all_terms
+        results
+            .all_terms
             .iter()
             .find(|t| t.term_id == id)
             .ok_or_else(|| anyhow::anyhow!("Term not found"))
@@ -1095,7 +1299,8 @@ impl Repl {
             .ok_or_else(|| anyhow::anyhow!("Target term not found"))?;
 
         // Parse the target term and update its ID to match what's in the graph
-        let target_term = language.parse_term(&target_info.display)
+        let target_term = language
+            .parse_term(&target_info.display)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         println!();
@@ -1143,7 +1348,8 @@ impl Repl {
         let target_info = &normal_forms[idx];
 
         // Parse the target term
-        let target_term = language.parse_term(&target_info.display)
+        let target_term = language
+            .parse_term(&target_info.display)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         println!();

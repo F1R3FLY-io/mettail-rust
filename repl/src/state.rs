@@ -1,5 +1,5 @@
-use mettail_runtime::{AscentResults, Term};
 use anyhow::Result;
+use mettail_runtime::{AscentResults, Term};
 use std::any::Any;
 
 /// The current state of the REPL session
@@ -21,7 +21,7 @@ pub struct ReplState {
 
     /// Cached Ascent results
     ascent_results: Option<AscentResults>,
-    
+
     /// Environment for variable bindings (theory-specific type)
     environment: Option<Box<dyn Any + Send + Sync>>,
 }
@@ -58,22 +58,22 @@ impl ReplState {
         self.ascent_results = None;
         self.environment = None;
     }
-    
+
     /// Get the environment (immutable)
     pub fn environment(&self) -> Option<&(dyn Any + Send + Sync)> {
         self.environment.as_ref().map(|b| b.as_ref())
     }
-    
+
     /// Get the environment (mutable)
     pub fn environment_mut(&mut self) -> Option<&mut (dyn Any + Send + Sync)> {
         self.environment.as_mut().map(|b| b.as_mut())
     }
-    
+
     /// Set the environment
     pub fn set_environment(&mut self, env: Box<dyn Any + Send + Sync>) {
         self.environment = Some(env);
     }
-    
+
     /// Ensure environment exists (create if needed)
     pub fn ensure_environment<F>(&mut self, create: F) -> &mut (dyn Any + Send + Sync)
     where

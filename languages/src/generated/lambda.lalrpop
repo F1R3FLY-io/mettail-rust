@@ -1,0 +1,66 @@
+// Generated LALRPOP grammar for theory: Lambda
+// This file is auto-generated - do not edit manually
+
+use mettail_runtime::{Binder, Scope};
+use super::{Term, VarCategory};
+
+grammar;
+
+Comma<T>: Vec<T> = {
+    <mut v:(<T> ",")*> <e:T?> => match e {
+        None => v,
+        Some(e) => { v.push(e); v }
+    }
+};
+
+Ident: std::string::String = {
+    r"[a-zA-Z_][a-zA-Z0-9_]*" => <>.to_string(),
+};
+
+pub Term: Term = {
+    "lam " <x:Ident> "." <body:Term> => {
+        use mettail_runtime::BoundTerm;
+        let free_vars = body.free_vars();
+        let binder = if let Some(fv) = free_vars.iter().find(|fv| fv.pretty_name.as_deref() == Some(&x)) {
+            Binder((*fv).clone())
+        } else {
+            Binder(mettail_runtime::get_or_create_var(x))
+        };
+        let scope = Scope::new(binder, Box::new(body));
+        Term::Lam(scope)
+    },
+    "(" <fun:Term> "," <arg:Term> ")" => Term::App(Box::new(fun), Box::new(arg))
+,
+    <v:Ident> => Term::TVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
+    "^" <x:Ident> "." "{" <body:Term> "}" => {
+        let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(x.clone()));
+        // Infer binder type from usage in body (supports higher-order types)
+        match body.infer_var_type(&x) {
+            Some(ref t) => match t.base_type() {
+                VarCategory::Term => Term::LamTerm(mettail_runtime::Scope::new(binder, Box::new(body))),
+            },
+            None => panic!("Lambda binder '{}' not used in body", x),
+        }
+    },
+    "^" "[" <xs:Comma<Ident>> "]" "." "{" <body:Term> "}" => {
+        let binder_names: Vec<_> = xs.clone();
+        let binders: Vec<_> = xs.into_iter()
+            .map(|x| mettail_runtime::Binder(mettail_runtime::get_or_create_var(x)))
+            .collect();
+        // Infer binder type from first binder's usage in body
+        let first_binder = binder_names.first().expect("Multi-lambda needs at least one binder");
+        match body.infer_var_type(first_binder) {
+            Some(ref t) => match t.base_type() {
+                VarCategory::Term => Term::MLamTerm(mettail_runtime::Scope::new(binders, Box::new(body))),
+            },
+            None => panic!("Lambda binder '{}' not used in body", first_binder),
+        }
+    },
+    "$term" "(" <lam:Term> "," <arg:Term> ")" => {
+        Term::ApplyTerm(Box::new(lam), Box::new(arg))
+    },
+    "$$term(" <lam:Term> "," <args:Comma<Term>> ")" => {
+        Term::MApplyTerm(Box::new(lam), args)
+    }
+};
+

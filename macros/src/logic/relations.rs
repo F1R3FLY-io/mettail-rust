@@ -3,8 +3,9 @@
 //! Generates relation declarations for categories, equality, rewrites,
 //! and collection projections.
 
-use crate::ast::language::{LanguageDef};
 use crate::ast::grammar::TermParam;
+use crate::ast::language::LanguageDef;
+use crate::ast::types::EvalMode;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -40,6 +41,21 @@ pub fn generate_relations(language: &LanguageDef) -> TokenStream {
         });
     }
 
+    // Fold (big-step eval) relations for categories that have fold-mode constructors
+    for lang_type in &language.types {
+        let cat = &lang_type.name;
+        let has_fold = language
+            .terms
+            .iter()
+            .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
+        if has_fold {
+            let fold_rel = format_ident!("fold_{}", cat.to_string().to_lowercase());
+            relations.push(quote! {
+                relation #fold_rel(#cat, #cat);
+            });
+        }
+    }
+
     // Collection projection relations (automatic)
     // For each constructor with a collection field, generate a "contains" relation
     // Example: PPar(HashBag<Proc>) generates: relation ppar_contains(Proc, Proc);
@@ -67,13 +83,14 @@ fn generate_collection_projection_relations(language: &LanguageDef) -> Vec<Token
 
     for rule in &language.terms {
         // Skip multi-binder constructors (they have term_context with MultiAbstraction)
-        let is_multi_binder = rule.term_context.as_ref().map_or(false, |ctx| {
-            ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        let is_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
+            ctx.iter()
+                .any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
         });
         if is_multi_binder {
             continue;
         }
-        
+
         // Check if this constructor has a collection field
         if let Some(elem_cat) = language.collection_element_type(&rule.label) {
             let parent_cat = &rule.category;

@@ -39,120 +39,133 @@ use crate::ast::language::LanguageDef;
 /// Generate environment types for all exported categories
 pub fn generate_environments(language: &LanguageDef) -> TokenStream {
     let language_name = &language.name;
-    
-    // Filter to only categories without native types (native types like i32 don't have variables)
-    let categories: Vec<_> = language.types.iter()
-        .filter(|t| t.native_type.is_none())
-        .collect();
-    
+
+    // Include all categories (terms can have variables via IVar etc. even when native_type is set)
+    let categories: Vec<_> = language.types.iter().collect();
+
     if categories.is_empty() {
         return quote! {};
     }
-    
+
     // Generate per-category environment structs
-    let category_envs: Vec<TokenStream> = categories.iter().map(|lang_type| {
-        let cat_name = &lang_type.name;
-        let env_name = format_ident!("{}Env", cat_name);
-        
-        quote! {
-            /// Per-category environment for storing named term bindings (preserves insertion order)
-            #[derive(Debug, Clone, Default)]
-            pub struct #env_name(pub indexmap::IndexMap<String, #cat_name>);
-            
-            impl #env_name {
-                /// Create a new empty environment
-                pub fn new() -> Self {
-                    Self(indexmap::IndexMap::new())
-                }
-                
-                /// Get a term by name
-                pub fn get(&self, name: &str) -> Option<&#cat_name> {
-                    self.0.get(name)
-                }
-                
-                /// Set a term binding (maintains insertion order for new entries)
-                pub fn set(&mut self, name: String, value: #cat_name) {
-                    self.0.insert(name, value);
-                }
-                
-                /// Remove a term binding (maintains order of remaining entries)
-                pub fn remove(&mut self, name: &str) -> Option<#cat_name> {
-                    self.0.shift_remove(name)
-                }
-                
-                /// Iterate over all bindings in insertion order
-                pub fn iter(&self) -> impl Iterator<Item = (&String, &#cat_name)> {
-                    self.0.iter()
-                }
-                
-                /// Check if environment is empty
-                pub fn is_empty(&self) -> bool {
-                    self.0.is_empty()
-                }
-                
-                /// Get the number of bindings
-                pub fn len(&self) -> usize {
-                    self.0.len()
-                }
-                
-                /// Clear all bindings
-                pub fn clear(&mut self) {
-                    self.0.clear()
+    let category_envs: Vec<TokenStream> = categories
+        .iter()
+        .map(|lang_type| {
+            let cat_name = &lang_type.name;
+            let env_name = format_ident!("{}Env", cat_name);
+
+            quote! {
+                /// Per-category environment for storing named term bindings (preserves insertion order)
+                #[derive(Debug, Clone, Default)]
+                pub struct #env_name(pub indexmap::IndexMap<std::string::String, #cat_name>);
+
+                impl #env_name {
+                    /// Create a new empty environment
+                    pub fn new() -> Self {
+                        Self(indexmap::IndexMap::new())
+                    }
+
+                    /// Get a term by name
+                    pub fn get(&self, name: &str) -> Option<&#cat_name> {
+                        self.0.get(name)
+                    }
+
+                    /// Set a term binding (maintains insertion order for new entries)
+                    pub fn set(&mut self, name: std::string::String, value: #cat_name) {
+                        self.0.insert(name, value);
+                    }
+
+                    /// Remove a term binding (maintains order of remaining entries)
+                    pub fn remove(&mut self, name: &str) -> Option<#cat_name> {
+                        self.0.shift_remove(name)
+                    }
+
+                    /// Iterate over all bindings in insertion order
+                    pub fn iter(&self) -> impl Iterator<Item = (&std::string::String, &#cat_name)> {
+                        self.0.iter()
+                    }
+
+                    /// Check if environment is empty
+                    pub fn is_empty(&self) -> bool {
+                        self.0.is_empty()
+                    }
+
+                    /// Get the number of bindings
+                    pub fn len(&self) -> usize {
+                        self.0.len()
+                    }
+
+                    /// Clear all bindings
+                    pub fn clear(&mut self) {
+                        self.0.clear()
+                    }
                 }
             }
-        }
-    }).collect();
-    
+        })
+        .collect();
+
     // Generate combined environment struct
     let env_struct_name = format_ident!("{}Env", language_name);
-    
-    let field_defs: Vec<TokenStream> = categories.iter().map(|lang_type| {
-        let cat_name = &lang_type.name;
-        let field_name = format_ident!("{}", cat_name.to_string().to_lowercase());
-        let env_name = format_ident!("{}Env", cat_name);
-        
-        quote! {
-            pub #field_name: #env_name
-        }
-    }).collect();
-    
-    let field_defaults: Vec<TokenStream> = categories.iter().map(|lang_type| {
-        let cat_name = &lang_type.name;
-        let field_name = format_ident!("{}", cat_name.to_string().to_lowercase());
-        let env_name = format_ident!("{}Env", cat_name);
-        
-        quote! {
-            #field_name: #env_name::new()
-        }
-    }).collect();
-    
-    let field_clears: Vec<TokenStream> = categories.iter().map(|lang_type| {
-        let cat_name = &lang_type.name;
-        let field_name = format_ident!("{}", cat_name.to_string().to_lowercase());
-        
-        quote! {
-            self.#field_name.clear()
-        }
-    }).collect();
-    
-    let field_empty_checks: Vec<TokenStream> = categories.iter().map(|lang_type| {
-        let cat_name = &lang_type.name;
-        let field_name = format_ident!("{}", cat_name.to_string().to_lowercase());
-        
-        quote! {
-            self.#field_name.is_empty()
-        }
-    }).collect();
-    
+
+    let field_defs: Vec<TokenStream> = categories
+        .iter()
+        .map(|lang_type| {
+            let cat_name = &lang_type.name;
+            let field_name = format_ident!("{}", cat_name.to_string().to_lowercase());
+            let env_name = format_ident!("{}Env", cat_name);
+
+            quote! {
+                pub #field_name: #env_name
+            }
+        })
+        .collect();
+
+    let field_defaults: Vec<TokenStream> = categories
+        .iter()
+        .map(|lang_type| {
+            let cat_name = &lang_type.name;
+            let field_name = format_ident!("{}", cat_name.to_string().to_lowercase());
+            let env_name = format_ident!("{}Env", cat_name);
+
+            quote! {
+                #field_name: #env_name::new()
+            }
+        })
+        .collect();
+
+    let field_clears: Vec<TokenStream> = categories
+        .iter()
+        .map(|lang_type| {
+            let cat_name = &lang_type.name;
+            let field_name = format_ident!("{}", cat_name.to_string().to_lowercase());
+
+            quote! {
+                self.#field_name.clear()
+            }
+        })
+        .collect();
+
+    let field_empty_checks: Vec<TokenStream> = categories
+        .iter()
+        .map(|lang_type| {
+            let cat_name = &lang_type.name;
+            let field_name = format_ident!("{}", cat_name.to_string().to_lowercase());
+
+            quote! {
+                self.#field_name.is_empty()
+            }
+        })
+        .collect();
+
     let combined_env = quote! {
         /// Combined environment for all categories in this theory
         #[derive(Debug, Clone, Default)]
         pub struct #env_struct_name {
             #(#field_defs),*,
             /// Optional comments for each binding (keyed by binding name)
-            pub comments: std::collections::HashMap<String, String>,
+            pub comments: std::collections::HashMap<std::string::String, std::string::String>,
         }
-        
+
         impl #env_struct_name {
             /// Create a new empty environment
             pub fn new() -> Self {
@@ -161,38 +174,38 @@ pub fn generate_environments(language: &LanguageDef) -> TokenStream {
                     comments: std::collections::HashMap::new(),
                 }
             }
-            
+
             /// Clear all bindings from all categories
             pub fn clear(&mut self) {
                 #(#field_clears);*;
                 self.comments.clear();
             }
-            
+
             /// Check if all environments are empty
             pub fn is_empty(&self) -> bool {
                 #(#field_empty_checks)&&*
             }
-            
+
             /// Set a comment for a binding
-            pub fn set_comment(&mut self, name: &str, comment: String) {
+            pub fn set_comment(&mut self, name: &str, comment: std::string::String) {
                 self.comments.insert(name.to_string(), comment);
             }
-            
+
             /// Get the comment for a binding
-            pub fn get_comment(&self, name: &str) -> Option<&String> {
+            pub fn get_comment(&self, name: &str) -> Option<&std::string::String> {
                 self.comments.get(name)
             }
-            
+
             /// Remove a comment for a binding
             pub fn remove_comment(&mut self, name: &str) {
                 self.comments.remove(name);
             }
         }
     };
-    
+
     quote! {
         #(#category_envs)*
-        
+
         #combined_env
     }
 }

@@ -368,7 +368,7 @@ pub static CORRELATION: Example = Example {
         request!(txn42) | response!(result42)
     }",
     category: ExampleCategory::MultiComm,
-        language: LanguageName::RhoCalculus,
+    language: LanguageName::RhoCalculus,
 };
 
 pub static MULTI_PARTY_SYNC: Example = Example {

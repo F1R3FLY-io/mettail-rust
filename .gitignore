@@ -56,8 +56,8 @@ examples/src/*_gen.rs
 *.dylib
 *.dll
 
-# Generated files
-/languages/src/generated
+# Generated files (languages/src/generated is committed so CI build script can find .lalrpop files)
+# /languages/src/generated - do not ignore; build script needs these before macro runs
 
 # trybuild artifacts
 target/tests/trybuild/

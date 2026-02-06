@@ -1,7 +1,12 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use crate::gen::{generate_var_label, generate_literal_label, is_integer_rule, is_var_rule};
-use crate::ast::{language::LanguageDef, grammar::{GrammarItem, GrammarRule, TermParam}, types::{TypeExpr, CollectionType}};
+use crate::ast::{
+    grammar::{GrammarItem, GrammarRule, TermParam},
+    language::LanguageDef,
+    types::{CollectionType, TypeExpr},
+};
+use crate::gen::native::native_type_to_string;
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -25,20 +30,25 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             .map(|v| v.as_slice())
             .unwrap_or(&[]);
 
-        let has_integer_rule = rules.iter().any(|rule| is_integer_rule(rule));
+        let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
         let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
 
         let mut variants: Vec<TokenStream> = rules.iter().map(|rule| {
             generate_variant(rule, language)
         }).collect();
 
-        // Auto-generate NumLit variant for native types without explicit Integer rule
+        // Auto-generate literal variant for native types without explicit literal rule
         if let Some(native_type) = &lang_type.native_type {
-            if !has_integer_rule {
+            if !has_literal_rule {
                 let literal_label = generate_literal_label(native_type);
-                let native_type_cloned = native_type.clone();
+                // str is unsized; use String for the variant payload
+                let payload_type = if native_type_to_string(native_type) == "str" {
+                    quote! { std::string::String }
+                } else {
+                    quote! { #native_type }
+                };
                 variants.push(quote! {
-                    #literal_label(#native_type_cloned)
+                    #literal_label(#payload_type)
                 });
             }
         }
@@ -58,9 +68,9 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             if domain_lang_type.native_type.is_some() {
                 continue;
             }
-            
+
             let domain_name = &domain_lang_type.name;
-            
+
             // Single-binder lambda: Lam{Domain}
             let lam_variant = syn::Ident::new(
                 &format!("Lam{}", domain_name),
@@ -69,7 +79,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             variants.push(quote! {
                 #lam_variant(mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#cat_name>>)
             });
-            
+
             // Multi-binder lambda: MLam{Domain}
             let mlam_variant = syn::Ident::new(
                 &format!("MLam{}", domain_name),
@@ -78,7 +88,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             variants.push(quote! {
                 #mlam_variant(mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#cat_name>>)
             });
-            
+
             // Application variant: Apply{Domain}
             // Represents unevaluated application of a lambda to an argument
             let apply_variant = syn::Ident::new(
@@ -88,7 +98,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             variants.push(quote! {
                 #apply_variant(Box<#cat_name>, Box<#domain_name>)
             });
-            
+
             // Multi-application variant: MApply{Domain}
             let mapply_variant = syn::Ident::new(
                 &format!("MApply{}", domain_name),
@@ -99,8 +109,18 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             });
         }
 
+        // f64/f32 don't implement Eq, Ord, Hash; omit those derives for float categories
+        let has_float = lang_type.native_type.as_ref().map_or(false, |t| {
+            let s = native_type_to_string(t);
+            s == "f32" || s == "f64"
+        });
+        let derives = if has_float {
+            quote! { #[derive(Debug, Clone, PartialEq, PartialOrd, mettail_runtime::BoundTerm)] }
+        } else {
+            quote! { #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, mettail_runtime::BoundTerm)] }
+        };
         quote! {
-            #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, mettail_runtime::BoundTerm)]
+            #derives
             pub enum #cat_name {
                 #(#variants),*
             }
@@ -109,6 +129,36 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
 
     quote! {
         #(#enums)*
+    }
+}
+
+/// Rust type for a literal rule's single field (Integer, Boolean, StringLiteral, FloatLiteral).
+fn literal_payload_type(nt: &str, category: &syn::Ident, language: &LanguageDef) -> TokenStream {
+    let native_type_for_category = || {
+        language
+            .types
+            .iter()
+            .find(|t| t.name == *category)
+            .and_then(|t| t.native_type.as_ref())
+    };
+    match nt {
+        "Integer" => {
+            if let Some(native_type) = native_type_for_category() {
+                quote! { #native_type }
+            } else {
+                quote! { i32 }
+            }
+        }
+        "Boolean" => quote! { bool },
+        "StringLiteral" => quote! { std::string::String },
+        "FloatLiteral" => {
+            if let Some(native_type) = native_type_for_category() {
+                quote! { #native_type }
+            } else {
+                quote! { f64 }
+            }
+        }
+        _ => quote! { std::string::String }, // fallback for str/other
     }
 }
 
@@ -158,23 +208,11 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
     } else if fields.len() == 1 {
         #[allow(clippy::cmp_owned)]
         match &fields[0] {
-            FieldType::NonTerminal(ident) if ident.to_string() == "Integer" => {
-                // Special case: Integer field - use the category's native type
-                let category = &rule.category;
-
-                // Integer requires native type (should be validated earlier)
-                if let Some(native_type) = language
-                    .types
-                    .iter()
-                    .find(|t| t.name == *category)
-                    .and_then(|t| t.native_type.as_ref())
-                {
-                    let native_type_cloned = native_type.clone();
-                    quote! { #label(#native_type_cloned) }
-                } else {
-                    // Fallback to i32 if native type not found
-                    quote! { #label(i32) }
-                }
+            FieldType::NonTerminal(ident) if crate::gen::is_literal_nonterminal(&ident.to_string()) => {
+                // Literal rule: payload type from nonterminal name (Integer, Boolean, StringLiteral, FloatLiteral)
+                let nt = ident.to_string();
+                let payload_type = literal_payload_type(&nt, &rule.category, language);
+                quote! { #label(#payload_type) }
             },
             FieldType::NonTerminal(ident) if ident.to_string() == "Var" => {
                 // Special case: Var field - always use OrdVar
@@ -221,16 +259,19 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate variant from new term_context syntax
-fn generate_variant_from_term_context(label: &syn::Ident, term_context: &[TermParam]) -> TokenStream {
+fn generate_variant_from_term_context(
+    label: &syn::Ident,
+    term_context: &[TermParam],
+) -> TokenStream {
     let mut fields: Vec<TokenStream> = Vec::new();
-    
+
     for param in term_context {
         match param {
             TermParam::Simple { ty, .. } => {
                 // Simple parameter: generate appropriate field type
                 let field_type = type_expr_to_field_type(ty);
                 fields.push(field_type);
-            }
+            },
             TermParam::Abstraction { ty, .. } => {
                 // Single abstraction: ^x.p:[A -> B]
                 // Generates: Scope<Binder<String>, Box<B>>
@@ -240,7 +281,7 @@ fn generate_variant_from_term_context(label: &syn::Ident, term_context: &[TermPa
                         mettail_runtime::Scope<mettail_runtime::Binder<String>, Box<#body_type>>
                     });
                 }
-            }
+            },
             TermParam::MultiAbstraction { ty, .. } => {
                 // Multi-abstraction: ^[xs].p:[Name* -> B]
                 // Generates: Scope<Vec<Binder<String>>, Box<B>>
@@ -250,10 +291,10 @@ fn generate_variant_from_term_context(label: &syn::Ident, term_context: &[TermPa
                         mettail_runtime::Scope<Vec<mettail_runtime::Binder<String>>, Box<#body_type>>
                     });
                 }
-            }
+            },
         }
     }
-    
+
     if fields.is_empty() {
         // Unit variant
         quote! { #label }
@@ -342,10 +383,16 @@ fn type_expr_to_field_type(ty: &TypeExpr) -> TokenStream {
                 quote! { mettail_runtime::OrdVar }
             } else if name == "Integer" {
                 quote! { i64 }
+            } else if name == "Boolean" {
+                quote! { bool }
+            } else if name == "StringLiteral" {
+                quote! { std::string::String }
+            } else if name == "FloatLiteral" {
+                quote! { f64 }
             } else {
                 quote! { Box<#ident> }
             }
-        }
+        },
         TypeExpr::Collection { coll_type, element } => {
             let elem_type = type_expr_to_rust_type(element);
             match coll_type {
@@ -353,16 +400,16 @@ fn type_expr_to_field_type(ty: &TypeExpr) -> TokenStream {
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
             }
-        }
+        },
         TypeExpr::Arrow { .. } => {
             // Arrow types in simple params shouldn't happen, but handle gracefully
             quote! { Box<dyn std::any::Any> }
-        }
+        },
         TypeExpr::MultiBinder(inner) => {
             // MultiBinder in simple context: Vec<T>
             let inner_type = type_expr_to_rust_type(inner);
             quote! { Vec<#inner_type> }
-        }
+        },
     }
 }
 
@@ -371,7 +418,7 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
     match ty {
         TypeExpr::Base(ident) => {
             quote! { #ident }
-        }
+        },
         TypeExpr::Collection { coll_type, element } => {
             let elem_type = type_expr_to_rust_type(element);
             match coll_type {
@@ -379,15 +426,15 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
             }
-        }
+        },
         TypeExpr::Arrow { domain, codomain } => {
             let dom = type_expr_to_rust_type(domain);
             let cod = type_expr_to_rust_type(codomain);
             quote! { (#dom -> #cod) }
-        }
+        },
         TypeExpr::MultiBinder(inner) => {
             let inner_type = type_expr_to_rust_type(inner);
             quote! { Vec<#inner_type> }
-        }
+        },
     }
 }

@@ -3,6 +3,7 @@ use quote::quote_spanned;
 
 /// Validation error with span information for better compile-time diagnostics
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum ValidationError {
     UnknownCategory {
         name: String,
@@ -111,6 +112,7 @@ impl ValidationError {
     }
 
     /// Convert to a compile_error! token stream
+    #[allow(dead_code)]
     pub fn to_compile_error(&self) -> TokenStream {
         let span = self.span();
         let msg = self.message();

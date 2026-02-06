@@ -1,7 +1,8 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-use crate::ast::language::LanguageDef;
 use crate::ast::grammar::{GrammarItem, TermParam};
+use crate::ast::language::LanguageDef;
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -17,12 +18,14 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
         // Skip rules that use new term_context with multi-binders
         // These have structured fields, not just a collection
         if let Some(ref ctx) = rule.term_context {
-            let has_multi_binder = ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }));
+            let has_multi_binder = ctx
+                .iter()
+                .any(|p| matches!(p, TermParam::MultiAbstraction { .. }));
             if has_multi_binder {
                 continue;
             }
         }
-        
+
         // Check if this rule has a collection field (old style)
         let has_collection = rule
             .items
@@ -103,11 +106,6 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
     let mut impls = Vec::new();
 
     for lang_type in &language.types {
-        // Skip native types
-        if lang_type.native_type.is_some() {
-            continue;
-        }
-        
         let category = &lang_type.name;
 
         // Find all rules for this category
@@ -117,13 +115,87 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
             .filter(|rule| rule.category == *category)
             .collect();
 
+        // Native types: generate simple recursive normalize (no beta-reduction, no collections)
+        if let Some(ref native_type) = lang_type.native_type {
+            let has_literal_rule = rules_for_category.iter().any(|r| is_literal_rule(r));
+            let has_var_rule = rules_for_category.iter().any(|r| is_var_rule(r));
+            let mut match_arms: Vec<TokenStream> = rules_for_category
+                .iter()
+                .filter_map(|rule| {
+                    if is_var_rule(rule) || is_literal_rule(rule) {
+                        return None;
+                    }
+                    let label = &rule.label;
+                    let fields: Vec<_> = rule
+                        .items
+                        .iter()
+                        .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+                        .collect();
+                    if fields.is_empty() {
+                        return Some(quote! { #category::#label => self.clone() });
+                    }
+                    let field_names: Vec<_> =
+                        (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+                    let field_patterns: Vec<_> =
+                        field_names.iter().map(|n| quote! { ref #n }).collect();
+                    let normalized_fields: Vec<_> = fields
+                        .iter()
+                        .zip(field_names.iter())
+                        .map(|(item, name)| {
+                            if let GrammarItem::NonTerminal(field_cat) = item {
+                                if field_cat == category {
+                                    quote! { Box::new(#name.as_ref().normalize()) }
+                                } else {
+                                    quote! { #name.clone() }
+                                }
+                            } else {
+                                quote! { #name.clone() }
+                            }
+                        })
+                        .collect();
+                    Some(quote! {
+                        #category::#label(#(#field_patterns),*) => {
+                            #category::#label(#(#normalized_fields),*)
+                        }
+                    })
+                })
+                .collect();
+            if !has_literal_rule {
+                let literal_label = generate_literal_label(native_type);
+                match_arms.push(quote! {
+                    #category::#literal_label(_) => self.clone()
+                });
+            }
+            if !has_var_rule {
+                let var_label = generate_var_label(category);
+                match_arms.push(quote! {
+                    #category::#var_label(_) => self.clone()
+                });
+            }
+            let impl_block = quote! {
+                impl #category {
+                    /// Recursively normalize subterms (no beta-reduction for native-type categories).
+                    /// If the reconstructed term is fully evaluable, folds it to a literal (constant folding).
+                    pub fn normalize(&self) -> Self {
+                        let reconstructed = match self {
+                            #(#match_arms),*,
+                            _ => self.clone()
+                        };
+                        reconstructed.try_fold_to_literal().unwrap_or(reconstructed)
+                    }
+                }
+            };
+            impls.push(impl_block);
+            continue;
+        }
+
         // Find collection constructors
         let has_collections = rules_for_category.iter().any(|rule| {
             rule.items
                 .iter()
                 .any(|item| matches!(item, GrammarItem::Collection { .. }))
         });
-        
+
         // Generate beta-reduction arms for Apply/Lam variants
         let beta_reduction_arms = generate_beta_reduction_arms(category, language);
 
@@ -142,21 +214,24 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
         }
 
         // Generate match arms for each constructor
+        #[allow(clippy::unnecessary_filter_map)]
         let match_arms: Vec<TokenStream> = rules_for_category
             .iter()
             .filter_map(|rule| {
                 let label = &rule.label;
 
                 // Check if this rule uses term_context with multi-binder
-                let has_multi_binder = rule.term_context.as_ref().map_or(false, |ctx| {
-                    ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+                let has_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
+                    ctx.iter()
+                        .any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
                 });
 
                 // Check if this is a simple collection constructor (no multi-binder)
-                let is_collection = !has_multi_binder && rule
-                    .items
-                    .iter()
-                    .any(|item| matches!(item, GrammarItem::Collection { .. }));
+                let is_collection = !has_multi_binder
+                    && rule
+                        .items
+                        .iter()
+                        .any(|item| matches!(item, GrammarItem::Collection { .. }));
 
                 if is_collection {
                     // For collection constructors, rebuild using the flattening helper
@@ -241,11 +316,11 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                         }
                     } else {
                         // Multiple fields - generate normalization for each
-                        let field_names: Vec<_> = (0..fields.len())
-                            .map(|i| format_ident!("f{}", i))
-                            .collect();
-                        
-                        let normalized_fields: Vec<_> = fields.iter()
+                        let field_names: Vec<_> =
+                            (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+
+                        let normalized_fields: Vec<_> = fields
+                            .iter()
                             .enumerate()
                             .map(|(i, field)| {
                                 let field_name = &field_names[i];
@@ -259,24 +334,26 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                                         } else if field_cat_str == "Var" {
                                             // Var field - not boxed, just clone
                                             quote! { #field_name.clone() }
-                                        } else if language.types.iter().any(|t| t.name == *field_cat && t.native_type.is_none()) {
+                                        } else if language.types.iter().any(|t| {
+                                            t.name == *field_cat && t.native_type.is_none()
+                                        }) {
                                             // Another non-native category - normalize it (boxed)
                                             quote! { Box::new(#field_name.as_ref().normalize()) }
                                         } else {
                                             // Native type or unknown - just clone (boxed)
                                             quote! { #field_name.clone() }
                                         }
-                                    }
+                                    },
                                     GrammarItem::Collection { .. } => {
                                         // Collection field - just clone for now
                                         // (collection flattening is handled separately)
                                         quote! { #field_name.clone() }
-                                    }
-                                    _ => quote! { #field_name.clone() }
+                                    },
+                                    _ => quote! { #field_name.clone() },
                                 }
                             })
                             .collect();
-                        
+
                         Some(quote! {
                             #category::#label(#(#field_names),*) => {
                                 #category::#label(#(#normalized_fields),*)
@@ -368,34 +445,31 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate match arms for beta-reduction of Apply/Lam variants
-fn generate_beta_reduction_arms(
-    category: &syn::Ident,
-    language: &LanguageDef,
-) -> Vec<TokenStream> {
+fn generate_beta_reduction_arms(category: &syn::Ident, language: &LanguageDef) -> Vec<TokenStream> {
     use quote::format_ident;
-    
+
     let mut arms = Vec::new();
-    
+
     // For each domain type, generate beta-reduction arms
     for domain_lang_type in &language.types {
         // Skip native types
         if domain_lang_type.native_type.is_some() {
             continue;
         }
-        
+
         let domain = &domain_lang_type.name;
         let domain_lower = domain.to_string().to_lowercase();
-        
+
         // Variant names
         let apply_variant = format_ident!("Apply{}", domain);
         let lam_variant = format_ident!("Lam{}", domain);
         let mapply_variant = format_ident!("MApply{}", domain);
         let mlam_variant = format_ident!("MLam{}", domain);
-        
+
         // Substitution method names
         let subst_method = format_ident!("substitute_{}", domain_lower);
         let multi_subst_method = format_ident!("multi_substitute_{}", domain_lower);
-        
+
         // Single-argument beta reduction:
         // ApplyDomain(LamDomain(scope), arg) => body[binder := arg].normalize()
         arms.push(quote! {
@@ -420,7 +494,7 @@ fn generate_beta_reduction_arms(
                 }
             }
         });
-        
+
         // Multi-argument beta reduction:
         // MApplyDomain(MLamDomain(scope), args) => body[binders := args].normalize()
         arms.push(quote! {
@@ -449,6 +523,6 @@ fn generate_beta_reduction_arms(
             }
         });
     }
-    
+
     arms
 }

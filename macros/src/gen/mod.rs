@@ -19,16 +19,16 @@
 
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
-pub mod types;
-pub mod syntax;
-pub mod term_ops;
+pub mod blockly;
 pub mod native;
 pub mod runtime;
+pub mod syntax;
 pub mod term_gen;
-pub mod blockly;
+pub mod term_ops;
+pub mod types;
 
-use crate::ast::language::LanguageDef;
 use crate::ast::grammar::{GrammarItem, GrammarRule};
+use crate::ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::quote;
 use syn::Ident;
@@ -50,14 +50,14 @@ pub use syntax::parser::{generate_lalrpop_grammar, write_grammar_file};
 /// - Native type evaluation
 /// - Variable inference for parsing
 pub fn generate_all(language: &LanguageDef) -> TokenStream {
-    use types::enums::generate_ast_enums;
-    use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
-    use term_ops::subst::{generate_substitution, generate_env_substitution};
+    use native::eval::generate_eval_method;
     use runtime::environment::generate_environments;
     use syntax::display::generate_display;
-    use term_gen::{generate_term_generation, generate_random_generation};
-    use native::eval::generate_eval_method;
     use syntax::var_inference::generate_var_category_inference;
+    use term_gen::{generate_random_generation, generate_term_generation};
+    use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
+    use term_ops::subst::{generate_env_substitution, generate_substitution};
+    use types::enums::generate_ast_enums;
 
     let ast_enums = generate_ast_enums(language);
     let flatten_helpers = generate_flatten_helpers(language);
@@ -122,12 +122,49 @@ pub fn is_var_rule(rule: &GrammarRule) -> bool {
         && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if ident.to_string() == "Var")
 }
 
-/// Checks if a rule is an Integer rule (single item, NonTerminal "Integer")
-/// Used for native integer type handling in theory definitions
+/// Names of nonterminals that represent native literal tokens in the generated grammar.
+const LITERAL_NONTERMINALS: &[&str] = &["Integer", "Boolean", "StringLiteral", "FloatLiteral"];
+
+/// Returns true if the given nonterminal name is a known literal type (Integer, Boolean, StringLiteral, FloatLiteral).
+pub fn is_literal_nonterminal(name: &str) -> bool {
+    LITERAL_NONTERMINALS.contains(&name)
+}
+
+/// Checks if a rule is a literal rule (single item, NonTerminal one of Integer/Boolean/StringLiteral/FloatLiteral).
+/// Used for native type handling in theory definitions; all native literal types are treated uniformly.
 #[allow(clippy::cmp_owned)]
-pub fn is_integer_rule(rule: &GrammarRule) -> bool {
+pub fn is_literal_rule(rule: &GrammarRule) -> bool {
     rule.items.len() == 1
-        && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if ident.to_string() == "Integer")
+        && matches!(&rule.items[0], GrammarItem::NonTerminal(ident) if is_literal_nonterminal(&ident.to_string()))
+}
+
+/// Returns the nonterminal name when the rule is a literal rule (Integer, Boolean, StringLiteral, FloatLiteral).
+/// Used for payload-type selection (clone vs copy) and for signed-numeric logic (unary minus).
+#[allow(clippy::cmp_owned)]
+pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<String> {
+    match rule.items.first()? {
+        GrammarItem::NonTerminal(ident) => {
+            let name = ident.to_string();
+            if is_literal_nonterminal(&name) {
+                Some(name)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// True when the rule is the Integer literal rule (for signed-numeric behavior like unary minus).
+#[allow(clippy::cmp_owned)]
+pub fn is_integer_literal_rule(rule: &GrammarRule) -> bool {
+    literal_rule_nonterminal(rule).as_deref() == Some("Integer")
+}
+
+/// True when the rule is the FloatLiteral literal rule (for signed-numeric behavior like unary minus).
+#[allow(clippy::cmp_owned)]
+pub fn is_float_literal_rule(rule: &GrammarRule) -> bool {
+    literal_rule_nonterminal(rule).as_deref() == Some("FloatLiteral")
 }
 
 /// Generate the Var variant label for a category
@@ -156,6 +193,7 @@ pub fn generate_literal_label(native_type: &syn::Type) -> Ident {
         "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => quote::format_ident!("NumLit"),
         "f32" | "f64" => quote::format_ident!("FloatLit"),
         "bool" => quote::format_ident!("BoolLit"),
+        "str" | "String" => quote::format_ident!("StringLit"),
         _ => quote::format_ident!("Lit"), // Generic fallback
     }
 }

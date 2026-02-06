@@ -22,6 +22,7 @@ ascent-byods-rels = { workspace = true }
 
 [build-dependencies]
 lalrpop = { workspace = true }
+mettail-lang-gen = { path = "lang-gen" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }

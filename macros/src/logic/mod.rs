@@ -17,7 +17,16 @@
 //! 3. **Equation Rules**: Add reflexivity, congruence, and user-defined equalities
 //! 4. **Rewrite Rules**: Base rewrites + congruence rules (propagate through constructors)
 
-use crate::{ast::{grammar::GrammarItem, language::{BuiltinOp, LanguageDef, SemanticOperation}}, logic::rules::generate_base_rewrites};
+use crate::ast::grammar::TermParam;
+use crate::ast::types::{EvalMode, TypeExpr};
+use crate::gen::{generate_literal_label, is_literal_rule};
+use crate::{
+    ast::{
+        grammar::GrammarItem,
+        language::{BuiltinOp, LanguageDef, SemanticOperation},
+    },
+    logic::rules::generate_base_rewrites,
+};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
@@ -161,6 +170,10 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     let semantic_rules = generate_semantic_rules(language);
     rules.extend(semantic_rules);
 
+    // Generate big-step fold rules (one rewrite per fold-mode constructor)
+    let fold_rules = generate_fold_big_step_rules(language);
+    rules.extend(fold_rules);
+
     // Generate explicit congruence rules (with premise: if S => T then ...)
     // These are user-declared rules that control where rewrites propagate
     let congruence_rules = generate_all_explicit_congruences(language);
@@ -173,12 +186,19 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
 
 /// Generate semantic evaluation rules for constructors with semantics
 /// For example: Add (NumLit a) (NumLit b) => NumLit(a + b)
+/// Only for step mode (or unspecified); fold mode uses big-step rules instead.
 fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
-
     let mut rules = Vec::new();
 
     for semantic in &language.semantics {
         let constructor_name = &semantic.constructor;
+
+        // Skip fold-mode: they use big-step rules instead of small-step folding
+        if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
+            if rule.eval_mode == Some(EvalMode::Fold) {
+                continue;
+            }
+        }
 
         // Extract the operator
         let op_token = match &semantic.operation {
@@ -218,16 +238,310 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
                 let num_lit = format_ident!("NumLit");
 
-                // Pattern: rw_cat(s, t) with body that matches and extracts a, b
+                // Pattern: rw_cat(s, t) with body that matches and extracts a, b.
+                // Bind a,b by clone so non-Copy types (e.g. bool) are passed by value.
+                // Clone s so we insert owned; Ascent may bind s by reference (e.g. &Str).
                 rules.push(quote! {
-                    #rw_rel(s, t) <--
+                    #rw_rel(s.clone(), t) <--
                         #cat_rel(s),
                         if let #category::#label(left, right) = s,
-                        if let #category::#num_lit(a) = left.as_ref(),
-                        if let #category::#num_lit(b) = right.as_ref(),
+                        if let #category::#num_lit(a_ref) = left.as_ref(),
+                        if let #category::#num_lit(b_ref) = right.as_ref(),
+                        let a = a_ref.clone(),
+                        let b = b_ref.clone(),
                         let t = #category::#num_lit(a #op_token b);
                 });
             }
+        }
+    }
+
+    // Generate folding rules for rules that have HOL rust_code but are not in semantics
+    // e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
+    let native_type_for = |category: &Ident| {
+        language
+            .types
+            .iter()
+            .find(|t| t.name == *category)
+            .and_then(|t| t.native_type.as_ref())
+    };
+    for rule in &language.terms {
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if language
+            .semantics
+            .iter()
+            .any(|s| s.constructor == rule.label)
+        {
+            continue;
+        }
+        // Skip fold-mode: they use big-step rules instead
+        if rule.eval_mode == Some(EvalMode::Fold) {
+            continue;
+        }
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .count();
+        if non_terminal_count != 2 {
+            continue;
+        }
+        let category = &rule.category;
+        let Some(result_native) = native_type_for(category) else {
+            continue;
+        };
+        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
+        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
+        let label = &rule.label;
+        let result_lit_label = language
+            .terms
+            .iter()
+            .find(|r| r.category == *category && is_literal_rule(r))
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| generate_literal_label(result_native));
+        let rust_code = &rule.rust_code.as_ref().unwrap().code;
+
+        // Use argument types from term_context when present, so cross-category rules
+        // (e.g. Eq . a:Int, b:Int |- ... : Bool) use the correct literal patterns.
+        let arg_labels = if let Some(ref term_ctx) = rule.term_context {
+            let simple: Vec<_> = term_ctx
+                .iter()
+                .filter_map(|p| match p {
+                    TermParam::Simple { ty, .. } => Some(ty),
+                    _ => None,
+                })
+                .collect();
+            if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
+                (simple.get(0), simple.get(1))
+            {
+                let left_type = language.types.iter().find(|t| t.name == *left_ty);
+                let right_type = language.types.iter().find(|t| t.name == *right_ty);
+                match (left_type.and_then(|t| t.native_type.as_ref()), right_type.and_then(|t| t.native_type.as_ref())) {
+                    (Some(left_nat), Some(right_nat)) => {
+                        let left_lit = language
+                            .terms
+                            .iter()
+                            .find(|r| r.category == *left_ty && is_literal_rule(r))
+                            .map(|r| r.label.clone())
+                            .unwrap_or_else(|| generate_literal_label(left_nat));
+                        let right_lit = language
+                            .terms
+                            .iter()
+                            .find(|r| r.category == *right_ty && is_literal_rule(r))
+                            .map(|r| r.label.clone())
+                            .unwrap_or_else(|| generate_literal_label(right_nat));
+                        Some((left_ty.clone(), left_lit, right_ty.clone(), right_lit))
+                    }
+                    _ => None,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let (left_cat, left_lit_label, right_cat, right_lit_label) = match arg_labels {
+            Some((lc, ll, rc, rl)) => (lc, ll, rc, rl),
+            None => {
+                // Same-category binary: both operands and result are in category
+                (
+                    category.clone(),
+                    result_lit_label.clone(),
+                    category.clone(),
+                    result_lit_label.clone(),
+                )
+            }
+        };
+
+        rules.push(quote! {
+            #rw_rel(s.clone(), t) <--
+                #cat_rel(s),
+                if let #category::#label(left, right) = s,
+                if let #left_cat::#left_lit_label(a_ref) = left.as_ref(),
+                if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
+                let a = a_ref.clone(),
+                let b = b_ref.clone(),
+                let t = #category::#result_lit_label((#rust_code));
+        });
+    }
+
+    // Unary step rules: one argument from another category (e.g. Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step)
+    for rule in &language.terms {
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if language
+            .semantics
+            .iter()
+            .any(|s| s.constructor == rule.label)
+        {
+            continue;
+        }
+        if rule.eval_mode == Some(EvalMode::Fold) {
+            continue;
+        }
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .count();
+        if non_terminal_count != 1 {
+            continue;
+        }
+        let Some(ref term_context) = rule.term_context else {
+            continue;
+        };
+        let [TermParam::Simple { name: param_name, ty: ref param_ty }] = term_context.as_slice() else {
+            continue;
+        };
+        let TypeExpr::Base(arg_category) = param_ty else {
+            continue;
+        };
+        let category = &rule.category;
+        let Some(result_native) = native_type_for(category) else {
+            continue;
+        };
+        let Some(arg_lang_type) = language.types.iter().find(|t| t.name == *arg_category) else {
+            continue;
+        };
+        let Some(ref arg_native) = arg_lang_type.native_type else {
+            continue;
+        };
+        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
+        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
+        let label = &rule.label;
+        let num_lit_label = language
+            .terms
+            .iter()
+            .find(|r| r.category == *category && is_literal_rule(r))
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| generate_literal_label(result_native));
+        let arg_lit_label = generate_literal_label(arg_native);
+        let rust_code = &rule.rust_code.as_ref().unwrap().code;
+        // Use a different name for the term so the param (e.g. s) can be bound for rust_code without shadowing
+        let term_var = format_ident!("orig");
+        rules.push(quote! {
+            #rw_rel(#term_var.clone(), t) <--
+                #cat_rel(#term_var),
+                if let #category::#label(inner) = #term_var,
+                if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
+                let #param_name = s_ref.clone(),
+                let t = #category::#num_lit_label((#rust_code));
+        });
+    }
+
+    rules
+}
+
+/// Generate big-step fold rules for constructors with eval_mode Fold.
+/// fold_<cat>(t, v) computes the value term v of t; one rw_<cat>(s, t) step for whole expression.
+fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
+    let mut rules = Vec::new();
+
+    let native_type_for = |category: &Ident| {
+        language
+            .types
+            .iter()
+            .find(|t| t.name == *category)
+            .and_then(|t| t.native_type.as_ref())
+    };
+
+    for lang_type in &language.types {
+        let category = &lang_type.name;
+        let Some(native_type) = native_type_for(category) else {
+            continue;
+        };
+        let has_fold = language
+            .terms
+            .iter()
+            .any(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold));
+        if !has_fold {
+            continue;
+        }
+
+        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
+        let fold_rel = format_ident!("fold_{}", category.to_string().to_lowercase());
+        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
+        let num_lit = language
+            .terms
+            .iter()
+            .find(|r| r.category == *category && is_literal_rule(r))
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| generate_literal_label(native_type));
+
+        // fold_<cat>(t, t) for literals
+        rules.push(quote! {
+            #fold_rel(t.clone(), t.clone()) <--
+                #cat_rel(t),
+                if let #category::#num_lit(_) = t;
+        });
+
+        // fold_<cat>(s, res) for each constructor with semantics or rust_code (so we can compute recursively)
+        for rule in &language.terms {
+            if rule.category != *category {
+                continue;
+            }
+            let non_terminal_count = rule
+                .items
+                .iter()
+                .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+                .count();
+            if non_terminal_count != 2 {
+                continue;
+            }
+            let label = &rule.label;
+
+            let res_expr = if let Some(sem) = language
+                .semantics
+                .iter()
+                .find(|s| s.constructor == rule.label)
+            {
+                let op_token = match &sem.operation {
+                    SemanticOperation::Builtin(builtin_op) => match builtin_op {
+                        BuiltinOp::Add => quote! { a + b },
+                        BuiltinOp::Sub => quote! { a - b },
+                        BuiltinOp::Mul => quote! { a * b },
+                        BuiltinOp::Div => quote! { a / b },
+                        BuiltinOp::Rem => quote! { a % b },
+                        _ => continue,
+                    },
+                };
+                quote! { #category::#num_lit(#op_token) }
+            } else if let Some(ref rust_block) = rule.rust_code {
+                let rust_code = &rust_block.code;
+                quote! { #category::#num_lit((#rust_code)) }
+            } else {
+                continue;
+            };
+
+            rules.push(quote! {
+                #fold_rel(s.clone(), res) <--
+                    #cat_rel(s),
+                    if let #category::#label(left, right) = s,
+                    #fold_rel(left.as_ref().clone(), lv),
+                    #fold_rel(right.as_ref().clone(), rv),
+                    if let #category::#num_lit(a_ref) = &lv,
+                    if let #category::#num_lit(b_ref) = &rv,
+                    let a = a_ref.clone(),
+                    let b = b_ref.clone(),
+                    let res = #res_expr;
+            });
+        }
+
+        // rw_<cat>(s, t) for fold-mode constructors only (one big step)
+        for rule in &language.terms {
+            if rule.category != *category || rule.eval_mode != Some(EvalMode::Fold) {
+                continue;
+            }
+            let label = &rule.label;
+            rules.push(quote! {
+                #rw_rel(s.clone(), t.clone()) <--
+                    #cat_rel(s),
+                    if let #category::#label(_, _) = s,
+                    #fold_rel(s, t);
+            });
         }
     }
 

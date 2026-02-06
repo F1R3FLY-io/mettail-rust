@@ -89,7 +89,7 @@ impl Example {
             .filter(|e| e.language == language && e.category == cat)
             .collect()
     }
-    
+
     /// Get examples by language name (string) and category
     pub fn by_language_name_and_category(
         language_name: &str,
@@ -97,7 +97,9 @@ impl Example {
     ) -> Vec<&'static Example> {
         Self::all()
             .into_iter()
-            .filter(|e| e.language.as_str().eq_ignore_ascii_case(language_name) && e.category == cat)
+            .filter(|e| {
+                e.language.as_str().eq_ignore_ascii_case(language_name) && e.category == cat
+            })
             .collect()
     }
 }
