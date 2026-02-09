@@ -1,3 +1,1 @@
-To write the full generated code of a theory to a file:
-
-cargo expand --package mettail-theories --lib $THEORY > theories/src/generated/$THEORY-expanded.rs
+cargo expand --package mettail-languages --lib rhocalc > languages/src/generated/rhocalc-expanded.rs

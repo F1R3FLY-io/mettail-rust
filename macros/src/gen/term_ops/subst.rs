@@ -112,12 +112,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
     let language_name = &language.name;
     let env_name = format_ident!("{}Env", language_name);
 
-    // Generate for all categories (native-type categories still have Var and need substitute_env)
     let categories: Vec<_> = language.types.iter().collect();
-
-    if categories.is_empty() {
-        return quote! {};
-    }
 
     let impls: Vec<TokenStream> = categories.iter().map(|export| {
         let cat_name = &export.name;
@@ -164,12 +159,6 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                 /// Iterates until fixed point (no more substitutions possible).
                 /// Finally normalizes FreeVar IDs and flattens any nested collections.
                 pub fn substitute_env(&self, env: &#env_name) -> Self {
-                    self.substitute_env_no_fold(env).normalize()
-                }
-
-                /// Substitute environment variables without constant folding (no normalize).
-                /// Use for step mode so the term tree is preserved and rewrites can be shown.
-                pub fn substitute_env_no_fold(&self, env: &#env_name) -> Self {
                     let mut result = self.clone();
                     for _ in 0..100 {
                         let prev_str = format!("{}", result);
@@ -178,7 +167,8 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                             break;
                         }
                     }
-                    result.unify_freevars()
+                    let result = result.unify_freevars();
+                    result.normalize()
                 }
 
                 #(#subst_by_name_methods)*

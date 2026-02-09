@@ -138,15 +138,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         })
         .collect();
 
-    let substitute_no_fold_arms: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|t| {
-            let cat = &t.name;
-            let variant = format_ident!("{}", cat);
-            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env_no_fold(env)) }
-        })
-        .collect();
+
 
     // Cross-category variable resolution: if after substitution we still have a variable,
     // look it up in other categories (e.g. "x" parsed as Int but bound as Bool -> use Bool value).
@@ -209,17 +201,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                 substituted
             }
 
-            /// Substitute without normalizing (no constant folding). For step mode.
-            pub fn substitute_env_no_fold(&self, env: &#env_name) -> Self {
-                let substituted = match self {
-                    #(#substitute_no_fold_arms),*
-                };
-                match &substituted {
-                    #(#cross_resolve_arms)*
-                    _ => {}
-                }
-                substituted
-            }
+
         }
 
         impl std::fmt::Display for #inner_enum_name {
@@ -875,12 +857,14 @@ fn generate_language_struct_multi(
 
     let custom_relation_extraction = generate_custom_relation_extraction(language);
 
-    // Parse: try each category's parser in order; first success wins. Keep last error for message.
-    let parse_tries: Vec<TokenStream> = language
-        .types
-        .iter()
-        .map(|t| {
-            let cat = &t.name;
+    // Parse: try primary (first) type's parser first, then the rest. First success wins.
+    // This order matters for multi-type languages (e.g. RhoCalc): primary (Proc) is the most
+    // general; other categories (Name) are tried so that e.g. "@(0)" parses as Name when Proc fails.
+    let primary_type = language.types.first().map(|t| &t.name);
+    let parse_tries: Vec<TokenStream> = primary_type
+        .into_iter()
+        .chain(language.types.iter().skip(1).map(|t| &t.name))
+        .map(|cat| {
             let parser_name = format_ident!("{}Parser", cat);
             let variant = format_ident!("{}", cat);
             quote! {
@@ -1115,7 +1099,7 @@ fn generate_language_trait_impl(
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                let substituted = typed_term.0.substitute_env_no_fold(typed_env);
+                let substituted = typed_term.0.substitute_env(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
 
@@ -1356,7 +1340,7 @@ fn generate_language_trait_impl_multi(
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                let substituted = typed_term.0.substitute_env_no_fold(typed_env);
+                let substituted = typed_term.0.substitute_env(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
 

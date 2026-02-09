@@ -1783,12 +1783,22 @@ fn generate_auto_alternatives(
                 cat_str, var_label
             ));
         } else {
+            // Non-primary category: prefix form ("name:x", "str:x", "bool:x").
+            // For two-type languages only (e.g. RhoCalc Proc/Name), also add bare Ident so that
+            // when this category is used as a subrule (e.g. Name in "a!(0)"), "a" can parse as Name.
+            // For three+ types (e.g. Calculator) bare Ident on multiple categories causes shift-reduce conflicts.
             let prefix_lit = format!("{}:", cat_str.to_string().to_lowercase());
             let prefix_escaped = prefix_lit.replace('\\', "\\\\").replace('"', "\\\"");
             result.push_str(&format!(
                 "    \"{}\" <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
                 prefix_escaped, cat_str, var_label
             ));
+            if language.types.len() == 2 {
+                result.push_str(&format!(
+                    ",\n    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
+                    cat_str, var_label
+                ));
+            }
         }
         needs_comma = true;
     }
