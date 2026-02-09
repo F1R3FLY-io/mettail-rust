@@ -870,7 +870,7 @@ fn generate_language_struct_multi(
             quote! {
                 match #parser_mod::#parser_name::new().parse(input) {
                     Ok(t) => return Ok(#term_name(#inner_enum_name::#variant(t))),
-                    Err(e) => last_err = Some(format!("{:?}", e)),
+                    Err(e) => if first_err.is_none() { first_err = Some(format!("{:?}", e)); },
                 }
             }
         })
@@ -931,10 +931,11 @@ fn generate_language_struct_multi(
             }
 
             /// Parse without clearing var cache. Tries each category parser in order.
+            /// Reports the first parser's error when all fail (so the message is from the most general parser, e.g. Proc).
             pub fn parse_preserving_vars(input: &str) -> Result<#term_name, std::string::String> {
-                let mut last_err = None;
+                let mut first_err = None;
                 #(#parse_tries)*
-                Err(last_err.unwrap_or_else(|| "Parse error".to_string()))
+                Err(first_err.unwrap_or_else(|| "Parse error".to_string()))
             }
 
             /// Run Ascent on a typed term (seeds the relation for the term's category).
@@ -1498,6 +1499,13 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
             .map(|v| quote! { format!("{}", #v) })
             .collect();
         
+        // For arity 1, use (e0,) so Rust treats it as a tuple pattern; (e0) would bind the whole &(Proc,).
+        let tuple_pattern: TokenStream = if arity == 1 {
+            quote! { (#(#tuple_vars),*,) }
+        } else {
+            quote! { (#(#tuple_vars),*) }
+        };
+        
         extractions.push(quote! {
             custom_relations.insert(
                 #rel_name_str.to_string(),
@@ -1505,7 +1513,7 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
                     param_types: vec![#(#param_type_strs.to_string()),*],
                     tuples: prog.#rel_name
                         .iter()
-                        .map(|(#(#tuple_vars),*)| vec![#(#format_exprs),*])
+                        .map(|#tuple_pattern| vec![#(#format_exprs),*])
                         .collect(),
                 }
             );

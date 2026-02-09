@@ -40,28 +40,15 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             None => continue,
         };
 
-        // Find all rules for this category
+        // Find all rules for this category (may be empty for native types that only
+        // get literal/Var from the grammar, e.g. Int with no explicit term rules)
         let rules: Vec<&GrammarRule> = language
             .terms
             .iter()
             .filter(|r| r.category == *category)
             .collect();
 
-        if rules.is_empty() {
-            continue;
-        }
-
-        // Build map of constructor -> semantic operation
-        // Skip rules that already have HOL Rust code blocks (they get their own eval arms)
-        let mut semantics_map: HashMap<String, BuiltinOp> = HashMap::new();
-        for semantic_rule in &language.semantics {
-            if let Some(rule) = rules.iter().find(|r| r.label == semantic_rule.constructor) {
-                if rule.category == *category && rule.rust_code.is_none() {
-                    let SemanticOperation::Builtin(op) = &semantic_rule.operation;
-                    semantics_map.insert(semantic_rule.constructor.to_string(), *op);
-                }
-            }
-        }
+        
 
         // Literal label for try_fold_to_literal (resolve once)
         let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
@@ -228,40 +215,6 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 };
                 try_eval_arms.push(try_arm);
             }
-            // Check if this has semantics (operator)
-            else if let Some(op) = semantics_map.get(&label_str) {
-                // Count non-terminal arguments (excluding terminals)
-                let arg_count = rule
-                    .items
-                    .iter()
-                    .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
-                    .count();
-
-                if arg_count == 2 {
-                    // Binary operator
-                    let op_token = match op {
-                        BuiltinOp::Add => quote! { + },
-                        BuiltinOp::Sub => quote! { - },
-                        BuiltinOp::Mul => quote! { * },
-                        BuiltinOp::Div => quote! { / },
-                        BuiltinOp::Rem => quote! { % },
-                        BuiltinOp::BitAnd => quote! { & },
-                        BuiltinOp::BitOr => quote! { | },
-                        BuiltinOp::BitXor => quote! { ^ },
-                        BuiltinOp::Shl => quote! { << },
-                        BuiltinOp::Shr => quote! { >> },
-                    };
-
-                    match_arms.push(quote! {
-                        #category::#label(a, b) => a.as_ref().eval() #op_token b.as_ref().eval(),
-                    });
-                    try_eval_arms.push(quote! {
-                        #category::#label(a, b) => Some(a.as_ref().try_eval()? #op_token b.as_ref().try_eval()?),
-                    });
-                } else {
-                    continue;
-                }
-            }
             // Handle rules with recursive self-reference and Var (like Assign . Int ::= Var "=" Int)
             // These evaluate to the value of the recursive argument
             else {
@@ -320,6 +273,49 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                 }
             };
             impls.push(impl_block);
+
+            // Implement arithmetic ops for numeric native types so rust_code in other categories
+            // (e.g. Proc::Add with CastInt(a), CastInt(b) => a + b) can use +, -, etc. on term types.
+            let type_str = native_type_to_string(native_type);
+            let is_numeric = matches!(
+                type_str.as_str(),
+                "i32" | "i64" | "u32" | "u64" | "isize" | "usize" | "f32" | "f64"
+            );
+            if is_numeric {
+                let ops_impl = quote! {
+                    impl std::ops::Add for #category {
+                        type Output = #category;
+                        fn add(self, rhs: #category) -> #category {
+                            #category::#literal_label(self.eval() + rhs.eval())
+                        }
+                    }
+                    impl std::ops::Sub for #category {
+                        type Output = #category;
+                        fn sub(self, rhs: #category) -> #category {
+                            #category::#literal_label(self.eval() - rhs.eval())
+                        }
+                    }
+                    impl std::ops::Mul for #category {
+                        type Output = #category;
+                        fn mul(self, rhs: #category) -> #category {
+                            #category::#literal_label(self.eval() * rhs.eval())
+                        }
+                    }
+                    impl std::ops::Div for #category {
+                        type Output = #category;
+                        fn div(self, rhs: #category) -> #category {
+                            #category::#literal_label(self.eval() / rhs.eval())
+                        }
+                    }
+                    impl std::ops::Rem for #category {
+                        type Output = #category;
+                        fn rem(self, rhs: #category) -> #category {
+                            #category::#literal_label(self.eval() % rhs.eval())
+                        }
+                    }
+                };
+                impls.push(ops_impl);
+            }
         }
     }
 

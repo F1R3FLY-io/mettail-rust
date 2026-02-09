@@ -5,6 +5,14 @@ use super::{Int, Bool, Str, VarCategory};
 
 grammar;
 
+match {
+    "bool",
+    "str",
+} else {
+    r"[a-zA-Z_][a-zA-Z0-9_]*",
+    _
+}
+
 Comma<T>: Vec<T> = {
     <mut v:(<T> ",")*> <e:T?> => match e {
         None => v,
@@ -30,27 +38,20 @@ StringLiteral: std::string::String = {
 };
 
 pub Int: Int = {
-    #[precedence(level="2")]
     <IntInfix>
 };
 
 IntInfix: Int = {
-    #[precedence(level="0")]
     <IntAtom>,
-    #[precedence(level="1")] #[assoc(side="left")]
     <left:IntInfix> "^" <right:IntAtom> => Int::Pow(Box::new(left), Box::new(right)),
-    #[precedence(level="1")] #[assoc(side="left")]
     <left:IntInfix> "+" <right:IntAtom> => Int::Add(Box::new(left), Box::new(right)),
-    #[precedence(level="1")] #[assoc(side="left")]
     <left:IntInfix> "-" <right:IntAtom> => Int::Sub(Box::new(left), Box::new(right)),
-    #[precedence(level="1")] #[assoc(side="left")]
     <left:IntInfix> "~" <right:IntAtom> => Int::CustomOp(Box::new(left), Box::new(right)),
 };
 
 IntAtom: Int = {
     "(" <Int> ")",
     "|" <s:Str> "|" => Int::Len(Box::new(s)),
-    "-" <i:Integer> => Int::NumLit(-i),
     <i:Integer> => Int::NumLit(i),
     <v:Ident> => Int::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
     "^" <x:Ident> "." "{" <body:Int> "}" => {
@@ -102,16 +103,12 @@ IntAtom: Int = {
 };
 
 pub Bool: Bool = {
-    #[precedence(level="2")]
     <BoolInfix>
 };
 
 BoolInfix: Bool = {
-    #[precedence(level="0")]
     <BoolAtom>,
-    #[precedence(level="1")] #[assoc(side="left")]
     <left:BoolInfix> "==" <right:BoolAtom> => Bool::EqBool(Box::new(left), Box::new(right)),
-    #[precedence(level="1")] #[assoc(side="left")]
     <left:BoolInfix> "&&" <right:BoolAtom> => Bool::Comp(Box::new(left), Box::new(right)),
 };
 
@@ -121,26 +118,22 @@ BoolAtom: Bool = {
     <a:Str> "==" <b:Str> => Bool::EqStr(Box::new(a), Box::new(b)),
     "not" <a:BoolAtom> => Bool::Not(Box::new(a)),
     <b:Boolean> => Bool::BoolLit(b),
-    "bool:" <v:Ident> => Bool::BVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
+    "bool" ":" <v:Ident> => Bool::BVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
 };
 
 pub Str: Str = {
-    #[precedence(level="2")]
     <StrInfix>
 };
 
 StrInfix: Str = {
-    #[precedence(level="0")]
     <StrAtom>,
-    #[precedence(level="1")] #[assoc(side="left")]
     <left:StrInfix> "++" <right:StrAtom> => Str::Concat(Box::new(left), Box::new(right)),
-    #[precedence(level="1")] #[assoc(side="left")]
     <left:StrInfix> "+" <right:StrAtom> => Str::AddStr(Box::new(left), Box::new(right)),
 };
 
 StrAtom: Str = {
     "(" <Str> ")",
     <s:StringLiteral> => Str::StringLit(s.clone()),
-    "str:" <v:Ident> => Str::SVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
+    "str" ":" <v:Ident> => Str::SVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
 };
 

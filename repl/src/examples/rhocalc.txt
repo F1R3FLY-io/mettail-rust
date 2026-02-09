@@ -1,4 +1,5 @@
 // examples
+add = { a!(2) | b!(3) | (a?x,b?y).{ *(x) + *(y) } }
 comm = { a!(0) | (a?x).{*(x)}}
 multi_comm = {a!(p) | b!(q) | c!(r) | (a?x, b?y, c?z).{{*(x) | *(y) | *(z)}}}
 

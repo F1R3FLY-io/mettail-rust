@@ -119,24 +119,54 @@ const definitions = [
 
 	// Add: ... ...
 	{
-		type: "int_add",
+		type: "proc_add",
 		tooltip: "Add: ... ...",
 		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Cast Int: ...
+	{
+		type: "proc_cast_int",
+		tooltip: "Cast Int: ...",
+		message0: "%1",
 		args0: [
 			{
 				type: "input_value",
 				name: "ARG1",
 				check: "Int",
 			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Int",
-			},
 		],
 		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Err
+	{
+		type: "proc_err",
+		tooltip: "Err",
+		message0: "",
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
 	}
 ];
 

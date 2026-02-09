@@ -12,25 +12,48 @@ language! {
     types {
         Proc
         Name
+        ![i64] as Int
+        // ![f64] as Float
 
-        ![i32] as Int
+
     },
 
     terms {
-        PZero . |- "0" : Proc;
+        PZero . 
+        |- "{}" : Proc;
 
-        PDrop . n:Name |- "*" "(" n ")" : Proc ;
+        PDrop . n:Name 
+        |- "*" "(" n ")" : Proc ;
 
-        POutput . n:Name, q:Proc |- n "!" "(" q ")" : Proc ;
+        POutput . n:Name, q:Proc 
+        |- n "!" "(" q ")" : Proc ;
 
         PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
-            |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
+        |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
 
-        PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
+        PPar . ps:HashBag(Proc) 
+        |- "{" ps.*sep("|") "}" : Proc;
 
-        NQuote . p:Proc |- "@" "(" p ")" : Name ;
+        NQuote . p:Proc 
+        |- "@" "(" p ")" : Name ;
 
-        Add . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+        Add . a:Proc, b:Proc |- a "+" b : Proc ![
+            {if let Proc::CastInt(a) = a {
+                if let Proc::CastInt(b) = b {
+                    Proc::CastInt(Box::new(*a.clone() + *b.clone()))
+                }
+                else {
+                    Proc::Err
+                }
+            } else {
+                Proc::Err
+            }}
+        ] fold;
+
+        CastInt . k:Int |- k : Proc;
+        // CastFloat . k:Float |- k : Proc;
+
+        Err . |- "error" : Proc;
     },
 
     equations {
@@ -44,9 +67,33 @@ language! {
         Exec . |- (PDrop (NQuote P)) ~> P;
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+
+        AddCongL . | S ~> T |- (Add S X) ~> (Add T X);
+
+        AddCongR . | S ~> T |- (Add X S) ~> (Add X T);
     },
 
     logic {
+
+        // relation garbage(Name,Proc);
+        // garbage(n,p) <--
+        //     proc(p),
+        //     if let Proc::PPar(elems) = p,
+        //     for (elem, _) in elems.iter(),
+        //     if let Proc::PNew();
+
+
+        relation rw_weight(Proc, Int, Proc);
+
+        relation is_int(Proc);
+        is_int(p) <--
+            proc(p),
+            if let Proc::CastInt(_) = p;
+        
+        // is_err(p) <-- 
+        //     proc(p),
+        //     if let Proc::Err = p;
+
         relation path(Proc, Proc);
         path(p0, p1) <-- rw_proc(p0, p1);
         path(p0, p2) <-- path(p0, p1), path(p1, p2);

@@ -6,6 +6,14 @@ use super::{Proc, Name, Int, VarCategory};
 
 grammar;
 
+match {
+    "name",
+    "int",
+} else {
+    r"[a-zA-Z_][a-zA-Z0-9_]*",
+    _
+}
+
 Comma<T>: Vec<T> = {
     <mut v:(<T> ",")*> <e:T?> => match e {
         None => v,
@@ -17,14 +25,24 @@ Ident: std::string::String = {
     r"[a-zA-Z_][a-zA-Z0-9_]*" => <>.to_string(),
 };
 
-Integer: i32 = {
+Integer: i64 = {
     r"[0-9]+" => <>.parse().unwrap_or(0),
 };
 
 pub Proc: Proc = {
-    "0" => Proc::PZero,
+    <ProcInfix>
+};
+
+ProcInfix: Proc = {
+    <ProcAtom>,
+    <left:ProcInfix> "+" <right:ProcAtom> => Proc::Add(Box::new(left), Box::new(right)),
+};
+
+ProcAtom: Proc = {
+    "(" <Proc> ")",
+    "{}" => Proc::PZero,
     "*" "(" <n:Name> ")" => Proc::PDrop(Box::new(n)),
-    <n:Name> "!" "(" <q:Proc> ")" => Proc::POutput(Box::new(n), Box::new(q)),
+    <n:Name> "!" "(" <q:ProcAtom> ")" => Proc::POutput(Box::new(n), Box::new(q)),
     "(" <__pairs_v:((Name "?" Ident) ",")*> <__pair_e:(Name "?" Ident)?> ")" "." "{" <p:Proc> "}" => {
         let mut ns = Vec::new();
 let mut __binder_strs = Vec::new();
@@ -47,8 +65,9 @@ let mut __binder_strs = Vec::new();
 for item in ps_v { ps.insert(item); }
 if let Some(item) = ps_e { ps.insert(item); }
         Proc::PPar(ps)
-    }
-,
+    },
+    <k:Int> => Proc::CastInt(Box::new(k)),
+    "error" => Proc::Err,
     <v:Ident> => Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
     "^" <x:Ident> "." "{" <body:Proc> "}" => {
         let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(x.clone()));
@@ -101,25 +120,12 @@ if let Some(item) = ps_e { ps.insert(item); }
 pub Name: Name = {
     "@" "(" <p:Proc> ")" => Name::NQuote(Box::new(p))
 ,
-    "name:" <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
+    "name" ":" <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
+    <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
 };
 
 pub Int: Int = {
-    #[precedence(level="2")]
-    <IntInfix>
-};
-
-IntInfix: Int = {
-    #[precedence(level="0")]
-    <IntAtom>,
-    #[precedence(level="1")] #[assoc(side="left")]
-    <left:IntInfix> "+" <right:IntAtom> => Int::Add(Box::new(left), Box::new(right)),
-};
-
-IntAtom: Int = {
-    "(" <Int> ")",
-    "-" <i:Integer> => Int::NumLit(-i),
     <i:Integer> => Int::NumLit(i),
-    "int:" <v:Ident> => Int::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
+    "int" ":" <v:Ident> => Int::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
 };
 

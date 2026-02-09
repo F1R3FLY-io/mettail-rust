@@ -43,6 +43,13 @@ pub struct HashBag<T: Clone + Hash + Eq> {
     total_count: usize,
 }
 
+impl<T: Clone + Hash + Eq> Iterator for HashBag<T> {
+    type Item = T;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.counts.iter().next().map(|(k, _)| k.clone())
+    }
+}
+
 impl<T: Clone + Hash + Eq> HashBag<T> {
     /// Creates an empty `HashBag`.
     ///

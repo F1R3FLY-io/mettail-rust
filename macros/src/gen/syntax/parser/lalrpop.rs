@@ -126,6 +126,27 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
     // Add grammar directive
     grammar.push_str("grammar;\n\n");
 
+    // When we have 3+ types, non-primary categories use prefix keywords ("name:", "int:"). Ensure
+    // those keywords win over the Ident regex so "name" is tokenized as literal, not Ident.
+    if language.types.len() >= 3 {
+        let keywords: Vec<String> = language
+            .types
+            .iter()
+            .skip(1) // primary gets bare Ident
+            .map(|t| format!("\"{}\"", t.name.to_string().to_lowercase()))
+            .collect();
+        if !keywords.is_empty() {
+            grammar.push_str("match {\n");
+            for kw in &keywords {
+                grammar.push_str(&format!("    {},\n", kw));
+            }
+            grammar.push_str("} else {\n");
+            grammar.push_str("    r\"[a-zA-Z_][a-zA-Z0-9_]*\",\n");
+            grammar.push_str("    _\n");
+            grammar.push_str("}\n\n");
+        }
+    }
+
     // Add Comma helper macro for comma-separated lists
     grammar.push_str("Comma<T>: Vec<T> = {\n");
     grammar.push_str("    <mut v:(<T> \",\")*> <e:T?> => match e {\n");
@@ -304,7 +325,7 @@ fn generate_tiered_production(
     }
 
     // Then delegate to infix tier (low precedence so infix ops prefer shift)
-    production.push_str("    #[precedence(level=\"2\")]\n");
+    // production.push_str("    #[precedence(level=\"2\")]\n");
     production.push_str(&format!("    <{}Infix>\n", cat_str));
     production.push_str("};\n\n");
 
@@ -312,12 +333,12 @@ fn generate_tiered_production(
     production.push_str(&format!("{}Infix: {} = {{\n", cat_str, cat_str));
 
     // Base case first with precedence 0 so that level 1 can use associativity
-    production.push_str("    #[precedence(level=\"0\")]\n");
+    // production.push_str("    #[precedence(level=\"0\")]\n");
     production.push_str(&format!("    <{}Atom>,\n", cat_str));
 
     // Generate left-recursive rules for infix operators
     for rule in infix_rules.iter() {
-        production.push_str("    #[precedence(level=\"1\")] #[assoc(side=\"left\")]\n");
+        // production.push_str("    #[precedence(level=\"1\")] #[assoc(side=\"left\")]\n");
         production.push_str("    ");
         let alt = if is_hol_infix_rule(rule) {
             generate_hol_infix_alternative(rule, &cat_str)
@@ -344,26 +365,26 @@ fn generate_tiered_production(
         .collect();
 
     // Add unary minus support for signed numeric types (Integer, FloatLiteral) before other rules for precedence
-    if let Some(native_type) = has_native_type(category, language) {
-        let type_str = native_type_to_string(native_type);
-        if type_str == "i32" || type_str == "i64" {
-            if let Some(rule) = filtered_other_rules.iter().find(|r| is_integer_literal_rule(r)) {
-                let label = rule.label.to_string();
-                production.push_str(&format!(
-                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    cat_str, label
-                ));
-            }
-        } else if type_str == "f32" || type_str == "f64" {
-            if let Some(rule) = filtered_other_rules.iter().find(|r| is_float_literal_rule(r)) {
-                let label = rule.label.to_string();
-                production.push_str(&format!(
-                    "    \"-\" <f:FloatLiteral> => {}::{}(-f),\n",
-                    cat_str, label
-                ));
-            }
-        }
-    }
+    // if let Some(native_type) = has_native_type(category, language) {
+    //     let type_str = native_type_to_string(native_type);
+    //     if type_str == "i32" || type_str == "i64" {
+    //         if let Some(rule) = filtered_other_rules.iter().find(|r| is_integer_literal_rule(r)) {
+    //             let label = rule.label.to_string();
+    //             production.push_str(&format!(
+    //                 "    \"-\" <i:Integer> => {}::{}(-i),\n",
+    //                 cat_str, label
+    //             ));
+    //         }
+    //     } else if type_str == "f32" || type_str == "f64" {
+    //         if let Some(rule) = filtered_other_rules.iter().find(|r| is_float_literal_rule(r)) {
+    //             let label = rule.label.to_string();
+    //             production.push_str(&format!(
+    //                 "    \"-\" <f:FloatLiteral> => {}::{}(-f),\n",
+    //                 cat_str, label
+    //             ));
+    //         }
+    //     }
+    // }
 
     // Add non-infix rules (excluding var+terminal rules, which are handled at top level)
     // Use Atom for same-category params to avoid ambiguity with Infix tier
@@ -1727,18 +1748,9 @@ fn generate_auto_alternatives(
             }
 
             if type_str == "i32" || type_str == "i64" {
-                // Add unary minus support for negative numbers
-                result.push_str(&format!(
-                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    cat_str, literal_label
-                ));
                 result.push_str(&format!("    <i:Integer> => {}::{}(i)", cat_str, literal_label));
             } else if type_str == "f32" || type_str == "f64" {
-                // Add unary minus support for negative floats
-                result.push_str(&format!(
-                    "    \"-\" <f:FloatLiteral> => {}::{}(-f),\n",
-                    cat_str, literal_label
-                ));
+                
                 result.push_str(&format!("    <f:FloatLiteral> => {}::{}(f)", cat_str, literal_label));
             } else if type_str == "bool" {
                 result.push_str(&format!("    <b:Boolean> => {}::{}(b)", cat_str, literal_label));
@@ -1783,17 +1795,20 @@ fn generate_auto_alternatives(
                 cat_str, var_label
             ));
         } else {
-            // Non-primary category: prefix form ("name:x", "str:x", "bool:x").
+            // Non-primary category: prefix form ("name:x", "int:x", "str:x").
+            // Emit as two separate terminals (e.g. "name" ":") so the keyword is a fixed string;
+            // LALRPOP gives fixed strings precedence over regex, so "name" wins over Ident when both match.
             // For two-type languages only (e.g. RhoCalc Proc/Name), also add bare Ident so that
             // when this category is used as a subrule (e.g. Name in "a!(0)"), "a" can parse as Name.
             // For three+ types (e.g. Calculator) bare Ident on multiple categories causes shift-reduce conflicts.
-            let prefix_lit = format!("{}:", cat_str.to_string().to_lowercase());
-            let prefix_escaped = prefix_lit.replace('\\', "\\\\").replace('"', "\\\"");
+            let prefix_base = cat_str.to_string().to_lowercase();
+            let prefix_escaped = prefix_base.replace('\\', "\\\\").replace('"', "\\\"");
             result.push_str(&format!(
-                "    \"{}\" <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
+                "    \"{}\" \":\" <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
                 prefix_escaped, cat_str, var_label
             ));
-            if language.types.len() == 2 {
+            let allow_bare_ident = language.types.len() == 2 || cat_str == "Name";
+            if allow_bare_ident {
                 result.push_str(&format!(
                     ",\n    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
                     cat_str, var_label

@@ -6,554 +6,605 @@ ascent_source! {
     rhocalc_source:
 
     // Relations
-relation proc (Proc);
+relation proc(Proc);
 
-relation name (Name);
+relation name(Name);
 
-relation int (Int);
+relation int(Int);
 
-# [ds (crate :: eqrel)] relation eq_proc (Proc , Proc);
+#[ds(crate :: eqrel)] relation eq_proc(Proc, Proc);
 
-# [ds (crate :: eqrel)] relation eq_name (Name , Name);
+#[ds(crate :: eqrel)] relation eq_name(Name, Name);
 
-# [ds (crate :: eqrel)] relation eq_int (Int , Int);
+#[ds(crate :: eqrel)] relation eq_int(Int, Int);
 
-relation rw_proc (Proc , Proc);
+relation rw_proc(Proc, Proc);
 
-relation rw_name (Name , Name);
+relation rw_name(Name, Name);
 
-relation rw_int (Int , Int);
+relation rw_int(Int, Int);
 
-relation fold_int (Int , Int);
+relation fold_proc(Proc, Proc);
 
-relation ppar_contains (Proc , Proc);
+relation ppar_contains(Proc, Proc);
 
 
     // Category rules
-proc (c1 . clone ()) <--
-    proc (c0),
-    rw_proc (c0 , c1);
-
-name (field_0 . as_ref () . clone ()) <--
-    proc (t),
-    if let Proc :: PDrop (field_0) = t;
-
-name (field_0 . as_ref () . clone ()),
-proc (field_1 . as_ref () . clone ()) <--
-    proc (t),
-    if let Proc :: POutput (field_0 , field_1) = t;
-
-proc (lam . as_ref () . clone ()),
-proc (arg . as_ref () . clone ()) <--
-    proc (t),
-    if let Proc :: ApplyProc (lam , arg) = t;
-
-proc (lam . as_ref () . clone ()) <--
-    proc (t),
-    if let Proc :: MApplyProc (lam , _) = t;
-
-proc (arg . clone ()) <--
-    proc (t),
-    if let Proc :: MApplyProc (_ , args) = t,
-    for arg in args . iter ();
-
-proc ((* scope . inner () . unsafe_body) . clone ()) <--
-    proc (t),
-    if let Proc :: LamProc (scope) = t;
-
-proc ((* scope . inner () . unsafe_body) . clone ()) <--
-    proc (t),
-    if let Proc :: MLamProc (scope) = t;
-
-proc (lam . as_ref () . clone ()),
-name (arg . as_ref () . clone ()) <--
-    proc (t),
-    if let Proc :: ApplyName (lam , arg) = t;
-
-proc (lam . as_ref () . clone ()) <--
-    proc (t),
-    if let Proc :: MApplyName (lam , _) = t;
-
-name (arg . clone ()) <--
-    proc (t),
-    if let Proc :: MApplyName (_ , args) = t,
-    for arg in args . iter ();
-
-proc ((* scope . inner () . unsafe_body) . clone ()) <--
-    proc (t),
-    if let Proc :: LamName (scope) = t;
-
-proc ((* scope . inner () . unsafe_body) . clone ()) <--
-    proc (t),
-    if let Proc :: MLamName (scope) = t;
-
-proc (lam . as_ref () . clone ()),
-int (arg . as_ref () . clone ()) <--
-    proc (t),
-    if let Proc :: ApplyInt (lam , arg) = t;
-
-proc (lam . as_ref () . clone ()) <--
-    proc (t),
-    if let Proc :: MApplyInt (lam , _) = t;
-
-int (arg . clone ()) <--
-    proc (t),
-    if let Proc :: MApplyInt (_ , args) = t,
-    for arg in args . iter ();
-
-proc ((* scope . inner () . unsafe_body) . clone ()) <--
-    proc (t),
-    if let Proc :: LamInt (scope) = t;
-
-proc ((* scope . inner () . unsafe_body) . clone ()) <--
-    proc (t),
-    if let Proc :: MLamInt (scope) = t;
-
-ppar_contains (parent . clone () , elem . clone ()) <--
-    proc (parent),
-    if let Proc :: PPar (ref bag_field) = parent,
-    for (elem , _count) in bag_field . iter ();
-
-proc (elem . clone ()) <--
-    ppar_contains (_parent , elem);
-
-rw_proc (Proc :: ApplyProc (lam . clone () , arg . clone ()) , Proc :: ApplyProc (Box :: new (lam_new . clone ()) , arg . clone ())) <--
-    proc (t),
-    if let Proc :: ApplyProc (ref lam , ref arg) = t,
-    rw_proc (lam . as_ref () . clone () , lam_new);
-
-rw_proc (Proc :: ApplyProc (lam . clone () , arg . clone ()) , Proc :: ApplyProc (lam . clone () , Box :: new (arg_new . clone ()))) <--
-    proc (t),
-    if let Proc :: ApplyProc (ref lam , ref arg) = t,
-    rw_proc (arg . as_ref () . clone () , arg_new);
-
-rw_proc (Proc :: MApplyProc (lam . clone () , args . clone ()) , Proc :: MApplyProc (Box :: new (lam_new . clone ()) , args . clone ())) <--
-    proc (t),
-    if let Proc :: MApplyProc (ref lam , ref args) = t,
-    rw_proc (lam . as_ref () . clone () , lam_new);
-
-rw_proc (Proc :: ApplyName (lam . clone () , arg . clone ()) , Proc :: ApplyName (Box :: new (lam_new . clone ()) , arg . clone ())) <--
-    proc (t),
-    if let Proc :: ApplyName (ref lam , ref arg) = t,
-    rw_proc (lam . as_ref () . clone () , lam_new);
-
-rw_proc (Proc :: ApplyName (lam . clone () , arg . clone ()) , Proc :: ApplyName (lam . clone () , Box :: new (arg_new . clone ()))) <--
-    proc (t),
-    if let Proc :: ApplyName (ref lam , ref arg) = t,
-    rw_name (arg . as_ref () . clone () , arg_new);
-
-rw_proc (Proc :: MApplyName (lam . clone () , args . clone ()) , Proc :: MApplyName (Box :: new (lam_new . clone ()) , args . clone ())) <--
-    proc (t),
-    if let Proc :: MApplyName (ref lam , ref args) = t,
-    rw_proc (lam . as_ref () . clone () , lam_new);
-
-rw_proc (Proc :: ApplyInt (lam . clone () , arg . clone ()) , Proc :: ApplyInt (Box :: new (lam_new . clone ()) , arg . clone ())) <--
-    proc (t),
-    if let Proc :: ApplyInt (ref lam , ref arg) = t,
-    rw_proc (lam . as_ref () . clone () , lam_new);
-
-rw_proc (Proc :: ApplyInt (lam . clone () , arg . clone ()) , Proc :: ApplyInt (lam . clone () , Box :: new (arg_new . clone ()))) <--
-    proc (t),
-    if let Proc :: ApplyInt (ref lam , ref arg) = t,
-    rw_int (arg . as_ref () . clone () , arg_new);
-
-rw_proc (Proc :: MApplyInt (lam . clone () , args . clone ()) , Proc :: MApplyInt (Box :: new (lam_new . clone ()) , args . clone ())) <--
-    proc (t),
-    if let Proc :: MApplyInt (ref lam , ref args) = t,
-    rw_proc (lam . as_ref () . clone () , lam_new);
-
-name (c1 . clone ()) <--
-    name (c0),
-    rw_name (c0 , c1);
-
-proc (field_0 . as_ref () . clone ()) <--
-    name (t),
-    if let Name :: NQuote (field_0) = t;
-
-name (lam . as_ref () . clone ()),
-proc (arg . as_ref () . clone ()) <--
-    name (t),
-    if let Name :: ApplyProc (lam , arg) = t;
-
-name (lam . as_ref () . clone ()) <--
-    name (t),
-    if let Name :: MApplyProc (lam , _) = t;
-
-proc (arg . clone ()) <--
-    name (t),
-    if let Name :: MApplyProc (_ , args) = t,
-    for arg in args . iter ();
-
-name ((* scope . inner () . unsafe_body) . clone ()) <--
-    name (t),
-    if let Name :: LamProc (scope) = t;
-
-name ((* scope . inner () . unsafe_body) . clone ()) <--
-    name (t),
-    if let Name :: MLamProc (scope) = t;
-
-name (lam . as_ref () . clone ()),
-name (arg . as_ref () . clone ()) <--
-    name (t),
-    if let Name :: ApplyName (lam , arg) = t;
-
-name (lam . as_ref () . clone ()) <--
-    name (t),
-    if let Name :: MApplyName (lam , _) = t;
-
-name (arg . clone ()) <--
-    name (t),
-    if let Name :: MApplyName (_ , args) = t,
-    for arg in args . iter ();
-
-name ((* scope . inner () . unsafe_body) . clone ()) <--
-    name (t),
-    if let Name :: LamName (scope) = t;
-
-name ((* scope . inner () . unsafe_body) . clone ()) <--
-    name (t),
-    if let Name :: MLamName (scope) = t;
-
-name (lam . as_ref () . clone ()),
-int (arg . as_ref () . clone ()) <--
-    name (t),
-    if let Name :: ApplyInt (lam , arg) = t;
-
-name (lam . as_ref () . clone ()) <--
-    name (t),
-    if let Name :: MApplyInt (lam , _) = t;
-
-int (arg . clone ()) <--
-    name (t),
-    if let Name :: MApplyInt (_ , args) = t,
-    for arg in args . iter ();
-
-name ((* scope . inner () . unsafe_body) . clone ()) <--
-    name (t),
-    if let Name :: LamInt (scope) = t;
-
-name ((* scope . inner () . unsafe_body) . clone ()) <--
-    name (t),
-    if let Name :: MLamInt (scope) = t;
-
-rw_name (Name :: ApplyProc (lam . clone () , arg . clone ()) , Name :: ApplyProc (Box :: new (lam_new . clone ()) , arg . clone ())) <--
-    name (t),
-    if let Name :: ApplyProc (ref lam , ref arg) = t,
-    rw_name (lam . as_ref () . clone () , lam_new);
-
-rw_name (Name :: ApplyProc (lam . clone () , arg . clone ()) , Name :: ApplyProc (lam . clone () , Box :: new (arg_new . clone ()))) <--
-    name (t),
-    if let Name :: ApplyProc (ref lam , ref arg) = t,
-    rw_proc (arg . as_ref () . clone () , arg_new);
-
-rw_name (Name :: MApplyProc (lam . clone () , args . clone ()) , Name :: MApplyProc (Box :: new (lam_new . clone ()) , args . clone ())) <--
-    name (t),
-    if let Name :: MApplyProc (ref lam , ref args) = t,
-    rw_name (lam . as_ref () . clone () , lam_new);
-
-rw_name (Name :: ApplyName (lam . clone () , arg . clone ()) , Name :: ApplyName (Box :: new (lam_new . clone ()) , arg . clone ())) <--
-    name (t),
-    if let Name :: ApplyName (ref lam , ref arg) = t,
-    rw_name (lam . as_ref () . clone () , lam_new);
-
-rw_name (Name :: ApplyName (lam . clone () , arg . clone ()) , Name :: ApplyName (lam . clone () , Box :: new (arg_new . clone ()))) <--
-    name (t),
-    if let Name :: ApplyName (ref lam , ref arg) = t,
-    rw_name (arg . as_ref () . clone () , arg_new);
-
-rw_name (Name :: MApplyName (lam . clone () , args . clone ()) , Name :: MApplyName (Box :: new (lam_new . clone ()) , args . clone ())) <--
-    name (t),
-    if let Name :: MApplyName (ref lam , ref args) = t,
-    rw_name (lam . as_ref () . clone () , lam_new);
-
-rw_name (Name :: ApplyInt (lam . clone () , arg . clone ()) , Name :: ApplyInt (Box :: new (lam_new . clone ()) , arg . clone ())) <--
-    name (t),
-    if let Name :: ApplyInt (ref lam , ref arg) = t,
-    rw_name (lam . as_ref () . clone () , lam_new);
-
-rw_name (Name :: ApplyInt (lam . clone () , arg . clone ()) , Name :: ApplyInt (lam . clone () , Box :: new (arg_new . clone ()))) <--
-    name (t),
-    if let Name :: ApplyInt (ref lam , ref arg) = t,
-    rw_int (arg . as_ref () . clone () , arg_new);
-
-rw_name (Name :: MApplyInt (lam . clone () , args . clone ()) , Name :: MApplyInt (Box :: new (lam_new . clone ()) , args . clone ())) <--
-    name (t),
-    if let Name :: MApplyInt (ref lam , ref args) = t,
-    rw_name (lam . as_ref () . clone () , lam_new);
-
-int (c1 . clone ()) <--
-    int (c0),
-    rw_int (c0 , c1);
-
-int (field_0 . as_ref () . clone ()),
-int (field_1 . as_ref () . clone ()) <--
-    int (t),
-    if let Int :: Add (field_0 , field_1) = t;
-
-int (lam . as_ref () . clone ()),
-proc (arg . as_ref () . clone ()) <--
-    int (t),
-    if let Int :: ApplyProc (lam , arg) = t;
-
-int (lam . as_ref () . clone ()) <--
-    int (t),
-    if let Int :: MApplyProc (lam , _) = t;
-
-proc (arg . clone ()) <--
-    int (t),
-    if let Int :: MApplyProc (_ , args) = t,
-    for arg in args . iter ();
-
-int ((* scope . inner () . unsafe_body) . clone ()) <--
-    int (t),
-    if let Int :: LamProc (scope) = t;
-
-int ((* scope . inner () . unsafe_body) . clone ()) <--
-    int (t),
-    if let Int :: MLamProc (scope) = t;
-
-int (lam . as_ref () . clone ()),
-name (arg . as_ref () . clone ()) <--
-    int (t),
-    if let Int :: ApplyName (lam , arg) = t;
-
-int (lam . as_ref () . clone ()) <--
-    int (t),
-    if let Int :: MApplyName (lam , _) = t;
-
-name (arg . clone ()) <--
-    int (t),
-    if let Int :: MApplyName (_ , args) = t,
-    for arg in args . iter ();
-
-int ((* scope . inner () . unsafe_body) . clone ()) <--
-    int (t),
-    if let Int :: LamName (scope) = t;
-
-int ((* scope . inner () . unsafe_body) . clone ()) <--
-    int (t),
-    if let Int :: MLamName (scope) = t;
-
-int (lam . as_ref () . clone ()),
-int (arg . as_ref () . clone ()) <--
-    int (t),
-    if let Int :: ApplyInt (lam , arg) = t;
-
-int (lam . as_ref () . clone ()) <--
-    int (t),
-    if let Int :: MApplyInt (lam , _) = t;
-
-int (arg . clone ()) <--
-    int (t),
-    if let Int :: MApplyInt (_ , args) = t,
-    for arg in args . iter ();
-
-int ((* scope . inner () . unsafe_body) . clone ()) <--
-    int (t),
-    if let Int :: LamInt (scope) = t;
-
-int ((* scope . inner () . unsafe_body) . clone ()) <--
-    int (t),
-    if let Int :: MLamInt (scope) = t;
-
-rw_int (Int :: ApplyProc (lam . clone () , arg . clone ()) , Int :: ApplyProc (Box :: new (lam_new . clone ()) , arg . clone ())) <--
-    int (t),
-    if let Int :: ApplyProc (ref lam , ref arg) = t,
-    rw_int (lam . as_ref () . clone () , lam_new);
-
-rw_int (Int :: ApplyProc (lam . clone () , arg . clone ()) , Int :: ApplyProc (lam . clone () , Box :: new (arg_new . clone ()))) <--
-    int (t),
-    if let Int :: ApplyProc (ref lam , ref arg) = t,
-    rw_proc (arg . as_ref () . clone () , arg_new);
-
-rw_int (Int :: MApplyProc (lam . clone () , args . clone ()) , Int :: MApplyProc (Box :: new (lam_new . clone ()) , args . clone ())) <--
-    int (t),
-    if let Int :: MApplyProc (ref lam , ref args) = t,
-    rw_int (lam . as_ref () . clone () , lam_new);
-
-rw_int (Int :: ApplyName (lam . clone () , arg . clone ()) , Int :: ApplyName (Box :: new (lam_new . clone ()) , arg . clone ())) <--
-    int (t),
-    if let Int :: ApplyName (ref lam , ref arg) = t,
-    rw_int (lam . as_ref () . clone () , lam_new);
-
-rw_int (Int :: ApplyName (lam . clone () , arg . clone ()) , Int :: ApplyName (lam . clone () , Box :: new (arg_new . clone ()))) <--
-    int (t),
-    if let Int :: ApplyName (ref lam , ref arg) = t,
-    rw_name (arg . as_ref () . clone () , arg_new);
-
-rw_int (Int :: MApplyName (lam . clone () , args . clone ()) , Int :: MApplyName (Box :: new (lam_new . clone ()) , args . clone ())) <--
-    int (t),
-    if let Int :: MApplyName (ref lam , ref args) = t,
-    rw_int (lam . as_ref () . clone () , lam_new);
-
-rw_int (Int :: ApplyInt (lam . clone () , arg . clone ()) , Int :: ApplyInt (Box :: new (lam_new . clone ()) , arg . clone ())) <--
-    int (t),
-    if let Int :: ApplyInt (ref lam , ref arg) = t,
-    rw_int (lam . as_ref () . clone () , lam_new);
-
-rw_int (Int :: ApplyInt (lam . clone () , arg . clone ()) , Int :: ApplyInt (lam . clone () , Box :: new (arg_new . clone ()))) <--
-    int (t),
-    if let Int :: ApplyInt (ref lam , ref arg) = t,
-    rw_int (arg . as_ref () . clone () , arg_new);
-
-rw_int (Int :: MApplyInt (lam . clone () , args . clone ()) , Int :: MApplyInt (Box :: new (lam_new . clone ()) , args . clone ())) <--
-    int (t),
-    if let Int :: MApplyInt (ref lam , ref args) = t,
-    rw_int (lam . as_ref () . clone () , lam_new);
+proc(c1.clone()) <--
+    proc(c0),
+    rw_proc(c0, c1);
+
+name(field_0.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: PDrop(field_0) = t;
+
+name(field_0.as_ref().clone()),
+proc(field_1.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: POutput(field_0, field_1) = t;
+
+proc(field_0.as_ref().clone()),
+proc(field_1.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: Add(field_0, field_1) = t;
+
+int(field_0.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: CastInt(field_0) = t;
+
+proc(lam.as_ref().clone()),
+proc(arg.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: ApplyProc(lam, arg) = t;
+
+proc(lam.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: MApplyProc(lam, _) = t;
+
+proc(arg.clone()) <--
+    proc(t),
+    if let Proc :: MApplyProc(_, args) = t,
+    for arg in args.iter();
+
+proc((* scope.inner().unsafe_body).clone()) <--
+    proc(t),
+    if let Proc :: LamProc(scope) = t;
+
+proc((* scope.inner().unsafe_body).clone()) <--
+    proc(t),
+    if let Proc :: MLamProc(scope) = t;
+
+proc(lam.as_ref().clone()),
+name(arg.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: ApplyName(lam, arg) = t;
+
+proc(lam.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: MApplyName(lam, _) = t;
+
+name(arg.clone()) <--
+    proc(t),
+    if let Proc :: MApplyName(_, args) = t,
+    for arg in args.iter();
+
+proc((* scope.inner().unsafe_body).clone()) <--
+    proc(t),
+    if let Proc :: LamName(scope) = t;
+
+proc((* scope.inner().unsafe_body).clone()) <--
+    proc(t),
+    if let Proc :: MLamName(scope) = t;
+
+proc(lam.as_ref().clone()),
+int(arg.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: ApplyInt(lam, arg) = t;
+
+proc(lam.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: MApplyInt(lam, _) = t;
+
+int(arg.clone()) <--
+    proc(t),
+    if let Proc :: MApplyInt(_, args) = t,
+    for arg in args.iter();
+
+proc((* scope.inner().unsafe_body).clone()) <--
+    proc(t),
+    if let Proc :: LamInt(scope) = t;
+
+proc((* scope.inner().unsafe_body).clone()) <--
+    proc(t),
+    if let Proc :: MLamInt(scope) = t;
+
+ppar_contains(parent.clone(), elem.clone()) <--
+    proc(parent),
+    if let Proc :: PPar(ref bag_field) = parent,
+    for (elem, _count) in bag_field.iter();
+
+proc(elem.clone()) <--
+    ppar_contains(_parent, elem);
+
+rw_proc(Proc :: ApplyProc(lam.clone(), arg.clone()), Proc :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
+    proc(t),
+    if let Proc :: ApplyProc(ref lam, ref arg) = t,
+    rw_proc(lam.as_ref().clone(), lam_new);
+
+rw_proc(Proc :: ApplyProc(lam.clone(), arg.clone()), Proc :: ApplyProc(lam.clone(), Box :: new(arg_new.clone()))) <--
+    proc(t),
+    if let Proc :: ApplyProc(ref lam, ref arg) = t,
+    rw_proc(arg.as_ref().clone(), arg_new);
+
+rw_proc(Proc :: MApplyProc(lam.clone(), args.clone()), Proc :: MApplyProc(Box :: new(lam_new.clone()), args.clone())) <--
+    proc(t),
+    if let Proc :: MApplyProc(ref lam, ref args) = t,
+    rw_proc(lam.as_ref().clone(), lam_new);
+
+rw_proc(Proc :: ApplyName(lam.clone(), arg.clone()), Proc :: ApplyName(Box :: new(lam_new.clone()), arg.clone())) <--
+    proc(t),
+    if let Proc :: ApplyName(ref lam, ref arg) = t,
+    rw_proc(lam.as_ref().clone(), lam_new);
+
+rw_proc(Proc :: ApplyName(lam.clone(), arg.clone()), Proc :: ApplyName(lam.clone(), Box :: new(arg_new.clone()))) <--
+    proc(t),
+    if let Proc :: ApplyName(ref lam, ref arg) = t,
+    rw_name(arg.as_ref().clone(), arg_new);
+
+rw_proc(Proc :: MApplyName(lam.clone(), args.clone()), Proc :: MApplyName(Box :: new(lam_new.clone()), args.clone())) <--
+    proc(t),
+    if let Proc :: MApplyName(ref lam, ref args) = t,
+    rw_proc(lam.as_ref().clone(), lam_new);
+
+rw_proc(Proc :: ApplyInt(lam.clone(), arg.clone()), Proc :: ApplyInt(Box :: new(lam_new.clone()), arg.clone())) <--
+    proc(t),
+    if let Proc :: ApplyInt(ref lam, ref arg) = t,
+    rw_proc(lam.as_ref().clone(), lam_new);
+
+rw_proc(Proc :: ApplyInt(lam.clone(), arg.clone()), Proc :: ApplyInt(lam.clone(), Box :: new(arg_new.clone()))) <--
+    proc(t),
+    if let Proc :: ApplyInt(ref lam, ref arg) = t,
+    rw_int(arg.as_ref().clone(), arg_new);
+
+rw_proc(Proc :: MApplyInt(lam.clone(), args.clone()), Proc :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
+    proc(t),
+    if let Proc :: MApplyInt(ref lam, ref args) = t,
+    rw_proc(lam.as_ref().clone(), lam_new);
+
+name(c1.clone()) <--
+    name(c0),
+    rw_name(c0, c1);
+
+proc(field_0.as_ref().clone()) <--
+    name(t),
+    if let Name :: NQuote(field_0) = t;
+
+name(lam.as_ref().clone()),
+proc(arg.as_ref().clone()) <--
+    name(t),
+    if let Name :: ApplyProc(lam, arg) = t;
+
+name(lam.as_ref().clone()) <--
+    name(t),
+    if let Name :: MApplyProc(lam, _) = t;
+
+proc(arg.clone()) <--
+    name(t),
+    if let Name :: MApplyProc(_, args) = t,
+    for arg in args.iter();
+
+name((* scope.inner().unsafe_body).clone()) <--
+    name(t),
+    if let Name :: LamProc(scope) = t;
+
+name((* scope.inner().unsafe_body).clone()) <--
+    name(t),
+    if let Name :: MLamProc(scope) = t;
+
+name(lam.as_ref().clone()),
+name(arg.as_ref().clone()) <--
+    name(t),
+    if let Name :: ApplyName(lam, arg) = t;
+
+name(lam.as_ref().clone()) <--
+    name(t),
+    if let Name :: MApplyName(lam, _) = t;
+
+name(arg.clone()) <--
+    name(t),
+    if let Name :: MApplyName(_, args) = t,
+    for arg in args.iter();
+
+name((* scope.inner().unsafe_body).clone()) <--
+    name(t),
+    if let Name :: LamName(scope) = t;
+
+name((* scope.inner().unsafe_body).clone()) <--
+    name(t),
+    if let Name :: MLamName(scope) = t;
+
+name(lam.as_ref().clone()),
+int(arg.as_ref().clone()) <--
+    name(t),
+    if let Name :: ApplyInt(lam, arg) = t;
+
+name(lam.as_ref().clone()) <--
+    name(t),
+    if let Name :: MApplyInt(lam, _) = t;
+
+int(arg.clone()) <--
+    name(t),
+    if let Name :: MApplyInt(_, args) = t,
+    for arg in args.iter();
+
+name((* scope.inner().unsafe_body).clone()) <--
+    name(t),
+    if let Name :: LamInt(scope) = t;
+
+name((* scope.inner().unsafe_body).clone()) <--
+    name(t),
+    if let Name :: MLamInt(scope) = t;
+
+rw_name(Name :: ApplyProc(lam.clone(), arg.clone()), Name :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
+    name(t),
+    if let Name :: ApplyProc(ref lam, ref arg) = t,
+    rw_name(lam.as_ref().clone(), lam_new);
+
+rw_name(Name :: ApplyProc(lam.clone(), arg.clone()), Name :: ApplyProc(lam.clone(), Box :: new(arg_new.clone()))) <--
+    name(t),
+    if let Name :: ApplyProc(ref lam, ref arg) = t,
+    rw_proc(arg.as_ref().clone(), arg_new);
+
+rw_name(Name :: MApplyProc(lam.clone(), args.clone()), Name :: MApplyProc(Box :: new(lam_new.clone()), args.clone())) <--
+    name(t),
+    if let Name :: MApplyProc(ref lam, ref args) = t,
+    rw_name(lam.as_ref().clone(), lam_new);
+
+rw_name(Name :: ApplyName(lam.clone(), arg.clone()), Name :: ApplyName(Box :: new(lam_new.clone()), arg.clone())) <--
+    name(t),
+    if let Name :: ApplyName(ref lam, ref arg) = t,
+    rw_name(lam.as_ref().clone(), lam_new);
+
+rw_name(Name :: ApplyName(lam.clone(), arg.clone()), Name :: ApplyName(lam.clone(), Box :: new(arg_new.clone()))) <--
+    name(t),
+    if let Name :: ApplyName(ref lam, ref arg) = t,
+    rw_name(arg.as_ref().clone(), arg_new);
+
+rw_name(Name :: MApplyName(lam.clone(), args.clone()), Name :: MApplyName(Box :: new(lam_new.clone()), args.clone())) <--
+    name(t),
+    if let Name :: MApplyName(ref lam, ref args) = t,
+    rw_name(lam.as_ref().clone(), lam_new);
+
+rw_name(Name :: ApplyInt(lam.clone(), arg.clone()), Name :: ApplyInt(Box :: new(lam_new.clone()), arg.clone())) <--
+    name(t),
+    if let Name :: ApplyInt(ref lam, ref arg) = t,
+    rw_name(lam.as_ref().clone(), lam_new);
+
+rw_name(Name :: ApplyInt(lam.clone(), arg.clone()), Name :: ApplyInt(lam.clone(), Box :: new(arg_new.clone()))) <--
+    name(t),
+    if let Name :: ApplyInt(ref lam, ref arg) = t,
+    rw_int(arg.as_ref().clone(), arg_new);
+
+rw_name(Name :: MApplyInt(lam.clone(), args.clone()), Name :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
+    name(t),
+    if let Name :: MApplyInt(ref lam, ref args) = t,
+    rw_name(lam.as_ref().clone(), lam_new);
+
+int(c1.clone()) <--
+    int(c0),
+    rw_int(c0, c1);
+
+int(lam.as_ref().clone()),
+proc(arg.as_ref().clone()) <--
+    int(t),
+    if let Int :: ApplyProc(lam, arg) = t;
+
+int(lam.as_ref().clone()) <--
+    int(t),
+    if let Int :: MApplyProc(lam, _) = t;
+
+proc(arg.clone()) <--
+    int(t),
+    if let Int :: MApplyProc(_, args) = t,
+    for arg in args.iter();
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: LamProc(scope) = t;
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: MLamProc(scope) = t;
+
+int(lam.as_ref().clone()),
+name(arg.as_ref().clone()) <--
+    int(t),
+    if let Int :: ApplyName(lam, arg) = t;
+
+int(lam.as_ref().clone()) <--
+    int(t),
+    if let Int :: MApplyName(lam, _) = t;
+
+name(arg.clone()) <--
+    int(t),
+    if let Int :: MApplyName(_, args) = t,
+    for arg in args.iter();
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: LamName(scope) = t;
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: MLamName(scope) = t;
+
+int(lam.as_ref().clone()),
+int(arg.as_ref().clone()) <--
+    int(t),
+    if let Int :: ApplyInt(lam, arg) = t;
+
+int(lam.as_ref().clone()) <--
+    int(t),
+    if let Int :: MApplyInt(lam, _) = t;
+
+int(arg.clone()) <--
+    int(t),
+    if let Int :: MApplyInt(_, args) = t,
+    for arg in args.iter();
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: LamInt(scope) = t;
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: MLamInt(scope) = t;
+
+rw_int(Int :: ApplyProc(lam.clone(), arg.clone()), Int :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
+    int(t),
+    if let Int :: ApplyProc(ref lam, ref arg) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
+
+rw_int(Int :: ApplyProc(lam.clone(), arg.clone()), Int :: ApplyProc(lam.clone(), Box :: new(arg_new.clone()))) <--
+    int(t),
+    if let Int :: ApplyProc(ref lam, ref arg) = t,
+    rw_proc(arg.as_ref().clone(), arg_new);
+
+rw_int(Int :: MApplyProc(lam.clone(), args.clone()), Int :: MApplyProc(Box :: new(lam_new.clone()), args.clone())) <--
+    int(t),
+    if let Int :: MApplyProc(ref lam, ref args) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
+
+rw_int(Int :: ApplyName(lam.clone(), arg.clone()), Int :: ApplyName(Box :: new(lam_new.clone()), arg.clone())) <--
+    int(t),
+    if let Int :: ApplyName(ref lam, ref arg) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
+
+rw_int(Int :: ApplyName(lam.clone(), arg.clone()), Int :: ApplyName(lam.clone(), Box :: new(arg_new.clone()))) <--
+    int(t),
+    if let Int :: ApplyName(ref lam, ref arg) = t,
+    rw_name(arg.as_ref().clone(), arg_new);
+
+rw_int(Int :: MApplyName(lam.clone(), args.clone()), Int :: MApplyName(Box :: new(lam_new.clone()), args.clone())) <--
+    int(t),
+    if let Int :: MApplyName(ref lam, ref args) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
+
+rw_int(Int :: ApplyInt(lam.clone(), arg.clone()), Int :: ApplyInt(Box :: new(lam_new.clone()), arg.clone())) <--
+    int(t),
+    if let Int :: ApplyInt(ref lam, ref arg) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
+
+rw_int(Int :: ApplyInt(lam.clone(), arg.clone()), Int :: ApplyInt(lam.clone(), Box :: new(arg_new.clone()))) <--
+    int(t),
+    if let Int :: ApplyInt(ref lam, ref arg) = t,
+    rw_int(arg.as_ref().clone(), arg_new);
+
+rw_int(Int :: MApplyInt(lam.clone(), args.clone()), Int :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
+    int(t),
+    if let Int :: MApplyInt(ref lam, ref args) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
 
 
     // Equation rules
-eq_proc (t . clone () , t . clone ()) <--
-    proc (t);
+eq_proc(t.clone(), t.clone()) <--
+    proc(t);
 
-eq_name (t . clone () , t . clone ()) <--
-    name (t);
+eq_name(t.clone(), t.clone()) <--
+    name(t);
 
-eq_int (t . clone () , t . clone ()) <--
-    int (t);
+eq_int(t.clone(), t.clone()) <--
+    int(t);
 
-eq_proc (s . clone () , t . clone ()) <--
-    proc (s),
-    if let Proc :: PDrop (ref s_f0) = s,
-    proc (t),
-    if let Proc :: PDrop (ref t_f0) = t,
-    eq_name (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ());
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: PDrop(ref s_f0) = s,
+    proc(t),
+    if let Proc :: PDrop(ref t_f0) = t,
+    eq_name(s_f0.as_ref().clone(), t_f0.as_ref().clone());
 
-eq_proc (s . clone () , t . clone ()) <--
-    proc (s),
-    if let Proc :: POutput (ref s_f0 , ref s_f1) = s,
-    proc (t),
-    if let Proc :: POutput (ref t_f0 , ref t_f1) = t,
-    eq_name (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
-    eq_proc (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: POutput(ref s_f0, ref s_f1) = s,
+    proc(t),
+    if let Proc :: POutput(ref t_f0, ref t_f1) = t,
+    eq_name(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_proc(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
-eq_name (s . clone () , t . clone ()) <--
-    name (s),
-    if let Name :: NQuote (ref s_f0) = s,
-    name (t),
-    if let Name :: NQuote (ref t_f0) = t,
-    eq_proc (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ());
+eq_name(s.clone(), t.clone()) <--
+    name(s),
+    if let Name :: NQuote(ref s_f0) = s,
+    name(t),
+    if let Name :: NQuote(ref t_f0) = t,
+    eq_proc(s_f0.as_ref().clone(), t_f0.as_ref().clone());
 
-eq_int (s . clone () , t . clone ()) <--
-    int (s),
-    if let Int :: Add (ref s_f0 , ref s_f1) = s,
-    int (t),
-    if let Int :: Add (ref t_f0 , ref t_f1) = t,
-    eq_int (s_f0 . as_ref () . clone () , t_f0 . as_ref () . clone ()),
-    eq_int (s_f1 . as_ref () . clone () , t_f1 . as_ref () . clone ());
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: Add(ref s_f0, ref s_f1) = s,
+    proc(t),
+    if let Proc :: Add(ref t_f0, ref t_f1) = t,
+    eq_proc(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_proc(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
-eq_name (s . clone () , t . clone ()),
-name (t . clone ()) <--
-    name (s),
-    if let Name :: NQuote (ref s_f0) = s,
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: CastInt(ref s_f0) = s,
+    proc(t),
+    if let Proc :: CastInt(ref t_f0) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_name(s.clone(), t.clone()),
+name(t.clone()) <--
+    name(s),
+    if let Name :: NQuote(ref s_f0) = s,
     let s_f0_deref = & * * s_f0,
-    if let Proc :: PDrop (ref s_f0_deref_f0) = s_f0_deref,
+    if let Proc :: PDrop(ref s_f0_deref_f0) = s_f0_deref,
     let s_f0_deref_f0_deref = & * * s_f0_deref_f0,
-    let t = ((s_f0_deref_f0_deref . clone ()) . clone ()) . normalize ();
+    let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
 
     // Rewrite rules
-rw_proc (s_orig . clone () , t) <--
-    eq_proc (s_orig , s),
-    if let Proc :: PPar (ref s_f0) = s,
-    for (s_f0_e0 , _count_0) in s_f0 . iter (),
-    if let Proc :: PInputs (ref s_f0_e0_f0 , ref s_f0_e0_f1) = s_f0_e0,
-    let s_f0_e0_f1_binder = s_f0_e0_f1 . unsafe_pattern () . clone (),
-    let s_f0_e0_f1_body_boxed = s_f0_e0_f1 . unsafe_body (),
+rw_proc(s_orig.clone(), t) <--
+    eq_proc(s_orig, s),
+    if let Proc :: PPar(ref s_f0) = s,
+    for (s_f0_e0, _count_0) in s_f0.iter(),
+    if let Proc :: PInputs(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
+    let s_f0_e0_f1_binder = s_f0_e0_f1.unsafe_pattern().clone(),
+    let s_f0_e0_f1_body_boxed = s_f0_e0_f1.unsafe_body(),
     let s_f0_e0_f1_body = & * * s_f0_e0_f1_body_boxed,
-    let __all_matchings_1 = {let __ctx_vec : Vec < _ > = s_f0 . iter () . collect ();
+    let __all_matchings_1 = { let __ctx_vec : Vec < _ > = s_f0.iter().collect();
 
-let mut __candidates = Vec :: new ();
+let mut __candidates = Vec :: new();
 
-for __zip_first_1 in s_f0_e0_f0 . clone () . iter () {let mut __row = Vec :: new ();
+for __zip_first_1 in s_f0_e0_f0.clone().iter() { let mut __row = Vec :: new();
 
-for (__idx , (__zip_search_1 , _)) in __ctx_vec . iter () . enumerate () {if let Proc :: POutput (ref __match_f0_1 , ref __match_f1_1) = __zip_search_1 {if & * * __match_f0_1 == __zip_first_1 {__row . push ((__idx , (* * __match_f1_1) . clone ()));
+for (__idx, (__zip_search_1, _)) in __ctx_vec.iter().enumerate() { if let Proc :: POutput(ref __match_f0_1, ref __match_f1_1) = __zip_search_1 { if & * * __match_f0_1 == __zip_first_1 { __row.push((__idx, (* * __match_f1_1).clone()));
 
-}}} __candidates . push (__row);
+} } } __candidates.push(__row);
 
-} mettail_runtime :: enumerate_matchings (& __candidates)} , for (__zip_collected_1 , __map_matched_indices_1) in __all_matchings_1 . into_iter () , if __zip_collected_1 . len () == s_f0_e0_f0 . clone () . len () , let s_f0_rest = {let mut bag = s_f0 . clone ();
+} mettail_runtime :: enumerate_matchings(& __candidates) }, for (__zip_collected_1, __map_matched_indices_1) in __all_matchings_1.into_iter(), if __zip_collected_1.len() == s_f0_e0_f0.clone().len(), let s_f0_rest = { let mut bag = s_f0.clone();
 
-bag . remove (& s_f0_e0);
+bag.remove(& s_f0_e0);
 
-let __ctx_vec : Vec < _ > = s_f0 . iter () . collect ();
+let __ctx_vec : Vec < _ > = s_f0.iter().collect();
 
-for __idx in __map_matched_indices_1 . iter () {if let Some ((elem , _)) = __ctx_vec . get (* __idx) {bag . remove (elem);
+for __idx in __map_matched_indices_1.iter() { if let Some((elem, _)) = __ctx_vec.get(* __idx) { bag.remove(elem);
 
-}} bag} , let t = (Proc :: PPar ({let mut bag = (s_f0_rest . clone ()) . clone ();
+} } bag }, let t = (Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
 
-Proc :: insert_into_ppar (& mut bag , {let (__binders , __body) = ((s_f0_e0_f1 . clone ()) . clone ()) . unbind ();
+Proc :: insert_into_ppar(& mut bag, { let (__binders, __body) = ((s_f0_e0_f1.clone()).clone()).unbind();
 
-let __vars : Vec < & mettail_runtime :: FreeVar < String >> = __binders . iter () . map (| b | & b . 0) . collect ();
+let __vars : Vec < & mettail_runtime :: FreeVar < String >> = __binders.iter().map(| b | & b.0).collect();
 
-let __repls = {let __map_coll = (__zip_collected_1 . clone ()) . clone ();
+let __repls = { let __map_coll = (__zip_collected_1.clone()).clone();
 
-__map_coll . iter () . map (| __elem | Name :: NQuote (Box :: new ((__elem) . clone ()))) . collect :: < Vec < _ >> ()};
+__map_coll.iter().map(| __elem | Name :: NQuote(Box :: new((__elem).clone()))).collect :: < Vec < _ >> () };
 
-(* __body) . multi_substitute_name (& __vars , & __repls)});
+(* __body).multi_substitute_name(& __vars, & __repls) });
 
-bag})) . normalize ();
+bag })).normalize();
 
-rw_proc (s_orig . clone () , t) <--
-    eq_proc (s_orig , s),
-    if let Proc :: PDrop (ref s_f0) = s,
+rw_proc(s_orig.clone(), t) <--
+    eq_proc(s_orig, s),
+    if let Proc :: PDrop(ref s_f0) = s,
     let s_f0_deref = & * * s_f0,
-    if let Name :: NQuote (ref s_f0_deref_f0) = s_f0_deref,
+    if let Name :: NQuote(ref s_f0_deref_f0) = s_f0_deref,
     let s_f0_deref_f0_deref = & * * s_f0_deref_f0,
-    let t = ((s_f0_deref_f0_deref . clone ()) . clone ()) . normalize ();
+    let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
-fold_int (t . clone () , t . clone ()) <--
-    int (t),
-    if let Int :: NumLit (_) = t;
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
+    if let Proc :: PZero = t;
 
-fold_int (s . clone () , res) <--
-    int (s),
-    if let Int :: Add (left , right) = s,
-    fold_int (left . as_ref () . clone () , lv),
-    fold_int (right . as_ref () . clone () , rv),
-    if let Int :: NumLit (a_ref) = & lv,
-    if let Int :: NumLit (b_ref) = & rv,
-    let a = a_ref . clone (),
-    let b = b_ref . clone (),
-    let res = Int :: NumLit ((a + b));
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
+    if let Proc :: PDrop(_) = t;
 
-rw_int (s . clone () , t . clone ()) <--
-    int (s),
-    if let Int :: Add (_ , _) = s,
-    fold_int (s , t);
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
+    if let Proc :: POutput(_, _) = t;
 
-rw_proc (parent . clone () , result) <--
-    proc (parent),
-    if let Proc :: PPar (ref bag) = parent,
-    for (elem , _count) in bag . iter (),
-    rw_proc (elem . clone () , elem_rewritten),
-    let result = Proc :: PPar ({let mut new_bag = bag . clone ();
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
+    if let Proc :: PInputs(_, _) = t;
 
-new_bag . remove (elem);
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
+    if let Proc :: PPar(_) = t;
 
-Proc :: insert_into_ppar (& mut new_bag , elem_rewritten . clone ());
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
+    if let Proc :: CastInt(_) = t;
 
-new_bag});
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
+    if let Proc :: Err = t;
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc :: Add(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ if let Proc :: CastInt(a) = a { if let Proc :: CastInt(b) = b { Proc :: CastInt(Box :: new(* a.clone() + * b.clone())) } else { Proc :: Err } } else { Proc :: Err } });
+
+rw_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: Add(_, _) = s,
+    fold_proc(s, t);
+
+rw_proc(parent.clone(), result) <--
+    proc(parent),
+    if let Proc :: PPar(ref bag) = parent,
+    for (elem, _count) in bag.iter(),
+    rw_proc(elem.clone(), elem_rewritten),
+    let result = Proc :: PPar({ let mut new_bag = bag.clone();
+
+new_bag.remove(elem);
+
+Proc :: insert_into_ppar(& mut new_bag, elem_rewritten.clone());
+
+new_bag });
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc :: Add(ref x0, ref x1) = lhs,
+    rw_proc((* * x0).clone(), t),
+    let rhs = Proc :: Add(Box :: new(t.clone()), x1.clone());
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc :: Add(ref x0, ref x1) = lhs,
+    rw_proc((* * x1).clone(), t),
+    let rhs = Proc :: Add(x0.clone(), Box :: new(t.clone()));
 
 
     // Custom logic
-relation path (Proc , Proc);
+relation rw_weight(Proc, Int, Proc);
 
-path (p0 , p1) <-- rw_proc (p0 , p1);
+relation is_int(Proc);
 
-path (p0 , p2) <-- path (p0 , p1) , path (p1 , p2);
+is_int(p) <-- proc(p), if let Proc :: CastInt(_) = p;
 
-relation recvs_on (Proc , Name);
+relation path(Proc, Proc);
 
-recvs_on (p , n . clone ()) <-- proc (p) , if let Proc :: PInputs (ref ns , _) = p , for n in ns . iter ();
+path(p0, p1) <-- rw_proc(p0, p1);
 
-recvs_on (parent , n) <-- ppar_contains (parent , elem) , recvs_on (elem , n);
+path(p0, p2) <-- path(p0, p1), path(p1, p2);
 
-relation loses_recv (Proc , Name);
+relation recvs_on(Proc, Name);
 
-loses_recv (p , n) <-- recvs_on (p , n) , rw_proc (p , q) , ! recvs_on (q , n);
+recvs_on(p, n.clone()) <-- proc(p), if let Proc :: PInputs(ref ns, _) = p, for n in ns.iter();
 
-relation live (Proc , Name);
+recvs_on(parent, n) <-- ppar_contains(parent, elem), recvs_on(elem, n);
 
-live (p , n) <-- recvs_on (p , n) , ! loses_recv (p , n);
+relation loses_recv(Proc, Name);
+
+loses_recv(p, n) <-- recvs_on(p, n), rw_proc(p, q), ! recvs_on(q, n);
+
+relation live(Proc, Name);
+
+live(p, n) <-- recvs_on(p, n), ! loses_recv(p, n);
 
 }
