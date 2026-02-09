@@ -1784,16 +1784,17 @@ fn generate_auto_alternatives(
             ));
         } else {
             // Non-primary category: prefix form ("name:x", "str:x", "bool:x").
-            // For two-type languages only (e.g. RhoCalc Proc/Name), also add bare Ident so that
-            // when this category is used as a subrule (e.g. Name in "a!(0)"), "a" can parse as Name.
-            // For three+ types (e.g. Calculator) bare Ident on multiple categories causes shift-reduce conflicts.
+            // Also add bare Ident when: two-type languages (Proc/Name), or category is Name (e.g. RhoCalc
+            // with Proc/Name/Int) so that (a?x) and a!(0) parse — "a" is a Name in subrule position.
+            // For other multi-type languages (e.g. Calculator) we do not add bare Ident to avoid conflicts.
             let prefix_lit = format!("{}:", cat_str.to_string().to_lowercase());
             let prefix_escaped = prefix_lit.replace('\\', "\\\\").replace('"', "\\\"");
             result.push_str(&format!(
                 "    \"{}\" <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
                 prefix_escaped, cat_str, var_label
             ));
-            if language.types.len() == 2 {
+            let allow_bare_ident = language.types.len() == 2 || cat_str == "Name";
+            if allow_bare_ident {
                 result.push_str(&format!(
                     ",\n    <v:Ident> => {}::{}(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))",
                     cat_str, var_label
