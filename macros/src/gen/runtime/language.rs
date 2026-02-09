@@ -1020,8 +1020,10 @@ fn generate_language_trait_impl(
 
     // try_direct_eval: only for single-type languages whose primary type has native_type
     let primary_lang_type = language.types.first().expect("at least one type");
-    let try_direct_eval_method: TokenStream = if primary_lang_type.native_type.is_some() {
-        let literal_label = generate_literal_label(primary_lang_type.native_type.as_ref().unwrap());
+    let try_direct_eval_method: TokenStream = if let Some(native_type) =
+        &primary_lang_type.native_type
+    {
+        let literal_label = generate_literal_label(native_type);
         quote! {
             fn try_direct_eval(&self, term: &dyn mettail_runtime::Term) -> Option<Box<dyn mettail_runtime::Term>> {
                 let typed_term = term.as_any().downcast_ref::<#term_name>()?;
