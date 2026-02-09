@@ -171,6 +171,20 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                     result.normalize()
                 }
 
+                /// Like substitute_env but does not call normalize().
+                /// Used for step mode so the term structure is preserved for rewrite display.
+                pub fn substitute_env_preserve_structure(&self, env: &#env_name) -> Self {
+                    let mut result = self.clone();
+                    for _ in 0..100 {
+                        let prev_str = format!("{}", result);
+                        #(#all_subst_calls)*
+                        if format!("{}", result) == prev_str {
+                            break;
+                        }
+                    }
+                    result.unify_freevars()
+                }
+
                 #(#subst_by_name_methods)*
 
                 /// Unify FreeVar IDs by pretty_name using the global VAR_CACHE.

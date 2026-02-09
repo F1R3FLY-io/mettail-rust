@@ -31,6 +31,7 @@ language! {
         NQuote . p:Proc |- "@" "(" p ")" : Name ;
 
         Add . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+        Sub . a:Int, b:Int |- a "-" b : Int ![a - b] step;
     },
 
     equations {
@@ -44,6 +45,9 @@ language! {
         Exec . |- (PDrop (NQuote P)) ~> P;
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+
+        SubCongL . | S ~> T |- (Sub S R) ~> (Sub T R);
+        SubCongR . | S ~> T |- (Sub L S) ~> (Sub L T);
     },
 
     logic {

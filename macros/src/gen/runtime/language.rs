@@ -138,7 +138,15 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         })
         .collect();
 
-
+    let substitute_preserve_structure_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env_preserve_structure(env)) }
+        })
+        .collect();
 
     // Cross-category variable resolution: if after substitution we still have a variable,
     // look it up in other categories (e.g. "x" parsed as Int but bound as Bool -> use Bool value).
@@ -201,7 +209,18 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                 substituted
             }
 
-
+            /// Like substitute_env but does not normalize; used by step mode to preserve structure.
+            pub fn substitute_env_preserve_structure(&self, env: &#env_name) -> Self {
+                let substituted = match self {
+                    #(#substitute_preserve_structure_arms),*
+                };
+                // Cross-category: if still a variable, try resolving from other categories
+                match &substituted {
+                    #(#cross_resolve_arms)*
+                    _ => {}
+                }
+                substituted
+            }
         }
 
         impl std::fmt::Display for #inner_enum_name {
@@ -1099,7 +1118,7 @@ fn generate_language_trait_impl(
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                let substituted = typed_term.0.substitute_env(typed_env);
+                let substituted = typed_term.0.substitute_env_preserve_structure(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
 
@@ -1340,7 +1359,7 @@ fn generate_language_trait_impl_multi(
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                let substituted = typed_term.0.substitute_env(typed_env);
+                let substituted = typed_term.0.substitute_env_preserve_structure(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
 
