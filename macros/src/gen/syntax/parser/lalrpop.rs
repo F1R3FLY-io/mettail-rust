@@ -48,9 +48,7 @@ fn generate_native_type_tokens(language: &LanguageDef) -> String {
             } else if type_str == "str" || type_str == "String" {
                 // Quoted string literal: single regex to avoid ambiguity with Integer/digits
                 tokens.push_str("StringLiteral: std::string::String = {\n");
-                tokens.push_str(
-                    r##"    r#""[^"]*""# => <>.trim_matches('"').to_string(),"##,
-                );
+                tokens.push_str(r##"    r#""[^"]*""# => <>.trim_matches('"').to_string(),"##);
                 tokens.push_str("\n};\n\n");
             }
             // Add more native types as needed
@@ -75,8 +73,6 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
 
     // Add use statements for runtime helpers. Only include what's needed
     let has_binders = language.terms.iter().any(|r| !r.bindings.is_empty());
-
-
 
     // Check if any term uses HashBag collections (for #sep)
     let needs_hashbag = language.terms.iter().any(|r| {
@@ -347,15 +343,19 @@ fn generate_tiered_production(
     if let Some(native_type) = has_native_type(category, language) {
         let type_str = native_type_to_string(native_type);
         if type_str == "i32" || type_str == "i64" {
-            if let Some(rule) = filtered_other_rules.iter().find(|r| is_integer_literal_rule(r)) {
+            if let Some(rule) = filtered_other_rules
+                .iter()
+                .find(|r| is_integer_literal_rule(r))
+            {
                 let label = rule.label.to_string();
-                production.push_str(&format!(
-                    "    \"-\" <i:Integer> => {}::{}(-i),\n",
-                    cat_str, label
-                ));
+                production
+                    .push_str(&format!("    \"-\" <i:Integer> => {}::{}(-i),\n", cat_str, label));
             }
         } else if type_str == "f32" || type_str == "f64" {
-            if let Some(rule) = filtered_other_rules.iter().find(|r| is_float_literal_rule(r)) {
+            if let Some(rule) = filtered_other_rules
+                .iter()
+                .find(|r| is_float_literal_rule(r))
+            {
                 let label = rule.label.to_string();
                 production.push_str(&format!(
                     "    \"-\" <f:FloatLiteral> => {}::{}(-f),\n",
@@ -408,10 +408,11 @@ fn generate_hol_infix_alternative(rule: &GrammarRule, cat_str: &str) -> String {
     if syntax_pattern.len() != 3 {
         panic!("HOL infix pattern must have exactly 3 elements");
     }
-    let (left_param, right_param) = match (&syntax_pattern[0], &syntax_pattern[1], &syntax_pattern[2]) {
-        (SyntaxExpr::Param(l), SyntaxExpr::Literal(_), SyntaxExpr::Param(r)) => (l, r),
-        _ => panic!("HOL infix pattern must be [Param, Literal, Param]"),
-    };
+    let (left_param, right_param) =
+        match (&syntax_pattern[0], &syntax_pattern[1], &syntax_pattern[2]) {
+            (SyntaxExpr::Param(l), SyntaxExpr::Literal(_), SyntaxExpr::Param(r)) => (l, r),
+            _ => panic!("HOL infix pattern must be [Param, Literal, Param]"),
+        };
     let param_ty = |name: &syn::Ident| -> Option<&syn::Ident> {
         let name_str = name.to_string();
         term_context.iter().find_map(|p| {
@@ -431,10 +432,7 @@ fn generate_hol_infix_alternative(rule: &GrammarRule, cat_str: &str) -> String {
         panic!(
             "infix rule {} has operands {} and {} but result category {}; \
              cross-category rules (e.g. Int == Int -> Bool) must not use infix tier",
-            label,
-            left_ty,
-            right_ty,
-            cat_str
+            label, left_ty, right_ty, cat_str
         );
     }
     let op_str = match &syntax_pattern[1] {
@@ -865,12 +863,21 @@ fn analyze_sequence_rule(rule: &GrammarRule, _cat_str: &str) -> AnalyzedRule {
 ///
 /// When use_atom_for_same_category is true (Atom tier), same-category params
 /// use CatAtom to avoid ambiguity with the Infix tier.
-fn analyze_rule(rule: &GrammarRule, cat_str: &str, use_atom_for_same_category: bool) -> AnalyzedRule {
+fn analyze_rule(
+    rule: &GrammarRule,
+    cat_str: &str,
+    use_atom_for_same_category: bool,
+) -> AnalyzedRule {
     // Check for new judgement-style syntax first
     if let (Some(ref term_context), Some(ref syntax_pattern)) =
         (&rule.term_context, &rule.syntax_pattern)
     {
-        return analyze_pattern_rule(rule, term_context, syntax_pattern, use_atom_for_same_category);
+        return analyze_pattern_rule(
+            rule,
+            term_context,
+            syntax_pattern,
+            use_atom_for_same_category,
+        );
     }
 
     // Handle old BNFC-style rules
@@ -1739,12 +1746,18 @@ fn generate_auto_alternatives(
                     "    \"-\" <f:FloatLiteral> => {}::{}(-f),\n",
                     cat_str, literal_label
                 ));
-                result.push_str(&format!("    <f:FloatLiteral> => {}::{}(f)", cat_str, literal_label));
+                result.push_str(&format!(
+                    "    <f:FloatLiteral> => {}::{}(f)",
+                    cat_str, literal_label
+                ));
             } else if type_str == "bool" {
                 result.push_str(&format!("    <b:Boolean> => {}::{}(b)", cat_str, literal_label));
             } else if type_str == "str" || type_str == "String" {
                 // Clone to avoid "cannot move out of a shared reference" - LALRPOP may pass symbol by ref when reducing
-                result.push_str(&format!("    <s:StringLiteral> => {}::{}(s.clone())", cat_str, literal_label));
+                result.push_str(&format!(
+                    "    <s:StringLiteral> => {}::{}(s.clone())",
+                    cat_str, literal_label
+                ));
             }
             needs_comma = true;
         }
@@ -1765,12 +1778,8 @@ fn generate_auto_alternatives(
             })
             .map(|t| t.name.to_string())
             .collect();
-        let only_first_gets_bare_ident =
-            categories_with_auto_var.len() <= 1
-                || categories_with_auto_var
-                    .first()
-                    .map(|s| s.as_str())
-                    == Some(cat_str.as_str());
+        let only_first_gets_bare_ident = categories_with_auto_var.len() <= 1
+            || categories_with_auto_var.first().map(|s| s.as_str()) == Some(cat_str.as_str());
         let var_label = generate_var_label(category);
         if needs_comma {
             result.push_str(",\n");
@@ -1814,11 +1823,7 @@ fn generate_auto_alternatives(
 
     if is_primary_category {
         // Get all non-native categories for the match arms
-        let domain_cats: Vec<_> = language
-            .types
-            .iter()
-            .map(|t| &t.name)
-            .collect();
+        let domain_cats: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
         if !domain_cats.is_empty() {
             if needs_comma {

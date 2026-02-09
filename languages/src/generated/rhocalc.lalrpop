@@ -101,7 +101,8 @@ if let Some(item) = ps_e { ps.insert(item); }
 pub Name: Name = {
     "@" "(" <p:Proc> ")" => Name::NQuote(Box::new(p))
 ,
-    "name:" <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
+    "name:" <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
+    <v:Ident> => Name::NVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
 };
 
 pub Int: Int = {
@@ -114,6 +115,8 @@ IntInfix: Int = {
     <IntAtom>,
     #[precedence(level="1")] #[assoc(side="left")]
     <left:IntInfix> "+" <right:IntAtom> => Int::Add(Box::new(left), Box::new(right)),
+    #[precedence(level="1")] #[assoc(side="left")]
+    <left:IntInfix> "-" <right:IntAtom> => Int::Sub(Box::new(left), Box::new(right)),
 };
 
 IntAtom: Int = {

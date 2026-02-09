@@ -4,7 +4,8 @@
 export const categoryInfo = {
 	Int: {
 		constructors: [
-			"Add"
+			"Add",
+			"Sub"
 		],
 		colour: "51b0e0",
 	},

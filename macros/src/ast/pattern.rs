@@ -598,11 +598,14 @@ impl Pattern {
                     let collected_var = format_ident!("__zip_collected_{}", iter_idx);
 
                     // Bind first_param to first_elem for body pattern matching
-                    result.bindings.insert(first_param.to_string(), VariableBinding {
-                        expression: quote! { #first_elem.clone() },
-                        lang_type: category.clone(),
-                        scope_kind: None,
-                    });
+                    result.bindings.insert(
+                        first_param.to_string(),
+                        VariableBinding {
+                            expression: quote! { #first_elem.clone() },
+                            lang_type: category.clone(),
+                            scope_kind: None,
+                        },
+                    );
 
                     let (constructor, body_args) = match body.as_ref() {
                         Pattern::Term(PatternTerm::Apply { constructor, args }) => {
