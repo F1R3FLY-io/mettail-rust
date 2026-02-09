@@ -7,9 +7,9 @@
 use crate::ast::grammar::GrammarItem;
 use crate::ast::language::LanguageDef;
 use crate::gen::{generate_literal_label, generate_var_label};
+use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use proc_macro2::Span;
 use syn::{Ident, LitStr};
 
 /// Generate the complete language implementation
@@ -138,7 +138,15 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         })
         .collect();
 
-
+    let substitute_preserve_structure_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env_preserve_structure(env)) }
+        })
+        .collect();
 
     // Cross-category variable resolution: if after substitution we still have a variable,
     // look it up in other categories (e.g. "x" parsed as Int but bound as Bool -> use Bool value).
@@ -201,7 +209,18 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                 substituted
             }
 
-
+            /// Like substitute_env but does not normalize; used by step mode to preserve structure.
+            pub fn substitute_env_preserve_structure(&self, env: &#env_name) -> Self {
+                let substituted = match self {
+                    #(#substitute_preserve_structure_arms),*
+                };
+                // Cross-category: if still a variable, try resolving from other categories
+                match &substituted {
+                    #(#cross_resolve_arms)*
+                    _ => {}
+                }
+                substituted
+            }
         }
 
         impl std::fmt::Display for #inner_enum_name {
@@ -657,7 +676,8 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                         } else {
                                             "Name".to_string()
                                         };
-                                        let domain_lit = LitStr::new(&domain_str, Span::call_site());
+                                        let domain_lit =
+                                            LitStr::new(&domain_str, Span::call_site());
 
                                         recurse_calls.push(quote! {
                                             // Extract binder from scope using unbind
@@ -699,7 +719,8 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                         } else {
                                             "Name".to_string()
                                         };
-                                        let domain_lit = LitStr::new(&domain_str, Span::call_site());
+                                        let domain_lit =
+                                            LitStr::new(&domain_str, Span::call_site());
 
                                         recurse_calls.push(quote! {
                                             // Extract binders from multi-scope using unbind
@@ -999,8 +1020,10 @@ fn generate_language_trait_impl(
 
     // try_direct_eval: only for single-type languages whose primary type has native_type
     let primary_lang_type = language.types.first().expect("at least one type");
-    let try_direct_eval_method: TokenStream = if primary_lang_type.native_type.is_some() {
-        let literal_label = generate_literal_label(primary_lang_type.native_type.as_ref().unwrap());
+    let try_direct_eval_method: TokenStream = if let Some(native_type) =
+        &primary_lang_type.native_type
+    {
+        let literal_label = generate_literal_label(native_type);
         quote! {
             fn try_direct_eval(&self, term: &dyn mettail_runtime::Term) -> Option<Box<dyn mettail_runtime::Term>> {
                 let typed_term = term.as_any().downcast_ref::<#term_name>()?;
@@ -1099,7 +1122,7 @@ fn generate_language_trait_impl(
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                let substituted = typed_term.0.substitute_env(typed_env);
+                let substituted = typed_term.0.substitute_env_preserve_structure(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
 
@@ -1340,7 +1363,7 @@ fn generate_language_trait_impl_multi(
                     .as_any()
                     .downcast_ref::<#term_name>()
                     .ok_or_else(|| format!("Expected {}", stringify!(#term_name)))?;
-                let substituted = typed_term.0.substitute_env(typed_env);
+                let substituted = typed_term.0.substitute_env_preserve_structure(typed_env);
                 Ok(Box::new(#term_name(substituted)))
             }
 
@@ -1460,7 +1483,7 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
 }
 
 /// Generate code to extract custom relations from the Ascent program
-/// 
+///
 /// For each relation declared in the logic block, generates code like:
 /// ```ignore
 /// custom_relations.insert("path".to_string(), mettail_runtime::RelationData {
@@ -1473,31 +1496,28 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
         Some(logic_block) => &logic_block.relations,
         None => return quote! {},
     };
-    
+
     if relations.is_empty() {
         return quote! {};
     }
-    
+
     let mut extractions = Vec::new();
-    
+
     for rel in relations {
         let rel_name = &rel.name;
         let rel_name_str = rel_name.to_string();
-        let param_type_strs: Vec<String> = rel.param_types.iter()
-            .map(|t| t.to_string())
-            .collect();
-        
+        let param_type_strs: Vec<String> = rel.param_types.iter().map(|t| t.to_string()).collect();
+
         // Generate tuple element names based on arity
         let arity = rel.param_types.len();
-        let tuple_vars: Vec<syn::Ident> = (0..arity)
-            .map(|i| format_ident!("e{}", i))
-            .collect();
-        
+        let tuple_vars: Vec<syn::Ident> = (0..arity).map(|i| format_ident!("e{}", i)).collect();
+
         // Generate format expressions for each element
-        let format_exprs: Vec<TokenStream> = tuple_vars.iter()
+        let format_exprs: Vec<TokenStream> = tuple_vars
+            .iter()
             .map(|v| quote! { format!("{}", #v) })
             .collect();
-        
+
         extractions.push(quote! {
             custom_relations.insert(
                 #rel_name_str.to_string(),
@@ -1511,7 +1531,7 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
             );
         });
     }
-    
+
     quote! {
         #(#extractions)*
     }

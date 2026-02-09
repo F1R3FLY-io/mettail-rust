@@ -93,11 +93,7 @@ pub fn language_grammar(input: TokenStream) -> TokenStream {
 
     let grammar = generate_lalrpop_grammar(&language_def);
     if let Err(e) = write_grammar_file(&language_def.name.to_string(), &grammar) {
-        abort!(
-            proc_macro2::Span::call_site(),
-            "Failed to write LALRPOP grammar: {}",
-            e
-        );
+        abort!(proc_macro2::Span::call_site(), "Failed to write LALRPOP grammar: {}", e);
     }
 
     let name = &language_def.name;

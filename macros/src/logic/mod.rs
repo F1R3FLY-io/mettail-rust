@@ -55,7 +55,9 @@ pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
     let category_rules = generate_category_rules(language);
     let equation_rules = generate_equation_rules(language);
     let rewrite_rules = generate_rewrite_rules(language);
-    let custom_logic = language.logic.as_ref()
+    let custom_logic = language
+        .logic
+        .as_ref()
         .map(|l| l.content.clone())
         .unwrap_or_default();
 
@@ -313,11 +315,14 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 })
                 .collect();
             if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
-                (simple.get(0), simple.get(1))
+                (simple.first(), simple.get(1))
             {
                 let left_type = language.types.iter().find(|t| t.name == *left_ty);
                 let right_type = language.types.iter().find(|t| t.name == *right_ty);
-                match (left_type.and_then(|t| t.native_type.as_ref()), right_type.and_then(|t| t.native_type.as_ref())) {
+                match (
+                    left_type.and_then(|t| t.native_type.as_ref()),
+                    right_type.and_then(|t| t.native_type.as_ref()),
+                ) {
                     (Some(left_nat), Some(right_nat)) => {
                         let left_lit = language
                             .terms
@@ -332,7 +337,7 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
                             .map(|r| r.label.clone())
                             .unwrap_or_else(|| generate_literal_label(right_nat));
                         Some((left_ty.clone(), left_lit, right_ty.clone(), right_lit))
-                    }
+                    },
                     _ => None,
                 }
             } else {
@@ -352,7 +357,7 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
                     category.clone(),
                     result_lit_label.clone(),
                 )
-            }
+            },
         };
 
         rules.push(quote! {
@@ -393,7 +398,8 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
         let Some(ref term_context) = rule.term_context else {
             continue;
         };
-        let [TermParam::Simple { name: param_name, ty: ref param_ty }] = term_context.as_slice() else {
+        let [TermParam::Simple { name: param_name, ty: ref param_ty }] = term_context.as_slice()
+        else {
             continue;
         };
         let TypeExpr::Base(arg_category) = param_ty else {

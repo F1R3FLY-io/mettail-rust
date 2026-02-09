@@ -6,7 +6,9 @@ use std::collections::HashMap;
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{BuiltinOp, LanguageDef, SemanticOperation};
 use crate::gen::native::native_type_to_string;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal};
+use crate::gen::{
+    generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
+};
 
 /// Extract parameter names from term_context in the same order as generated variant fields.
 /// Used for rust_code eval arms: param names match constructor field names.

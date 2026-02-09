@@ -304,8 +304,11 @@ fn generate_syntax_pattern_display_arm(
     for (i, expr) in syntax_pattern.iter().enumerate() {
         match expr {
             SyntaxExpr::Literal(s) => {
-                let next_param = syntax_pattern.get(i + 1).map(|e| matches!(e, SyntaxExpr::Param(_)));
-                let prev_param = i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
+                let next_param = syntax_pattern
+                    .get(i + 1)
+                    .map(|e| matches!(e, SyntaxExpr::Param(_)));
+                let prev_param =
+                    i > 0 && matches!(syntax_pattern.get(i - 1), Some(SyntaxExpr::Param(_)));
                 let is_word = s.chars().all(|c| c.is_alphabetic());
                 let (prefix, suffix) = if prev_param && next_param.unwrap_or(false) {
                     (" ", " ") // infix op: spaces around (e.g. " && ")

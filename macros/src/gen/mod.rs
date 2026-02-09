@@ -150,7 +150,7 @@ pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<String> {
             } else {
                 None
             }
-        }
+        },
         _ => None,
     }
 }

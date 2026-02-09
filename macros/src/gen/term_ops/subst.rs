@@ -25,7 +25,7 @@
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::ast::types::{CollectionType, TypeExpr};
-use crate::gen::native::{has_native_type, native_type_to_string};
+use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -169,6 +169,20 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                     }
                     let result = result.unify_freevars();
                     result.normalize()
+                }
+
+                /// Like substitute_env but does not call normalize().
+                /// Used for step mode so the term structure is preserved for rewrite display.
+                pub fn substitute_env_preserve_structure(&self, env: &#env_name) -> Self {
+                    let mut result = self.clone();
+                    for _ in 0..100 {
+                        let prev_str = format!("{}", result);
+                        #(#all_subst_calls)*
+                        if format!("{}", result) == prev_str {
+                            break;
+                        }
+                    }
+                    result.unify_freevars()
                 }
 
                 #(#subst_by_name_methods)*
@@ -674,8 +688,6 @@ fn generate_subst_by_name_arm(
 
 /// Generate substitution impl for a single category
 fn generate_category_substitution(category: &Ident, language: &LanguageDef) -> TokenStream {
-    
-
     // Collect all variants for this category
     let variants = collect_category_variants(category, language);
 
