@@ -583,6 +583,14 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
             }
 
             // fold_C(s, res) for each binary constructor with rust_code and eval_mode Fold
+            // If the category has an Err variant, only emit when res is not Err (so we don't
+            // rewrite e.g. Add(2, *(3)) to error when the right arg hasn't been evaluated yet).
+            let err_label = format_ident!("Err");
+            let category_has_err = language
+                .terms
+                .iter()
+                .any(|r| r.category == *category && r.label == err_label);
+
             for rule in &language.terms {
                 if rule.category != *category
                     || rule.eval_mode != Some(EvalMode::Fold)
@@ -599,6 +607,16 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 let p1 = &param_names[1];
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
 
+                // Only emit fold when result is not Err (e.g. Add only rewrites when both args are ints).
+                let filter_err = if category_has_err {
+                    quote! {
+                        ,
+                        if (match & res { #category :: #err_label => false , _ => true })
+                    }
+                } else {
+                    quote! {}
+                };
+
                 rules.push(quote! {
                     #fold_rel(s.clone(), res) <--
                         #cat_rel(s),
@@ -607,7 +625,9 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                         #fold_rel(right.as_ref().clone(), rv),
                         let #p0 = lv,
                         let #p1 = rv,
-                        let res = (#rust_code);
+                        let res = (#rust_code)
+                        #filter_err
+                        ;
                 });
             }
         }

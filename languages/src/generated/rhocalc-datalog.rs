@@ -547,7 +547,8 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ if let Proc :: CastInt(a) = a { if let Proc :: CastInt(b) = b { Proc :: CastInt(Box :: new(* a.clone() + * b.clone())) } else { Proc :: Err } } else { Proc :: Err } });
+    let res = ({ if let Proc :: CastInt(a) = a { if let Proc :: CastInt(b) = b { Proc :: CastInt(Box :: new(* a.clone() + * b.clone())) } else { Proc :: Err } } else { Proc :: Err } }),
+    if (match & res { Proc :: Err => false, _ => true });
 
 rw_proc(s.clone(), t.clone()) <--
     proc(s),
