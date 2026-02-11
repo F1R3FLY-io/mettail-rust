@@ -20,10 +20,7 @@
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::types::{EvalMode, TypeExpr};
 use crate::gen::{generate_literal_label, is_literal_rule};
-use crate::{
-    ast::language::{BuiltinOp, LanguageDef, SemanticOperation},
-    logic::rules::generate_base_rewrites,
-};
+use crate::{ast::language::LanguageDef, logic::rules::generate_base_rewrites};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
@@ -148,7 +145,6 @@ fn format_ascent_source(
 ///
 /// - **Base rewrites**: Rules without premises (S => T)
 /// - **Explicit congruences**: Rules with premises (if S => T then LHS => RHS)
-/// - **Semantic evaluation**: Rules for built-in operators (Add, Sub, etc.)
 ///
 /// Note: Beta-reduction is NOT generated as rewrite rules. Instead, it happens
 /// immediately via `normalize()` when terms are created. This makes beta-reduction
@@ -163,9 +159,9 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     let base_rewrite_clauses = generate_base_rewrites(language);
     rules.extend(base_rewrite_clauses);
 
-    // Generate semantic evaluation rules (for operators with semantics)
-    let semantic_rules = generate_semantic_rules(language);
-    rules.extend(semantic_rules);
+    // Generate small-step rules for HOL rust_code (step mode)
+    let hol_step_rules = generate_hol_step_rules(language);
+    rules.extend(hol_step_rules);
 
     // Generate big-step fold rules (one rewrite per fold-mode constructor)
     let fold_rules = generate_fold_big_step_rules(language);
@@ -181,79 +177,10 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     }
 }
 
-/// Generate semantic evaluation rules for constructors with semantics
-/// For example: Add (NumLit a) (NumLit b) => NumLit(a + b)
-/// Only for step mode (or unspecified); fold mode uses big-step rules instead.
-fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
+/// Generate small-step rewrite rules for terms that have HOL rust_code (step mode).
+/// e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
+fn generate_hol_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
-
-    for semantic in &language.semantics {
-        let constructor_name = &semantic.constructor;
-
-        // Skip fold-mode: they use big-step rules instead of small-step folding
-        if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
-            if rule.eval_mode == Some(EvalMode::Fold) {
-                continue;
-            }
-        }
-
-        // Extract the operator
-        let op_token = match &semantic.operation {
-            SemanticOperation::Builtin(builtin_op) => {
-                match builtin_op {
-                    BuiltinOp::Add => quote! { + },
-                    BuiltinOp::Sub => quote! { - },
-                    BuiltinOp::Mul => quote! { * },
-                    BuiltinOp::Div => quote! { / },
-                    BuiltinOp::Rem => quote! { % },
-                    _ => continue, // Skip other operators
-                }
-            },
-        };
-
-        // Find the rule with this constructor
-        if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
-            // Check if this is a binary operator (should have exactly 2 non-terminal fields)
-            let non_terminals: Vec<_> = rule
-                .items
-                .iter()
-                .filter_map(|item| {
-                    if let GrammarItem::NonTerminal(nt) = item {
-                        Some(nt)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if non_terminals.len() == 2 {
-                let category = &rule.category;
-                let label = &rule.label;
-
-                // Generate rule with proper variable extraction in the head
-                let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
-                let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
-                let num_lit = format_ident!("NumLit");
-
-                // Pattern: rw_cat(s, t) with body that matches and extracts a, b.
-                // Bind a,b by clone so non-Copy types (e.g. bool) are passed by value.
-                // Clone s so we insert owned; Ascent may bind s by reference (e.g. &Str).
-                rules.push(quote! {
-                    #rw_rel(s.clone(), t) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        if let #category::#num_lit(a_ref) = left.as_ref(),
-                        if let #category::#num_lit(b_ref) = right.as_ref(),
-                        let a = a_ref.clone(),
-                        let b = b_ref.clone(),
-                        let t = #category::#num_lit(a #op_token b);
-                });
-            }
-        }
-    }
-
-    // Generate folding rules for rules that have HOL rust_code but are not in semantics
-    // e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
     let native_type_for = |category: &Ident| {
         language
             .types
@@ -263,13 +190,6 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
     };
     for rule in &language.terms {
         if rule.rust_code.is_none() {
-            continue;
-        }
-        if language
-            .semantics
-            .iter()
-            .any(|s| s.constructor == rule.label)
-        {
             continue;
         }
         // Skip fold-mode: they use big-step rules instead
@@ -367,13 +287,6 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
     // Unary step rules: one argument from another category (e.g. Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step)
     for rule in &language.terms {
         if rule.rust_code.is_none() {
-            continue;
-        }
-        if language
-            .semantics
-            .iter()
-            .any(|s| s.constructor == rule.label)
-        {
             continue;
         }
         if rule.eval_mode == Some(EvalMode::Fold) {
@@ -519,23 +432,7 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 }
                 let label = &rule.label;
 
-                let res_expr = if let Some(sem) = language
-                    .semantics
-                    .iter()
-                    .find(|s| s.constructor == rule.label)
-                {
-                    let op_token = match &sem.operation {
-                        SemanticOperation::Builtin(builtin_op) => match builtin_op {
-                            BuiltinOp::Add => quote! { a + b },
-                            BuiltinOp::Sub => quote! { a - b },
-                            BuiltinOp::Mul => quote! { a * b },
-                            BuiltinOp::Div => quote! { a / b },
-                            BuiltinOp::Rem => quote! { a % b },
-                            _ => continue,
-                        },
-                    };
-                    quote! { #category::#num_lit(#op_token) }
-                } else if let Some(ref rust_block) = rule.rust_code {
+                let res_expr = if let Some(ref rust_block) = rule.rust_code {
                     let rust_code = &rust_block.code;
                     quote! { #category::#num_lit((#rust_code)) }
                 } else {

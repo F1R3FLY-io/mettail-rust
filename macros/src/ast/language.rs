@@ -7,14 +7,13 @@ use std::fmt;
 use std::fmt::Display;
 
 /// Top-level theory definition
-/// theory! { name: Foo, params: ..., types { ... }, terms { ... }, equations { ... }, rewrites { ... }, semantics { ... }, logic { ... } }
+/// theory! { name: Foo, params: ..., types { ... }, terms { ... }, equations { ... }, rewrites { ... }, logic { ... } }
 pub struct LanguageDef {
     pub name: Ident,
     pub types: Vec<LangType>,
     pub terms: Vec<GrammarRule>,
     pub equations: Vec<Equation>,
     pub rewrites: Vec<RewriteRule>,
-    pub semantics: Vec<SemanticRule>,
     /// Custom Ascent logic: additional relations and rules
     pub logic: Option<LogicBlock>,
 }
@@ -152,36 +151,6 @@ impl RewriteRule {
     }
 }
 
-/// Semantic rule for operator evaluation
-/// semantics { Add: +, Sub: -, ... }
-#[derive(Debug, Clone)]
-pub struct SemanticRule {
-    pub constructor: Ident,
-    pub operation: SemanticOperation,
-}
-
-/// Semantic operation type
-#[derive(Debug, Clone)]
-pub enum SemanticOperation {
-    /// Built-in operations: Add, Sub, Mul, Div, etc.
-    Builtin(BuiltinOp),
-}
-
-/// Built-in operator types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuiltinOp {
-    Add,    // +
-    Sub,    // -
-    Mul,    // *
-    Div,    // /
-    Rem,    // %
-    BitAnd, // &
-    BitOr,  // |
-    BitXor, // ^
-    Shl,    // <<
-    Shr,    // >>
-}
-
 /// Export: category name, optionally with native Rust type
 /// types { Elem; Name; ![i32] as Int; }
 pub struct LangType {
@@ -282,18 +251,6 @@ impl Parse for LanguageDef {
             Vec::new()
         };
 
-        // Parse: semantics { ... }
-        let semantics = if input.peek(Ident) {
-            let lookahead = input.fork().parse::<Ident>()?;
-            if lookahead == "semantics" {
-                parse_semantics(input)?
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
         // Parse: logic { ... }
         let logic = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
@@ -312,7 +269,6 @@ impl Parse for LanguageDef {
             terms,
             equations,
             rewrites,
-            semantics,
             logic,
         })
     }
@@ -897,82 +853,6 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
         left,
         right,
     })
-}
-
-fn parse_semantics(input: ParseStream) -> SynResult<Vec<SemanticRule>> {
-    let semantics_ident = input.parse::<Ident>()?;
-    if semantics_ident != "semantics" {
-        return Err(syn::Error::new(semantics_ident.span(), "expected 'semantics'"));
-    }
-
-    let content;
-    syn::braced!(content in input);
-
-    let mut rules = Vec::new();
-    while !content.is_empty() {
-        // Parse: Constructor: Operator
-        let constructor = content.parse::<Ident>()?;
-        let _ = content.parse::<Token![:]>()?;
-
-        // Parse operator symbol
-        let op = if content.peek(Token![+]) {
-            let _ = content.parse::<Token![+]>()?;
-            BuiltinOp::Add
-        } else if content.peek(Token![-]) {
-            let _ = content.parse::<Token![-]>()?;
-            BuiltinOp::Sub
-        } else if content.peek(Token![*]) {
-            let _ = content.parse::<Token![*]>()?;
-            BuiltinOp::Mul
-        } else if content.peek(Token![/]) {
-            let _ = content.parse::<Token![/]>()?;
-            BuiltinOp::Div
-        } else if content.peek(Token![%]) {
-            let _ = content.parse::<Token![%]>()?;
-            BuiltinOp::Rem
-        } else if content.peek(Token![&]) {
-            let _ = content.parse::<Token![&]>()?;
-            BuiltinOp::BitAnd
-        } else if content.peek(Token![|]) {
-            let _ = content.parse::<Token![|]>()?;
-            BuiltinOp::BitOr
-        } else if content.peek(Token![^]) {
-            let _ = content.parse::<Token![^]>()?;
-            BuiltinOp::BitXor
-        } else if content.peek(Token![<]) && content.peek2(Token![<]) {
-            let _ = content.parse::<Token![<]>()?;
-            let _ = content.parse::<Token![<]>()?;
-            BuiltinOp::Shl
-        } else if content.peek(Token![>]) && content.peek2(Token![>]) {
-            let _ = content.parse::<Token![>]>()?;
-            let _ = content.parse::<Token![>]>()?;
-            BuiltinOp::Shr
-        } else {
-            return Err(syn::Error::new(
-                content.span(),
-                "expected operator symbol (+, -, *, /, %, &, |, ^, <<, >>)",
-            ));
-        };
-
-        rules.push(SemanticRule {
-            constructor,
-            operation: SemanticOperation::Builtin(op),
-        });
-
-        // Optional comma or semicolon
-        if content.peek(Token![,]) {
-            let _ = content.parse::<Token![,]>()?;
-        } else if content.peek(Token![;]) {
-            let _ = content.parse::<Token![;]>()?;
-        }
-    }
-
-    // Optional comma after closing brace
-    if input.peek(Token![,]) {
-        let _ = input.parse::<Token![,]>()?;
-    }
-
-    Ok(rules)
 }
 
 /// Parse logic block: custom Ascent relations and rules

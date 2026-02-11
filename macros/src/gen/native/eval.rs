@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 /// Generate eval() method for native types
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
-use crate::ast::language::{BuiltinOp, LanguageDef, SemanticOperation};
+use crate::ast::language::LanguageDef;
 use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal};
 
