@@ -5,12 +5,19 @@ export const categoryInfo = {
 	Bool: {
 		constructors: [
 			"Eq",
+			"EqFloat",
 			"EqBool",
 			"EqStr",
 			"Not",
 			"Comp"
 		],
 		colour: "7a51e0",
+	},
+	Float: {
+		constructors: [
+			"AddFloat"
+		],
+		colour: "e05196",
 	},
 	Int: {
 		constructors: [

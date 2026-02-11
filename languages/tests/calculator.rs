@@ -1,5 +1,7 @@
 // use mettail_languages::calculator::{parse_and_eval_with_env, CalculatorEnv};
 
+use mettail_languages::calculator::{self as calc};
+
 // #[test]
 // fn test_numeric_literal() {
 //     let mut env = CalculatorEnv::new();
@@ -105,3 +107,65 @@
 //     assert!(result.is_err());
 //     assert!(result.unwrap_err().contains("undefined variable"));
 // }
+
+/// Float support: parse float literal and check canonical wrapper (Eq/Hash/Ord via CanonicalFloat64).
+#[test]
+fn test_float_literal_parse() {
+    mettail_runtime::clear_var_cache();
+    let parser = calc::calculator::FloatParser::new();
+    let term = parser.parse("1.5").expect("parse 1.5");
+    if let calc::Float::FloatLit(v) = term {
+        assert!((v.get() - 1.5).abs() < 1e-10);
+    } else {
+        panic!("expected FloatLit, got {:?}", term);
+    }
+    // Float is used in relations in the main crate (calculator_source); parsing confirms the type works.
+}
+
+/// REPL-style: "1.0" parses as Float (parser order Float-before-Int) via full language parse.
+#[test]
+fn test_exec_float_1_0() {
+    mettail_runtime::clear_var_cache();
+    let term = calc::CalculatorLanguage::parse("1.0").expect("parse 1.0");
+    if let calc::CalculatorTermInner::Float(inner) = &term.0 {
+        if let calc::Float::FloatLit(v) = inner {
+            assert!((v.get() - 1.0).abs() < 1e-10, "expected 1.0, got {}", v.get());
+        } else {
+            panic!("expected FloatLit, got {:?}", inner);
+        }
+    } else {
+        panic!("expected Float variant, got {:?}", term.0);
+    }
+}
+
+/// Rust-style suffix: "1.0f32" parses as Float via full language parse.
+#[test]
+fn test_exec_float_1_0_f32() {
+    mettail_runtime::clear_var_cache();
+    let term = calc::CalculatorLanguage::parse("1.0f32").expect("parse 1.0f32");
+    if let calc::CalculatorTermInner::Float(inner) = &term.0 {
+        if let calc::Float::FloatLit(v) = inner {
+            assert!((v.get() - 1.0).abs() < 1e-10, "expected 1.0, got {}", v.get());
+        } else {
+            panic!("expected FloatLit, got {:?}", inner);
+        }
+    } else {
+        panic!("expected Float variant, got {:?}", term.0);
+    }
+}
+
+/// Unary minus and scientific notation: "-1.0E01" parses as Float (-10.0).
+#[test]
+fn test_exec_float_neg_scientific() {
+    mettail_runtime::clear_var_cache();
+    let term = calc::CalculatorLanguage::parse("-1.0E01").expect("parse -1.0E01");
+    if let calc::CalculatorTermInner::Float(inner) = &term.0 {
+        if let calc::Float::FloatLit(v) = inner {
+            assert!((v.get() - (-10.0)).abs() < 1e-10, "expected -10.0, got {}", v.get());
+        } else {
+            panic!("expected FloatLit, got {:?}", inner);
+        }
+    } else {
+        panic!("expected Float variant, got {:?}", term.0);
+    }
+}

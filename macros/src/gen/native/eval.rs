@@ -244,8 +244,13 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         }
 
         if !match_arms.is_empty() {
-            let return_type = if native_type_to_string(native_type) == "str" {
+            let type_str = native_type_to_string(native_type);
+            let return_type = if type_str == "str" || type_str == "String" {
                 quote! { std::string::String }
+            } else if type_str == "f32" {
+                quote! { mettail_runtime::CanonicalFloat32 }
+            } else if type_str == "f64" {
+                quote! { mettail_runtime::CanonicalFloat64 }
             } else {
                 quote! { #native_type }
             };

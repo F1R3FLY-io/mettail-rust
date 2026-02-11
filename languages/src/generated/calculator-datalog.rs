@@ -8,17 +8,23 @@ ascent_source! {
     // Relations
 relation int(Int);
 
+relation float(Float);
+
 relation bool(Bool);
 
 relation str(Str);
 
 #[ds(crate :: eqrel)] relation eq_int(Int, Int);
 
+#[ds(crate :: eqrel)] relation eq_float(Float, Float);
+
 #[ds(crate :: eqrel)] relation eq_bool(Bool, Bool);
 
 #[ds(crate :: eqrel)] relation eq_str(Str, Str);
 
 relation rw_int(Int, Int);
+
+relation rw_float(Float, Float);
 
 relation rw_bool(Bool, Bool);
 
@@ -79,6 +85,28 @@ int((* scope.inner().unsafe_body).clone()) <--
     if let Int :: MLamInt(scope) = t;
 
 int(lam.as_ref().clone()),
+float(arg.as_ref().clone()) <--
+    int(t),
+    if let Int :: ApplyFloat(lam, arg) = t;
+
+int(lam.as_ref().clone()) <--
+    int(t),
+    if let Int :: MApplyFloat(lam, _) = t;
+
+float(arg.clone()) <--
+    int(t),
+    if let Int :: MApplyFloat(_, args) = t,
+    for arg in args.iter();
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: LamFloat(scope) = t;
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: MLamFloat(scope) = t;
+
+int(lam.as_ref().clone()),
 bool(arg.as_ref().clone()) <--
     int(t),
     if let Int :: ApplyBool(lam, arg) = t;
@@ -137,6 +165,21 @@ rw_int(Int :: MApplyInt(lam.clone(), args.clone()), Int :: MApplyInt(Box :: new(
     if let Int :: MApplyInt(ref lam, ref args) = t,
     rw_int(lam.as_ref().clone(), lam_new);
 
+rw_int(Int :: ApplyFloat(lam.clone(), arg.clone()), Int :: ApplyFloat(Box :: new(lam_new.clone()), arg.clone())) <--
+    int(t),
+    if let Int :: ApplyFloat(ref lam, ref arg) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
+
+rw_int(Int :: ApplyFloat(lam.clone(), arg.clone()), Int :: ApplyFloat(lam.clone(), Box :: new(arg_new.clone()))) <--
+    int(t),
+    if let Int :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(arg.as_ref().clone(), arg_new);
+
+rw_int(Int :: MApplyFloat(lam.clone(), args.clone()), Int :: MApplyFloat(Box :: new(lam_new.clone()), args.clone())) <--
+    int(t),
+    if let Int :: MApplyFloat(ref lam, ref args) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
+
 rw_int(Int :: ApplyBool(lam.clone(), arg.clone()), Int :: ApplyBool(Box :: new(lam_new.clone()), arg.clone())) <--
     int(t),
     if let Int :: ApplyBool(ref lam, ref arg) = t,
@@ -167,6 +210,163 @@ rw_int(Int :: MApplyStr(lam.clone(), args.clone()), Int :: MApplyStr(Box :: new(
     if let Int :: MApplyStr(ref lam, ref args) = t,
     rw_int(lam.as_ref().clone(), lam_new);
 
+float(c1.clone()) <--
+    float(c0),
+    rw_float(c0, c1);
+
+float(field_0.as_ref().clone()),
+float(field_1.as_ref().clone()) <--
+    float(t),
+    if let Float :: AddFloat(field_0, field_1) = t;
+
+float(lam.as_ref().clone()),
+int(arg.as_ref().clone()) <--
+    float(t),
+    if let Float :: ApplyInt(lam, arg) = t;
+
+float(lam.as_ref().clone()) <--
+    float(t),
+    if let Float :: MApplyInt(lam, _) = t;
+
+int(arg.clone()) <--
+    float(t),
+    if let Float :: MApplyInt(_, args) = t,
+    for arg in args.iter();
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: LamInt(scope) = t;
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: MLamInt(scope) = t;
+
+float(lam.as_ref().clone()),
+float(arg.as_ref().clone()) <--
+    float(t),
+    if let Float :: ApplyFloat(lam, arg) = t;
+
+float(lam.as_ref().clone()) <--
+    float(t),
+    if let Float :: MApplyFloat(lam, _) = t;
+
+float(arg.clone()) <--
+    float(t),
+    if let Float :: MApplyFloat(_, args) = t,
+    for arg in args.iter();
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: LamFloat(scope) = t;
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: MLamFloat(scope) = t;
+
+float(lam.as_ref().clone()),
+bool(arg.as_ref().clone()) <--
+    float(t),
+    if let Float :: ApplyBool(lam, arg) = t;
+
+float(lam.as_ref().clone()) <--
+    float(t),
+    if let Float :: MApplyBool(lam, _) = t;
+
+bool(arg.clone()) <--
+    float(t),
+    if let Float :: MApplyBool(_, args) = t,
+    for arg in args.iter();
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: LamBool(scope) = t;
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: MLamBool(scope) = t;
+
+float(lam.as_ref().clone()),
+str(arg.as_ref().clone()) <--
+    float(t),
+    if let Float :: ApplyStr(lam, arg) = t;
+
+float(lam.as_ref().clone()) <--
+    float(t),
+    if let Float :: MApplyStr(lam, _) = t;
+
+str(arg.clone()) <--
+    float(t),
+    if let Float :: MApplyStr(_, args) = t,
+    for arg in args.iter();
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: LamStr(scope) = t;
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: MLamStr(scope) = t;
+
+rw_float(Float :: ApplyInt(lam.clone(), arg.clone()), Float :: ApplyInt(Box :: new(lam_new.clone()), arg.clone())) <--
+    float(t),
+    if let Float :: ApplyInt(ref lam, ref arg) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyInt(lam.clone(), arg.clone()), Float :: ApplyInt(lam.clone(), Box :: new(arg_new.clone()))) <--
+    float(t),
+    if let Float :: ApplyInt(ref lam, ref arg) = t,
+    rw_int(arg.as_ref().clone(), arg_new);
+
+rw_float(Float :: MApplyInt(lam.clone(), args.clone()), Float :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
+    float(t),
+    if let Float :: MApplyInt(ref lam, ref args) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyFloat(lam.clone(), arg.clone()), Float :: ApplyFloat(Box :: new(lam_new.clone()), arg.clone())) <--
+    float(t),
+    if let Float :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyFloat(lam.clone(), arg.clone()), Float :: ApplyFloat(lam.clone(), Box :: new(arg_new.clone()))) <--
+    float(t),
+    if let Float :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(arg.as_ref().clone(), arg_new);
+
+rw_float(Float :: MApplyFloat(lam.clone(), args.clone()), Float :: MApplyFloat(Box :: new(lam_new.clone()), args.clone())) <--
+    float(t),
+    if let Float :: MApplyFloat(ref lam, ref args) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyBool(lam.clone(), arg.clone()), Float :: ApplyBool(Box :: new(lam_new.clone()), arg.clone())) <--
+    float(t),
+    if let Float :: ApplyBool(ref lam, ref arg) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyBool(lam.clone(), arg.clone()), Float :: ApplyBool(lam.clone(), Box :: new(arg_new.clone()))) <--
+    float(t),
+    if let Float :: ApplyBool(ref lam, ref arg) = t,
+    rw_bool(arg.as_ref().clone(), arg_new);
+
+rw_float(Float :: MApplyBool(lam.clone(), args.clone()), Float :: MApplyBool(Box :: new(lam_new.clone()), args.clone())) <--
+    float(t),
+    if let Float :: MApplyBool(ref lam, ref args) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyStr(lam.clone(), arg.clone()), Float :: ApplyStr(Box :: new(lam_new.clone()), arg.clone())) <--
+    float(t),
+    if let Float :: ApplyStr(ref lam, ref arg) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyStr(lam.clone(), arg.clone()), Float :: ApplyStr(lam.clone(), Box :: new(arg_new.clone()))) <--
+    float(t),
+    if let Float :: ApplyStr(ref lam, ref arg) = t,
+    rw_str(arg.as_ref().clone(), arg_new);
+
+rw_float(Float :: MApplyStr(lam.clone(), args.clone()), Float :: MApplyStr(Box :: new(lam_new.clone()), args.clone())) <--
+    float(t),
+    if let Float :: MApplyStr(ref lam, ref args) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
 bool(c1.clone()) <--
     bool(c0),
     rw_bool(c0, c1);
@@ -175,6 +375,11 @@ int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
     bool(t),
     if let Bool :: Eq(field_0, field_1) = t;
+
+float(field_0.as_ref().clone()),
+float(field_1.as_ref().clone()) <--
+    bool(t),
+    if let Bool :: EqFloat(field_0, field_1) = t;
 
 bool(field_0.as_ref().clone()),
 bool(field_1.as_ref().clone()) <--
@@ -216,6 +421,28 @@ bool((* scope.inner().unsafe_body).clone()) <--
 bool((* scope.inner().unsafe_body).clone()) <--
     bool(t),
     if let Bool :: MLamInt(scope) = t;
+
+bool(lam.as_ref().clone()),
+float(arg.as_ref().clone()) <--
+    bool(t),
+    if let Bool :: ApplyFloat(lam, arg) = t;
+
+bool(lam.as_ref().clone()) <--
+    bool(t),
+    if let Bool :: MApplyFloat(lam, _) = t;
+
+float(arg.clone()) <--
+    bool(t),
+    if let Bool :: MApplyFloat(_, args) = t,
+    for arg in args.iter();
+
+bool((* scope.inner().unsafe_body).clone()) <--
+    bool(t),
+    if let Bool :: LamFloat(scope) = t;
+
+bool((* scope.inner().unsafe_body).clone()) <--
+    bool(t),
+    if let Bool :: MLamFloat(scope) = t;
 
 bool(lam.as_ref().clone()),
 bool(arg.as_ref().clone()) <--
@@ -274,6 +501,21 @@ rw_bool(Bool :: ApplyInt(lam.clone(), arg.clone()), Bool :: ApplyInt(lam.clone()
 rw_bool(Bool :: MApplyInt(lam.clone(), args.clone()), Bool :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
     bool(t),
     if let Bool :: MApplyInt(ref lam, ref args) = t,
+    rw_bool(lam.as_ref().clone(), lam_new);
+
+rw_bool(Bool :: ApplyFloat(lam.clone(), arg.clone()), Bool :: ApplyFloat(Box :: new(lam_new.clone()), arg.clone())) <--
+    bool(t),
+    if let Bool :: ApplyFloat(ref lam, ref arg) = t,
+    rw_bool(lam.as_ref().clone(), lam_new);
+
+rw_bool(Bool :: ApplyFloat(lam.clone(), arg.clone()), Bool :: ApplyFloat(lam.clone(), Box :: new(arg_new.clone()))) <--
+    bool(t),
+    if let Bool :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(arg.as_ref().clone(), arg_new);
+
+rw_bool(Bool :: MApplyFloat(lam.clone(), args.clone()), Bool :: MApplyFloat(Box :: new(lam_new.clone()), args.clone())) <--
+    bool(t),
+    if let Bool :: MApplyFloat(ref lam, ref args) = t,
     rw_bool(lam.as_ref().clone(), lam_new);
 
 rw_bool(Bool :: ApplyBool(lam.clone(), arg.clone()), Bool :: ApplyBool(Box :: new(lam_new.clone()), arg.clone())) <--
@@ -343,6 +585,28 @@ str((* scope.inner().unsafe_body).clone()) <--
     if let Str :: MLamInt(scope) = t;
 
 str(lam.as_ref().clone()),
+float(arg.as_ref().clone()) <--
+    str(t),
+    if let Str :: ApplyFloat(lam, arg) = t;
+
+str(lam.as_ref().clone()) <--
+    str(t),
+    if let Str :: MApplyFloat(lam, _) = t;
+
+float(arg.clone()) <--
+    str(t),
+    if let Str :: MApplyFloat(_, args) = t,
+    for arg in args.iter();
+
+str((* scope.inner().unsafe_body).clone()) <--
+    str(t),
+    if let Str :: LamFloat(scope) = t;
+
+str((* scope.inner().unsafe_body).clone()) <--
+    str(t),
+    if let Str :: MLamFloat(scope) = t;
+
+str(lam.as_ref().clone()),
 bool(arg.as_ref().clone()) <--
     str(t),
     if let Str :: ApplyBool(lam, arg) = t;
@@ -401,6 +665,21 @@ rw_str(Str :: MApplyInt(lam.clone(), args.clone()), Str :: MApplyInt(Box :: new(
     if let Str :: MApplyInt(ref lam, ref args) = t,
     rw_str(lam.as_ref().clone(), lam_new);
 
+rw_str(Str :: ApplyFloat(lam.clone(), arg.clone()), Str :: ApplyFloat(Box :: new(lam_new.clone()), arg.clone())) <--
+    str(t),
+    if let Str :: ApplyFloat(ref lam, ref arg) = t,
+    rw_str(lam.as_ref().clone(), lam_new);
+
+rw_str(Str :: ApplyFloat(lam.clone(), arg.clone()), Str :: ApplyFloat(lam.clone(), Box :: new(arg_new.clone()))) <--
+    str(t),
+    if let Str :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(arg.as_ref().clone(), arg_new);
+
+rw_str(Str :: MApplyFloat(lam.clone(), args.clone()), Str :: MApplyFloat(Box :: new(lam_new.clone()), args.clone())) <--
+    str(t),
+    if let Str :: MApplyFloat(ref lam, ref args) = t,
+    rw_str(lam.as_ref().clone(), lam_new);
+
 rw_str(Str :: ApplyBool(lam.clone(), arg.clone()), Str :: ApplyBool(Box :: new(lam_new.clone()), arg.clone())) <--
     str(t),
     if let Str :: ApplyBool(ref lam, ref arg) = t,
@@ -436,6 +715,9 @@ rw_str(Str :: MApplyStr(lam.clone(), args.clone()), Str :: MApplyStr(Box :: new(
 eq_int(t.clone(), t.clone()) <--
     int(t);
 
+eq_float(t.clone(), t.clone()) <--
+    float(t);
+
 eq_bool(t.clone(), t.clone()) <--
     bool(t);
 
@@ -449,6 +731,14 @@ eq_bool(s.clone(), t.clone()) <--
     if let Bool :: Eq(ref t_f0, ref t_f1) = t,
     eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_bool(s.clone(), t.clone()) <--
+    bool(s),
+    if let Bool :: EqFloat(ref s_f0, ref s_f1) = s,
+    bool(t),
+    if let Bool :: EqFloat(ref t_f0, ref t_f1) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_float(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
 eq_bool(s.clone(), t.clone()) <--
     bool(s),
@@ -520,6 +810,14 @@ eq_int(s.clone(), t.clone()) <--
     eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: AddFloat(ref s_f0, ref s_f1) = s,
+    float(t),
+    if let Float :: AddFloat(ref t_f0, ref t_f1) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_float(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
 eq_int(s.clone(), t.clone()) <--
     int(s),
     if let Int :: Sub(ref s_f0, ref s_f1) = s,
@@ -546,6 +844,15 @@ rw_bool(s.clone(), t) <--
     let a = a_ref.clone(),
     let b = b_ref.clone(),
     let t = Bool :: BoolLit((a == b));
+
+rw_bool(s.clone(), t) <--
+    bool(s),
+    if let Bool :: EqFloat(left, right) = s,
+    if let Float :: FloatLit(a_ref) = left.as_ref(),
+    if let Float :: FloatLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Bool :: BoolLit((a.get() == b.get()));
 
 rw_bool(s.clone(), t) <--
     bool(s),
@@ -613,6 +920,15 @@ rw_int(s.clone(), t) <--
     let a = a_ref.clone(),
     let b = b_ref.clone(),
     let t = Int :: NumLit((a + b));
+
+rw_float(s.clone(), t) <--
+    float(s),
+    if let Float :: AddFloat(left, right) = s,
+    if let Float :: FloatLit(a_ref) = left.as_ref(),
+    if let Float :: FloatLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Float :: FloatLit((a + b));
 
 rw_bool(orig.clone(), t) <--
     bool(orig),
@@ -698,6 +1014,18 @@ rw_int(lhs.clone(), rhs) <--
     rw_int((* * x1).clone(), t),
     let rhs = Int :: Add(x0.clone(), Box :: new(t.clone()));
 
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: AddFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: AddFloat(Box :: new(t.clone()), x1.clone());
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: AddFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x1).clone(), t),
+    let rhs = Float :: AddFloat(x0.clone(), Box :: new(t.clone()));
+
 rw_int(lhs.clone(), rhs) <--
     int(lhs),
     if let Int :: Sub(ref x0, ref x1) = lhs,
@@ -751,6 +1079,18 @@ rw_bool(lhs.clone(), rhs) <--
     if let Bool :: Eq(ref x0, ref x1) = lhs,
     rw_int((* * x1).clone(), t),
     let rhs = Bool :: Eq(x0.clone(), Box :: new(t.clone()));
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: EqFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Bool :: EqFloat(Box :: new(t.clone()), x1.clone());
+
+rw_bool(lhs.clone(), rhs) <--
+    bool(lhs),
+    if let Bool :: EqFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x1).clone(), t),
+    let rhs = Bool :: EqFloat(x0.clone(), Box :: new(t.clone()));
 
 rw_bool(lhs.clone(), rhs) <--
     bool(lhs),

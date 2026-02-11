@@ -27,6 +27,28 @@ const definitions = [
 		colour: "7a51e0",
 	},
 
+	// Eq Float: ... ...
+	{
+		type: "bool_eq_float",
+		tooltip: "Eq Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
 	// Eq Bool: ... ...
 	{
 		type: "bool_eq_bool",
@@ -213,6 +235,28 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
+	},
+
+	// Add Float: ... ...
+	{
+		type: "float_add_float",
+		tooltip: "Add Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
 	},
 
 	// Sub: ... ...

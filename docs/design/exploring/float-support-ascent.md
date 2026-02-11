@@ -1,7 +1,15 @@
 # Float Support in Ascent Datalog
 
-**Status:** Proposal  
-**Context:** Enabling `![f64] as Float` (and f32) in language definitions; Float is currently commented out (e.g. in rhocalc) because Ascent relation types require `Eq` and `Hash`, which `f64` does not implement.
+**Status:** Implemented (Option A)  
+**Context:** Enabling `![f64] as Float` (and f32) in language definitions; Float is now supported via a canonical wrapper type in the runtime so that Ascent relation types (which require `Eq` and `Hash`) are satisfied.
+
+## Implementation (Option A)
+
+- **Runtime:** `runtime/src/canonical_float.rs` defines `CanonicalFloat64` and `CanonicalFloat32` with canonicalization (NaN → single pattern, -0 → +0), `Eq`/`Hash`/`Ord`, `BoundTerm`, and arithmetic ops. Re-exported from `runtime/src/lib.rs`.
+- **Macros:** In `macros/src/gen/types/enums.rs`, float categories use the canonical type as the literal payload and derive full `Eq`/`Hash`/`Ord`; `literal_payload_type` and `type_expr_to_field_type` return the wrapper for FloatLiteral. Parser in `macros/src/gen/syntax/parser/lalrpop.rs` wraps parsed floats with `CanonicalFloat64::from(f)` (or `CanonicalFloat32`). Display, term_gen/random, and native/eval use the wrapper; eval return type for float categories is the wrapper.
+- **Languages:** Float enabled in `languages/src/calculator.rs` with `![f64] as Float`, `EqFloat`, `AddFloat`, and congruence rules. Integration test in `languages/tests/calculator.rs` (`test_float_literal_parse`) parses a float and checks the canonical wrapper.
+
+The options and rationale below are preserved for reference.
 
 ---
 

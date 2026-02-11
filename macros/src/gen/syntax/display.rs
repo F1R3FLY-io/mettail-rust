@@ -791,6 +791,7 @@ fn generate_auto_literal_display_arm(
             #category::#literal_label(v) => write!(f, "\"{}\"", v.replace('\"', "\\\""))
         }
     } else {
+        // f32/f64 payload is canonical wrapper; it implements Display, so write!(f, "{}", v) is correct
         quote! {
             #category::#literal_label(v) => write!(f, "{}", v)
         }

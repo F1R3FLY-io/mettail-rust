@@ -1,11 +1,12 @@
 // Generated LALRPOP grammar for theory: Calculator
 // This file is auto-generated - do not edit manually
 
-use super::{Int, Bool, Str, VarCategory};
+use super::{Int, Float, Bool, Str, VarCategory};
 
 grammar;
 
 match {
+    "float",
     "bool",
     "str",
 } else {
@@ -26,6 +27,10 @@ Ident: std::string::String = {
 
 Integer: i32 = {
     r"[0-9]+" => <>.parse().unwrap_or(0),
+};
+
+FloatLiteral: f64 = {
+    r"[0-9]+\.[0-9]+((e|E)(\+|-)?[0-9]+)?(f32|f64)?" => { let s = <>.trim_end_matches("f64").trim_end_matches("f32"); s.parse().unwrap_or(0.0) },
 };
 
 Boolean: bool = {
@@ -51,6 +56,8 @@ IntInfix: Int = {
 
 IntAtom: Int = {
     "(" <Int> ")",
+    "+" <i:Integer> => Int::NumLit(i),
+    "-" <i:Integer> => Int::NumLit(-i),
     "|" <s:Str> "|" => Int::Len(Box::new(s)),
     <i:Integer> => Int::NumLit(i),
     <v:Ident> => Int::IVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
@@ -60,6 +67,7 @@ IntAtom: Int = {
         match body.infer_var_type(&x) {
             Some(ref t) => match t.base_type() {
                 VarCategory::Int => Int::LamInt(mettail_runtime::Scope::new(binder, Box::new(body))),
+                VarCategory::Float => Int::LamFloat(mettail_runtime::Scope::new(binder, Box::new(body))),
                 VarCategory::Bool => Int::LamBool(mettail_runtime::Scope::new(binder, Box::new(body))),
                 VarCategory::Str => Int::LamStr(mettail_runtime::Scope::new(binder, Box::new(body))),
             },
@@ -76,6 +84,7 @@ IntAtom: Int = {
         match body.infer_var_type(first_binder) {
             Some(ref t) => match t.base_type() {
                 VarCategory::Int => Int::MLamInt(mettail_runtime::Scope::new(binders, Box::new(body))),
+                VarCategory::Float => Int::MLamFloat(mettail_runtime::Scope::new(binders, Box::new(body))),
                 VarCategory::Bool => Int::MLamBool(mettail_runtime::Scope::new(binders, Box::new(body))),
                 VarCategory::Str => Int::MLamStr(mettail_runtime::Scope::new(binders, Box::new(body))),
             },
@@ -84,6 +93,9 @@ IntAtom: Int = {
     },
     "$int" "(" <lam:Int> "," <arg:Int> ")" => {
         Int::ApplyInt(Box::new(lam), Box::new(arg))
+    },
+    "$float" "(" <lam:Int> "," <arg:Float> ")" => {
+        Int::ApplyFloat(Box::new(lam), Box::new(arg))
     },
     "$bool" "(" <lam:Int> "," <arg:Bool> ")" => {
         Int::ApplyBool(Box::new(lam), Box::new(arg))
@@ -94,12 +106,32 @@ IntAtom: Int = {
     "$$int(" <lam:Int> "," <args:Comma<Int>> ")" => {
         Int::MApplyInt(Box::new(lam), args)
     },
+    "$$float(" <lam:Int> "," <args:Comma<Float>> ")" => {
+        Int::MApplyFloat(Box::new(lam), args)
+    },
     "$$bool(" <lam:Int> "," <args:Comma<Bool>> ")" => {
         Int::MApplyBool(Box::new(lam), args)
     },
     "$$str(" <lam:Int> "," <args:Comma<Str>> ")" => {
         Int::MApplyStr(Box::new(lam), args)
     }
+};
+
+pub Float: Float = {
+    <FloatInfix>
+};
+
+FloatInfix: Float = {
+    <FloatAtom>,
+    <left:FloatInfix> "+" <right:FloatAtom> => Float::AddFloat(Box::new(left), Box::new(right)),
+};
+
+FloatAtom: Float = {
+    "(" <Float> ")",
+    "+" <f:FloatLiteral> => Float::FloatLit(mettail_runtime::CanonicalFloat64::from(f)),
+    "-" <f:FloatLiteral> => Float::FloatLit(mettail_runtime::CanonicalFloat64::from(-f)),
+    <f:FloatLiteral> => Float::FloatLit(mettail_runtime::CanonicalFloat64::from(f)),
+    "float" ":" <v:Ident> => Float::FVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone()))))
 };
 
 pub Bool: Bool = {
@@ -115,6 +147,7 @@ BoolInfix: Bool = {
 BoolAtom: Bool = {
     "(" <Bool> ")",
     <a:Int> "==" <b:Int> => Bool::Eq(Box::new(a), Box::new(b)),
+    <a:Float> "==" <b:Float> => Bool::EqFloat(Box::new(a), Box::new(b)),
     <a:Str> "==" <b:Str> => Bool::EqStr(Box::new(a), Box::new(b)),
     "not" <a:BoolAtom> => Bool::Not(Box::new(a)),
     <b:Boolean> => Bool::BoolLit(b),

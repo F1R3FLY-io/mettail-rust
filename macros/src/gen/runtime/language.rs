@@ -857,13 +857,27 @@ fn generate_language_struct_multi(
 
     let custom_relation_extraction = generate_custom_relation_extraction(language);
 
-    // Parse: try primary (first) type's parser first, then the rest. First success wins.
-    // This order matters for multi-type languages (e.g. RhoCalc): primary (Proc) is the most
-    // general; other categories (Name) are tried so that e.g. "@(0)" parses as Name when Proc fails.
-    let primary_type = language.types.first().map(|t| &t.name);
-    let parse_tries: Vec<TokenStream> = primary_type
-        .into_iter()
-        .chain(language.types.iter().skip(1).map(|t| &t.name))
+    // Parse: try category parsers in order. First success wins.
+    // When both Int and Float exist, try Float before Int so that "1.0" is parsed as Float
+    // (Int parser would see FloatLiteral and fail with UnrecognizedToken).
+    let has_int = language.types.iter().any(|t| t.name.to_string() == "Int");
+    let has_float = language.types.iter().any(|t| t.name.to_string() == "Float");
+    let parse_order: Vec<syn::Ident> = if has_int && has_float {
+        let mut order = Vec::new();
+        order.push(language.types.iter().find(|t| t.name.to_string() == "Float").unwrap().name.clone());
+        order.push(language.types.iter().find(|t| t.name.to_string() == "Int").unwrap().name.clone());
+        for t in &language.types {
+            let s = t.name.to_string();
+            if s != "Int" && s != "Float" {
+                order.push(t.name.clone());
+            }
+        }
+        order
+    } else {
+        language.types.iter().map(|t| t.name.clone()).collect()
+    };
+    let parse_tries: Vec<TokenStream> = parse_order
+        .iter()
         .map(|cat| {
             let parser_name = format_ident!("{}Parser", cat);
             let variant = format_ident!("{}", cat);
