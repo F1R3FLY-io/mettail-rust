@@ -1880,6 +1880,17 @@ impl PatternTerm {
                                         map_body.to_ascent_rhs(&body_bindings, language);
                                     quote! {{ let __map_coll = #coll_expr; __map_coll.iter().map(|__elem| #body_expr).collect::<Vec<_>>() }}
                                 }
+                            } else if let Pattern::Term(PatternTerm::Var(v)) = &replacements[0] {
+                                // Variable bound to zip-collected payloads (e.g. qs = __zip_collected_1):
+                                // use the collection as __repls, mapping each element to the replacement
+                                // category (e.g. Name::NQuote) so arity matches the multi-binder.
+                                if let Some(binding) = bindings.get(&v.to_string()) {
+                                    let expr = &binding.expression;
+                                    quote! { (#expr).iter().map(|__e| #default_lang_type::NQuote(Box::new(__e.clone()))).collect::<Vec<_>>() }
+                                } else {
+                                    let expr = replacements[0].to_ascent_rhs(bindings, language);
+                                    quote! { vec![#expr] }
+                                }
                             } else {
                                 let expr = replacements[0].to_ascent_rhs(bindings, language);
                                 quote! { vec![#expr] }
