@@ -142,76 +142,28 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     .map(|name| quote! { let #name = #name.as_ref().try_eval()?; })
                     .collect();
                 let rust_code = &rust_code_block.code;
-                let match_arm = match param_count {
-                    0 => quote! {
+                let match_arm = if param_count == 0 {
+                    quote! {
                         #category::#label => (#rust_code),
-                    },
-                    1 => {
-                        let p0 = &param_names[0];
-                        quote! {
-                            #category::#label(#p0) => {
-                                #(#param_bindings)*
-                                (#rust_code)
-                            },
-                        }
-                    },
-                    2 => {
-                        let p0 = &param_names[0];
-                        let p1 = &param_names[1];
-                        quote! {
-                            #category::#label(#p0, #p1) => {
-                                #(#param_bindings)*
-                                (#rust_code)
-                            },
-                        }
-                    },
-                    3 => {
-                        let p0 = &param_names[0];
-                        let p1 = &param_names[1];
-                        let p2 = &param_names[2];
-                        quote! {
-                            #category::#label(#p0, #p1, #p2) => {
-                                #(#param_bindings)*
-                                (#rust_code)
-                            },
-                        }
-                    },
-                    _ => continue, // 4+ params: skip or extend later
+                    }
+                } else {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            (#rust_code)
+                        },
+                    }
                 };
                 match_arms.push(match_arm);
-                let try_arm = match param_count {
-                    0 => quote! { #category::#label => Some((#rust_code)), },
-                    1 => {
-                        let p0 = &param_names[0];
-                        quote! {
-                            #category::#label(#p0) => {
-                                #(#try_param_bindings)*
-                                Some((#rust_code))
-                            },
-                        }
-                    },
-                    2 => {
-                        let p0 = &param_names[0];
-                        let p1 = &param_names[1];
-                        quote! {
-                            #category::#label(#p0, #p1) => {
-                                #(#try_param_bindings)*
-                                Some((#rust_code))
-                            },
-                        }
-                    },
-                    3 => {
-                        let p0 = &param_names[0];
-                        let p1 = &param_names[1];
-                        let p2 = &param_names[2];
-                        quote! {
-                            #category::#label(#p0, #p1, #p2) => {
-                                #(#try_param_bindings)*
-                                Some((#rust_code))
-                            },
-                        }
-                    },
-                    _ => continue,
+                let try_arm = if param_count == 0 {
+                    quote! { #category::#label => Some((#rust_code)), }
+                } else {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#try_param_bindings)*
+                            Some((#rust_code))
+                        },
+                    }
                 };
                 try_eval_arms.push(try_arm);
             }
