@@ -18,6 +18,8 @@ relation rw_proc(Proc, Proc);
 
 relation rw_name(Name, Name);
 
+relation step_term(Proc);
+
 relation ppar_contains(Proc, Proc);
 
 

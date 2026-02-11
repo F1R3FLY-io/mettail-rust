@@ -325,8 +325,8 @@ fn generate_language_struct(
 
                 let prog = ascent_run! {
                     include_source!(#ascent_source);
-
                     #primary_relation(initial.clone());
+                    step_term(initial.clone());
                 };
 
                 // Extract results
@@ -876,6 +876,7 @@ fn generate_language_struct_multi(
         })
         .collect();
 
+    let primary_type_for_step = language.types.first().map(|t| &t.name);
     // run_ascent_typed: match on variant, seed the right relation, run, collect from that relation.
     // Term IDs must match the wrapper's term_id() which hashes the inner enum (e.g. CalculatorTermInner::Str(t)),
     // so we hash the enum variant wrapping each term for TermInfo and Rewrite.
@@ -887,6 +888,13 @@ fn generate_language_struct_multi(
             let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
             let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
             let variant = format_ident!("{}", cat);
+            let seed_step_term = primary_type_for_step.map(|pt| {
+                if pt == cat {
+                    quote! { step_term(initial.clone()); }
+                } else {
+                    quote! {}
+                }
+            }).unwrap_or(quote! {});
             quote! {
                 #inner_enum_name::#variant(inner) => {
                     use ascent::*;
@@ -894,6 +902,7 @@ fn generate_language_struct_multi(
                     let prog = ascent_run! {
                         include_source!(#ascent_source);
                         #cat_lower(initial.clone());
+                        #seed_step_term
                     };
                     let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
                     let rewrites: Vec<(#cat, #cat)> = prog.#rw_rel.iter().map(|(from, to)| (from.clone(), to.clone())).collect();

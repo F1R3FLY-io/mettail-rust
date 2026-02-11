@@ -228,7 +228,14 @@ fn generate_deconstruction_for_constructor(
         .any(|item| matches!(item, GrammarItem::Collection { .. }));
 
     if has_collections {
-        // Generate deconstruction for collection fields
+        // Multi-binder + collection (e.g. PInputs(Vec(Name), Scope)): generate deconstruction
+        // so that logic can see names and body (recvs_on, etc.). Plain collection-only
+        // deconstruction remains disabled to avoid fact explosion.
+        if let Some(rules) =
+            generate_collection_plus_binding_deconstruction(category, constructor)
+        {
+            return Some(quote! { #(#rules)* });
+        }
         return generate_collection_deconstruction(category, constructor);
     }
 
@@ -261,7 +268,80 @@ fn generate_deconstruction_for_constructor(
     }
 }
 
-/// Generate deconstruction for constructors with collection fields
+/// Generate deconstruction for a constructor that has both a collection field and a binding
+/// (e.g. PInputs(Vec(Name), Scope<..., Proc>)).
+///
+/// Produces:
+/// - One rule adding each collection element to its category: `name(n)` for each `n` in the vec.
+/// - One rule adding the scope to the same category wrapped as MLam{body_cat} (multi-binder)
+///   so the scope is visible as a lambda term without extracting the body.
+///
+/// This does not cause the same fact explosion as full collection deconstruction because
+/// (1) the collection is a Vec (bounded by syntax), and (2) we add one MLam term, not the body.
+fn generate_collection_plus_binding_deconstruction(
+    category: &Ident,
+    constructor: &GrammarRule,
+) -> Option<Vec<TokenStream>> {
+    use crate::ast::types::TypeExpr;
+
+    // Only for multi-binder + collection (e.g. PInputs): term_context has MultiAbstraction and Simple(Vec)
+    let term_context = constructor.term_context.as_ref()?;
+    let has_multi = term_context
+        .iter()
+        .any(|p| matches!(p, TermParam::MultiAbstraction { .. }));
+    let has_collection = term_context.iter().any(|p| {
+        matches!(
+            p,
+            TermParam::Simple {
+                ty: TypeExpr::Collection { .. },
+                ..
+            }
+        )
+    });
+    if !has_multi || !has_collection || constructor.bindings.len() != 1 {
+        return None;
+    }
+
+    let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
+    let label = &constructor.label;
+
+    // Find collection element type and binding body type from items
+    let mut element_type: Option<&Ident> = None;
+    for item in &constructor.items {
+        if let GrammarItem::Collection { element_type: e, .. } = item {
+            element_type = Some(e);
+            break;
+        }
+    }
+    let element_type = element_type?;
+    let elem_cat_lower = format_ident!("{}", element_type.to_string().to_lowercase());
+
+    let (_binder_idx, body_indices) = &constructor.bindings[0];
+    let body_idx = body_indices.first()?;
+    let body_cat = match &constructor.items[*body_idx] {
+        GrammarItem::NonTerminal(cat) => cat,
+        _ => return None,
+    };
+    // Multi-binder scope → wrap as MLam{body_cat} so the scope appears in the category as a lambda
+    let mlam_variant = format_ident!("MLam{}", body_cat);
+
+    // Rust enum has two fields: (collection_vec, scope). Vec uses .iter(), not (elem, _count).
+    Some(vec![
+        quote! {
+            #elem_cat_lower(elem.clone()) <--
+                #cat_lower(t),
+                if let #category::#label(ref vec_field, _) = t,
+                for elem in vec_field.iter();
+        },
+        quote! {
+            #cat_lower(#category::#mlam_variant(scope.clone())) <--
+                #cat_lower(t),
+                if let #category::#label(_, scope) = t;
+        },
+    ])
+}
+
+/// Generate deconstruction for constructors with collection fields only (no binding).
 ///
 /// PERFORMANCE NOTE: This eagerly extracts ALL elements from collections as separate facts,
 /// which causes exponential fact explosion (O(N*M) where N=terms, M=bag size).

@@ -26,6 +26,8 @@ relation rw_str(Str, Str);
 
 relation fold_int(Int, Int);
 
+relation step_term(Int);
+
 
     // Category rules
 int(c1.clone()) <--

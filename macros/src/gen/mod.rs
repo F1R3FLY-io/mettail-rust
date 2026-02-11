@@ -71,10 +71,11 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
     let eval_impl = generate_eval_method(language);
     let var_inference_impl = generate_var_category_inference(language);
 
-    // Generate LALRPOP module reference
+    // Generate LALRPOP module reference and per-category parse impls (parse must come after parser module)
     let language_name = &language.name;
     let language_name_lower = language_name.to_string().to_lowercase();
     let language_mod = syn::Ident::new(&language_name_lower, proc_macro2::Span::call_site());
+    let category_parse_impls = generate_category_parse_impls(language, &language_name_lower);
 
     quote! {
         use lalrpop_util::lalrpop_mod;
@@ -108,7 +109,40 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
         #[cfg(test)]
         #[allow(unused_imports)]
         lalrpop_util::lalrpop_mod!(#language_mod);
+
+        #category_parse_impls
     }
+}
+
+/// Generate `impl Cat { pub fn parse(input: &str) -> Result<Cat, String> { ... } }` for each
+/// language type so that logic-block rules can seed relations by parsing strings (e.g.
+/// `proc(p) <-- let Ok(p) = Proc::parse("^x.{*(x)}");`).
+fn generate_category_parse_impls(language: &LanguageDef, parser_mod: &str) -> TokenStream {
+    use quote::{format_ident, quote};
+
+    let parser_mod_ident = syn::Ident::new(parser_mod, proc_macro2::Span::call_site());
+
+    let impls: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let parser_name = format_ident!("{}Parser", cat);
+            quote! {
+                impl #cat {
+                    /// Parse a string as this category. For use in logic-block seeding, e.g.
+                    /// `proc(p) <-- let Ok(p) = Proc::parse("...");`
+                    pub fn parse(input: &str) -> Result<#cat, std::string::String> {
+                        #parser_mod_ident::#parser_name::new()
+                            .parse(input)
+                            .map_err(|e| format!("{:?}", e))
+                    }
+                }
+            }
+        })
+        .collect();
+
+    quote! { #(#impls)* }
 }
 
 // =============================================================================

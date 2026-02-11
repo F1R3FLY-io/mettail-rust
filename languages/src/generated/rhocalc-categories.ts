@@ -12,9 +12,9 @@ export const categoryInfo = {
 		constructors: [
 			"PZero",
 			"PDrop",
+			"PPar",
 			"POutput",
 			"PInputs",
-			"PPar",
 			"Add",
 			"CastInt",
 			"Err"

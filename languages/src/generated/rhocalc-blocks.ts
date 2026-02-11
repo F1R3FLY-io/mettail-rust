@@ -33,6 +33,23 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Par
+	{
+		type: "proc_par",
+		tooltip: "Par",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_statement",
+				name: "PROCS",
+				check: "Proc",
+			},
+		],
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Output: ... ...
 	{
 		type: "proc_output",
@@ -75,23 +92,6 @@ const definitions = [
 			{
 				type: "input_statement",
 				name: "ARG3",
-				check: "Proc",
-			},
-		],
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Par
-	{
-		type: "proc_par",
-		tooltip: "Par",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_statement",
-				name: "PROCS",
 				check: "Proc",
 			},
 		],
