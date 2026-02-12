@@ -169,3 +169,38 @@ fn test_exec_float_neg_scientific() {
         panic!("expected Float variant, got {:?}", term.0);
     }
 }
+
+/// exec x when x = 2.0E3 + 1.5: display of x must re-parse (whole-number float as "2000.0"),
+/// then running ascent yields 2001.5.
+#[test]
+fn test_exec_env_float_scientific_whole() {
+    use mettail_runtime::Language;
+
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+
+    let term = lang
+        .parse_term_for_env("2.0E3 + 1.5")
+        .expect("parse 2.0E3 + 1.5");
+    lang.add_to_env(env.as_mut(), "x", term.as_ref()).expect("add x");
+
+    let bindings = lang.list_env(env.as_ref());
+    let display = bindings
+        .iter()
+        .find(|(name, _, _)| name == "x")
+        .map(|(_, d, _)| d.clone())
+        .expect("x in env");
+
+    let parsed = lang
+        .parse_term(&display)
+        .expect("display must re-parse as Float (e.g. 2000.0 + 1.5)");
+    let substituted = lang
+        .substitute_env(parsed.as_ref(), env.as_ref())
+        .expect("substitute_env");
+    let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
+
+    let normal = results.normal_forms();
+    assert_eq!(normal.len(), 1, "one normal form");
+    assert_eq!(normal[0].display, "2001.5", "result is 2001.5");
+}

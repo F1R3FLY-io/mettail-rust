@@ -109,7 +109,12 @@ impl fmt::Debug for CanonicalFloat64 {
 
 impl fmt::Display for CanonicalFloat64 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
+        let x = self.0;
+        if x.is_finite() && x == x.trunc() {
+            write!(f, "{}.0", x)
+        } else {
+            fmt::Display::fmt(&x, f)
+        }
     }
 }
 
@@ -262,7 +267,12 @@ impl fmt::Debug for CanonicalFloat32 {
 
 impl fmt::Display for CanonicalFloat32 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&self.0, f)
+        let x = self.0;
+        if x.is_finite() && x == x.trunc() {
+            write!(f, "{}.0", x)
+        } else {
+            fmt::Display::fmt(&x, f)
+        }
     }
 }
 
