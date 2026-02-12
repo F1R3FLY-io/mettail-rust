@@ -14,10 +14,7 @@ use crate::ast::{
 /// Collection parameter: (name, coll_type, mapped_info)
 type CollectionParamInfo = (String, CollectionType, Option<(usize, usize)>);
 use crate::gen::native::{has_native_type, native_type_to_string};
-use crate::gen::{
-    generate_literal_label, generate_var_label, is_float_literal_rule, is_integer_literal_rule,
-    is_literal_rule, is_var_rule,
-};
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 
 /// Generate token parser for native type if needed
 fn generate_native_type_tokens(language: &LanguageDef) -> String {

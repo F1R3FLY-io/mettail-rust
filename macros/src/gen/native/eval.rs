@@ -1,6 +1,5 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use std::collections::HashMap;
 
 /// Generate eval() method for native types
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
@@ -104,7 +103,6 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
         for rule in &rules {
             let label = &rule.label;
-            let label_str = label.to_string();
 
             // Literal rule: copy or clone depending on nonterminal (StringLiteral => clone)
             if is_literal_rule(rule) {

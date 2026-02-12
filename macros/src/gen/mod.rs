@@ -155,18 +155,6 @@ pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<String> {
     }
 }
 
-/// True when the rule is the Integer literal rule (for signed-numeric behavior like unary minus).
-#[allow(clippy::cmp_owned)]
-pub fn is_integer_literal_rule(rule: &GrammarRule) -> bool {
-    literal_rule_nonterminal(rule).as_deref() == Some("Integer")
-}
-
-/// True when the rule is the FloatLiteral literal rule (for signed-numeric behavior like unary minus).
-#[allow(clippy::cmp_owned)]
-pub fn is_float_literal_rule(rule: &GrammarRule) -> bool {
-    literal_rule_nonterminal(rule).as_deref() == Some("FloatLiteral")
-}
-
 /// Generate the Var variant label for a category
 ///
 /// Convention: First letter of category + "Var"

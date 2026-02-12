@@ -25,7 +25,7 @@
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::ast::types::{CollectionType, TypeExpr};
-use crate::gen::native::{has_native_type, native_type_to_string};
+use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
