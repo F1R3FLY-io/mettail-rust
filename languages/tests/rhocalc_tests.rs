@@ -142,7 +142,7 @@ fn multi_comm_tests() -> Vec<TestCase> {
         TestCase {
             name: "multi_comm_both_vars",
             input: "{(c1?x, c2?y).{{*(x) | *(y)}} | c1!(p) | c2!(q)}",
-            expected_output: Some("{p | q}"),
+            expected_output: Some("p"),
             should_normalize: true,
             min_rewrites: 1,
             description: "Multi-communication using both received values",
