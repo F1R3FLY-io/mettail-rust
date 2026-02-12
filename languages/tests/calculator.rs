@@ -1,112 +1,201 @@
-// use mettail_languages::calculator::{parse_and_eval_with_env, CalculatorEnv};
-
 use mettail_languages::calculator::{self as calc};
+use mettail_runtime::Language;
 
-// #[test]
-// fn test_numeric_literal() {
-//     let mut env = CalculatorEnv::new();
-//     assert_eq!(parse_and_eval_with_env("3", &mut env).unwrap(), 3);
-// }
+/// Parse input, run Ascent, return the single normal form's display. Panics if expected is not among normal form displays.
+fn calc_normal_form(input: &str, expected_display: &str) {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let term = lang.parse_term(input).expect("parse");
+    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    let displays: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(
+        displays.contains(&expected_display.to_string()),
+        "expected normal form {:?} for {:?}, got: {:?}",
+        expected_display,
+        input,
+        displays
+    );
+}
 
-// #[test]
-// fn test_addition() {
-//     let mut env = CalculatorEnv::new();
-//     assert_eq!(parse_and_eval_with_env("3 + 3", &mut env).unwrap(), 6);
-//     assert_eq!(parse_and_eval_with_env("10+5", &mut env).unwrap(), 15);
-// }
+// --- Int: simple and precedence ---
 
-// #[test]
-// fn test_subtraction() {
-//     let mut env = CalculatorEnv::new();
-//     assert_eq!(parse_and_eval_with_env("5-2", &mut env).unwrap(), 3);
-//     assert_eq!(parse_and_eval_with_env("10 - 7", &mut env).unwrap(), 3);
-// }
+#[test]
+fn test_int_literal() {
+    calc_normal_form("42", "42");
+}
 
-// #[test]
-// fn test_left_associativity() {
-//     let mut env = CalculatorEnv::new();
-//     // (1+2)-3 == 0 and 1+2-3 parsed left-to-right -> (1+2)-3
-//     assert_eq!(parse_and_eval_with_env("1+2-3", &mut env).unwrap(), 0);
-//     assert_eq!(parse_and_eval_with_env("(1+2)-3", &mut env).unwrap(), 0);
-// }
+#[test]
+fn test_int_add() {
+    calc_normal_form("3 + 5", "8");
+}
 
-// #[test]
-// fn test_negative_integers() {
-//     let mut env = CalculatorEnv::new();
-//     assert_eq!(parse_and_eval_with_env("-5", &mut env).unwrap(), -5);
-//     assert_eq!(parse_and_eval_with_env("-10", &mut env).unwrap(), -10);
-//     assert_eq!(parse_and_eval_with_env("5 + -3", &mut env).unwrap(), 2);
-//     assert_eq!(parse_and_eval_with_env("5 - -3", &mut env).unwrap(), 8);
-//     assert_eq!(parse_and_eval_with_env("-5 + 3", &mut env).unwrap(), -2);
-//     assert_eq!(parse_and_eval_with_env("-5 - 3", &mut env).unwrap(), -8);
-// }
+#[test]
+fn test_int_sub() {
+    calc_normal_form("10 - 4", "6");
+    calc_normal_form("5 - -3", "8");
+}
 
-// #[test]
-// fn test_simple_assignment() {
-//     let mut env = CalculatorEnv::new();
-//     assert_eq!(parse_and_eval_with_env("x = 3 + 2", &mut env).unwrap(), 5);
-//     // Verify variable was stored
-//     assert_eq!(env.get("x"), Some(5));
-// }
+#[test]
+fn test_int_left_associativity() {
+    calc_normal_form("10 + 5 - 3 + 2", "14");
+}
 
-// #[test]
-// fn test_variable_lookup() {
-//     let mut env = CalculatorEnv::new();
-//     parse_and_eval_with_env("x = 10", &mut env).unwrap();
-//     assert_eq!(parse_and_eval_with_env("x", &mut env).unwrap(), 10);
-// }
+#[test]
+fn test_int_unary_minus() {
+    calc_normal_form("-7", "-7");
+}
 
-// #[test]
-// fn test_reassignment() {
-//     let mut env = CalculatorEnv::new();
-//     parse_and_eval_with_env("y = 3", &mut env).unwrap();
-//     assert_eq!(env.get("y"), Some(3));
-//     parse_and_eval_with_env("y = 10", &mut env).unwrap();
-//     assert_eq!(env.get("y"), Some(10));
-// }
+#[test]
+fn test_int_power() {
+    calc_normal_form("2 ^ 3", "8");
+    calc_normal_form("5 ^ 0", "1");
+}
 
-// #[test]
-// fn test_multiple_assignments() {
-//     let mut env = CalculatorEnv::new();
-//     parse_and_eval_with_env("x = 3 + 2", &mut env).unwrap();
-//     assert_eq!(env.get("x"), Some(5));
-//     parse_and_eval_with_env("y = 10 - 1", &mut env).unwrap();
-//     assert_eq!(env.get("y"), Some(9));
-// }
+#[test]
+fn test_int_custom_op() {
+    calc_normal_form("1 ~ 2", "8");
+}
 
-// #[test]
-// fn test_variable_in_expression() {
-//     let mut env = CalculatorEnv::new();
-//     parse_and_eval_with_env("x = 5", &mut env).unwrap();
-//     assert_eq!(parse_and_eval_with_env("x + 3", &mut env).unwrap(), 8);
-//     assert_eq!(parse_and_eval_with_env("x - 2", &mut env).unwrap(), 3);
-// }
+// --- Int: corner ---
 
-// #[test]
-// fn test_assignment_with_variable_reference() {
-//     let mut env = CalculatorEnv::new();
-//     parse_and_eval_with_env("x = 3 + 2", &mut env).unwrap();
-//     assert_eq!(parse_and_eval_with_env("y = x - 4 + 8", &mut env).unwrap(), 9);
-//     assert_eq!(env.get("x"), Some(5));
-//     assert_eq!(env.get("y"), Some(9));
-// }
+#[test]
+fn test_int_zero() {
+    calc_normal_form("0", "0");
+}
 
-// #[test]
-// fn test_multiple_vars_in_expression() {
-//     let mut env = CalculatorEnv::new();
-//     parse_and_eval_with_env("a = 10", &mut env).unwrap();
-//     parse_and_eval_with_env("b = 5", &mut env).unwrap();
-//     assert_eq!(parse_and_eval_with_env("a + b", &mut env).unwrap(), 15);
-//     assert_eq!(parse_and_eval_with_env("a - b", &mut env).unwrap(), 5);
-// }
+#[test]
+fn test_int_neg_zero() {
+    calc_normal_form("-0", "0");
+}
 
-// #[test]
-// fn test_undefined_variable() {
-//     let mut env = CalculatorEnv::new();
-//     let result = parse_and_eval_with_env("x", &mut env);
-//     assert!(result.is_err());
-//     assert!(result.unwrap_err().contains("undefined variable"));
-// }
+#[test]
+fn test_int_len_string() {
+    calc_normal_form(r#"|"abc"|"#, "3");
+}
+
+// --- Float: simple and corner ---
+
+#[test]
+fn test_float_literal_0_5() {
+    calc_normal_form("0.5", "0.5");
+}
+
+#[test]
+fn test_float_literal_0_0() {
+    calc_normal_form("0.0", "0.0");
+}
+
+#[test]
+fn test_float_add() {
+    calc_normal_form("1.5 + 2.5", "4.0");
+}
+
+#[test]
+fn test_float_scientific() {
+    calc_normal_form("1.0E2", "100.0");
+    calc_normal_form("2.5E-1", "0.25");
+}
+
+// --- Bool ---
+
+#[test]
+fn test_bool_literals() {
+    calc_normal_form("true", "true");
+    calc_normal_form("false", "false");
+}
+
+#[test]
+fn test_bool_not() {
+    calc_normal_form("not true", "false");
+    calc_normal_form("not false", "true");
+}
+
+#[test]
+fn test_bool_eq_int() {
+    calc_normal_form("1 == 1", "true");
+    calc_normal_form("1 == 2", "false");
+}
+
+#[test]
+fn test_bool_eq_float() {
+    calc_normal_form("1.0 == 1.0", "true");
+}
+
+#[test]
+fn test_bool_and() {
+    calc_normal_form("true && false", "false");
+    calc_normal_form("true && true", "true");
+}
+
+// --- Str ---
+
+#[test]
+fn test_str_empty() {
+    calc_normal_form(r#""""#, r#""""#);
+}
+
+#[test]
+fn test_str_literal() {
+    calc_normal_form(r#""a""#, r#""a""#);
+}
+
+#[test]
+fn test_str_concat() {
+    calc_normal_form(r#""a" ++ "b""#, r#""ab""#);
+}
+
+#[test]
+fn test_str_add() {
+    calc_normal_form(r#""x" + "y""#, r#""xy""#);
+}
+
+// --- Environment ---
+
+#[test]
+fn test_env_add_and_list() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    let term = lang.parse_term_for_env("7").expect("parse 7");
+    lang.add_to_env(env.as_mut(), "x", term.as_ref()).expect("add x");
+    let bindings = lang.list_env(env.as_ref());
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].0, "x");
+    assert_eq!(bindings[0].1, "7");
+}
+
+#[test]
+fn test_env_substitute_and_exec() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    for (name, src) in [("a", "1"), ("b", "2")] {
+        let term = lang.parse_term_for_env(src).expect(src);
+        lang.add_to_env(env.as_mut(), name, term.as_ref()).expect(name);
+    }
+    let term = lang.parse_term_for_env("a + b").expect("parse a + b");
+    let substituted = lang.substitute_env(term.as_ref(), env.as_ref()).expect("substitute_env");
+    let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
+    let normal = results.normal_forms();
+    assert_eq!(normal.len(), 1);
+    assert_eq!(normal[0].display, "3");
+}
+
+#[test]
+fn test_env_remove_and_clear() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    let t1 = lang.parse_term_for_env("1").expect("parse");
+    let t2 = lang.parse_term_for_env("2").expect("parse");
+    lang.add_to_env(env.as_mut(), "a", t1.as_ref()).expect("add a");
+    lang.add_to_env(env.as_mut(), "b", t2.as_ref()).expect("add b");
+    assert_eq!(lang.list_env(env.as_ref()).len(), 2);
+    lang.remove_from_env(env.as_mut(), "a").expect("remove a");
+    assert_eq!(lang.list_env(env.as_ref()).len(), 1);
+    lang.clear_env(env.as_mut());
+    assert!(lang.is_env_empty(env.as_ref()));
+}
 
 /// Float support: parse float literal and check canonical wrapper (Eq/Hash/Ord via CanonicalFloat64).
 #[test]
@@ -174,8 +263,6 @@ fn test_exec_float_neg_scientific() {
 /// then running ascent yields 2001.5.
 #[test]
 fn test_exec_env_float_scientific_whole() {
-    use mettail_runtime::Language;
-
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let mut env = lang.create_env();
