@@ -158,6 +158,24 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Cast Float: ...
+	{
+		type: "proc_cast_float",
+		tooltip: "Cast Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Err
 	{
 		type: "proc_err",

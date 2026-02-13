@@ -12,17 +12,23 @@ relation name(Name);
 
 relation int(Int);
 
+relation float(Float);
+
 #[ds(crate :: eqrel)] relation eq_proc(Proc, Proc);
 
 #[ds(crate :: eqrel)] relation eq_name(Name, Name);
 
 #[ds(crate :: eqrel)] relation eq_int(Int, Int);
 
+#[ds(crate :: eqrel)] relation eq_float(Float, Float);
+
 relation rw_proc(Proc, Proc);
 
 relation rw_name(Name, Name);
 
 relation rw_int(Int, Int);
+
+relation rw_float(Float, Float);
 
 relation fold_proc(Proc, Proc);
 
@@ -51,6 +57,10 @@ proc(field_1.as_ref().clone()) <--
 int(field_0.as_ref().clone()) <--
     proc(t),
     if let Proc :: CastInt(field_0) = t;
+
+float(field_0.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: CastFloat(field_0) = t;
 
 proc(lam.as_ref().clone()),
 proc(arg.as_ref().clone()) <--
@@ -118,6 +128,28 @@ proc((* scope.inner().unsafe_body).clone()) <--
     proc(t),
     if let Proc :: MLamInt(scope) = t;
 
+proc(lam.as_ref().clone()),
+float(arg.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: ApplyFloat(lam, arg) = t;
+
+proc(lam.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: MApplyFloat(lam, _) = t;
+
+float(arg.clone()) <--
+    proc(t),
+    if let Proc :: MApplyFloat(_, args) = t,
+    for arg in args.iter();
+
+proc((* scope.inner().unsafe_body).clone()) <--
+    proc(t),
+    if let Proc :: LamFloat(scope) = t;
+
+proc((* scope.inner().unsafe_body).clone()) <--
+    proc(t),
+    if let Proc :: MLamFloat(scope) = t;
+
 ppar_contains(parent.clone(), elem.clone()) <--
     proc(parent),
     if let Proc :: PPar(ref bag_field) = parent,
@@ -169,6 +201,21 @@ rw_proc(Proc :: ApplyInt(lam.clone(), arg.clone()), Proc :: ApplyInt(lam.clone()
 rw_proc(Proc :: MApplyInt(lam.clone(), args.clone()), Proc :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
     proc(t),
     if let Proc :: MApplyInt(ref lam, ref args) = t,
+    rw_proc(lam.as_ref().clone(), lam_new);
+
+rw_proc(Proc :: ApplyFloat(lam.clone(), arg.clone()), Proc :: ApplyFloat(Box :: new(lam_new.clone()), arg.clone())) <--
+    proc(t),
+    if let Proc :: ApplyFloat(ref lam, ref arg) = t,
+    rw_proc(lam.as_ref().clone(), lam_new);
+
+rw_proc(Proc :: ApplyFloat(lam.clone(), arg.clone()), Proc :: ApplyFloat(lam.clone(), Box :: new(arg_new.clone()))) <--
+    proc(t),
+    if let Proc :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(arg.as_ref().clone(), arg_new);
+
+rw_proc(Proc :: MApplyFloat(lam.clone(), args.clone()), Proc :: MApplyFloat(Box :: new(lam_new.clone()), args.clone())) <--
+    proc(t),
+    if let Proc :: MApplyFloat(ref lam, ref args) = t,
     rw_proc(lam.as_ref().clone(), lam_new);
 
 name(c1.clone()) <--
@@ -245,6 +292,28 @@ name((* scope.inner().unsafe_body).clone()) <--
     name(t),
     if let Name :: MLamInt(scope) = t;
 
+name(lam.as_ref().clone()),
+float(arg.as_ref().clone()) <--
+    name(t),
+    if let Name :: ApplyFloat(lam, arg) = t;
+
+name(lam.as_ref().clone()) <--
+    name(t),
+    if let Name :: MApplyFloat(lam, _) = t;
+
+float(arg.clone()) <--
+    name(t),
+    if let Name :: MApplyFloat(_, args) = t,
+    for arg in args.iter();
+
+name((* scope.inner().unsafe_body).clone()) <--
+    name(t),
+    if let Name :: LamFloat(scope) = t;
+
+name((* scope.inner().unsafe_body).clone()) <--
+    name(t),
+    if let Name :: MLamFloat(scope) = t;
+
 rw_name(Name :: ApplyProc(lam.clone(), arg.clone()), Name :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
     name(t),
     if let Name :: ApplyProc(ref lam, ref arg) = t,
@@ -288,6 +357,21 @@ rw_name(Name :: ApplyInt(lam.clone(), arg.clone()), Name :: ApplyInt(lam.clone()
 rw_name(Name :: MApplyInt(lam.clone(), args.clone()), Name :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
     name(t),
     if let Name :: MApplyInt(ref lam, ref args) = t,
+    rw_name(lam.as_ref().clone(), lam_new);
+
+rw_name(Name :: ApplyFloat(lam.clone(), arg.clone()), Name :: ApplyFloat(Box :: new(lam_new.clone()), arg.clone())) <--
+    name(t),
+    if let Name :: ApplyFloat(ref lam, ref arg) = t,
+    rw_name(lam.as_ref().clone(), lam_new);
+
+rw_name(Name :: ApplyFloat(lam.clone(), arg.clone()), Name :: ApplyFloat(lam.clone(), Box :: new(arg_new.clone()))) <--
+    name(t),
+    if let Name :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(arg.as_ref().clone(), arg_new);
+
+rw_name(Name :: MApplyFloat(lam.clone(), args.clone()), Name :: MApplyFloat(Box :: new(lam_new.clone()), args.clone())) <--
+    name(t),
+    if let Name :: MApplyFloat(ref lam, ref args) = t,
     rw_name(lam.as_ref().clone(), lam_new);
 
 int(c1.clone()) <--
@@ -360,6 +444,28 @@ int((* scope.inner().unsafe_body).clone()) <--
     int(t),
     if let Int :: MLamInt(scope) = t;
 
+int(lam.as_ref().clone()),
+float(arg.as_ref().clone()) <--
+    int(t),
+    if let Int :: ApplyFloat(lam, arg) = t;
+
+int(lam.as_ref().clone()) <--
+    int(t),
+    if let Int :: MApplyFloat(lam, _) = t;
+
+float(arg.clone()) <--
+    int(t),
+    if let Int :: MApplyFloat(_, args) = t,
+    for arg in args.iter();
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: LamFloat(scope) = t;
+
+int((* scope.inner().unsafe_body).clone()) <--
+    int(t),
+    if let Int :: MLamFloat(scope) = t;
+
 rw_int(Int :: ApplyProc(lam.clone(), arg.clone()), Int :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
     int(t),
     if let Int :: ApplyProc(ref lam, ref arg) = t,
@@ -405,6 +511,173 @@ rw_int(Int :: MApplyInt(lam.clone(), args.clone()), Int :: MApplyInt(Box :: new(
     if let Int :: MApplyInt(ref lam, ref args) = t,
     rw_int(lam.as_ref().clone(), lam_new);
 
+rw_int(Int :: ApplyFloat(lam.clone(), arg.clone()), Int :: ApplyFloat(Box :: new(lam_new.clone()), arg.clone())) <--
+    int(t),
+    if let Int :: ApplyFloat(ref lam, ref arg) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
+
+rw_int(Int :: ApplyFloat(lam.clone(), arg.clone()), Int :: ApplyFloat(lam.clone(), Box :: new(arg_new.clone()))) <--
+    int(t),
+    if let Int :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(arg.as_ref().clone(), arg_new);
+
+rw_int(Int :: MApplyFloat(lam.clone(), args.clone()), Int :: MApplyFloat(Box :: new(lam_new.clone()), args.clone())) <--
+    int(t),
+    if let Int :: MApplyFloat(ref lam, ref args) = t,
+    rw_int(lam.as_ref().clone(), lam_new);
+
+float(c1.clone()) <--
+    float(c0),
+    rw_float(c0, c1);
+
+float(lam.as_ref().clone()),
+proc(arg.as_ref().clone()) <--
+    float(t),
+    if let Float :: ApplyProc(lam, arg) = t;
+
+float(lam.as_ref().clone()) <--
+    float(t),
+    if let Float :: MApplyProc(lam, _) = t;
+
+proc(arg.clone()) <--
+    float(t),
+    if let Float :: MApplyProc(_, args) = t,
+    for arg in args.iter();
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: LamProc(scope) = t;
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: MLamProc(scope) = t;
+
+float(lam.as_ref().clone()),
+name(arg.as_ref().clone()) <--
+    float(t),
+    if let Float :: ApplyName(lam, arg) = t;
+
+float(lam.as_ref().clone()) <--
+    float(t),
+    if let Float :: MApplyName(lam, _) = t;
+
+name(arg.clone()) <--
+    float(t),
+    if let Float :: MApplyName(_, args) = t,
+    for arg in args.iter();
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: LamName(scope) = t;
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: MLamName(scope) = t;
+
+float(lam.as_ref().clone()),
+int(arg.as_ref().clone()) <--
+    float(t),
+    if let Float :: ApplyInt(lam, arg) = t;
+
+float(lam.as_ref().clone()) <--
+    float(t),
+    if let Float :: MApplyInt(lam, _) = t;
+
+int(arg.clone()) <--
+    float(t),
+    if let Float :: MApplyInt(_, args) = t,
+    for arg in args.iter();
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: LamInt(scope) = t;
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: MLamInt(scope) = t;
+
+float(lam.as_ref().clone()),
+float(arg.as_ref().clone()) <--
+    float(t),
+    if let Float :: ApplyFloat(lam, arg) = t;
+
+float(lam.as_ref().clone()) <--
+    float(t),
+    if let Float :: MApplyFloat(lam, _) = t;
+
+float(arg.clone()) <--
+    float(t),
+    if let Float :: MApplyFloat(_, args) = t,
+    for arg in args.iter();
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: LamFloat(scope) = t;
+
+float((* scope.inner().unsafe_body).clone()) <--
+    float(t),
+    if let Float :: MLamFloat(scope) = t;
+
+rw_float(Float :: ApplyProc(lam.clone(), arg.clone()), Float :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
+    float(t),
+    if let Float :: ApplyProc(ref lam, ref arg) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyProc(lam.clone(), arg.clone()), Float :: ApplyProc(lam.clone(), Box :: new(arg_new.clone()))) <--
+    float(t),
+    if let Float :: ApplyProc(ref lam, ref arg) = t,
+    rw_proc(arg.as_ref().clone(), arg_new);
+
+rw_float(Float :: MApplyProc(lam.clone(), args.clone()), Float :: MApplyProc(Box :: new(lam_new.clone()), args.clone())) <--
+    float(t),
+    if let Float :: MApplyProc(ref lam, ref args) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyName(lam.clone(), arg.clone()), Float :: ApplyName(Box :: new(lam_new.clone()), arg.clone())) <--
+    float(t),
+    if let Float :: ApplyName(ref lam, ref arg) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyName(lam.clone(), arg.clone()), Float :: ApplyName(lam.clone(), Box :: new(arg_new.clone()))) <--
+    float(t),
+    if let Float :: ApplyName(ref lam, ref arg) = t,
+    rw_name(arg.as_ref().clone(), arg_new);
+
+rw_float(Float :: MApplyName(lam.clone(), args.clone()), Float :: MApplyName(Box :: new(lam_new.clone()), args.clone())) <--
+    float(t),
+    if let Float :: MApplyName(ref lam, ref args) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyInt(lam.clone(), arg.clone()), Float :: ApplyInt(Box :: new(lam_new.clone()), arg.clone())) <--
+    float(t),
+    if let Float :: ApplyInt(ref lam, ref arg) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyInt(lam.clone(), arg.clone()), Float :: ApplyInt(lam.clone(), Box :: new(arg_new.clone()))) <--
+    float(t),
+    if let Float :: ApplyInt(ref lam, ref arg) = t,
+    rw_int(arg.as_ref().clone(), arg_new);
+
+rw_float(Float :: MApplyInt(lam.clone(), args.clone()), Float :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
+    float(t),
+    if let Float :: MApplyInt(ref lam, ref args) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyFloat(lam.clone(), arg.clone()), Float :: ApplyFloat(Box :: new(lam_new.clone()), arg.clone())) <--
+    float(t),
+    if let Float :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
+rw_float(Float :: ApplyFloat(lam.clone(), arg.clone()), Float :: ApplyFloat(lam.clone(), Box :: new(arg_new.clone()))) <--
+    float(t),
+    if let Float :: ApplyFloat(ref lam, ref arg) = t,
+    rw_float(arg.as_ref().clone(), arg_new);
+
+rw_float(Float :: MApplyFloat(lam.clone(), args.clone()), Float :: MApplyFloat(Box :: new(lam_new.clone()), args.clone())) <--
+    float(t),
+    if let Float :: MApplyFloat(ref lam, ref args) = t,
+    rw_float(lam.as_ref().clone(), lam_new);
+
 
     // Equation rules
 eq_proc(t.clone(), t.clone()) <--
@@ -415,6 +688,9 @@ eq_name(t.clone(), t.clone()) <--
 
 eq_int(t.clone(), t.clone()) <--
     int(t);
+
+eq_float(t.clone(), t.clone()) <--
+    float(t);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
@@ -452,6 +728,13 @@ eq_proc(s.clone(), t.clone()) <--
     proc(t),
     if let Proc :: CastInt(ref t_f0) = t,
     eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: CastFloat(ref s_f0) = s,
+    proc(t),
+    if let Proc :: CastFloat(ref t_f0) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone());
 
 eq_name(s.clone(), t.clone()),
 name(t.clone()) <--
@@ -538,6 +821,10 @@ fold_proc(t.clone(), t.clone()) <--
 
 fold_proc(t.clone(), t.clone()) <--
     proc(t),
+    if let Proc :: CastFloat(_) = t;
+
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
     if let Proc :: Err = t;
 
 fold_proc(s.clone(), res) <--
@@ -547,7 +834,7 @@ fold_proc(s.clone(), res) <--
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ if let Proc :: CastInt(a) = a { if let Proc :: CastInt(b) = b { Proc :: CastInt(Box :: new(* a.clone() + * b.clone())) } else { Proc :: Err } } else { Proc :: Err } });
+    let res = ({ match (& a, & b) { (Proc :: CastInt(a), Proc :: CastInt(b)) => Proc :: CastInt(Box :: new(* a.clone() + * b.clone())), (Proc :: CastFloat(a), Proc :: CastFloat(b)) => Proc :: CastFloat(Box :: new(* a.clone() + * b.clone())), _ => Proc :: Err, } });
 
 rw_proc(s.clone(), t.clone()) <--
     proc(s),

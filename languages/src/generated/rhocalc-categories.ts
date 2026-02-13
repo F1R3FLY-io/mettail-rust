@@ -17,6 +17,7 @@ export const categoryInfo = {
 			"PPar",
 			"Add",
 			"CastInt",
+			"CastFloat",
 			"Err"
 		],
 		colour: "208bfe",

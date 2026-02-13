@@ -13,8 +13,7 @@ language! {
         Proc
         Name
         ![i64] as Int
-        // ![f64] as Float
-
+        ![f64] as Float
 
     },
 
@@ -38,20 +37,15 @@ language! {
         |- "@" "(" p ")" : Name ;
 
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
-            {if let Proc::CastInt(a) = a {
-                if let Proc::CastInt(b) = b {
-                    Proc::CastInt(Box::new(*a.clone() + *b.clone()))
-                }
-                else {
-                    Proc::Err
-                }
-            } else {
-                Proc::Err
+            { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() + *b.clone())),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() + *b.clone())),
+                _ => Proc::Err,
             }}
         ] fold;
 
         CastInt . k:Int |- k : Proc;
-        // CastFloat . k:Float |- k : Proc;
+        CastFloat . k:Float |- k : Proc;
 
         Err . |- "error" : Proc;
     },
