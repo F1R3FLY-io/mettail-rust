@@ -15,7 +15,8 @@ export const categoryInfo = {
 	},
 	Float: {
 		constructors: [
-			"AddFloat"
+			"AddFloat",
+			"SubFloat"
 		],
 		colour: "e05196",
 	},
@@ -23,8 +24,8 @@ export const categoryInfo = {
 		constructors: [
 			"Pow",
 			"Len",
-			"Add",
-			"Sub",
+			"AddInt",
+			"SubInt",
 			"CustomOp"
 		],
 		colour: "51b0e0",

@@ -49,8 +49,8 @@ pub Int: Int = {
 IntInfix: Int = {
     <IntAtom>,
     <left:IntInfix> "^" <right:IntAtom> => Int::Pow(Box::new(left), Box::new(right)),
-    <left:IntInfix> "+" <right:IntAtom> => Int::Add(Box::new(left), Box::new(right)),
-    <left:IntInfix> "-" <right:IntAtom> => Int::Sub(Box::new(left), Box::new(right)),
+    <left:IntInfix> "+" <right:IntAtom> => Int::AddInt(Box::new(left), Box::new(right)),
+    <left:IntInfix> "-" <right:IntAtom> => Int::SubInt(Box::new(left), Box::new(right)),
     <left:IntInfix> "~" <right:IntAtom> => Int::CustomOp(Box::new(left), Box::new(right)),
 };
 
@@ -124,6 +124,7 @@ pub Float: Float = {
 FloatInfix: Float = {
     <FloatAtom>,
     <left:FloatInfix> "+" <right:FloatAtom> => Float::AddFloat(Box::new(left), Box::new(right)),
+    <left:FloatInfix> "-" <right:FloatAtom> => Float::SubFloat(Box::new(left), Box::new(right)),
 };
 
 FloatAtom: Float = {

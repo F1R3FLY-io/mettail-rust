@@ -28,20 +28,15 @@ language! {
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
         Concat . a:Str, b:Str |- a "++" b : Str ![[a, b].concat()] step;
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
-        Add . a:Int, b:Int |- a "+" b : Int ![a + b] step;
-        AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] step;
-        Sub . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
+        AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+        SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
+        AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] fold;
+        SubFloat . a:Float, b:Float |- a "-" b : Float ![a - b] fold;
         CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
     },
     equations {
     },
     rewrites {
-        AddCongL . | S ~> T |- (Add S R) ~> (Add T R);
-        AddCongR . | S ~> T |- (Add L S) ~> (Add L T);
-        AddFloatCongL . | S ~> T |- (AddFloat S R) ~> (AddFloat T R);
-        AddFloatCongR . | S ~> T |- (AddFloat L S) ~> (AddFloat L T);
-        SubCongL . | S ~> T |- (Sub S R) ~> (Sub T R);
-        SubCongR . | S ~> T |- (Sub L S) ~> (Sub L T);
         AddStrCongL . | S ~> T |- (AddStr S R) ~> (AddStr T R);
         AddStrCongR . | S ~> T |- (AddStr L S) ~> (AddStr L T);
         CompCongL . | S ~> T |- (Comp S R) ~> (Comp T R);
@@ -55,5 +50,13 @@ language! {
         EqBoolCongR . | S ~> T |- (EqBool L S) ~> (EqBool L T);
         EqStrCongL . | S ~> T |- (EqStr S R) ~> (EqStr T R);
         EqStrCongR . | S ~> T |- (EqStr L S) ~> (EqStr L T);
+        AddIntCongL . | S ~> T |- (AddInt S R) ~> (AddInt T R);
+        AddIntCongR . | S ~> T |- (AddInt L S) ~> (AddInt L T);
+        SubIntCongL . | S ~> T |- (SubInt S R) ~> (SubInt T R);
+        SubIntCongR . | S ~> T |- (SubInt L S) ~> (SubInt L T);
+        AddFloatCongL . | S ~> T |- (AddFloat S R) ~> (AddFloat T R);
+        AddFloatCongR . | S ~> T |- (AddFloat L S) ~> (AddFloat L T);
+        SubFloatCongL . | S ~> T |- (SubFloat S R) ~> (SubFloat T R);
+        SubFloatCongR . | S ~> T |- (SubFloat L S) ~> (SubFloat L T);
     },
 }

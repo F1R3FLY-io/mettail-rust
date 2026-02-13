@@ -32,6 +32,8 @@ relation rw_str(Str, Str);
 
 relation fold_int(Int, Int);
 
+relation fold_float(Float, Float);
+
 
     // Category rules
 int(c1.clone()) <--
@@ -50,12 +52,12 @@ str(field_0.as_ref().clone()) <--
 int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
     int(t),
-    if let Int :: Add(field_0, field_1) = t;
+    if let Int :: AddInt(field_0, field_1) = t;
 
 int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
     int(t),
-    if let Int :: Sub(field_0, field_1) = t;
+    if let Int :: SubInt(field_0, field_1) = t;
 
 int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
@@ -218,6 +220,11 @@ float(field_0.as_ref().clone()),
 float(field_1.as_ref().clone()) <--
     float(t),
     if let Float :: AddFloat(field_0, field_1) = t;
+
+float(field_0.as_ref().clone()),
+float(field_1.as_ref().clone()) <--
+    float(t),
+    if let Float :: SubFloat(field_0, field_1) = t;
 
 float(lam.as_ref().clone()),
 int(arg.as_ref().clone()) <--
@@ -804,9 +811,17 @@ eq_str(s.clone(), t.clone()) <--
 
 eq_int(s.clone(), t.clone()) <--
     int(s),
-    if let Int :: Add(ref s_f0, ref s_f1) = s,
+    if let Int :: AddInt(ref s_f0, ref s_f1) = s,
     int(t),
-    if let Int :: Add(ref t_f0, ref t_f1) = t,
+    if let Int :: AddInt(ref t_f0, ref t_f1) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: SubInt(ref s_f0, ref s_f1) = s,
+    int(t),
+    if let Int :: SubInt(ref t_f0, ref t_f1) = t,
     eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
@@ -818,13 +833,13 @@ eq_float(s.clone(), t.clone()) <--
     eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_float(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
-eq_int(s.clone(), t.clone()) <--
-    int(s),
-    if let Int :: Sub(ref s_f0, ref s_f1) = s,
-    int(t),
-    if let Int :: Sub(ref t_f0, ref t_f1) = t,
-    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: SubFloat(ref s_f0, ref s_f1) = s,
+    float(t),
+    if let Float :: SubFloat(ref t_f0, ref t_f1) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_float(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
 eq_int(s.clone(), t.clone()) <--
     int(s),
@@ -912,24 +927,6 @@ x.push_str(& b);
 
 x }));
 
-rw_int(s.clone(), t) <--
-    int(s),
-    if let Int :: Add(left, right) = s,
-    if let Int :: NumLit(a_ref) = left.as_ref(),
-    if let Int :: NumLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Int :: NumLit((a + b));
-
-rw_float(s.clone(), t) <--
-    float(s),
-    if let Float :: AddFloat(left, right) = s,
-    if let Float :: FloatLit(a_ref) = left.as_ref(),
-    if let Float :: FloatLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Float :: FloatLit((a + b));
-
 rw_bool(orig.clone(), t) <--
     bool(orig),
     if let Bool :: Not(inner) = orig,
@@ -961,7 +958,7 @@ fold_int(s.clone(), res) <--
 
 fold_int(s.clone(), res) <--
     int(s),
-    if let Int :: Add(left, right) = s,
+    if let Int :: AddInt(left, right) = s,
     fold_int(left.as_ref().clone(), lv),
     fold_int(right.as_ref().clone(), rv),
     if let Int :: NumLit(a_ref) = & lv,
@@ -972,7 +969,7 @@ fold_int(s.clone(), res) <--
 
 fold_int(s.clone(), res) <--
     int(s),
-    if let Int :: Sub(left, right) = s,
+    if let Int :: SubInt(left, right) = s,
     fold_int(left.as_ref().clone(), lv),
     fold_int(right.as_ref().clone(), rv),
     if let Int :: NumLit(a_ref) = & lv,
@@ -994,7 +991,12 @@ fold_int(s.clone(), res) <--
 
 rw_int(s.clone(), t.clone()) <--
     int(s),
-    if let Int :: Sub(_, _) = s,
+    if let Int :: AddInt(_, _) = s,
+    fold_int(s, t);
+
+rw_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: SubInt(_, _) = s,
     fold_int(s, t);
 
 rw_int(s.clone(), t.clone()) <--
@@ -1002,41 +1004,41 @@ rw_int(s.clone(), t.clone()) <--
     if let Int :: CustomOp(_, _) = s,
     fold_int(s, t);
 
-rw_int(lhs.clone(), rhs) <--
-    int(lhs),
-    if let Int :: Add(ref x0, ref x1) = lhs,
-    rw_int((* * x0).clone(), t),
-    let rhs = Int :: Add(Box :: new(t.clone()), x1.clone());
+fold_float(t.clone(), t.clone()) <--
+    float(t),
+    if let Float :: FloatLit(_) = t;
 
-rw_int(lhs.clone(), rhs) <--
-    int(lhs),
-    if let Int :: Add(ref x0, ref x1) = lhs,
-    rw_int((* * x1).clone(), t),
-    let rhs = Int :: Add(x0.clone(), Box :: new(t.clone()));
+fold_float(s.clone(), res) <--
+    float(s),
+    if let Float :: AddFloat(left, right) = s,
+    fold_float(left.as_ref().clone(), lv),
+    fold_float(right.as_ref().clone(), rv),
+    if let Float :: FloatLit(a_ref) = & lv,
+    if let Float :: FloatLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Float :: FloatLit((a + b));
 
-rw_float(lhs.clone(), rhs) <--
-    float(lhs),
-    if let Float :: AddFloat(ref x0, ref x1) = lhs,
-    rw_float((* * x0).clone(), t),
-    let rhs = Float :: AddFloat(Box :: new(t.clone()), x1.clone());
+fold_float(s.clone(), res) <--
+    float(s),
+    if let Float :: SubFloat(left, right) = s,
+    fold_float(left.as_ref().clone(), lv),
+    fold_float(right.as_ref().clone(), rv),
+    if let Float :: FloatLit(a_ref) = & lv,
+    if let Float :: FloatLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Float :: FloatLit((a - b));
 
-rw_float(lhs.clone(), rhs) <--
-    float(lhs),
-    if let Float :: AddFloat(ref x0, ref x1) = lhs,
-    rw_float((* * x1).clone(), t),
-    let rhs = Float :: AddFloat(x0.clone(), Box :: new(t.clone()));
+rw_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: AddFloat(_, _) = s,
+    fold_float(s, t);
 
-rw_int(lhs.clone(), rhs) <--
-    int(lhs),
-    if let Int :: Sub(ref x0, ref x1) = lhs,
-    rw_int((* * x0).clone(), t),
-    let rhs = Int :: Sub(Box :: new(t.clone()), x1.clone());
-
-rw_int(lhs.clone(), rhs) <--
-    int(lhs),
-    if let Int :: Sub(ref x0, ref x1) = lhs,
-    rw_int((* * x1).clone(), t),
-    let rhs = Int :: Sub(x0.clone(), Box :: new(t.clone()));
+rw_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: SubFloat(_, _) = s,
+    fold_float(s, t);
 
 rw_str(lhs.clone(), rhs) <--
     str(lhs),
@@ -1115,5 +1117,53 @@ rw_bool(lhs.clone(), rhs) <--
     if let Bool :: EqStr(ref x0, ref x1) = lhs,
     rw_str((* * x1).clone(), t),
     let rhs = Bool :: EqStr(x0.clone(), Box :: new(t.clone()));
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: AddInt(ref x0, ref x1) = lhs,
+    rw_int((* * x0).clone(), t),
+    let rhs = Int :: AddInt(Box :: new(t.clone()), x1.clone());
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: AddInt(ref x0, ref x1) = lhs,
+    rw_int((* * x1).clone(), t),
+    let rhs = Int :: AddInt(x0.clone(), Box :: new(t.clone()));
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: SubInt(ref x0, ref x1) = lhs,
+    rw_int((* * x0).clone(), t),
+    let rhs = Int :: SubInt(Box :: new(t.clone()), x1.clone());
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: SubInt(ref x0, ref x1) = lhs,
+    rw_int((* * x1).clone(), t),
+    let rhs = Int :: SubInt(x0.clone(), Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: AddFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: AddFloat(Box :: new(t.clone()), x1.clone());
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: AddFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x1).clone(), t),
+    let rhs = Float :: AddFloat(x0.clone(), Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: SubFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: SubFloat(Box :: new(t.clone()), x1.clone());
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: SubFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x1).clone(), t),
+    let rhs = Float :: SubFloat(x0.clone(), Box :: new(t.clone()));
 
 }

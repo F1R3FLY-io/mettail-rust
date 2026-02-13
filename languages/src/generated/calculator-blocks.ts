@@ -215,10 +215,32 @@ const definitions = [
 		colour: "51e05f",
 	},
 
-	// Add: ... ...
+	// Add Int: ... ...
 	{
-		type: "int_add",
-		tooltip: "Add: ... ...",
+		type: "int_add_int",
+		tooltip: "Add Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Sub Int: ... ...
+	{
+		type: "int_sub_int",
+		tooltip: "Sub Int: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -259,26 +281,26 @@ const definitions = [
 		colour: "e05196",
 	},
 
-	// Sub: ... ...
+	// Sub Float: ... ...
 	{
-		type: "int_sub",
-		tooltip: "Sub: ... ...",
+		type: "float_sub_float",
+		tooltip: "Sub Float: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
 				type: "input_value",
 				name: "ARG1",
-				check: "Int",
+				check: "Float",
 			},
 			{
 				type: "input_value",
 				name: "ARG2",
-				check: "Int",
+				check: "Float",
 			},
 		],
 		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
+		output: "Float",
+		colour: "e05196",
 	},
 
 	// Custom Op: ... ...
