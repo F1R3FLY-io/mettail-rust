@@ -33,6 +33,12 @@ language! {
         AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] fold;
         SubFloat . a:Float, b:Float |- a "-" b : Float ![a - b] fold;
         CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
+        // Type casts for mixed Int/Float arithmetic without mixed-type Add/Sub terms.
+        ToFloat . a:Int |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a as f64)] step;
+        ToInt . a:Float |- "int" "(" a ")" : Int ![a.get() as i32] step;
+        // Identity casts: int(Int), float(Float).
+        IntId . a:Int |- "int" "(" a ")" : Int ![a] step;
+        FloatId . a:Float |- "float" "(" a ")" : Float ![a] step;
     },
     equations {
     },
@@ -58,5 +64,9 @@ language! {
         AddFloatCongR . | S ~> T |- (AddFloat L S) ~> (AddFloat L T);
         SubFloatCongL . | S ~> T |- (SubFloat S R) ~> (SubFloat T R);
         SubFloatCongR . | S ~> T |- (SubFloat L S) ~> (SubFloat L T);
+        ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
+        ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
+        IntIdCong . | S ~> T |- (IntId S) ~> (IntId T);
+        FloatIdCong . | S ~> T |- (FloatId S) ~> (FloatId T);
     },
 }

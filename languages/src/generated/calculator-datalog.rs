@@ -64,6 +64,14 @@ int(field_1.as_ref().clone()) <--
     int(t),
     if let Int :: CustomOp(field_0, field_1) = t;
 
+float(field_0.as_ref().clone()) <--
+    int(t),
+    if let Int :: ToInt(field_0) = t;
+
+int(field_0.as_ref().clone()) <--
+    int(t),
+    if let Int :: IntId(field_0) = t;
+
 int(lam.as_ref().clone()),
 int(arg.as_ref().clone()) <--
     int(t),
@@ -225,6 +233,14 @@ float(field_0.as_ref().clone()),
 float(field_1.as_ref().clone()) <--
     float(t),
     if let Float :: SubFloat(field_0, field_1) = t;
+
+int(field_0.as_ref().clone()) <--
+    float(t),
+    if let Float :: ToFloat(field_0) = t;
+
+float(field_0.as_ref().clone()) <--
+    float(t),
+    if let Float :: FloatId(field_0) = t;
 
 float(lam.as_ref().clone()),
 int(arg.as_ref().clone()) <--
@@ -849,6 +865,34 @@ eq_int(s.clone(), t.clone()) <--
     eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
 
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: ToFloat(ref s_f0) = s,
+    float(t),
+    if let Float :: ToFloat(ref t_f0) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: ToInt(ref s_f0) = s,
+    int(t),
+    if let Int :: ToInt(ref t_f0) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: IntId(ref s_f0) = s,
+    int(t),
+    if let Int :: IntId(ref t_f0) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: FloatId(ref s_f0) = s,
+    float(t),
+    if let Float :: FloatId(ref t_f0) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
 
     // Rewrite rules
 rw_bool(s.clone(), t) <--
@@ -940,6 +984,34 @@ rw_int(orig.clone(), t) <--
     if let Str :: StringLit(s_ref) = inner.as_ref(),
     let s = s_ref.clone(),
     let t = Int :: NumLit((s.len() as i32));
+
+rw_float(orig.clone(), t) <--
+    float(orig),
+    if let Float :: ToFloat(inner) = orig,
+    if let Int :: NumLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Float :: FloatLit((mettail_runtime :: CanonicalFloat64 :: from(a as f64)));
+
+rw_int(orig.clone(), t) <--
+    int(orig),
+    if let Int :: ToInt(inner) = orig,
+    if let Float :: FloatLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Int :: NumLit((a.get() as i32));
+
+rw_int(orig.clone(), t) <--
+    int(orig),
+    if let Int :: IntId(inner) = orig,
+    if let Int :: NumLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Int :: NumLit((a));
+
+rw_float(orig.clone(), t) <--
+    float(orig),
+    if let Float :: FloatId(inner) = orig,
+    if let Float :: FloatLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Float :: FloatLit((a));
 
 fold_int(t.clone(), t.clone()) <--
     int(t),
@@ -1165,5 +1237,29 @@ rw_float(lhs.clone(), rhs) <--
     if let Float :: SubFloat(ref x0, ref x1) = lhs,
     rw_float((* * x1).clone(), t),
     let rhs = Float :: SubFloat(x0.clone(), Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: ToFloat(ref x0) = lhs,
+    rw_int((* * x0).clone(), t),
+    let rhs = Float :: ToFloat(Box :: new(t.clone()));
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: ToInt(ref x0) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Int :: ToInt(Box :: new(t.clone()));
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: IntId(ref x0) = lhs,
+    rw_int((* * x0).clone(), t),
+    let rhs = Int :: IntId(Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: FloatId(ref x0) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: FloatId(Box :: new(t.clone()));
 
 }

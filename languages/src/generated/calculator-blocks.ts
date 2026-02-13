@@ -323,6 +323,74 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
+	},
+
+	// To Float: ...
+	{
+		type: "float_to_float",
+		tooltip: "To Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// To Int: ...
+	{
+		type: "int_to_int",
+		tooltip: "To Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Int Id: ...
+	{
+		type: "int_int_id",
+		tooltip: "Int Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Float Id: ...
+	{
+		type: "float_float_id",
+		tooltip: "Float Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
 	}
 ];
 
