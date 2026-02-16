@@ -41,6 +41,9 @@ pub Proc: Proc = {
 ProcInfix: Proc = {
     <ProcAtom>,
     <left:ProcInfix> "+" <right:ProcAtom> => Proc::Add(Box::new(left), Box::new(right)),
+    <left:ProcInfix> "-" <right:ProcAtom> => Proc::Sub(Box::new(left), Box::new(right)),
+    <left:ProcInfix> "*" <right:ProcAtom> => Proc::Mul(Box::new(left), Box::new(right)),
+    <left:ProcInfix> "/" <right:ProcAtom> => Proc::Div(Box::new(left), Box::new(right)),
 };
 
 ProcAtom: Proc = {

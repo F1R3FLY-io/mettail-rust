@@ -44,6 +44,30 @@ language! {
             }}
         ] fold;
 
+        Sub . a:Proc, b:Proc |- a "-" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() - *b.clone())),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() - *b.clone())),
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        Mul . a:Proc, b:Proc |- a "*" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() * *b.clone())),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() * *b.clone())),
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        Div . a:Proc, b:Proc |- a "/" b : Proc ![
+            { match (&a, &b) {
+                (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() / *b.clone())),
+                (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() / *b.clone())),
+                _ => Proc::Err,
+            }}
+        ] fold;
+
         CastInt . k:Int |- k : Proc;
         CastFloat . k:Float |- k : Proc;
 
@@ -65,6 +89,18 @@ language! {
         AddCongL . | S ~> T |- (Add S X) ~> (Add T X);
 
         AddCongR . | S ~> T |- (Add X S) ~> (Add X T);
+
+        SubCongL . | S ~> T |- (Sub S X) ~> (Sub T X);
+
+        SubCongR . | S ~> T |- (Sub X S) ~> (Sub X T);
+
+        MulCongL . | S ~> T |- (Mul S X) ~> (Mul T X);
+
+        MulCongR . | S ~> T |- (Mul X S) ~> (Mul X T);
+
+        DivCongL . | S ~> T |- (Div S X) ~> (Div T X);
+
+        DivCongR . | S ~> T |- (Div X S) ~> (Div X T);
     },
 
     logic {

@@ -16,6 +16,9 @@ export const categoryInfo = {
 			"PInputs",
 			"PPar",
 			"Add",
+			"Sub",
+			"Mul",
+			"Div",
 			"CastInt",
 			"CastFloat",
 			"Err"

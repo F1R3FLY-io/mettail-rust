@@ -54,6 +54,21 @@ proc(field_1.as_ref().clone()) <--
     proc(t),
     if let Proc :: Add(field_0, field_1) = t;
 
+proc(field_0.as_ref().clone()),
+proc(field_1.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: Sub(field_0, field_1) = t;
+
+proc(field_0.as_ref().clone()),
+proc(field_1.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: Mul(field_0, field_1) = t;
+
+proc(field_0.as_ref().clone()),
+proc(field_1.as_ref().clone()) <--
+    proc(t),
+    if let Proc :: Div(field_0, field_1) = t;
+
 int(field_0.as_ref().clone()) <--
     proc(t),
     if let Proc :: CastInt(field_0) = t;
@@ -724,6 +739,30 @@ eq_proc(s.clone(), t.clone()) <--
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
+    if let Proc :: Sub(ref s_f0, ref s_f1) = s,
+    proc(t),
+    if let Proc :: Sub(ref t_f0, ref t_f1) = t,
+    eq_proc(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_proc(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: Mul(ref s_f0, ref s_f1) = s,
+    proc(t),
+    if let Proc :: Mul(ref t_f0, ref t_f1) = t,
+    eq_proc(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_proc(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: Div(ref s_f0, ref s_f1) = s,
+    proc(t),
+    if let Proc :: Div(ref t_f0, ref t_f1) = t,
+    eq_proc(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_proc(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
     if let Proc :: CastInt(ref s_f0) = s,
     proc(t),
     if let Proc :: CastInt(ref t_f0) = t,
@@ -836,9 +875,51 @@ fold_proc(s.clone(), res) <--
     let b = rv,
     let res = ({ match (& a, & b) { (Proc :: CastInt(a), Proc :: CastInt(b)) => Proc :: CastInt(Box :: new(* a.clone() + * b.clone())), (Proc :: CastFloat(a), Proc :: CastFloat(b)) => Proc :: CastFloat(Box :: new(* a.clone() + * b.clone())), _ => Proc :: Err, } });
 
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc :: Sub(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ match (& a, & b) { (Proc :: CastInt(a), Proc :: CastInt(b)) => Proc :: CastInt(Box :: new(* a.clone() - * b.clone())), (Proc :: CastFloat(a), Proc :: CastFloat(b)) => Proc :: CastFloat(Box :: new(* a.clone() - * b.clone())), _ => Proc :: Err, } });
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc :: Mul(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ match (& a, & b) { (Proc :: CastInt(a), Proc :: CastInt(b)) => Proc :: CastInt(Box :: new(* a.clone() * * b.clone())), (Proc :: CastFloat(a), Proc :: CastFloat(b)) => Proc :: CastFloat(Box :: new(* a.clone() * * b.clone())), _ => Proc :: Err, } });
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc :: Div(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ match (& a, & b) { (Proc :: CastInt(a), Proc :: CastInt(b)) => Proc :: CastInt(Box :: new(* a.clone() / * b.clone())), (Proc :: CastFloat(a), Proc :: CastFloat(b)) => Proc :: CastFloat(Box :: new(* a.clone() / * b.clone())), _ => Proc :: Err, } });
+
 rw_proc(s.clone(), t.clone()) <--
     proc(s),
     if let Proc :: Add(_, _) = s,
+    fold_proc(s, t);
+
+rw_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: Sub(_, _) = s,
+    fold_proc(s, t);
+
+rw_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: Mul(_, _) = s,
+    fold_proc(s, t);
+
+rw_proc(s.clone(), t.clone()) <--
+    proc(s),
+    if let Proc :: Div(_, _) = s,
     fold_proc(s, t);
 
 rw_proc(parent.clone(), result) <--
@@ -865,6 +946,42 @@ rw_proc(lhs.clone(), rhs) <--
     if let Proc :: Add(ref x0, ref x1) = lhs,
     rw_proc((* * x1).clone(), t),
     let rhs = Proc :: Add(x0.clone(), Box :: new(t.clone()));
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc :: Sub(ref x0, ref x1) = lhs,
+    rw_proc((* * x0).clone(), t),
+    let rhs = Proc :: Sub(Box :: new(t.clone()), x1.clone());
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc :: Sub(ref x0, ref x1) = lhs,
+    rw_proc((* * x1).clone(), t),
+    let rhs = Proc :: Sub(x0.clone(), Box :: new(t.clone()));
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc :: Mul(ref x0, ref x1) = lhs,
+    rw_proc((* * x0).clone(), t),
+    let rhs = Proc :: Mul(Box :: new(t.clone()), x1.clone());
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc :: Mul(ref x0, ref x1) = lhs,
+    rw_proc((* * x1).clone(), t),
+    let rhs = Proc :: Mul(x0.clone(), Box :: new(t.clone()));
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc :: Div(ref x0, ref x1) = lhs,
+    rw_proc((* * x0).clone(), t),
+    let rhs = Proc :: Div(Box :: new(t.clone()), x1.clone());
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc :: Div(ref x0, ref x1) = lhs,
+    rw_proc((* * x1).clone(), t),
+    let rhs = Proc :: Div(x0.clone(), Box :: new(t.clone()));
 
 
     // Custom logic
