@@ -14,11 +14,14 @@ export const categoryInfo = {
 	},
 	Int: {
 		constructors: [
+			"Tern",
 			"Pow",
 			"Len",
 			"Add",
+			"Neg",
 			"Sub",
-			"CustomOp"
+			"CustomOp",
+			"Fact"
 		],
 		colour: "51b0e0",
 	},

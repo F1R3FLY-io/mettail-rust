@@ -1,7 +1,7 @@
 //! Syntax-layer generation
 //!
 //! Generates code for text ↔ AST conversion:
-//! - `parser/` - LALRPOP grammar generation (text → AST)
+//! - `parser/` - PraTTaIL parser generation (text → AST)
 //! - `display` - Display trait implementations (AST → text)
 //! - `var_inference` - Variable type inference for parser lambda resolution
 

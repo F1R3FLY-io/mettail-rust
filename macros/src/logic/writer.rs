@@ -1,5 +1,5 @@
 // Helper module for writing generated Ascent Datalog to files
-// This writes the generated Datalog source alongside LALRPOP grammars for debugging/inspection
+// This writes the generated Datalog source for debugging/inspection
 
 use std::fs;
 use std::path::Path;

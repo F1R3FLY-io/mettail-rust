@@ -310,7 +310,7 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 })
                 .collect();
             if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
-                (simple.get(0), simple.get(1))
+                (simple.first(), simple.get(1))
             {
                 let left_type = language.types.iter().find(|t| t.name == *left_ty);
                 let right_type = language.types.iter().find(|t| t.name == *right_ty);
@@ -429,6 +429,135 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
         });
     }
 
+    // N-ary step rules (3+ arguments)
+    for rule in &language.terms {
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if language
+            .semantics
+            .iter()
+            .any(|s| s.constructor == rule.label)
+        {
+            continue;
+        }
+        if rule.eval_mode == Some(EvalMode::Fold) {
+            continue;
+        }
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .count();
+        if non_terminal_count < 3 {
+            continue;
+        }
+        let Some(ref term_context) = rule.term_context else {
+            continue;
+        };
+        let category = &rule.category;
+        let Some(result_native) = native_type_for(category) else {
+            continue;
+        };
+
+        // Collect all simple params with their types
+        let simple_params: Vec<_> = term_context
+            .iter()
+            .filter_map(|p| match p {
+                TermParam::Simple { name, ty } => {
+                    if let TypeExpr::Base(base_ty) = ty {
+                        Some((name.clone(), base_ty.clone()))
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            })
+            .collect();
+
+        if simple_params.len() != non_terminal_count {
+            continue; // All NT params must be Simple with base types
+        }
+
+        // Resolve each arg's literal label
+        let mut arg_infos = Vec::with_capacity(simple_params.len());
+        let mut all_resolved = true;
+        for (param_name, arg_cat) in &simple_params {
+            let arg_lang_type = language.types.iter().find(|t| t.name == *arg_cat);
+            let arg_native = arg_lang_type.and_then(|t| t.native_type.as_ref());
+            if let Some(arg_nat) = arg_native {
+                let lit_label = language
+                    .terms
+                    .iter()
+                    .find(|r| r.category == *arg_cat && is_literal_rule(r))
+                    .map(|r| r.label.clone())
+                    .unwrap_or_else(|| generate_literal_label(arg_nat));
+                arg_infos.push((param_name.clone(), arg_cat.clone(), lit_label));
+            } else {
+                all_resolved = false;
+                break;
+            }
+        }
+        if !all_resolved {
+            continue;
+        }
+
+        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
+        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
+        let label = &rule.label;
+        let result_lit_label = language
+            .terms
+            .iter()
+            .find(|r| r.category == *category && is_literal_rule(r))
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| generate_literal_label(result_native));
+        let rust_code = &rule.rust_code.as_ref().unwrap().code;
+
+        // Build destructure pattern: (f0, f1, f2, ...)
+        let field_names: Vec<Ident> = (0..arg_infos.len())
+            .map(|i| format_ident!("f{}", i))
+            .collect();
+        let ref_names: Vec<Ident> = (0..arg_infos.len())
+            .map(|i| format_ident!("r{}", i))
+            .collect();
+
+        // Generate the if-let chain for destructuring each field
+        let destructure_fields: Vec<TokenStream> = arg_infos
+            .iter()
+            .enumerate()
+            .map(|(i, (_, arg_cat, lit_label))| {
+                let fi = &field_names[i];
+                let ri = &ref_names[i];
+                quote! {
+                    if let #arg_cat::#lit_label(#ri) = #fi.as_ref(),
+                }
+            })
+            .collect();
+
+        // Generate the let bindings: let param_name = ri.clone()
+        let let_bindings: Vec<TokenStream> = arg_infos
+            .iter()
+            .enumerate()
+            .map(|(i, (param_name, _, _))| {
+                let ri = &ref_names[i];
+                quote! {
+                    let #param_name = #ri.clone(),
+                }
+            })
+            .collect();
+
+        // Use __src/__dst to avoid name collisions with user-defined param names
+        // (e.g., a user might name a param `t` or `s` which would shadow Ascent head vars)
+        rules.push(quote! {
+            #rw_rel(__src.clone(), __dst) <--
+                #cat_rel(__src),
+                if let #category::#label(#(#field_names),*) = __src,
+                #(#destructure_fields)*
+                #(#let_bindings)*
+                let __dst = #category::#result_lit_label((#rust_code));
+        });
+    }
+
     rules
 }
 
@@ -446,6 +575,30 @@ fn fold_param_names(rule: &GrammarRule) -> Vec<Ident> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+/// Check whether all Simple params in a rule have the same type as the given category.
+/// Used to filter out cross-category rules (e.g., Len(Str)->Int) from fold generation.
+fn fold_params_all_same_category(rule: &GrammarRule, category: &Ident) -> bool {
+    let cat_str = category.to_string();
+    if let Some(ref ctx) = rule.term_context {
+        ctx.iter().all(|p| match p {
+            TermParam::Simple { ty, .. } => {
+                if let TypeExpr::Base(t) = ty {
+                    *t == cat_str
+                } else {
+                    false
+                }
+            }
+            _ => true, // Binders etc. are OK
+        })
+    } else {
+        // Old-style: check NonTerminal items
+        rule.items.iter().all(|item| match item {
+            GrammarItem::NonTerminal(nt) => *nt == cat_str,
+            _ => true, // Terminals are OK
+        })
+    }
 }
 
 /// Number of constructor fields (for identity fold pattern).
@@ -509,12 +662,17 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 if rule.category != *category {
                     continue;
                 }
-                let non_terminal_count = rule
-                    .items
-                    .iter()
-                    .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
-                    .count();
-                if non_terminal_count != 2 {
+                let param_names = fold_param_names(rule);
+                let param_count = param_names.len();
+
+                // Support unary (1 param) and binary (2 params) fold rules
+                // where all parameters are of the same category as the result.
+                // This filters out cross-category rules like Len(Str)->Int.
+                if param_count == 0 || param_count > 2 {
+                    continue;
+                }
+                let all_same_category = fold_params_all_same_category(rule, category);
+                if !all_same_category {
                     continue;
                 }
                 let label = &rule.label;
@@ -542,18 +700,32 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                     continue;
                 };
 
-                rules.push(quote! {
-                    #fold_rel(s.clone(), res) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        #fold_rel(left.as_ref().clone(), lv),
-                        #fold_rel(right.as_ref().clone(), rv),
-                        if let #category::#num_lit(a_ref) = &lv,
-                        if let #category::#num_lit(b_ref) = &rv,
-                        let a = a_ref.clone(),
-                        let b = b_ref.clone(),
-                        let res = #res_expr;
-                });
+                if param_count == 1 {
+                    // Unary fold rule (e.g., Neg)
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(inner) = s,
+                            #fold_rel(inner.as_ref().clone(), iv),
+                            if let #category::#num_lit(a_ref) = &iv,
+                            let a = a_ref.clone(),
+                            let res = #res_expr;
+                    });
+                } else {
+                    // Binary fold rule (e.g., Add, Sub)
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, right) = s,
+                            #fold_rel(left.as_ref().clone(), lv),
+                            #fold_rel(right.as_ref().clone(), rv),
+                            if let #category::#num_lit(a_ref) = &lv,
+                            if let #category::#num_lit(b_ref) = &rv,
+                            let a = a_ref.clone(),
+                            let b = b_ref.clone(),
+                            let res = #res_expr;
+                    });
+                }
             }
         } else {
             // Non-native category (e.g. Proc): identity for non-fold constructors, rust_code for fold
@@ -618,12 +790,24 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 continue;
             }
             let label = &rule.label;
-            rules.push(quote! {
-                #rw_rel(s.clone(), t.clone()) <--
-                    #cat_rel(s),
-                    if let #category::#label(_, _) = s,
-                    #fold_rel(s, t);
-            });
+            let n = fold_field_count(rule);
+            let trigger_rule = if n == 0 {
+                quote! {
+                    #rw_rel(s.clone(), t.clone()) <--
+                        #cat_rel(s),
+                        if let #category::#label = s,
+                        #fold_rel(s, t);
+                }
+            } else {
+                let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
+                quote! {
+                    #rw_rel(s.clone(), t.clone()) <--
+                        #cat_rel(s),
+                        if let #category::#label(#(#pat),*) = s,
+                        #fold_rel(s, t);
+                }
+            };
+            rules.push(trigger_rule);
         }
     }
 

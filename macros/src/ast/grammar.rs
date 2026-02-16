@@ -115,6 +115,13 @@ pub struct GrammarRule {
     pub rust_code: Option<RustCodeBlock>,
     /// HOL syntax: evaluation mode (fold / step)
     pub eval_mode: Option<EvalMode>,
+    /// Whether this rule is right-associative (default: left).
+    /// Annotated with `right` keyword after eval mode in the DSL.
+    pub is_right_assoc: bool,
+    /// Explicit prefix binding power for unary prefix operators.
+    /// Annotated with `prefix(N)` after eval mode and `right` in the DSL.
+    /// When `None`, falls back to `max_infix_bp + 2`.
+    pub prefix_bp: Option<u8>,
 }
 
 pub fn parse_terms(input: ParseStream) -> SynResult<Vec<GrammarRule>> {
@@ -223,6 +230,8 @@ fn parse_grammar_rule_old(label: Ident, input: ParseStream) -> SynResult<Grammar
         syntax_pattern: None,
         rust_code: None,
         eval_mode: None,
+        is_right_assoc: false,
+        prefix_bp: None,
     })
 }
 
@@ -258,20 +267,58 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
 
     // Parse optional evaluation mode: fold, step
     let eval_mode = if input.peek(syn::Ident) {
-        let mode_ident = input.parse::<syn::Ident>()?;
-        match mode_ident.to_string().as_str() {
-            "fold" => Some(EvalMode::Fold),
-            "step" => Some(EvalMode::Step),
+        let fork = input.fork();
+        let kw = fork.parse::<syn::Ident>()?;
+        match kw.to_string().as_str() {
+            "fold" | "step" => {
+                let mode_ident = input.parse::<syn::Ident>()?;
+                match mode_ident.to_string().as_str() {
+                    "fold" => Some(EvalMode::Fold),
+                    "step" => Some(EvalMode::Step),
+                    _ => unreachable!(),
+                }
+            }
+            "right" | "prefix" => None, // handled below
             _ => {
+                let bad = input.parse::<syn::Ident>()?;
                 return Err(syn::Error::new(
-                    mode_ident.span(),
-                    "expected evaluation mode: fold or step",
+                    bad.span(),
+                    "expected 'fold', 'step', 'right', 'prefix(N)', or ';'",
                 ));
             },
         }
     } else {
         None
     };
+
+    // Parse optional annotations after eval mode: `right`, `prefix(N)`
+    let mut is_right_assoc = false;
+    let mut prefix_bp = None;
+
+    while input.peek(syn::Ident) {
+        let fork = input.fork();
+        if let Ok(kw) = fork.parse::<syn::Ident>() {
+            if kw == "right" {
+                let _ = input.parse::<syn::Ident>()?; // consume
+                is_right_assoc = true;
+            } else if kw == "prefix" {
+                let _ = input.parse::<syn::Ident>()?; // consume "prefix"
+                // Parse (N)
+                let content;
+                syn::parenthesized!(content in input);
+                let bp_lit: syn::LitInt = content.parse()?;
+                let bp_val: u8 = bp_lit.base10_parse()?;
+                prefix_bp = Some(bp_val);
+            } else {
+                return Err(syn::Error::new(
+                    kw.span(),
+                    "expected 'right', 'prefix(N)', or ';' after evaluation mode",
+                ));
+            }
+        } else {
+            break;
+        }
+    }
 
     // Parse ;
     let _ = input.parse::<Token![;]>()?;
@@ -288,6 +335,8 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
         syntax_pattern: Some(syntax_pattern),
         rust_code,
         eval_mode,
+        is_right_assoc,
+        prefix_bp,
     })
 }
 
@@ -399,8 +448,8 @@ fn is_end_of_syntax_pattern(input: ParseStream) -> bool {
         let _ = fork.parse::<Token![:]>();
         if fork.peek(Ident) {
             let _ = fork.parse::<Ident>();
-            // End of pattern: either `;` or optional `![code]` / eval_mode
-            return fork.peek(Token![;]) || fork.peek(Token![!]);
+            // End of pattern: `;`, `![code]`, or eval_mode/assoc keyword (Ident)
+            return fork.peek(Token![;]) || fork.peek(Token![!]) || fork.peek(Ident);
         }
     }
     false

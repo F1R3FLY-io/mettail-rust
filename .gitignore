@@ -45,6 +45,10 @@ examples/src/*_gen.rs
 *.profraw
 *.profdata
 
+# Profiling output
+prattail/docs/benchmarks/*.txt
+perf*.data
+
 # Backup files
 *.bak
 *.tmp
@@ -68,3 +72,4 @@ target/tests/trybuild/
 # Implementation plans and developer notes
 *.plan.md
 
+.claude/projects/*

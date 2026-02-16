@@ -30,7 +30,6 @@ rand = { workspace = true }
 # Ascent
 ascent = { workspace = true }
 ascent-byods-rels = { workspace = true }
-lalrpop-util = { version = "0.20", features = ["lexer"] }
 
 
 [dev-dependencies]

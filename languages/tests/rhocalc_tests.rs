@@ -2,6 +2,10 @@ use ascent::*;
 use ascent_byods_rels::*;
 use mettail_languages::rhocalc::*;
 
+fn parse_proc(input: &str) -> Result<Proc, String> {
+    Proc::parse(input)
+}
+
 struct TestCase {
     name: &'static str,
     input: &'static str,
@@ -17,10 +21,7 @@ fn run_test(test: &TestCase) -> Result<(), String> {
     println!("Input: {}", test.input);
 
     mettail_runtime::clear_var_cache();
-    let parser = rhocalc::ProcParser::new();
-    let input_term = parser
-        .parse(test.input)
-        .map_err(|e| format!("Parse error: {:?}", e))?;
+    let input_term = parse_proc(test.input)?;
 
     // Normalize to flatten any nested collections
     let input_term = input_term.normalize();
@@ -91,9 +92,7 @@ fn run_test(test: &TestCase) -> Result<(), String> {
 
     // Check expected output if provided
     if let Some(expected_str) = test.expected_output {
-        let expected = parser
-            .parse(expected_str)
-            .map_err(|e| format!("Parse error in expected: {:?}", e))?
+        let expected = parse_proc(expected_str)?
             .normalize();
 
         // Check if expected output is in the rewrite relation or path

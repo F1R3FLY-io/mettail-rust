@@ -101,6 +101,8 @@ fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
             continue; // Nullary constructor - no congruence needed
         }
 
+
+
         // Skip constructors with Var or Integer arguments
         let var_ident = format_ident!("Var");
         let int_ident = format_ident!("Integer");

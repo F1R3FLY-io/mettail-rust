@@ -6,7 +6,7 @@
 #![allow(
     clippy::cloned_ref_to_slice_refs,
     clippy::type_complexity,
-    unused_imports, // generated LALRPOP code may include unused imports
+    unused_imports, // generated parser code may include unused imports
 )]
 
 pub mod ambient;

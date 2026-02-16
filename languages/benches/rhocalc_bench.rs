@@ -155,8 +155,7 @@ struct BenchMetrics {
 
 fn run_rhocalc(input: &str) -> BenchMetrics {
     mettail_runtime::clear_var_cache();
-    let parser = rhocalc::ProcParser::new();
-    let term = parser.parse(input).expect("Parse failed");
+    let term = Proc::parse(input).expect("Parse failed");
     let term = term.normalize();
 
     println!("input: {}", input);
@@ -176,7 +175,7 @@ fn run_rhocalc(input: &str) -> BenchMetrics {
             if parts.len() == 2 {
                 let name = parts[0].trim();
                 let value = parts[1].trim();
-                if let Ok(val_term) = parser.parse(value) {
+                if let Ok(val_term) = Proc::parse(value) {
                     env.proc.set(name.to_string(), val_term.normalize());
                 }
             }
@@ -203,7 +202,6 @@ fn run_rhocalc(input: &str) -> BenchMetrics {
 
 fn bench_size_parallel_zeros(c: &mut Criterion) {
     let mut group = c.benchmark_group("size/parallel_zeros");
-    group.measurement_time(Duration::from_secs(5));
 
     for n in [1, 2, 5, 10, 20, 50].iter() {
         let input = gen_parallel_zeros(*n);
@@ -217,7 +215,6 @@ fn bench_size_parallel_zeros(c: &mut Criterion) {
 
 fn bench_size_comm_pairs(c: &mut Criterion) {
     let mut group = c.benchmark_group("size/comm_pairs");
-    group.measurement_time(Duration::from_secs(10));
 
     for n in [1, 2, 3, 4, 5, 6].iter() {
         let input = gen_comm_pairs(*n);
@@ -235,7 +232,6 @@ fn bench_size_comm_pairs(c: &mut Criterion) {
 
 fn bench_depth_pipeline(c: &mut Criterion) {
     let mut group = c.benchmark_group("depth/pipeline");
-    group.measurement_time(Duration::from_secs(5));
 
     for depth in [2, 3, 4, 5, 6, 8, 10].iter() {
         let input = gen_pipeline(*depth);
@@ -253,7 +249,6 @@ fn bench_depth_pipeline(c: &mut Criterion) {
 
 fn bench_ndet_race(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndet/race");
-    group.measurement_time(Duration::from_secs(5));
 
     for n in [1, 2, 3, 4, 5].iter() {
         let input = gen_race(*n);
@@ -267,7 +262,6 @@ fn bench_ndet_race(c: &mut Criterion) {
 
 fn bench_ndet_choice(c: &mut Criterion) {
     let mut group = c.benchmark_group("ndet/choice");
-    group.measurement_time(Duration::from_secs(5));
 
     for n in [1, 2, 3, 4, 5].iter() {
         let input = gen_choice(*n);
@@ -285,7 +279,6 @@ fn bench_ndet_choice(c: &mut Criterion) {
 
 fn bench_parallel_fanout(c: &mut Criterion) {
     let mut group = c.benchmark_group("parallel/fanout");
-    group.measurement_time(Duration::from_secs(5));
 
     for n in [2, 3, 4, 5, 6, 8].iter() {
         let input = gen_fanout(*n);
@@ -303,7 +296,6 @@ fn bench_parallel_fanout(c: &mut Criterion) {
 
 fn bench_reflect_nested(c: &mut Criterion) {
     let mut group = c.benchmark_group("reflect/nested");
-    group.measurement_time(Duration::from_secs(5));
 
     for depth in [1, 2, 3, 4, 5, 6, 8, 10].iter() {
         let input = gen_nested_reflect(*depth);
@@ -321,7 +313,6 @@ fn bench_reflect_nested(c: &mut Criterion) {
 
 fn bench_join_channels(c: &mut Criterion) {
     let mut group = c.benchmark_group("join/channels");
-    group.measurement_time(Duration::from_secs(5));
 
     for n in [2, 3, 4, 5, 6].iter() {
         let input = gen_join(*n);
@@ -339,8 +330,6 @@ fn bench_join_channels(c: &mut Criterion) {
 
 fn bench_replication_basic(c: &mut Criterion) {
     let mut group = c.benchmark_group("replication");
-    group.measurement_time(Duration::from_secs(10));
-    group.sample_size(30);
 
     let input = gen_replication_base();
     group.bench_function("basic", |b| b.iter(|| run_rhocalc(black_box(input))));
@@ -354,43 +343,64 @@ fn bench_replication_basic(c: &mut Criterion) {
 
 criterion_group! {
     name = size_scaling;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default()
+        .warm_up_time(Duration::from_secs(5))
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(10);
     targets = bench_size_parallel_zeros, bench_size_comm_pairs
 }
 
 criterion_group! {
     name = depth_scaling;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default()
+        .warm_up_time(Duration::from_secs(5))
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(10);
     targets = bench_depth_pipeline
 }
 
 criterion_group! {
     name = nondeterminism;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default()
+        .warm_up_time(Duration::from_secs(5))
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(10);
     targets = bench_ndet_race, bench_ndet_choice
 }
 
 criterion_group! {
     name = parallelism;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default()
+        .warm_up_time(Duration::from_secs(5))
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(10);
     targets = bench_parallel_fanout
 }
 
 criterion_group! {
     name = reflection;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default()
+        .warm_up_time(Duration::from_secs(5))
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(10);
     targets = bench_reflect_nested
 }
 
 criterion_group! {
     name = join_patterns;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default()
+        .warm_up_time(Duration::from_secs(5))
+        .measurement_time(Duration::from_secs(10))
+        .sample_size(10);
     targets = bench_join_channels
 }
 
 criterion_group! {
     name = replication;
-    config = Criterion::default().sample_size(10);
+    config = Criterion::default()
+        .warm_up_time(Duration::from_secs(5))
+        .measurement_time(Duration::from_secs(15))
+        .sample_size(10);
     targets = bench_replication_basic
 }
 

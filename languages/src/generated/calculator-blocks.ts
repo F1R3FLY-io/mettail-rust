@@ -5,6 +5,33 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
+	// Tern: ... ... ...
+	{
+		type: "int_tern",
+		tooltip: "Tern: ... ... ...",
+		message0: "%1 %2 %3",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG3",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
 	// Eq: ... ...
 	{
 		type: "bool_eq",
@@ -215,6 +242,23 @@ const definitions = [
 		colour: "51b0e0",
 	},
 
+	// Neg: ...
+	{
+		type: "int_neg",
+		tooltip: "Neg: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
 	// Sub: ... ...
 	{
 		type: "int_sub",
@@ -251,6 +295,23 @@ const definitions = [
 			{
 				type: "input_value",
 				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Fact: ...
+	{
+		type: "int_fact",
+		tooltip: "Fact: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
 				check: "Int",
 			},
 		],

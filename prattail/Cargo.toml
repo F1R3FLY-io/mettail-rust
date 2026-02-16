@@ -1,0 +1,35 @@
+[package]
+name = "mettail-prattail"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "PraTTaIL: Pratt + Recursive Descent parser generator with automata-optimized lexing for MeTTaIL"
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "bench_end_to_end"
+harness = false
+
+[[bench]]
+name = "bench_lexer"
+harness = false
+
+[[bench]]
+name = "bench_analysis"
+harness = false
+
+[[bench]]
+name = "bench_codegen"
+harness = false
+
+[[bench]]
+name = "bench_lexer_codegen"
+harness = false

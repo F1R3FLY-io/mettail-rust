@@ -105,10 +105,13 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
         }
 
         // f64/f32 don't implement Eq, Ord, Hash; omit those derives for float categories
-        let has_float = lang_type.native_type.as_ref().map_or(false, |t| {
-            let s = native_type_to_string(t);
-            s == "f32" || s == "f64"
-        });
+        let has_float = lang_type
+            .native_type
+            .as_ref()
+            .is_some_and(|t| {
+                let s = native_type_to_string(t);
+                s == "f32" || s == "f64"
+            });
         let derives = if has_float {
             quote! { #[derive(Debug, Clone, PartialEq, PartialOrd, mettail_runtime::BoundTerm)] }
         } else {

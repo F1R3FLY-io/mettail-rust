@@ -276,8 +276,6 @@ fn generate_language_struct(
     let term_name = format_ident!("{}Term", name);
     let _metadata_name = format_ident!("{}Metadata", name);
     let env_name = format_ident!("{}Env", name);
-    let parser_name = format_ident!("{}Parser", primary_type);
-    let parser_mod = format_ident!("{}", name_lower);
     let ascent_source = format_ident!("{}_source", name_lower);
 
     // Primary type relation names (lowercase)
@@ -295,6 +293,10 @@ fn generate_language_struct(
     // Generate custom relation extraction code
     let custom_relation_extraction = generate_custom_relation_extraction(language);
 
+    let parse_preserving_vars_body = quote! {
+        #primary_type::parse(input).map(#term_name)
+    };
+
     quote! {
         /// Language implementation struct
         ///
@@ -310,11 +312,7 @@ fn generate_language_struct(
 
             /// Parse a term without clearing var cache (for environment sharing)
             pub fn parse_preserving_vars(input: &str) -> Result<#term_name, std::string::String> {
-                let parser = #parser_mod::#parser_name::new();
-                parser
-                    .parse(input)
-                    .map(#term_name)
-                    .map_err(|e| format!("Parse error: {:?}", e))
+                #parse_preserving_vars_body
             }
 
             /// Run Ascent on a typed term (seeds with term as-is so step-by-step rewrites are visible)
@@ -852,7 +850,6 @@ fn generate_language_struct_multi(
     let term_name = format_ident!("{}Term", name);
     let inner_enum_name = format_ident!("{}TermInner", name);
     let env_name = format_ident!("{}Env", name);
-    let parser_mod = format_ident!("{}", name_lower);
     let ascent_source = format_ident!("{}_source", name_lower);
 
     let custom_relation_extraction = generate_custom_relation_extraction(language);
@@ -861,16 +858,16 @@ fn generate_language_struct_multi(
     // This order matters for multi-type languages (e.g. RhoCalc): primary (Proc) is the most
     // general; other categories (Name) are tried so that e.g. "@(0)" parses as Name when Proc fails.
     let primary_type = language.types.first().map(|t| &t.name);
+
     let parse_tries: Vec<TokenStream> = primary_type
         .into_iter()
         .chain(language.types.iter().skip(1).map(|t| &t.name))
         .map(|cat| {
-            let parser_name = format_ident!("{}Parser", cat);
             let variant = format_ident!("{}", cat);
             quote! {
-                match #parser_mod::#parser_name::new().parse(input) {
+                match #cat::parse(input) {
                     Ok(t) => return Ok(#term_name(#inner_enum_name::#variant(t))),
-                    Err(e) => if first_err.is_none() { first_err = Some(format!("{:?}", e)); },
+                    Err(e) => if first_err.is_none() { first_err = Some(e); },
                 }
             }
         })
@@ -894,7 +891,7 @@ fn generate_language_struct_multi(
                 } else {
                     quote! {}
                 }
-            }).unwrap_or(quote! {});
+            }).unwrap_or_default();
             quote! {
                 #inner_enum_name::#variant(inner) => {
                     use ascent::*;
@@ -1009,8 +1006,8 @@ fn generate_language_trait_impl(
 
     // try_direct_eval: only for single-type languages whose primary type has native_type
     let primary_lang_type = language.types.first().expect("at least one type");
-    let try_direct_eval_method: TokenStream = if primary_lang_type.native_type.is_some() {
-        let literal_label = generate_literal_label(primary_lang_type.native_type.as_ref().unwrap());
+    let try_direct_eval_method: TokenStream = if let Some(ref native_type) = primary_lang_type.native_type {
+        let literal_label = generate_literal_label(native_type);
         quote! {
             fn try_direct_eval(&self, term: &dyn mettail_runtime::Term) -> Option<Box<dyn mettail_runtime::Term>> {
                 let typed_term = term.as_any().downcast_ref::<#term_name>()?;

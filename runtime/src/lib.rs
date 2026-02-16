@@ -27,5 +27,3 @@ pub use language::*;
 mod matchings;
 pub use matchings::*;
 
-// Re-export LALRPOP utilities for generated parsers
-pub use lalrpop_util::ParseError as LalrpopParseError;

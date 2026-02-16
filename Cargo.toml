@@ -1,5 +1,5 @@
 [workspace]
-members = ["macros", "runtime", "languages", "repl",
+members = ["macros", "runtime", "languages", "repl", "prattail",
     # "ascent/ascent",
     # "ascent/ascent_base",
     # "ascent/ascent_macro",
@@ -35,8 +35,6 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 proc-macro-error = "1.0"
-lalrpop = "0.20"
-lalrpop-util = "0.20"
 regex = "1.0"
 rand = "0.8"
 

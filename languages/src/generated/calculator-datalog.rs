@@ -35,6 +35,12 @@ int(c1.clone()) <--
     rw_int(c0, c1);
 
 int(field_0.as_ref().clone()),
+int(field_1.as_ref().clone()),
+int(field_2.as_ref().clone()) <--
+    int(t),
+    if let Int :: Tern(field_0, field_1, field_2) = t;
+
+int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
     int(t),
     if let Int :: Pow(field_0, field_1) = t;
@@ -48,6 +54,10 @@ int(field_1.as_ref().clone()) <--
     int(t),
     if let Int :: Add(field_0, field_1) = t;
 
+int(field_0.as_ref().clone()) <--
+    int(t),
+    if let Int :: Neg(field_0) = t;
+
 int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
     int(t),
@@ -57,6 +67,10 @@ int(field_0.as_ref().clone()),
 int(field_1.as_ref().clone()) <--
     int(t),
     if let Int :: CustomOp(field_0, field_1) = t;
+
+int(field_0.as_ref().clone()) <--
+    int(t),
+    if let Int :: Fact(field_0) = t;
 
 int(lam.as_ref().clone()),
 int(arg.as_ref().clone()) <--
@@ -444,6 +458,15 @@ eq_bool(t.clone(), t.clone()) <--
 eq_str(t.clone(), t.clone()) <--
     str(t);
 
+eq_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: Tern(ref s_f0, ref s_f1, ref s_f2) = s,
+    int(t),
+    if let Int :: Tern(ref t_f0, ref t_f1, ref t_f2) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone()),
+    eq_int(s_f2.as_ref().clone(), t_f2.as_ref().clone());
+
 eq_bool(s.clone(), t.clone()) <--
     bool(s),
     if let Bool :: Eq(ref s_f0, ref s_f1) = s,
@@ -524,6 +547,13 @@ eq_int(s.clone(), t.clone()) <--
 
 eq_int(s.clone(), t.clone()) <--
     int(s),
+    if let Int :: Neg(ref s_f0) = s,
+    int(t),
+    if let Int :: Neg(ref t_f0) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_int(s.clone(), t.clone()) <--
+    int(s),
     if let Int :: Sub(ref s_f0, ref s_f1) = s,
     int(t),
     if let Int :: Sub(ref t_f0, ref t_f1) = t,
@@ -537,6 +567,13 @@ eq_int(s.clone(), t.clone()) <--
     if let Int :: CustomOp(ref t_f0, ref t_f1) = t,
     eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
     eq_int(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: Fact(ref s_f0) = s,
+    int(t),
+    if let Int :: Fact(ref t_f0) = t,
+    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone());
 
 
     // Rewrite rules
@@ -630,6 +667,24 @@ rw_int(orig.clone(), t) <--
     let s = s_ref.clone(),
     let t = Int :: NumLit((s.len() as i32));
 
+rw_int(orig.clone(), t) <--
+    int(orig),
+    if let Int :: Fact(inner) = orig,
+    if let Int :: NumLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Int :: NumLit(({ (1 ..= a.max(0)).product :: < i32 > () }));
+
+rw_int(__src.clone(), __dst) <--
+    int(__src),
+    if let Int :: Tern(f0, f1, f2) = __src,
+    if let Int :: NumLit(r0) = f0.as_ref(),
+    if let Int :: NumLit(r1) = f1.as_ref(),
+    if let Int :: NumLit(r2) = f2.as_ref(),
+    let c = r0.clone(),
+    let t = r1.clone(),
+    let e = r2.clone(),
+    let __dst = Int :: NumLit(({ if c != 0 { t } else { e } }));
+
 fold_int(t.clone(), t.clone()) <--
     int(t),
     if let Int :: NumLit(_) = t;
@@ -658,6 +713,14 @@ fold_int(s.clone(), res) <--
 
 fold_int(s.clone(), res) <--
     int(s),
+    if let Int :: Neg(inner) = s,
+    fold_int(inner.as_ref().clone(), iv),
+    if let Int :: NumLit(a_ref) = & iv,
+    let a = a_ref.clone(),
+    let res = Int :: NumLit(((- a)));
+
+fold_int(s.clone(), res) <--
+    int(s),
     if let Int :: Sub(left, right) = s,
     fold_int(left.as_ref().clone(), lv),
     fold_int(right.as_ref().clone(), rv),
@@ -677,6 +740,19 @@ fold_int(s.clone(), res) <--
     let a = a_ref.clone(),
     let b = b_ref.clone(),
     let res = Int :: NumLit((2 * a + 3 * b));
+
+fold_int(s.clone(), res) <--
+    int(s),
+    if let Int :: Fact(inner) = s,
+    fold_int(inner.as_ref().clone(), iv),
+    if let Int :: NumLit(a_ref) = & iv,
+    let a = a_ref.clone(),
+    let res = Int :: NumLit(({ (1 ..= a.max(0)).product :: < i32 > () }));
+
+rw_int(s.clone(), t.clone()) <--
+    int(s),
+    if let Int :: Neg(_) = s,
+    fold_int(s, t);
 
 rw_int(s.clone(), t.clone()) <--
     int(s),
@@ -699,6 +775,12 @@ rw_int(lhs.clone(), rhs) <--
     if let Int :: Add(ref x0, ref x1) = lhs,
     rw_int((* * x1).clone(), t),
     let rhs = Int :: Add(x0.clone(), Box :: new(t.clone()));
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: Neg(ref x0) = lhs,
+    rw_int((* * x0).clone(), t),
+    let rhs = Int :: Neg(Box :: new(t.clone()));
 
 rw_int(lhs.clone(), rhs) <--
     int(lhs),
@@ -777,5 +859,29 @@ rw_bool(lhs.clone(), rhs) <--
     if let Bool :: EqStr(ref x0, ref x1) = lhs,
     rw_str((* * x1).clone(), t),
     let rhs = Bool :: EqStr(x0.clone(), Box :: new(t.clone()));
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: Fact(ref x0) = lhs,
+    rw_int((* * x0).clone(), t),
+    let rhs = Int :: Fact(Box :: new(t.clone()));
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: Tern(ref x0, ref x1, ref x2) = lhs,
+    rw_int((* * x0).clone(), t),
+    let rhs = Int :: Tern(Box :: new(t.clone()), x1.clone(), x2.clone());
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: Tern(ref x0, ref x1, ref x2) = lhs,
+    rw_int((* * x1).clone(), t),
+    let rhs = Int :: Tern(x0.clone(), Box :: new(t.clone()), x2.clone());
+
+rw_int(lhs.clone(), rhs) <--
+    int(lhs),
+    if let Int :: Tern(ref x0, ref x1, ref x2) = lhs,
+    rw_int((* * x2).clone(), t),
+    let rhs = Int :: Tern(x0.clone(), x1.clone(), Box :: new(t.clone()));
 
 }
