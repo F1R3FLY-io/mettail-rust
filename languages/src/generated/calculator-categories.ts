@@ -24,19 +24,21 @@ export const categoryInfo = {
 	},
 	Int: {
 		constructors: [
-			"Pow",
 			"Len",
 			"AddInt",
 			"SubInt",
-			"CustomOp",
+			"MulInt",
+			"DivInt",
+			"ModInt",
+			"PowInt",
 			"ToInt",
-			"IntId"
+			"IntId",
+			"CustomOp"
 		],
 		colour: "51b0e0",
 	},
 	Str: {
 		constructors: [
-			"Concat",
 			"AddStr"
 		],
 		colour: "51e05f",

@@ -110,28 +110,6 @@ const definitions = [
 		colour: "7a51e0",
 	},
 
-	// Pow: ... ...
-	{
-		type: "int_pow",
-		tooltip: "Pow: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
 	// Comp: ... ...
 	{
 		type: "bool_comp",
@@ -169,28 +147,6 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
-	},
-
-	// Concat: ... ...
-	{
-		type: "str_concat",
-		tooltip: "Concat: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Str",
-			},
-		],
-		inputsInline: true,
-		output: "Str",
-		colour: "51e05f",
 	},
 
 	// Add Str: ... ...
@@ -259,6 +215,94 @@ const definitions = [
 		colour: "51b0e0",
 	},
 
+	// Mul Int: ... ...
+	{
+		type: "int_mul_int",
+		tooltip: "Mul Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Div Int: ... ...
+	{
+		type: "int_div_int",
+		tooltip: "Div Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Mod Int: ... ...
+	{
+		type: "int_mod_int",
+		tooltip: "Mod Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Pow Int: ... ...
+	{
+		type: "int_pow_int",
+		tooltip: "Pow Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
 	// Add Float: ... ...
 	{
 		type: "float_add_float",
@@ -301,28 +345,6 @@ const definitions = [
 		inputsInline: true,
 		output: "Float",
 		colour: "e05196",
-	},
-
-	// Custom Op: ... ...
-	{
-		type: "int_custom_op",
-		tooltip: "Custom Op: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-			{
-				type: "input_value",
-				name: "ARG2",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
 	},
 
 	// To Float: ...
@@ -391,6 +413,28 @@ const definitions = [
 		inputsInline: true,
 		output: "Float",
 		colour: "e05196",
+	},
+
+	// Custom Op: ... ...
+	{
+		type: "int_custom_op",
+		tooltip: "Custom Op: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
 	}
 ];
 

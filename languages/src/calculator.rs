@@ -23,22 +23,24 @@ language! {
             true => false,
             false => true,
         }}] step;
-        Pow . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step;
         Comp . a:Bool, b:Bool |- a "&&" b : Bool ![a && b] step;
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
-        Concat . a:Str, b:Str |- a "++" b : Str ![[a, b].concat()] step;
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
         AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
         SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
+        MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;
+        DivInt . a:Int, b:Int |- a "/" b : Int ![a / b] fold;
+        ModInt . a:Int, b:Int |- a "%" b : Int ![a % b] fold;
+        PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step;
+
         AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] fold;
         SubFloat . a:Float, b:Float |- a "-" b : Float ![a - b] fold;
-        CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
-        // Type casts for mixed Int/Float arithmetic without mixed-type Add/Sub terms.
         ToFloat . a:Int |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a as f64)] step;
         ToInt . a:Float |- "int" "(" a ")" : Int ![a.get() as i32] step;
-        // Identity casts: int(Int), float(Float).
         IntId . a:Int |- "int" "(" a ")" : Int ![a] step;
         FloatId . a:Float |- "float" "(" a ")" : Float ![a] step;
+        // Example of a custom operation:
+        CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
     },
     equations {
     },
@@ -60,6 +62,14 @@ language! {
         AddIntCongR . | S ~> T |- (AddInt L S) ~> (AddInt L T);
         SubIntCongL . | S ~> T |- (SubInt S R) ~> (SubInt T R);
         SubIntCongR . | S ~> T |- (SubInt L S) ~> (SubInt L T);
+        MulIntCongL . | S ~> T |- (MulInt S R) ~> (MulInt T R);
+        MulIntCongR . | S ~> T |- (MulInt L S) ~> (MulInt L T);
+        DivIntCongL . | S ~> T |- (DivInt S R) ~> (DivInt T R);
+        DivIntCongR . | S ~> T |- (DivInt L S) ~> (DivInt L T);
+        ModIntCongL . | S ~> T |- (ModInt S R) ~> (ModInt T R);
+        ModIntCongR . | S ~> T |- (ModInt L S) ~> (ModInt L T);
+        PowIntCongL . | S ~> T |- (PowInt S R) ~> (PowInt T R);
+        
         AddFloatCongL . | S ~> T |- (AddFloat S R) ~> (AddFloat T R);
         AddFloatCongR . | S ~> T |- (AddFloat L S) ~> (AddFloat L T);
         SubFloatCongL . | S ~> T |- (SubFloat S R) ~> (SubFloat T R);

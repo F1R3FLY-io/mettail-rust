@@ -48,9 +48,12 @@ pub Int: Int = {
 
 IntInfix: Int = {
     <IntAtom>,
-    <left:IntInfix> "^" <right:IntAtom> => Int::Pow(Box::new(left), Box::new(right)),
     <left:IntInfix> "+" <right:IntAtom> => Int::AddInt(Box::new(left), Box::new(right)),
     <left:IntInfix> "-" <right:IntAtom> => Int::SubInt(Box::new(left), Box::new(right)),
+    <left:IntInfix> "*" <right:IntAtom> => Int::MulInt(Box::new(left), Box::new(right)),
+    <left:IntInfix> "/" <right:IntAtom> => Int::DivInt(Box::new(left), Box::new(right)),
+    <left:IntInfix> "%" <right:IntAtom> => Int::ModInt(Box::new(left), Box::new(right)),
+    <left:IntInfix> "^" <right:IntAtom> => Int::PowInt(Box::new(left), Box::new(right)),
     <left:IntInfix> "~" <right:IntAtom> => Int::CustomOp(Box::new(left), Box::new(right)),
 };
 
@@ -165,7 +168,6 @@ pub Str: Str = {
 
 StrInfix: Str = {
     <StrAtom>,
-    <left:StrInfix> "++" <right:StrAtom> => Str::Concat(Box::new(left), Box::new(right)),
     <left:StrInfix> "+" <right:StrAtom> => Str::AddStr(Box::new(left), Box::new(right)),
 };
 
