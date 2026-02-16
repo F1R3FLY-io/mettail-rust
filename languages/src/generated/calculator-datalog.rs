@@ -249,6 +249,37 @@ float(field_1.as_ref().clone()) <--
     float(t),
     if let Float :: SubFloat(field_0, field_1) = t;
 
+float(field_0.as_ref().clone()),
+float(field_1.as_ref().clone()) <--
+    float(t),
+    if let Float :: MulFloat(field_0, field_1) = t;
+
+float(field_0.as_ref().clone()),
+float(field_1.as_ref().clone()) <--
+    float(t),
+    if let Float :: DivFloat(field_0, field_1) = t;
+
+float(field_0.as_ref().clone()),
+float(field_1.as_ref().clone()) <--
+    float(t),
+    if let Float :: PowFloat(field_0, field_1) = t;
+
+float(field_0.as_ref().clone()) <--
+    float(t),
+    if let Float :: SinFloat(field_0) = t;
+
+float(field_0.as_ref().clone()) <--
+    float(t),
+    if let Float :: CosFloat(field_0) = t;
+
+float(field_0.as_ref().clone()) <--
+    float(t),
+    if let Float :: ExpFloat(field_0) = t;
+
+float(field_0.as_ref().clone()) <--
+    float(t),
+    if let Float :: LnFloat(field_0) = t;
+
 int(field_0.as_ref().clone()) <--
     float(t),
     if let Float :: ToFloat(field_0) = t;
@@ -885,6 +916,58 @@ eq_float(s.clone(), t.clone()) <--
 
 eq_float(s.clone(), t.clone()) <--
     float(s),
+    if let Float :: MulFloat(ref s_f0, ref s_f1) = s,
+    float(t),
+    if let Float :: MulFloat(ref t_f0, ref t_f1) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_float(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: DivFloat(ref s_f0, ref s_f1) = s,
+    float(t),
+    if let Float :: DivFloat(ref t_f0, ref t_f1) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_float(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: PowFloat(ref s_f0, ref s_f1) = s,
+    float(t),
+    if let Float :: PowFloat(ref t_f0, ref t_f1) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
+    eq_float(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: SinFloat(ref s_f0) = s,
+    float(t),
+    if let Float :: SinFloat(ref t_f0) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: CosFloat(ref s_f0) = s,
+    float(t),
+    if let Float :: CosFloat(ref t_f0) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: ExpFloat(ref s_f0) = s,
+    float(t),
+    if let Float :: ExpFloat(ref t_f0) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: LnFloat(ref s_f0) = s,
+    float(t),
+    if let Float :: LnFloat(ref t_f0) = t,
+    eq_float(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+
+eq_float(s.clone(), t.clone()) <--
+    float(s),
     if let Float :: ToFloat(ref s_f0) = s,
     float(t),
     if let Float :: ToFloat(ref t_f0) = t,
@@ -988,6 +1071,15 @@ rw_int(s.clone(), t) <--
     let b = b_ref.clone(),
     let t = Int :: NumLit((a.pow(b as u32)));
 
+rw_float(s.clone(), t) <--
+    float(s),
+    if let Float :: PowFloat(left, right) = s,
+    if let Float :: FloatLit(a_ref) = left.as_ref(),
+    if let Float :: FloatLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Float :: FloatLit((mettail_runtime :: CanonicalFloat64 :: from(a.get().powf(b.get()))));
+
 rw_bool(orig.clone(), t) <--
     bool(orig),
     if let Bool :: Not(inner) = orig,
@@ -1001,6 +1093,34 @@ rw_int(orig.clone(), t) <--
     if let Str :: StringLit(s_ref) = inner.as_ref(),
     let s = s_ref.clone(),
     let t = Int :: NumLit((s.len() as i32));
+
+rw_float(orig.clone(), t) <--
+    float(orig),
+    if let Float :: SinFloat(inner) = orig,
+    if let Float :: FloatLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Float :: FloatLit((mettail_runtime :: CanonicalFloat64 :: from(a.get().sin())));
+
+rw_float(orig.clone(), t) <--
+    float(orig),
+    if let Float :: CosFloat(inner) = orig,
+    if let Float :: FloatLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Float :: FloatLit((mettail_runtime :: CanonicalFloat64 :: from(a.get().cos())));
+
+rw_float(orig.clone(), t) <--
+    float(orig),
+    if let Float :: ExpFloat(inner) = orig,
+    if let Float :: FloatLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Float :: FloatLit((mettail_runtime :: CanonicalFloat64 :: from(a.get().exp())));
+
+rw_float(orig.clone(), t) <--
+    float(orig),
+    if let Float :: LnFloat(inner) = orig,
+    if let Float :: FloatLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Float :: FloatLit((mettail_runtime :: CanonicalFloat64 :: from(a.get().ln())));
 
 rw_float(orig.clone(), t) <--
     float(orig),
@@ -1167,6 +1287,39 @@ fold_float(s.clone(), res) <--
     let b = b_ref.clone(),
     let res = Float :: FloatLit((a - b));
 
+fold_float(s.clone(), res) <--
+    float(s),
+    if let Float :: MulFloat(left, right) = s,
+    fold_float(left.as_ref().clone(), lv),
+    fold_float(right.as_ref().clone(), rv),
+    if let Float :: FloatLit(a_ref) = & lv,
+    if let Float :: FloatLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Float :: FloatLit((a * b));
+
+fold_float(s.clone(), res) <--
+    float(s),
+    if let Float :: DivFloat(left, right) = s,
+    fold_float(left.as_ref().clone(), lv),
+    fold_float(right.as_ref().clone(), rv),
+    if let Float :: FloatLit(a_ref) = & lv,
+    if let Float :: FloatLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Float :: FloatLit((a / b));
+
+fold_float(s.clone(), res) <--
+    float(s),
+    if let Float :: PowFloat(left, right) = s,
+    fold_float(left.as_ref().clone(), lv),
+    fold_float(right.as_ref().clone(), rv),
+    if let Float :: FloatLit(a_ref) = & lv,
+    if let Float :: FloatLit(b_ref) = & rv,
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let res = Float :: FloatLit((mettail_runtime :: CanonicalFloat64 :: from(a.get().powf(b.get()))));
+
 rw_float(s.clone(), t.clone()) <--
     float(s),
     if let Float :: AddFloat(_, _) = s,
@@ -1175,6 +1328,16 @@ rw_float(s.clone(), t.clone()) <--
 rw_float(s.clone(), t.clone()) <--
     float(s),
     if let Float :: SubFloat(_, _) = s,
+    fold_float(s, t);
+
+rw_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: MulFloat(_, _) = s,
+    fold_float(s, t);
+
+rw_float(s.clone(), t.clone()) <--
+    float(s),
+    if let Float :: DivFloat(_, _) = s,
     fold_float(s, t);
 
 rw_str(lhs.clone(), rhs) <--
@@ -1344,6 +1507,66 @@ rw_float(lhs.clone(), rhs) <--
     if let Float :: SubFloat(ref x0, ref x1) = lhs,
     rw_float((* * x1).clone(), t),
     let rhs = Float :: SubFloat(x0.clone(), Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: MulFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: MulFloat(Box :: new(t.clone()), x1.clone());
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: MulFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x1).clone(), t),
+    let rhs = Float :: MulFloat(x0.clone(), Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: DivFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: DivFloat(Box :: new(t.clone()), x1.clone());
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: DivFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x1).clone(), t),
+    let rhs = Float :: DivFloat(x0.clone(), Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: PowFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: PowFloat(Box :: new(t.clone()), x1.clone());
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: PowFloat(ref x0, ref x1) = lhs,
+    rw_float((* * x1).clone(), t),
+    let rhs = Float :: PowFloat(x0.clone(), Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: SinFloat(ref x0) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: SinFloat(Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: CosFloat(ref x0) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: CosFloat(Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: ExpFloat(ref x0) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: ExpFloat(Box :: new(t.clone()));
+
+rw_float(lhs.clone(), rhs) <--
+    float(lhs),
+    if let Float :: LnFloat(ref x0) = lhs,
+    rw_float((* * x0).clone(), t),
+    let rhs = Float :: LnFloat(Box :: new(t.clone()));
 
 rw_float(lhs.clone(), rhs) <--
     float(lhs),

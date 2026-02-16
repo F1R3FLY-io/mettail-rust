@@ -130,12 +130,19 @@ FloatInfix: Float = {
     <FloatAtom>,
     <left:FloatInfix> "+" <right:FloatAtom> => Float::AddFloat(Box::new(left), Box::new(right)),
     <left:FloatInfix> "-" <right:FloatAtom> => Float::SubFloat(Box::new(left), Box::new(right)),
+    <left:FloatInfix> "*" <right:FloatAtom> => Float::MulFloat(Box::new(left), Box::new(right)),
+    <left:FloatInfix> "/" <right:FloatAtom> => Float::DivFloat(Box::new(left), Box::new(right)),
+    <left:FloatInfix> "^" <right:FloatAtom> => Float::PowFloat(Box::new(left), Box::new(right)),
 };
 
 FloatAtom: Float = {
     "(" <Float> ")",
     "+" <f:FloatLiteral> => Float::FloatLit(mettail_runtime::CanonicalFloat64::from(f)),
     "-" <f:FloatLiteral> => Float::FloatLit(mettail_runtime::CanonicalFloat64::from(-f)),
+    "sin" "(" <a:FloatAtom> ")" => Float::SinFloat(Box::new(a)),
+    "cos" "(" <a:FloatAtom> ")" => Float::CosFloat(Box::new(a)),
+    "exp" "(" <a:FloatAtom> ")" => Float::ExpFloat(Box::new(a)),
+    "ln" "(" <a:FloatAtom> ")" => Float::LnFloat(Box::new(a)),
     "float" "(" <a:Int> ")" => Float::ToFloat(Box::new(a)),
     "float" "(" <a:FloatAtom> ")" => Float::FloatId(Box::new(a)),
     <f:FloatLiteral> => Float::FloatLit(mettail_runtime::CanonicalFloat64::from(f)),

@@ -17,6 +17,13 @@ export const categoryInfo = {
 		constructors: [
 			"AddFloat",
 			"SubFloat",
+			"MulFloat",
+			"DivFloat",
+			"PowFloat",
+			"SinFloat",
+			"CosFloat",
+			"ExpFloat",
+			"LnFloat",
 			"ToFloat",
 			"FloatId"
 		],

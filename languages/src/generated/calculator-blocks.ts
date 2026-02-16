@@ -347,6 +347,140 @@ const definitions = [
 		colour: "e05196",
 	},
 
+	// Mul Float: ... ...
+	{
+		type: "float_mul_float",
+		tooltip: "Mul Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Div Float: ... ...
+	{
+		type: "float_div_float",
+		tooltip: "Div Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Pow Float: ... ...
+	{
+		type: "float_pow_float",
+		tooltip: "Pow Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Sin Float: ...
+	{
+		type: "float_sin_float",
+		tooltip: "Sin Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Cos Float: ...
+	{
+		type: "float_cos_float",
+		tooltip: "Cos Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Exp Float: ...
+	{
+		type: "float_exp_float",
+		tooltip: "Exp Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Ln Float: ...
+	{
+		type: "float_ln_float",
+		tooltip: "Ln Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
 	// To Float: ...
 	{
 		type: "float_to_float",
