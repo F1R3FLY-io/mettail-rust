@@ -597,7 +597,9 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
         })
         .collect();
 
-    let lexer_input = extract_terminals(&grammar_rules, &type_infos);
+    let has_binders = spec.rules.iter().any(|r| r.has_binder || r.has_multi_binder);
+    let category_names: Vec<String> = spec.types.iter().map(|t| t.name.clone()).collect();
+    let lexer_input = extract_terminals(&grammar_rules, &type_infos, has_binders, &category_names);
 
     // ── Phase 1b: Automata pipeline ──
 

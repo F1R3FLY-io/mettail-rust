@@ -554,6 +554,117 @@ fn write_optional_body(buf: &mut String, items: &[RDSyntaxItem], captures: &mut 
     );
 }
 
+/// Write dollar-syntax handlers for function application ($cat, $$cat( syntax).
+///
+/// For each domain category `dom`, generates two parse functions:
+/// - `parse_dollar_{dom_lower}` — handles `$dom(f, x)` → `Primary::Apply{Dom}(f, x)`
+/// - `parse_ddollar_{dom_lower}` — handles `$$dom(f, x1, x2, ...)` → `Primary::MApply{Dom}(f, args)`
+///
+/// These are always associated with the PRIMARY category (the function `f` and
+/// the result are of the primary type).
+pub fn write_dollar_handlers(
+    buf: &mut String,
+    primary_category: &str,
+    all_categories: &[String],
+) -> Vec<PrefixHandler> {
+    let cat = primary_category;
+    let mut handlers = Vec::with_capacity(all_categories.len() * 2);
+
+    for dom in all_categories {
+        let dom_lower = dom.to_lowercase();
+
+        // Capitalize first letter for variant names: "proc" → "Proc"
+        let dom_capitalized = {
+            let mut s = String::with_capacity(dom.len());
+            let mut chars = dom_lower.chars();
+            if let Some(first) = chars.next() {
+                s.extend(first.to_uppercase());
+            }
+            s.extend(chars);
+            s
+        };
+
+        let dollar_variant = format!("Dollar{}", dom_capitalized);
+        let ddollar_variant = format!("Ddollar{}Lp", dom_capitalized);
+        let apply_variant = format!("Apply{}", dom);
+        let mapply_variant = format!("MApply{}", dom);
+
+        // ── A) Single-apply: $dom(f, x) ──
+
+        let single_fn = format!("parse_dollar_{}", dom_lower);
+
+        write!(
+            buf,
+            "fn {single_fn}<'a>(\
+                tokens: &[(Token<'a>, Span)], \
+                pos: &mut usize, \
+            ) -> Result<{cat}, ParseError> {{ \
+                expect_token(tokens, pos, |t| matches!(t, Token::{dollar_variant}), \"${dom_lower}\")?; \
+                expect_token(tokens, pos, |t| matches!(t, Token::LParen), \"(\")?; \
+                let f = parse_{cat}(tokens, pos, 0)?; \
+                expect_token(tokens, pos, |t| matches!(t, Token::Comma), \",\")?; \
+                let x = parse_{dom}(tokens, pos, 0)?; \
+                expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
+                Ok({cat}::{apply_variant}(Box::new(f), Box::new(x))) \
+            }}",
+        )
+        .unwrap();
+
+        handlers.push(PrefixHandler {
+            category: cat.to_string(),
+            label: format!("Dollar{}", dom_capitalized),
+            match_arm: format!(
+                "Token::{} => {{ {}(tokens, pos) }}",
+                dollar_variant, single_fn
+            ),
+            ident_lookahead: None,
+            parse_fn_name: single_fn,
+        });
+
+        // ── B) Multi-apply: $$dom(f, x1, x2, ...) ──
+
+        let multi_fn = format!("parse_ddollar_{}", dom_lower);
+
+        write!(
+            buf,
+            "fn {multi_fn}<'a>(\
+                tokens: &[(Token<'a>, Span)], \
+                pos: &mut usize, \
+            ) -> Result<{cat}, ParseError> {{ \
+                expect_token(tokens, pos, |t| matches!(t, Token::{ddollar_variant}), \"$${dom_lower}(\")?; \
+                let f = parse_{cat}(tokens, pos, 0)?; \
+                expect_token(tokens, pos, |t| matches!(t, Token::Comma), \",\")?; \
+                let mut args: Vec<{dom}> = Vec::new(); \
+                loop {{ \
+                    let arg = parse_{dom}(tokens, pos, 0)?; \
+                    args.push(arg); \
+                    if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::Comma)) {{ \
+                        *pos += 1; \
+                    }} else {{ \
+                        break; \
+                    }} \
+                }} \
+                expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
+                Ok({cat}::{mapply_variant}(Box::new(f), args)) \
+            }}",
+        )
+        .unwrap();
+
+        handlers.push(PrefixHandler {
+            category: cat.to_string(),
+            label: format!("Ddollar{}Lp", dom_capitalized),
+            match_arm: format!(
+                "Token::{} => {{ {}(tokens, pos) }}",
+                ddollar_variant, multi_fn
+            ),
+            ident_lookahead: None,
+            parse_fn_name: multi_fn,
+        });
+    }
+
+    handlers
+}
+
 /// Write lambda parsing support (for the primary category).
 pub fn write_lambda_handlers(
     buf: &mut String,

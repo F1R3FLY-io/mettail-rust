@@ -7,6 +7,8 @@
 //! Character-class patterns (identifiers, integers, floats, strings) remain
 //! Thompson fragments since they use ranges rather than single bytes.
 
+use std::collections::HashMap;
+
 use super::{CharClass, Nfa, NfaFragment, NfaState, StateId, TerminalPattern, TokenKind};
 
 /// Build a complete NFA from a set of terminal patterns plus built-in
@@ -66,25 +68,253 @@ pub struct BuiltinNeeds {
     pub boolean: bool,
 }
 
-/// Build a prefix-sharing trie for all fixed string terminals directly in the NFA.
+// ══════════════════════════════════════════════════════════════════════════════
+// DAFSA (Directed Acyclic Finite State Automaton) — prefix + suffix sharing
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Signature of an NFA state for DAFSA suffix equivalence.
 ///
-/// Common prefixes share NFA states by construction. For example, `=` and `==`:
-/// ```text
-///   trie_root -'='-> s1(accept:Eq) -'='-> s2(accept:EqEq)
-/// ```
-/// And `true`/`try`/`type`:
-/// ```text
-///   trie_root -'t'-> s1 -'r'-> s2 -'u'-> s3 -'e'-> s4(accept:True)
-///                              s2 -'y'-> s5(accept:KwTry)
-///                    s1 -'y'-> s6 -'p'-> s7 -'e'-> s8(accept:KwType)
-/// ```
+/// Two states are suffix-equivalent iff they have the same accept token and
+/// identical outgoing transitions to identical targets. This is the key used
+/// by the Daciuk et al. incremental algorithm's frozen-state registry.
+#[derive(Clone, PartialEq, Eq, Hash)]
+struct NodeSignature {
+    accept: Option<TokenKind>,
+    /// Sorted by byte for deterministic hashing.
+    transitions: Vec<(u8, StateId)>,
+}
+
+impl NodeSignature {
+    /// Extract a signature from a live NFA state. Only considers `CharClass::Single`
+    /// transitions (the only kind used in the keyword trie).
+    fn from_nfa_state(nfa: &Nfa, state_id: StateId) -> Self {
+        let state = &nfa.states[state_id as usize];
+        let mut transitions: Vec<(u8, StateId)> = state
+            .transitions
+            .iter()
+            .filter_map(|(class, target)| {
+                if let CharClass::Single(b) = class {
+                    Some((*b, *target))
+                } else {
+                    None
+                }
+            })
+            .collect();
+        transitions.sort_unstable_by_key(|&(b, _)| b);
+        NodeSignature {
+            accept: state.accept.clone(),
+            transitions,
+        }
+    }
+}
+
+/// An entry in the DAFSA construction path, tracking the current insertion path
+/// from root to the deepest node of the most recently inserted terminal.
+struct PathEntry {
+    /// The NFA state at this position in the path.
+    state: StateId,
+    /// The byte label on the edge from the parent to this state.
+    byte: u8,
+}
+
+/// Find the target state of a single-byte transition from `state` on `byte`.
+fn find_transition(nfa: &Nfa, state: StateId, byte: u8) -> Option<StateId> {
+    nfa.states[state as usize]
+        .transitions
+        .iter()
+        .find_map(|(class, target)| {
+            if let CharClass::Single(b) = class {
+                if *b == byte {
+                    Some(*target)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+}
+
+/// Set or upgrade the accept token on a state (higher priority wins).
+fn set_or_upgrade_accept(nfa: &mut Nfa, state: StateId, kind: &TokenKind) {
+    let nfa_state = &mut nfa.states[state as usize];
+    match &nfa_state.accept {
+        None => {
+            nfa_state.accept = Some(kind.clone());
+        }
+        Some(existing) => {
+            if kind.priority() > existing.priority() {
+                nfa_state.accept = Some(kind.clone());
+            }
+        }
+    }
+}
+
+/// Redirect an existing transition edge: change `parent --byte--> old_target`
+/// to `parent --byte--> new_target`.
+fn redirect_edge(nfa: &mut Nfa, parent: StateId, byte: u8, new_target: StateId) {
+    for (class, target) in &mut nfa.states[parent as usize].transitions {
+        if let CharClass::Single(b) = class {
+            if *b == byte {
+                *target = new_target;
+                return;
+            }
+        }
+    }
+    panic!(
+        "redirect_edge: no transition on byte {} from state {}",
+        byte, parent
+    );
+}
+
+/// Freeze suffix states in the DAFSA construction path.
 ///
-/// Priority resolution: when a terminal ends at an existing state that already
-/// has an accept token, the higher-priority token wins (e.g., Fixed beats Ident).
+/// Walks backward from `path[path.len()-1]` to `path[keep_count]`, computing
+/// the `NodeSignature` for each state. If an equivalent frozen state exists in
+/// the registry, redirects the parent's edge to it (suffix sharing). Otherwise,
+/// registers the state as a new frozen canonical representative.
+///
+/// `keep_count` is the number of path entries to keep unfrozen (the common
+/// prefix with the next terminal). `trie_root` is needed as the parent of
+/// `path[0]` (since the root itself is not part of the path).
+fn freeze_suffixes(
+    nfa: &mut Nfa,
+    registry: &mut HashMap<NodeSignature, StateId>,
+    path: &[PathEntry],
+    trie_root: StateId,
+    keep_count: usize,
+) {
+    // Walk backward from the deepest path entry to keep_count
+    for i in (keep_count..path.len()).rev() {
+        let state = path[i].state;
+        let byte = path[i].byte;
+        let sig = NodeSignature::from_nfa_state(nfa, state);
+
+        if let Some(&canonical) = registry.get(&sig) {
+            // An equivalent frozen state exists — redirect parent edge to it.
+            let parent = if i > 0 { path[i - 1].state } else { trie_root };
+            redirect_edge(nfa, parent, byte, canonical);
+            // The old state becomes dead (unreachable) — left in nfa.states vector.
+        } else {
+            // Register this state as the canonical representative for its signature.
+            registry.insert(sig, state);
+        }
+    }
+}
+
+/// Build a DAFSA (Directed Acyclic Finite State Automaton) for all fixed string
+/// terminals directly in the NFA.
+///
+/// Extends prefix-sharing with suffix sharing using the Daciuk et al. incremental
+/// algorithm. Terminals must arrive sorted (guaranteed by `BTreeSet<TerminalPattern>`
+/// in the caller). Two trie nodes merge when they have identical accept tokens and
+/// identical outgoing transitions to identical targets.
+///
+/// For grammars with suffix overlap (e.g., keywords ending in `"e"`, `"le"`, `"ile"`),
+/// DAFSA merges redundant NFA states. For current small grammars the savings are
+/// modest (0-3 states), but it guarantees optimality for any future grammar.
+///
+/// Merged states remain as unreachable dead entries in `nfa.states` — downstream
+/// stages (subset construction, partition) only visit reachable states.
 ///
 /// Returns the trie root state ID. The caller should add an epsilon transition
 /// from the global NFA start to this root.
 fn build_keyword_trie(nfa: &mut Nfa, terminals: &[TerminalPattern]) -> StateId {
+    let trie_root = nfa.add_state(NfaState::new());
+
+    // Registry of frozen states: NodeSignature → canonical StateId
+    let mut registry: HashMap<NodeSignature, StateId> = HashMap::new();
+
+    // Path tracks the insertion path for the previous terminal.
+    // Each entry records (state, byte_from_parent).
+    // path[0] is the first child of trie_root (not the root itself).
+    let mut path: Vec<PathEntry> = Vec::new();
+
+    let mut prev_bytes: Vec<u8> = Vec::new();
+
+    for terminal in terminals {
+        assert!(
+            !terminal.text.is_empty(),
+            "terminal string must not be empty"
+        );
+
+        let bytes = terminal.text.as_bytes();
+
+        // Step 1: Compute common prefix length with previous terminal
+        let common_prefix_len = prev_bytes
+            .iter()
+            .zip(bytes.iter())
+            .take_while(|(&a, &b)| a == b)
+            .count();
+
+        // Step 2: FREEZE — freeze suffix states from previous path that diverge
+        if !path.is_empty() {
+            freeze_suffixes(nfa, &mut registry, &path, trie_root, common_prefix_len);
+            path.truncate(common_prefix_len);
+        }
+
+        // Step 3: INSERT — walk the common prefix, then add remaining chars
+        let mut current = if path.is_empty() {
+            trie_root
+        } else {
+            path.last().expect("path should not be empty after truncation").state
+        };
+
+        // Edge case: entire terminal is already in the common prefix (e.g., duplicate
+        // text with different priority). Set/upgrade accept on the current state.
+        if bytes.len() == common_prefix_len && !path.is_empty() {
+            set_or_upgrade_accept(nfa, current, &terminal.kind);
+            prev_bytes = bytes.to_vec();
+            continue;
+        }
+
+        for (i, &byte) in bytes.iter().enumerate() {
+            if i < common_prefix_len {
+                // Already in the path — just advance
+                continue;
+            }
+
+            let is_last = i == bytes.len() - 1;
+
+            // Check if a transition for this byte already exists
+            let existing = find_transition(nfa, current, byte);
+
+            if let Some(target) = existing {
+                current = target;
+                if is_last {
+                    set_or_upgrade_accept(nfa, current, &terminal.kind);
+                }
+                path.push(PathEntry { state: current, byte });
+            } else {
+                // Create new state
+                let next = if is_last {
+                    nfa.add_state(NfaState::accepting(terminal.kind.clone()))
+                } else {
+                    nfa.add_state(NfaState::new())
+                };
+                nfa.add_transition(current, next, CharClass::Single(byte));
+                path.push(PathEntry { state: next, byte });
+                current = next;
+            }
+        }
+
+        prev_bytes = bytes.to_vec();
+    }
+
+    // Step 4: FINALIZE — freeze all remaining states from last path
+    if !path.is_empty() {
+        freeze_suffixes(nfa, &mut registry, &path, trie_root, 0);
+    }
+
+    trie_root
+}
+
+/// Build a prefix-only sharing trie for fixed string terminals (no suffix sharing).
+///
+/// **Preserved for testing**: used to verify DAFSA produces functionally equivalent
+/// DFAs via `test_dafsa_produces_same_dfa` and `test_dafsa_vs_prefix_identical_codegen`.
+#[cfg(test)]
+pub(crate) fn build_keyword_trie_prefix_only(nfa: &mut Nfa, terminals: &[TerminalPattern]) -> StateId {
     let trie_root = nfa.add_state(NfaState::new());
 
     for terminal in terminals {
@@ -99,40 +329,14 @@ fn build_keyword_trie(nfa: &mut Nfa, terminals: &[TerminalPattern]) -> StateId {
         for (i, &byte) in bytes.iter().enumerate() {
             let is_last = i == bytes.len() - 1;
 
-            // Check if a transition for this byte already exists from current state
-            let existing = nfa.states[current as usize]
-                .transitions
-                .iter()
-                .find_map(|(class, target)| {
-                    if let CharClass::Single(b) = class {
-                        if *b == byte {
-                            Some(*target)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                });
+            let existing = find_transition(nfa, current, byte);
 
             if let Some(target) = existing {
                 current = target;
                 if is_last {
-                    // Terminal ends at existing state — set or upgrade accept
-                    let state = &mut nfa.states[current as usize];
-                    match &state.accept {
-                        None => {
-                            state.accept = Some(terminal.kind.clone());
-                        }
-                        Some(existing_kind) => {
-                            if terminal.kind.priority() > existing_kind.priority() {
-                                state.accept = Some(terminal.kind.clone());
-                            }
-                        }
-                    }
+                    set_or_upgrade_accept(nfa, current, &terminal.kind);
                 }
             } else {
-                // No existing transition — create new state
                 let next = if is_last {
                     nfa.add_state(NfaState::accepting(terminal.kind.clone()))
                 } else {
@@ -145,6 +349,44 @@ fn build_keyword_trie(nfa: &mut Nfa, terminals: &[TerminalPattern]) -> StateId {
     }
 
     trie_root
+}
+
+/// Build a complete NFA using prefix-only trie (no DAFSA suffix sharing).
+///
+/// **Preserved for testing**: allows A/B comparison of DAFSA vs prefix-only codegen
+/// to verify that DAFSA does not affect generated lexer code for current grammars.
+#[cfg(test)]
+pub(crate) fn build_nfa_prefix_only(terminals: &[TerminalPattern], needs: &BuiltinNeeds) -> Nfa {
+    let mut nfa = Nfa::new();
+    let global_start = nfa.start;
+
+    // Build keyword/operator trie (prefix-sharing only, no suffix merging)
+    if !terminals.is_empty() {
+        let trie_root = build_keyword_trie_prefix_only(&mut nfa, terminals);
+        nfa.add_epsilon(global_start, trie_root);
+    }
+
+    // Build built-in character class patterns (Thompson fragments) — same as build_nfa
+    let mut fragments: Vec<NfaFragment> = Vec::new();
+    if needs.ident {
+        fragments.push(build_ident_fragment(&mut nfa));
+    }
+    if needs.integer {
+        fragments.push(build_integer_fragment(&mut nfa));
+    }
+    if needs.float {
+        fragments.push(build_float_fragment(&mut nfa));
+    }
+    if needs.string_lit {
+        fragments.push(build_string_lit_fragment(&mut nfa));
+    }
+
+    // Combine character-class fragments via alternation
+    for frag in &fragments {
+        nfa.add_epsilon(global_start, frag.start);
+    }
+
+    nfa
 }
 
 /// Build an NFA fragment for a fixed string terminal (Thompson chain).
@@ -695,5 +937,348 @@ mod tests {
             3,
             "start state should have 3 epsilon transitions (trie + ident + integer)"
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // DAFSA suffix sharing tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_dafsa_no_regression_single_char() {
+        // Single-char terminals should be unchanged by DAFSA (no suffixes to share).
+        let terminals = vec![
+            TerminalPattern {
+                text: "+".to_string(),
+                kind: TokenKind::Fixed("+".to_string()),
+                is_keyword: false,
+            },
+            TerminalPattern {
+                text: "*".to_string(),
+                kind: TokenKind::Fixed("*".to_string()),
+                is_keyword: false,
+            },
+        ];
+
+        let mut dafsa_nfa = Nfa::new();
+        let dafsa_root = build_keyword_trie(&mut dafsa_nfa, &terminals);
+
+        let mut prefix_nfa = Nfa::new();
+        let prefix_root = build_keyword_trie_prefix_only(&mut prefix_nfa, &terminals);
+
+        // Both should produce same structure for single-char terminals
+        assert_eq!(
+            dafsa_nfa.states[dafsa_root as usize].transitions.len(),
+            prefix_nfa.states[prefix_root as usize].transitions.len(),
+            "root transition counts should match"
+        );
+    }
+
+    #[test]
+    fn test_dafsa_no_regression_prefix_sharing() {
+        // `=`/`==` prefix sharing should be preserved by DAFSA.
+        let terminals = vec![
+            TerminalPattern {
+                text: "=".to_string(),
+                kind: TokenKind::Fixed("=".to_string()),
+                is_keyword: false,
+            },
+            TerminalPattern {
+                text: "==".to_string(),
+                kind: TokenKind::Fixed("==".to_string()),
+                is_keyword: false,
+            },
+        ];
+
+        let mut nfa = Nfa::new();
+        let root = build_keyword_trie(&mut nfa, &terminals);
+
+        // Root should have exactly 1 transition ('=')
+        assert_eq!(nfa.states[root as usize].transitions.len(), 1);
+
+        // The '=' state should accept single '='
+        let eq_state = nfa.states[root as usize].transitions[0].1;
+        assert_eq!(
+            nfa.states[eq_state as usize].accept,
+            Some(TokenKind::Fixed("=".to_string()))
+        );
+
+        // The '=' state should have a transition to '==' state
+        let eq_eq_state = nfa.states[eq_state as usize].transitions[0].1;
+        assert_eq!(
+            nfa.states[eq_eq_state as usize].accept,
+            Some(TokenKind::Fixed("==".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_dafsa_suffix_sharing_non_accepting() {
+        // Terminals with same accept token but different prefixes can share suffixes.
+        // `ab` → Ident, `cb` → Ident: the 'b'(Ident) leaf nodes can merge,
+        // and then the intermediate nodes (both {None, [('b', canonical)]}) can merge too.
+        let terminals = vec![
+            TerminalPattern {
+                text: "ab".to_string(),
+                kind: TokenKind::Ident,
+                is_keyword: false,
+            },
+            TerminalPattern {
+                text: "cb".to_string(),
+                kind: TokenKind::Ident,
+                is_keyword: false,
+            },
+        ];
+
+        let mut dafsa_nfa = Nfa::new();
+        let dafsa_root = build_keyword_trie(&mut dafsa_nfa, &terminals);
+
+        let mut prefix_nfa = Nfa::new();
+        let prefix_root = build_keyword_trie_prefix_only(&mut prefix_nfa, &terminals);
+
+        // Count reachable states from each root
+        let dafsa_reachable = count_reachable_trie_states(&dafsa_nfa, dafsa_root);
+        let prefix_reachable = count_reachable_trie_states(&prefix_nfa, prefix_root);
+
+        assert!(
+            dafsa_reachable <= prefix_reachable,
+            "DAFSA reachable ({}) should be <= prefix-only reachable ({})",
+            dafsa_reachable,
+            prefix_reachable
+        );
+
+        // Specifically: DAFSA should merge 'b' leaves and intermediate states
+        // prefix-only: root → a → b(Ident), root → c → b(Ident) = 5 reachable
+        // DAFSA: root → a → b(Ident), root → c → (same a) → (same b) = 3 reachable
+        assert_eq!(
+            dafsa_reachable, 3,
+            "DAFSA should have 3 reachable states (root + shared intermediate + shared accept)"
+        );
+        assert_eq!(
+            prefix_reachable, 5,
+            "prefix-only should have 5 reachable states (root + a + b_1 + c + b_2)"
+        );
+
+        // Both 'a' and 'c' transitions from root should point to the same state
+        let targets: Vec<StateId> = dafsa_nfa.states[dafsa_root as usize]
+            .transitions
+            .iter()
+            .map(|(_, t)| *t)
+            .collect();
+        assert_eq!(targets.len(), 2);
+        assert_eq!(
+            targets[0], targets[1],
+            "both root transitions should point to same merged state"
+        );
+    }
+
+    #[test]
+    fn test_dafsa_no_merge_different_accept() {
+        // Terminals with different accept tokens on leaves should NOT merge.
+        // `ab` → Fixed("ab"), `cb` → Fixed("cb"): different accept tokens
+        let terminals = vec![
+            TerminalPattern {
+                text: "ab".to_string(),
+                kind: TokenKind::Fixed("ab".to_string()),
+                is_keyword: false,
+            },
+            TerminalPattern {
+                text: "cb".to_string(),
+                kind: TokenKind::Fixed("cb".to_string()),
+                is_keyword: false,
+            },
+        ];
+
+        let mut dafsa_nfa = Nfa::new();
+        let dafsa_root = build_keyword_trie(&mut dafsa_nfa, &terminals);
+
+        let mut prefix_nfa = Nfa::new();
+        let prefix_root = build_keyword_trie_prefix_only(&mut prefix_nfa, &terminals);
+
+        // No merging should happen — same reachable count
+        let dafsa_reachable = count_reachable_trie_states(&dafsa_nfa, dafsa_root);
+        let prefix_reachable = count_reachable_trie_states(&prefix_nfa, prefix_root);
+
+        assert_eq!(
+            dafsa_reachable, prefix_reachable,
+            "different accept tokens should prevent DAFSA merging"
+        );
+    }
+
+    #[test]
+    fn test_dafsa_produces_same_dfa() {
+        // End-to-end: both trie variants should produce functionally equivalent DFAs.
+        use crate::automata::{
+            minimize::minimize_dfa,
+            partition::compute_equivalence_classes,
+            subset::subset_construction,
+        };
+
+        let terminal_specs = vec![
+            ("+", TokenKind::Fixed("+".to_string())),
+            ("++", TokenKind::Fixed("++".to_string())),
+            ("-", TokenKind::Fixed("-".to_string())),
+            ("->", TokenKind::Fixed("->".to_string())),
+            ("=", TokenKind::Fixed("=".to_string())),
+            ("==", TokenKind::Fixed("==".to_string())),
+            ("!=", TokenKind::Fixed("!=".to_string())),
+            ("(", TokenKind::Fixed("(".to_string())),
+            (")", TokenKind::Fixed(")".to_string())),
+            ("error", TokenKind::Fixed("error".to_string())),
+        ];
+
+        let terminals: Vec<TerminalPattern> = terminal_specs
+            .iter()
+            .map(|(text, kind)| TerminalPattern {
+                text: text.to_string(),
+                kind: kind.clone(),
+                is_keyword: text.chars().all(|c| c.is_alphanumeric()),
+            })
+            .collect();
+
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: true,
+            ..Default::default()
+        };
+
+        // Build with DAFSA (current build_keyword_trie)
+        let nfa_dafsa = build_nfa(&terminals, &needs);
+        let partition_dafsa = compute_equivalence_classes(&nfa_dafsa);
+        let dfa_dafsa = minimize_dfa(&subset_construction(&nfa_dafsa, &partition_dafsa));
+
+        // Build with prefix-only trie
+        let mut nfa_prefix = Nfa::new();
+        let global_start_prefix = nfa_prefix.start;
+        let trie_root_prefix = build_keyword_trie_prefix_only(&mut nfa_prefix, &terminals);
+        nfa_prefix.add_epsilon(global_start_prefix, trie_root_prefix);
+        // Add character-class fragments
+        if needs.ident {
+            let frag = build_ident_fragment(&mut nfa_prefix);
+            nfa_prefix.add_epsilon(global_start_prefix, frag.start);
+        }
+        if needs.integer {
+            let frag = build_integer_fragment(&mut nfa_prefix);
+            nfa_prefix.add_epsilon(global_start_prefix, frag.start);
+        }
+        let partition_prefix = compute_equivalence_classes(&nfa_prefix);
+        let dfa_prefix = minimize_dfa(&subset_construction(&nfa_prefix, &partition_prefix));
+
+        // Verify DFA equivalence by testing all terminals + identifiers + integers
+        let test_inputs = vec![
+            "+", "++", "-", "->", "=", "==", "!=", "(", ")", "error",
+            "x", "foo", "bar123", "42", "0", "999",
+        ];
+
+        for input in test_inputs {
+            let result_dafsa = lex_through_dfa(&dfa_dafsa, &partition_dafsa, input);
+            let result_prefix = lex_through_dfa(&dfa_prefix, &partition_prefix, input);
+            assert_eq!(
+                result_dafsa, result_prefix,
+                "DFA mismatch for input {:?}: DAFSA={:?} vs prefix-only={:?}",
+                input, result_dafsa, result_prefix
+            );
+        }
+    }
+
+    #[test]
+    fn test_dafsa_state_count_report() {
+        // Diagnostic: print before/after NFA state counts for visibility
+        let terminals: Vec<TerminalPattern> = [
+            "+", "++", "-", "->", "=", "==", "!=", "<=", ">=",
+            "(", ")", "{", "}", "[", "]", ",", ";",
+            "error", "true", "false", "if", "else", "while", "for",
+        ]
+        .iter()
+        .enumerate()
+        .map(|(_, text)| {
+            let kind = match *text {
+                "true" => TokenKind::True,
+                "false" => TokenKind::False,
+                _ => TokenKind::Fixed(text.to_string()),
+            };
+            TerminalPattern {
+                text: text.to_string(),
+                kind,
+                is_keyword: text.chars().all(|c| c.is_alphanumeric()),
+            }
+        })
+        .collect();
+
+        let mut dafsa_nfa = Nfa::new();
+        let dafsa_root = build_keyword_trie(&mut dafsa_nfa, &terminals);
+        let dafsa_total = dafsa_nfa.states.len();
+        let dafsa_reachable = count_reachable_trie_states(&dafsa_nfa, dafsa_root);
+
+        let mut prefix_nfa = Nfa::new();
+        let prefix_root = build_keyword_trie_prefix_only(&mut prefix_nfa, &terminals);
+        let prefix_total = prefix_nfa.states.len();
+        let prefix_reachable = count_reachable_trie_states(&prefix_nfa, prefix_root);
+
+        eprintln!("DAFSA state count report:");
+        eprintln!(
+            "  Prefix-only: {} total, {} reachable from trie root",
+            prefix_total, prefix_reachable
+        );
+        eprintln!(
+            "  DAFSA:       {} total ({} dead), {} reachable from trie root",
+            dafsa_total,
+            dafsa_total - dafsa_reachable - 1, // -1 for nfa start
+            dafsa_reachable
+        );
+        eprintln!(
+            "  Reduction:   {} states saved ({:.1}%)",
+            prefix_reachable.saturating_sub(dafsa_reachable),
+            if prefix_reachable > 0 {
+                (prefix_reachable.saturating_sub(dafsa_reachable) as f64
+                    / prefix_reachable as f64)
+                    * 100.0
+            } else {
+                0.0
+            }
+        );
+
+        // DAFSA should never produce MORE reachable states
+        assert!(
+            dafsa_reachable <= prefix_reachable,
+            "DAFSA ({}) should not produce more reachable states than prefix-only ({})",
+            dafsa_reachable,
+            prefix_reachable
+        );
+    }
+
+    /// Count reachable states from a trie root via BFS (only follows Single-byte transitions).
+    fn count_reachable_trie_states(nfa: &Nfa, root: StateId) -> usize {
+        let mut visited = vec![false; nfa.states.len()];
+        let mut queue = vec![root];
+        visited[root as usize] = true;
+        let mut count = 0;
+        while let Some(state) = queue.pop() {
+            count += 1;
+            for (class, target) in &nfa.states[state as usize].transitions {
+                if let CharClass::Single(_) = class {
+                    if !visited[*target as usize] {
+                        visited[*target as usize] = true;
+                        queue.push(*target);
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    /// Simulate lexing through a DFA, returning the accept token (if any).
+    fn lex_through_dfa(
+        dfa: &crate::automata::Dfa,
+        partition: &crate::automata::partition::AlphabetPartition,
+        input: &str,
+    ) -> Option<TokenKind> {
+        let mut state = dfa.start;
+        for &byte in input.as_bytes() {
+            let class = partition.classify(byte);
+            state = dfa.transition(state, class);
+            if state == crate::automata::DEAD_STATE {
+                return None;
+            }
+        }
+        dfa.states[state as usize].accept.clone()
     }
 }

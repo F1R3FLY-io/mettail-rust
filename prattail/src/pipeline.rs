@@ -31,7 +31,7 @@ use crate::prediction::{
     analyze_cross_category_overlaps, compute_first_sets, compute_follow_sets_from_inputs,
     detect_grammar_warnings, generate_sync_predicate, FirstItem, FollowSetInput, RuleInfo,
 };
-use crate::recursive::{write_rd_handler, RDRuleInfo, RDSyntaxItem};
+use crate::recursive::{write_dollar_handlers, write_lambda_handlers, write_rd_handler, RDRuleInfo, RDSyntaxItem};
 use crate::{LanguageSpec, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -42,24 +42,30 @@ use crate::{LanguageSpec, SyntaxItemSpec};
 pub struct LexerBundle {
     grammar_rules: Vec<GrammarRuleInfo>,
     type_infos: Vec<TypeInfo>,
+    /// Whether the grammar has binder rules (^x.{body} lambda syntax).
+    has_binders: bool,
+    /// Category names (needed for dollar terminal generation when has_binders).
+    category_names: Vec<String>,
 }
 
 /// Category metadata for the parser pipeline. Send+Sync.
-struct CategoryInfo {
-    name: String,
-    native_type: Option<String>,
-    is_primary: bool,
+pub(crate) struct CategoryInfo {
+    pub(crate) name: String,
+    pub(crate) native_type: Option<String>,
+    pub(crate) is_primary: bool,
 }
 
 /// All data needed by the parser pipeline. Send+Sync.
 pub struct ParserBundle {
-    categories: Vec<CategoryInfo>,
-    bp_table: BindingPowerTable,
-    rule_infos: Vec<RuleInfo>,
-    follow_inputs: Vec<FollowSetInput>,
-    rd_rules: Vec<RDRuleInfo>,
-    cross_rules: Vec<CrossCategoryRule>,
-    cast_rules: Vec<CastRule>,
+    pub(crate) categories: Vec<CategoryInfo>,
+    pub(crate) bp_table: BindingPowerTable,
+    pub(crate) rule_infos: Vec<RuleInfo>,
+    pub(crate) follow_inputs: Vec<FollowSetInput>,
+    pub(crate) rd_rules: Vec<RDRuleInfo>,
+    pub(crate) cross_rules: Vec<CrossCategoryRule>,
+    pub(crate) cast_rules: Vec<CastRule>,
+    /// Whether the grammar has binder rules (^x.{body} lambda syntax).
+    pub(crate) has_binders: bool,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -144,6 +150,12 @@ pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
         eprintln!("warning: {}", warning);
     }
 
+    // EBNF debug dump (opt-in via environment variable)
+    if let Ok(dump_target) = std::env::var("PRATTAIL_DUMP_EBNF") {
+        let ebnf = crate::ebnf::format_ebnf(spec, &parser_bundle);
+        crate::ebnf::write_ebnf_output(&ebnf, &spec.name, &dump_target);
+    }
+
     let mut state = PipelineState::Ready {
         lexer_bundle,
         parser_bundle,
@@ -189,9 +201,14 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         })
         .collect();
 
+    let has_binders = spec.rules.iter().any(|r| r.has_binder || r.has_multi_binder);
+
+    let lexer_category_names: Vec<String> = spec.types.iter().map(|t| t.name.clone()).collect();
     let lexer_bundle = LexerBundle {
         grammar_rules,
         type_infos,
+        has_binders,
+        category_names: lexer_category_names,
     };
 
     // ── Parser bundle ──
@@ -375,6 +392,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         rd_rules,
         cross_rules,
         cast_rules,
+        has_binders,
     };
 
     (lexer_bundle, parser_bundle)
@@ -388,7 +406,12 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
 ///
 /// Runs the full automata pipeline: terminal extraction → NFA → DFA → minimize → codegen.
 fn generate_lexer_code(bundle: &LexerBundle) -> String {
-    let lexer_input = extract_terminals(&bundle.grammar_rules, &bundle.type_infos);
+    let lexer_input = extract_terminals(
+        &bundle.grammar_rules,
+        &bundle.type_infos,
+        bundle.has_binders,
+        &bundle.category_names,
+    );
     let (lexer_str, _stats) = generate_lexer_as_string(&lexer_input);
     lexer_str
 }
@@ -398,6 +421,7 @@ fn generate_lexer_code(bundle: &LexerBundle) -> String {
 /// Runs: FIRST/FOLLOW sets → RD handlers → Pratt parsers → cross-category dispatch.
 fn generate_parser_code(bundle: &ParserBundle) -> String {
     let category_names: Vec<String> = bundle.categories.iter().map(|c| c.name.clone()).collect();
+    let primary_category = category_names.first().map(|s| s.as_str()).unwrap_or("");
 
     // Compute FIRST sets
     let mut first_sets = compute_first_sets(&bundle.rule_infos, &category_names);
@@ -425,10 +449,23 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         }
     }
 
+    // Augment FIRST set of primary category with Caret and dollar tokens if grammar has binders
+    if bundle.has_binders {
+        if let Some(first_set) = first_sets.get_mut(primary_category) {
+            first_set.insert("Caret");
+            // Add dollar tokens: DollarProc, DdollarProcLp, etc.
+            for cat in &bundle.categories {
+                let cat_lower = cat.name.to_lowercase();
+                let capitalized = capitalize_first(&cat_lower);
+                first_set.insert(&format!("Dollar{}", capitalized));
+                first_set.insert(&format!("Ddollar{}Lp", capitalized));
+            }
+        }
+    }
+
     let overlaps = analyze_cross_category_overlaps(&category_names, &first_sets);
 
     // Compute FOLLOW sets from extracted inputs
-    let primary_category = category_names.first().map(|s| s.as_str()).unwrap_or("");
     let follow_sets = compute_follow_sets_from_inputs(
         &bundle.follow_inputs,
         &category_names,
@@ -443,6 +480,16 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
     for rd_rule in &bundle.rd_rules {
         let handler = write_rd_handler(&mut buf, rd_rule);
         all_prefix_handlers.push(handler);
+    }
+
+    // Generate lambda handlers for primary category if grammar has binders
+    if bundle.has_binders {
+        let lambda_handlers = write_lambda_handlers(&mut buf, primary_category, &category_names);
+        all_prefix_handlers.extend(lambda_handlers);
+
+        // Generate dollar-syntax handlers ($proc, $name, etc.) for function application
+        let dollar_handlers = write_dollar_handlers(&mut buf, primary_category, &category_names);
+        all_prefix_handlers.extend(dollar_handlers);
     }
 
     // Determine dispatch categories
@@ -535,6 +582,17 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         for delim in &["(", ")", "{", "}", "[", "]", ","] {
             terminals.insert(delim.to_string());
         }
+        // Binder terminals (^ and .) for lambda syntax
+        if bundle.has_binders {
+            terminals.insert("^".to_string());
+            terminals.insert(".".to_string());
+            // Dollar terminals for function application syntax
+            for cat in &bundle.categories {
+                let cat_lower = cat.name.to_lowercase();
+                terminals.insert(format!("${}", cat_lower));
+                terminals.insert(format!("$${}(", cat_lower));
+            }
+        }
         terminals
     };
 
@@ -595,6 +653,20 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
 // ══════════════════════════════════════════════════════════════════════════════
 // Helper functions (moved from lib.rs — only used by the pipeline)
 // ══════════════════════════════════════════════════════════════════════════════
+
+/// Capitalize the first letter of a string.
+fn capitalize_first(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => {
+            let mut result = String::with_capacity(s.len());
+            result.extend(first.to_uppercase());
+            result.extend(chars);
+            result
+        }
+    }
+}
 
 /// Recursively collect all terminal strings from a list of syntax items.
 ///

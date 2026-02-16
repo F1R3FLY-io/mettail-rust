@@ -25,7 +25,7 @@ fn test_extract_terminals_simple() {
         native_type_name: Some("i32".to_string()),
     }];
 
-    let input = extract_terminals(&rules, &types);
+    let input = extract_terminals(&rules, &types, false, &[]);
 
     assert!(
         input.needs.ident,
@@ -70,7 +70,7 @@ fn test_extract_terminals_with_bool() {
         native_type_name: Some("bool".to_string()),
     }];
 
-    let input = extract_terminals(&rules, &types);
+    let input = extract_terminals(&rules, &types, false, &[]);
 
     assert!(input.needs.boolean, "should need booleans for bool native type");
 
@@ -102,7 +102,7 @@ fn test_generate_lexer_produces_code() {
         native_type_name: Some("i32".to_string()),
     }];
 
-    let input = extract_terminals(&rules, &types);
+    let input = extract_terminals(&rules, &types, false, &[]);
     let (code, stats) = generate_lexer(&input);
 
     // Verify code is non-empty
@@ -145,7 +145,7 @@ fn test_lexer_stats_rhocalc() {
         TypeInfo { name: "Int".to_string(), language_name: "RhoCalc".to_string(), native_type_name: Some("i32".to_string()) },
     ];
 
-    let input = extract_terminals(&rules, &types);
+    let input = extract_terminals(&rules, &types, false, &[]);
     let (_code, stats) = generate_lexer(&input);
 
     // RhoCalc should have reasonable stats

@@ -1,6 +1,6 @@
 # PraTTaIL: Recursive Descent Generator
 
-**Date:** 2026-02-14
+**Date:** 2026-02-14 (updated 2026-02-17)
 
 ---
 
@@ -455,11 +455,72 @@ $$bool(lam, arg1, arg2)  -> multi application, Bool arguments
 Each variant is parsed by consuming the prefix token, then parsing the
 lambda expression and argument(s) with their respective category parsers.
 
+### Dollar Syntax Handlers: `write_dollar_handlers()`
+
+The `write_dollar_handlers()` function generates parsing functions for
+the dollar application syntax (`$cat(f,x)` and `$$cat(f,xs...)`):
+
+```
+write_dollar_handlers(buf: &mut String, primary_category: &str, all_categories: &[String])
+    -> Vec<PrefixHandler>
+```
+
+For each domain category in `all_categories`, it generates two parse
+functions:
+
+1. **`parse_dollar_{dom}`** — Handles `$dom(f, x)` (single application):
+   ```rust
+   fn parse_dollar_proc(tokens: &[(Token, Span)], pos: &mut usize) -> Result<Proc, String> {
+       // Token::DollarProc already consumed by prefix dispatch
+       expect_token(tokens, pos, |t| matches!(t, Token::LParen), "(")?;
+       let f = parse_Proc(tokens, pos, 0)?;    // lambda (always primary category)
+       expect_token(tokens, pos, |t| matches!(t, Token::Comma), ",")?;
+       let x = parse_Proc(tokens, pos, 0)?;    // argument (domain category)
+       expect_token(tokens, pos, |t| matches!(t, Token::RParen), ")")?;
+       Ok(Proc::ApplyProc(Box::new(f), Box::new(x)))
+   }
+   ```
+
+2. **`parse_ddollar_{dom}`** — Handles `$$dom(f, x1, x2, ...)` (multi-application):
+   ```rust
+   fn parse_ddollar_proc(tokens: &[(Token, Span)], pos: &mut usize) -> Result<Proc, String> {
+       // Token::DdollarProcLp already consumed (includes opening paren)
+       let f = parse_Proc(tokens, pos, 0)?;    // lambda (always primary category)
+       let mut args = Vec::new();
+       while peek_token(tokens, *pos) == Some(&Token::Comma) {
+           *pos += 1;  // consume comma
+           let arg = parse_Proc(tokens, pos, 0)?;
+           args.push(arg);
+       }
+       expect_token(tokens, pos, |t| matches!(t, Token::RParen), ")")?;
+       Ok(Proc::MApplyProc(Box::new(f), args))
+   }
+   ```
+
+**Token variant naming:**
+
+| Dollar syntax | Token variant | Notes |
+|---|---|---|
+| `$proc` | `Token::DollarProc` | Followed by `(` parsed separately |
+| `$name` | `Token::DollarName` | Followed by `(` parsed separately |
+| `$int` | `Token::DollarInt` | Followed by `(` parsed separately |
+| `$$proc(` | `Token::DdollarProcLp` | Opening paren is part of the token |
+| `$$name(` | `Token::DdollarNameLp` | Opening paren is part of the token |
+| `$$int(` | `Token::DdollarIntLp` | Opening paren is part of the token |
+
+Note that `$$cat(` is a **single token** — the opening parenthesis is
+consumed as part of the token, not parsed separately. This avoids
+ambiguity with the `$` prefix.
+
+The function returns a `Vec<PrefixHandler>` with dispatch entries for
+both single and multi-application forms, which are wired into the Pratt
+prefix handler for the primary category.
+
 ### Binder Type Inference
 
-Both LALRPOP and PraTTaIL rely on `body.infer_var_type(&binder_name)` to
-determine which lambda variant to construct. This method examines the AST
-node `body` and returns the `VarCategory` of the first occurrence of the
+PraTTaIL relies on `body.infer_var_type(&binder_name)` to determine
+which lambda variant to construct. This method examines the AST node
+`body` and returns the `VarCategory` of the first occurrence of the
 binder variable:
 
 ```

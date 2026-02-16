@@ -2,8 +2,9 @@
 //! minimization, and alphabet partitioning.
 
 use crate::automata::{
+    codegen::generate_lexer_string,
     minimize::minimize_dfa,
-    nfa::{build_nfa, BuiltinNeeds},
+    nfa::{build_nfa, build_nfa_prefix_only, BuiltinNeeds},
     partition::compute_equivalence_classes,
     subset::subset_construction,
     TerminalPattern, TokenKind, DEAD_STATE,
@@ -256,5 +257,249 @@ fn test_minimization_reduces_states() {
         "minimized DFA ({}) should have no more states than unminimized ({})",
         min_dfa.states.len(),
         dfa.states.len()
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Phase 1A: DAFSA vs prefix-only codegen identity tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Helper: run full automata pipeline (NFA → partition → DFA → minimize → codegen string)
+/// for a given NFA, returning the generated code and token_kinds used.
+fn run_codegen_pipeline(
+    terminals: &[TerminalPattern],
+    needs: &BuiltinNeeds,
+    use_prefix_only: bool,
+) -> String {
+    let nfa = if use_prefix_only {
+        build_nfa_prefix_only(terminals, needs)
+    } else {
+        build_nfa(terminals, needs)
+    };
+    let partition = compute_equivalence_classes(&nfa);
+    let dfa = subset_construction(&nfa, &partition);
+    let min_dfa = minimize_dfa(&dfa);
+
+    // Collect token kinds (same logic as lexer.rs)
+    let mut token_kinds: Vec<TokenKind> = vec![TokenKind::Eof];
+    if needs.ident {
+        token_kinds.push(TokenKind::Ident);
+    }
+    if needs.integer {
+        token_kinds.push(TokenKind::Integer);
+    }
+    if needs.float {
+        token_kinds.push(TokenKind::Float);
+    }
+    if needs.boolean {
+        token_kinds.push(TokenKind::True);
+        token_kinds.push(TokenKind::False);
+    }
+    if needs.string_lit {
+        token_kinds.push(TokenKind::StringLit);
+    }
+    for terminal in terminals {
+        token_kinds.push(terminal.kind.clone());
+    }
+
+    let (code, _strategy) = generate_lexer_string(&min_dfa, &partition, &token_kinds, "test");
+    code
+}
+
+/// Build terminal set for the Ambient Calculus grammar.
+fn ambient_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
+    let terms: Vec<(&str, TokenKind)> = vec![
+        ("(", TokenKind::Fixed("(".to_string())),
+        (")", TokenKind::Fixed(")".to_string())),
+        (",", TokenKind::Fixed(",".to_string())),
+        (".", TokenKind::Fixed(".".to_string())),
+        ("0", TokenKind::Fixed("0".to_string())),
+        ("[", TokenKind::Fixed("[".to_string())),
+        ("]", TokenKind::Fixed("]".to_string())),
+        ("{", TokenKind::Fixed("{".to_string())),
+        ("}", TokenKind::Fixed("}".to_string())),
+        ("|", TokenKind::Fixed("|".to_string())),
+        ("in", TokenKind::Fixed("in".to_string())),
+        ("new", TokenKind::Fixed("new".to_string())),
+        ("open", TokenKind::Fixed("open".to_string())),
+        ("out", TokenKind::Fixed("out".to_string())),
+    ];
+
+    let terminals: Vec<TerminalPattern> = terms
+        .into_iter()
+        .map(|(text, kind)| TerminalPattern {
+            text: text.to_string(),
+            kind,
+            is_keyword: text.chars().all(|c| c.is_alphanumeric() || c == '_'),
+        })
+        .collect();
+
+    let needs = BuiltinNeeds {
+        ident: true,
+        ..Default::default()
+    };
+
+    (terminals, needs)
+}
+
+/// Build terminal set for the Calculator grammar.
+fn calculator_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
+    let terms: Vec<(&str, TokenKind)> = vec![
+        ("!", TokenKind::Fixed("!".to_string())),
+        ("&&", TokenKind::Fixed("&&".to_string())),
+        ("(", TokenKind::Fixed("(".to_string())),
+        (")", TokenKind::Fixed(")".to_string())),
+        ("+", TokenKind::Fixed("+".to_string())),
+        ("++", TokenKind::Fixed("++".to_string())),
+        (",", TokenKind::Fixed(",".to_string())),
+        ("-", TokenKind::Fixed("-".to_string())),
+        (":", TokenKind::Fixed(":".to_string())),
+        ("==", TokenKind::Fixed("==".to_string())),
+        ("?", TokenKind::Fixed("?".to_string())),
+        ("[", TokenKind::Fixed("[".to_string())),
+        ("]", TokenKind::Fixed("]".to_string())),
+        ("^", TokenKind::Fixed("^".to_string())),
+        ("false", TokenKind::False),
+        ("not", TokenKind::Fixed("not".to_string())),
+        ("true", TokenKind::True),
+        ("{", TokenKind::Fixed("{".to_string())),
+        ("|", TokenKind::Fixed("|".to_string())),
+        ("}", TokenKind::Fixed("}".to_string())),
+        ("~", TokenKind::Fixed("~".to_string())),
+    ];
+
+    let terminals: Vec<TerminalPattern> = terms
+        .into_iter()
+        .map(|(text, kind)| TerminalPattern {
+            text: text.to_string(),
+            kind,
+            is_keyword: text.chars().all(|c| c.is_alphanumeric() || c == '_'),
+        })
+        .collect();
+
+    let needs = BuiltinNeeds {
+        ident: true,
+        integer: true,
+        boolean: true,
+        string_lit: true,
+        ..Default::default()
+    };
+
+    (terminals, needs)
+}
+
+/// Build terminal set for the Lambda Calculus grammar.
+fn lambda_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
+    let terms: Vec<(&str, TokenKind)> = vec![
+        ("(", TokenKind::Fixed("(".to_string())),
+        (")", TokenKind::Fixed(")".to_string())),
+        (",", TokenKind::Fixed(",".to_string())),
+        (".", TokenKind::Fixed(".".to_string())),
+        ("[", TokenKind::Fixed("[".to_string())),
+        ("]", TokenKind::Fixed("]".to_string())),
+        ("lam ", TokenKind::Fixed("lam ".to_string())),
+        ("{", TokenKind::Fixed("{".to_string())),
+        ("}", TokenKind::Fixed("}".to_string())),
+    ];
+
+    let terminals: Vec<TerminalPattern> = terms
+        .into_iter()
+        .map(|(text, kind)| TerminalPattern {
+            text: text.to_string(),
+            kind,
+            is_keyword: text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == ' '),
+        })
+        .collect();
+
+    let needs = BuiltinNeeds {
+        ident: true,
+        ..Default::default()
+    };
+
+    (terminals, needs)
+}
+
+/// Build terminal set for the RhoCalc grammar.
+fn rhocalc_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
+    let terms: Vec<(&str, TokenKind)> = vec![
+        ("!", TokenKind::Fixed("!".to_string())),
+        ("(", TokenKind::Fixed("(".to_string())),
+        (")", TokenKind::Fixed(")".to_string())),
+        ("+", TokenKind::Fixed("+".to_string())),
+        (",", TokenKind::Fixed(",".to_string())),
+        (".", TokenKind::Fixed(".".to_string())),
+        (":", TokenKind::Fixed(":".to_string())),
+        ("?", TokenKind::Fixed("?".to_string())),
+        ("@", TokenKind::Fixed("@".to_string())),
+        ("[", TokenKind::Fixed("[".to_string())),
+        ("]", TokenKind::Fixed("]".to_string())),
+        ("^", TokenKind::Fixed("^".to_string())),
+        ("error", TokenKind::Fixed("error".to_string())),
+        ("{", TokenKind::Fixed("{".to_string())),
+        ("{}", TokenKind::Fixed("{}".to_string())),
+        ("|", TokenKind::Fixed("|".to_string())),
+        ("}", TokenKind::Fixed("}".to_string())),
+        ("*", TokenKind::Fixed("*".to_string())),
+    ];
+
+    let terminals: Vec<TerminalPattern> = terms
+        .into_iter()
+        .map(|(text, kind)| TerminalPattern {
+            text: text.to_string(),
+            kind,
+            is_keyword: text.chars().all(|c| c.is_alphanumeric() || c == '_'),
+        })
+        .collect();
+
+    let needs = BuiltinNeeds {
+        ident: true,
+        integer: true,
+        ..Default::default()
+    };
+
+    (terminals, needs)
+}
+
+#[test]
+fn test_dafsa_vs_prefix_identical_codegen_ambient() {
+    let (terminals, needs) = ambient_terminals();
+    let dafsa_code = run_codegen_pipeline(&terminals, &needs, false);
+    let prefix_code = run_codegen_pipeline(&terminals, &needs, true);
+    assert_eq!(
+        dafsa_code, prefix_code,
+        "Ambient: DAFSA and prefix-only should produce identical lexer code"
+    );
+}
+
+#[test]
+fn test_dafsa_vs_prefix_identical_codegen_calculator() {
+    let (terminals, needs) = calculator_terminals();
+    let dafsa_code = run_codegen_pipeline(&terminals, &needs, false);
+    let prefix_code = run_codegen_pipeline(&terminals, &needs, true);
+    assert_eq!(
+        dafsa_code, prefix_code,
+        "Calculator: DAFSA and prefix-only should produce identical lexer code"
+    );
+}
+
+#[test]
+fn test_dafsa_vs_prefix_identical_codegen_lambda() {
+    let (terminals, needs) = lambda_terminals();
+    let dafsa_code = run_codegen_pipeline(&terminals, &needs, false);
+    let prefix_code = run_codegen_pipeline(&terminals, &needs, true);
+    assert_eq!(
+        dafsa_code, prefix_code,
+        "Lambda: DAFSA and prefix-only should produce identical lexer code"
+    );
+}
+
+#[test]
+fn test_dafsa_vs_prefix_identical_codegen_rhocalc() {
+    let (terminals, needs) = rhocalc_terminals();
+    let dafsa_code = run_codegen_pipeline(&terminals, &needs, false);
+    let prefix_code = run_codegen_pipeline(&terminals, &needs, true);
+    assert_eq!(
+        dafsa_code, prefix_code,
+        "RhoCalc: DAFSA and prefix-only should produce identical lexer code"
     );
 }

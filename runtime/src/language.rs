@@ -133,6 +133,12 @@ pub trait Language: Send + Sync {
         None
     }
 
+    /// Normalize a term (beta-reduce Apply/MApply of Lam/MLam, flatten collections, etc.)
+    /// Default: returns a clone (no normalization).
+    fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
+        term.clone_box()
+    }
+
     /// Format a term as a string
     fn format_term(&self, term: &dyn Term) -> String {
         format!("{}", term)

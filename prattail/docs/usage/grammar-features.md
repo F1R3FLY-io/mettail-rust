@@ -597,6 +597,53 @@ enum Int {
 }
 ```
 
+### Beta-Reduction and Normalization
+
+PraTTaIL languages implement the `normalize_term` method on the
+`Language` trait to perform beta-reduction before evaluation:
+
+```rust
+pub trait Language: Send + Sync {
+    /// Normalize a term (beta-reduce Apply/MApply of Lam/MLam, flatten
+    /// collections, etc.). Default: returns a clone (no normalization).
+    fn normalize_term(&self, term: &dyn Term) -> Box<dyn Term> {
+        term.clone_box()
+    }
+}
+```
+
+Each generated language overrides this method to perform:
+
+1. **Beta-reduction of single applications:**
+   `ApplyDom(LamDom(scope), arg)` → `body[binder := arg].normalize()`
+
+2. **Beta-reduction of multi-applications:**
+   `MApplyDom(MLamDom(scope), [arg1, arg2, ...])` → `body[binders := args].normalize()`
+
+3. **Recursive normalization** of all sub-terms.
+
+**REPL integration:** The REPL calls `normalize_term` automatically after
+environment variable substitution, before `try_direct_eval` and
+`run_ascent`. This ensures that beta-redexes introduced by variable
+substitution are reduced before the Ascent Datalog engine processes the
+term.
+
+**Type matching caveat:** Lambda binder types must match the substitution
+domain. `LamProc` binds Proc-typed variables; `LamName` binds Name-typed
+variables. The syntax `^x.{body}` always constructs `LamProc` (primary
+category lambda). The substitution function `substitute_proc` only
+affects Proc-typed positions in the body, **not** Name-typed positions.
+
+| Expression | Result | Explanation |
+|---|---|---|
+| `$proc(^x.{x}, {})` | `{}` | `x` is Proc, body uses `x` as Proc → substitution succeeds |
+| `$proc(^x.{*(x)}, {})` | `*(x)` (no reduction) | `*(x)` uses `x` as a Name, not Proc; `substitute_proc` does not touch Name positions |
+| `$name(^x.{*(x)}, n)` | Not constructible via `^x.{...}` syntax | `LamName` can only be created programmatically |
+
+To substitute into Name-typed positions, `LamName` must be constructed
+programmatically (not via `^x.{body}` syntax, which always creates
+`LamProc`).
+
 ---
 
 ## 13. HOL Native Evaluation

@@ -17,7 +17,7 @@ use std::fmt::Write;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use super::{partition::AlphabetPartition, Dfa, TokenKind};
+use super::{partition::AlphabetPartition, Dfa, TokenKind, DEAD_STATE};
 
 /// Threshold: use direct-coded for small DFAs, table-driven for larger ones.
 const DIRECT_CODED_THRESHOLD: usize = 30;
@@ -42,9 +42,10 @@ pub fn generate_lexer_code(
     partition: &AlphabetPartition,
     token_kinds: &[TokenKind],
     language_name: &str,
-) -> TokenStream {
-    let buf = generate_lexer_string(dfa, partition, token_kinds, language_name);
-    buf.parse::<TokenStream>().expect("generated lexer code must be valid Rust")
+) -> (TokenStream, CodegenStrategy) {
+    let (buf, strategy) = generate_lexer_string(dfa, partition, token_kinds, language_name);
+    let ts = buf.parse::<TokenStream>().expect("generated lexer code must be valid Rust");
+    (ts, strategy)
 }
 
 /// Generate the complete lexer code as a `String` (no proc_macro2 parsing).
@@ -52,12 +53,14 @@ pub fn generate_lexer_code(
 /// This is the string-based entry point used by the combined lexer+parser
 /// codegen path. The caller appends parser code to this string and does a
 /// single `str::parse::<TokenStream>()` at the end.
+///
+/// Returns the generated code string and which codegen strategy was selected.
 pub fn generate_lexer_string(
     dfa: &Dfa,
     partition: &AlphabetPartition,
     token_kinds: &[TokenKind],
     _language_name: &str,
-) -> String {
+) -> (String, CodegenStrategy) {
     // Estimate buffer size: ~8KB for typical grammars, scales with DFA size
     let estimated_size = 4096 + dfa.states.len() * partition.num_classes * 16;
     let mut buf = String::with_capacity(estimated_size);
@@ -66,13 +69,14 @@ pub fn generate_lexer_string(
     write_position_and_range_defs(&mut buf);
     write_parse_error_enum(&mut buf);
 
-    if dfa.states.len() <= DIRECT_CODED_THRESHOLD {
+    let strategy = if dfa.states.len() <= DIRECT_CODED_THRESHOLD {
         write_direct_coded_lexer(&mut buf, dfa, partition);
+        CodegenStrategy::DirectCoded
     } else {
-        write_table_driven_lexer(&mut buf, dfa, partition);
-    }
+        write_compressed_lexer(&mut buf, dfa, partition)
+    };
 
-    buf
+    (buf, strategy)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -283,6 +287,9 @@ fn write_transition_arms(buf: &mut String, dfa: &Dfa) {
 }
 
 /// Write the flat transition table to a string buffer (for table-driven lexer).
+///
+/// Superseded by `write_comb_tables()` — preserved for reference and testing.
+#[allow(dead_code)]
 fn write_transition_table(buf: &mut String, dfa: &Dfa, num_classes: usize) {
     let table_size = dfa.states.len() * num_classes;
     write!(buf, "static TRANSITIONS: [u32; {}] = [", table_size).unwrap();
@@ -399,7 +406,11 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     buf.push('}');
 }
 
-/// Write a complete table-driven lexer to a string buffer.
+/// Write a complete table-driven lexer to a string buffer (flat transition table).
+///
+/// Superseded by `write_comb_driven_lexer()` and `write_bitmap_driven_lexer()`
+/// — preserved for reference and testing.
+#[allow(dead_code)]
 fn write_table_driven_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPartition) {
     let num_classes = partition.num_classes;
 
@@ -472,6 +483,479 @@ fn write_table_driven_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     write_accept_arms(buf, dfa);
     buf.push('}');
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Compressed table codegen — comb (row displacement) + bitmap strategies
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Which codegen strategy was selected for the lexer's transition table.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodegenStrategy {
+    /// Direct-coded (match arms): for ≤30 DFA states.
+    DirectCoded,
+    /// Row displacement (comb) compression: BASE/NEXT/CHECK/DEFAULT arrays.
+    CombCompressed,
+    /// Bitmap + popcount indexing: BITMAPS/OFFSETS/TARGETS arrays.
+    BitmapCompressed,
+}
+
+/// Row-displacement (comb) compressed transition table.
+///
+/// Classic technique from `flex`/`re2c`: sparse rows are packed into a shared
+/// linear array by finding non-colliding offsets. Lookup:
+/// ```text
+/// idx = BASE[state] + class
+/// next = if CHECK[idx] == state { NEXT[idx] } else { DEFAULT[state] }
+/// ```
+#[derive(Debug, Clone)]
+pub struct CombTable {
+    /// Displacement offset per state.
+    pub base: Vec<u32>,
+    /// Default transition per state (typically DEAD_STATE).
+    pub default: Vec<u32>,
+    /// Packed target states.
+    pub next: Vec<u32>,
+    /// Owner state for collision detection.
+    pub check: Vec<u32>,
+}
+
+impl CombTable {
+    /// Total size in u32 entries (for size comparison).
+    pub fn total_entries(&self) -> usize {
+        self.base.len() + self.default.len() + self.next.len() + self.check.len()
+    }
+
+    /// Total size in bytes (for size comparison).
+    pub fn total_bytes(&self) -> usize {
+        self.total_entries() * 4
+    }
+}
+
+/// Bitmap-compressed transition table for sparse DFA states.
+///
+/// Each state stores a `u32` bitmap (bit `i` set iff class `i` has a non-DEAD
+/// transition) plus a dense array of only live targets. Lookup uses bit-test +
+/// popcount indexing: O(1) with hardware POPCNT.
+///
+/// Requires `num_classes ≤ 32` (fits in `u32` bitmap).
+#[derive(Debug, Clone)]
+pub struct BitmapTables {
+    /// One bitmap per state.
+    pub bitmaps: Vec<u32>,
+    /// Starting index into `targets` for each state.
+    pub offsets: Vec<u16>,
+    /// Dense array of only live (non-DEAD) target states.
+    pub targets: Vec<u32>,
+}
+
+impl BitmapTables {
+    /// Total size in bytes (for size comparison).
+    pub fn total_bytes(&self) -> usize {
+        self.bitmaps.len() * 4 + self.offsets.len() * 2 + self.targets.len() * 4
+    }
+}
+
+/// Sparsity analysis of a DFA's transition table.
+#[derive(Debug, Clone)]
+pub struct SparsityInfo {
+    /// Number of live (non-DEAD) transitions per state.
+    pub live_per_state: Vec<usize>,
+    /// Total number of live transitions across all states.
+    pub total_live: usize,
+    /// Fraction of transitions that are DEAD (0.0 to 1.0).
+    pub dead_fraction: f64,
+}
+
+/// Analyze the sparsity of a DFA's transition table.
+pub fn analyze_sparsity(dfa: &Dfa) -> SparsityInfo {
+    let mut live_per_state = Vec::with_capacity(dfa.states.len());
+    let mut total_live = 0usize;
+    let total_entries = dfa.states.len() * dfa.num_classes;
+
+    for state in &dfa.states {
+        let live = state.transitions.iter().filter(|&&t| t != DEAD_STATE).count();
+        live_per_state.push(live);
+        total_live += live;
+    }
+
+    let dead_fraction = if total_entries > 0 {
+        1.0 - (total_live as f64 / total_entries as f64)
+    } else {
+        0.0
+    };
+
+    SparsityInfo {
+        live_per_state,
+        total_live,
+        dead_fraction,
+    }
+}
+
+/// Compress a DFA transition table using row displacement (comb) packing.
+///
+/// Algorithm:
+/// 1. Extract sparse rows: for each state, collect non-DEAD entries as `(class_id, target)`
+/// 2. Sort rows by density (densest first) for better packing
+/// 3. Greedy offset search: for each row, find smallest offset where no non-default
+///    entries collide with previously placed rows
+/// 4. Pad NEXT/CHECK to `max(base) + num_classes` to eliminate bounds checking
+pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
+    let num_states = dfa.states.len();
+
+    // Extract sparse rows: (state_idx, [(class_id, target)])
+    let mut sparse_rows: Vec<(usize, Vec<(usize, u32)>)> = Vec::with_capacity(num_states);
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        let entries: Vec<(usize, u32)> = state
+            .transitions
+            .iter()
+            .enumerate()
+            .filter(|(_, &t)| t != DEAD_STATE)
+            .map(|(class_id, &target)| (class_id, target))
+            .collect();
+        sparse_rows.push((state_idx, entries));
+    }
+
+    // Sort by density (densest first) for better packing
+    sparse_rows.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+
+    // Greedy offset search
+    let mut base = vec![0u32; num_states];
+    let default = vec![u32::MAX; num_states]; // DEAD_STATE
+    // Start with a reasonable size, will grow as needed
+    let initial_capacity = num_states * 2 + num_classes;
+    let mut next = vec![u32::MAX; initial_capacity];
+    let mut check = vec![u32::MAX; initial_capacity]; // u32::MAX means "unoccupied"
+    let mut high_water: usize = 0;
+
+    for (state_idx, entries) in &sparse_rows {
+        if entries.is_empty() {
+            base[*state_idx] = 0; // doesn't matter, will always hit DEFAULT
+            continue;
+        }
+
+        // Find smallest offset d where no entries collide
+        let mut d: usize = 0;
+        'search: loop {
+            let needed = d + num_classes;
+            // Grow arrays if needed
+            if needed > next.len() {
+                let new_len = needed + num_classes;
+                next.resize(new_len, u32::MAX);
+                check.resize(new_len, u32::MAX);
+            }
+
+            // Check for collisions
+            let mut collides = false;
+            for &(class_id, _) in entries {
+                let idx = d + class_id;
+                if check[idx] != u32::MAX {
+                    collides = true;
+                    break;
+                }
+            }
+            if !collides {
+                break 'search;
+            }
+            d += 1;
+        }
+
+        // Place this row at offset d
+        base[*state_idx] = d as u32;
+        for &(class_id, target) in entries {
+            let idx = d + class_id;
+            next[idx] = target;
+            check[idx] = *state_idx as u32;
+            if idx >= high_water {
+                high_water = idx + 1;
+            }
+        }
+    }
+
+    // Pad to max(base) + num_classes to eliminate bounds checks in generated code
+    let pad_to = if high_water > 0 {
+        let max_base = *base.iter().max().unwrap_or(&0) as usize;
+        max_base + num_classes
+    } else {
+        num_classes
+    };
+    if pad_to > next.len() {
+        next.resize(pad_to, u32::MAX);
+        check.resize(pad_to, u32::MAX);
+    }
+    // Truncate to padded size (remove excess slack)
+    next.truncate(pad_to);
+    check.truncate(pad_to);
+
+    CombTable {
+        base,
+        default,
+        next,
+        check,
+    }
+}
+
+/// Build bitmap-compressed transition tables for a DFA.
+///
+/// Requires `num_classes ≤ 32` (each state's live transitions fit in a `u32` bitmap).
+/// Lookup uses bit-test + popcount: O(1) with hardware POPCNT.
+pub fn build_bitmap_tables(dfa: &Dfa) -> BitmapTables {
+    assert!(
+        dfa.num_classes <= 32,
+        "bitmap compression requires num_classes <= 32, got {}",
+        dfa.num_classes
+    );
+
+    let num_states = dfa.states.len();
+    let mut bitmaps = Vec::with_capacity(num_states);
+    let mut offsets = Vec::with_capacity(num_states);
+    let mut targets = Vec::new();
+
+    for state in &dfa.states {
+        let mut bitmap: u32 = 0;
+        let offset = targets.len() as u16;
+        offsets.push(offset);
+
+        for (class_id, &target) in state.transitions.iter().enumerate() {
+            if target != DEAD_STATE {
+                bitmap |= 1u32 << (class_id as u32);
+                targets.push(target);
+            }
+        }
+        bitmaps.push(bitmap);
+    }
+
+    BitmapTables {
+        bitmaps,
+        offsets,
+        targets,
+    }
+}
+
+/// Write the comb-compressed transition tables as static arrays.
+fn write_comb_tables(buf: &mut String, comb: &CombTable) {
+    // BASE array
+    write!(buf, "static BASE: [u32; {}] = [", comb.base.len()).unwrap();
+    for (i, &b) in comb.base.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        write!(buf, "{}", b).unwrap();
+    }
+    buf.push_str("];");
+
+    // DEFAULT array
+    write!(buf, "static DEFAULT: [u32; {}] = [", comb.default.len()).unwrap();
+    for (i, &d) in comb.default.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        write!(buf, "{}", d).unwrap();
+    }
+    buf.push_str("];");
+
+    // NEXT array
+    write!(buf, "static NEXT: [u32; {}] = [", comb.next.len()).unwrap();
+    for (i, &n) in comb.next.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        write!(buf, "{}", n).unwrap();
+    }
+    buf.push_str("];");
+
+    // CHECK array
+    write!(buf, "static CHECK: [u32; {}] = [", comb.check.len()).unwrap();
+    for (i, &c) in comb.check.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        write!(buf, "{}", c).unwrap();
+    }
+    buf.push_str("];");
+}
+
+/// Write the bitmap-compressed transition tables as static arrays.
+fn write_bitmap_tables(buf: &mut String, tables: &BitmapTables) {
+    // BITMAPS array
+    write!(buf, "static BITMAPS: [u32; {}] = [", tables.bitmaps.len()).unwrap();
+    for (i, &b) in tables.bitmaps.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        write!(buf, "{}", b).unwrap();
+    }
+    buf.push_str("];");
+
+    // OFFSETS array
+    write!(buf, "static OFFSETS: [u16; {}] = [", tables.offsets.len()).unwrap();
+    for (i, &o) in tables.offsets.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        write!(buf, "{}", o).unwrap();
+    }
+    buf.push_str("];");
+
+    // TARGETS array
+    write!(buf, "static TARGETS: [u32; {}] = [", tables.targets.len()).unwrap();
+    for (i, &t) in tables.targets.iter().enumerate() {
+        if i > 0 { buf.push(','); }
+        write!(buf, "{}", t).unwrap();
+    }
+    buf.push_str("];");
+}
+
+/// Select and write the best compressed lexer strategy.
+///
+/// Compares comb vs bitmap table sizes and picks the smaller one.
+/// Returns which strategy was selected.
+fn write_compressed_lexer(
+    buf: &mut String,
+    dfa: &Dfa,
+    partition: &AlphabetPartition,
+) -> CodegenStrategy {
+    let num_classes = partition.num_classes;
+    let comb = compress_rows_comb(dfa, num_classes);
+
+    if num_classes <= 32 {
+        let bitmap = build_bitmap_tables(dfa);
+        if bitmap.total_bytes() <= comb.total_bytes() {
+            write_bitmap_driven_lexer(buf, dfa, partition, &bitmap);
+            return CodegenStrategy::BitmapCompressed;
+        }
+    }
+
+    write_comb_driven_lexer(buf, dfa, partition, &comb);
+    CodegenStrategy::CombCompressed
+}
+
+/// Write a complete comb-compressed lexer to a string buffer.
+fn write_comb_driven_lexer(
+    buf: &mut String,
+    dfa: &Dfa,
+    partition: &AlphabetPartition,
+    comb: &CombTable,
+) {
+    write_class_table(buf, partition);
+    write_comb_tables(buf, comb);
+
+    write!(
+        buf,
+        "const NUM_CLASSES: usize = {};",
+        partition.num_classes
+    )
+    .unwrap();
+
+    buf.push_str(
+        "fn is_whitespace(b: u8) -> bool { matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r') }",
+    );
+
+    // dfa_next function using comb lookup
+    write!(
+        buf,
+        "#[inline(always)] fn dfa_next(state: u32, class: u8) -> u32 {{ \
+         let idx = BASE[state as usize] as usize + class as usize; \
+         if CHECK[idx] == state {{ NEXT[idx] }} else {{ DEFAULT[state as usize] }} \
+         }}"
+    )
+    .unwrap();
+
+    // lex() function — same structure as table-driven, using dfa_next()
+    write_lex_function_with_dfa_next(buf);
+
+    // accept_token() function
+    buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
+    write_accept_arms(buf, dfa);
+    buf.push('}');
+}
+
+/// Write a complete bitmap-compressed lexer to a string buffer.
+fn write_bitmap_driven_lexer(
+    buf: &mut String,
+    dfa: &Dfa,
+    partition: &AlphabetPartition,
+    tables: &BitmapTables,
+) {
+    write_class_table(buf, partition);
+    write_bitmap_tables(buf, tables);
+
+    write!(
+        buf,
+        "const NUM_CLASSES: usize = {};",
+        partition.num_classes
+    )
+    .unwrap();
+
+    buf.push_str(
+        "fn is_whitespace(b: u8) -> bool { matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r') }",
+    );
+
+    // dfa_next function using bitmap+popcount lookup
+    buf.push_str(
+        "#[inline(always)] fn dfa_next(state: u32, class: u8) -> u32 { \
+         let bitmap = BITMAPS[state as usize]; \
+         let bit = 1u32 << (class as u32); \
+         if bitmap & bit == 0 { return u32::MAX; } \
+         let index = (bitmap & (bit - 1)).count_ones() as usize; \
+         TARGETS[OFFSETS[state as usize] as usize + index] \
+         }",
+    );
+
+    // lex() function — same structure, using dfa_next()
+    write_lex_function_with_dfa_next(buf);
+
+    // accept_token() function
+    buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
+    write_accept_arms(buf, dfa);
+    buf.push('}');
+}
+
+/// Write the lex() function body that uses a `dfa_next(state, class)` function.
+///
+/// Shared between comb-driven and bitmap-driven lexers (both define `dfa_next`
+/// with the same signature but different lookup strategies).
+fn write_lex_function_with_dfa_next(buf: &mut String) {
+    buf.push_str(
+        "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String> { \
+         lex_with_file_id(input, None) \
+         }\n\
+         pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range)>, String> { \
+         let bytes = input.as_bytes(); \
+         let mut pos: usize = 0; \
+         let mut line: usize = 0; \
+         let mut col: usize = 0; \
+         let mut tokens: Vec<(Token<'a>, Range)> = Vec::with_capacity(input.len() / 2); \
+         while pos < bytes.len() { \
+         while pos < bytes.len() && is_whitespace(bytes[pos]) { \
+         if bytes[pos] == b'\\n' { line += 1; col = 0; } else { col += 1; } \
+         pos += 1; } \
+         if pos >= bytes.len() { break; } \
+         let start = pos; \
+         let start_line = line; \
+         let start_col = col; \
+         let mut state: u32 = 0; \
+         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
+         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
+         while pos < bytes.len() { \
+         let class = CHAR_CLASS[bytes[pos] as usize]; \
+         let next = dfa_next(state, class); \
+         if next == u32::MAX { break; } \
+         state = next; \
+         if bytes[pos] == b'\\n' { line += 1; col = 0; } \
+         else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
+         pos += 1; \
+         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
+         } \
+         match last_accept { \
+         Some((accept_state, end, end_line, end_col)) => { \
+         pos = end; line = end_line; col = end_col; \
+         let text = &input[start..end]; \
+         if let Some(token) = accept_token(accept_state, text) { \
+         tokens.push((token, Range { \
+         start: Position { byte_offset: start, line: start_line, column: start_col }, \
+         end: Position { byte_offset: end, line: end_line, column: end_col }, \
+         file_id })); } } \
+         None => { return Err(format!(\"{}:{}: unexpected character '{}'\", \
+         line + 1, col + 1, bytes[start] as char)); } \
+         } } \
+         let eof_pos = Position { byte_offset: pos, line, column: col }; \
+         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id })); \
+         Ok(tokens) }",
+    );
+}
+
+// Preserved for reference: the original flat table-driven lexer.
+// Superseded by write_comb_driven_lexer() and write_bitmap_driven_lexer().
+// #[allow(dead_code)]
+// fn write_table_driven_lexer(buf, dfa, partition) { ... }
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Legacy quote!-based API — kept for sub-function benchmarking comparison
@@ -988,6 +1472,39 @@ pub fn terminal_to_variant_name(terminal: &str) -> String {
         ">>" => "GtGt".to_string(),
         ">>>" => "GtGtGt".to_string(),
         _ => {
+            // $-prefixed terminals: "$proc" → "DollarProc", "$$name(" → "DdollarNameLp"
+            if terminal.starts_with("$$") && terminal.ends_with('(') {
+                let inner = &terminal[2..terminal.len() - 1];
+                if !inner.is_empty() && inner.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    let mut result = String::from("Ddollar");
+                    let mut capitalize_next = true;
+                    for c in inner.chars() {
+                        if capitalize_next {
+                            result.extend(c.to_uppercase());
+                            capitalize_next = false;
+                        } else {
+                            result.push(c);
+                        }
+                    }
+                    result.push_str("Lp");
+                    return result;
+                }
+            } else if terminal.starts_with('$') {
+                let inner = &terminal[1..];
+                if !inner.is_empty() && inner.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    let mut result = String::from("Dollar");
+                    let mut capitalize_next = true;
+                    for c in inner.chars() {
+                        if capitalize_next {
+                            result.extend(c.to_uppercase());
+                            capitalize_next = false;
+                        } else {
+                            result.push(c);
+                        }
+                    }
+                    return result;
+                }
+            }
             // For keywords and other multi-character terminals,
             // capitalize the first letter and prefix with Kw
             if terminal.chars().all(|c| c.is_alphanumeric() || c == '_') {
@@ -1017,6 +1534,13 @@ pub fn terminal_to_variant_name(terminal: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::automata::{
+        minimize::minimize_dfa,
+        nfa::{build_nfa, BuiltinNeeds},
+        partition::compute_equivalence_classes,
+        subset::subset_construction,
+        DfaState, TerminalPattern,
+    };
 
     #[test]
     fn test_terminal_to_variant_name() {
@@ -1027,5 +1551,323 @@ mod tests {
         assert_eq!(terminal_to_variant_name("("), "LParen");
         assert_eq!(terminal_to_variant_name("error"), "KwError");
         assert_eq!(terminal_to_variant_name("true"), "KwTrue");
+    }
+
+    #[test]
+    fn test_terminal_to_variant_name_dollar() {
+        // Single-dollar: $cat → DollarCat
+        assert_eq!(terminal_to_variant_name("$proc"), "DollarProc");
+        assert_eq!(terminal_to_variant_name("$name"), "DollarName");
+        assert_eq!(terminal_to_variant_name("$int"), "DollarInt");
+        assert_eq!(terminal_to_variant_name("$term"), "DollarTerm");
+
+        // Double-dollar with opening paren: $$cat( → DdollarCatLp
+        assert_eq!(terminal_to_variant_name("$$proc("), "DdollarProcLp");
+        assert_eq!(terminal_to_variant_name("$$name("), "DdollarNameLp");
+        assert_eq!(terminal_to_variant_name("$$int("), "DdollarIntLp");
+        assert_eq!(terminal_to_variant_name("$$term("), "DdollarTermLp");
+    }
+
+    /// Helper: build a minimized DFA from terminal specs for compression testing.
+    fn build_test_dfa(
+        terminal_specs: &[(&str, TokenKind)],
+        needs: BuiltinNeeds,
+    ) -> (Dfa, AlphabetPartition) {
+        let terminals: Vec<TerminalPattern> = terminal_specs
+            .iter()
+            .map(|(text, kind)| TerminalPattern {
+                text: text.to_string(),
+                kind: kind.clone(),
+                is_keyword: text.chars().all(|c| c.is_alphanumeric()),
+            })
+            .collect();
+        let nfa = build_nfa(&terminals, &needs);
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+        (minimize_dfa(&dfa), partition)
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Comb (row displacement) compression tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_comb_empty_dfa() {
+        // Single state, no transitions
+        let dfa = Dfa::new(4);
+        let comb = compress_rows_comb(&dfa, 4);
+        // All defaults should be DEAD
+        assert_eq!(comb.default.len(), 1);
+        assert_eq!(comb.default[0], u32::MAX);
+    }
+
+    #[test]
+    fn test_comb_dense_dfa() {
+        // Fully dense state: verify comb table ≤ flat table size
+        let num_classes = 12;
+        let mut dfa = Dfa::new(num_classes);
+        // Make state 0 have transitions to states 1-12
+        for class_id in 0..num_classes {
+            let target = dfa.add_state(DfaState::with_classes(num_classes));
+            dfa.set_transition(0, class_id as u8, target);
+        }
+
+        let comb = compress_rows_comb(&dfa, num_classes);
+        let flat_entries = dfa.states.len() * num_classes;
+        // Comb should not be significantly larger than flat for dense DFA
+        // (overhead is base + default arrays)
+        assert!(
+            comb.next.len() + comb.check.len() <= flat_entries * 3,
+            "comb NEXT+CHECK ({}) should not vastly exceed flat ({})",
+            comb.next.len() + comb.check.len(),
+            flat_entries
+        );
+    }
+
+    #[test]
+    fn test_comb_sparse_dfa() {
+        // Sparse DFA: most transitions are DEAD. Verify significant compression.
+        let num_classes = 16;
+        let num_states = 20;
+        let mut dfa = Dfa::new(num_classes);
+        // Add states with only 1-2 live transitions each
+        for s in 1..num_states {
+            let state = dfa.add_state(DfaState::with_classes(num_classes));
+            dfa.set_transition(state, 0, 0); // one transition to state 0
+            if s % 3 == 0 {
+                dfa.set_transition(state, 1, 0); // occasional second transition
+            }
+        }
+
+        let comb = compress_rows_comb(&dfa, num_classes);
+        let flat_entries = dfa.states.len() * num_classes;
+        // With ~90% DEAD transitions, comb should compress significantly
+        assert!(
+            comb.next.len() < flat_entries,
+            "comb NEXT ({}) should be smaller than flat ({}) for sparse DFA",
+            comb.next.len(),
+            flat_entries
+        );
+    }
+
+    #[test]
+    fn test_comb_lookup_matches_flat() {
+        // For every (state, class), comb lookup must equal flat lookup.
+        let (dfa, partition) = build_test_dfa(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+                ("++", TokenKind::Fixed("++".to_string())),
+                ("-", TokenKind::Fixed("-".to_string())),
+                ("->", TokenKind::Fixed("->".to_string())),
+                ("=", TokenKind::Fixed("=".to_string())),
+                ("==", TokenKind::Fixed("==".to_string())),
+                ("!=", TokenKind::Fixed("!=".to_string())),
+                ("(", TokenKind::Fixed("(".to_string())),
+                (")", TokenKind::Fixed(")".to_string())),
+                ("error", TokenKind::Fixed("error".to_string())),
+            ],
+            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+        );
+
+        let num_classes = partition.num_classes;
+        let comb = compress_rows_comb(&dfa, num_classes);
+
+        for (state_idx, state) in dfa.states.iter().enumerate() {
+            for class_id in 0..num_classes {
+                let flat_result = state.transitions[class_id];
+                // Comb lookup
+                let idx = comb.base[state_idx] as usize + class_id;
+                let comb_result = if comb.check[idx] == state_idx as u32 {
+                    comb.next[idx]
+                } else {
+                    comb.default[state_idx]
+                };
+                assert_eq!(
+                    flat_result, comb_result,
+                    "mismatch at state={}, class={}: flat={}, comb={}",
+                    state_idx, class_id, flat_result, comb_result
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_comb_collision_detection() {
+        // Two states sharing transitions on the same class get different offsets
+        let num_classes = 4;
+        let mut dfa = Dfa::new(num_classes);
+        let s1 = dfa.add_state(DfaState::with_classes(num_classes));
+        let s2 = dfa.add_state(DfaState::with_classes(num_classes));
+        dfa.set_transition(s1, 0, 0); // both have transition on class 0
+        dfa.set_transition(s2, 0, 0);
+
+        let comb = compress_rows_comb(&dfa, num_classes);
+        // They can't share the same base offset (both write to base+0)
+        assert_ne!(
+            comb.base[s1 as usize], comb.base[s2 as usize],
+            "colliding states should get different base offsets"
+        );
+    }
+
+    #[test]
+    fn test_comb_compression_ratio_report() {
+        // Print flat vs comb sizes for visibility
+        let specs = vec![
+            ("+", TokenKind::Fixed("+".to_string())),
+            ("++", TokenKind::Fixed("++".to_string())),
+            ("-", TokenKind::Fixed("-".to_string())),
+            ("->", TokenKind::Fixed("->".to_string())),
+            ("=", TokenKind::Fixed("=".to_string())),
+            ("==", TokenKind::Fixed("==".to_string())),
+            ("!=", TokenKind::Fixed("!=".to_string())),
+            ("(", TokenKind::Fixed("(".to_string())),
+            (")", TokenKind::Fixed(")".to_string())),
+            ("{", TokenKind::Fixed("{".to_string())),
+            ("}", TokenKind::Fixed("}".to_string())),
+            ("[", TokenKind::Fixed("[".to_string())),
+            ("]", TokenKind::Fixed("]".to_string())),
+            (",", TokenKind::Fixed(",".to_string())),
+            ("error", TokenKind::Fixed("error".to_string())),
+        ];
+        let (dfa, partition) = build_test_dfa(
+            &specs,
+            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+        );
+
+        let num_classes = partition.num_classes;
+        let flat_bytes = dfa.states.len() * num_classes * 4;
+        let comb = compress_rows_comb(&dfa, num_classes);
+        let comb_bytes = comb.total_bytes();
+        let sparsity = analyze_sparsity(&dfa);
+
+        eprintln!("Comb compression ratio report:");
+        eprintln!(
+            "  DFA: {} states, {} classes, {:.1}% dead",
+            dfa.states.len(),
+            num_classes,
+            sparsity.dead_fraction * 100.0
+        );
+        eprintln!(
+            "  Flat:  {} bytes ({} entries)",
+            flat_bytes,
+            dfa.states.len() * num_classes
+        );
+        eprintln!(
+            "  Comb:  {} bytes (NEXT: {}, CHECK: {}, BASE: {}, DEFAULT: {})",
+            comb_bytes,
+            comb.next.len(),
+            comb.check.len(),
+            comb.base.len(),
+            comb.default.len()
+        );
+        if flat_bytes > 0 {
+            eprintln!(
+                "  Ratio: {:.1}%",
+                comb_bytes as f64 / flat_bytes as f64 * 100.0
+            );
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Bitmap compression tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_bitmap_tables_simple() {
+        // 2-state, 4-class DFA with known bitmaps
+        let num_classes = 4;
+        let mut dfa = Dfa::new(num_classes);
+        let s1 = dfa.add_state(DfaState::with_classes(num_classes));
+        dfa.set_transition(0, 0, s1);  // state 0, class 0 → s1
+        dfa.set_transition(0, 2, s1);  // state 0, class 2 → s1
+
+        let tables = build_bitmap_tables(&dfa);
+
+        // State 0 has classes 0 and 2 set → bitmap = 0b0101 = 5
+        assert_eq!(tables.bitmaps[0], 5);
+        assert_eq!(tables.targets[tables.offsets[0] as usize], s1); // class 0
+        assert_eq!(tables.targets[tables.offsets[0] as usize + 1], s1); // class 2
+
+        // State 1 has no transitions → bitmap = 0
+        assert_eq!(tables.bitmaps[s1 as usize], 0);
+    }
+
+    #[test]
+    fn test_bitmap_lookup_equivalence() {
+        // For every (state, class), bitmap lookup must equal flat lookup.
+        let (dfa, partition) = build_test_dfa(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+                ("-", TokenKind::Fixed("-".to_string())),
+                ("*", TokenKind::Fixed("*".to_string())),
+                ("==", TokenKind::Fixed("==".to_string())),
+                ("!=", TokenKind::Fixed("!=".to_string())),
+                ("(", TokenKind::Fixed("(".to_string())),
+                (")", TokenKind::Fixed(")".to_string())),
+            ],
+            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+        );
+
+        assert!(
+            partition.num_classes <= 32,
+            "bitmap test requires ≤32 classes"
+        );
+
+        let tables = build_bitmap_tables(&dfa);
+
+        for (state_idx, state) in dfa.states.iter().enumerate() {
+            for class_id in 0..partition.num_classes {
+                let flat_result = state.transitions[class_id];
+                // Bitmap lookup
+                let bitmap = tables.bitmaps[state_idx];
+                let bit = 1u32 << (class_id as u32);
+                let bitmap_result = if bitmap & bit == 0 {
+                    DEAD_STATE
+                } else {
+                    let index = (bitmap & (bit - 1)).count_ones() as usize;
+                    tables.targets[tables.offsets[state_idx] as usize + index]
+                };
+                assert_eq!(
+                    flat_result, bitmap_result,
+                    "mismatch at state={}, class={}: flat={}, bitmap={}",
+                    state_idx, class_id, flat_result, bitmap_result
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "bitmap compression requires num_classes <= 32")]
+    fn test_bitmap_num_classes_guard() {
+        // Must panic for num_classes > 32
+        let mut dfa = Dfa::new(33);
+        dfa.states[0].transitions = vec![DEAD_STATE; 33];
+        build_bitmap_tables(&dfa);
+    }
+
+    #[test]
+    fn test_bitmap_codegen_valid_tokenstream() {
+        // Generated code must parse as valid Rust TokenStream
+        let (dfa, partition) = build_test_dfa(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+                ("-", TokenKind::Fixed("-".to_string())),
+            ],
+            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+        );
+
+        let token_kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Integer,
+            TokenKind::Fixed("+".to_string()),
+            TokenKind::Fixed("-".to_string()),
+        ];
+
+        let (code, _strategy) = generate_lexer_string(&dfa, &partition, &token_kinds, "test");
+        // If this doesn't panic, the generated code is valid Rust
+        let _ts: TokenStream = code
+            .parse()
+            .expect("generated compressed lexer should be valid Rust");
     }
 }

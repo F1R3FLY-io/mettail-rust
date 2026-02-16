@@ -11,7 +11,10 @@
 use proc_macro2::TokenStream;
 
 use crate::automata::{
-    codegen::{generate_lexer_code, generate_lexer_string, terminal_to_variant_name},
+    codegen::{
+        analyze_sparsity, generate_lexer_code, generate_lexer_string, terminal_to_variant_name,
+        CodegenStrategy,
+    },
     minimize::minimize_dfa,
     nfa::{build_nfa, BuiltinNeeds},
     partition::compute_equivalence_classes,
@@ -37,6 +40,10 @@ pub struct LexerStats {
     pub num_dfa_states: usize,
     pub num_minimized_states: usize,
     pub num_equiv_classes: usize,
+    /// Which codegen strategy was selected for the transition table.
+    pub codegen_strategy: CodegenStrategy,
+    /// Fraction of DFA transitions that are DEAD (0.0 to 1.0).
+    pub dead_fraction: f64,
 }
 
 /// Run the full lexer generation pipeline and return generated Rust code.
@@ -79,8 +86,12 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
         token_kinds.push(terminal.kind.clone());
     }
 
-    // Step 5: Generate code
-    let code = generate_lexer_code(&min_dfa, &partition, &token_kinds, &input.language_name);
+    // Step 5: Analyze sparsity
+    let sparsity = analyze_sparsity(&min_dfa);
+
+    // Step 6: Generate code
+    let (code, codegen_strategy) =
+        generate_lexer_code(&min_dfa, &partition, &token_kinds, &input.language_name);
 
     let stats = LexerStats {
         num_terminals: input.terminals.len(),
@@ -88,6 +99,8 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
         num_dfa_states,
         num_minimized_states,
         num_equiv_classes,
+        codegen_strategy,
+        dead_fraction: sparsity.dead_fraction,
     };
 
     (code, stats)
@@ -137,8 +150,12 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
         token_kinds.push(terminal.kind.clone());
     }
 
-    // Step 5: Generate code as string
-    let code = generate_lexer_string(&min_dfa, &partition, &token_kinds, &input.language_name);
+    // Step 5: Analyze sparsity
+    let sparsity = analyze_sparsity(&min_dfa);
+
+    // Step 6: Generate code as string
+    let (code, codegen_strategy) =
+        generate_lexer_string(&min_dfa, &partition, &token_kinds, &input.language_name);
 
     let stats = LexerStats {
         num_terminals: input.terminals.len(),
@@ -146,6 +163,8 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
         num_dfa_states,
         num_minimized_states,
         num_equiv_classes,
+        codegen_strategy,
+        dead_fraction: sparsity.dead_fraction,
     };
 
     (code, stats)
@@ -158,6 +177,8 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
 pub fn extract_terminals(
     terms: &[GrammarRuleInfo],
     types: &[TypeInfo],
+    has_binders: bool,
+    category_names: &[String],
 ) -> LexerInput {
     let mut terminal_set = std::collections::BTreeSet::new();
     let mut needs = BuiltinNeeds {
@@ -174,6 +195,36 @@ pub fn extract_terminals(
             kind: TokenKind::Fixed(text.to_string()),
             is_keyword: false,
         });
+    }
+
+    // Add binder terminals (^ and .) for lambda syntax
+    if has_binders {
+        for text in &["^", "."] {
+            terminal_set.insert(TerminalPattern {
+                text: text.to_string(),
+                kind: TokenKind::Fixed(text.to_string()),
+                is_keyword: false,
+            });
+        }
+
+        // Dollar terminals for function application syntax ($cat, $$cat()
+        for cat_name in category_names {
+            let cat_lower = cat_name.to_lowercase();
+            // $cat (e.g., "$proc", "$name")
+            let single = format!("${}", cat_lower);
+            terminal_set.insert(TerminalPattern {
+                text: single.clone(),
+                kind: TokenKind::Fixed(single),
+                is_keyword: false,
+            });
+            // $$cat( (e.g., "$$proc(", "$$name(")
+            let multi = format!("$${}(", cat_lower);
+            terminal_set.insert(TerminalPattern {
+                text: multi.clone(),
+                kind: TokenKind::Fixed(multi),
+                is_keyword: false,
+            });
+        }
     }
 
     // Check for native types
@@ -218,22 +269,6 @@ pub fn extract_terminals(
                 is_keyword,
             });
         }
-    }
-
-    // Check for dollar-prefixed terminals
-    // These are handled specially: $ident and $$ident( patterns
-    // For now, add $ as a terminal if any rule uses it
-    let has_dollar = terms.iter().any(|r| {
-        r.terminals.iter().any(|t| t.starts_with('$'))
-    });
-    if has_dollar {
-        // Dollar patterns are complex; we handle them in the parser, not the lexer.
-        // The lexer will see '$' as a single character and the parser handles the rest.
-        terminal_set.insert(TerminalPattern {
-            text: "$".to_string(),
-            kind: TokenKind::Fixed("$".to_string()),
-            is_keyword: false,
-        });
     }
 
     let language_name = types.first()

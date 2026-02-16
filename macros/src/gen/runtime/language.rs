@@ -1049,6 +1049,14 @@ fn generate_language_trait_impl(
 
             #try_direct_eval_method
 
+            fn normalize_term(&self, term: &dyn mettail_runtime::Term) -> Box<dyn mettail_runtime::Term> {
+                if let Some(typed) = term.as_any().downcast_ref::<#term_name>() {
+                    Box::new(#term_name(typed.0.normalize()))
+                } else {
+                    term.clone_box()
+                }
+            }
+
             fn create_env(&self) -> Box<dyn std::any::Any + Send + Sync> {
                 Box::new(#language_name::create_env())
             }
@@ -1234,6 +1242,19 @@ fn generate_language_trait_impl_multi(
         })
         .collect();
 
+    // normalize_term for multi-type: normalize the inner variant
+    let normalize_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            quote! {
+                #inner_enum_name::#variant(inner) => #inner_enum_name::#variant(inner.normalize())
+            }
+        })
+        .collect();
+
     // try_direct_eval for multi-type: only when at least one type has native_type
     let try_direct_eval_arms: Vec<TokenStream> = language
         .types
@@ -1292,6 +1313,17 @@ fn generate_language_trait_impl_multi(
             }
 
             #try_direct_eval_method
+
+            fn normalize_term(&self, term: &dyn mettail_runtime::Term) -> Box<dyn mettail_runtime::Term> {
+                if let Some(typed) = term.as_any().downcast_ref::<#term_name>() {
+                    let normalized = match &typed.0 {
+                        #(#normalize_arms),*
+                    };
+                    Box::new(#term_name(normalized))
+                } else {
+                    term.clone_box()
+                }
+            }
 
             fn create_env(&self) -> Box<dyn std::any::Any + Send + Sync> {
                 Box::new(#language_name::create_env())

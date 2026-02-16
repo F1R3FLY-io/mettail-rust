@@ -47,7 +47,7 @@ fn bench_extract_terminals(c: &mut Criterion) {
             BenchmarkId::from_parameter(name),
             &prepared,
             |b, prepared| {
-                b.iter(|| extract_terminals(&prepared.grammar_rules, &prepared.type_infos));
+                b.iter(|| extract_terminals(&prepared.grammar_rules, &prepared.type_infos, false, &[]));
             },
         );
     }

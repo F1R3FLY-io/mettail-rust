@@ -14,6 +14,7 @@
 6. [Collection Parsing Issues](#6-collection-parsing-issues)
 7. [Build and Compilation Issues](#7-build-and-compilation-issues)
 8. [Performance Tips](#8-performance-tips)
+9. [Dollar Syntax Type Mismatch](#9-dollar-syntax-type-mismatch)
 
 ---
 
@@ -367,3 +368,62 @@ println!("{:.2} us/parse", elapsed.as_micros() as f64 / 10_000.0);
 
 Expected: sub-microsecond for simple expressions, low single-digit microseconds
 for complex expressions.
+
+---
+
+## 9. Dollar Syntax Type Mismatch
+
+### Symptom
+
+A dollar application does not beta-reduce when you expect it to:
+
+```
+> $proc(^x.{*(x)}, {})
+*(x)
+```
+
+The result is `*(x)` (unchanged) instead of the expected `*({})`.
+
+### Cause
+
+The `^x.{body}` syntax **always** creates `LamProc` — a lambda that
+binds a **Proc**-typed variable. When beta-reducing `$proc(LamProc(scope), arg)`,
+the runtime calls `substitute_proc`, which replaces occurrences of `x` in
+**Proc-typed** positions only.
+
+In the expression `*(x)`, the `x` inside `*( )` occupies a **Name-typed**
+position (the `PDrop` rule takes `n:Name`). Since `substitute_proc` does
+not affect Name-typed positions, the `x` is not replaced, and no
+reduction occurs.
+
+### Fix
+
+Ensure the binder variable is used in a position matching the binder's type:
+
+```
+# Correct: x used as Proc (primary category)
+$proc(^x.{x}, {})        → {}
+
+# Correct: x used in Proc position (parallel composition)
+$proc(^x.{x | x}, {})    → {} | {}
+
+# Will NOT reduce: x used as Name, not Proc
+$proc(^x.{*(x)}, {})     → *(x)
+```
+
+**General rule:** Use `$proc` when the body uses `x` as a `Proc`. The
+`^x.{body}` syntax can only create `LamProc` (Proc binder). `LamName`
+(Name binder) can only be constructed programmatically, not via the
+`^x.{...}` surface syntax.
+
+### Diagnostic
+
+If unsure which positions are Proc-typed vs Name-typed, check the grammar
+rules. For example, in RhoCalc:
+
+- `PDrop . n:Name |- "*" "(" n ")" : Proc` — the `n` position is **Name**
+- `POutput . n:Name, q:Proc |- n "!" "(" q ")" : Proc` — `n` is **Name**, `q` is **Proc**
+- `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc` — `ps` elements are **Proc**
+
+A binder `^x` created via `^x.{body}` will only substitute into
+positions whose category matches the primary category (Proc).

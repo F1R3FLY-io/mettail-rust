@@ -1,6 +1,6 @@
 # PraTTaIL: Automata Pipeline (Lexer Generation)
 
-**Date:** 2026-02-14 (updated 2026-02-16)
+**Date:** 2026-02-14 (updated 2026-02-17)
 
 ---
 
@@ -356,6 +356,114 @@ The original per-terminal `build_string_fragment()` function is retained
 with `#[cfg(test)]` annotation for unit testing. It is no longer called
 in production---all fixed terminals go through `build_keyword_trie()`.
 
+### DAFSA Suffix Sharing
+
+#### Motivation
+
+The prefix trie shares prefixes across terminals but **not suffixes**.
+Consider terminals `input` and `output`---both end in `put`, but the trie
+allocates separate chains for these shared suffixes. A **DAFSA** (Directed
+Acyclic Finite State Automaton) extends prefix sharing to also share
+suffix states, producing a more compact NFA.
+
+#### Algorithm: Daciuk's Incremental Construction
+
+PraTTaIL uses an adaptation of Daciuk et al.'s incremental algorithm
+(2000) to build the DAFSA directly during trie construction. The key
+insight: if two subtrees have identical structure (same transitions and
+same accept token), they can be merged into one.
+
+Two types support this:
+
+```
+NodeSignature {
+    accept: Option<TokenKind>,           // Accept token (if any)
+    transitions: Vec<(u8, StateId)>,     // Sorted by byte value
+}
+
+PathEntry {
+    state: StateId,    // NFA state at this position in the word
+    byte: u8,          // Edge label from parent to this state
+}
+```
+
+`NodeSignature` captures the essential identity of an NFA state: its
+accept status and outgoing transitions. Two states with identical
+signatures are interchangeable.
+
+The algorithm processes terminals in **sorted order** (guaranteed by
+`BTreeSet<TerminalPattern>`), which ensures that the common prefix
+between consecutive terminals is always a prefix of the current path.
+
+```
+build_keyword_trie(nfa, terminals):
+  trie_root = nfa.add_state()
+  registry: HashMap<NodeSignature, StateId> = {}
+  previous_path: Vec<PathEntry> = []
+
+  for each fixed terminal T with text = [c_0, c_1, ..., c_n] (sorted):
+    // 1. FREEZE: share suffixes of previous word not shared with current
+    common_prefix_len = longest_common_prefix(previous_path, T.text)
+    freeze_suffixes(nfa, registry, previous_path, trie_root, common_prefix_len)
+
+    // 2. INSERT: extend the trie from the divergence point
+    current = if common_prefix_len > 0:
+                previous_path[common_prefix_len - 1].state
+              else:
+                trie_root
+    for each byte c_i in text[common_prefix_len..]:
+      new_state = nfa.add_state()
+      nfa.add_transition(current, c_i, new_state)
+      path.push(PathEntry { state: new_state, byte: c_i })
+      current = new_state
+
+    // Mark final state as accepting
+    current.accept = T.kind
+
+  // 3. FINALIZE: freeze the entire last path
+  freeze_suffixes(nfa, registry, path, trie_root, 0)
+
+  return trie_root
+```
+
+#### freeze_suffixes()
+
+```
+freeze_suffixes(nfa, registry, path, trie_root, keep_count):
+  // Walk backward from path end to keep_count
+  for i in (keep_count..path.len()).rev():
+    sig = NodeSignature::from_nfa_state(nfa, path[i].state)
+    if let Some(&canonical) = registry.get(&sig):
+      // Redirect parent edge to existing canonical state (suffix sharing)
+      parent = if i > 0: path[i-1].state else: trie_root
+      redirect parent's transition on path[i].byte -> canonical
+    else:
+      // Register this state as the canonical representative
+      registry.insert(sig, path[i].state)
+```
+
+The `trie_root` parameter is needed because `path[0]`'s parent is the
+root itself, which is not part of the path.
+
+#### Current Grammar Behavior
+
+For current MeTTaIL grammars, **no suffix merging occurs at leaf nodes**
+because every terminal has a unique `Fixed(text)` token kind. Since
+`NodeSignature` includes the accept token, leaf nodes always differ.
+The benefit comes from shared **non-accepting intermediate states**
+(e.g., multiple keywords sharing internal character sequences).
+
+This is validated by 4 identity tests that verify DAFSA produces
+byte-identical DFA codegen compared to prefix-only trie construction
+for all 4 grammars (Calculator, Ambient, RhoCalc, and the minimal spec).
+
+#### Legacy build_keyword_trie_prefix_only()
+
+The prefix-only trie builder `build_keyword_trie_prefix_only()` is
+preserved for DFA equivalence testing. It constructs the same prefix
+trie without suffix sharing, allowing tests to verify that the DAFSA
+optimization does not change the DFA output.
+
 ---
 
 ## 5. Alphabet Partitioning (Equivalence Classes)
@@ -538,6 +646,57 @@ Minimized DFA         |   ~10
 The minimized DFA typically has 30-50% fewer states than the un-minimized
 DFA for grammars with shared-prefix terminals.
 
+### BFS Canonical State Reordering
+
+After Hopcroft minimization, `canonicalize_state_order()` in `minimize.rs`
+renumbers all DFA states in **BFS traversal order** starting from state 0
+(the start state).
+
+#### Motivation
+
+Hopcroft's algorithm assigns state IDs based on partition refinement
+order, which depends on the NFA topology. Different NFA constructions
+(e.g., prefix-only trie vs DAFSA) may produce different intermediate
+state numberings, even though the final minimized DFA is structurally
+identical. This causes generated match arms to appear in different
+orders, which can:
+
+1. Confuse benchmark comparisons (identical DFAs with different codegen)
+2. Make regression testing fragile (byte-non-identical output for
+   equivalent DFAs)
+
+#### Algorithm
+
+```
+canonicalize_state_order(dfa):
+  // BFS from start state
+  queue = [dfa.start]      // always state 0
+  visited = {dfa.start}
+  new_order = []
+
+  while queue is not empty:
+    state = queue.pop_front()
+    new_order.push(state)
+    for each (class, target) in state.transitions (sorted by class):
+      if target not in visited and target != DEAD:
+        visited.add(target)
+        queue.push(target)
+
+  // Early exit if already in BFS order
+  if new_order[i] == i for all i: return
+
+  // Build old_to_new mapping and rebuild state vector
+  old_to_new[new_order[i]] = i for each i
+  Remap all transitions: target = old_to_new[target]
+  Reorder state vector to match new numbering
+```
+
+**Complexity:** O(S + T) where S = states, T = total transitions.
+
+This is called as the final step of `minimize_dfa()`, after Hopcroft
+refinement. It ensures that the generated lexer code is deterministic
+regardless of the NFA construction strategy used.
+
 ---
 
 ## 8. Code Generation: String-Based, Direct-Coded vs Table-Driven
@@ -657,36 +816,201 @@ fn dfa_next(state: u32, class: u8) -> u32 {
 
 - Constant-time lookup (single array index).
 - Compact representation for large DFAs.
-- Row displacement compression can further reduce table size
-  (not yet implemented; planned for very large grammars).
+- Row displacement (comb) or bitmap compression can further reduce table
+  size (see below).
 
-### Row Displacement Compression (Future)
+### Sparsity Analysis
 
-For very large DFAs, row displacement compression packs sparse rows into
-a shared array by finding offsets where non-dead entries do not overlap:
+Before selecting a compression strategy, `analyze_sparsity()` examines
+the DFA transition table to determine how sparse it is:
 
-```
-Before compression (3 states, 10 classes, many dead entries):
-
-  State 0: [_, _, _, 3, _, _, 4, _, _, _]
-  State 1: [1, 1, _, _, _, _, _, 1, 1, _]
-  State 2: [_, _, 5, _, _, _, _, _, _, 6]
-
-After displacement (shared array with offsets):
-
-  Offset[0] = 0,  Offset[1] = 2,  Offset[2] = 5
-
-  Shared: [_, _, 1, 3, 1, _, 4, 5, 1, 1, _, _, _, _, 6]
-                 |     |           |              |
-            state 1[0] state 0[3] state 2[2]  state 2[9]
-
-  Check:  check[state * NUM_CLASSES + class] == state
-  Value:  shared[offset[state] + class]
+```rust
+struct SparsityInfo {
+    live_per_state: Vec<usize>,  // Non-dead transitions per state
+    total_live: usize,           // Total non-dead transitions across all states
+    dead_fraction: f64,          // Fraction of entries that are dead (0.0-1.0)
+}
 ```
 
-This is planned but not yet implemented because current MeTTaIL grammars
-produce DFAs with fewer than 30 states, well within the direct-coded
-threshold.
+For typical MeTTaIL grammars, the dead fraction is 0.7-0.9 (70-90% of
+the flat table entries are dead/unreachable transitions). This high
+sparsity motivates compression.
+
+### Row Displacement (Comb) Compression
+
+Row displacement packs sparse rows into a shared array by finding
+offsets where non-dead entries do not overlap. This is also known as
+"comb compression" (visualize the rows as combs meshing together).
+
+```
+CombTable {
+    base: Vec<u32>,     // Displacement offset per state
+    default: Vec<u32>,  // Default target (typically DEAD_STATE) per state
+    next: Vec<u32>,     // Packed target states
+    check: Vec<u32>,    // Owner state for collision detection
+}
+```
+
+**Lookup formula:**
+
+```
+idx = BASE[state] + class
+target = if CHECK[idx] == state { NEXT[idx] } else { DEFAULT[state] }
+```
+
+**Algorithm: `compress_rows_comb()`**
+
+```
+compress_rows_comb(dfa, num_classes):
+  // 1. Extract sparse rows: only non-dead transitions
+  rows = [(state_idx, [(class_id, target)])] for each state
+
+  // 2. Sort by density (densest first) for tighter packing
+  rows.sort_by_descending(|row| row.transitions.len())
+
+  // 3. Greedy offset search
+  for each row (in density order):
+    for d = 0, 1, 2, ...:
+      if no collision at offset d:
+        BASE[state] = d
+        place row entries at NEXT[d + class] = target, CHECK[d + class] = state
+        break
+
+  // 4. Pad NEXT/CHECK to max(BASE) + num_classes to eliminate bounds checks
+  // 5. Set DEFAULT[state] = DEAD_STATE for all states
+```
+
+The densest-first heuristic ensures that rows with the most live entries
+are placed first, when the shared array is most empty. This typically
+achieves near-optimal packing.
+
+**Generated lexer (`write_comb_driven_lexer`):**
+
+```rust
+static BASE: [u32; NUM_STATES] = [...];
+static DEFAULT: [u32; NUM_STATES] = [...];
+static NEXT: [u32; TABLE_SIZE] = [...];
+static CHECK: [u32; TABLE_SIZE] = [...];
+
+fn dfa_next(state: u32, class: u8) -> u32 {
+    let idx = BASE[state as usize] as usize + class as usize;
+    if CHECK[idx] == state { NEXT[idx] } else { DEFAULT[state as usize] }
+}
+```
+
+### Bitmap Node Compression
+
+An alternative to comb compression: represent each state's live
+transitions as a bitmap, with a dense array of only the live targets.
+
+```
+BitmapTables {
+    bitmaps: Vec<u32>,   // One u32 bitmap per state
+    offsets: Vec<u16>,   // Start index into targets array per state
+    targets: Vec<u32>,   // Dense array of live target states
+}
+```
+
+**Guard:** This strategy requires `num_classes ≤ 32` (must fit in a
+`u32` bitmap).
+
+**Lookup formula:**
+
+```
+bit = 1u32 << class
+if bitmaps[state] & bit == 0:
+    return DEAD_STATE              // No transition on this class
+else:
+    index = (bitmaps[state] & (bit - 1)).count_ones()  // popcount
+    return targets[offsets[state] + index]
+```
+
+The `count_ones()` call uses hardware `POPCNT` on modern CPUs (one
+cycle on x86-64 with SSE4.2+), making this O(1) per lookup.
+
+**Algorithm: `build_bitmap_tables()`**
+
+```
+build_bitmap_tables(dfa):
+  for each state:
+    bitmap = 0u32
+    live_targets = []
+    for class in 0..num_classes:
+      target = dfa.transitions[state][class]
+      if target != DEAD:
+        bitmap |= 1u32 << class
+        live_targets.push(target)
+    bitmaps.push(bitmap)
+    offsets.push(targets.len())
+    targets.extend(live_targets)
+```
+
+**Generated lexer (`write_bitmap_driven_lexer`):**
+
+```rust
+static BITMAPS: [u32; NUM_STATES] = [...];
+static OFFSETS: [u16; NUM_STATES] = [...];
+static TARGETS: [u32; NUM_LIVE_TRANSITIONS] = [...];
+
+fn dfa_next(state: u32, class: u8) -> u32 {
+    let bit = 1u32 << class;
+    let bm = BITMAPS[state as usize];
+    if bm & bit == 0 {
+        u32::MAX  // DEAD_STATE
+    } else {
+        let idx = OFFSETS[state as usize] as usize
+            + (bm & (bit - 1)).count_ones() as usize;
+        TARGETS[idx]
+    }
+}
+```
+
+### Strategy Selection
+
+PraTTaIL selects the best compression strategy automatically based on
+DFA size and table cost:
+
+```
+CodegenStrategy enum:
+  DirectCoded       — Match arms for ≤30 DFA states (default for small grammars)
+  CombCompressed    — Row displacement for >30 states or when comb is smaller
+  BitmapCompressed  — Bitmap + popcount for >30 states when classes ≤ 32
+
+Selection logic:
+  if minimized_states ≤ 30:
+    strategy = DirectCoded
+  else:
+    comb = compress_rows_comb(dfa, num_classes)
+    if num_classes ≤ 32:
+      bitmap = build_bitmap_tables(dfa)
+      if bitmap.total_bytes() ≤ comb.total_bytes():
+        strategy = BitmapCompressed
+      else:
+        strategy = CombCompressed
+    else:
+      strategy = CombCompressed
+```
+
+The `total_bytes()` method on each table type computes the total
+memory footprint (array lengths × element sizes). The strategy with
+the smallest footprint wins.
+
+`LexerStats` reports the selected strategy:
+
+```rust
+struct LexerStats {
+    // ... existing fields ...
+    codegen_strategy: CodegenStrategy,  // Which strategy was selected
+    dead_fraction: f64,                 // Fraction of dead transitions (0.0-1.0)
+}
+```
+
+### Legacy Flat Table-Driven Lexer
+
+The original flat `write_table_driven_lexer()` function (uncompressed
+`TRANSITIONS[NUM_STATES * NUM_CLASSES]` array) is preserved with
+`#[allow(dead_code)]` annotation. It is no longer called in production
+but may be useful for debugging or comparison.
 
 ---
 

@@ -2,9 +2,9 @@
 
 ## Summary
 
-PraTTaIL achieves **17x to 893x speedup** over LALRPOP for parse-only benchmarks across
+PraTTaIL achieves **21x to 900x speedup** over LALRPOP for parse-only benchmarks across
 all 4 languages (Ambient, Calculator, Lambda, RhoCalc). The geometric mean speedup
-across all 39 benchmarks is approximately **170x**.
+across all 39 benchmarks is approximately **192x**.
 
 **Date:** 2026-02-14 (updated 2026-02-16)
 **Branch:** `feature/improved-parsing`
@@ -175,6 +175,9 @@ that improve both parse-time and codegen-time performance:
 | Aho-Corasick keyword trie | Sprint 5D | NFA state reduction: **~30–42%** |
 | Zero-copy lexing | Sprint 5E | Zero `String` allocs during lex |
 | Panic-mode error recovery | Sprint 4A | Functional addition (zero overhead on non-recovering path) |
+| DAFSA suffix sharing | Sprint 5F | NFA sharing for large grammars (no impact on current 4 grammars) |
+| Comb/bitmap compression | Sprint 5F | Table compression for >30-state DFAs (not triggered by current grammars) |
+| BFS canonical state ordering | Performance investigation | Deterministic DFA state numbering; geomean **173x → 192x** |
 
 The zero-copy lexing improvement (Sprint 5E) is the most impactful for parse-time performance:
 `Token<'a>` borrows `&'a str` directly from the input for `Ident`, `StringLit`, `Dollar`, and

@@ -881,6 +881,9 @@ impl Repl {
             term
         };
 
+        // Normalize (beta-reduce Apply/MApply of Lam/MLam) before evaluation
+        let term = language.normalize_term(term.as_ref());
+
         // Direct eval only for exec: step must always run Ascent and show the initial term
         if !step_mode {
             if let Some(result_term) = language.try_direct_eval(term.as_ref()) {

@@ -38,6 +38,7 @@
 pub mod automata;
 pub mod binding_power;
 pub mod dispatch;
+pub mod ebnf;
 pub mod lexer;
 pub mod pipeline;
 pub mod pratt;

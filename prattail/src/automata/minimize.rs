@@ -232,7 +232,80 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
     }
 
     new_dfa.start = 0;
+
+    // --- Step 6: Canonical BFS state reordering ---
+    // Renumber states in BFS order from state 0 so that the generated code is
+    // deterministic regardless of NFA topology (e.g., DAFSA vs prefix-only).
+    // This is O(S + T) where S = states, T = transitions — negligible overhead.
+    canonicalize_state_order(&mut new_dfa);
+
     new_dfa
+}
+
+/// Renumber DFA states in BFS order from the start state.
+///
+/// This ensures that generated match arms appear in a canonical order,
+/// independent of the NFA construction strategy (DAFSA vs prefix-only trie).
+/// Future grammars with shared `Ident` tokens could trigger DAFSA merging,
+/// producing different NFA topologies; canonical ordering makes the output
+/// deterministic regardless.
+///
+/// Complexity: O(S + T) where S = number of states, T = total transitions.
+pub fn canonicalize_state_order(dfa: &mut Dfa) {
+    let n = dfa.states.len();
+    if n <= 1 {
+        return;
+    }
+
+    let num_classes = dfa.num_classes;
+
+    // BFS from start state (always 0 after minimize_dfa)
+    let mut old_to_new: Vec<StateId> = vec![DEAD_STATE; n];
+    let mut new_order: Vec<StateId> = Vec::with_capacity(n);
+    let mut queue = std::collections::VecDeque::with_capacity(n);
+
+    old_to_new[dfa.start as usize] = 0;
+    new_order.push(dfa.start);
+    queue.push_back(dfa.start);
+
+    while let Some(old_id) = queue.pop_front() {
+        for class_id in 0..num_classes {
+            let target = dfa.states[old_id as usize].transitions[class_id];
+            if target != DEAD_STATE && old_to_new[target as usize] == DEAD_STATE {
+                let new_id = new_order.len() as StateId;
+                old_to_new[target as usize] = new_id;
+                new_order.push(target);
+                queue.push_back(target);
+            }
+        }
+    }
+
+    // Check if already in BFS order (common case — skip reordering)
+    let already_ordered = new_order.iter().enumerate().all(|(i, &old)| old == i as StateId);
+    if already_ordered && new_order.len() == n {
+        return;
+    }
+
+    // Build reordered states vector
+    let mut new_states: Vec<DfaState> = Vec::with_capacity(new_order.len());
+    for &old_id in &new_order {
+        let old_state = &dfa.states[old_id as usize];
+        let mut new_transitions = Vec::with_capacity(num_classes);
+        for &target in &old_state.transitions {
+            if target == DEAD_STATE {
+                new_transitions.push(DEAD_STATE);
+            } else {
+                new_transitions.push(old_to_new[target as usize]);
+            }
+        }
+        new_states.push(DfaState {
+            transitions: new_transitions,
+            accept: old_state.accept.clone(),
+        });
+    }
+
+    dfa.states = new_states;
+    dfa.start = 0;
 }
 
 #[cfg(test)]
@@ -277,6 +350,63 @@ mod tests {
             "minimized DFA ({} states) should have no more states than original ({} states)",
             min_dfa.states.len(),
             dfa.states.len()
+        );
+    }
+
+    #[test]
+    fn test_canonicalize_idempotent() {
+        // Canonical reordering applied twice should produce the same DFA.
+        let terminals = vec![
+            TerminalPattern {
+                text: "+".to_string(),
+                kind: TokenKind::Fixed("+".to_string()),
+                is_keyword: false,
+            },
+            TerminalPattern {
+                text: "++".to_string(),
+                kind: TokenKind::Fixed("++".to_string()),
+                is_keyword: false,
+            },
+            TerminalPattern {
+                text: "-".to_string(),
+                kind: TokenKind::Fixed("-".to_string()),
+                is_keyword: false,
+            },
+            TerminalPattern {
+                text: "->".to_string(),
+                kind: TokenKind::Fixed("->".to_string()),
+                is_keyword: false,
+            },
+        ];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: true,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs);
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+        let min_dfa = minimize_dfa(&dfa);
+
+        // Snapshot state after first canonicalization (already done in minimize_dfa)
+        let first_pass_states: Vec<_> = min_dfa.states.iter()
+            .map(|s| (s.transitions.clone(), s.accept.clone()))
+            .collect();
+
+        // Apply canonicalization again
+        let mut dfa_copy = min_dfa.clone();
+        canonicalize_state_order(&mut dfa_copy);
+
+        let second_pass_states: Vec<_> = dfa_copy.states.iter()
+            .map(|s| (s.transitions.clone(), s.accept.clone()))
+            .collect();
+
+        assert_eq!(
+            first_pass_states, second_pass_states,
+            "canonical BFS reordering should be idempotent"
         );
     }
 
