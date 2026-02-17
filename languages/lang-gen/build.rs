@@ -17,7 +17,7 @@ fn main() {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        if path.extension().map_or(true, |e| e != "rs") {
+        if path.extension().is_none_or(|e| e != "rs") {
             continue;
         }
         let stem = match path.file_stem().and_then(|s| s.to_str()) {
@@ -45,7 +45,7 @@ fn main() {
             let segs = &item_macro.mac.path.segments;
             let is_language = segs
                 .last()
-                .map_or(false, |s| s.ident == "language");
+                .is_some_and(|s| s.ident == "language");
             if !is_language {
                 continue;
             }

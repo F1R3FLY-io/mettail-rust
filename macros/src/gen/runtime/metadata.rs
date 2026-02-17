@@ -801,7 +801,7 @@ fn generate_logic_rule_defs(language: &LanguageDef) -> TokenStream {
         .map(|s| s.trim())
         .filter(|s| !s.is_empty())
         .filter(|s| !s.starts_with("relation "))
-        .map(|s| normalize_rule_whitespace(s))
+        .map(normalize_rule_whitespace)
         .collect();
     
     if rules.is_empty() {

@@ -230,7 +230,7 @@ fn generate_hol_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 })
                 .collect();
             if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
-                (simple.get(0), simple.get(1))
+                (simple.first(), simple.get(1))
             {
                 let left_type = language.types.iter().find(|t| t.name == *left_ty);
                 let right_type = language.types.iter().find(|t| t.name == *right_ty);

@@ -908,7 +908,7 @@ fn generate_language_struct_multi(
                 } else {
                     quote! {}
                 }
-            }).unwrap_or(quote! {});
+            }).unwrap_or_default();
             quote! {
                 #inner_enum_name::#variant(inner) => {
                     use ascent::*;
