@@ -45,8 +45,8 @@ language! {
             true => false,
             false => true,
         }}] step;
-        And . a:Bool, b:Bool |- a "&&" b : Bool ![a && b] step;
-        Or . a:Bool, b:Bool |- a "||" b : Bool ![a || b] step;
+        And . a:Bool, b:Bool |- a "and" b : Bool ![a && b] step;
+        Or . a:Bool, b:Bool |- a "or" b : Bool ![a || b] step;
         Xor . a:Bool, b:Bool |- a "xor" b : Bool ![a ^ b] step;
         // String operations
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
