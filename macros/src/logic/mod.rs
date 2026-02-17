@@ -479,7 +479,7 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 rules.push(identity_rule);
             }
 
-            // fold_C(s, res) for each binary constructor with rust_code and eval_mode Fold
+            // fold_C(s, res) for each constructor with rust_code and eval_mode Fold (unary or binary)
             for rule in &language.terms {
                 if rule.category != *category
                     || rule.eval_mode != Some(EvalMode::Fold)
@@ -488,24 +488,33 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                     continue;
                 }
                 let param_names = fold_param_names(rule);
-                if param_names.len() != 2 {
-                    continue;
-                }
                 let label = &rule.label;
-                let p0 = &param_names[0];
-                let p1 = &param_names[1];
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
 
-                rules.push(quote! {
-                    #fold_rel(s.clone(), res) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        #fold_rel(left.as_ref().clone(), lv),
-                        #fold_rel(right.as_ref().clone(), rv),
-                        let #p0 = lv,
-                        let #p1 = rv,
-                        let res = (#rust_code);
-                });
+                if param_names.len() == 2 {
+                    let p0 = &param_names[0];
+                    let p1 = &param_names[1];
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, right) = s,
+                            #fold_rel(left.as_ref().clone(), lv),
+                            #fold_rel(right.as_ref().clone(), rv),
+                            let #p0 = lv,
+                            let #p1 = rv,
+                            let res = (#rust_code);
+                    });
+                } else if param_names.len() == 1 {
+                    let p0 = &param_names[0];
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(inner) = s,
+                            #fold_rel(inner.as_ref().clone(), lv),
+                            let #p0 = lv,
+                            let res = (#rust_code);
+                    });
+                }
             }
         }
 
@@ -515,12 +524,24 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 continue;
             }
             let label = &rule.label;
-            rules.push(quote! {
-                #rw_rel(s.clone(), t.clone()) <--
-                    #cat_rel(s),
-                    if let #category::#label(_, _) = s,
-                    #fold_rel(s, t);
-            });
+            let n = fold_field_count(rule);
+            let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
+            let rw_rule = if n == 0 {
+                quote! {
+                    #rw_rel(s.clone(), t.clone()) <--
+                        #cat_rel(s),
+                        if let #category::#label = s,
+                        #fold_rel(s, t);
+                }
+            } else {
+                quote! {
+                    #rw_rel(s.clone(), t.clone()) <--
+                        #cat_rel(s),
+                        if let #category::#label(#(#pat),*) = s,
+                        #fold_rel(s, t);
+                }
+            };
+            rules.push(rw_rule);
         }
     }
 

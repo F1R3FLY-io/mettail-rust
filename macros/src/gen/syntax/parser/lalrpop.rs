@@ -131,13 +131,24 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
 
     // When we have 3+ types, non-primary categories use prefix keywords ("name:", "int:"). Ensure
     // those keywords win over the Ident regex so "name" is tokenized as literal, not Ident.
+    // When any type is bool, also reserve "true" and "false" for Boolean literals.
     if language.types.len() >= 3 {
-        let keywords: Vec<String> = language
+        let mut keywords: Vec<String> = language
             .types
             .iter()
             .skip(1) // primary gets bare Ident
             .map(|t| format!("\"{}\"", t.name.to_string().to_lowercase()))
             .collect();
+        let has_bool = language.types.iter().any(|t| {
+            t.native_type
+                .as_ref()
+                .map(|nt| native_type_to_string(nt) == "bool")
+                .unwrap_or(false)
+        });
+        if has_bool {
+            keywords.push("\"true\"".to_string());
+            keywords.push("\"false\"".to_string());
+        }
         if !keywords.is_empty() {
             grammar.push_str("match {\n");
             for kw in &keywords {

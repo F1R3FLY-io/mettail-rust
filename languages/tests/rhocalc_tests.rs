@@ -327,6 +327,39 @@ fn test_corner_nested_par_drop() {
     assert!(results.rewrites.len() >= 1, "Exec under par should fire");
 }
 
+#[test]
+fn test_native_types_bool_and_comparisons() {
+    mettail_runtime::clear_var_cache();
+    let lang = RhoCalcLanguage;
+    // Bool literals
+    let term = lang.parse_term("{ true | false }").expect("parse bool literals");
+    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    assert!(!results.normal_forms().is_empty(), "should reduce");
+    // Comparison: 1 == 1 -> true
+    let term = lang.parse_term("{ 1 == 1 }").expect("parse eq");
+    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    let displays: Vec<&str> = results.normal_forms().iter().map(|nf| nf.display.as_str()).collect();
+    assert!(
+        displays.iter().any(|d| d.contains("true")),
+        "normal forms should include true, got {:?}",
+        displays
+    );
+}
+
+#[test]
+fn test_native_types_string_and_concat() {
+    mettail_runtime::clear_var_cache();
+    let lang = RhoCalcLanguage;
+    let term = lang.parse_term(r#"{ concat("hello", "world") }"#).expect("parse concat");
+    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    let displays: Vec<&str> = results.normal_forms().iter().map(|nf| nf.display.as_str()).collect();
+    assert!(
+        displays.iter().any(|d| d.contains("helloworld")),
+        "normal forms should include concat result, got {:?}",
+        displays
+    );
+}
+
 fn main() {
     let tests = multi_comm_tests();
 
