@@ -45,7 +45,10 @@ language! {
             true => false,
             false => true,
         }}] step;
-        Comp . a:Bool, b:Bool |- a "&&" b : Bool ![a && b] step;
+        And . a:Bool, b:Bool |- a "&&" b : Bool ![a && b] step;
+        Or . a:Bool, b:Bool |- a "||" b : Bool ![a || b] step;
+        Xor . a:Bool, b:Bool |- a "xor" b : Bool ![a ^ b] step;
+        // String operations
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
         // Int operations
@@ -76,11 +79,6 @@ language! {
     equations {
     },
     rewrites {
-        AddStrCongL . | S ~> T |- (AddStr S R) ~> (AddStr T R);
-        AddStrCongR . | S ~> T |- (AddStr L S) ~> (AddStr L T);
-        CompCongL . | S ~> T |- (Comp S R) ~> (Comp T R);
-        CompCongR . | S ~> T |- (Comp L S) ~> (Comp L T);
-        NotCong . | S ~> T |- (Not S) ~> (Not T);
         // Comparison operations
         EqIntCongL . | S ~> T |- (EqInt S R) ~> (EqInt T R);
         EqIntCongR . | S ~> T |- (EqInt L S) ~> (EqInt L T);
@@ -131,13 +129,17 @@ language! {
         NeStrCongL . | S ~> T |- (NeStr S R) ~> (NeStr T R);
         NeStrCongR . | S ~> T |- (NeStr L S) ~> (NeStr L T);
         // Boolean operations
+        AndCongL . | S ~> T |- (And S R) ~> (And T R);
+        AndCongR . | S ~> T |- (And L S) ~> (And L T);
+        OrCongL . | S ~> T |- (Or S R) ~> (Or T R);
+        OrCongR . | S ~> T |- (Or L S) ~> (Or L T);
+        XorCongL . | S ~> T |- (Xor S R) ~> (Xor T R);
+        XorCongR . | S ~> T |- (Xor L S) ~> (Xor L T);
         NotCong . | S ~> T |- (Not S) ~> (Not T);
-        CompCongL . | S ~> T |- (Comp S R) ~> (Comp T R);
-        CompCongR . | S ~> T |- (Comp L S) ~> (Comp L T);
+        // String operations
         LenCong . | S ~> T |- (Len S) ~> (Len T);
         AddStrCongL . | S ~> T |- (AddStr S R) ~> (AddStr T R);
         AddStrCongR . | S ~> T |- (AddStr L S) ~> (AddStr L T);
-
         // Int operations
         AddIntCongL . | S ~> T |- (AddInt S R) ~> (AddInt T R);
         AddIntCongR . | S ~> T |- (AddInt L S) ~> (AddInt L T);
