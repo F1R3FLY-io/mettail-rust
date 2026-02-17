@@ -32,6 +32,8 @@ relation rw_float(Float, Float);
 
 relation fold_proc(Proc, Proc);
 
+relation step_term(Proc);
+
 relation ppar_contains(Proc, Proc);
 
 
@@ -48,6 +50,15 @@ name(field_0.as_ref().clone()),
 proc(field_1.as_ref().clone()) <--
     proc(t),
     if let Proc :: POutput(field_0, field_1) = t;
+
+name(elem.clone()) <--
+    proc(t),
+    if let Proc :: PInputs(ref vec_field, _) = t,
+    for elem in vec_field.iter();
+
+proc(Proc :: MLamProc(scope.clone())) <--
+    proc(t),
+    if let Proc :: PInputs(_, scope) = t;
 
 proc(field_0.as_ref().clone()),
 proc(field_1.as_ref().clone()) <--
@@ -844,15 +855,15 @@ fold_proc(t.clone(), t.clone()) <--
 
 fold_proc(t.clone(), t.clone()) <--
     proc(t),
+    if let Proc :: PPar(_) = t;
+
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
     if let Proc :: POutput(_, _) = t;
 
 fold_proc(t.clone(), t.clone()) <--
     proc(t),
     if let Proc :: PInputs(_, _) = t;
-
-fold_proc(t.clone(), t.clone()) <--
-    proc(t),
-    if let Proc :: PPar(_) = t;
 
 fold_proc(t.clone(), t.clone()) <--
     proc(t),
@@ -985,11 +996,13 @@ rw_proc(lhs.clone(), rhs) <--
 
 
     // Custom logic
-relation rw_weight(Proc, Int, Proc);
+proc(p) <-- if let Ok(p) = Proc :: parse("^x.{{ x | serv!(req) }}");
 
-relation is_int(Proc);
+proc(p) <-- if let Ok(p) = Proc :: parse("^x.{x}");
 
-is_int(p) <-- proc(p), if let Proc :: CastInt(_) = p;
+proc(res) <-- step_term(p), proc(c), if let Proc :: LamProc(_) = c, let app = Proc :: ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize();
+
+proc(res) <-- step_term(p), proc(c), if let Proc :: MLamProc(_) = c, let app = Proc :: MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize();
 
 relation path(Proc, Proc);
 
@@ -997,18 +1010,10 @@ path(p0, p1) <-- rw_proc(p0, p1);
 
 path(p0, p2) <-- path(p0, p1), path(p1, p2);
 
-relation recvs_on(Proc, Name);
+relation trans(Proc, Proc, Proc);
 
-recvs_on(p, n.clone()) <-- proc(p), if let Proc :: PInputs(ref ns, _) = p, for n in ns.iter();
+trans(p,c,q) <-- step_term(p), proc(c), if let Proc :: LamProc(_) = c, let app = Proc :: ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize(), path(res.clone(), q);
 
-recvs_on(parent, n) <-- ppar_contains(parent, elem), recvs_on(elem, n);
-
-relation loses_recv(Proc, Name);
-
-loses_recv(p, n) <-- recvs_on(p, n), rw_proc(p, q), ! recvs_on(q, n);
-
-relation live(Proc, Name);
-
-live(p, n) <-- recvs_on(p, n), ! loses_recv(p, n);
+trans(p,c,q) <-- step_term(p), proc(c), if let Proc :: MLamProc(_) = c, let app = Proc :: MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize(), path(res.clone(), q);
 
 }

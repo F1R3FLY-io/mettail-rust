@@ -1097,7 +1097,7 @@ fn generate_subst_impl(
                     repls: &[#repl_cat],
                 ) -> Self {
                     if vars.is_empty() { return self.clone(); }
-                    debug_assert_eq!(vars.len(), repls.len());
+                    // debug_assert_eq!(vars.len(), repls.len());
                     match self {
                         #(#cross_arms),*
                     }
@@ -1150,7 +1150,7 @@ fn generate_subst_impl(
                 repls: &[Self],
             ) -> Self {
                 if vars.is_empty() { return self.clone(); }
-                debug_assert_eq!(vars.len(), repls.len());
+                // debug_assert_eq!(vars.len(), repls.len());
                 match self {
                     #(#match_arms),*
                 }

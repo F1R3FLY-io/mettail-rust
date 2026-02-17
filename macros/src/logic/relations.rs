@@ -56,6 +56,15 @@ pub fn generate_relations(language: &LanguageDef) -> TokenStream {
         }
     }
 
+    // step_term(primary): holds only the term being stepped (seeded by runtime).
+    // Used by logic to add application results without blow-up (e.g. trans: only apply contexts to the stepped term).
+    if let Some(primary) = language.types.first() {
+        let cat = &primary.name;
+        relations.push(quote! {
+            relation step_term(#cat);
+        });
+    }
+
     // Collection projection relations (automatic)
     // For each constructor with a collection field, generate a "contains" relation
     // Example: PPar(HashBag<Proc>) generates: relation ppar_contains(Proc, Proc);

@@ -12,6 +12,8 @@ relation term(Term);
 
 relation rw_term(Term, Term);
 
+relation step_term(Term);
+
 
     // Category rules
 term(c1.clone()) <--

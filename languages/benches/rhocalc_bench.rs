@@ -187,7 +187,7 @@ fn run_rhocalc(input: &str) -> BenchMetrics {
         term
     };
 
-    let term = RhoCalcTerm(term);
+    let term = RhoCalcTerm(RhoCalcTermInner::Proc(term));
     let results = RhoCalcLanguage::run_ascent_typed(&term);
 
     BenchMetrics {

@@ -50,6 +50,12 @@ ProcAtom: Proc = {
     "(" <Proc> ")",
     "{}" => Proc::PZero,
     "*" "(" <n:Name> ")" => Proc::PDrop(Box::new(n)),
+    "{" <ps_v:(<Proc> "|")*> <ps_e:Proc?> "}" => {
+        let mut ps = HashBag::new();
+for item in ps_v { ps.insert(item); }
+if let Some(item) = ps_e { ps.insert(item); }
+        Proc::PPar(ps)
+    },
     <n:Name> "!" "(" <q:ProcAtom> ")" => Proc::POutput(Box::new(n), Box::new(q)),
     "(" <__pairs_v:((Name "?" Ident) ",")*> <__pair_e:(Name "?" Ident)?> ")" "." "{" <p:Proc> "}" => {
         let mut ns = Vec::new();
@@ -67,12 +73,6 @@ let mut __binder_strs = Vec::new();
 .collect();
         let __scope = Scope::new(__binders, Box::new(p));
         Proc::PInputs(ns, __scope)
-    },
-    "{" <ps_v:(<Proc> "|")*> <ps_e:Proc?> "}" => {
-        let mut ps = HashBag::new();
-for item in ps_v { ps.insert(item); }
-if let Some(item) = ps_e { ps.insert(item); }
-        Proc::PPar(ps)
     },
     <k:Int> => Proc::CastInt(Box::new(k)),
     <k:Float> => Proc::CastFloat(Box::new(k)),
