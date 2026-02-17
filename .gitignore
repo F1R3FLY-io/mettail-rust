@@ -68,3 +68,6 @@ target/tests/trybuild/
 # Implementation plans and developer notes
 *.plan.md
 
+# Generated files
+languages/src/generated/
+
