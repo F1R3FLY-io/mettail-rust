@@ -15,10 +15,32 @@ language! {
         ![str] as Str
     },
     terms {
-        Eq . a:Int, b:Int |- a "==" b : Bool ![a == b] step;
+        // Comparison operations
+        EqInt . a:Int, b:Int |- a "==" b : Bool ![a == b] step;
         EqFloat . a:Float, b:Float |- a "==" b : Bool ![a.get() == b.get()] step;
         EqBool . a:Bool, b:Bool |- a "==" b : Bool ![a == b] step;
         EqStr . a:Str, b:Str |- a "==" b : Bool ![a == b] step;
+        GtInt . a:Int, b:Int |- a ">" b : Bool ![a > b] step;
+        GtFloat . a:Float, b:Float |- a ">" b : Bool ![a.get() > b.get()] step;
+        GtBool . a:Bool, b:Bool |- a ">" b : Bool ![a > b] step;
+        GtStr . a:Str, b:Str |- a ">" b : Bool ![a > b] step;
+        LtInt . a:Int, b:Int |- a "<" b : Bool ![a < b] step;
+        LtFloat . a:Float, b:Float |- a "<" b : Bool ![a.get() < b.get()] step;
+        LtBool . a:Bool, b:Bool |- a "<" b : Bool ![a < b] step;
+        LtStr . a:Str, b:Str |- a "<" b : Bool ![a < b] step;
+        LtEqInt . a:Int, b:Int |- a "<=" b : Bool ![a <= b] step;
+        LtEqFloat . a:Float, b:Float |- a "<=" b : Bool ![a.get() <= b.get()] step;
+        LtEqBool . a:Bool, b:Bool |- a "<=" b : Bool ![a <= b] step;
+        LtEqStr . a:Str, b:Str |- a "<=" b : Bool ![a <= b] step;
+        GtEqInt . a:Int, b:Int |- a ">=" b : Bool ![a >= b] step;
+        GtEqFloat . a:Float, b:Float |- a ">=" b : Bool ![a.get() >= b.get()] step;
+        GtEqBool . a:Bool, b:Bool |- a ">=" b : Bool ![a >= b] step;
+        GtEqStr . a:Str, b:Str |- a ">=" b : Bool ![a >= b] step;
+        NeInt . a:Int, b:Int |- a "!=" b : Bool ![a != b] step;
+        NeFloat . a:Float, b:Float |- a "!=" b : Bool ![a.get() != b.get()] step;
+        NeBool . a:Bool, b:Bool |- a "!=" b : Bool ![a != b] step;
+        NeStr . a:Str, b:Str |- a "!=" b : Bool ![a != b] step;
+        // Boolean operations
         Not . a:Bool |- "not" a : Bool ![{match a {
             true => false,
             false => true,
@@ -59,14 +81,63 @@ language! {
         CompCongL . | S ~> T |- (Comp S R) ~> (Comp T R);
         CompCongR . | S ~> T |- (Comp L S) ~> (Comp L T);
         NotCong . | S ~> T |- (Not S) ~> (Not T);
-        EqCongL . | S ~> T |- (Eq S R) ~> (Eq T R);
-        EqCongR . | S ~> T |- (Eq L S) ~> (Eq L T);
+        // Comparison operations
+        EqIntCongL . | S ~> T |- (EqInt S R) ~> (EqInt T R);
+        EqIntCongR . | S ~> T |- (EqInt L S) ~> (EqInt L T);
         EqFloatCongL . | S ~> T |- (EqFloat S R) ~> (EqFloat T R);
         EqFloatCongR . | S ~> T |- (EqFloat L S) ~> (EqFloat L T);
         EqBoolCongL . | S ~> T |- (EqBool S R) ~> (EqBool T R);
         EqBoolCongR . | S ~> T |- (EqBool L S) ~> (EqBool L T);
         EqStrCongL . | S ~> T |- (EqStr S R) ~> (EqStr T R);
         EqStrCongR . | S ~> T |- (EqStr L S) ~> (EqStr L T);
+        GtIntCongL . | S ~> T |- (GtInt S R) ~> (GtInt T R);
+        GtIntCongR . | S ~> T |- (GtInt L S) ~> (GtInt L T);
+        GtFloatCongL . | S ~> T |- (GtFloat S R) ~> (GtFloat T R);
+        GtFloatCongR . | S ~> T |- (GtFloat L S) ~> (GtFloat L T);
+        GtBoolCongL . | S ~> T |- (GtBool S R) ~> (GtBool T R);
+        GtBoolCongR . | S ~> T |- (GtBool L S) ~> (GtBool L T);
+        GtStrCongL . | S ~> T |- (GtStr S R) ~> (GtStr T R);
+        GtStrCongR . | S ~> T |- (GtStr L S) ~> (GtStr L T);
+        LtIntCongL . | S ~> T |- (LtInt S R) ~> (LtInt T R);
+        LtIntCongR . | S ~> T |- (LtInt L S) ~> (LtInt L T);
+        LtFloatCongL . | S ~> T |- (LtFloat S R) ~> (LtFloat T R);
+        LtFloatCongR . | S ~> T |- (LtFloat L S) ~> (LtFloat L T);
+        LtBoolCongL . | S ~> T |- (LtBool S R) ~> (LtBool T R);
+        LtBoolCongR . | S ~> T |- (LtBool L S) ~> (LtBool L T);
+        LtStrCongL . | S ~> T |- (LtStr S R) ~> (LtStr T R);
+        LtStrCongR . | S ~> T |- (LtStr L S) ~> (LtStr L T);
+        LtEqIntCongL . | S ~> T |- (LtEqInt S R) ~> (LtEqInt T R);
+        LtEqIntCongR . | S ~> T |- (LtEqInt L S) ~> (LtEqInt L T);
+        LtEqFloatCongL . | S ~> T |- (LtEqFloat S R) ~> (LtEqFloat T R);
+        LtEqFloatCongR . | S ~> T |- (LtEqFloat L S) ~> (LtEqFloat L T);
+        LtEqBoolCongL . | S ~> T |- (LtEqBool S R) ~> (LtEqBool T R);
+        LtEqBoolCongR . | S ~> T |- (LtEqBool L S) ~> (LtEqBool L T);
+        LtEqStrCongL . | S ~> T |- (LtEqStr S R) ~> (LtEqStr T R);
+        LtEqStrCongR . | S ~> T |- (LtEqStr L S) ~> (LtEqStr L T);
+        GtEqIntCongL . | S ~> T |- (GtEqInt S R) ~> (GtEqInt T R);
+        GtEqIntCongR . | S ~> T |- (GtEqInt L S) ~> (GtEqInt L T);
+        GtEqFloatCongL . | S ~> T |- (GtEqFloat S R) ~> (GtEqFloat T R);
+        GtEqFloatCongR . | S ~> T |- (GtEqFloat L S) ~> (GtEqFloat L T);
+        GtEqBoolCongL . | S ~> T |- (GtEqBool S R) ~> (GtEqBool T R);
+        GtEqBoolCongR . | S ~> T |- (GtEqBool L S) ~> (GtEqBool L T);
+        GtEqStrCongL . | S ~> T |- (GtEqStr S R) ~> (GtEqStr T R);
+        GtEqStrCongR . | S ~> T |- (GtEqStr L S) ~> (GtEqStr L T);
+        NeIntCongL . | S ~> T |- (NeInt S R) ~> (NeInt T R);
+        NeIntCongR . | S ~> T |- (NeInt L S) ~> (NeInt L T);
+        NeFloatCongL . | S ~> T |- (NeFloat S R) ~> (NeFloat T R);
+        NeFloatCongR . | S ~> T |- (NeFloat L S) ~> (NeFloat L T);
+        NeBoolCongL . | S ~> T |- (NeBool S R) ~> (NeBool T R);
+        NeBoolCongR . | S ~> T |- (NeBool L S) ~> (NeBool L T);
+        NeStrCongL . | S ~> T |- (NeStr S R) ~> (NeStr T R);
+        NeStrCongR . | S ~> T |- (NeStr L S) ~> (NeStr L T);
+        // Boolean operations
+        NotCong . | S ~> T |- (Not S) ~> (Not T);
+        CompCongL . | S ~> T |- (Comp S R) ~> (Comp T R);
+        CompCongR . | S ~> T |- (Comp L S) ~> (Comp L T);
+        LenCong . | S ~> T |- (Len S) ~> (Len T);
+        AddStrCongL . | S ~> T |- (AddStr S R) ~> (AddStr T R);
+        AddStrCongR . | S ~> T |- (AddStr L S) ~> (AddStr L T);
+
         // Int operations
         AddIntCongL . | S ~> T |- (AddInt S R) ~> (AddInt T R);
         AddIntCongR . | S ~> T |- (AddInt L S) ~> (AddInt L T);
