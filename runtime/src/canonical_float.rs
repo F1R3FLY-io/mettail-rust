@@ -179,6 +179,38 @@ impl std::ops::Rem for CanonicalFloat64 {
     }
 }
 
+impl CanonicalFloat64 {
+    /// Power: `self^exp`. Result is canonicalized.
+    #[inline]
+    pub fn powf(self, exp: Self) -> Self {
+        Self::from(self.0.powf(exp.0))
+    }
+
+    /// Sine. Result is canonicalized.
+    #[inline]
+    pub fn sin(self) -> Self {
+        Self::from(self.0.sin())
+    }
+
+    /// Cosine. Result is canonicalized.
+    #[inline]
+    pub fn cos(self) -> Self {
+        Self::from(self.0.cos())
+    }
+
+    /// Exponential (e^self). Result is canonicalized.
+    #[inline]
+    pub fn exp(self) -> Self {
+        Self::from(self.0.exp())
+    }
+
+    /// Natural logarithm. Result is canonicalized.
+    #[inline]
+    pub fn ln(self) -> Self {
+        Self::from(self.0.ln())
+    }
+}
+
 // ---------------------------------------------------------------------------
 // CanonicalFloat32 (optional, for f32 categories)
 // ---------------------------------------------------------------------------
@@ -328,6 +360,33 @@ impl std::ops::Rem for CanonicalFloat32 {
     type Output = Self;
     fn rem(self, rhs: Self) -> Self {
         Self::from(self.0 % rhs.0)
+    }
+}
+
+impl CanonicalFloat32 {
+    #[inline]
+    pub fn powf(self, exp: Self) -> Self {
+        Self::from(self.0.powf(exp.0))
+    }
+
+    #[inline]
+    pub fn sin(self) -> Self {
+        Self::from(self.0.sin())
+    }
+
+    #[inline]
+    pub fn cos(self) -> Self {
+        Self::from(self.0.cos())
+    }
+
+    #[inline]
+    pub fn exp(self) -> Self {
+        Self::from(self.0.exp())
+    }
+
+    #[inline]
+    pub fn ln(self) -> Self {
+        Self::from(self.0.ln())
     }
 }
 

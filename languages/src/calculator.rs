@@ -17,27 +17,27 @@ language! {
     terms {
         // Comparison operations
         EqInt . a:Int, b:Int |- a "==" b : Bool ![a == b] step;
-        EqFloat . a:Float, b:Float |- a "==" b : Bool ![a.get() == b.get()] step;
+        EqFloat . a:Float, b:Float |- a "==" b : Bool ![a == b] step;
         EqBool . a:Bool, b:Bool |- a "==" b : Bool ![a == b] step;
         EqStr . a:Str, b:Str |- a "==" b : Bool ![a == b] step;
         GtInt . a:Int, b:Int |- a ">" b : Bool ![a > b] step;
-        GtFloat . a:Float, b:Float |- a ">" b : Bool ![a.get() > b.get()] step;
+        GtFloat . a:Float, b:Float |- a ">" b : Bool ![a > b] step;
         GtBool . a:Bool, b:Bool |- a ">" b : Bool ![a > b] step;
         GtStr . a:Str, b:Str |- a ">" b : Bool ![a > b] step;
         LtInt . a:Int, b:Int |- a "<" b : Bool ![a < b] step;
-        LtFloat . a:Float, b:Float |- a "<" b : Bool ![a.get() < b.get()] step;
+        LtFloat . a:Float, b:Float |- a "<" b : Bool ![a < b] step;
         LtBool . a:Bool, b:Bool |- a "<" b : Bool ![a < b] step;
         LtStr . a:Str, b:Str |- a "<" b : Bool ![a < b] step;
         LtEqInt . a:Int, b:Int |- a "<=" b : Bool ![a <= b] step;
-        LtEqFloat . a:Float, b:Float |- a "<=" b : Bool ![a.get() <= b.get()] step;
+        LtEqFloat . a:Float, b:Float |- a "<=" b : Bool ![a <= b] step;
         LtEqBool . a:Bool, b:Bool |- a "<=" b : Bool ![a <= b] step;
         LtEqStr . a:Str, b:Str |- a "<=" b : Bool ![a <= b] step;
         GtEqInt . a:Int, b:Int |- a ">=" b : Bool ![a >= b] step;
-        GtEqFloat . a:Float, b:Float |- a ">=" b : Bool ![a.get() >= b.get()] step;
+        GtEqFloat . a:Float, b:Float |- a ">=" b : Bool ![a >= b] step;
         GtEqBool . a:Bool, b:Bool |- a ">=" b : Bool ![a >= b] step;
         GtEqStr . a:Str, b:Str |- a ">=" b : Bool ![a >= b] step;
         NeInt . a:Int, b:Int |- a "!=" b : Bool ![a != b] step;
-        NeFloat . a:Float, b:Float |- a "!=" b : Bool ![a.get() != b.get()] step;
+        NeFloat . a:Float, b:Float |- a "!=" b : Bool ![a != b] step;
         NeBool . a:Bool, b:Bool |- a "!=" b : Bool ![a != b] step;
         NeStr . a:Str, b:Str |- a "!=" b : Bool ![a != b] step;
         // Boolean operations
@@ -63,14 +63,14 @@ language! {
         SubFloat . a:Float, b:Float |- a "-" b : Float ![a - b] fold;
         MulFloat . a:Float, b:Float |- a "*" b : Float ![a * b] fold;
         DivFloat . a:Float, b:Float |- a "/" b : Float ![a / b] fold;
-        PowFloat . a:Float, b:Float |- a "^" b : Float ![mettail_runtime::CanonicalFloat64::from(a.get().powf(b.get()))] step;
-        SinFloat . a:Float |- "sin" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.get().sin())] step;
-        CosFloat . a:Float |- "cos" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.get().cos())] step;
-        ExpFloat . a:Float |- "exp" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.get().exp())] step;
-        LnFloat . a:Float |- "ln" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.get().ln())] step;
+        PowFloat . a:Float, b:Float |- a "^" b : Float ![a.powf(b)] step;
+        SinFloat . a:Float |- "sin" "(" a ")" : Float ![a.sin()] step;
+        CosFloat . a:Float |- "cos" "(" a ")" : Float ![a.cos()] step;
+        ExpFloat . a:Float |- "exp" "(" a ")" : Float ![a.exp()] step;
+        LnFloat . a:Float |- "ln" "(" a ")" : Float ![a.ln()] step;
         // Type casts
         IntToFloat . a:Int |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a as f64)] step;
-        BoolToFloat . a:Bool |- "float" "(" a ")" : Float ![if a { mettail_runtime::CanonicalFloat64::from(1.0) } else { mettail_runtime::CanonicalFloat64::from(0.0) }] step;
+        BoolToFloat . a:Bool |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(if a { 1.0 } else { 0.0 })] step;
         StrToFloat . a:Str |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.parse().unwrap_or(0.0))] step;
         FloatToInt . a:Float |- "int" "(" a ")" : Int ![a.get() as i32] step;
         BoolToInt . a:Bool |- "int" "(" a ")" : Int ![if a { 1 } else { 0 }] step;
