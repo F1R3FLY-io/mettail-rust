@@ -24,14 +24,15 @@ use crate::binding_power::{analyze_binding_powers, BindingPowerTable, InfixRuleI
 use crate::dispatch::{categories_needing_dispatch, write_category_dispatch, CastRule, CrossCategoryRule};
 use crate::lexer::{extract_terminals, generate_lexer_as_string, GrammarRuleInfo, TypeInfo};
 use crate::pratt::{
-    write_dispatch_recovering, write_parser_helpers, write_pratt_parser,
-    write_pratt_parser_recovering, write_recovery_helpers, PrattConfig, PrefixHandler,
+    write_dispatch_recovering, write_parser_helpers,
+    write_recovery_helpers, PrefixHandler,
 };
 use crate::prediction::{
     analyze_cross_category_overlaps, compute_first_sets, compute_follow_sets_from_inputs,
     detect_grammar_warnings, generate_sync_predicate, FirstItem, FollowSetInput, RuleInfo,
 };
 use crate::recursive::{write_dollar_handlers, write_lambda_handlers, write_rd_handler, RDRuleInfo, RDSyntaxItem};
+use crate::trampoline::{write_trampolined_parser, write_trampolined_parser_recovering, TrampolineConfig};
 use crate::{LanguageSpec, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -473,6 +474,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         primary_category,
     );
 
+
     // Generate RD handlers
     let mut buf = String::with_capacity(8192);
     let mut all_prefix_handlers: Vec<PrefixHandler> = Vec::with_capacity(bundle.rd_rules.len());
@@ -496,10 +498,11 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
     let dispatch_categories =
         categories_needing_dispatch(&bundle.cross_rules, &bundle.cast_rules);
 
+
     // Write parser helpers
     write_parser_helpers(&mut buf);
 
-    // Write Pratt parsers per category
+    // Write trampolined parsers per category (stack-safe via explicit continuation stack)
     for cat in &bundle.categories {
         let has_infix = !bundle.bp_table.operators_for_category(&cat.name).is_empty();
         let has_postfix = !bundle
@@ -522,7 +525,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         let own_first = first_sets.get(&cat.name).cloned().unwrap_or_default();
         let own_follow = follow_sets.get(&cat.name).cloned().unwrap_or_default();
 
-        let config = PrattConfig {
+        let tramp_config = TrampolineConfig {
             category: cat.name.clone(),
             is_primary: cat.is_primary,
             has_infix,
@@ -535,6 +538,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             own_first_set: own_first,
             all_first_sets: first_sets.clone(),
             follow_set: own_follow,
+            has_binders: bundle.has_binders,
         };
 
         let cat_handlers: Vec<PrefixHandler> = all_prefix_handlers
@@ -543,7 +547,13 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             .cloned()
             .collect();
 
-        write_pratt_parser(&mut buf, &config, &bundle.bp_table, &cat_handlers);
+        write_trampolined_parser(
+            &mut buf,
+            &tramp_config,
+            &bundle.bp_table,
+            &cat_handlers,
+            &bundle.rd_rules,
+        );
     }
 
     // Write cross-category dispatch
@@ -608,16 +618,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
 
         let needs_dispatch = dispatch_categories.contains(&cat.name);
 
-        let cat_cast_rules: Vec<CastRule> = bundle
-            .cast_rules
-            .iter()
-            .filter(|r| r.target_category == cat.name)
-            .cloned()
-            .collect();
-
-        let own_first = first_sets.get(&cat.name).cloned().unwrap_or_default();
-
-        let config = PrattConfig {
+        let tramp_config = TrampolineConfig {
             category: cat.name.clone(),
             is_primary: cat.is_primary,
             has_infix: !bundle.bp_table.operators_for_category(&cat.name).is_empty(),
@@ -632,18 +633,42 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             all_categories: category_names.clone(),
             needs_dispatch,
             native_type: cat.native_type.clone(),
-            cast_rules: cat_cast_rules,
-            own_first_set: own_first,
+            cast_rules: bundle
+                .cast_rules
+                .iter()
+                .filter(|r| r.target_category == cat.name)
+                .cloned()
+                .collect(),
+            own_first_set: first_sets.get(&cat.name).cloned().unwrap_or_default(),
             all_first_sets: first_sets.clone(),
             follow_set: own_follow,
+            has_binders: bundle.has_binders,
         };
 
-        // Generate recovering Pratt parser
-        write_pratt_parser_recovering(&mut buf, &config, &bundle.bp_table);
+        // Generate recovering trampolined parser (wraps fail-fast trampoline with error catch)
+        write_trampolined_parser_recovering(
+            &mut buf,
+            &tramp_config,
+            &bundle.bp_table,
+            &crate::trampoline::FrameInfo {
+                enum_name: format!("Frame_{}", cat.name),
+                variants: Vec::new(), // Not needed for simple recovery wrapper
+            },
+        );
 
         // Generate recovering dispatch wrapper if needed
         if needs_dispatch {
             write_dispatch_recovering(&mut buf, &cat.name);
+        }
+    }
+
+    // Debug dump: write generated parser code to file for inspection
+    if let Ok(dump_dir) = std::env::var("PRATTAIL_DUMP_PARSER") {
+        let dir = if dump_dir == "1" { ".".to_string() } else { dump_dir };
+        let cat_suffix = category_names.join("-");
+        let filename = format!("{}/prattail-parser-{}.rs", dir, cat_suffix);
+        if let Ok(()) = std::fs::write(&filename, &buf) {
+            eprintln!("PraTTaIL: dumped parser code to {}", filename);
         }
     }
 

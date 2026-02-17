@@ -935,3 +935,76 @@ pub fn write_dispatch_recovering(
     )
     .unwrap();
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Public accessors for trampoline module
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Public wrapper: write BP function (for trampoline codegen).
+pub fn write_bp_function_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
+    write!(buf, "fn infix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{").unwrap();
+    for op in bp_table.operators_for_category(cat) {
+        let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+        write!(buf, "Token::{} => Some(({}, {})),", variant, op.left_bp, op.right_bp).unwrap();
+    }
+    buf.push_str("_ => None } }");
+}
+
+/// Public wrapper: write make_infix function (for trampoline codegen).
+pub fn write_make_infix_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
+    write!(
+        buf,
+        "fn make_infix_{cat}<'a>(token: &Token<'a>, lhs: {cat}, rhs: {cat}) -> {cat} {{ match token {{",
+    ).unwrap();
+    for op in bp_table.operators_for_category(cat) {
+        let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+        write!(buf, "Token::{} => {}::{}(Box::new(lhs), Box::new(rhs)),", variant, cat, op.label).unwrap();
+    }
+    buf.push_str("_ => unreachable!(\"make_infix called with non-infix token\") } }");
+}
+
+/// Public wrapper: write postfix BP function (for trampoline codegen).
+pub fn write_postfix_bp_function_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
+    write!(buf, "fn postfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<u8> {{ match token {{").unwrap();
+    for op in bp_table.postfix_operators_for_category(cat) {
+        let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+        write!(buf, "Token::{} => Some({}),", variant, op.left_bp).unwrap();
+    }
+    buf.push_str("_ => None } }");
+}
+
+/// Public wrapper: write make_postfix function (for trampoline codegen).
+pub fn write_make_postfix_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
+    write!(
+        buf,
+        "fn make_postfix_{cat}<'a>(token: &Token<'a>, operand: {cat}) -> {cat} {{ match token {{",
+    ).unwrap();
+    for op in bp_table.postfix_operators_for_category(cat) {
+        let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+        write!(buf, "Token::{} => {}::{}(Box::new(operand)),", variant, cat, op.label).unwrap();
+    }
+    buf.push_str("_ => unreachable!(\"make_postfix called with non-postfix token\") } }");
+}
+
+/// Public wrapper: write mixfix BP function (for trampoline codegen).
+pub fn write_mixfix_bp_function_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
+    write!(
+        buf,
+        "fn mixfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{",
+    ).unwrap();
+    for op in bp_table.mixfix_operators_for_category(cat) {
+        let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+        write!(buf, "Token::{} => Some(({}, {})),", variant, op.left_bp, op.right_bp).unwrap();
+    }
+    buf.push_str("_ => None } }");
+}
+
+/// Public wrapper: build expected message from FIRST set (for trampoline codegen).
+pub fn build_expected_message_pub(category: &str, first_set: &FirstSet) -> String {
+    build_expected_message(category, first_set)
+}
+
+/// Public wrapper: write token match pattern (for trampoline codegen).
+pub fn write_token_pattern_pub(buf: &mut String, token: &str) {
+    write_token_pattern(buf, token);
+}

@@ -601,7 +601,7 @@ fn test_generate_parser_with_mixfix() {
 
     // Verify mixfix-specific generated code
     assert!(code_str.contains("mixfix_bp"), "should contain mixfix_bp function");
-    assert!(code_str.contains("handle_mixfix"), "should contain handle_mixfix function");
+    // In trampolined parser, mixfix is handled inline in the infix loop (no separate handle_mixfix fn)
     assert!(code_str.contains("Question"), "should contain Question token for ? trigger");
     assert!(code_str.contains("Colon"), "should contain Colon token for : separator");
     assert!(code_str.contains("Ternary"), "should contain Ternary constructor");

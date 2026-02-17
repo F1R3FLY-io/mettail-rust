@@ -44,6 +44,7 @@ pub mod pipeline;
 pub mod pratt;
 pub mod prediction;
 pub mod recursive;
+pub mod trampoline;
 
 #[cfg(test)]
 mod tests;

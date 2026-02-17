@@ -73,3 +73,5 @@ target/tests/trybuild/
 *.plan.md
 
 .claude/projects/*
+
+prattail/target/*
