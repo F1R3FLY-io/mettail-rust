@@ -69,10 +69,23 @@ language! {
         ExpFloat . a:Float |- "exp" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.get().exp())] step;
         LnFloat . a:Float |- "ln" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.get().ln())] step;
         // Type casts
-        ToFloat . a:Int |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a as f64)] step;
-        ToInt . a:Float |- "int" "(" a ")" : Int ![a.get() as i32] step;
+        IntToFloat . a:Int |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a as f64)] step;
+        BoolToFloat . a:Bool |- "float" "(" a ")" : Float ![if a { mettail_runtime::CanonicalFloat64::from(1.0) } else { mettail_runtime::CanonicalFloat64::from(0.0) }] step;
+        StrToFloat . a:Str |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.parse().unwrap_or(0.0))] step;
+        FloatToInt . a:Float |- "int" "(" a ")" : Int ![a.get() as i32] step;
+        BoolToInt . a:Bool |- "int" "(" a ")" : Int ![if a { 1 } else { 0 }] step;
+        StrToInt . a:Str |- "int" "(" a ")" : Int ![a.parse().unwrap_or(0)] step;
+        BoolToStr . a:Bool |- "str" "(" a ")" : Str ![a.to_string()] step;
+        IntToStr . a:Int |- "str" "(" a ")" : Str ![a.to_string()] step;
+        FloatToStr . a:Float |- "str" "(" a ")" : Str ![a.to_string()] step;
+        IntToBool . a:Int |- "bool" "(" a ")" : Bool ![a != 0] step;
+        FloatToBool . a:Float |- "bool" "(" a ")" : Bool ![a.get() != 0.0] step;
+        StrToBool . a:Str |- "bool" "(" a ")" : Bool ![a.parse().unwrap_or(false)] step;
         IntId . a:Int |- "int" "(" a ")" : Int ![a] step;
         FloatId . a:Float |- "float" "(" a ")" : Float ![a] step;
+        BoolId . a:Bool |- "bool" "(" a ")" : Bool ![a] step;
+        StrId . a:Str |- "str" "(" a ")" : Str ![a] step;
+
         // Example of a custom operation:
         CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
     },
@@ -168,9 +181,21 @@ language! {
         ExpFloatCong . | S ~> T |- (ExpFloat S) ~> (ExpFloat T);
         LnFloatCong . | S ~> T |- (LnFloat S) ~> (LnFloat T);
         // Type casts
-        ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
-        ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
+        IntToFloatCong . | S ~> T |- (IntToFloat S) ~> (IntToFloat T);
+        BoolToFloatCong . | S ~> T |- (BoolToFloat S) ~> (BoolToFloat T);
+        StrToFloatCong . | S ~> T |- (StrToFloat S) ~> (StrToFloat T);
+        FloatToIntCong . | S ~> T |- (FloatToInt S) ~> (FloatToInt T);
+        BoolToIntCong . | S ~> T |- (BoolToInt S) ~> (BoolToInt T);
+        StrToIntCong . | S ~> T |- (StrToInt S) ~> (StrToInt T);
+        BoolToStrCong . | S ~> T |- (BoolToStr S) ~> (BoolToStr T);
+        IntToStrCong . | S ~> T |- (IntToStr S) ~> (IntToStr T);
+        FloatToStrCong . | S ~> T |- (FloatToStr S) ~> (FloatToStr T);
+        IntToBoolCong . | S ~> T |- (IntToBool S) ~> (IntToBool T);
+        FloatToBoolCong . | S ~> T |- (FloatToBool S) ~> (FloatToBool T);
+        StrToBoolCong . | S ~> T |- (StrToBool S) ~> (StrToBool T);
         IntIdCong . | S ~> T |- (IntId S) ~> (IntId T);
         FloatIdCong . | S ~> T |- (FloatId S) ~> (FloatId T);
+        BoolIdCong . | S ~> T |- (BoolId S) ~> (BoolId T);
+        StrIdCong . | S ~> T |- (StrId S) ~> (StrId T);
     },
 }
