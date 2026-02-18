@@ -110,8 +110,12 @@ fn run_test(test: &TestCase) -> Result<(), String> {
         if !found {
             // Also check if it's in normal forms (by value, by display, or by normalized equality for e.g. {p|q} vs {q|p})
             let in_normal_forms = normal_forms.iter().any(|nf| nf.0 == expected);
-            let in_normal_forms_display = normal_forms.iter().any(|nf| nf.0.to_string() == expected_display);
-            let in_normal_forms_normalized = normal_forms.iter().any(|nf| nf.0.clone().normalize() == expected);
+            let in_normal_forms_display = normal_forms
+                .iter()
+                .any(|nf| nf.0.to_string() == expected_display);
+            let in_normal_forms_normalized = normal_forms
+                .iter()
+                .any(|nf| nf.0.clone().normalize() == expected);
             if !in_normal_forms && !in_normal_forms_display && !in_normal_forms_normalized {
                 return Err(format!(
                     "Expected output '{}' not found in rewrites or normal forms.\nNormalized expected: {}\nAvailable normal forms: {:?}",
@@ -241,7 +245,9 @@ fn test_parse_receive() {
     mettail_runtime::clear_var_cache();
     let lang = RhoCalcLanguage;
     // Grammar uses (name?var).{body} for receive, not for(x -> y){body}
-    let term = lang.parse_term("(x?y).{y!(0)}").expect("parse (x?y).{y!(0)}");
+    let term = lang
+        .parse_term("(x?y).{y!(0)}")
+        .expect("parse (x?y).{y!(0)}");
     let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
     assert!(!results.all_terms.is_empty());
 }
@@ -262,16 +268,13 @@ fn test_rewrite_exec_drop() {
     let lang = RhoCalcLanguage;
     let term = lang.parse_term("{*(@(0))}").expect("parse");
     let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
-    assert!(
-        results.rewrites.len() >= 1,
-        "Exec rewrite *(@(p)) ~> p should fire"
-    );
-    let displays: Vec<&str> = results.normal_forms().iter().map(|nf| nf.display.as_str()).collect();
-    assert!(
-        displays.contains(&"0"),
-        "normal forms should include 0, got {:?}",
-        displays
-    );
+    assert!(results.rewrites.len() >= 1, "Exec rewrite *(@(p)) ~> p should fire");
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
+    assert!(displays.contains(&"0"), "normal forms should include 0, got {:?}", displays);
 }
 
 #[test]
@@ -281,14 +284,8 @@ fn test_rewrite_comm() {
     // Grammar uses (c?x).{body} for receive
     let term = lang.parse_term("{(c?x).{x!(0)} | c!(p)}").expect("parse");
     let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
-    assert!(
-        results.rewrites.len() >= 1,
-        "Comm rewrite should fire"
-    );
-    assert!(
-        !results.normal_forms().is_empty(),
-        "should have at least one normal form"
-    );
+    assert!(results.rewrites.len() >= 1, "Comm rewrite should fire");
+    assert!(!results.normal_forms().is_empty(), "should have at least one normal form");
 }
 
 #[test]
@@ -297,16 +294,13 @@ fn test_rewrite_par_cong() {
     let lang = RhoCalcLanguage;
     let term = lang.parse_term("{*(@(0)) | 0}").expect("parse");
     let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
-    assert!(
-        results.rewrites.len() >= 1,
-        "ParCong + Exec should apply"
-    );
-    let displays: Vec<&str> = results.normal_forms().iter().map(|nf| nf.display.as_str()).collect();
-    assert!(
-        displays.contains(&"0"),
-        "normal form should include 0, got {:?}",
-        displays
-    );
+    assert!(results.rewrites.len() >= 1, "ParCong + Exec should apply");
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
+    assert!(displays.contains(&"0"), "normal form should include 0, got {:?}", displays);
 }
 
 #[test]
@@ -332,13 +326,19 @@ fn test_native_types_bool_and_comparisons() {
     mettail_runtime::clear_var_cache();
     let lang = RhoCalcLanguage;
     // Bool literals
-    let term = lang.parse_term("{ true | false }").expect("parse bool literals");
+    let term = lang
+        .parse_term("{ true | false }")
+        .expect("parse bool literals");
     let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
     assert!(!results.normal_forms().is_empty(), "should reduce");
     // Comparison: 1 == 1 -> true
     let term = lang.parse_term("{ 1 == 1 }").expect("parse eq");
     let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
-    let displays: Vec<&str> = results.normal_forms().iter().map(|nf| nf.display.as_str()).collect();
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
     assert!(
         displays.iter().any(|d| d.contains("true")),
         "normal forms should include true, got {:?}",
@@ -350,9 +350,15 @@ fn test_native_types_bool_and_comparisons() {
 fn test_native_types_string_and_concat() {
     mettail_runtime::clear_var_cache();
     let lang = RhoCalcLanguage;
-    let term = lang.parse_term(r#"{ concat("hello", "world") }"#).expect("parse concat");
+    let term = lang
+        .parse_term(r#"{ concat("hello", "world") }"#)
+        .expect("parse concat");
     let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
-    let displays: Vec<&str> = results.normal_forms().iter().map(|nf| nf.display.as_str()).collect();
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
     assert!(
         displays.iter().any(|d| d.contains("helloworld")),
         "normal forms should include concat result, got {:?}",

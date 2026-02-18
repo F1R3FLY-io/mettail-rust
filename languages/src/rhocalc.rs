@@ -19,22 +19,22 @@ language! {
     },
 
     terms {
-        PZero . 
+        PZero .
         |- "{}" : Proc;
 
-        PDrop . n:Name 
+        PDrop . n:Name
         |- "*" "(" n ")" : Proc ;
 
-        PPar . ps:HashBag(Proc) 
+        PPar . ps:HashBag(Proc)
         |- "{" ps.*sep("|") "}" : Proc;
 
-        POutput . n:Name, q:Proc 
+        POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
 
-        PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc] 
+        PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
         |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc ;
 
-        NQuote . p:Proc 
+        NQuote . p:Proc
         |- "@" "(" p ")" : Name ;
 
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
@@ -354,13 +354,13 @@ language! {
             if let Proc::LamProc(_) = c,
             let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())),
             let res = app.normalize();
-            
+
         proc(res) <--
             step_term(p), proc(c),
             if let Proc::MLamProc(_) = c,
             let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]),
             let res = app.normalize();
-            
+
         relation path(Proc, Proc);
         path(p0, p1) <-- rw_proc(p0, p1);
         path(p0, p2) <-- path(p0, p1), path(p1, p2);

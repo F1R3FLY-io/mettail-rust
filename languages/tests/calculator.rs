@@ -7,7 +7,11 @@ fn calc_normal_form(input: &str, expected_display: &str) {
     let lang = calc::CalculatorLanguage;
     let term = lang.parse_term(input).expect("parse");
     let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
-    let displays: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    let displays: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
     assert!(
         displays.contains(&expected_display.to_string()),
         "expected normal form {:?} for {:?}, got: {:?}",
@@ -157,7 +161,8 @@ fn test_env_add_and_list() {
     let lang = calc::CalculatorLanguage;
     let mut env = lang.create_env();
     let term = lang.parse_term_for_env("7").expect("parse 7");
-    lang.add_to_env(env.as_mut(), "x", term.as_ref()).expect("add x");
+    lang.add_to_env(env.as_mut(), "x", term.as_ref())
+        .expect("add x");
     let bindings = lang.list_env(env.as_ref());
     assert_eq!(bindings.len(), 1);
     assert_eq!(bindings[0].0, "x");
@@ -171,10 +176,13 @@ fn test_env_substitute_and_exec() {
     let mut env = lang.create_env();
     for (name, src) in [("a", "1"), ("b", "2")] {
         let term = lang.parse_term_for_env(src).expect(src);
-        lang.add_to_env(env.as_mut(), name, term.as_ref()).expect(name);
+        lang.add_to_env(env.as_mut(), name, term.as_ref())
+            .expect(name);
     }
     let term = lang.parse_term_for_env("a + b").expect("parse a + b");
-    let substituted = lang.substitute_env(term.as_ref(), env.as_ref()).expect("substitute_env");
+    let substituted = lang
+        .substitute_env(term.as_ref(), env.as_ref())
+        .expect("substitute_env");
     let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
     let normal = results.normal_forms();
     assert_eq!(normal.len(), 1);
@@ -188,8 +196,10 @@ fn test_env_remove_and_clear() {
     let mut env = lang.create_env();
     let t1 = lang.parse_term_for_env("1").expect("parse");
     let t2 = lang.parse_term_for_env("2").expect("parse");
-    lang.add_to_env(env.as_mut(), "a", t1.as_ref()).expect("add a");
-    lang.add_to_env(env.as_mut(), "b", t2.as_ref()).expect("add b");
+    lang.add_to_env(env.as_mut(), "a", t1.as_ref())
+        .expect("add a");
+    lang.add_to_env(env.as_mut(), "b", t2.as_ref())
+        .expect("add b");
     assert_eq!(lang.list_env(env.as_ref()).len(), 2);
     lang.remove_from_env(env.as_mut(), "a").expect("remove a");
     assert_eq!(lang.list_env(env.as_ref()).len(), 1);
@@ -270,7 +280,8 @@ fn test_exec_env_float_scientific_whole() {
     let term = lang
         .parse_term_for_env("2.0E3 + 1.5")
         .expect("parse 2.0E3 + 1.5");
-    lang.add_to_env(env.as_mut(), "x", term.as_ref()).expect("add x");
+    lang.add_to_env(env.as_mut(), "x", term.as_ref())
+        .expect("add x");
 
     let bindings = lang.list_env(env.as_ref());
     let display = bindings

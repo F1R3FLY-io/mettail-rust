@@ -674,8 +674,6 @@ fn generate_subst_by_name_arm(
 
 /// Generate substitution impl for a single category
 fn generate_category_substitution(category: &Ident, language: &LanguageDef) -> TokenStream {
-    
-
     // Collect all variants for this category
     let variants = collect_category_variants(category, language);
 

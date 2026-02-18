@@ -123,7 +123,11 @@ impl BoundTerm<String> for CanonicalFloat64 {
         self.eq(other)
     }
 
-    fn close_term(&mut self, _state: moniker::ScopeState, _on_free: &impl moniker::OnFreeFn<String>) {
+    fn close_term(
+        &mut self,
+        _state: moniker::ScopeState,
+        _on_free: &impl moniker::OnFreeFn<String>,
+    ) {
         // No variables inside
     }
 
@@ -313,7 +317,11 @@ impl BoundTerm<String> for CanonicalFloat32 {
         self.eq(other)
     }
 
-    fn close_term(&mut self, _state: moniker::ScopeState, _on_free: &impl moniker::OnFreeFn<String>) {
+    fn close_term(
+        &mut self,
+        _state: moniker::ScopeState,
+        _on_free: &impl moniker::OnFreeFn<String>,
+    ) {
     }
 
     fn open_term(
@@ -416,7 +424,10 @@ mod tests {
             t.hash(&mut h);
             h.finish()
         }
-        assert_eq!(hash(&CanonicalFloat64::from(f64::NAN)), hash(&CanonicalFloat64::from(f64::NAN)));
+        assert_eq!(
+            hash(&CanonicalFloat64::from(f64::NAN)),
+            hash(&CanonicalFloat64::from(f64::NAN))
+        );
         assert_eq!(hash(&CanonicalFloat64::from(-0.0)), hash(&CanonicalFloat64::from(0.0)));
     }
 

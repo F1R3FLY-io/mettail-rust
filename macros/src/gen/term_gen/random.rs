@@ -15,8 +15,8 @@ use crate::ast::{
     grammar::{GrammarItem, GrammarRule, TermParam},
     language::LanguageDef,
 };
-use crate::gen::native::native_type_to_string;
 use crate::gen::is_literal_nonterminal;
+use crate::gen::native::native_type_to_string;
 use crate::gen::term_gen::is_lang_type;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -184,9 +184,15 @@ fn generate_random_depth_0(
                                 .map(|n| native_type_to_string(n) == "f32")
                                 .unwrap_or(false);
                             let (wrapper_ty, val_ty) = if is_f32 {
-                                (quote! { mettail_runtime::CanonicalFloat32 }, quote! { rng.gen_range(-100.0f32..100.0f32) })
+                                (
+                                    quote! { mettail_runtime::CanonicalFloat32 },
+                                    quote! { rng.gen_range(-100.0f32..100.0f32) },
+                                )
                             } else {
-                                (quote! { mettail_runtime::CanonicalFloat64 }, quote! { rng.gen_range(-100.0f64..100.0f64) })
+                                (
+                                    quote! { mettail_runtime::CanonicalFloat64 },
+                                    quote! { rng.gen_range(-100.0f64..100.0f64) },
+                                )
                             };
                             quote! {
                                 let val = #val_ty;

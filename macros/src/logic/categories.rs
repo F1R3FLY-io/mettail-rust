@@ -231,8 +231,7 @@ fn generate_deconstruction_for_constructor(
         // Multi-binder + collection (e.g. PInputs(Vec(Name), Scope)): generate deconstruction
         // so that logic can see names and body (recvs_on, etc.). Plain collection-only
         // deconstruction remains disabled to avoid fact explosion.
-        if let Some(rules) =
-            generate_collection_plus_binding_deconstruction(category, constructor)
+        if let Some(rules) = generate_collection_plus_binding_deconstruction(category, constructor)
         {
             return Some(quote! { #(#rules)* });
         }
@@ -289,15 +288,9 @@ fn generate_collection_plus_binding_deconstruction(
     let has_multi = term_context
         .iter()
         .any(|p| matches!(p, TermParam::MultiAbstraction { .. }));
-    let has_collection = term_context.iter().any(|p| {
-        matches!(
-            p,
-            TermParam::Simple {
-                ty: TypeExpr::Collection { .. },
-                ..
-            }
-        )
-    });
+    let has_collection = term_context
+        .iter()
+        .any(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Collection { .. }, .. }));
     if !has_multi || !has_collection || constructor.bindings.len() != 1 {
         return None;
     }

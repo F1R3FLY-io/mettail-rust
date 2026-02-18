@@ -1,5 +1,8 @@
 use proc_macro2::TokenStream;
-use syn::{Ident, Type, Token, parse::{Parse, ParseStream}, Result as SynResult};
+use syn::{
+    parse::{Parse, ParseStream},
+    Ident, Result as SynResult, Token, Type,
+};
 
 use super::grammar::{parse_terms, GrammarRule};
 use super::pattern::{Pattern, PatternTerm};
@@ -857,7 +860,7 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
 
 /// Parse logic block: custom Ascent relations and rules
 /// Syntax: logic { <ascent-syntax> }
-/// 
+///
 /// Extracts relation declarations for code generation while keeping
 /// the full content as verbatim TokenStream for Ascent.
 fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
@@ -880,20 +883,17 @@ fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
         let _ = input.parse::<Token![,]>()?;
     }
 
-    Ok(LogicBlock {
-        relations,
-        content: tokens,
-    })
+    Ok(LogicBlock { relations, content: tokens })
 }
 
 /// Extract relation declarations from a token stream
 /// Looks for patterns like: relation name(Type1, Type2, ...);
 fn extract_relation_decls(tokens: &TokenStream) -> Vec<RelationDecl> {
     use proc_macro2::TokenTree;
-    
+
     let mut relations = Vec::new();
     let token_vec: Vec<TokenTree> = tokens.clone().into_iter().collect();
-    
+
     let mut i = 0;
     while i < token_vec.len() {
         // Look for "relation" keyword
@@ -906,10 +906,7 @@ fn extract_relation_decls(tokens: &TokenStream) -> Vec<RelationDecl> {
                         if group.delimiter() == proc_macro2::Delimiter::Parenthesis {
                             // Parse the types from the group
                             let param_types = parse_relation_params(group.stream());
-                            relations.push(RelationDecl {
-                                name: name.clone(),
-                                param_types,
-                            });
+                            relations.push(RelationDecl { name: name.clone(), param_types });
                         }
                     }
                 }
@@ -917,22 +914,22 @@ fn extract_relation_decls(tokens: &TokenStream) -> Vec<RelationDecl> {
         }
         i += 1;
     }
-    
+
     relations
 }
 
 /// Parse relation parameter types from a token stream like "Proc, Proc"
 fn parse_relation_params(tokens: TokenStream) -> Vec<Ident> {
     use proc_macro2::TokenTree;
-    
+
     let mut params = Vec::new();
-    
+
     for token in tokens {
         if let TokenTree::Ident(ident) = token {
             params.push(ident);
         }
         // Skip punctuation (commas)
     }
-    
+
     params
 }

@@ -11,9 +11,8 @@ fn main() {
 
     let mut modules_bodies: Vec<(String, String)> = Vec::new();
 
-    let entries = fs::read_dir(&src_dir).unwrap_or_else(|e| {
-        panic!("lang-gen: cannot read {}: {}", src_dir.display(), e)
-    });
+    let entries = fs::read_dir(&src_dir)
+        .unwrap_or_else(|e| panic!("lang-gen: cannot read {}: {}", src_dir.display(), e));
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -43,9 +42,7 @@ fn main() {
                 continue;
             };
             let segs = &item_macro.mac.path.segments;
-            let is_language = segs
-                .last()
-                .is_some_and(|s| s.ident == "language");
+            let is_language = segs.last().is_some_and(|s| s.ident == "language");
             if !is_language {
                 continue;
             }

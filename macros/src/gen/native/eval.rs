@@ -5,7 +5,9 @@ use quote::quote;
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::gen::native::native_type_to_string;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal};
+use crate::gen::{
+    generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
+};
 
 /// Extract parameter names from term_context in the same order as generated variant fields.
 /// Used for rust_code eval arms: param names match constructor field names.
@@ -46,8 +48,6 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             .iter()
             .filter(|r| r.category == *category)
             .collect();
-
-        
 
         // Literal label for try_fold_to_literal (resolve once)
         let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
