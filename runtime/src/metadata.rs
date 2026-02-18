@@ -143,10 +143,10 @@ impl RewriteDef {
 pub struct LogicRelationDef {
     /// Relation name (e.g., "path", "can_send")
     pub name: &'static str,
-    
+
     /// Parameter type names (e.g., ["Proc", "Proc"])
     pub param_types: &'static [&'static str],
-    
+
     /// Optional description (from comment)
     pub description: Option<&'static str>,
 }

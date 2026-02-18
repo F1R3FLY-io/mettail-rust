@@ -182,6 +182,9 @@ pub enum Var<N> {
 }
 ```
 
+#### Native types (Int, Float, Bool, Str)
+Category enums for native types (e.g. `![i32] as Int`, `![f64] as Float`) are generated like other categories. Float (f32/f64) is represented via the runtime **canonical float** type (`CanonicalFloat64`/`CanonicalFloat32` in `runtime/src/canonical_float.rs`) so that Float satisfies `Eq`/`Hash`/`Ord` and can be used in Ascent relations. See `docs/design/exploring/float-support-ascent.md` for design and semantics.
+
 ---
 
 ## Ascent Execution Model

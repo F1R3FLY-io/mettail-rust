@@ -265,10 +265,6 @@ theory! {
         if S => T then (Sub S R) => (Sub T R);
         if S => T then (Sub L S) => (Sub L T);
     },
-    semantics {
-        Add: +,
-        Sub: -,
-    }
 }
 ```
 

@@ -14,10 +14,7 @@ use crate::ast::{
 /// Collection parameter: (name, coll_type, mapped_info)
 type CollectionParamInfo = (String, CollectionType, Option<(usize, usize)>);
 use crate::gen::native::{has_native_type, native_type_to_string};
-use crate::gen::{
-    generate_literal_label, generate_var_label, is_float_literal_rule, is_integer_literal_rule,
-    is_literal_rule, is_var_rule,
-};
+use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 
 /// Generate token parser for native type if needed
 fn generate_native_type_tokens(language: &LanguageDef) -> String {
@@ -36,9 +33,15 @@ fn generate_native_type_tokens(language: &LanguageDef) -> String {
                 tokens.push_str("    r\"[0-9]+\" => <>.parse().unwrap_or(0),\n");
                 tokens.push_str("};\n\n");
             } else if type_str == "f32" || type_str == "f64" {
-                // Token name FloatLiteral to avoid collision with category Float
+                // Token name FloatLiteral to avoid collision with category Float.
+                // Accept optional exponent (e|E)(+|-)?[0-9]+ and optional Rust-style suffix (f32|f64); strip suffix before parsing.
                 tokens.push_str(&format!("FloatLiteral: {} = {{\n", type_str));
-                tokens.push_str("    r\"[0-9]+\\.[0-9]+\" => <>.parse().unwrap_or(0.0),\n");
+                tokens.push_str(r#"    r"[0-9]+\.[0-9]+((e|E)(\+|-)?[0-9]+)?(f32|f64)?" => { let s = <>.trim_end_matches("f64").trim_end_matches("f32"); "#);
+                if type_str == "f32" {
+                    tokens.push_str("s.parse::<f32>().unwrap_or(0.0) },\n");
+                } else {
+                    tokens.push_str("s.parse().unwrap_or(0.0) },\n");
+                }
                 tokens.push_str("};\n\n");
             } else if type_str == "bool" {
                 tokens.push_str("Boolean: bool = {\n");
@@ -48,9 +51,7 @@ fn generate_native_type_tokens(language: &LanguageDef) -> String {
             } else if type_str == "str" || type_str == "String" {
                 // Quoted string literal: single regex to avoid ambiguity with Integer/digits
                 tokens.push_str("StringLiteral: std::string::String = {\n");
-                tokens.push_str(
-                    r##"    r#""[^"]*""# => <>.trim_matches('"').to_string(),"##,
-                );
+                tokens.push_str(r##"    r#""[^"]*""# => <>.trim_matches('"').to_string(),"##);
                 tokens.push_str("\n};\n\n");
             }
             // Add more native types as needed
@@ -75,8 +76,6 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
 
     // Add use statements for runtime helpers. Only include what's needed
     let has_binders = language.terms.iter().any(|r| !r.bindings.is_empty());
-
-
 
     // Check if any term uses HashBag collections (for #sep)
     let needs_hashbag = language.terms.iter().any(|r| {
@@ -128,13 +127,24 @@ pub fn generate_lalrpop_grammar(language: &LanguageDef) -> String {
 
     // When we have 3+ types, non-primary categories use prefix keywords ("name:", "int:"). Ensure
     // those keywords win over the Ident regex so "name" is tokenized as literal, not Ident.
+    // When any type is bool, also reserve "true" and "false" for Boolean literals.
     if language.types.len() >= 3 {
-        let keywords: Vec<String> = language
+        let mut keywords: Vec<String> = language
             .types
             .iter()
             .skip(1) // primary gets bare Ident
             .map(|t| format!("\"{}\"", t.name.to_string().to_lowercase()))
             .collect();
+        let has_bool = language.types.iter().any(|t| {
+            t.native_type
+                .as_ref()
+                .map(|nt| native_type_to_string(nt) == "bool")
+                .unwrap_or(false)
+        });
+        if has_bool {
+            keywords.push("\"true\"".to_string());
+            keywords.push("\"false\"".to_string());
+        }
         if !keywords.is_empty() {
             grammar.push_str("match {\n");
             for kw in &keywords {
@@ -364,27 +374,30 @@ fn generate_tiered_production(
         .copied()
         .collect();
 
-    // Add unary minus support for signed numeric types (Integer, FloatLiteral) before other rules for precedence
-    // if let Some(native_type) = has_native_type(category, language) {
-    //     let type_str = native_type_to_string(native_type);
-    //     if type_str == "i32" || type_str == "i64" {
-    //         if let Some(rule) = filtered_other_rules.iter().find(|r| is_integer_literal_rule(r)) {
-    //             let label = rule.label.to_string();
-    //             production.push_str(&format!(
-    //                 "    \"-\" <i:Integer> => {}::{}(-i),\n",
-    //                 cat_str, label
-    //             ));
-    //         }
-    //     } else if type_str == "f32" || type_str == "f64" {
-    //         if let Some(rule) = filtered_other_rules.iter().find(|r| is_float_literal_rule(r)) {
-    //             let label = rule.label.to_string();
-    //             production.push_str(&format!(
-    //                 "    \"-\" <f:FloatLiteral> => {}::{}(-f),\n",
-    //                 cat_str, label
-    //             ));
-    //         }
-    //     }
-    // }
+    // Add unary plus/minus support for signed numeric types (Integer, FloatLiteral) before other rules for precedence
+    if let Some(native_type) = has_native_type(category, language) {
+        let type_str = native_type_to_string(native_type);
+        if type_str == "i32" || type_str == "i64" {
+            let label = generate_literal_label(native_type);
+            production.push_str(&format!("    \"+\" <i:Integer> => {}::{}(i),\n", cat_str, label));
+            production.push_str(&format!("    \"-\" <i:Integer> => {}::{}(-i),\n", cat_str, label));
+        } else if type_str == "f32" || type_str == "f64" {
+            let label = generate_literal_label(native_type);
+            let wrapper = if type_str == "f32" {
+                "mettail_runtime::CanonicalFloat32"
+            } else {
+                "mettail_runtime::CanonicalFloat64"
+            };
+            production.push_str(&format!(
+                "    \"+\" <f:FloatLiteral> => {}::{}({}::from(f)),\n",
+                cat_str, label, wrapper
+            ));
+            production.push_str(&format!(
+                "    \"-\" <f:FloatLiteral> => {}::{}({}::from(-f)),\n",
+                cat_str, label, wrapper
+            ));
+        }
+    }
 
     // Add non-infix rules (excluding var+terminal rules, which are handled at top level)
     // Use Atom for same-category params to avoid ambiguity with Infix tier
@@ -429,10 +442,11 @@ fn generate_hol_infix_alternative(rule: &GrammarRule, cat_str: &str) -> String {
     if syntax_pattern.len() != 3 {
         panic!("HOL infix pattern must have exactly 3 elements");
     }
-    let (left_param, right_param) = match (&syntax_pattern[0], &syntax_pattern[1], &syntax_pattern[2]) {
-        (SyntaxExpr::Param(l), SyntaxExpr::Literal(_), SyntaxExpr::Param(r)) => (l, r),
-        _ => panic!("HOL infix pattern must be [Param, Literal, Param]"),
-    };
+    let (left_param, right_param) =
+        match (&syntax_pattern[0], &syntax_pattern[1], &syntax_pattern[2]) {
+            (SyntaxExpr::Param(l), SyntaxExpr::Literal(_), SyntaxExpr::Param(r)) => (l, r),
+            _ => panic!("HOL infix pattern must be [Param, Literal, Param]"),
+        };
     let param_ty = |name: &syn::Ident| -> Option<&syn::Ident> {
         let name_str = name.to_string();
         term_context.iter().find_map(|p| {
@@ -452,10 +466,7 @@ fn generate_hol_infix_alternative(rule: &GrammarRule, cat_str: &str) -> String {
         panic!(
             "infix rule {} has operands {} and {} but result category {}; \
              cross-category rules (e.g. Int == Int -> Bool) must not use infix tier",
-            label,
-            left_ty,
-            right_ty,
-            cat_str
+            label, left_ty, right_ty, cat_str
         );
     }
     let op_str = match &syntax_pattern[1] {
@@ -886,12 +897,21 @@ fn analyze_sequence_rule(rule: &GrammarRule, _cat_str: &str) -> AnalyzedRule {
 ///
 /// When use_atom_for_same_category is true (Atom tier), same-category params
 /// use CatAtom to avoid ambiguity with the Infix tier.
-fn analyze_rule(rule: &GrammarRule, cat_str: &str, use_atom_for_same_category: bool) -> AnalyzedRule {
+fn analyze_rule(
+    rule: &GrammarRule,
+    cat_str: &str,
+    use_atom_for_same_category: bool,
+) -> AnalyzedRule {
     // Check for new judgement-style syntax first
     if let (Some(ref term_context), Some(ref syntax_pattern)) =
         (&rule.term_context, &rule.syntax_pattern)
     {
-        return analyze_pattern_rule(rule, term_context, syntax_pattern, use_atom_for_same_category);
+        return analyze_pattern_rule(
+            rule,
+            term_context,
+            syntax_pattern,
+            use_atom_for_same_category,
+        );
     }
 
     // Handle old BNFC-style rules
@@ -1750,13 +1770,23 @@ fn generate_auto_alternatives(
             if type_str == "i32" || type_str == "i64" {
                 result.push_str(&format!("    <i:Integer> => {}::{}(i)", cat_str, literal_label));
             } else if type_str == "f32" || type_str == "f64" {
-                
-                result.push_str(&format!("    <f:FloatLiteral> => {}::{}(f)", cat_str, literal_label));
+                let wrapper = if type_str == "f32" {
+                    "mettail_runtime::CanonicalFloat32::from(f)"
+                } else {
+                    "mettail_runtime::CanonicalFloat64::from(f)"
+                };
+                result.push_str(&format!(
+                    "    <f:FloatLiteral> => {}::{}({})",
+                    cat_str, literal_label, wrapper
+                ));
             } else if type_str == "bool" {
                 result.push_str(&format!("    <b:Boolean> => {}::{}(b)", cat_str, literal_label));
             } else if type_str == "str" || type_str == "String" {
                 // Clone to avoid "cannot move out of a shared reference" - LALRPOP may pass symbol by ref when reducing
-                result.push_str(&format!("    <s:StringLiteral> => {}::{}(s.clone())", cat_str, literal_label));
+                result.push_str(&format!(
+                    "    <s:StringLiteral> => {}::{}(s.clone())",
+                    cat_str, literal_label
+                ));
             }
             needs_comma = true;
         }
@@ -1777,12 +1807,8 @@ fn generate_auto_alternatives(
             })
             .map(|t| t.name.to_string())
             .collect();
-        let only_first_gets_bare_ident =
-            categories_with_auto_var.len() <= 1
-                || categories_with_auto_var
-                    .first()
-                    .map(|s| s.as_str())
-                    == Some(cat_str.as_str());
+        let only_first_gets_bare_ident = categories_with_auto_var.len() <= 1
+            || categories_with_auto_var.first().map(|s| s.as_str()) == Some(cat_str.as_str());
         let var_label = generate_var_label(category);
         if needs_comma {
             result.push_str(",\n");
@@ -1828,11 +1854,7 @@ fn generate_auto_alternatives(
 
     if is_primary_category {
         // Get all non-native categories for the match arms
-        let domain_cats: Vec<_> = language
-            .types
-            .iter()
-            .map(|t| &t.name)
-            .collect();
+        let domain_cats: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
         if !domain_cats.is_empty() {
             if needs_comma {

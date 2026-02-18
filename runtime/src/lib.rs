@@ -11,6 +11,10 @@
 mod binding;
 pub use binding::*;
 
+// Canonical float types for Float category (Eq/Hash/Ord)
+mod canonical_float;
+pub use canonical_float::{CanonicalFloat32, CanonicalFloat64};
+
 // Collection types
 mod hashbag;
 pub use hashbag::HashBag;

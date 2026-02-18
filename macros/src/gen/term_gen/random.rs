@@ -16,6 +16,7 @@ use crate::ast::{
     language::LanguageDef,
 };
 use crate::gen::is_literal_nonterminal;
+use crate::gen::native::native_type_to_string;
 use crate::gen::term_gen::is_lang_type;
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -105,7 +106,7 @@ fn generate_random_for_category(cat_name: &Ident, language: &LanguageDef) -> Tok
 fn generate_random_depth_0(
     cat_name: &Ident,
     rules: &[&GrammarRule],
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> TokenStream {
     let mut cases = Vec::new();
 
@@ -174,9 +175,29 @@ fn generate_random_depth_0(
                             let val: bool = rng.gen();
                             #cat_name::#label(val)
                         },
-                        "FloatLiteral" => quote! {
-                            let val = rng.gen_range(-100.0f64..100.0f64);
-                            #cat_name::#label(val)
+                        "FloatLiteral" => {
+                            let is_f32 = language
+                                .types
+                                .iter()
+                                .find(|t| t.name == *cat_name)
+                                .and_then(|t| t.native_type.as_ref())
+                                .map(|n| native_type_to_string(n) == "f32")
+                                .unwrap_or(false);
+                            let (wrapper_ty, val_ty) = if is_f32 {
+                                (
+                                    quote! { mettail_runtime::CanonicalFloat32 },
+                                    quote! { rng.gen_range(-100.0f32..100.0f32) },
+                                )
+                            } else {
+                                (
+                                    quote! { mettail_runtime::CanonicalFloat64 },
+                                    quote! { rng.gen_range(-100.0f64..100.0f64) },
+                                )
+                            };
+                            quote! {
+                                let val = #val_ty;
+                                #cat_name::#label(#wrapper_ty::from(val))
+                            }
                         },
                         "StringLiteral" => quote! {
                             let len = rng.gen_range(0..20usize);
