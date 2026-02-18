@@ -128,11 +128,12 @@ fn run_test(test: &TestCase) -> Result<(), String> {
             let in_normal_forms_normalized = normal_forms
                 .iter()
                 .any(|nf| nf.0.clone().normalize() == expected);
-            let in_normal_forms_par_display = par_display_multiset(&expected).map_or(false, |expected_ms| {
-                normal_forms.iter().any(|nf| {
-                    par_display_multiset(&nf.0).map_or(false, |nf_ms| nf_ms == expected_ms)
-                })
-            });
+            let in_normal_forms_par_display =
+                par_display_multiset(&expected).map_or(false, |expected_ms| {
+                    normal_forms.iter().any(|nf| {
+                        par_display_multiset(&nf.0).map_or(false, |nf_ms| nf_ms == expected_ms)
+                    })
+                });
             if !in_normal_forms
                 && !in_normal_forms_display
                 && !in_normal_forms_normalized
