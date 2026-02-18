@@ -3,6 +3,18 @@ use ascent_byods_rels::*;
 use mettail_languages::rhocalc::*;
 use mettail_runtime::Language;
 
+/// For PPar terms, return a canonical multiset of (element_display, count) sorted by display.
+/// Used to compare parallel compositions regardless of HashBag iteration order.
+fn par_display_multiset(proc: &rhocalc::Proc) -> Option<Vec<(String, usize)>> {
+    if let rhocalc::Proc::PPar(bag) = proc {
+        let mut v: Vec<_> = bag.iter().map(|(p, c)| (p.to_string(), *c)).collect();
+        v.sort_by(|a, b| a.0.cmp(&b.0));
+        Some(v)
+    } else {
+        None
+    }
+}
+
 struct TestCase {
     name: &'static str,
     input: &'static str,
@@ -108,7 +120,7 @@ fn run_test(test: &TestCase) -> Result<(), String> {
                 .any(|(from, to)| from == &input_term && to == &expected);
 
         if !found {
-            // Also check if it's in normal forms (by value, by display, or by normalized equality for e.g. {p|q} vs {q|p})
+            // Also check if it's in normal forms (by value, by display, by normalized equality, or by PPar display multiset)
             let in_normal_forms = normal_forms.iter().any(|nf| nf.0 == expected);
             let in_normal_forms_display = normal_forms
                 .iter()
@@ -116,7 +128,16 @@ fn run_test(test: &TestCase) -> Result<(), String> {
             let in_normal_forms_normalized = normal_forms
                 .iter()
                 .any(|nf| nf.0.clone().normalize() == expected);
-            if !in_normal_forms && !in_normal_forms_display && !in_normal_forms_normalized {
+            let in_normal_forms_par_display = par_display_multiset(&expected).map_or(false, |expected_ms| {
+                normal_forms.iter().any(|nf| {
+                    par_display_multiset(&nf.0).map_or(false, |nf_ms| nf_ms == expected_ms)
+                })
+            });
+            if !in_normal_forms
+                && !in_normal_forms_display
+                && !in_normal_forms_normalized
+                && !in_normal_forms_par_display
+            {
                 return Err(format!(
                     "Expected output '{}' not found in rewrites or normal forms.\nNormalized expected: {}\nAvailable normal forms: {:?}",
                     expected_str,
