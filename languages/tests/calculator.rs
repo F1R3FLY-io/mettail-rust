@@ -127,8 +127,8 @@ fn test_bool_eq_float() {
 
 #[test]
 fn test_bool_and() {
-    calc_normal_form("true && false", "false");
-    calc_normal_form("true && true", "true");
+    calc_normal_form("true and false", "false");
+    calc_normal_form("true and true", "true");
 }
 
 // --- Str ---
@@ -145,7 +145,7 @@ fn test_str_literal() {
 
 #[test]
 fn test_str_concat() {
-    calc_normal_form(r#""a" ++ "b""#, r#""ab""#);
+    calc_normal_form(r#""a" + "b""#, r#""ab""#);
 }
 
 #[test]
