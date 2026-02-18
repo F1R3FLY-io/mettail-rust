@@ -22,11 +22,11 @@ language! {
         EqStr . a:Str, b:Str |- a "==" b : Bool ![a == b] step;
         GtInt . a:Int, b:Int |- a ">" b : Bool ![a > b] step;
         GtFloat . a:Float, b:Float |- a ">" b : Bool ![a > b] step;
-        GtBool . a:Bool, b:Bool |- a ">" b : Bool ![a > b] step;
+        GtBool . a:Bool, b:Bool |- a ">" b : Bool ![a & !b] step;
         GtStr . a:Str, b:Str |- a ">" b : Bool ![a > b] step;
         LtInt . a:Int, b:Int |- a "<" b : Bool ![a < b] step;
         LtFloat . a:Float, b:Float |- a "<" b : Bool ![a < b] step;
-        LtBool . a:Bool, b:Bool |- a "<" b : Bool ![a < b] step;
+        LtBool . a:Bool, b:Bool |- a "<" b : Bool ![!a & b] step;
         LtStr . a:Str, b:Str |- a "<" b : Bool ![a < b] step;
         LtEqInt . a:Int, b:Int |- a "<=" b : Bool ![a <= b] step;
         LtEqFloat . a:Float, b:Float |- a "<=" b : Bool ![a <= b] step;
