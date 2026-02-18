@@ -5,9 +5,9 @@ use mettail_runtime::Language;
 
 /// For PPar terms, return a canonical multiset of (element_display, count) sorted by display.
 /// Used to compare parallel compositions regardless of HashBag iteration order.
-fn par_display_multiset(proc: &rhocalc::Proc) -> Option<Vec<(String, usize)>> {
-    if let rhocalc::Proc::PPar(bag) = proc {
-        let mut v: Vec<_> = bag.iter().map(|(p, c)| (p.to_string(), *c)).collect();
+fn par_display_multiset(proc: &Proc) -> Option<Vec<(String, usize)>> {
+    if let Proc::PPar(bag) = proc {
+        let mut v: Vec<_> = bag.iter().map(|(p, c)| (p.to_string(), c)).collect();
         v.sort_by(|a, b| a.0.cmp(&b.0));
         Some(v)
     } else {
