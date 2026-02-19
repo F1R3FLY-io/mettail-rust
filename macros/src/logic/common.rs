@@ -4,11 +4,10 @@
 //! generation modules, reducing duplication and ensuring consistency.
 
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
-use crate::ast::language::{BuiltinOp, LanguageDef, SemanticOperation};
+use crate::ast::language::LanguageDef;
 use crate::ast::types::TypeExpr;
 use crate::gen::{generate_literal_label, is_literal_rule};
-use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::format_ident;
 use syn::Ident;
 
 /// Pre-computed relation names for a category.
@@ -55,34 +54,6 @@ pub fn literal_label_for(language: &LanguageDef, category: &Ident) -> Option<Ide
     Some(label)
 }
 
-/// Convert a `BuiltinOp` to its operator token (e.g., `Add` -> `+`).
-///
-/// Returns `None` for operators that don't have a simple infix token (e.g., `Eq`, `Not`).
-pub fn builtin_op_token(op: &BuiltinOp) -> Option<TokenStream> {
-    match op {
-        BuiltinOp::Add => Some(quote! { + }),
-        BuiltinOp::Sub => Some(quote! { - }),
-        BuiltinOp::Mul => Some(quote! { * }),
-        BuiltinOp::Div => Some(quote! { / }),
-        BuiltinOp::Rem => Some(quote! { % }),
-        _ => None,
-    }
-}
-
-/// Convert a `BuiltinOp` to a full `a <op> b` expression.
-///
-/// Returns `None` for operators that don't have a simple binary form.
-pub fn builtin_op_expr(op: &BuiltinOp) -> Option<TokenStream> {
-    match op {
-        BuiltinOp::Add => Some(quote! { a + b }),
-        BuiltinOp::Sub => Some(quote! { a - b }),
-        BuiltinOp::Mul => Some(quote! { a * b }),
-        BuiltinOp::Div => Some(quote! { a / b }),
-        BuiltinOp::Rem => Some(quote! { a % b }),
-        _ => None,
-    }
-}
-
 /// Count the number of AST fields (nonterminals + collections) in a grammar rule.
 ///
 /// Accounts for:
@@ -124,37 +95,6 @@ pub fn count_nonterminals(rule: &GrammarRule) -> usize {
         .iter()
         .filter(|item| matches!(item, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
         .count()
-}
-
-/// Resolve the result expression for a fold/semantic rule.
-///
-/// Given a constructor, resolve the expression to compute its value.
-/// Returns `None` if the constructor has no evaluation semantics.
-pub fn resolve_fold_expr(
-    rule: &GrammarRule,
-    language: &LanguageDef,
-    category: &Ident,
-    result_lit_label: &Ident,
-) -> Option<TokenStream> {
-    // Check for builtin semantics first
-    if let Some(sem) = language
-        .semantics
-        .iter()
-        .find(|s| s.constructor == rule.label)
-    {
-        let op_expr = match &sem.operation {
-            SemanticOperation::Builtin(op) => builtin_op_expr(op)?,
-        };
-        return Some(quote! { #category::#result_lit_label(#op_expr) });
-    }
-
-    // Fall back to rust_code
-    if let Some(ref rust_block) = rule.rust_code {
-        let rust_code = &rust_block.code;
-        return Some(quote! { #category::#result_lit_label((#rust_code)) });
-    }
-
-    None
 }
 
 /// Check if a constructor has a collection field.

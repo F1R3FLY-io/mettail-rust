@@ -127,6 +127,18 @@ fn test_floats() {
 
     assert_eq!(lex_string(&dfa, &partition, "3.14"), Some(TokenKind::Float));
     assert_eq!(lex_string(&dfa, &partition, "0.0"), Some(TokenKind::Float));
+
+    // Scientific notation: [eE][+-]?[0-9]+
+    assert_eq!(lex_string(&dfa, &partition, "1.0E2"), Some(TokenKind::Float));
+    assert_eq!(lex_string(&dfa, &partition, "1.0e2"), Some(TokenKind::Float));
+    assert_eq!(lex_string(&dfa, &partition, "2.5e-1"), Some(TokenKind::Float));
+    assert_eq!(lex_string(&dfa, &partition, "2.5E+3"), Some(TokenKind::Float));
+    assert_eq!(lex_string(&dfa, &partition, "1.23e10"), Some(TokenKind::Float));
+
+    // Partial exponent (no digits after 'e') should NOT match Float
+    assert_eq!(lex_string(&dfa, &partition, "1.0e"), None);
+    assert_eq!(lex_string(&dfa, &partition, "1.0e+"), None);
+    assert_eq!(lex_string(&dfa, &partition, "1.0E-"), None);
 }
 
 #[test]
@@ -380,9 +392,9 @@ fn calculator_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
     let needs = BuiltinNeeds {
         ident: true,
         integer: true,
+        float: true,
         boolean: true,
         string_lit: true,
-        ..Default::default()
     };
 
     (terminals, needs)

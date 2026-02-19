@@ -13,8 +13,8 @@
 //! bag.insert("a");
 //! bag.insert("b");
 //!
-//! assert_eq!(bag.count(&"a"), 2);
-//! assert_eq!(bag.count(&"b"), 1);
+//! assert_eq!(HashBag::count(&bag, &"a"), 2);
+//! assert_eq!(HashBag::count(&bag, &"b"), 1);
 //! assert_eq!(bag.len(), 3);
 //! ```
 
@@ -69,7 +69,7 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     /// use mettail_runtime::HashBag;
     ///
     /// let bag = HashBag::from_iter(vec!["a", "b", "a"]);
-    /// assert_eq!(bag.count(&"a"), 2);
+    /// assert_eq!(HashBag::count(&bag, &"a"), 2);
     /// assert_eq!(bag.len(), 3);
     /// ```
     #[allow(clippy::should_implement_trait)]
@@ -91,7 +91,7 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     /// let mut bag = HashBag::new();
     /// bag.insert("a");
     /// bag.insert("a");
-    /// assert_eq!(bag.count(&"a"), 2);
+    /// assert_eq!(HashBag::count(&bag, &"a"), 2);
     /// ```
     pub fn insert(&mut self, item: T) {
         *self.counts.entry(item).or_insert(0) += 1;
@@ -112,10 +112,10 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     /// bag.insert("a");
     ///
     /// assert!(bag.remove(&"a"));
-    /// assert_eq!(bag.count(&"a"), 1);
+    /// assert_eq!(HashBag::count(&bag, &"a"), 1);
     ///
     /// assert!(bag.remove(&"a"));
-    /// assert_eq!(bag.count(&"a"), 0);
+    /// assert_eq!(HashBag::count(&bag, &"a"), 0);
     ///
     /// assert!(!bag.remove(&"a"));
     /// ```
@@ -162,8 +162,8 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
     /// bag.insert("a");
     /// bag.insert("a");
     ///
-    /// assert_eq!(bag.count(&"a"), 2);
-    /// assert_eq!(bag.count(&"b"), 0);
+    /// assert_eq!(HashBag::count(&bag, &"a"), 2);
+    /// assert_eq!(HashBag::count(&bag, &"b"), 0);
     /// ```
     pub fn count(&self, item: &T) -> usize {
         self.counts.get(item).copied().unwrap_or(0)

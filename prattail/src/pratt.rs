@@ -475,7 +475,7 @@ fn write_prefix_handler(
             }
             "f32" | "f64" => {
                 match_arms.push(format!(
-                    "Token::Float(v) => {{ let val = *v; *pos += 1; Ok({}::FloatLit(val)) }}",
+                    "Token::Float(v) => {{ let val = (*v).into(); *pos += 1; Ok({}::FloatLit(val)) }}",
                     cat,
                 ));
             }

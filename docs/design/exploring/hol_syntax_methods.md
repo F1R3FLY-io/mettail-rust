@@ -12,7 +12,7 @@
 
 ## Problem Statement
 
-The current semantics system uses a separate `semantics` block that maps constructors to operations. We need to integrate semantics directly into grammar rules using HOL syntax with native Rust code blocks. This document focuses on:
+Semantics are defined in grammar rules using HOL syntax with native Rust code blocks (`![...]` in the `terms` section). This document focuses on:
 
 - Integration of Rust code blocks (`![...]`) into HOL syntax
 - Standard library import propagation to Rust code blocks
@@ -23,9 +23,9 @@ For string, float, and bool operation requirements, see [string_float_bool_metho
 
 **Current Implementation:**
 
-- `macros/src/ast/types.rs`: Separate `SemanticRule` with `BuiltinOp` enum
-- `macros/src/codegen/ast_gen.rs`: Hardcoded operator token generation
-- `macros/src/ascent/mod.rs`: Constant folding rule generation
+- Grammar rules in `terms` carry optional `rust_code` and `eval_mode`; evaluation and folding are generated from these.
+- `macros/src/gen/native/eval.rs`: Generated `eval`/`try_eval` from rust_code in rules.
+- `macros/src/logic/mod.rs`: Step and fold rule generation from rust_code.
 
 **Constraints:**
 

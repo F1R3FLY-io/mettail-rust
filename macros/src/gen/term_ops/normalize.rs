@@ -334,7 +334,11 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                                         } else if field_cat_str == "Var" {
                                             // Var field - not boxed, just clone
                                             quote! { #field_name.clone() }
-                                        } else if language.types.iter().any(|t| t.name == *field_cat) {
+                                        } else if language
+                                            .types
+                                            .iter()
+                                            .any(|t| t.name == *field_cat)
+                                        {
                                             // Another category (including native) - normalize it (boxed)
                                             quote! { Box::new(#field_name.as_ref().normalize()) }
                                         } else {

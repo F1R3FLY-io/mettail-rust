@@ -59,11 +59,11 @@ pub fn generate_metadata(language: &LanguageDef) -> TokenStream {
             fn rewrites(&self) -> &'static [mettail_runtime::RewriteDef] {
                 #rewrite_defs
             }
-            
+
             fn logic_relations(&self) -> &'static [mettail_runtime::LogicRelationDef] {
                 #logic_relation_defs
             }
-            
+
             fn logic_rules(&self) -> &'static [mettail_runtime::LogicRuleDef] {
                 #logic_rule_defs
             }
@@ -756,19 +756,18 @@ fn generate_logic_relation_defs(language: &LanguageDef) -> TokenStream {
         Some(l) => l,
         None => return quote! { &[] },
     };
-    
+
     if logic.relations.is_empty() {
         return quote! { &[] };
     }
-    
-    let defs: Vec<TokenStream> = logic.relations
+
+    let defs: Vec<TokenStream> = logic
+        .relations
         .iter()
         .map(|rel| {
             let name = rel.name.to_string();
-            let param_types: Vec<String> = rel.param_types.iter()
-                .map(|t| t.to_string())
-                .collect();
-            
+            let param_types: Vec<String> = rel.param_types.iter().map(|t| t.to_string()).collect();
+
             quote! {
                 mettail_runtime::LogicRelationDef {
                     name: #name,
@@ -778,21 +777,21 @@ fn generate_logic_relation_defs(language: &LanguageDef) -> TokenStream {
             }
         })
         .collect();
-    
+
     quote! {
         &[#(#defs),*]
     }
 }
 
 /// Generate LogicRuleDef array from logic block
-/// 
+///
 /// This extracts rules (non-relation declarations) from the logic content.
 fn generate_logic_rule_defs(language: &LanguageDef) -> TokenStream {
     let logic = match &language.logic {
         Some(l) => l,
         None => return quote! { &[] },
     };
-    
+
     // Extract rules from the token stream by splitting on semicolons
     // and filtering out relation declarations
     let content_str = logic.content.to_string();
@@ -803,11 +802,11 @@ fn generate_logic_rule_defs(language: &LanguageDef) -> TokenStream {
         .filter(|s| !s.starts_with("relation "))
         .map(normalize_rule_whitespace)
         .collect();
-    
+
     if rules.is_empty() {
         return quote! { &[] };
     }
-    
+
     let defs: Vec<TokenStream> = rules
         .iter()
         .map(|rule| {
@@ -818,7 +817,7 @@ fn generate_logic_rule_defs(language: &LanguageDef) -> TokenStream {
             }
         })
         .collect();
-    
+
     quote! {
         &[#(#defs),*]
     }

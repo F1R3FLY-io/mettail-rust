@@ -466,16 +466,22 @@ fn build_integer_fragment(nfa: &mut Nfa) -> NfaFragment {
     NfaFragment { start, accept }
 }
 
-/// Build an NFA fragment for float literals: `[0-9]+\.[0-9]+`
+/// Build an NFA fragment for float literals: `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`
 ///
 /// ```text
-///   start -[0-9]-> s1 -[0-9]-> s1 -'.'-> s2 -[0-9]-> s3(accept:Float) -[0-9]-> s3
+///   start -[0-9]-> s1 -[0-9]-> s1 -'.'-> s2 -[0-9]-> frac_accept(accept:Float) -[0-9]-> frac_accept
+///   frac_accept -[eE]-> exp_marker -[0-9]-> exp_accept(accept:Float) -[0-9]-> exp_accept
+///                                   -[+-]-> exp_sign -[0-9]-> exp_accept
 /// ```
+///
+/// Both `frac_accept` and `exp_accept` are accepting states for `TokenKind::Float`.
+/// Rust's `str::parse::<f64>()` already handles scientific notation, so no change
+/// to codegen is needed.
 fn build_float_fragment(nfa: &mut Nfa) -> NfaFragment {
     let start = nfa.add_state(NfaState::new());
     let integer_part = nfa.add_state(NfaState::new());
     let dot = nfa.add_state(NfaState::new());
-    let accept = nfa.add_state(NfaState::accepting(TokenKind::Float));
+    let frac_accept = nfa.add_state(NfaState::accepting(TokenKind::Float));
 
     // Integer part: one or more digits
     nfa.add_transition(start, integer_part, CharClass::Range(b'0', b'9'));
@@ -485,10 +491,36 @@ fn build_float_fragment(nfa: &mut Nfa) -> NfaFragment {
     nfa.add_transition(integer_part, dot, CharClass::Single(b'.'));
 
     // Fractional part: one or more digits
-    nfa.add_transition(dot, accept, CharClass::Range(b'0', b'9'));
-    nfa.add_transition(accept, accept, CharClass::Range(b'0', b'9'));
+    nfa.add_transition(dot, frac_accept, CharClass::Range(b'0', b'9'));
+    nfa.add_transition(frac_accept, frac_accept, CharClass::Range(b'0', b'9'));
 
-    NfaFragment { start, accept }
+    // Optional exponent: [eE][+-]?[0-9]+
+    let exp_marker = nfa.add_state(NfaState::new());
+    let exp_sign = nfa.add_state(NfaState::new());
+    let exp_accept = nfa.add_state(NfaState::accepting(TokenKind::Float));
+
+    // frac_accept -[eE]-> exp_marker
+    nfa.add_transition(frac_accept, exp_marker, CharClass::Single(b'e'));
+    nfa.add_transition(frac_accept, exp_marker, CharClass::Single(b'E'));
+
+    // exp_marker -[+-]-> exp_sign (optional sign)
+    nfa.add_transition(exp_marker, exp_sign, CharClass::Single(b'+'));
+    nfa.add_transition(exp_marker, exp_sign, CharClass::Single(b'-'));
+
+    // exp_marker -[0-9]-> exp_accept (no sign)
+    nfa.add_transition(exp_marker, exp_accept, CharClass::Range(b'0', b'9'));
+
+    // exp_sign -[0-9]-> exp_accept
+    nfa.add_transition(exp_sign, exp_accept, CharClass::Range(b'0', b'9'));
+
+    // exp_accept -[0-9]-> exp_accept (multi-digit exponent)
+    nfa.add_transition(exp_accept, exp_accept, CharClass::Range(b'0', b'9'));
+
+    // The fragment's accept is exp_accept (last possible accepting state),
+    // but frac_accept is ALSO accepting, so both paths work via subset construction.
+    // We return frac_accept as the fragment accept since it's the first accepting state;
+    // the NFA handles both via epsilon-free paths.
+    NfaFragment { start, accept: frac_accept }
 }
 
 /// Build an NFA fragment for string literals: `"[^"]*"`

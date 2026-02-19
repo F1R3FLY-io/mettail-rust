@@ -7,9 +7,9 @@
 use crate::ast::grammar::GrammarItem;
 use crate::ast::language::LanguageDef;
 use crate::gen::{generate_literal_label, generate_var_label};
+use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use proc_macro2::Span;
 use syn::{Ident, LitStr};
 
 /// Generate the complete language implementation
@@ -137,8 +137,6 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env(env)) }
         })
         .collect();
-
-
 
     // Cross-category variable resolution: if after substitution we still have a variable,
     // look it up in other categories (e.g. "x" parsed as Int but bound as Bool -> use Bool value).
@@ -655,7 +653,8 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                         } else {
                                             "Name".to_string()
                                         };
-                                        let domain_lit = LitStr::new(&domain_str, Span::call_site());
+                                        let domain_lit =
+                                            LitStr::new(&domain_str, Span::call_site());
 
                                         recurse_calls.push(quote! {
                                             // Extract binder from scope using unbind
@@ -697,7 +696,8 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                         } else {
                                             "Name".to_string()
                                         };
-                                        let domain_lit = LitStr::new(&domain_str, Span::call_site());
+                                        let domain_lit =
+                                            LitStr::new(&domain_str, Span::call_site());
 
                                         recurse_calls.push(quote! {
                                             // Extract binders from multi-scope using unbind
@@ -854,14 +854,43 @@ fn generate_language_struct_multi(
 
     let custom_relation_extraction = generate_custom_relation_extraction(language);
 
-    // Parse: try primary (first) type's parser first, then the rest. First success wins.
-    // This order matters for multi-type languages (e.g. RhoCalc): primary (Proc) is the most
-    // general; other categories (Name) are tried so that e.g. "@(0)" parses as Name when Proc fails.
-    let primary_type = language.types.first().map(|t| &t.name);
-
-    let parse_tries: Vec<TokenStream> = primary_type
-        .into_iter()
-        .chain(language.types.iter().skip(1).map(|t| &t.name))
+    // Parse: try category parsers in order. First success wins.
+    // When both Int and Float exist, try Float before Int so that "1.0" is parsed as Float
+    // (Int parser would see FloatLiteral and fail with UnrecognizedToken).
+    let has_int = language.types.iter().any(|t| t.name.to_string() == "Int");
+    let has_float = language.types.iter().any(|t| t.name.to_string() == "Float");
+    let parse_order: Vec<syn::Ident> = if has_int && has_float {
+        let mut order = Vec::new();
+        order.push(
+            language
+                .types
+                .iter()
+                .find(|t| t.name.to_string() == "Float")
+                .expect("Float type must exist")
+                .name
+                .clone(),
+        );
+        order.push(
+            language
+                .types
+                .iter()
+                .find(|t| t.name.to_string() == "Int")
+                .expect("Int type must exist")
+                .name
+                .clone(),
+        );
+        for t in &language.types {
+            let s = t.name.to_string();
+            if s != "Int" && s != "Float" {
+                order.push(t.name.clone());
+            }
+        }
+        order
+    } else {
+        language.types.iter().map(|t| t.name.clone()).collect()
+    };
+    let parse_tries: Vec<TokenStream> = parse_order
+        .iter()
         .map(|cat| {
             let variant = format_ident!("{}", cat);
             quote! {
@@ -1499,7 +1528,7 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
 }
 
 /// Generate code to extract custom relations from the Ascent program
-/// 
+///
 /// For each relation declared in the logic block, generates code like:
 /// ```ignore
 /// custom_relations.insert("path".to_string(), mettail_runtime::RelationData {
@@ -1512,38 +1541,35 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
         Some(logic_block) => &logic_block.relations,
         None => return quote! {},
     };
-    
+
     if relations.is_empty() {
         return quote! {};
     }
-    
+
     let mut extractions = Vec::new();
-    
+
     for rel in relations {
         let rel_name = &rel.name;
         let rel_name_str = rel_name.to_string();
-        let param_type_strs: Vec<String> = rel.param_types.iter()
-            .map(|t| t.to_string())
-            .collect();
-        
+        let param_type_strs: Vec<String> = rel.param_types.iter().map(|t| t.to_string()).collect();
+
         // Generate tuple element names based on arity
         let arity = rel.param_types.len();
-        let tuple_vars: Vec<syn::Ident> = (0..arity)
-            .map(|i| format_ident!("e{}", i))
-            .collect();
-        
+        let tuple_vars: Vec<syn::Ident> = (0..arity).map(|i| format_ident!("e{}", i)).collect();
+
         // Generate format expressions for each element
-        let format_exprs: Vec<TokenStream> = tuple_vars.iter()
+        let format_exprs: Vec<TokenStream> = tuple_vars
+            .iter()
             .map(|v| quote! { format!("{}", #v) })
             .collect();
-        
+
         // For arity 1, use (e0,) so Rust treats it as a tuple pattern; (e0) would bind the whole &(Proc,).
         let tuple_pattern: TokenStream = if arity == 1 {
             quote! { (#(#tuple_vars),*,) }
         } else {
             quote! { (#(#tuple_vars),*) }
         };
-        
+
         extractions.push(quote! {
             custom_relations.insert(
                 #rel_name_str.to_string(),
@@ -1557,7 +1583,7 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
             );
         });
     }
-    
+
     quote! {
         #(#extractions)*
     }

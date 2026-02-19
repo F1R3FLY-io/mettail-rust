@@ -38,21 +38,33 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
         4,          // items per collection (unused here, but required)
         |inner| {
             prop_oneof![
-                // Add: left + right
+                // AddInt: left + right
                 (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::Add(Box::new(a), Box::new(b))
+                    Int::AddInt(Box::new(a), Box::new(b))
                 }),
-                // Sub: left - right
+                // SubInt: left - right
                 (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::Sub(Box::new(a), Box::new(b))
+                    Int::SubInt(Box::new(a), Box::new(b))
+                }),
+                // MulInt: left * right
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::MulInt(Box::new(a), Box::new(b))
+                }),
+                // DivInt: left / right
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::DivInt(Box::new(a), Box::new(b))
+                }),
+                // ModInt: left % right
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
+                    Int::ModInt(Box::new(a), Box::new(b))
                 }),
                 // Neg: -operand
                 inner.clone().prop_map(|a| {
                     Int::Neg(Box::new(a))
                 }),
-                // Pow: base ^ exponent
+                // PowInt: base ^ exponent
                 (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::Pow(Box::new(a), Box::new(b))
+                    Int::PowInt(Box::new(a), Box::new(b))
                 }),
                 // Fact: operand!
                 inner.clone().prop_map(|a| {
@@ -139,9 +151,12 @@ fn roundtrip_depth0_literals() {
 #[test]
 fn roundtrip_simple_binary_ops() {
     let ops: Vec<(&str, fn(Box<Int>, Box<Int>) -> Int)> = vec![
-        ("+", |a, b| Int::Add(a, b)),
-        ("-", |a, b| Int::Sub(a, b)),
-        ("^", |a, b| Int::Pow(a, b)),
+        ("+", |a, b| Int::AddInt(a, b)),
+        ("-", |a, b| Int::SubInt(a, b)),
+        ("*", |a, b| Int::MulInt(a, b)),
+        ("/", |a, b| Int::DivInt(a, b)),
+        ("%", |a, b| Int::ModInt(a, b)),
+        ("^", |a, b| Int::PowInt(a, b)),
         ("~", |a, b| Int::CustomOp(a, b)),
     ];
 
@@ -213,8 +228,8 @@ fn roundtrip_ternary() {
 fn roundtrip_nested_expressions() {
     // (1 + 2) - 3
     mettail_runtime::clear_var_cache();
-    let term = Int::Sub(
-        Box::new(Int::Add(Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2)))),
+    let term = Int::SubInt(
+        Box::new(Int::AddInt(Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2)))),
         Box::new(Int::NumLit(3)),
     );
     let displayed = format!("{}", term);
@@ -229,7 +244,7 @@ fn roundtrip_nested_expressions() {
 
     // -(3 + 4)
     mettail_runtime::clear_var_cache();
-    let term = Int::Neg(Box::new(Int::Add(
+    let term = Int::Neg(Box::new(Int::AddInt(
         Box::new(Int::NumLit(3)),
         Box::new(Int::NumLit(4)),
     )));

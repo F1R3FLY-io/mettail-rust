@@ -100,15 +100,9 @@ fn generate_collection_plus_binding_deconstruction(
     let has_multi = term_context
         .iter()
         .any(|p| matches!(p, TermParam::MultiAbstraction { .. }));
-    let has_collection = term_context.iter().any(|p| {
-        matches!(
-            p,
-            TermParam::Simple {
-                ty: TypeExpr::Collection { .. },
-                ..
-            }
-        )
-    });
+    let has_collection = term_context
+        .iter()
+        .any(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Collection { .. }, .. }));
     if !has_multi || !has_collection || constructor.bindings.len() != 1 {
         return None;
     }

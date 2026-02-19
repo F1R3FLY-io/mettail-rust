@@ -894,7 +894,8 @@ impl Repl {
                 let formatted = format_term_pretty(&format!("{}", result_term));
                 println!("{}", formatted.cyan());
                 println!();
-                self.state.set_term_with_id(result_term, results, result_id)?;
+                self.state
+                    .set_term_with_id(result_term, results, result_id)?;
                 return Ok(());
             }
         }
@@ -926,7 +927,11 @@ impl Repl {
             println!();
             self.state.set_term_with_id(term, results, initial_id)?;
             if available > 0 {
-                println!("  Use {} to apply a rewrite ({} available).", "apply 0".cyan(), available);
+                println!(
+                    "  Use {} to apply a rewrite ({} available).",
+                    "apply 0".cyan(),
+                    available
+                );
             } else {
                 println!("  No rewrites from this term (already a normal form).");
             }
@@ -1121,12 +1126,16 @@ impl Repl {
                 println!();
                 println!("{} ({} tuples):", "terms(Term)".bold(), results.all_terms.len());
                 for term_info in &results.all_terms {
-                    let nf_marker = if term_info.is_normal_form { " [NF]".dimmed() } else { "".into() };
+                    let nf_marker = if term_info.is_normal_form {
+                        " [NF]".dimmed()
+                    } else {
+                        "".into()
+                    };
                     println!("  {}{}", term_info.display.green(), nf_marker);
                 }
                 println!();
                 return Ok(());
-            }
+            },
             "rewrites" => {
                 println!();
                 println!("{} ({} tuples):", "rewrites(Term, Term)".bold(), results.rewrites.len());
@@ -1134,17 +1143,24 @@ impl Repl {
                     let from = results.all_terms.iter().find(|t| t.term_id == rw.from_id);
                     let to = results.all_terms.iter().find(|t| t.term_id == rw.to_id);
                     if let (Some(from), Some(to)) = (from, to) {
-                        println!("  {} {} {}", from.display.green(), "→".yellow(), to.display.green());
+                        println!(
+                            "  {} {} {}",
+                            from.display.green(),
+                            "→".yellow(),
+                            to.display.green()
+                        );
                     }
                 }
                 println!();
                 return Ok(());
-            }
+            },
             "equivalences" => {
                 println!();
                 println!("{} ({} classes):", "equivalences".bold(), results.equivalences.len());
                 for equiv in &results.equivalences {
-                    let terms: Vec<_> = equiv.term_ids.iter()
+                    let terms: Vec<_> = equiv
+                        .term_ids
+                        .iter()
                         .filter_map(|id| results.all_terms.iter().find(|t| t.term_id == *id))
                         .map(|t| t.display.as_str())
                         .collect();
@@ -1152,8 +1168,8 @@ impl Repl {
                 }
                 println!();
                 return Ok(());
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         // Check custom relations
@@ -1168,10 +1184,7 @@ impl Repl {
             return Ok(());
         }
 
-        anyhow::bail!(
-            "Unknown relation: '{}'. Use 'relations' to list available relations.",
-            name
-        )
+        anyhow::bail!("Unknown relation: '{}'. Use 'relations' to list available relations.", name)
     }
 
     fn cmd_apply(&mut self, args: &[&str]) -> Result<()> {

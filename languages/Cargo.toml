@@ -21,15 +21,6 @@ ascent-byods-rels = { workspace = true }
 criterion = { version = "0.5", features = ["html_reports"] }
 proptest = "1"
 
-# TODO: Re-enable after Pattern refactor complete
-[[bin]]
-name = "ambient_tests"
-path = "tests/ambient_tests.rs"
-
-[[bin]]
-name = "rhocalc_tests"
-path = "tests/rhocalc_tests.rs"
-
 [[bench]]
 name = "rhocalc_bench"
 harness = false

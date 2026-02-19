@@ -1137,7 +1137,7 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
         "f32" | "f64" => {
             write!(
                 buf,
-                "Token::Float(v) => {{ let val = *v; *pos += 1; break 'prefix {}::FloatLit(val); }},",
+                "Token::Float(v) => {{ let val = (*v).into(); *pos += 1; break 'prefix {}::FloatLit(val); }},",
                 cat,
             ).unwrap();
         }

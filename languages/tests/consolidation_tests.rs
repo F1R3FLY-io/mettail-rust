@@ -31,12 +31,18 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
     leaf.prop_recursive(max_depth, 64, 4, |inner| {
         prop_oneof![
             (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::Add(Box::new(a), Box::new(b))),
+                .prop_map(|(a, b)| Int::AddInt(Box::new(a), Box::new(b))),
             (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::Sub(Box::new(a), Box::new(b))),
+                .prop_map(|(a, b)| Int::SubInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::MulInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::DivInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone())
+                .prop_map(|(a, b)| Int::ModInt(Box::new(a), Box::new(b))),
             inner.clone().prop_map(|a| Int::Neg(Box::new(a))),
             (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::Pow(Box::new(a), Box::new(b))),
+                .prop_map(|(a, b)| Int::PowInt(Box::new(a), Box::new(b))),
             inner.clone().prop_map(|a| Int::Fact(Box::new(a))),
             (inner.clone(), inner.clone(), inner.clone())
                 .prop_map(|(c, t, e)| Int::Tern(Box::new(c), Box::new(t), Box::new(e))),
@@ -53,10 +59,13 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
 /// Classify an Int term by its constructor kind (returns a tag).
 fn classify_int(t: &Int) -> &'static str {
     match t {
-        Int::Add(..) => "Add",
-        Int::Sub(..) => "Sub",
+        Int::AddInt(..) => "AddInt",
+        Int::SubInt(..) => "SubInt",
+        Int::MulInt(..) => "MulInt",
+        Int::DivInt(..) => "DivInt",
+        Int::ModInt(..) => "ModInt",
         Int::Neg(..) => "Neg",
-        Int::Pow(..) => "Pow",
+        Int::PowInt(..) => "PowInt",
         Int::Fact(..) => "Fact",
         Int::Tern(..) => "Tern",
         Int::CustomOp(..) => "CustomOp",
@@ -70,13 +79,28 @@ fn classify_int(t: &Int) -> &'static str {
 fn extract_subterms_per_constructor(t: &Int) -> Vec<Int> {
     let mut results = Vec::new();
 
-    // Rule for Add
-    if let Int::Add(f0, f1) = t {
+    // Rule for AddInt
+    if let Int::AddInt(f0, f1) = t {
         results.push(f0.as_ref().clone());
         results.push(f1.as_ref().clone());
     }
-    // Rule for Sub
-    if let Int::Sub(f0, f1) = t {
+    // Rule for SubInt
+    if let Int::SubInt(f0, f1) = t {
+        results.push(f0.as_ref().clone());
+        results.push(f1.as_ref().clone());
+    }
+    // Rule for MulInt
+    if let Int::MulInt(f0, f1) = t {
+        results.push(f0.as_ref().clone());
+        results.push(f1.as_ref().clone());
+    }
+    // Rule for DivInt
+    if let Int::DivInt(f0, f1) = t {
+        results.push(f0.as_ref().clone());
+        results.push(f1.as_ref().clone());
+    }
+    // Rule for ModInt
+    if let Int::ModInt(f0, f1) = t {
         results.push(f0.as_ref().clone());
         results.push(f1.as_ref().clone());
     }
@@ -84,8 +108,8 @@ fn extract_subterms_per_constructor(t: &Int) -> Vec<Int> {
     if let Int::Neg(f0) = t {
         results.push(f0.as_ref().clone());
     }
-    // Rule for Pow
-    if let Int::Pow(f0, f1) = t {
+    // Rule for PowInt
+    if let Int::PowInt(f0, f1) = t {
         results.push(f0.as_ref().clone());
         results.push(f1.as_ref().clone());
     }
@@ -112,10 +136,13 @@ fn extract_subterms_per_constructor(t: &Int) -> Vec<Int> {
 /// NEW: Consolidated subterm extraction (simulates 1 for-match rule).
 fn extract_subterms_consolidated(t: &Int) -> Vec<Int> {
     match t {
-        Int::Add(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
-        Int::Sub(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Int::AddInt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Int::SubInt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Int::MulInt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Int::DivInt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Int::ModInt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
         Int::Neg(f0) => vec![f0.as_ref().clone()],
-        Int::Pow(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Int::PowInt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
         Int::Fact(f0) => vec![f0.as_ref().clone()],
         Int::Tern(f0, f1, f2) => {
             vec![f0.as_ref().clone(), f1.as_ref().clone(), f2.as_ref().clone()]
@@ -128,24 +155,33 @@ fn extract_subterms_consolidated(t: &Int) -> Vec<Int> {
 /// Extract (field_value, variant_index) pairs — simulates consolidated congruence.
 fn vi_extract(t: &Int) -> Vec<(Int, usize)> {
     match t {
-        Int::Add(x0, x1) => {
+        Int::AddInt(x0, x1) => {
             vec![(x0.as_ref().clone(), 0), (x1.as_ref().clone(), 1)]
         }
-        Int::Sub(x0, x1) => {
+        Int::SubInt(x0, x1) => {
             vec![(x0.as_ref().clone(), 2), (x1.as_ref().clone(), 3)]
         }
-        Int::Neg(x0) => vec![(x0.as_ref().clone(), 4)],
-        Int::Pow(x0, x1) => {
-            vec![(x0.as_ref().clone(), 5), (x1.as_ref().clone(), 6)]
+        Int::MulInt(x0, x1) => {
+            vec![(x0.as_ref().clone(), 4), (x1.as_ref().clone(), 5)]
         }
-        Int::Fact(x0) => vec![(x0.as_ref().clone(), 7)],
+        Int::DivInt(x0, x1) => {
+            vec![(x0.as_ref().clone(), 6), (x1.as_ref().clone(), 7)]
+        }
+        Int::ModInt(x0, x1) => {
+            vec![(x0.as_ref().clone(), 8), (x1.as_ref().clone(), 9)]
+        }
+        Int::Neg(x0) => vec![(x0.as_ref().clone(), 10)],
+        Int::PowInt(x0, x1) => {
+            vec![(x0.as_ref().clone(), 11), (x1.as_ref().clone(), 12)]
+        }
+        Int::Fact(x0) => vec![(x0.as_ref().clone(), 13)],
         Int::Tern(x0, x1, x2) => vec![
-            (x0.as_ref().clone(), 8),
-            (x1.as_ref().clone(), 9),
-            (x2.as_ref().clone(), 10),
+            (x0.as_ref().clone(), 14),
+            (x1.as_ref().clone(), 15),
+            (x2.as_ref().clone(), 16),
         ],
         Int::CustomOp(x0, x1) => {
-            vec![(x0.as_ref().clone(), 11), (x1.as_ref().clone(), 12)]
+            vec![(x0.as_ref().clone(), 17), (x1.as_ref().clone(), 18)]
         }
         _ => vec![],
     }
@@ -154,25 +190,31 @@ fn vi_extract(t: &Int) -> Vec<(Int, usize)> {
 /// Rebuild a term by replacing the field at the given variant index.
 fn vi_rebuild(t: &Int, vi: usize, new_val: Int) -> Int {
     match (t, vi) {
-        (Int::Add(_, x1), 0) => Int::Add(Box::new(new_val), x1.clone()),
-        (Int::Add(x0, _), 1) => Int::Add(x0.clone(), Box::new(new_val)),
-        (Int::Sub(_, x1), 2) => Int::Sub(Box::new(new_val), x1.clone()),
-        (Int::Sub(x0, _), 3) => Int::Sub(x0.clone(), Box::new(new_val)),
-        (Int::Neg(_), 4) => Int::Neg(Box::new(new_val)),
-        (Int::Pow(_, x1), 5) => Int::Pow(Box::new(new_val), x1.clone()),
-        (Int::Pow(x0, _), 6) => Int::Pow(x0.clone(), Box::new(new_val)),
-        (Int::Fact(_), 7) => Int::Fact(Box::new(new_val)),
-        (Int::Tern(_, x1, x2), 8) => {
+        (Int::AddInt(_, x1), 0) => Int::AddInt(Box::new(new_val), x1.clone()),
+        (Int::AddInt(x0, _), 1) => Int::AddInt(x0.clone(), Box::new(new_val)),
+        (Int::SubInt(_, x1), 2) => Int::SubInt(Box::new(new_val), x1.clone()),
+        (Int::SubInt(x0, _), 3) => Int::SubInt(x0.clone(), Box::new(new_val)),
+        (Int::MulInt(_, x1), 4) => Int::MulInt(Box::new(new_val), x1.clone()),
+        (Int::MulInt(x0, _), 5) => Int::MulInt(x0.clone(), Box::new(new_val)),
+        (Int::DivInt(_, x1), 6) => Int::DivInt(Box::new(new_val), x1.clone()),
+        (Int::DivInt(x0, _), 7) => Int::DivInt(x0.clone(), Box::new(new_val)),
+        (Int::ModInt(_, x1), 8) => Int::ModInt(Box::new(new_val), x1.clone()),
+        (Int::ModInt(x0, _), 9) => Int::ModInt(x0.clone(), Box::new(new_val)),
+        (Int::Neg(_), 10) => Int::Neg(Box::new(new_val)),
+        (Int::PowInt(_, x1), 11) => Int::PowInt(Box::new(new_val), x1.clone()),
+        (Int::PowInt(x0, _), 12) => Int::PowInt(x0.clone(), Box::new(new_val)),
+        (Int::Fact(_), 13) => Int::Fact(Box::new(new_val)),
+        (Int::Tern(_, x1, x2), 14) => {
             Int::Tern(Box::new(new_val), x1.clone(), x2.clone())
         }
-        (Int::Tern(x0, _, x2), 9) => {
+        (Int::Tern(x0, _, x2), 15) => {
             Int::Tern(x0.clone(), Box::new(new_val), x2.clone())
         }
-        (Int::Tern(x0, x1, _), 10) => {
+        (Int::Tern(x0, x1, _), 16) => {
             Int::Tern(x0.clone(), x1.clone(), Box::new(new_val))
         }
-        (Int::CustomOp(_, x1), 11) => Int::CustomOp(Box::new(new_val), x1.clone()),
-        (Int::CustomOp(x0, _), 12) => Int::CustomOp(x0.clone(), Box::new(new_val)),
+        (Int::CustomOp(_, x1), 17) => Int::CustomOp(Box::new(new_val), x1.clone()),
+        (Int::CustomOp(x0, _), 18) => Int::CustomOp(x0.clone(), Box::new(new_val)),
         _ => unreachable!("invalid variant index {} for {:?}", vi, classify_int(t)),
     }
 }
@@ -181,18 +223,30 @@ fn vi_rebuild(t: &Int, vi: usize, new_val: Int) -> Int {
 fn pair_extract_per_constructor(s: &Int, t: &Int) -> Vec<(Int, Int)> {
     let mut results = Vec::new();
 
-    if let (Int::Add(s0, s1), Int::Add(t0, t1)) = (s, t) {
+    if let (Int::AddInt(s0, s1), Int::AddInt(t0, t1)) = (s, t) {
         results.push((s0.as_ref().clone(), t0.as_ref().clone()));
         results.push((s1.as_ref().clone(), t1.as_ref().clone()));
     }
-    if let (Int::Sub(s0, s1), Int::Sub(t0, t1)) = (s, t) {
+    if let (Int::SubInt(s0, s1), Int::SubInt(t0, t1)) = (s, t) {
+        results.push((s0.as_ref().clone(), t0.as_ref().clone()));
+        results.push((s1.as_ref().clone(), t1.as_ref().clone()));
+    }
+    if let (Int::MulInt(s0, s1), Int::MulInt(t0, t1)) = (s, t) {
+        results.push((s0.as_ref().clone(), t0.as_ref().clone()));
+        results.push((s1.as_ref().clone(), t1.as_ref().clone()));
+    }
+    if let (Int::DivInt(s0, s1), Int::DivInt(t0, t1)) = (s, t) {
+        results.push((s0.as_ref().clone(), t0.as_ref().clone()));
+        results.push((s1.as_ref().clone(), t1.as_ref().clone()));
+    }
+    if let (Int::ModInt(s0, s1), Int::ModInt(t0, t1)) = (s, t) {
         results.push((s0.as_ref().clone(), t0.as_ref().clone()));
         results.push((s1.as_ref().clone(), t1.as_ref().clone()));
     }
     if let (Int::Neg(s0), Int::Neg(t0)) = (s, t) {
         results.push((s0.as_ref().clone(), t0.as_ref().clone()));
     }
-    if let (Int::Pow(s0, s1), Int::Pow(t0, t1)) = (s, t) {
+    if let (Int::PowInt(s0, s1), Int::PowInt(t0, t1)) = (s, t) {
         results.push((s0.as_ref().clone(), t0.as_ref().clone()));
         results.push((s1.as_ref().clone(), t1.as_ref().clone()));
     }
@@ -215,18 +269,30 @@ fn pair_extract_per_constructor(s: &Int, t: &Int) -> Vec<(Int, Int)> {
 /// NEW: Consolidated pair extraction (simulates 1 pair-match rule).
 fn pair_extract_consolidated(s: &Int, t: &Int) -> Vec<(Int, Int)> {
     match (s, t) {
-        (Int::Add(s0, s1), Int::Add(t0, t1)) => vec![
+        (Int::AddInt(s0, s1), Int::AddInt(t0, t1)) => vec![
             (s0.as_ref().clone(), t0.as_ref().clone()),
             (s1.as_ref().clone(), t1.as_ref().clone()),
         ],
-        (Int::Sub(s0, s1), Int::Sub(t0, t1)) => vec![
+        (Int::SubInt(s0, s1), Int::SubInt(t0, t1)) => vec![
+            (s0.as_ref().clone(), t0.as_ref().clone()),
+            (s1.as_ref().clone(), t1.as_ref().clone()),
+        ],
+        (Int::MulInt(s0, s1), Int::MulInt(t0, t1)) => vec![
+            (s0.as_ref().clone(), t0.as_ref().clone()),
+            (s1.as_ref().clone(), t1.as_ref().clone()),
+        ],
+        (Int::DivInt(s0, s1), Int::DivInt(t0, t1)) => vec![
+            (s0.as_ref().clone(), t0.as_ref().clone()),
+            (s1.as_ref().clone(), t1.as_ref().clone()),
+        ],
+        (Int::ModInt(s0, s1), Int::ModInt(t0, t1)) => vec![
             (s0.as_ref().clone(), t0.as_ref().clone()),
             (s1.as_ref().clone(), t1.as_ref().clone()),
         ],
         (Int::Neg(s0), Int::Neg(t0)) => {
             vec![(s0.as_ref().clone(), t0.as_ref().clone())]
         }
-        (Int::Pow(s0, s1), Int::Pow(t0, t1)) => vec![
+        (Int::PowInt(s0, s1), Int::PowInt(t0, t1)) => vec![
             (s0.as_ref().clone(), t0.as_ref().clone()),
             (s1.as_ref().clone(), t1.as_ref().clone()),
         ],
@@ -248,10 +314,22 @@ fn pair_extract_consolidated(s: &Int, t: &Int) -> Vec<(Int, Int)> {
 
 /// Fold trigger predicate — OLD: N separate if-let guards.
 fn is_fold_trigger_per_constructor(t: &Int) -> bool {
-    if let Int::Neg(_) = t {
+    if let Int::AddInt(_, _) = t {
         return true;
     }
-    if let Int::Sub(_, _) = t {
+    if let Int::SubInt(_, _) = t {
+        return true;
+    }
+    if let Int::MulInt(_, _) = t {
+        return true;
+    }
+    if let Int::DivInt(_, _) = t {
+        return true;
+    }
+    if let Int::ModInt(_, _) = t {
+        return true;
+    }
+    if let Int::Neg(_) = t {
         return true;
     }
     if let Int::CustomOp(_, _) = t {
@@ -262,7 +340,16 @@ fn is_fold_trigger_per_constructor(t: &Int) -> bool {
 
 /// Fold trigger predicate — NEW: consolidated match predicate.
 fn is_fold_trigger_consolidated(t: &Int) -> bool {
-    matches!(t, Int::Neg(_) | Int::Sub(_, _) | Int::CustomOp(_, _))
+    matches!(
+        t,
+        Int::AddInt(_, _)
+            | Int::SubInt(_, _)
+            | Int::MulInt(_, _)
+            | Int::DivInt(_, _)
+            | Int::ModInt(_, _)
+            | Int::Neg(_)
+            | Int::CustomOp(_, _)
+    )
 }
 
 // ════════════════════════════════════════════════════════════════════════
@@ -390,10 +477,13 @@ proptest! {
 fn test_variant_index_injectivity() {
     // Collect all (constructor, field_position, vi) triples from representative terms
     let terms: Vec<Int> = vec![
-        Int::Add(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
-        Int::Sub(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
+        Int::AddInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
+        Int::SubInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
+        Int::MulInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
+        Int::DivInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
+        Int::ModInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
         Int::Neg(Box::new(Int::NumLit(0))),
-        Int::Pow(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
+        Int::PowInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
         Int::Fact(Box::new(Int::NumLit(0))),
         Int::Tern(
             Box::new(Int::NumLit(0)),
@@ -422,11 +512,11 @@ fn test_variant_index_injectivity() {
         }
     }
 
-    // Verify we have the expected number of variant indices (13 fields total)
+    // Verify we have the expected number of variant indices (19 fields total)
     assert_eq!(
         all_vis.len(),
-        13,
-        "Expected 13 variant indices (2+2+1+2+1+3+2)"
+        19,
+        "Expected 19 variant indices (2+2+2+2+2+1+2+1+3+2)"
     );
 }
 
@@ -442,8 +532,8 @@ fn test_leaf_produces_no_subterms() {
 /// Test pair extraction for mismatched constructors.
 #[test]
 fn test_pair_mismatch_is_empty() {
-    let add = Int::Add(Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2)));
-    let sub = Int::Sub(Box::new(Int::NumLit(3)), Box::new(Int::NumLit(4)));
+    let add = Int::AddInt(Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2)));
+    let sub = Int::SubInt(Box::new(Int::NumLit(3)), Box::new(Int::NumLit(4)));
 
     assert!(pair_extract_per_constructor(&add, &sub).is_empty());
     assert!(pair_extract_consolidated(&add, &sub).is_empty());

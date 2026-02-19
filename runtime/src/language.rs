@@ -163,7 +163,11 @@ pub trait Language: Send + Sync {
 
     /// Substitute environment variables without normalizing (no constant folding).
     /// Use for step mode so the term tree is preserved and rewrites can be applied one by one.
-    fn substitute_env_preserve_structure(&self, term: &dyn Term, env: &dyn Any) -> Result<Box<dyn Term>, String> {
+    fn substitute_env_preserve_structure(
+        &self,
+        term: &dyn Term,
+        env: &dyn Any,
+    ) -> Result<Box<dyn Term>, String> {
         self.substitute_env(term, env)
     }
 
@@ -210,7 +214,7 @@ pub struct AscentResults {
 
     /// Equivalence classes (terms related by equations)
     pub equivalences: Vec<EquivClass>,
-    
+
     /// Custom relations: name -> relation data
     pub custom_relations: std::collections::HashMap<String, RelationData>,
 }

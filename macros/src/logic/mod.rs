@@ -19,10 +19,7 @@
 
 use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::types::{EvalMode, TypeExpr};
-use crate::{
-    ast::language::{LanguageDef, SemanticOperation},
-    logic::rules::generate_base_rewrites,
-};
+use crate::{ast::language::LanguageDef, logic::rules::generate_base_rewrites};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
@@ -54,7 +51,9 @@ pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
     let category_rules = generate_category_rules(language);
     let equation_rules = generate_equation_rules(language);
     let rewrite_rules = generate_rewrite_rules(language);
-    let custom_logic = language.logic.as_ref()
+    let custom_logic = language
+        .logic
+        .as_ref()
         .map(|l| l.content.clone())
         .unwrap_or_default();
 
@@ -160,7 +159,6 @@ fn format_ascent_source(
 ///
 /// - **Base rewrites**: Rules without premises (S => T)
 /// - **Explicit congruences**: Rules with premises (if S => T then LHS => RHS)
-/// - **Semantic evaluation**: Rules for built-in operators (Add, Sub, etc.)
 ///
 /// Note: Beta-reduction is NOT generated as rewrite rules. Instead, it happens
 /// immediately via `normalize()` when terms are created. This makes beta-reduction
@@ -175,9 +173,9 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     let base_rewrite_clauses = generate_base_rewrites(language);
     rules.extend(base_rewrite_clauses);
 
-    // Generate semantic evaluation rules (for operators with semantics)
-    let semantic_rules = generate_semantic_rules(language);
-    rules.extend(semantic_rules);
+    // Generate small-step rules for HOL rust_code (step mode)
+    let hol_step_rules = generate_hol_step_rules(language);
+    rules.extend(hol_step_rules);
 
     // Generate big-step fold rules (one rewrite per fold-mode constructor)
     let fold_rules = generate_fold_big_step_rules(language);
@@ -193,75 +191,11 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     }
 }
 
-/// Generate semantic evaluation rules for constructors with semantics
-/// For example: Add (NumLit a) (NumLit b) => NumLit(a + b)
-/// Only for step mode (or unspecified); fold mode uses big-step rules instead.
-fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
+/// Generate small-step rewrite rules for terms that have HOL rust_code (step mode).
+/// e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
+fn generate_hol_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
-    for semantic in &language.semantics {
-        let constructor_name = &semantic.constructor;
-
-        // Skip fold-mode: they use big-step rules instead of small-step folding
-        if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
-            if rule.eval_mode == Some(EvalMode::Fold) {
-                continue;
-            }
-        }
-
-        // Extract the operator
-        let op_token = match &semantic.operation {
-            SemanticOperation::Builtin(builtin_op) => {
-                match common::builtin_op_token(builtin_op) {
-                    Some(tok) => tok,
-                    None => continue, // Skip other operators
-                }
-            },
-        };
-
-        // Find the rule with this constructor
-        if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
-            // Check if this is a binary operator (should have exactly 2 non-terminal fields)
-            let non_terminals: Vec<_> = rule
-                .items
-                .iter()
-                .filter_map(|item| {
-                    if let GrammarItem::NonTerminal(nt) = item {
-                        Some(nt)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if non_terminals.len() == 2 {
-                let category = &rule.category;
-                let label = &rule.label;
-
-                // Generate rule with proper variable extraction in the head
-                let sem_rn = common::relation_names(category);
-                let rw_rel = &sem_rn.rw_rel;
-                let cat_rel = &sem_rn.cat_lower;
-                let num_lit = format_ident!("NumLit");
-
-                // Pattern: rw_cat(s, t) with body that matches and extracts a, b.
-                // Bind a,b by clone so non-Copy types (e.g. bool) are passed by value.
-                // Clone s so we insert owned; Ascent may bind s by reference (e.g. &Str).
-                rules.push(quote! {
-                    #rw_rel(s.clone(), t) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        if let #category::#num_lit(a_ref) = left.as_ref(),
-                        if let #category::#num_lit(b_ref) = right.as_ref(),
-                        let a = a_ref.clone(),
-                        let b = b_ref.clone(),
-                        let t = #category::#num_lit(a #op_token b);
-                });
-            }
-        }
-    }
-
-    // Generate step rules for constructors with rust_code but not in semantics
     // Unified single-pass iteration over language.terms with arity dispatch.
     // Collected into separate vecs to preserve output ordering (binary, unary, N-ary).
     let mut binary_rust_rules = Vec::new();
@@ -272,13 +206,7 @@ fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
         if rule.rust_code.is_none() {
             continue;
         }
-        if language
-            .semantics
-            .iter()
-            .any(|s| s.constructor == rule.label)
-        {
-            continue;
-        }
+        // Skip fold-mode: they use big-step rules instead
         if rule.eval_mode == Some(EvalMode::Fold) {
             continue;
         }
@@ -522,7 +450,10 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 }
                 let label = &rule.label;
 
-                let Some(res_expr) = common::resolve_fold_expr(rule, language, category, &num_lit) else {
+                let res_expr = if let Some(ref rust_block) = rule.rust_code {
+                    let rust_code = &rust_block.code;
+                    quote! { #category::#num_lit((#rust_code)) }
+                } else {
                     continue;
                 };
 
@@ -583,7 +514,7 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 });
             }
 
-            // fold_C(s, res) for each binary constructor with rust_code and eval_mode Fold
+            // fold_C(s, res) for each constructor with rust_code and eval_mode Fold (unary or binary)
             for rule in &language.terms {
                 if rule.category != *category
                     || rule.eval_mode != Some(EvalMode::Fold)
@@ -592,24 +523,33 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                     continue;
                 }
                 let param_names = fold_param_names(rule);
-                if param_names.len() != 2 {
-                    continue;
-                }
                 let label = &rule.label;
-                let p0 = &param_names[0];
-                let p1 = &param_names[1];
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
 
-                rules.push(quote! {
-                    #fold_rel(s.clone(), res) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        #fold_rel(left.as_ref().clone(), lv),
-                        #fold_rel(right.as_ref().clone(), rv),
-                        let #p0 = lv,
-                        let #p1 = rv,
-                        let res = (#rust_code);
-                });
+                if param_names.len() == 2 {
+                    let p0 = &param_names[0];
+                    let p1 = &param_names[1];
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, right) = s,
+                            #fold_rel(left.as_ref().clone(), lv),
+                            #fold_rel(right.as_ref().clone(), rv),
+                            let #p0 = lv,
+                            let #p1 = rv,
+                            let res = (#rust_code);
+                    });
+                } else if param_names.len() == 1 {
+                    let p0 = &param_names[0];
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(inner) = s,
+                            #fold_rel(inner.as_ref().clone(), lv),
+                            let #p0 = lv,
+                            let res = (#rust_code);
+                    });
+                }
             }
         }
 
