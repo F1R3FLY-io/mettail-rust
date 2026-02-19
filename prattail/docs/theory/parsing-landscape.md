@@ -20,9 +20,9 @@ concrete syntax tree (CST). Two broad phases are involved:
  │ "3 + 4*5" │─────>│ INT PLUS │─────>│     Add      │
  │           │ Lex  │ INT STAR │ Parse│    / \       │
  │           │      │ INT      │      │   3  Mul     │
- └───────────┘      └──────────┘      │      / \    │
-                                       │     4   5   │
-                                       └──────────────┘
+ └───────────┘      └──────────┘      │      / \     │
+                                      │     4   5    │
+                                      └──────────────┘
 ```
 
 **Lexing** (also called scanning or tokenization) groups characters into
@@ -365,7 +365,7 @@ PraTTaIL is a **parser generator** that combines:
          |
          v
    ┌─────────────────────────────────────────────────────────┐
-   │                 PraTTaIL Pipeline                        │
+   │                 PraTTaIL Pipeline                       │
    │                                                         │
    │  Phase 1: Lexer generation                              │
    │  ┌─────────────────────────────────────────────────┐    │
@@ -379,26 +379,26 @@ PraTTaIL is a **parser generator** that combines:
    │  Phase 2: Binding power analysis                        │
    │  ┌─────────────────────────────────────────────────┐    │
    │  │ Infix rules -> BP pairs (left_bp, right_bp)     │    │
-   │  │             -> BP lookup table per category      │    │
-   │  │             -> AST constructor dispatch          │    │
+   │  │             -> BP lookup table per category     │    │
+   │  │             -> AST constructor dispatch         │    │
    │  └─────────────────────────────────────────────────┘    │
    │                                                         │
    │  Phase 3: Prediction engine                             │
    │  ┌─────────────────────────────────────────────────┐    │
    │  │ Rules -> FIRST sets (fixed-point iteration)     │    │
-   │  │       -> Dispatch tables per category            │    │
-   │  │       -> Cross-category overlap analysis         │    │
+   │  │       -> Dispatch tables per category           │    │
+   │  │       -> Cross-category overlap analysis        │    │
    │  └─────────────────────────────────────────────────┘    │
    │                                                         │
    │  Phase 4: RD handler generation                         │
    │  ┌─────────────────────────────────────────────────┐    │
-   │  │ Structural rules -> parse functions              │    │
-   │  │                  -> match arms for dispatch      │    │
+   │  │ Structural rules -> parse functions             │    │
+   │  │                  -> match arms for dispatch     │    │
    │  └─────────────────────────────────────────────────┘    │
    │                                                         │
    │  Phase 5: Pratt parser generation                       │
    │  ┌─────────────────────────────────────────────────┐    │
-   │  │ Per category:                                    │    │
+   │  │ Per category:                                   │    │
    │  │   parse_<Cat>(tokens, pos, min_bp)  -- loop     │    │
    │  │   parse_<Cat>_prefix(tokens, pos)   -- nud      │    │
    │  │   infix_bp(token) -> (left, right)  -- led bp   │    │

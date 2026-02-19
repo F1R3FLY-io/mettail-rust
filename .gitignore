@@ -75,3 +75,13 @@ target/tests/trybuild/
 .claude/projects/*
 
 prattail/target/*
+
+# Rocq/Coq build artifacts
+**/*.vo
+**/*.vos
+**/*.vok
+**/*.glob
+**/*.aux
+**/CoqMakefile
+**/CoqMakefile.conf
+**/.CoqMakefile.d

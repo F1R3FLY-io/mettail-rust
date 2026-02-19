@@ -5,10 +5,13 @@
 //! - Equality congruence rules (if args equal, constructed terms equal)
 //! - User-defined equation rules
 
-use crate::ast::{grammar::GrammarItem, language::LanguageDef};
+use super::common::relation_names;
+use crate::ast::grammar::{GrammarItem, GrammarRule};
+use crate::ast::language::LanguageDef;
 use crate::logic::rules as unified_rules;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::BTreeMap;
 use syn::Ident;
 
 /// Main entry point: Generate all equation rules.
@@ -41,9 +44,9 @@ fn generate_reflexivity_rules(language: &LanguageDef) -> Vec<TokenStream> {
         .types
         .iter()
         .map(|lang_type| {
-            let cat = &lang_type.name;
-            let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
-            let eq_rel = format_ident!("eq_{}", cat.to_string().to_lowercase());
+            let rn = relation_names(&lang_type.name);
+            let cat_lower = &rn.cat_lower;
+            let eq_rel = &rn.eq_rel;
             quote! {
                 #eq_rel(t.clone(), t.clone()) <-- #cat_lower(t);
             }
@@ -53,23 +56,23 @@ fn generate_reflexivity_rules(language: &LanguageDef) -> Vec<TokenStream> {
 
 /// Generate demand-driven congruence rules for equality.
 ///
+/// Groups constructors by `(result_category, field_types_tuple)` and generates
+/// one consolidated rule per group using `match (s, t)` to extract fields.
+///
+/// Before: one rule per constructor
+/// After: one rule per unique (category, field_types) signature
+///
 /// For terms that already exist: if their args are equal, then the terms are equal.
-///
-/// Unlike the original approach which synthesizes new terms:
-///   eq(Op(x), Op(y)) <-- eq(x, y)  // Creates new terms!
-///
-/// This approach only equates existing terms:
-///   eq(s, t) <-- cat(s), if let Op(x) = s, cat(t), if let Op(y) = t, eq(x, y)
-///
 /// This is demand-driven and avoids O(N²) term explosion.
 fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
-    let mut rules = Vec::new();
+    // Group constructors by (category, ordered field types)
+    // Key: (category_str, vec of field_type_str)
+    let mut groups: BTreeMap<(String, Vec<String>), Vec<&GrammarRule>> = BTreeMap::new();
+
+    let var_str = "Var";
+    let int_str = "Integer";
 
     for grammar_rule in &language.terms {
-        let category = &grammar_rule.category;
-        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
-        let eq_rel = format_ident!("eq_{}", category.to_string().to_lowercase());
-
         // Skip binders (alpha-equivalence is complex)
         if !grammar_rule.bindings.is_empty() {
             continue;
@@ -84,61 +87,94 @@ fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
             continue;
         }
 
-        // Collect non-terminal arguments
-        let args: Vec<&Ident> = grammar_rule
+        // Collect non-terminal argument categories
+        let arg_cats: Vec<String> = grammar_rule
             .items
             .iter()
             .filter_map(|item| {
                 if let GrammarItem::NonTerminal(cat) = item {
-                    Some(cat)
+                    Some(cat.to_string())
                 } else {
                     None
                 }
             })
             .collect();
 
-        if args.is_empty() {
-            continue; // Nullary constructor - no congruence needed
+        if arg_cats.is_empty() {
+            continue; // Nullary constructor
         }
 
-
-
         // Skip constructors with Var or Integer arguments
-        let var_ident = format_ident!("Var");
-        let int_ident = format_ident!("Integer");
-        if args
-            .iter()
-            .any(|cat| **cat == var_ident || **cat == int_ident)
-        {
+        if arg_cats.iter().any(|c| c == var_str || c == int_str) {
             continue;
         }
 
-        let label = &grammar_rule.label;
+        let key = (grammar_rule.category.to_string(), arg_cats);
+        groups.entry(key).or_default().push(grammar_rule);
+    }
 
-        // Generate field names for pattern matching
-        let s_fields: Vec<Ident> = (0..args.len()).map(|i| format_ident!("s_f{}", i)).collect();
-        let t_fields: Vec<Ident> = (0..args.len()).map(|i| format_ident!("t_f{}", i)).collect();
+    // Generate one consolidated rule per group
+    let mut rules = Vec::with_capacity(groups.len());
 
-        // Build the pattern for destructuring
-        let s_pattern = quote! { #category::#label(#(ref #s_fields),*) };
-        let t_pattern = quote! { #category::#label(#(ref #t_fields),*) };
+    for ((cat_str, field_type_strs), constructors) in &groups {
+        let category = format_ident!("{}", cat_str);
+        let rn = relation_names(&category);
+        let cat_rel = &rn.cat_lower;
+        let eq_rel = &rn.eq_rel;
 
-        // Build equality checks for each field
-        let eq_checks: Vec<TokenStream> = args
+        let arity = field_type_strs.len();
+
+        // Field names for the for-binding
+        let s_fields: Vec<Ident> = (0..arity).map(|i| format_ident!("s_f{}", i)).collect();
+        let t_fields: Vec<Ident> = (0..arity).map(|i| format_ident!("t_f{}", i)).collect();
+
+        // Build match arms for (s, t) extraction
+        let match_arms: Vec<TokenStream> = constructors
             .iter()
-            .zip(s_fields.iter().zip(t_fields.iter()))
-            .map(|(arg_cat, (s_f, t_f))| {
-                let eq_arg_rel = format_ident!("eq_{}", arg_cat.to_string().to_lowercase());
-                quote! { #eq_arg_rel(#s_f.as_ref().clone(), #t_f.as_ref().clone()) }
+            .map(|rule| {
+                let label = &rule.label;
+                let s_pat_fields: Vec<Ident> =
+                    (0..arity).map(|i| format_ident!("sf{}", i)).collect();
+                let t_pat_fields: Vec<Ident> =
+                    (0..arity).map(|i| format_ident!("tf{}", i)).collect();
+
+                // Extractions: s fields then t fields
+                let extractions: Vec<TokenStream> = s_pat_fields
+                    .iter()
+                    .chain(t_pat_fields.iter())
+                    .map(|f| quote! { #f.as_ref().clone() })
+                    .collect();
+
+                quote! {
+                    (#category::#label(#(#s_pat_fields),*), #category::#label(#(#t_pat_fields),*)) =>
+                        vec![(#(#extractions),*)],
+                }
+            })
+            .collect();
+
+        // For-binding: (s_f0, s_f1, ..., t_f0, t_f1, ...)
+        let for_bindings: Vec<&Ident> = s_fields.iter().chain(t_fields.iter()).collect();
+
+        // Equality checks for corresponding field pairs
+        let eq_checks: Vec<TokenStream> = field_type_strs
+            .iter()
+            .enumerate()
+            .map(|(i, ft_str)| {
+                let eq_arg_rel = format_ident!("eq_{}", ft_str.to_lowercase());
+                let sf = &s_fields[i];
+                let tf = &t_fields[i];
+                quote! { #eq_arg_rel(#sf, #tf) }
             })
             .collect();
 
         rules.push(quote! {
             #eq_rel(s.clone(), t.clone()) <--
                 #cat_rel(s),
-                if let #s_pattern = s,
                 #cat_rel(t),
-                if let #t_pattern = t,
+                for (#(#for_bindings),*) in (match (s, t) {
+                    #(#match_arms)*
+                    _ => vec![],
+                }).into_iter(),
                 #(#eq_checks),*;
         });
     }

@@ -78,13 +78,13 @@ The solution is to assign each operator a **pair** of binding powers:
 
 ```
   ┌────────────────────────────────────────────────────────────┐
-  │ The binding power pair (left_bp, right_bp) for an infix   │
+  │ The binding power pair (left_bp, right_bp) for an infix    │
   │ operator controls two things:                              │
   │                                                            │
-  │   left_bp:  How strongly this operator competes for its   │
+  │   left_bp:  How strongly this operator competes for its    │
   │             LEFT operand against the operator to its left  │
   │                                                            │
-  │   right_bp: The minimum binding power required for the    │
+  │   right_bp: The minimum binding power required for the     │
   │             parser to continue consuming tokens to form    │
   │             the RIGHT operand                              │
   └────────────────────────────────────────────────────────────┘
@@ -121,11 +121,11 @@ The fundamental insight:
 ```
   ┌────────────────────────────────────────────────────────────┐
   │                                                            │
-  │  LEFT-ASSOCIATIVE:   left_bp < right_bp                   │
-  │  RIGHT-ASSOCIATIVE:  left_bp > right_bp                   │
+  │  LEFT-ASSOCIATIVE:   left_bp < right_bp                    │
+  │  RIGHT-ASSOCIATIVE:  left_bp > right_bp                    │
   │                                                            │
-  │  The asymmetry between left_bp and right_bp determines    │
-  │  associativity. The absolute values determine precedence  │
+  │  The asymmetry between left_bp and right_bp determines     │
+  │  associativity. The absolute values determine precedence   │
   │  relative to other operators.                              │
   │                                                            │
   └────────────────────────────────────────────────────────────┘

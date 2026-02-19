@@ -3,6 +3,7 @@
 //! Generates relation declarations for categories, equality, rewrites,
 //! and collection projections.
 
+use super::common::relation_names;
 use crate::ast::grammar::TermParam;
 use crate::ast::language::LanguageDef;
 use crate::ast::types::EvalMode;
@@ -13,43 +14,36 @@ use quote::{format_ident, quote};
 pub fn generate_relations(language: &LanguageDef) -> TokenStream {
     let mut relations = Vec::new();
 
-    // Category exploration relations (unadorned)
     for lang_type in &language.types {
-        let cat = &lang_type.name;
-        let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
+        let rn = relation_names(&lang_type.name);
+        let cat = &rn.cat;
+        let cat_lower = &rn.cat_lower;
+        let eq_rel = &rn.eq_rel;
+        let rw_rel = &rn.rw_rel;
+        let fold_rel = &rn.fold_rel;
+
+        // Category exploration relation (unadorned)
         relations.push(quote! {
             relation #cat_lower(#cat);
         });
-    }
 
-    // Equality relations (per-category, typed)
-    for lang_type in &language.types {
-        let cat = &lang_type.name;
-        let eq_rel = format_ident!("eq_{}", cat.to_string().to_lowercase());
+        // Equality relation (typed)
         relations.push(quote! {
             #[ds(crate::eqrel)]
             relation #eq_rel(#cat, #cat);
         });
-    }
 
-    // Rewrite relations (per-category, typed)
-    for lang_type in &language.types {
-        let cat = &lang_type.name;
-        let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
+        // Rewrite relation (typed)
         relations.push(quote! {
             relation #rw_rel(#cat, #cat);
         });
-    }
 
-    // Fold (big-step eval) relations for categories that have fold-mode constructors
-    for lang_type in &language.types {
-        let cat = &lang_type.name;
+        // Fold (big-step eval) relation, only if this category has fold-mode constructors
         let has_fold = language
             .terms
             .iter()
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
         if has_fold {
-            let fold_rel = format_ident!("fold_{}", cat.to_string().to_lowercase());
             relations.push(quote! {
                 relation #fold_rel(#cat, #cat);
             });

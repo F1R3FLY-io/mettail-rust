@@ -8,23 +8,23 @@ ascent_source! {
     // Relations
 relation proc(Proc);
 
-relation name(Name);
-
-relation int(Int);
-
-#[ds(crate :: eqrel)] relation eq_proc(Proc, Proc);
-
-#[ds(crate :: eqrel)] relation eq_name(Name, Name);
-
-#[ds(crate :: eqrel)] relation eq_int(Int, Int);
+#[ds(crate::eqrel)] relation eq_proc(Proc, Proc);
 
 relation rw_proc(Proc, Proc);
 
+relation fold_proc(Proc, Proc);
+
+relation name(Name);
+
+#[ds(crate::eqrel)] relation eq_name(Name, Name);
+
 relation rw_name(Name, Name);
 
-relation rw_int(Int, Int);
+relation int(Int);
 
-relation fold_proc(Proc, Proc);
+#[ds(crate::eqrel)] relation eq_int(Int, Int);
+
+relation rw_int(Int, Int);
 
 relation step_term(Proc);
 
@@ -32,389 +32,319 @@ relation ppar_contains(Proc, Proc);
 
 
     // Category rules
+proc(sub.clone()) <--
+    proc(t),
+    for sub in (match t {
+        Proc::POutput(_, f1) => vec![f1.as_ref().clone()],
+        Proc::Add(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::ApplyProc(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Proc::MApplyProc(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
+            v
+        },
+        Proc::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Proc::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Proc::LamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::MLamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
+
+name(sub.clone()) <--
+    proc(t),
+    for sub in (match t {
+        Proc::PDrop(f0) => vec![f0.as_ref().clone()],
+        Proc::POutput(f0, _) => vec![f0.as_ref().clone()],
+        Proc::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        Proc::MApplyName(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
+
+int(sub.clone()) <--
+    proc(t),
+    for sub in (match t {
+        Proc::CastInt(f0) => vec![f0.as_ref().clone()],
+        Proc::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        Proc::MApplyInt(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
+
+proc(sub.clone()) <--
+    name(t),
+    for sub in (match t {
+        Name::NQuote(f0) => vec![f0.as_ref().clone()],
+        Name::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        Name::MApplyProc(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
+
+name(sub.clone()) <--
+    name(t),
+    for sub in (match t {
+        Name::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Name::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::ApplyName(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Name::MApplyName(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
+            v
+        },
+        Name::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Name::LamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::MLamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
+
+int(sub.clone()) <--
+    name(t),
+    for sub in (match t {
+        Name::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        Name::MApplyInt(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
+
+proc(sub.clone()) <--
+    int(t),
+    for sub in (match t {
+        Int::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        Int::MApplyProc(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
+
+name(sub.clone()) <--
+    int(t),
+    for sub in (match t {
+        Int::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        Int::MApplyName(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
+
+int(sub.clone()) <--
+    int(t),
+    for sub in (match t {
+        Int::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Int::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Int::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::ApplyInt(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Int::MApplyInt(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
+            v
+        },
+        Int::LamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::MLamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
+
 proc(c1.clone()) <--
     proc(c0),
     rw_proc(c0, c1);
 
-name(field_0.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: PDrop(field_0) = t;
-
-name(field_0.as_ref().clone()),
-proc(field_1.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: POutput(field_0, field_1) = t;
-
-name(elem.clone()) <--
-    proc(t),
-    if let Proc :: PInputs(ref vec_field, _) = t,
-    for elem in vec_field.iter();
-
-proc(Proc :: MLamProc(scope.clone())) <--
-    proc(t),
-    if let Proc :: PInputs(_, scope) = t;
-
-proc(field_0.as_ref().clone()),
-proc(field_1.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: Add(field_0, field_1) = t;
-
-int(field_0.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: CastInt(field_0) = t;
-
-proc(lam.as_ref().clone()),
-proc(arg.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: ApplyProc(lam, arg) = t;
-
-proc(lam.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: MApplyProc(lam, _) = t;
-
-proc(arg.clone()) <--
-    proc(t),
-    if let Proc :: MApplyProc(_, args) = t,
-    for arg in args.iter();
-
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: LamProc(scope) = t;
-
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: MLamProc(scope) = t;
-
-proc(lam.as_ref().clone()),
-name(arg.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: ApplyName(lam, arg) = t;
-
-proc(lam.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: MApplyName(lam, _) = t;
-
-name(arg.clone()) <--
-    proc(t),
-    if let Proc :: MApplyName(_, args) = t,
-    for arg in args.iter();
-
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: LamName(scope) = t;
-
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: MLamName(scope) = t;
-
-proc(lam.as_ref().clone()),
-int(arg.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: ApplyInt(lam, arg) = t;
-
-proc(lam.as_ref().clone()) <--
-    proc(t),
-    if let Proc :: MApplyInt(lam, _) = t;
-
-int(arg.clone()) <--
-    proc(t),
-    if let Proc :: MApplyInt(_, args) = t,
-    for arg in args.iter();
-
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: LamInt(scope) = t;
-
-proc((* scope.inner().unsafe_body).clone()) <--
-    proc(t),
-    if let Proc :: MLamInt(scope) = t;
-
 ppar_contains(parent.clone(), elem.clone()) <--
     proc(parent),
-    if let Proc :: PPar(ref bag_field) = parent,
+    if let Proc::PPar(ref bag_field) = parent,
     for (elem, _count) in bag_field.iter();
 
 proc(elem.clone()) <--
     ppar_contains(_parent, elem);
 
-rw_proc(Proc :: ApplyProc(lam.clone(), arg.clone()), Proc :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
+name(elem.clone()) <--
     proc(t),
-    if let Proc :: ApplyProc(ref lam, ref arg) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
+    if let Proc::PInputs(ref vec_field, _) = t,
+    for elem in vec_field.iter();
 
-rw_proc(Proc :: ApplyProc(lam.clone(), arg.clone()), Proc :: ApplyProc(lam.clone(), Box :: new(arg_new.clone()))) <--
+proc(Proc::MLamProc(scope.clone())) <--
     proc(t),
-    if let Proc :: ApplyProc(ref lam, ref arg) = t,
-    rw_proc(arg.as_ref().clone(), arg_new);
+    if let Proc::PInputs(_, scope) = t;
 
-rw_proc(Proc :: MApplyProc(lam.clone(), args.clone()), Proc :: MApplyProc(Box :: new(lam_new.clone()), args.clone())) <--
+rw_proc(t.clone(), match t {
+    Proc::ApplyProc(_, arg) => Proc::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
+    Proc::MApplyProc(_, args) => Proc::MApplyProc(Box::new(new_lam.clone()), args.clone()),
+    Proc::ApplyName(_, arg) => Proc::ApplyName(Box::new(new_lam.clone()), arg.clone()),
+    Proc::MApplyName(_, args) => Proc::MApplyName(Box::new(new_lam.clone()), args.clone()),
+    Proc::ApplyInt(_, arg) => Proc::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
+    Proc::MApplyInt(_, args) => Proc::MApplyInt(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
+}) <--
     proc(t),
-    if let Proc :: MApplyProc(ref lam, ref args) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
+    for lam in (match t {
+        Proc::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Proc::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Proc::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(lam, new_lam);
 
-rw_proc(Proc :: ApplyName(lam.clone(), arg.clone()), Proc :: ApplyName(Box :: new(lam_new.clone()), arg.clone())) <--
+rw_proc(t.clone(), match t {
+    Proc::ApplyProc(lam, _) => Proc::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     proc(t),
-    if let Proc :: ApplyName(ref lam, ref arg) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
+    for arg in (match t {
+        Proc::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(arg, new_arg);
 
-rw_proc(Proc :: ApplyName(lam.clone(), arg.clone()), Proc :: ApplyName(lam.clone(), Box :: new(arg_new.clone()))) <--
+rw_proc(t.clone(), match t {
+    Proc::ApplyName(lam, _) => Proc::ApplyName(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     proc(t),
-    if let Proc :: ApplyName(ref lam, ref arg) = t,
-    rw_name(arg.as_ref().clone(), arg_new);
+    for arg in (match t {
+        Proc::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(arg, new_arg);
 
-rw_proc(Proc :: MApplyName(lam.clone(), args.clone()), Proc :: MApplyName(Box :: new(lam_new.clone()), args.clone())) <--
+rw_proc(t.clone(), match t {
+    Proc::ApplyInt(lam, _) => Proc::ApplyInt(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     proc(t),
-    if let Proc :: MApplyName(ref lam, ref args) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
-
-rw_proc(Proc :: ApplyInt(lam.clone(), arg.clone()), Proc :: ApplyInt(Box :: new(lam_new.clone()), arg.clone())) <--
-    proc(t),
-    if let Proc :: ApplyInt(ref lam, ref arg) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
-
-rw_proc(Proc :: ApplyInt(lam.clone(), arg.clone()), Proc :: ApplyInt(lam.clone(), Box :: new(arg_new.clone()))) <--
-    proc(t),
-    if let Proc :: ApplyInt(ref lam, ref arg) = t,
-    rw_int(arg.as_ref().clone(), arg_new);
-
-rw_proc(Proc :: MApplyInt(lam.clone(), args.clone()), Proc :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
-    proc(t),
-    if let Proc :: MApplyInt(ref lam, ref args) = t,
-    rw_proc(lam.as_ref().clone(), lam_new);
+    for arg in (match t {
+        Proc::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(arg, new_arg);
 
 name(c1.clone()) <--
     name(c0),
     rw_name(c0, c1);
 
-proc(field_0.as_ref().clone()) <--
+rw_name(t.clone(), match t {
+    Name::ApplyProc(_, arg) => Name::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
+    Name::MApplyProc(_, args) => Name::MApplyProc(Box::new(new_lam.clone()), args.clone()),
+    Name::ApplyName(_, arg) => Name::ApplyName(Box::new(new_lam.clone()), arg.clone()),
+    Name::MApplyName(_, args) => Name::MApplyName(Box::new(new_lam.clone()), args.clone()),
+    Name::ApplyInt(_, arg) => Name::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
+    Name::MApplyInt(_, args) => Name::MApplyInt(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
+}) <--
     name(t),
-    if let Name :: NQuote(field_0) = t;
+    for lam in (match t {
+        Name::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Name::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Name::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(lam, new_lam);
 
-name(lam.as_ref().clone()),
-proc(arg.as_ref().clone()) <--
+rw_name(t.clone(), match t {
+    Name::ApplyProc(lam, _) => Name::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     name(t),
-    if let Name :: ApplyProc(lam, arg) = t;
+    for arg in (match t {
+        Name::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(arg, new_arg);
 
-name(lam.as_ref().clone()) <--
+rw_name(t.clone(), match t {
+    Name::ApplyName(lam, _) => Name::ApplyName(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     name(t),
-    if let Name :: MApplyProc(lam, _) = t;
+    for arg in (match t {
+        Name::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(arg, new_arg);
 
-proc(arg.clone()) <--
+rw_name(t.clone(), match t {
+    Name::ApplyInt(lam, _) => Name::ApplyInt(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     name(t),
-    if let Name :: MApplyProc(_, args) = t,
-    for arg in args.iter();
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: LamProc(scope) = t;
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: MLamProc(scope) = t;
-
-name(lam.as_ref().clone()),
-name(arg.as_ref().clone()) <--
-    name(t),
-    if let Name :: ApplyName(lam, arg) = t;
-
-name(lam.as_ref().clone()) <--
-    name(t),
-    if let Name :: MApplyName(lam, _) = t;
-
-name(arg.clone()) <--
-    name(t),
-    if let Name :: MApplyName(_, args) = t,
-    for arg in args.iter();
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: LamName(scope) = t;
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: MLamName(scope) = t;
-
-name(lam.as_ref().clone()),
-int(arg.as_ref().clone()) <--
-    name(t),
-    if let Name :: ApplyInt(lam, arg) = t;
-
-name(lam.as_ref().clone()) <--
-    name(t),
-    if let Name :: MApplyInt(lam, _) = t;
-
-int(arg.clone()) <--
-    name(t),
-    if let Name :: MApplyInt(_, args) = t,
-    for arg in args.iter();
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: LamInt(scope) = t;
-
-name((* scope.inner().unsafe_body).clone()) <--
-    name(t),
-    if let Name :: MLamInt(scope) = t;
-
-rw_name(Name :: ApplyProc(lam.clone(), arg.clone()), Name :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
-    name(t),
-    if let Name :: ApplyProc(ref lam, ref arg) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
-
-rw_name(Name :: ApplyProc(lam.clone(), arg.clone()), Name :: ApplyProc(lam.clone(), Box :: new(arg_new.clone()))) <--
-    name(t),
-    if let Name :: ApplyProc(ref lam, ref arg) = t,
-    rw_proc(arg.as_ref().clone(), arg_new);
-
-rw_name(Name :: MApplyProc(lam.clone(), args.clone()), Name :: MApplyProc(Box :: new(lam_new.clone()), args.clone())) <--
-    name(t),
-    if let Name :: MApplyProc(ref lam, ref args) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
-
-rw_name(Name :: ApplyName(lam.clone(), arg.clone()), Name :: ApplyName(Box :: new(lam_new.clone()), arg.clone())) <--
-    name(t),
-    if let Name :: ApplyName(ref lam, ref arg) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
-
-rw_name(Name :: ApplyName(lam.clone(), arg.clone()), Name :: ApplyName(lam.clone(), Box :: new(arg_new.clone()))) <--
-    name(t),
-    if let Name :: ApplyName(ref lam, ref arg) = t,
-    rw_name(arg.as_ref().clone(), arg_new);
-
-rw_name(Name :: MApplyName(lam.clone(), args.clone()), Name :: MApplyName(Box :: new(lam_new.clone()), args.clone())) <--
-    name(t),
-    if let Name :: MApplyName(ref lam, ref args) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
-
-rw_name(Name :: ApplyInt(lam.clone(), arg.clone()), Name :: ApplyInt(Box :: new(lam_new.clone()), arg.clone())) <--
-    name(t),
-    if let Name :: ApplyInt(ref lam, ref arg) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
-
-rw_name(Name :: ApplyInt(lam.clone(), arg.clone()), Name :: ApplyInt(lam.clone(), Box :: new(arg_new.clone()))) <--
-    name(t),
-    if let Name :: ApplyInt(ref lam, ref arg) = t,
-    rw_int(arg.as_ref().clone(), arg_new);
-
-rw_name(Name :: MApplyInt(lam.clone(), args.clone()), Name :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
-    name(t),
-    if let Name :: MApplyInt(ref lam, ref args) = t,
-    rw_name(lam.as_ref().clone(), lam_new);
+    for arg in (match t {
+        Name::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(arg, new_arg);
 
 int(c1.clone()) <--
     int(c0),
     rw_int(c0, c1);
 
-int(lam.as_ref().clone()),
-proc(arg.as_ref().clone()) <--
+rw_int(t.clone(), match t {
+    Int::ApplyProc(_, arg) => Int::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
+    Int::MApplyProc(_, args) => Int::MApplyProc(Box::new(new_lam.clone()), args.clone()),
+    Int::ApplyName(_, arg) => Int::ApplyName(Box::new(new_lam.clone()), arg.clone()),
+    Int::MApplyName(_, args) => Int::MApplyName(Box::new(new_lam.clone()), args.clone()),
+    Int::ApplyInt(_, arg) => Int::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
+    Int::MApplyInt(_, args) => Int::MApplyInt(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
+}) <--
     int(t),
-    if let Int :: ApplyProc(lam, arg) = t;
+    for lam in (match t {
+        Int::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Int::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Int::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(lam, new_lam);
 
-int(lam.as_ref().clone()) <--
+rw_int(t.clone(), match t {
+    Int::ApplyProc(lam, _) => Int::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     int(t),
-    if let Int :: MApplyProc(lam, _) = t;
+    for arg in (match t {
+        Int::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(arg, new_arg);
 
-proc(arg.clone()) <--
+rw_int(t.clone(), match t {
+    Int::ApplyName(lam, _) => Int::ApplyName(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     int(t),
-    if let Int :: MApplyProc(_, args) = t,
-    for arg in args.iter();
+    for arg in (match t {
+        Int::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(arg, new_arg);
 
-int((* scope.inner().unsafe_body).clone()) <--
+rw_int(t.clone(), match t {
+    Int::ApplyInt(lam, _) => Int::ApplyInt(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     int(t),
-    if let Int :: LamProc(scope) = t;
-
-int((* scope.inner().unsafe_body).clone()) <--
-    int(t),
-    if let Int :: MLamProc(scope) = t;
-
-int(lam.as_ref().clone()),
-name(arg.as_ref().clone()) <--
-    int(t),
-    if let Int :: ApplyName(lam, arg) = t;
-
-int(lam.as_ref().clone()) <--
-    int(t),
-    if let Int :: MApplyName(lam, _) = t;
-
-name(arg.clone()) <--
-    int(t),
-    if let Int :: MApplyName(_, args) = t,
-    for arg in args.iter();
-
-int((* scope.inner().unsafe_body).clone()) <--
-    int(t),
-    if let Int :: LamName(scope) = t;
-
-int((* scope.inner().unsafe_body).clone()) <--
-    int(t),
-    if let Int :: MLamName(scope) = t;
-
-int(lam.as_ref().clone()),
-int(arg.as_ref().clone()) <--
-    int(t),
-    if let Int :: ApplyInt(lam, arg) = t;
-
-int(lam.as_ref().clone()) <--
-    int(t),
-    if let Int :: MApplyInt(lam, _) = t;
-
-int(arg.clone()) <--
-    int(t),
-    if let Int :: MApplyInt(_, args) = t,
-    for arg in args.iter();
-
-int((* scope.inner().unsafe_body).clone()) <--
-    int(t),
-    if let Int :: LamInt(scope) = t;
-
-int((* scope.inner().unsafe_body).clone()) <--
-    int(t),
-    if let Int :: MLamInt(scope) = t;
-
-rw_int(Int :: ApplyProc(lam.clone(), arg.clone()), Int :: ApplyProc(Box :: new(lam_new.clone()), arg.clone())) <--
-    int(t),
-    if let Int :: ApplyProc(ref lam, ref arg) = t,
-    rw_int(lam.as_ref().clone(), lam_new);
-
-rw_int(Int :: ApplyProc(lam.clone(), arg.clone()), Int :: ApplyProc(lam.clone(), Box :: new(arg_new.clone()))) <--
-    int(t),
-    if let Int :: ApplyProc(ref lam, ref arg) = t,
-    rw_proc(arg.as_ref().clone(), arg_new);
-
-rw_int(Int :: MApplyProc(lam.clone(), args.clone()), Int :: MApplyProc(Box :: new(lam_new.clone()), args.clone())) <--
-    int(t),
-    if let Int :: MApplyProc(ref lam, ref args) = t,
-    rw_int(lam.as_ref().clone(), lam_new);
-
-rw_int(Int :: ApplyName(lam.clone(), arg.clone()), Int :: ApplyName(Box :: new(lam_new.clone()), arg.clone())) <--
-    int(t),
-    if let Int :: ApplyName(ref lam, ref arg) = t,
-    rw_int(lam.as_ref().clone(), lam_new);
-
-rw_int(Int :: ApplyName(lam.clone(), arg.clone()), Int :: ApplyName(lam.clone(), Box :: new(arg_new.clone()))) <--
-    int(t),
-    if let Int :: ApplyName(ref lam, ref arg) = t,
-    rw_name(arg.as_ref().clone(), arg_new);
-
-rw_int(Int :: MApplyName(lam.clone(), args.clone()), Int :: MApplyName(Box :: new(lam_new.clone()), args.clone())) <--
-    int(t),
-    if let Int :: MApplyName(ref lam, ref args) = t,
-    rw_int(lam.as_ref().clone(), lam_new);
-
-rw_int(Int :: ApplyInt(lam.clone(), arg.clone()), Int :: ApplyInt(Box :: new(lam_new.clone()), arg.clone())) <--
-    int(t),
-    if let Int :: ApplyInt(ref lam, ref arg) = t,
-    rw_int(lam.as_ref().clone(), lam_new);
-
-rw_int(Int :: ApplyInt(lam.clone(), arg.clone()), Int :: ApplyInt(lam.clone(), Box :: new(arg_new.clone()))) <--
-    int(t),
-    if let Int :: ApplyInt(ref lam, ref arg) = t,
-    rw_int(arg.as_ref().clone(), arg_new);
-
-rw_int(Int :: MApplyInt(lam.clone(), args.clone()), Int :: MApplyInt(Box :: new(lam_new.clone()), args.clone())) <--
-    int(t),
-    if let Int :: MApplyInt(ref lam, ref args) = t,
-    rw_int(lam.as_ref().clone(), lam_new);
+    for arg in (match t {
+        Int::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(arg, new_arg);
 
 
     // Equation rules
@@ -427,178 +357,141 @@ eq_name(t.clone(), t.clone()) <--
 eq_int(t.clone(), t.clone()) <--
     int(t);
 
-eq_proc(s.clone(), t.clone()) <--
-    proc(s),
-    if let Proc :: PDrop(ref s_f0) = s,
-    proc(t),
-    if let Proc :: PDrop(ref t_f0) = t,
-    eq_name(s_f0.as_ref().clone(), t_f0.as_ref().clone());
-
-eq_proc(s.clone(), t.clone()) <--
-    proc(s),
-    if let Proc :: POutput(ref s_f0, ref s_f1) = s,
-    proc(t),
-    if let Proc :: POutput(ref t_f0, ref t_f1) = t,
-    eq_name(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_proc(s_f1.as_ref().clone(), t_f1.as_ref().clone());
-
 eq_name(s.clone(), t.clone()) <--
     name(s),
-    if let Name :: NQuote(ref s_f0) = s,
     name(t),
-    if let Name :: NQuote(ref t_f0) = t,
-    eq_proc(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+    for (s_f0, t_f0) in (match (s, t) {
+        (Name::NQuote(sf0), Name::NQuote(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_proc(s_f0, t_f0);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
-    if let Proc :: Add(ref s_f0, ref s_f1) = s,
     proc(t),
-    if let Proc :: Add(ref t_f0, ref t_f1) = t,
-    eq_proc(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_proc(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+    for (s_f0, t_f0) in (match (s, t) {
+        (Proc::CastInt(sf0), Proc::CastInt(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_int(s_f0, t_f0);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
-    if let Proc :: CastInt(ref s_f0) = s,
     proc(t),
-    if let Proc :: CastInt(ref t_f0) = t,
-    eq_int(s_f0.as_ref().clone(), t_f0.as_ref().clone());
+    for (s_f0, t_f0) in (match (s, t) {
+        (Proc::PDrop(sf0), Proc::PDrop(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_name(s_f0, t_f0);
+
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, s_f1, t_f0, t_f1) in (match (s, t) {
+        (Proc::POutput(sf0, sf1), Proc::POutput(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_name(s_f0, t_f0),
+    eq_proc(s_f1, t_f1);
+
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, s_f1, t_f0, t_f1) in (match (s, t) {
+        (Proc::Add(sf0, sf1), Proc::Add(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_proc(s_f0, t_f0),
+    eq_proc(s_f1, t_f1);
 
 eq_name(s.clone(), t.clone()),
 name(t.clone()) <--
     name(s),
-    if let Name :: NQuote(ref s_f0) = s,
-    let s_f0_deref = & * * s_f0,
-    if let Proc :: PDrop(ref s_f0_deref_f0) = s_f0_deref,
-    let s_f0_deref_f0_deref = & * * s_f0_deref_f0,
+    if let Name::NQuote(ref s_f0) = s,
+    let s_f0_deref = &** s_f0,
+    if let Proc::PDrop(ref s_f0_deref_f0) = s_f0_deref,
+    let s_f0_deref_f0_deref = &** s_f0_deref_f0,
     let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
 
     // Rewrite rules
 rw_proc(s_orig.clone(), t) <--
     eq_proc(s_orig, s),
-    if let Proc :: PPar(ref s_f0) = s,
+    if let Proc::PPar(ref s_f0) = s,
     for (s_f0_e0, _count_0) in s_f0.iter(),
-    if let Proc :: PInputs(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
+    if let Proc::PInputs(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
     let s_f0_e0_f1_binder = s_f0_e0_f1.unsafe_pattern().clone(),
     let s_f0_e0_f1_body_boxed = s_f0_e0_f1.unsafe_body(),
-    let s_f0_e0_f1_body = & * * s_f0_e0_f1_body_boxed,
-    let __all_matchings_1 = { let __ctx_vec : Vec < _ > = s_f0.iter().collect();
-
-let mut __candidates = Vec :: new();
-
-for __zip_first_1 in s_f0_e0_f0.clone().iter() { let mut __row = Vec :: new();
-
-for (__idx, (__zip_search_1, _)) in __ctx_vec.iter().enumerate() { if let Proc :: POutput(ref __match_f0_1, ref __match_f1_1) = __zip_search_1 { if & * * __match_f0_1 == __zip_first_1 { __row.push((__idx, (* * __match_f1_1).clone()));
-
-} } } __candidates.push(__row);
-
-} mettail_runtime :: enumerate_matchings(& __candidates) }, for (__zip_collected_1, __map_matched_indices_1) in __all_matchings_1.into_iter(), if __zip_collected_1.len() == s_f0_e0_f0.clone().len(), let s_f0_rest = { let mut bag = s_f0.clone();
-
-bag.remove(& s_f0_e0);
-
-let __ctx_vec : Vec < _ > = s_f0.iter().collect();
-
-for __idx in __map_matched_indices_1.iter() { if let Some((elem, _)) = __ctx_vec.get(* __idx) { bag.remove(elem);
-
-} } bag }, let t = (Proc :: PPar({ let mut bag = (s_f0_rest.clone()).clone();
-
-Proc :: insert_into_ppar(& mut bag, { let (__binders, __body) = ((s_f0_e0_f1.clone()).clone()).unbind();
-
-let __vars : Vec < & mettail_runtime :: FreeVar < String >> = __binders.iter().map(| b | & b.0).collect();
-
-let __repls = { let __map_coll = (__zip_collected_1.clone()).clone();
-
-__map_coll.iter().map(| __elem | Name :: NQuote(Box :: new((__elem).clone()))).collect :: < Vec < _ >> () };
-
-(* __body).multi_substitute_name(& __vars, & __repls) });
-
-bag })).normalize();
+    let s_f0_e0_f1_body = &** s_f0_e0_f1_body_boxed,
+    let __all_matchings_1 = { let __ctx_vec : Vec < _ > = s_f0.iter().collect(); let mut __candidates = Vec::new(); for __zip_first_1 in s_f0_e0_f0.clone().iter() { let mut __row = Vec::new(); for (__idx, (__zip_search_1, _)) in __ctx_vec.iter().enumerate() { if let Proc::POutput(ref __match_f0_1, ref __match_f1_1) = __zip_search_1 { if &** __match_f0_1 == __zip_first_1 { __row.push((__idx, (** __match_f1_1).clone())); } } } __candidates.push(__row); } mettail_runtime::enumerate_matchings(& __candidates) },
+    for (__zip_collected_1, __map_matched_indices_1) in __all_matchings_1.into_iter(),
+    if __zip_collected_1.len() == s_f0_e0_f0.clone().len(),
+    let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); let __ctx_vec : Vec < _ > = s_f0.iter().collect(); for __idx in __map_matched_indices_1.iter() { if let Some((elem, _)) = __ctx_vec.get(* __idx) { bag.remove(elem); } } bag },
+    let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, { let (__binders, __body) = ((s_f0_e0_f1.clone()).clone()).unbind(); let __vars : Vec < & mettail_runtime::FreeVar < String >> = __binders.iter().map(| b | & b.0).collect(); let __repls = { let __map_coll = (__zip_collected_1.clone()).clone(); __map_coll.iter().map(| __elem | Name::NQuote(Box::new((__elem).clone()))).collect::< Vec < _ >> () }; (* __body).multi_substitute_name(& __vars, & __repls) }); bag })).normalize();
 
 rw_proc(s_orig.clone(), t) <--
     eq_proc(s_orig, s),
-    if let Proc :: PDrop(ref s_f0) = s,
-    let s_f0_deref = & * * s_f0,
-    if let Name :: NQuote(ref s_f0_deref_f0) = s_f0_deref,
-    let s_f0_deref_f0_deref = & * * s_f0_deref_f0,
+    if let Proc::PDrop(ref s_f0) = s,
+    let s_f0_deref = &** s_f0,
+    if let Name::NQuote(ref s_f0_deref_f0) = s_f0_deref,
+    let s_f0_deref_f0_deref = &** s_f0_deref_f0,
     let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
 fold_proc(t.clone(), t.clone()) <--
     proc(t),
-    if let Proc :: PZero = t;
-
-fold_proc(t.clone(), t.clone()) <--
-    proc(t),
-    if let Proc :: PDrop(_) = t;
-
-fold_proc(t.clone(), t.clone()) <--
-    proc(t),
-    if let Proc :: PPar(_) = t;
-
-fold_proc(t.clone(), t.clone()) <--
-    proc(t),
-    if let Proc :: POutput(_, _) = t;
-
-fold_proc(t.clone(), t.clone()) <--
-    proc(t),
-    if let Proc :: PInputs(_, _) = t;
-
-fold_proc(t.clone(), t.clone()) <--
-    proc(t),
-    if let Proc :: CastInt(_) = t;
-
-fold_proc(t.clone(), t.clone()) <--
-    proc(t),
-    if let Proc :: Err = t;
+    if (match t {
+        Proc::PZero => true,
+        Proc::PDrop(_) => true,
+        Proc::PPar(_) => true,
+        Proc::POutput(_, _) => true,
+        Proc::PInputs(_, _) => true,
+        Proc::CastInt(_) => true,
+        Proc::Err => true,
+        _ => false,
+    });
 
 fold_proc(s.clone(), res) <--
     proc(s),
-    if let Proc :: Add(left, right) = s,
+    if let Proc::Add(left, right) = s,
     fold_proc(left.as_ref().clone(), lv),
     fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({ if let Proc :: CastInt(a) = a { if let Proc :: CastInt(b) = b { Proc :: CastInt(Box :: new(* a.clone() + * b.clone())) } else { Proc :: Err } } else { Proc :: Err } });
+    let res = ({ if let Proc::CastInt(a) = a { if let Proc::CastInt(b) = b { Proc::CastInt(Box::new(* a.clone() + * b.clone())) } else { Proc::Err } } else { Proc::Err } });
 
 rw_proc(s.clone(), t.clone()) <--
     proc(s),
-    if let Proc :: Add(_, _) = s,
+    if (match s { Proc::Add(_, _) => true, _ => false, }),
     fold_proc(s, t);
 
 rw_proc(parent.clone(), result) <--
     proc(parent),
-    if let Proc :: PPar(ref bag) = parent,
+    if let Proc::PPar(ref bag) = parent,
     for (elem, _count) in bag.iter(),
     rw_proc(elem.clone(), elem_rewritten),
-    let result = Proc :: PPar({ let mut new_bag = bag.clone();
+    let result = Proc::PPar({ let mut new_bag = bag.clone(); new_bag.remove(elem); Proc::insert_into_ppar(& mut new_bag, elem_rewritten.clone()); new_bag });
 
-new_bag.remove(elem);
-
-Proc :: insert_into_ppar(& mut new_bag, elem_rewritten.clone());
-
-new_bag });
-
-rw_proc(lhs.clone(), rhs) <--
+rw_proc(lhs.clone(), match (lhs, vi) {
+    (Proc::Add(_, x1), 0usize) => Proc::Add(Box::new(t.clone()), x1.clone()),
+    (Proc::Add(x0, _), 1usize) => Proc::Add(x0.clone(), Box::new(t.clone())),
+    _ => unreachable!(),
+}) <--
     proc(lhs),
-    if let Proc :: Add(ref x0, ref x1) = lhs,
-    rw_proc((* * x0).clone(), t),
-    let rhs = Proc :: Add(Box :: new(t.clone()), x1.clone());
-
-rw_proc(lhs.clone(), rhs) <--
-    proc(lhs),
-    if let Proc :: Add(ref x0, ref x1) = lhs,
-    rw_proc((* * x1).clone(), t),
-    let rhs = Proc :: Add(x0.clone(), Box :: new(t.clone()));
+    for (field_val, vi) in (match lhs {
+        Proc::Add(x0, x1) => vec![((** x0).clone(), 0usize), ((** x1).clone(), 1usize)],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(field_val, t);
 
 
     // Custom logic
-proc(p) <-- if let Ok(p) = Proc :: parse("^x.{{ x | serv!(req) }}");
+proc(p) <-- if let Ok(p) = Proc::parse("^x.{{ x | serv!(req) }}");
 
-proc(p) <-- if let Ok(p) = Proc :: parse("^x.{x}");
+proc(p) <-- if let Ok(p) = Proc::parse("^x.{x}");
 
-proc(res) <-- step_term(p), proc(c), if let Proc :: LamProc(_) = c, let app = Proc :: ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize();
+proc(res) <-- step_term(p), proc(c), if let Proc::LamProc(_) = c, let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize();
 
-proc(res) <-- step_term(p), proc(c), if let Proc :: MLamProc(_) = c, let app = Proc :: MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize();
+proc(res) <-- step_term(p), proc(c), if let Proc::MLamProc(_) = c, let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize();
 
 relation path(Proc, Proc);
 
@@ -608,8 +501,8 @@ path(p0, p2) <-- path(p0, p1), path(p1, p2);
 
 relation trans(Proc, Proc, Proc);
 
-trans(p,c,q) <-- step_term(p), proc(c), if let Proc :: LamProc(_) = c, let app = Proc :: ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize(), path(res.clone(), q);
+trans(p,c,q) <-- step_term(p), proc(c), if let Proc::LamProc(_) = c, let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize(), path(res.clone(), q);
 
-trans(p,c,q) <-- step_term(p), proc(c), if let Proc :: MLamProc(_) = c, let app = Proc :: MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize(), path(res.clone(), q);
+trans(p,c,q) <-- step_term(p), proc(c), if let Proc::MLamProc(_) = c, let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize(), path(res.clone(), q);
 
 }

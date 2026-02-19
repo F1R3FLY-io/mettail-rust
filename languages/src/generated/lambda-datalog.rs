@@ -8,7 +8,7 @@ ascent_source! {
     // Relations
 relation term(Term);
 
-#[ds(crate :: eqrel)] relation eq_term(Term, Term);
+#[ds(crate::eqrel)] relation eq_term(Term, Term);
 
 relation rw_term(Term, Term);
 
@@ -16,56 +16,50 @@ relation step_term(Term);
 
 
     // Category rules
+term(sub.clone()) <--
+    term(t),
+    for sub in (match t {
+        Term::Lam(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Term::App(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Term::ApplyTerm(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Term::MApplyTerm(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
+            v
+        },
+        Term::LamTerm(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Term::MLamTerm(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
+
 term(c1.clone()) <--
     term(c0),
     rw_term(c0, c1);
 
-term(body_value) <--
+rw_term(t.clone(), match t {
+    Term::ApplyTerm(_, arg) => Term::ApplyTerm(Box::new(new_lam.clone()), arg.clone()),
+    Term::MApplyTerm(_, args) => Term::MApplyTerm(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
+}) <--
     term(t),
-    if let Term :: Lam(scope) = t,
-    let body_value = scope.inner().unsafe_body.as_ref().clone();
+    for lam in (match t {
+        Term::ApplyTerm(lam, _) => vec![lam.as_ref().clone()],
+        Term::MApplyTerm(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_term(lam, new_lam);
 
-term(field_0.as_ref().clone()),
-term(field_1.as_ref().clone()) <--
+rw_term(t.clone(), match t {
+    Term::ApplyTerm(lam, _) => Term::ApplyTerm(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
+}) <--
     term(t),
-    if let Term :: App(field_0, field_1) = t;
-
-term(lam.as_ref().clone()),
-term(arg.as_ref().clone()) <--
-    term(t),
-    if let Term :: ApplyTerm(lam, arg) = t;
-
-term(lam.as_ref().clone()) <--
-    term(t),
-    if let Term :: MApplyTerm(lam, _) = t;
-
-term(arg.clone()) <--
-    term(t),
-    if let Term :: MApplyTerm(_, args) = t,
-    for arg in args.iter();
-
-term((* scope.inner().unsafe_body).clone()) <--
-    term(t),
-    if let Term :: LamTerm(scope) = t;
-
-term((* scope.inner().unsafe_body).clone()) <--
-    term(t),
-    if let Term :: MLamTerm(scope) = t;
-
-rw_term(Term :: ApplyTerm(lam.clone(), arg.clone()), Term :: ApplyTerm(Box :: new(lam_new.clone()), arg.clone())) <--
-    term(t),
-    if let Term :: ApplyTerm(ref lam, ref arg) = t,
-    rw_term(lam.as_ref().clone(), lam_new);
-
-rw_term(Term :: ApplyTerm(lam.clone(), arg.clone()), Term :: ApplyTerm(lam.clone(), Box :: new(arg_new.clone()))) <--
-    term(t),
-    if let Term :: ApplyTerm(ref lam, ref arg) = t,
-    rw_term(arg.as_ref().clone(), arg_new);
-
-rw_term(Term :: MApplyTerm(lam.clone(), args.clone()), Term :: MApplyTerm(Box :: new(lam_new.clone()), args.clone())) <--
-    term(t),
-    if let Term :: MApplyTerm(ref lam, ref args) = t,
-    rw_term(lam.as_ref().clone(), lam_new);
+    for arg in (match t {
+        Term::ApplyTerm(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_term(arg, new_arg);
 
 
     // Equation rules
@@ -74,45 +68,45 @@ eq_term(t.clone(), t.clone()) <--
 
 eq_term(s.clone(), t.clone()) <--
     term(s),
-    if let Term :: App(ref s_f0, ref s_f1) = s,
     term(t),
-    if let Term :: App(ref t_f0, ref t_f1) = t,
-    eq_term(s_f0.as_ref().clone(), t_f0.as_ref().clone()),
-    eq_term(s_f1.as_ref().clone(), t_f1.as_ref().clone());
+    for (s_f0, s_f1, t_f0, t_f1) in (match (s, t) {
+        (Term::App(sf0, sf1), Term::App(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_term(s_f0, t_f0),
+    eq_term(s_f1, t_f1);
 
 
     // Rewrite rules
 rw_term(s_orig.clone(), t) <--
     eq_term(s_orig, s),
-    if let Term :: App(ref s_f0, ref s_f1) = s,
-    let s_f0_deref = & * * s_f0,
-    if let Term :: Lam(ref s_f0_deref_f0) = s_f0_deref,
+    if let Term::App(ref s_f0, ref s_f1) = s,
+    let s_f0_deref = &** s_f0,
+    if let Term::Lam(ref s_f0_deref_f0) = s_f0_deref,
     let s_f0_deref_f0_binder = s_f0_deref_f0.unsafe_pattern().clone(),
     let s_f0_deref_f0_body_boxed = s_f0_deref_f0.unsafe_body(),
-    let s_f0_deref_f0_body = & * * s_f0_deref_f0_body_boxed,
-    let s_f1_deref = & * * s_f1,
-    let t = ({ let (__binder, __body) = ((s_f0_deref_f0.clone()).clone()).unbind();
-
-(* __body).substitute_term(& __binder.0, & (s_f1_deref.clone()).clone()) }).normalize();
+    let s_f0_deref_f0_body = &** s_f0_deref_f0_body_boxed,
+    let s_f1_deref = &** s_f1,
+    let t = ({ let (__binder, __body) = ((s_f0_deref_f0.clone()).clone()).unbind(); (* __body).substitute_term(& __binder.0, & (s_f1_deref.clone()).clone()) }).normalize();
 
 rw_term(lhs.clone(), rhs) <--
     term(lhs),
-    if let Term :: App(ref x0, ref x1) = lhs,
-    rw_term((* * x0).clone(), t),
-    let rhs = Term :: App(Box :: new(t.clone()), x1.clone());
-
-rw_term(lhs.clone(), rhs) <--
-    term(lhs),
-    if let Term :: App(ref x0, ref x1) = lhs,
-    rw_term((* * x1).clone(), t),
-    let rhs = Term :: App(x0.clone(), Box :: new(t.clone()));
-
-rw_term(lhs.clone(), rhs) <--
-    term(lhs),
-    if let Term :: Lam(ref scope) = lhs,
+    if let Term::Lam(ref scope) = lhs,
     let binder = scope.unsafe_pattern().clone(),
     let body = scope.unsafe_body(),
-    rw_term((* * body).clone(), body_rewritten),
-    let rhs = Term :: Lam(mettail_runtime :: Scope :: from_parts_unsafe(binder.clone(), Box :: new(body_rewritten.clone())));
+    rw_term((** body).clone(), body_rewritten),
+    let rhs = Term::Lam(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
+
+rw_term(lhs.clone(), match (lhs, vi) {
+    (Term::App(_, x1), 0usize) => Term::App(Box::new(t.clone()), x1.clone()),
+    (Term::App(x0, _), 1usize) => Term::App(x0.clone(), Box::new(t.clone())),
+    _ => unreachable!(),
+}) <--
+    term(lhs),
+    for (field_val, vi) in (match lhs {
+        Term::App(x0, x1) => vec![((** x0).clone(), 0usize), ((** x1).clone(), 1usize)],
+        _ => vec![],
+    }).into_iter(),
+    rw_term(field_val, t);
 
 }

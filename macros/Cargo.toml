@@ -25,3 +25,4 @@ mettail-prattail = { path = "../prattail" }
 
 [dev-dependencies]
 trybuild = "1.0"
+proptest = "1"

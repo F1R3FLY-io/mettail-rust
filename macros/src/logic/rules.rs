@@ -119,85 +119,33 @@ pub fn generate_rule_clause_with_category(
     //   rw_proc(s1, t) <-- rw_proc(s0, t), eq_proc(s0, s1)
     let source_var = format_ident!("s_orig");
 
-    // Wrap RHS expression with .normalize() for immediate beta-reduction
-    if use_equation_matching {
+    // Build rule head and first body clause based on matching mode
+    let (head, first_clause) = if use_equation_matching {
         // Rewrite rules: match via equation relation
-        if condition_clauses.is_empty() && eq_checks.is_empty() {
-            quote! {
-                #relation_name(#source_var.clone(), #rhs_var) <--
-                    #eq_rel(#source_var, #lhs_var),
-                    #(#clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else if eq_checks.is_empty() {
-            quote! {
-                #relation_name(#source_var.clone(), #rhs_var) <--
-                    #eq_rel(#source_var, #lhs_var),
-                    #(#clauses,)*
-                    #(#condition_clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else if condition_clauses.is_empty() {
-            quote! {
-                #relation_name(#source_var.clone(), #rhs_var) <--
-                    #eq_rel(#source_var, #lhs_var),
-                    #(#clauses,)*
-                    #(#eq_checks,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else {
-            quote! {
-                #relation_name(#source_var.clone(), #rhs_var) <--
-                    #eq_rel(#source_var, #lhs_var),
-                    #(#clauses,)*
-                    #(#eq_checks,)*
-                    #(#condition_clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        }
+        (
+            quote! { #relation_name(#source_var.clone(), #rhs_var) },
+            quote! { #eq_rel(#source_var, #lhs_var) },
+        )
     } else {
         // Equation rules: match directly on category relation
         // Also add the produced term to proc, enabling:
         // 1. Deconstruction of equation-produced terms
         // 2. Reflexivity for equation-produced terms (so rewrites can match via eq_proc)
-        if condition_clauses.is_empty() && eq_checks.is_empty() {
-            quote! {
-                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
-                #cat_lower(#rhs_var.clone()) <--
-                    #cat_lower(#lhs_var),
-                    #(#clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else if eq_checks.is_empty() {
-            quote! {
-                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
-                #cat_lower(#rhs_var.clone()) <--
-                    #cat_lower(#lhs_var),
-                    #(#clauses,)*
-                    #(#condition_clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else if condition_clauses.is_empty() {
-            quote! {
-                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
-                #cat_lower(#rhs_var.clone()) <--
-                    #cat_lower(#lhs_var),
-                    #(#clauses,)*
-                    #(#eq_checks,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else {
-            quote! {
-                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
-                #cat_lower(#rhs_var.clone()) <--
-                    #cat_lower(#lhs_var),
-                    #(#clauses,)*
-                    #(#eq_checks,)*
-                    #(#condition_clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        }
-    }
+        (
+            quote! { #relation_name(#lhs_var.clone(), #rhs_var.clone()), #cat_lower(#rhs_var.clone()) },
+            quote! { #cat_lower(#lhs_var) },
+        )
+    };
+
+    // Assemble body clauses in order: first_clause, LHS pattern, eq_checks, conditions, RHS binding
+    let mut body = Vec::with_capacity(1 + clauses.len() + eq_checks.len() + condition_clauses.len() + 1);
+    body.push(first_clause);
+    body.extend(clauses.iter().cloned());
+    body.extend(eq_checks.iter().cloned());
+    body.extend(condition_clauses.iter().cloned());
+    body.push(quote! { let #rhs_var = (#rhs_expr).normalize() });
+
+    quote! { #head <-- #(#body),*; }
 }
 
 /// Generate condition clauses from freshness and env conditions.

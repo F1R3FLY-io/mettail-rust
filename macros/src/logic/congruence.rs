@@ -9,44 +9,71 @@
 //! Equality congruences ARE auto-generated (in equations.rs), since
 //! `eq(x,y) => eq(f(x), f(y))` for all constructors is always sound.
 
+use super::common::{count_nonterminals, relation_names};
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{LanguageDef, RewriteRule};
 use crate::ast::pattern::{Pattern, PatternTerm};
 use crate::ast::types::TypeExpr;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::BTreeMap;
 use syn::Ident;
+
+/// Entry for a simple congruence rule to be consolidated.
+struct SimpleCongruenceEntry {
+    constructor: Ident,
+    field_idx: usize,
+    n_fields: usize,
+    is_boxed: bool,
+}
 
 pub fn generate_all_explicit_congruences(language: &LanguageDef) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
+    // Group simple congruences by (source_cat, field_cat) for consolidation.
+    // BTreeMap gives deterministic ordering for reproducible code generation.
+    let mut simple_groups: BTreeMap<(String, String), Vec<SimpleCongruenceEntry>> =
+        BTreeMap::new();
+
     for rewrite in &language.rewrites {
-        // Only process rules with congruence premise
-        if rewrite.is_congruence_rule() {
-            if let Some(rule) = generate_explicit_congruence(rewrite, language) {
-                rules.push(rule);
-            }
+        if !rewrite.is_congruence_rule() {
+            continue;
+        }
+
+        if let Some(rule) =
+            classify_and_generate_congruence(rewrite, language, &mut simple_groups)
+        {
+            rules.push(rule);
+        }
+    }
+
+    // Generate consolidated rules for each simple congruence group
+    for ((src_str, fld_str), entries) in &simple_groups {
+        let source_cat = format_ident!("{}", src_str);
+        let field_cat = format_ident!("{}", fld_str);
+        if let Some(rule) =
+            generate_consolidated_simple_congruence(&source_cat, &field_cat, entries)
+        {
+            rules.push(rule);
         }
     }
 
     rules
 }
 
-/// Process an explicit congruence rule: `| S ~> T |- LHS ~> RHS`
+/// Classify a congruence rewrite rule and either generate it immediately
+/// (Collection/Binding) or collect it for consolidation (Simple).
 ///
-/// This is the main entry point that replaces the scattered code in
-/// analysis.rs, binding.rs, collection.rs, regular.rs, projections.rs.
-pub fn generate_explicit_congruence(
-    rule: &RewriteRule,
+/// Returns `Some(TokenStream)` for Collection/Binding rules, `None` for Simple
+/// (which is added to simple_groups for later consolidation).
+fn classify_and_generate_congruence(
+    rewrite: &RewriteRule,
     language: &LanguageDef,
+    simple_groups: &mut BTreeMap<(String, String), Vec<SimpleCongruenceEntry>>,
 ) -> Option<TokenStream> {
-    // Must have a congruence premise (S ~> T)
-    let (source_var, _target_var) = rule.congruence_premise()?;
+    let (source_var, _target_var) = rewrite.congruence_premise()?;
+    let context = find_rewrite_context(&rewrite.left, source_var, language)?;
 
-    // Analyze LHS to find where source_var appears and in what context
-    let context = find_rewrite_context(&rule.left, source_var, language)?;
-
-    // Generate appropriate congruence based on context
     match context {
         RewriteContext::Collection {
             category,
@@ -77,13 +104,21 @@ pub fn generate_explicit_congruence(
             constructor,
             field_idx,
             field_category,
-        } => generate_simple_congruence(
-            &category,
-            &constructor,
-            field_idx,
-            &field_category,
-            language,
-        ),
+        } => {
+            // Collect for consolidation instead of generating immediately
+            let grammar_rule = language.get_constructor(&constructor)?;
+            let n = count_nonterminals(grammar_rule);
+            let is_boxed = field_is_boxed_in_ast(grammar_rule, field_idx);
+
+            let key = (category.to_string(), field_category.to_string());
+            simple_groups.entry(key).or_default().push(SimpleCongruenceEntry {
+                constructor,
+                field_idx,
+                n_fields: n,
+                is_boxed,
+            });
+            None // Will be generated later in consolidated form
+        }
     }
 }
 
@@ -269,9 +304,11 @@ fn generate_collection_congruence(
     _has_rest: bool,
     _language: &LanguageDef,
 ) -> Option<TokenStream> {
-    let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
-    let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
-    let elem_rw_rel = format_ident!("rw_{}", element_category.to_string().to_lowercase());
+    let rn = relation_names(category);
+    let cat_lower = &rn.cat_lower;
+    let rw_rel = &rn.rw_rel;
+    let elem_rn = relation_names(element_category);
+    let elem_rw_rel = &elem_rn.rw_rel;
     let insert_helper = format_ident!("insert_into_{}", constructor.to_string().to_lowercase());
 
     Some(quote! {
@@ -308,12 +345,14 @@ fn generate_binding_congruence(
     body_category: &Ident,
     language: &LanguageDef,
 ) -> Option<TokenStream> {
-    let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
-    let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
-    let body_rw_rel = format_ident!("rw_{}", body_category.to_string().to_lowercase());
+    let rn = relation_names(category);
+    let cat_lower = &rn.cat_lower;
+    let rw_rel = &rn.rw_rel;
+    let body_rn = relation_names(body_category);
+    let body_rw_rel = &body_rn.rw_rel;
 
     let rule = language.get_constructor(constructor)?;
-    let n = count_nonterminal_fields(rule);
+    let n = count_nonterminals(rule);
 
     if n == 1 {
         // Simple case: just the scope (like PNew)
@@ -357,70 +396,132 @@ fn generate_binding_congruence(
     }
 }
 
-/// Generate simple congruence: if field rewrites, term rewrites
+/// Generate a single consolidated rule for a group of simple congruence entries
+/// that share the same (source_cat, field_cat).
 ///
-/// Example: `if S => T then (PAmb N S) => (PAmb N T)`
-/// Generates:
-/// ```text
-/// rw_proc(lhs, rhs) <--
-///     proc(lhs),
-///     if let Proc::PAmb(ref x0, ref x1) = lhs,
-///     rw_proc((*x1).clone(), t),
-///     let rhs = Proc::PAmb(x0.clone(), Box::new(t));
-/// ```
-fn generate_simple_congruence(
-    category: &Ident,
-    constructor: &Ident,
-    field_idx: usize,
-    field_category: &Ident,
-    language: &LanguageDef,
+/// Groups constructors with the same rewrite target field category into one rule
+/// using inline match expressions for extraction and rebuild.
+///
+/// Before: N rules (one per constructor×field position)
+/// After: 1 rule with N match arms
+fn generate_consolidated_simple_congruence(
+    source_cat: &Ident,
+    field_cat: &Ident,
+    entries: &[SimpleCongruenceEntry],
 ) -> Option<TokenStream> {
-    let cat_lower = format_ident!("{}", category.to_string().to_lowercase());
-    let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
-    let field_rw_rel = format_ident!("rw_{}", field_category.to_string().to_lowercase());
+    if entries.is_empty() {
+        return None;
+    }
 
-    let rule = language.get_constructor(constructor)?;
-    let n = count_nonterminal_fields(rule);
-    let vars: Vec<Ident> = (0..n).map(|i| format_ident!("x{}", i)).collect();
+    let rn = relation_names(source_cat);
+    let cat_lower = &rn.cat_lower;
+    let rw_rel = &rn.rw_rel;
+    let field_rn = relation_names(field_cat);
+    let field_rw_rel = &field_rn.rw_rel;
 
-    let s_var = &vars[field_idx];
-    let t_var = format_ident!("t");
+    // Assign variant indices sequentially within this group
+    // Group entries by constructor for extraction (one match arm per constructor)
+    let mut by_constructor: BTreeMap<String, Vec<(usize, &SimpleCongruenceEntry)>> =
+        BTreeMap::new();
+    for (vi, entry) in entries.iter().enumerate() {
+        by_constructor
+            .entry(entry.constructor.to_string())
+            .or_default()
+            .push((vi, entry));
+    }
 
-    // Determine if field is stored as Box in the AST (recursive or cross-category both use Box)
-    let needs_box = is_recursive_field(rule, field_idx);
-    let rewritten_field_is_boxed = field_is_boxed_in_ast(rule, field_idx);
+    // === Extraction match arms (one per constructor) ===
+    let mut extract_arms = Vec::new();
+    for ctor_entries in by_constructor.values() {
+        let first = ctor_entries[0].1;
+        let ctor = &first.constructor;
+        let n = first.n_fields;
 
-    // Source expression: pass the inner value to the rewrite relation (rw_cat expects the term type, not Box)
-    let s_expr = if needs_box || rewritten_field_is_boxed {
-        quote! { (**#s_var).clone() }
-    } else {
-        quote! { (*#s_var).clone() }
-    };
+        // Determine which fields to bind (those being extracted)
+        let extracted_indices: Vec<usize> = ctor_entries.iter().map(|(_, e)| e.field_idx).collect();
 
-    // Reconstruction: vars from the pattern are already &Box<T>, so clone() gives Box<T>.
-    // Only the rewritten field (t_var) is a bare value and must be wrapped in Box::new when the AST expects Box.
-    let recon_args: Vec<TokenStream> = vars
-        .iter()
-        .enumerate()
-        .map(|(i, v)| {
-            if i == field_idx {
-                if rewritten_field_is_boxed {
-                    quote! { Box::new(#t_var.clone()) }
+        let pattern_fields: Vec<TokenStream> = (0..n)
+            .map(|i| {
+                if extracted_indices.contains(&i) {
+                    let xi = format_ident!("x{}", i);
+                    quote! { #xi }
                 } else {
-                    quote! { #t_var.clone() }
+                    quote! { _ }
                 }
-            } else {
-                quote! { #v.clone() }
-            }
-        })
-        .collect();
+            })
+            .collect();
+
+        // Build extraction vec: one (field_val, vi) per entry
+        let extractions: Vec<TokenStream> = ctor_entries
+            .iter()
+            .map(|(vi, e)| {
+                let xi = format_ident!("x{}", e.field_idx);
+                let vi_lit = *vi;
+                if e.is_boxed {
+                    quote! { ((**#xi).clone(), #vi_lit) }
+                } else {
+                    quote! { ((*#xi).clone(), #vi_lit) }
+                }
+            })
+            .collect();
+
+        extract_arms.push(quote! {
+            #source_cat::#ctor(#(#pattern_fields),*) => vec![#(#extractions),*],
+        });
+    }
+
+    // === Rebuild match arms (one per entry) ===
+    let mut rebuild_arms = Vec::new();
+    for (vi, entry) in entries.iter().enumerate() {
+        let ctor = &entry.constructor;
+        let n = entry.n_fields;
+        let vi_lit = vi;
+
+        // Pattern: bind all fields except the replaced one
+        let pattern_fields: Vec<TokenStream> = (0..n)
+            .map(|i| {
+                if i == entry.field_idx {
+                    quote! { _ }
+                } else {
+                    let xi = format_ident!("x{}", i);
+                    quote! { #xi }
+                }
+            })
+            .collect();
+
+        // Reconstruction: clone all fields, replace the rewritten one
+        let recon_args: Vec<TokenStream> = (0..n)
+            .map(|i| {
+                if i == entry.field_idx {
+                    if entry.is_boxed {
+                        quote! { Box::new(t.clone()) }
+                    } else {
+                        quote! { t.clone() }
+                    }
+                } else {
+                    let xi = format_ident!("x{}", i);
+                    quote! { #xi.clone() }
+                }
+            })
+            .collect();
+
+        rebuild_arms.push(quote! {
+            (#source_cat::#ctor(#(#pattern_fields),*), #vi_lit) =>
+                #source_cat::#ctor(#(#recon_args),*),
+        });
+    }
 
     Some(quote! {
-        #rw_rel(lhs.clone(), rhs) <--
+        #rw_rel(lhs.clone(), match (lhs, vi) {
+            #(#rebuild_arms)*
+            _ => unreachable!(),
+        }) <--
             #cat_lower(lhs),
-            if let #category::#constructor(#(ref #vars),*) = lhs,
-            #field_rw_rel(#s_expr, #t_var),
-            let rhs = #category::#constructor(#(#recon_args),*);
+            for (field_val, vi) in (match lhs {
+                #(#extract_arms)*
+                _ => vec![],
+            }).into_iter(),
+            #field_rw_rel(field_val, t);
     })
 }
 
@@ -428,47 +529,7 @@ fn generate_simple_congruence(
 // Helpers
 // =============================================================================
 
-/// Count actual AST fields in a grammar rule
-///
-/// This accounts for the fact that:
-/// - New syntax (term_context): Abstraction = 1 Scope field
-/// - Old syntax with bindings: Binder + body NonTerminal = 1 Scope field
-fn count_nonterminal_fields(rule: &GrammarRule) -> usize {
-    // New syntax uses term_context
-    if let Some(ref term_context) = rule.term_context {
-        return term_context.len();
-    }
-
-    // Old syntax with explicit bindings - binder and body combine into one Scope
-    if !rule.bindings.is_empty() {
-        let (binder_idx, body_indices) = &rule.bindings[0];
-        let body_idx = body_indices[0];
-
-        let mut count = 0;
-        for (i, item) in rule.items.iter().enumerate() {
-            if i == *binder_idx {
-                continue; // Skip binder - it's part of the Scope
-            }
-            if i == body_idx {
-                count += 1; // Body becomes Scope field
-            } else {
-                match item {
-                    GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. } => {
-                        count += 1;
-                    },
-                    _ => {},
-                }
-            }
-        }
-        return count;
-    }
-
-    // Regular rule - count non-terminals and collections
-    rule.items
-        .iter()
-        .filter(|item| matches!(item, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
-        .count()
-}
+// `count_nonterminal_fields` moved to `common::count_nonterminals`
 
 /// Check if the AST stores this field as Box<T> (so reconstruction must use Box::new).
 ///
@@ -497,26 +558,6 @@ fn field_is_boxed_in_ast(rule: &GrammarRule, field_idx: usize) -> bool {
                 if idx == field_idx {
                     return false;
                 }
-                idx += 1;
-            },
-            GrammarItem::Terminal(_) => {},
-        }
-    }
-    false
-}
-
-/// Check if a field is recursive (same category as constructor result)
-fn is_recursive_field(rule: &GrammarRule, field_idx: usize) -> bool {
-    let mut idx = 0;
-    for item in &rule.items {
-        match item {
-            GrammarItem::NonTerminal(cat) => {
-                if idx == field_idx {
-                    return cat == &rule.category;
-                }
-                idx += 1;
-            },
-            GrammarItem::Collection { .. } | GrammarItem::Binder { .. } => {
                 idx += 1;
             },
             GrammarItem::Terminal(_) => {},
