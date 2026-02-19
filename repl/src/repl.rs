@@ -4,6 +4,7 @@ use crate::registry::LanguageRegistry;
 use crate::state::ReplState;
 use anyhow::Result;
 use colored::Colorize;
+use mettail_query::run_query as query_run_query;
 use mettail_runtime::{AscentResults, Language, TermInfo};
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
@@ -157,6 +158,11 @@ impl Repl {
             return self.cmd_assign(&name, &term_str);
         }
 
+        // Query: single rule in Ascent form, e.g. query(result) <-- path(term, result), !rw_proc(result, _).
+        if line.contains(" <-- ") {
+            return self.cmd_query(line);
+        }
+
         match parts[0] {
             "help" => self.cmd_help(),
             "lang" => self.cmd_lang(&parts[1..]),
@@ -184,6 +190,8 @@ impl Repl {
             "quit" | "exit" => {
                 println!("Goodbye!");
                 std::process::exit(0);
+                #[allow(unreachable_code)]
+                Ok::<(), anyhow::Error>(())
             },
             "exec" => self.cmd_exec_term(line.strip_prefix("exec").unwrap()),
             "step" => self.cmd_step_term(line.strip_prefix("step").unwrap()),
@@ -281,6 +289,13 @@ impl Repl {
         println!("{}", "  Relations:".yellow());
         println!("    {}         List all computed relations", "relations".green());
         println!("    {} Show tuples in a relation", "relation <name>".green());
+        println!();
+        println!("{}", "  Query:".yellow());
+        println!(
+            "    {}  Run a Datalog rule over step results (e.g. {}).",
+            "head(args) <-- body.".green(),
+            "query(result) <-- path(current_term, result), !rw_proc(result, _)".dimmed()
+        );
         println!();
         println!("{}", "  General:".yellow());
         println!("    {}              Show this help", "help".green());
@@ -1246,13 +1261,13 @@ impl Repl {
                 println!("  ({})", tuple.join(", ").green());
             }
             println!();
-            return Ok(());
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "Unknown relation: '{}'. Use 'relations' to list available relations.",
+                name
+            ))
         }
-
-        anyhow::bail!(
-            "Unknown relation: '{}'. Use 'relations' to list available relations.",
-            name
-        )
     }
 
     fn cmd_apply(&mut self, args: &[&str]) -> Result<()> {
@@ -1365,6 +1380,75 @@ impl Repl {
             .set_term_with_id(target_term, results.clone(), target_info.term_id)?;
 
         Ok(())
+    }
+
+    /// Run a single Datalog-style rule over the current Ascent results.
+    /// Requires a loaded language, a prior step (so ascent_results exists), and a current term for env substitution.
+    /// Environment substitution includes REPL bindings plus "current_term" (display of the current stepped term).
+    fn cmd_query(&mut self, line: &str) -> Result<()> {
+        let language_name = self
+            .state
+            .language_name()
+            .ok_or_else(|| anyhow::anyhow!("No language loaded. Use 'lang <name>' first."))?;
+
+        let current_term = self
+            .state
+            .current_term()
+            .ok_or_else(|| anyhow::anyhow!("No current term. Use 'step <term>' first."))?
+            .clone_box();
+
+        let language = self.registry.get(language_name)?;
+
+        self.state.ensure_environment(|| language.create_env());
+
+        // Substitute env bindings (save t, etc.). We do *not* add "current_term" to env here.
+        let mut substituted =
+            pre_substitute_env(line, language, self.state.environment().unwrap());
+
+        // Substitute "current_term" with a Rust string literal so the Ascent (syn) parser sees one argument.
+        // The term's display can contain { } | . etc. which are valid Rust tokens; only a string literal is safe.
+        let current_display = format!("{}", current_term);
+        let current_literal = format!(
+            "\"{}\"",
+            current_display
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('\n', "\\n")
+                .replace('\r', "\\r")
+                .replace('\t', "\\t")
+        );
+        substituted = replace_whole_word(&substituted, "current_term", &current_literal);
+
+        let results = self
+            .state
+            .ascent_results()
+            .ok_or_else(|| anyhow::anyhow!("No step results. Use 'step <term>' first."))?;
+
+        match query_run_query(&substituted, results) {
+            Ok(rows) => {
+                println!();
+                if rows.is_empty() {
+                    println!("{} (0 rows)", "Query result:".bold());
+                } else {
+                    println!("{} ({} row(s)):", "Query result:".bold(), rows.len());
+                    for row in &rows {
+                        let formatted = if row.len() == 1 {
+                            row[0].clone()
+                        } else {
+                            format!("({})", row.join(", "))
+                        };
+                        println!("  {}", formatted.green());
+                    }
+                }
+                println!();
+                Ok(())
+            },
+            Err(e) => {
+                eprintln!("{}", "Query (after substitution):".yellow().bold());
+                eprintln!("{}", substituted.dimmed());
+                Err(anyhow::anyhow!("{}", e))
+            },
+        }
     }
 
     fn cmd_example(&mut self, args: &[&str]) -> Result<()> {

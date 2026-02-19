@@ -13,6 +13,7 @@ doc = false  # Same binary as root package; document only from workspace root to
 mettail-runtime = { path = "../runtime" }
 mettail-languages = { path = "../languages" }
 mettail-macros = { path = "../macros" }
+mettail-query = { path = "../query" }
 
 moniker = {workspace = true}
 

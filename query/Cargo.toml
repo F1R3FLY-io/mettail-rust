@@ -1,0 +1,11 @@
+[package]
+name = "mettail-query"
+version = "0.1.0"
+edition = "2021"
+description = "Runtime query interpreter for MeTTaIL: parse and execute Datalog-style rules over Ascent results"
+
+[dependencies]
+ascent_syntax_export = { path = "../ascent_syntax_export" }
+mettail-runtime = { path = "../runtime" }
+
+syn = { workspace = true }

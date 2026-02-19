@@ -158,6 +158,28 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// New: ... ...
+	{
+		type: "proc_new",
+		tooltip: "New: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "field_input",
+				name: "VAR",
+				text: "x",
+			},
+			{
+				type: "input_statement",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Err
 	{
 		type: "proc_err",

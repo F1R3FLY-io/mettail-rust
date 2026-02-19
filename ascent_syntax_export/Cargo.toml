@@ -1,0 +1,20 @@
+[package]
+name = "ascent_syntax_export"
+version.workspace = true
+edition = "2021"
+description = "Non-proc-macro wrapper to export Ascent's parser types for external use"
+
+[dependencies]
+syn = { version = "2.0.57", features = ["derive", "full", "extra-traits", "visit-mut", "parsing"] }
+quote = "1.0"
+proc-macro2 = "1.0"
+itertools = "0.13"
+petgraph = "0.6.0"
+derive-syn-parse = "0.2.0"
+lazy_static = "1.4.0"
+duplicate = { version = "2.0", default-features = false }
+ascent_base = "0.8"
+
+[build-dependencies]
+# No build dependencies needed - just std file operations
+

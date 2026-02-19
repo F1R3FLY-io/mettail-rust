@@ -38,7 +38,7 @@ pub mod rules;
 // Re-export key functions
 pub use categories::generate_category_rules;
 pub use equations::generate_equation_rules;
-pub use relations::generate_relations;
+pub use relations::{generate_relations, list_all_relations_for_extraction, RelationForExtraction};
 
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
@@ -163,10 +163,6 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     let base_rewrite_clauses = generate_base_rewrites(language);
     rules.extend(base_rewrite_clauses);
 
-    // Generate semantic evaluation rules (for operators with semantics)
-    let semantic_rules = generate_semantic_rules(language);
-    rules.extend(semantic_rules);
-
     // Generate big-step fold rules (one rewrite per fold-mode constructor)
     let fold_rules = generate_fold_big_step_rules(language);
     rules.extend(fold_rules);
@@ -179,257 +175,6 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     quote! {
         #(#rules)*
     }
-}
-
-/// Generate semantic evaluation rules for constructors with semantics
-/// For example: Add (NumLit a) (NumLit b) => NumLit(a + b)
-/// Only for step mode (or unspecified); fold mode uses big-step rules instead.
-fn generate_semantic_rules(language: &LanguageDef) -> Vec<TokenStream> {
-    let mut rules = Vec::new();
-
-    for semantic in &language.semantics {
-        let constructor_name = &semantic.constructor;
-
-        // Skip fold-mode: they use big-step rules instead of small-step folding
-        if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
-            if rule.eval_mode == Some(EvalMode::Fold) {
-                continue;
-            }
-        }
-
-        // Extract the operator
-        let op_token = match &semantic.operation {
-            SemanticOperation::Builtin(builtin_op) => {
-                match builtin_op {
-                    BuiltinOp::Add => quote! { + },
-                    BuiltinOp::Sub => quote! { - },
-                    BuiltinOp::Mul => quote! { * },
-                    BuiltinOp::Div => quote! { / },
-                    BuiltinOp::Rem => quote! { % },
-                    _ => continue, // Skip other operators
-                }
-            },
-        };
-
-        // Find the rule with this constructor
-        if let Some(rule) = language.terms.iter().find(|r| r.label == *constructor_name) {
-            // Check if this is a binary operator (should have exactly 2 non-terminal fields)
-            let non_terminals: Vec<_> = rule
-                .items
-                .iter()
-                .filter_map(|item| {
-                    if let GrammarItem::NonTerminal(nt) = item {
-                        Some(nt)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            if non_terminals.len() == 2 {
-                let category = &rule.category;
-                let label = &rule.label;
-
-                // Generate rule with proper variable extraction in the head
-                let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
-                let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
-                let num_lit = format_ident!("NumLit");
-
-                // Pattern: rw_cat(s, t) with body that matches and extracts a, b.
-                // Bind a,b by clone so non-Copy types (e.g. bool) are passed by value.
-                // Clone s so we insert owned; Ascent may bind s by reference (e.g. &Str).
-                rules.push(quote! {
-                    #rw_rel(s.clone(), t) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        if let #category::#num_lit(a_ref) = left.as_ref(),
-                        if let #category::#num_lit(b_ref) = right.as_ref(),
-                        let a = a_ref.clone(),
-                        let b = b_ref.clone(),
-                        let t = #category::#num_lit(a #op_token b);
-                });
-            }
-        }
-    }
-
-    // Generate folding rules for rules that have HOL rust_code but are not in semantics
-    // e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
-    let native_type_for = |category: &Ident| {
-        language
-            .types
-            .iter()
-            .find(|t| t.name == *category)
-            .and_then(|t| t.native_type.as_ref())
-    };
-    for rule in &language.terms {
-        if rule.rust_code.is_none() {
-            continue;
-        }
-        if language
-            .semantics
-            .iter()
-            .any(|s| s.constructor == rule.label)
-        {
-            continue;
-        }
-        // Skip fold-mode: they use big-step rules instead
-        if rule.eval_mode == Some(EvalMode::Fold) {
-            continue;
-        }
-        let non_terminal_count = rule
-            .items
-            .iter()
-            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
-            .count();
-        if non_terminal_count != 2 {
-            continue;
-        }
-        let category = &rule.category;
-        let Some(result_native) = native_type_for(category) else {
-            continue;
-        };
-        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
-        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
-        let label = &rule.label;
-        let result_lit_label = language
-            .terms
-            .iter()
-            .find(|r| r.category == *category && is_literal_rule(r))
-            .map(|r| r.label.clone())
-            .unwrap_or_else(|| generate_literal_label(result_native));
-        let rust_code = &rule.rust_code.as_ref().unwrap().code;
-
-        // Use argument types from term_context when present, so cross-category rules
-        // (e.g. Eq . a:Int, b:Int |- ... : Bool) use the correct literal patterns.
-        let arg_labels = if let Some(ref term_ctx) = rule.term_context {
-            let simple: Vec<_> = term_ctx
-                .iter()
-                .filter_map(|p| match p {
-                    TermParam::Simple { ty, .. } => Some(ty),
-                    _ => None,
-                })
-                .collect();
-            if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
-                (simple.get(0), simple.get(1))
-            {
-                let left_type = language.types.iter().find(|t| t.name == *left_ty);
-                let right_type = language.types.iter().find(|t| t.name == *right_ty);
-                match (left_type.and_then(|t| t.native_type.as_ref()), right_type.and_then(|t| t.native_type.as_ref())) {
-                    (Some(left_nat), Some(right_nat)) => {
-                        let left_lit = language
-                            .terms
-                            .iter()
-                            .find(|r| r.category == *left_ty && is_literal_rule(r))
-                            .map(|r| r.label.clone())
-                            .unwrap_or_else(|| generate_literal_label(left_nat));
-                        let right_lit = language
-                            .terms
-                            .iter()
-                            .find(|r| r.category == *right_ty && is_literal_rule(r))
-                            .map(|r| r.label.clone())
-                            .unwrap_or_else(|| generate_literal_label(right_nat));
-                        Some((left_ty.clone(), left_lit, right_ty.clone(), right_lit))
-                    }
-                    _ => None,
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
-        let (left_cat, left_lit_label, right_cat, right_lit_label) = match arg_labels {
-            Some((lc, ll, rc, rl)) => (lc, ll, rc, rl),
-            None => {
-                // Same-category binary: both operands and result are in category
-                (
-                    category.clone(),
-                    result_lit_label.clone(),
-                    category.clone(),
-                    result_lit_label.clone(),
-                )
-            }
-        };
-
-        rules.push(quote! {
-            #rw_rel(s.clone(), t) <--
-                #cat_rel(s),
-                if let #category::#label(left, right) = s,
-                if let #left_cat::#left_lit_label(a_ref) = left.as_ref(),
-                if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
-                let a = a_ref.clone(),
-                let b = b_ref.clone(),
-                let t = #category::#result_lit_label((#rust_code));
-        });
-    }
-
-    // Unary step rules: one argument from another category (e.g. Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step)
-    for rule in &language.terms {
-        if rule.rust_code.is_none() {
-            continue;
-        }
-        if language
-            .semantics
-            .iter()
-            .any(|s| s.constructor == rule.label)
-        {
-            continue;
-        }
-        if rule.eval_mode == Some(EvalMode::Fold) {
-            continue;
-        }
-        let non_terminal_count = rule
-            .items
-            .iter()
-            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
-            .count();
-        if non_terminal_count != 1 {
-            continue;
-        }
-        let Some(ref term_context) = rule.term_context else {
-            continue;
-        };
-        let [TermParam::Simple { name: param_name, ty: ref param_ty }] = term_context.as_slice() else {
-            continue;
-        };
-        let TypeExpr::Base(arg_category) = param_ty else {
-            continue;
-        };
-        let category = &rule.category;
-        let Some(result_native) = native_type_for(category) else {
-            continue;
-        };
-        let Some(arg_lang_type) = language.types.iter().find(|t| t.name == *arg_category) else {
-            continue;
-        };
-        let Some(ref arg_native) = arg_lang_type.native_type else {
-            continue;
-        };
-        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
-        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
-        let label = &rule.label;
-        let num_lit_label = language
-            .terms
-            .iter()
-            .find(|r| r.category == *category && is_literal_rule(r))
-            .map(|r| r.label.clone())
-            .unwrap_or_else(|| generate_literal_label(result_native));
-        let arg_lit_label = generate_literal_label(arg_native);
-        let rust_code = &rule.rust_code.as_ref().unwrap().code;
-        // Use a different name for the term so the param (e.g. s) can be bound for rust_code without shadowing
-        let term_var = format_ident!("orig");
-        rules.push(quote! {
-            #rw_rel(#term_var.clone(), t) <--
-                #cat_rel(#term_var),
-                if let #category::#label(inner) = #term_var,
-                if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
-                let #param_name = s_ref.clone(),
-                let t = #category::#num_lit_label((#rust_code));
-        });
-    }
-
-    rules
 }
 
 /// Simple param names from term_context (order matches constructor fields).
@@ -583,6 +328,13 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
             }
 
             // fold_C(s, res) for each binary constructor with rust_code and eval_mode Fold
+                        // If the category has an Err variant, only emit when res is not Err (so we don't
+            // rewrite e.g. Add(2, *(3)) to error when the right arg hasn't been evaluated yet).
+            let err_label = format_ident!("Err");
+            let category_has_err = language
+                .terms
+                .iter()
+                .any(|r| r.category == *category && r.label == err_label);
             for rule in &language.terms {
                 if rule.category != *category
                     || rule.eval_mode != Some(EvalMode::Fold)
@@ -599,6 +351,16 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 let p1 = &param_names[1];
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
 
+                // Only emit fold when result is not Err (e.g. Add only rewrites when both args are ints).
+                let filter_err = if category_has_err {
+                    quote! {
+                        ,
+                        if (match & res { #category :: #err_label => false , _ => true })
+                    }
+                } else {
+                    quote! {}
+                };
+
                 rules.push(quote! {
                     #fold_rel(s.clone(), res) <--
                         #cat_rel(s),
@@ -607,7 +369,8 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                         #fold_rel(right.as_ref().clone(), rv),
                         let #p0 = lv,
                         let #p1 = rv,
-                        let res = (#rust_code);
+                        let res = (#rust_code)
+                        #filter_err;
                 });
             }
         }

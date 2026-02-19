@@ -1,9 +1,5 @@
 [workspace]
-members = ["macros", "runtime", "languages", "repl",
-    # "ascent/ascent",
-    # "ascent/ascent_base",
-    # "ascent/ascent_macro",
-    # "ascent/byods/ascent-byods-rels",
+members = ["macros", "runtime", "languages", "repl", "ascent_syntax_export", "query",
 ]
 resolver = "2"
 
@@ -45,5 +41,5 @@ ascent-byods-rels = { version = "0.8" }
 moniker = { version = "0.5", features = ["moniker-derive"] }
 indexmap = "2.0"
 
-# ascent_macro = { path = "ascent/ascent_macro" }
-# ascent_base = { path = "ascent/ascent_base" }
+ascent_syntax_export = { path = "ascent_syntax_export" }
+query = { path = "query" }

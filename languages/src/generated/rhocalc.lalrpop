@@ -67,6 +67,17 @@ let mut __binder_strs = Vec::new();
         Proc::PInputs(ns, __scope)
     },
     <k:Int> => Proc::CastInt(Box::new(k)),
+    "new" "(" <x:Ident> "," <p:Proc> ")" => {
+        use mettail_runtime::BoundTerm;
+        let free_vars = p.free_vars();
+        let binder = if let Some(fv) = free_vars.iter().find(|fv| fv.pretty_name.as_deref() == Some(&x)) {
+            Binder((*fv).clone())
+        } else {
+            Binder(mettail_runtime::get_or_create_var(x))
+        };
+        let scope = Scope::new(binder, Box::new(p));
+        Proc::PNew(scope)
+    },
     "error" => Proc::Err,
     <v:Ident> => Proc::PVar(mettail_runtime::OrdVar(mettail_runtime::Var::Free(mettail_runtime::get_or_create_var(v.clone())))),
     "^" <x:Ident> "." "{" <body:Proc> "}" => {
