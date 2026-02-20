@@ -1,6 +1,6 @@
 # Layer 5: Error Recovery
 
-Error recovery is the fifth and final layer in PraTTaIL's five-layer model. It
+Error recovery is the fifth layer in PraTTaIL's six-layer model. It
 activates **only when Layers 1-4 fail to produce a valid parse** and determines
 where the parser should resume after a syntax error, preventing error cascades
 that would obscure the original problem.

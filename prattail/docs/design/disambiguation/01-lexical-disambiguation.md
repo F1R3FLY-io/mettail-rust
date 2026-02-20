@@ -1,6 +1,6 @@
 # Layer 1: Lexical Disambiguation
 
-Lexical disambiguation is the first layer in PraTTaIL's five-layer model. It
+Lexical disambiguation is the first layer in PraTTaIL's six-layer model. It
 operates on raw characters and produces an unambiguous token stream. Every
 subsequent layer depends on this layer having already resolved all token-level
 ambiguity.

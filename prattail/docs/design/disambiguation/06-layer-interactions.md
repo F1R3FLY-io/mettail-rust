@@ -1,22 +1,23 @@
-# Layer Interactions: How the Five Layers Compose
+# Layer Interactions: How the Six Layers Compose
 
 This is the keystone document of the disambiguation series. It shows how
-PraTTaIL's five disambiguation layers interact through end-to-end traces of real
+PraTTaIL's six disambiguation layers interact through end-to-end traces of real
 input, explains why the layers are ordered as they are, and provides a master
 flowchart for disambiguation decisions.
 
-**Prerequisites:** This document references all five layer documents:
+**Prerequisites:** This document references all six layer documents:
 - [01-lexical-disambiguation.md](01-lexical-disambiguation.md)
 - [02-parse-prediction.md](02-parse-prediction.md)
 - [03-operator-precedence.md](03-operator-precedence.md)
 - [04-cross-category-resolution.md](04-cross-category-resolution.md)
 - [05-error-recovery.md](05-error-recovery.md)
+- [07-semantic-disambiguation.md](07-semantic-disambiguation.md)
 
 ---
 
 ## 1. The Layered Architecture
 
-The five layers form a pipeline where each layer's output constrains the next
+The six layers form a pipeline where each layer's output constrains the next
 layer's choices:
 
 ```
@@ -242,7 +243,7 @@ Return: BAnd(BVar("b"), Eq(IVar("x"), IVar("y")))
 
 ## 3. Layer Ordering Matters
 
-The five layers are ordered for a reason. Reordering would break correctness.
+The layers are ordered for a reason. Reordering would break correctness.
 
 ### 3.1 Why Lexical Before Prediction
 
@@ -289,7 +290,7 @@ This interleaving is safe because each layer maintains its own state:
 
 ## 4. End-to-End Trace: `"3 + x == y - 1 && true"`
 
-This trace exercises all five layers. The expected parse:
+This trace exercises all syntactic layers (1-5). The expected parse:
 `BAnd(Eq(IAdd(NumLit(3), IVar("x")), ISub(IVar("y"), NumLit(1))), BTrue)`
 
 ### 4.1 Layer 1: Lexing
@@ -619,11 +620,12 @@ Every class of parsing ambiguity is handled by exactly one layer:
 | Operator associativity | 3 | BP pair asymmetry determines left/right |
 | Category ownership | 4 | Three-way partition + backtracking is exhaustive |
 | Error recovery | 5 | Sync predicate guarantees eventual sync (at Eof worst case) |
+| Multi-category ambiguity | 6 | Groundness + substitution resolves all multi-parse cases |
 
 ### 7.2 Composability
 
 The layers compose without interference because each layer:
-1. Consumes the previous layer's output format (characters → tokens → rules → expressions → typed nodes)
+1. Consumes the previous layer's output format (characters → tokens → rules → expressions → typed nodes → disambiguated nodes)
 2. Resolves a disjoint class of ambiguity
 3. Preserves all information needed by subsequent layers
 
@@ -636,9 +638,12 @@ The layers compose without interference because each layer:
 | 3. Precedence | O(1) per operator | O(1) (comparison always resolves) |
 | 4. Cross-Category | O(1) for unique tokens | O(k) for ambiguous tokens |
 | 5. Error Recovery | O(0) (not activated) | O(skip) tokens skipped |
+| 6. Semantic | O(cats) * O(parse) for NFA-style | O(cats) * O(Ascent) for fallback |
 
-**Total:** O(n) for lexing + O(tokens) for parsing, with O(1) per disambiguation
-decision. No exponential blowup from backtracking (Layer 4 is bounded).
+**Total:** O(n) for lexing + O(tokens) for parsing, with O(1) per syntactic
+disambiguation decision. Layer 6 adds O(categories) overhead for multi-category
+parsing, with most ambiguities resolved in O(is_ground) structural checks.
+No exponential blowup from backtracking (Layer 4 is bounded).
 
 ### 7.4 Separation of Concerns
 
@@ -652,8 +657,11 @@ Layer 4: dispatch.rs   (cross-category wrapper generation)
 Layer 5: prediction.rs (FOLLOW sets, sync predicates)
 ```
 
-Adding a new disambiguation mechanism (e.g., semantic disambiguation based on
-type information) would be a new layer, not a modification of existing layers.
+Layer 6 (semantic disambiguation) was added as a new layer rather than modifying
+existing layers, confirming this separation-of-concerns property. See
+[07-semantic-disambiguation.md](07-semantic-disambiguation.md) for the full
+design: NFA-style multi-category parsing, the `Ambiguous` variant, deep
+`is_ground()` checking, and the three-stage resolution pipeline.
 
 ---
 
@@ -670,6 +678,8 @@ contexts, consider `Ident("x")`:
 | Peek fails (next is `&&`) | Layer 4 | Restore, fall through to `parse_Bool_own` |
 | In `parse_Bool_own` prefix | Layer 3 | Dispatch to `BVar` (variable rule) |
 | After error in expression | Layer 5 | `Ident` is NOT a sync token → skip past |
+| NFA-style multi-category parse | Layer 6 | `Ident("x")` → both `IntVar("x")` and `FloatVar("x")` → `Ambiguous` |
+| With env `{x=1.0}`, substitution | Layer 6 | Float progresses (`FloatVar` → `FloatLit(1.0)`), Int does not → Float wins |
 
-The same token `Ident("x")` is handled by up to four different layers depending
+The same token `Ident("x")` is handled by up to five different layers depending
 on the parsing context, and each layer resolves a different question about it.

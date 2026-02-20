@@ -1,6 +1,6 @@
 # Layer 3: Operator Precedence
 
-Operator precedence is the third layer in PraTTaIL's five-layer model. It
+Operator precedence is the third layer in PraTTaIL's six-layer model. It
 resolves ambiguity between competing operators within a single grammar category
 using **binding power pairs** and the **Pratt parsing loop**. This document
 assumes basic familiarity with Pratt parsing; see

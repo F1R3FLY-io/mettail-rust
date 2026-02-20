@@ -1,6 +1,6 @@
 # Layer 4: Cross-Category Resolution
 
-Cross-category resolution is the fourth layer in PraTTaIL's five-layer model. It
+Cross-category resolution is the fourth layer in PraTTaIL's six-layer model. It
 resolves ambiguity that arises when a grammar has **multiple type categories** and
 a token could legitimately begin an expression in more than one category.
 
@@ -399,6 +399,31 @@ If both cross-category and own-category parsing fail, control passes to Layer 5
 (error recovery). The sync predicate uses FOLLOW sets that account for
 cross-category operators.
 
+### 9.4 Layer 4 → Layer 6
+
+Layer 4 and Layer 6 both resolve cross-category ambiguity, but at different
+levels:
+
+- **Layer 4 (syntactic):** Operates *within* a single parse invocation. When
+  parsing `Bool` and encountering `Ident("x")`, Layer 4 tries parsing as `Int`
+  and peeks for `==`. This is a single-parse-path decision — exactly one
+  category wins per token.
+
+- **Layer 6 (semantic):** Operates *across* multiple parse invocations. When
+  the top-level NFA-style parser runs `Float::parse("a + b")` and
+  `Int::parse("a + b")` and both succeed, Layer 6 resolves via groundness
+  checking and substitution. This handles multi-parse-path ambiguity that
+  Layer 4 cannot see (because Layer 4 operates inside each category's parser,
+  not across them).
+
+Layer 4's backtracking dispatch is a necessary prerequisite for Layer 6: it
+ensures that each individual category parser produces a correct, unambiguous
+AST. Layer 6 then decides which of those correct ASTs is the intended
+interpretation.
+
+See [07-semantic-disambiguation.md](07-semantic-disambiguation.md) §8 for the
+full interaction model.
+
 ---
 
 ## 10. Summary
@@ -422,4 +447,7 @@ cross-category operators.
 | `_own` split | Separate own-category from dispatch | `parse_Cat` + `parse_Cat_own` |
 
 **Layer 4 output → Layer 5 input:** A fully typed AST node, or a parse failure
-that Layer 5 will attempt to recover from.
+that Layer 5 will attempt to recover from. When multiple categories each produce
+a valid AST (Layer 4 succeeded in each), Layer 6 resolves the remaining ambiguity
+via groundness checking and substitution (see
+[07-semantic-disambiguation.md](07-semantic-disambiguation.md)).

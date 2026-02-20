@@ -1,6 +1,6 @@
 # Layer 2: Parse Prediction
 
-Parse prediction is the second layer in PraTTaIL's five-layer model. It consumes
+Parse prediction is the second layer in PraTTaIL's six-layer model. It consumes
 the token stream produced by Layer 1 (lexical disambiguation) and determines
 **which parse rule** to apply for a given grammar category, given the next token(s).
 
