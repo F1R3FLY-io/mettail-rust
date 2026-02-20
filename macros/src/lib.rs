@@ -42,13 +42,16 @@ pub fn language(input: TokenStream) -> TokenStream {
     let freshness_fns = generate_freshness_functions(&language_def);
 
     // Generate Ascent datalog source (includes rewrites as Ascent clauses)
-    let ascent_code = generate_ascent_source(&language_def);
+    let ascent_output = generate_ascent_source(&language_def);
+    let ascent_code = ascent_output.full_output;
+    let raw_ascent_content = ascent_output.raw_content;
 
     // Generate metadata for REPL introspection
     let metadata_code = generate_metadata(&language_def);
 
     // Generate language implementation struct (Term wrapper + Language struct)
-    let language_code = generate_language_impl(&language_def);
+    // Pass raw Ascent content for direct inclusion in ascent! { struct Foo; ... }
+    let language_code = generate_language_impl(&language_def, &raw_ascent_content);
 
     // Generate Blockly block definitions
     let blockly_output = generate_blockly_definitions(&language_def);

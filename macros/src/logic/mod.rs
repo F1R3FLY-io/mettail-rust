@@ -41,8 +41,17 @@ pub use relations::generate_relations;
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
 
+/// Output from Ascent source generation
+pub struct AscentSourceOutput {
+    /// Full output including helper functions and ascent_source! wrapper (for debug dump & backward compat)
+    pub full_output: TokenStream,
+    /// Raw Ascent content (relations + rules) without ascent_source! wrapper, suitable for direct
+    /// inclusion in an `ascent! { struct Foo; #raw_content }` invocation.
+    pub raw_content: TokenStream,
+}
+
 /// Main entry point: Generate complete Ascent source for a theory
-pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
+pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
     let theory_name = language.name.to_string().to_lowercase();
     let source_name = format_ident!("{}_source", theory_name);
 
@@ -57,21 +66,25 @@ pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
         .map(|l| l.content.clone())
         .unwrap_or_default();
 
-    let result = quote! {
+    let raw_content = quote! {
+        #relations
+
+        #category_rules
+
+        #equation_rules
+
+        #rewrite_rules
+
+        #custom_logic
+    };
+
+    let full_output = quote! {
         #helper_fns
 
         ::ascent::ascent_source! {
             #source_name:
 
-            #relations
-
-            #category_rules
-
-            #equation_rules
-
-            #rewrite_rules
-
-            #custom_logic
+            #raw_content
         }
     };
 
@@ -91,7 +104,7 @@ pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
         eprintln!("Warning: Failed to write Ascent Datalog file: {}", e);
     }
 
-    result
+    AscentSourceOutput { full_output, raw_content }
 }
 
 /// Format Ascent source for display and file output

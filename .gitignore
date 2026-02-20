@@ -85,3 +85,5 @@ prattail/target/*
 **/CoqMakefile
 **/CoqMakefile.conf
 **/.CoqMakefile.d
+
+*.mm_profdata

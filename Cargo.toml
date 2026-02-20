@@ -45,3 +45,6 @@ indexmap = "2.0"
 
 # ascent_macro = { path = "ascent/ascent_macro" }
 # ascent_base = { path = "ascent/ascent_base" }
+
+[profile.dev]
+debug = "line-tables-only"   # Saves debuginfo generation time in LLVM/cranelift
