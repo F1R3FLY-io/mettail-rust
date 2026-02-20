@@ -95,10 +95,12 @@ fn test_float_add() {
 }
 
 #[test]
-#[ignore = "PraTTaIL lexer does not yet support scientific notation (1.0E2)"]
 fn test_float_scientific() {
     calc_normal_form("1.0E2", "100.0");
     calc_normal_form("2.5E-1", "0.25");
+    calc_normal_form("1.0e2", "100.0");
+    calc_normal_form("2.5E+3", "2500.0");
+    calc_normal_form("1.23e10", "12300000000.0");
 }
 
 // --- Bool ---
@@ -426,4 +428,79 @@ fn test_ternary_display_roundtrip() {
     mettail_runtime::clear_var_cache();
     let reparsed = Int::parse(&displayed).expect("should reparse displayed ternary");
     assert_eq!(term, reparsed, "display roundtrip should preserve structure");
+}
+
+// ── NFA-style multi-category parse (Ambiguous) tests ──
+
+#[test]
+fn test_env_int_substitute_and_exec() {
+    // Variables parsed ambiguously across Float/Int, but env has Int bindings.
+    // After substitution, only the Int alternative makes progress → disambiguation collapses to Int.
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    for (name, src) in [("a", "1"), ("b", "2")] {
+        let term = lang.parse_term_for_env(src).expect(src);
+        lang.add_to_env(env.as_mut(), name, term.as_ref())
+            .expect(name);
+    }
+    let term = lang.parse_term_for_env("a + b").expect("parse a + b");
+    let substituted = lang
+        .substitute_env(term.as_ref(), env.as_ref())
+        .expect("substitute_env");
+    let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
+    assert!(
+        displays.contains(&"3"),
+        "expected \"3\" among {:?}",
+        displays
+    );
+}
+
+#[test]
+fn test_ambiguous_parse_variable_expr() {
+    // "a + b" should parse successfully (ambiguous across Float/Int).
+    mettail_runtime::clear_var_cache();
+    let result = calc::CalculatorLanguage::parse("a + b");
+    assert!(
+        result.is_ok(),
+        "ambiguous expression should parse: {:?}",
+        result
+    );
+    // Display should show the expression regardless of internal ambiguity
+    assert_eq!(format!("{}", result.expect("already checked")), "a + b");
+}
+
+#[test]
+fn test_unambiguous_int_literal() {
+    // "42" should parse unambiguously as Int (Float parser doesn't accept Integer tokens).
+    mettail_runtime::clear_var_cache();
+    let result = calc::CalculatorLanguage::parse("42").expect("parse 42");
+    if let calc::CalculatorTermInner::Int(inner) = &result.0 {
+        assert_eq!(inner.eval(), 42);
+    } else {
+        panic!(
+            "expected Int variant for '42', got {:?}",
+            result.0
+        );
+    }
+}
+
+#[test]
+fn test_unambiguous_float_literal() {
+    // "1.5" should parse unambiguously as Float (Int parser doesn't accept Float tokens).
+    mettail_runtime::clear_var_cache();
+    let result = calc::CalculatorLanguage::parse("1.5").expect("parse 1.5");
+    if let calc::CalculatorTermInner::Float(_) = &result.0 {
+        // ok
+    } else {
+        panic!(
+            "expected Float variant for '1.5', got {:?}",
+            result.0
+        );
+    }
 }

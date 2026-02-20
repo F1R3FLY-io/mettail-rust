@@ -55,6 +55,7 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
     use syntax::display::generate_display;
     use syntax::var_inference::generate_var_category_inference;
     use term_gen::{generate_random_generation, generate_term_generation};
+    use term_ops::ground::generate_is_ground_methods;
     use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
     use term_ops::subst::{generate_env_substitution, generate_substitution};
     use types::enums::generate_ast_enums;
@@ -69,6 +70,7 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
     let generation_impl = generate_term_generation(language);
     let random_gen_impl = generate_random_generation(language);
     let eval_impl = generate_eval_method(language);
+    let is_ground_impl = generate_is_ground_methods(language);
     let var_inference_impl = generate_var_category_inference(language);
 
     // Parser code: PraTTaIL (inline)
@@ -101,6 +103,8 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
         #random_gen_impl
 
         #eval_impl
+
+        #is_ground_impl
 
         #var_inference_impl
 

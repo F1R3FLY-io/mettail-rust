@@ -176,27 +176,164 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         })
         .collect();
 
+    // Generate per-variant is_accepting arms: delegates to is_ground() for deep
+    // recursive variable checking (no wasted arithmetic, handles nested variables).
+    let is_accepting_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let variant = format_ident!("{}", t.name);
+            quote! { #inner_enum_name::#variant(inner) => inner.is_ground() }
+        })
+        .collect();
+
+    // Generate per-variant substitute_env arms for Ambiguous handling
+    let ambiguous_substitute_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env(env)) }
+        })
+        .collect();
+
+    // Generate cross-resolve logic for Ambiguous handling (applied per-alternative)
+    let ambiguous_cross_resolve_arms: Vec<TokenStream> = var_label_per_cat
+        .iter()
+        .map(|(cat, var_label)| {
+            let other_lookups: Vec<TokenStream> = language
+                .types
+                .iter()
+                .filter(|t| t.name != *cat)
+                .map(|t| {
+                    let variant = format_ident!("{}", t.name);
+                    let field = format_ident!("{}", t.name.to_string().to_lowercase());
+                    quote! {
+                        if let Some(val) = env.#field.get(&name) {
+                            return #inner_enum_name::#variant(val.clone());
+                        }
+                    }
+                })
+                .collect();
+            quote! {
+                #inner_enum_name::#cat(#cat::#var_label(v)) => {
+                    let name = match &v.0 {
+                        mettail_runtime::Var::Free(fv) => fv.pretty_name.as_ref().map(|s| s.to_string()),
+                        mettail_runtime::Var::Bound(bv) => bv.pretty_name.as_ref().map(|s| s.to_string()),
+                    };
+                    if let Some(name) = name {
+                        #(#other_lookups)*
+                    }
+                }
+            }
+        })
+        .collect();
+
     quote! {
         /// Inner term enum for multi-category languages (one variant per type in the language).
+        /// The `Ambiguous` variant holds multiple parse alternatives that will be resolved
+        /// during substitution or Ascent evaluation.
         #[derive(Clone, PartialEq, Eq, Hash)]
         pub enum #inner_enum_name {
-            #(#enum_variants),*
+            #(#enum_variants),*,
+            /// Multiple parse alternatives (2+, flat — no nested Ambiguous).
+            Ambiguous(Vec<#inner_enum_name>),
         }
 
         impl #inner_enum_name {
-            /// Substitute environment bindings into the term.
-            /// Variables are resolved by name; if a variable is bound in another category
-            /// (e.g. "x" parsed as Int but x = true in env), the bound value is used.
-            pub fn substitute_env(&self, env: &#env_name) -> Self {
-                let substituted = match self {
-                    #(#substitute_arms),*
-                };
-                // Cross-category: if still a variable, try resolving from other categories
-                match &substituted {
-                    #(#cross_resolve_arms)*
-                    _ => {}
+            /// Check if this alternative is "accepting" — i.e., fully resolved to a
+            /// concrete/ground term (no free variables, evaluable for native types).
+            fn is_accepting(&self) -> bool {
+                match self {
+                    #(#is_accepting_arms),*,
+                    #inner_enum_name::Ambiguous(_) => false,
                 }
-                substituted
+            }
+
+            /// Collapse a vec of alternatives into a single term.
+            /// Invariants: flattens nested Ambiguous, panics on empty, unwraps singletons.
+            /// Final disambiguation: if only one alternative is "accepting" (concrete/ground),
+            /// choose it even if more candidates exist.
+            fn from_alternatives(alts: Vec<Self>) -> Self {
+                let flat: Vec<Self> = alts.into_iter().flat_map(|a| match a {
+                    Self::Ambiguous(inner) => inner,
+                    other => vec![other],
+                }).collect();
+                match flat.len() {
+                    0 => panic!("from_alternatives: empty alternatives"),
+                    1 => flat.into_iter().next().expect("checked len == 1"),
+                    _ => {
+                        // Final disambiguation: if exactly one alternative is accepting
+                        // (concrete/ground), choose it regardless of how many candidates exist.
+                        let accepting: Vec<&Self> = flat.iter().filter(|a| a.is_accepting()).collect();
+                        if accepting.len() == 1 {
+                            return accepting[0].clone();
+                        }
+                        Self::Ambiguous(flat)
+                    }
+                }
+            }
+
+            /// Substitute environment bindings into the term.
+            /// For Ambiguous terms, substitutes each alternative independently and
+            /// keeps only those that made progress (Display changed). Deduplicates by Display.
+            pub fn substitute_env(&self, env: &#env_name) -> Self {
+                match self {
+                    #inner_enum_name::Ambiguous(alts) => {
+                        let orig_displays: Vec<std::string::String> = alts.iter().map(|a| format!("{}", a)).collect();
+
+                        // Substitute each alternative (including cross-category resolution)
+                        let results: Vec<Self> = alts.iter().map(|alt| {
+                            let substituted = match alt {
+                                #(#ambiguous_substitute_arms),*,
+                                #inner_enum_name::Ambiguous(_) => unreachable!("nested Ambiguous"),
+                            };
+                            // Apply cross-category bare variable resolution
+                            let cross_resolved = (|| -> Self {
+                                match &substituted {
+                                    #(#ambiguous_cross_resolve_arms)*
+                                    _ => {}
+                                }
+                                substituted.clone()
+                            })();
+                            cross_resolved
+                        }).collect();
+
+                        let result_displays: Vec<std::string::String> = results.iter().map(|r| format!("{}", r)).collect();
+
+                        // Keep only alternatives that made substitution progress
+                        let progressed: Vec<usize> = (0..results.len())
+                            .filter(|&i| result_displays[i] != orig_displays[i])
+                            .collect();
+
+                        let kept: Vec<Self> = if progressed.is_empty() {
+                            results  // None progressed — keep all
+                        } else {
+                            progressed.into_iter().map(|i| results[i].clone()).collect()
+                        };
+
+                        // Dedup by Display
+                        let mut seen = std::collections::HashSet::new();
+                        let unique: Vec<Self> = kept.into_iter()
+                            .filter(|a| seen.insert(format!("{}", a)))
+                            .collect();
+
+                        Self::from_alternatives(unique)
+                    }
+                    _ => {
+                        let substituted = match self {
+                            #(#substitute_arms),*,
+                            #inner_enum_name::Ambiguous(_) => unreachable!(),
+                        };
+                        // Cross-category: if still a variable, try resolving from other categories
+                        match &substituted {
+                            #(#cross_resolve_arms)*
+                            _ => {}
+                        }
+                        substituted
+                    }
+                }
             }
 
 
@@ -205,7 +342,8 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         impl std::fmt::Display for #inner_enum_name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self {
-                    #(#display_arms),*
+                    #(#display_arms),*,
+                    #inner_enum_name::Ambiguous(alts) => write!(f, "{}", alts[0]),
                 }
             }
         }
@@ -213,7 +351,8 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         impl std::fmt::Debug for #inner_enum_name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 match self {
-                    #(#debug_arms),*
+                    #(#debug_arms),*,
+                    #inner_enum_name::Ambiguous(alts) => write!(f, "Ambiguous({:?})", alts),
                 }
             }
         }
@@ -854,9 +993,9 @@ fn generate_language_struct_multi(
 
     let custom_relation_extraction = generate_custom_relation_extraction(language);
 
-    // Parse: try category parsers in order. First success wins.
-    // When both Int and Float exist, try Float before Int so that "1.0" is parsed as Float
-    // (Int parser would see FloatLiteral and fail with UnrecognizedToken).
+    // NFA-style multi-category parse: try ALL category parsers and collect successes.
+    // When both Int and Float exist, try Float before Int for deterministic ordering
+    // (so Float alternative appears first in Ambiguous).
     let has_int = language.types.iter().any(|t| t.name.to_string() == "Int");
     let has_float = language.types.iter().any(|t| t.name.to_string() == "Float");
     let parse_order: Vec<syn::Ident> = if has_int && has_float {
@@ -895,7 +1034,7 @@ fn generate_language_struct_multi(
             let variant = format_ident!("{}", cat);
             quote! {
                 match #cat::parse(input) {
-                    Ok(t) => return Ok(#term_name(#inner_enum_name::#variant(t))),
+                    Ok(t) => successes.push(#inner_enum_name::#variant(t)),
                     Err(e) => if first_err.is_none() { first_err = Some(e); },
                 }
             }
@@ -959,23 +1098,56 @@ fn generate_language_struct_multi(
         pub struct #language_name;
 
         impl #language_name {
-            /// Parse a term from a string (clears var cache). Tries each category parser in order.
+            /// Parse a term from a string (clears var cache). Tries all category parsers.
             pub fn parse(input: &str) -> Result<#term_name, std::string::String> {
                 mettail_runtime::clear_var_cache();
                 Self::parse_preserving_vars(input)
             }
 
-            /// Parse without clearing var cache. Tries each category parser in order.
-            /// Reports the first parser's error when all fail (so the message is from the most general parser, e.g. Proc).
+            /// Parse without clearing var cache. Tries ALL category parsers (NFA-style).
+            /// If exactly 1 succeeds → unambiguous. If N succeed → `Ambiguous(Vec<Inner>)`.
+            /// Reports the first parser's error when all fail.
             pub fn parse_preserving_vars(input: &str) -> Result<#term_name, std::string::String> {
+                let mut successes = Vec::new();
                 let mut first_err = None;
                 #(#parse_tries)*
-                Err(first_err.unwrap_or_else(|| "Parse error".to_string()))
+                match successes.len() {
+                    0 => Err(first_err.unwrap_or_else(|| "Parse error".to_string())),
+                    1 => Ok(#term_name(successes.into_iter().next().expect("checked len == 1"))),
+                    _ => Ok(#term_name(#inner_enum_name::from_alternatives(successes))),
+                }
             }
 
             /// Run Ascent on a typed term (seeds the relation for the term's category).
+            /// For Ambiguous terms, runs Ascent on each alternative and merges results.
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
                 match &term.0 {
+                    #inner_enum_name::Ambiguous(alts) => {
+                        let mut all_term_infos = Vec::new();
+                        let mut all_rewrites = Vec::new();
+                        let mut all_custom: std::collections::HashMap<std::string::String, mettail_runtime::RelationData> = std::collections::HashMap::new();
+                        for alt in alts {
+                            let sub_term = #term_name(alt.clone());
+                            let sub_result = Self::run_ascent_typed(&sub_term);
+                            all_term_infos.extend(sub_result.all_terms);
+                            all_rewrites.extend(sub_result.rewrites);
+                            for (k, v) in sub_result.custom_relations {
+                                all_custom.entry(k).or_insert_with(|| mettail_runtime::RelationData {
+                                    param_types: v.param_types.clone(),
+                                    tuples: Vec::new(),
+                                }).tuples.extend(v.tuples);
+                            }
+                        }
+                        // Dedup term_infos by term_id
+                        let mut seen_ids = std::collections::HashSet::new();
+                        all_term_infos.retain(|t| seen_ids.insert(t.term_id));
+                        mettail_runtime::AscentResults {
+                            all_terms: all_term_infos,
+                            rewrites: all_rewrites,
+                            equivalences: Vec::new(),
+                            custom_relations: all_custom,
+                        }
+                    }
                     #(#run_arms),*
                 }
             }
@@ -1346,6 +1518,13 @@ fn generate_language_trait_impl_multi(
             fn normalize_term(&self, term: &dyn mettail_runtime::Term) -> Box<dyn mettail_runtime::Term> {
                 if let Some(typed) = term.as_any().downcast_ref::<#term_name>() {
                     let normalized = match &typed.0 {
+                        #inner_enum_name::Ambiguous(alts) => {
+                            let normalized_alts: Vec<#inner_enum_name> = alts.iter().map(|alt| match alt {
+                                #(#normalize_arms),*,
+                                #inner_enum_name::Ambiguous(_) => unreachable!("nested Ambiguous"),
+                            }).collect();
+                            #inner_enum_name::from_alternatives(normalized_alts)
+                        }
                         #(#normalize_arms),*
                     };
                     Box::new(#term_name(normalized))
@@ -1369,6 +1548,15 @@ fn generate_language_trait_impl_multi(
                 // Remove name from all categories first so reassigning replaces the binding
                 #(#remove_before_add)*
                 match &typed_term.0 {
+                    #inner_enum_name::Ambiguous(alts) => {
+                        // For ambiguous terms, add to ALL matching category envs
+                        for alt in alts {
+                            match alt {
+                                #(#add_to_env_arms),*,
+                                #inner_enum_name::Ambiguous(_) => {} // invariant: no nested
+                            }
+                        }
+                    }
                     #(#add_to_env_arms),*
                 }
                 Ok(())
@@ -1442,6 +1630,7 @@ fn generate_language_trait_impl_multi(
                     None => return mettail_runtime::TermType::Unknown,
                 };
                 match &typed_term.0 {
+                    #inner_enum_name::Ambiguous(_) => mettail_runtime::TermType::Base("Ambiguous".to_string()),
                     #(#infer_term_type_arms),*
                 }
             }
