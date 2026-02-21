@@ -390,10 +390,13 @@ but only the **primary category** gets parse rules.
 
 ### Lambda: `^x.{body}` and `^[x,y,z].{body}`
 
-The `generate_lambda_handlers` function produces:
+The `write_lambda_handlers` function produces a `parse_lambda` function
+that uses **inference-driven variant selection** — the `infer_var_type`
+result determines which `Lam{Domain}` or `MLam{Domain}` variant to
+construct:
 
 ```rust
-fn parse_lambda(tokens: &[(Token, Span)], pos: &mut usize) -> Result<Cat, String> {
+fn parse_lambda(tokens: &[(Token, Span)], pos: &mut usize) -> Result<Cat, ParseError> {
     expect_token(tokens, pos, |t| matches!(t, Token::Caret), "^")?;
 
     match peek_token(tokens, *pos) {
@@ -416,10 +419,23 @@ fn parse_lambda(tokens: &[(Token, Span)], pos: &mut usize) -> Result<Cat, String
             let body = parse_Cat(tokens, pos, 0)?;
             expect_token(tokens, pos, Token::RBrace, "}")?;
 
+            // Infer binder domain from first variable's usage in body
+            let inferred = if let Some(name) = binder_names.first() {
+                body.infer_var_type(name)
+            } else {
+                None
+            };
             let binders = binder_names.into_iter()
                 .map(|s| Binder(get_or_create_var(s)))
                 .collect();
-            Ok(Cat::MLamCat(Scope::new(binders, Box::new(body))))
+            let scope = Scope::new(binders, Box::new(body));
+            // Select MLam variant based on inferred domain type
+            Ok(match inferred {
+                Some(InferredType::Base(VarCategory::Name)) => Cat::MLamName(scope),
+                Some(InferredType::Base(VarCategory::Int))  => Cat::MLamInt(scope),
+                // ... one arm per category in all_categories ...
+                _ => Cat::MLamCat(scope)  // fallback to primary category default
+            })
         }
 
         // Single lambda: ^x.{body}
@@ -430,16 +446,30 @@ fn parse_lambda(tokens: &[(Token, Span)], pos: &mut usize) -> Result<Cat, String
             let body = parse_Cat(tokens, pos, 0)?;
             expect_token(tokens, pos, Token::RBrace, "}")?;
 
-            Ok(Cat::LamCat(Scope::new(
+            // Infer binder domain from variable usage in body
+            let inferred = body.infer_var_type(&binder_name);
+            let scope = Scope::new(
                 Binder(get_or_create_var(binder_name)),
                 Box::new(body),
-            )))
+            );
+            // Select Lam variant based on inferred domain type
+            Ok(match inferred {
+                Some(InferredType::Base(VarCategory::Name)) => Cat::LamName(scope),
+                Some(InferredType::Base(VarCategory::Int))  => Cat::LamInt(scope),
+                // ... one arm per category in all_categories ...
+                _ => Cat::LamCat(scope)  // fallback to primary category default
+            })
         }
 
-        _ => Err("expected identifier or '[' after '^'".into()),
+        _ => Err(ParseError::UnexpectedToken { ... }),
     }
 }
 ```
+
+The match arms are generated at compile time from `all_categories`,
+ensuring every domain category has a corresponding arm. The `_ =>`
+fallback covers `None` (variable not found in body) and higher-order
+function types (`InferredType::Arrow` / `MultiArrow`).
 
 ### Application: `$type(lam, arg)` and `$$type(lam, args...)`
 
@@ -518,18 +548,55 @@ prefix handler for the primary category.
 
 ### Binder Type Inference
 
-PraTTaIL relies on `body.infer_var_type(&binder_name)` to determine
-which lambda variant to construct. This method examines the AST node
-`body` and returns the `VarCategory` of the first occurrence of the
-binder variable:
+PraTTaIL uses `body.infer_var_type(&binder_name)` to determine which
+lambda variant to construct. This method examines the AST node `body`
+and returns an `Option<InferredType>` indicating how the binder variable
+is used:
 
 ```
-^x.{x + 1}     -> infer_var_type("x") = Some(VarCategory::Int)
-                -> construct LamInt(Scope::new(...))
+^x.{x + 1}          -> infer_var_type("x") = Some(Base(VarCategory::Int))
+                     -> match selects LamInt(Scope::new(...))
 
-^x.{x && true}  -> infer_var_type("x") = Some(VarCategory::Bool)
-                -> construct LamBool(Scope::new(...))
+^x.{x && true}      -> infer_var_type("x") = Some(Base(VarCategory::Bool))
+                     -> match selects LamBool(Scope::new(...))
+
+^loc.{loc!(init)}    -> infer_var_type("loc") = Some(Base(VarCategory::Name))
+                     -> match selects LamName(Scope::new(...))
+
+^f.{f}               -> infer_var_type("f") = Some(Base(VarCategory::Proc))
+                     -> match selects LamProc(Scope::new(...))
 ```
+
+**Why this matters for beta-reduction:** The normalizer's
+`ApplyDom(lam, arg)` arm specifically matches `LamDom(scope)`. If the
+lambda variant doesn't match the application variant (e.g.,
+`ApplyName(LamProc(...), ...)` instead of `ApplyName(LamName(...), ...)`),
+the beta-reduction falls through to the `_ =>` arm and returns the
+un-reduced term. Inference-driven variant selection ensures the lambda
+variant matches the dollar syntax's domain.
+
+**Implementation in `write_lambda_handlers`:** Before the `write!` call
+that generates `parse_lambda`, match arm strings are pre-built from
+`all_categories`:
+
+```rust
+let lam_match_arms: String = all_categories.iter().map(|dom| {
+    format!(
+        "Some(InferredType::Base(VarCategory::{})) => {}::Lam{}(scope), ",
+        dom, cat, dom
+    )
+}).collect::<Vec<_>>().join("");
+```
+
+These are interpolated into the format string as `{lam_match_arms}`,
+producing one match arm per category. The same pattern is used for
+`mlam_match_arms` in the multi-lambda case.
+
+**Trampoline parser:** The same inference-driven selection is applied in
+the trampoline parser's unwind handlers (`LambdaBody_Single` and
+`LambdaBody_Multi` frame variants in `trampoline.rs`), ensuring
+consistent behavior between the recursive-descent and trampoline
+code paths.
 
 ---
 

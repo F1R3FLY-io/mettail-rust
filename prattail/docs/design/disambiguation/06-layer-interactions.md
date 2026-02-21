@@ -620,7 +620,7 @@ Every class of parsing ambiguity is handled by exactly one layer:
 | Operator associativity | 3 | BP pair asymmetry determines left/right |
 | Category ownership | 4 | Three-way partition + backtracking is exhaustive |
 | Error recovery | 5 | Sync predicate guarantees eventual sync (at Eof worst case) |
-| Multi-category ambiguity | 6 | Groundness + substitution resolves all multi-parse cases |
+| Multi-category ambiguity | 6 | Groundness + substitution + declaration-order evaluation resolves all multi-parse cases |
 
 ### 7.2 Composability
 
@@ -662,6 +662,18 @@ existing layers, confirming this separation-of-concerns property. See
 [07-semantic-disambiguation.md](07-semantic-disambiguation.md) for the full
 design: NFA-style multi-category parsing, the `Ambiguous` variant, deep
 `is_ground()` checking, and the three-stage resolution pipeline.
+
+**Layer 1 → Layer 6 direct interaction (lexer probe):** In languages with
+non-native categories (e.g. rhocalc's `Proc` and `Name`), Layer 6 now uses a
+single-token **lexer probe** from Layer 1's `lex()` to pre-filter category
+parsers before NFA-style multi-category parsing begins. If the first token is
+`Token::Ident`, native-only categories (Float, Int, Bool, Str) are skipped
+entirely, since identifiers cannot be native literals. This is a direct
+Layer 1 → Layer 6 interaction not mediated by Layers 2-5: Layer 1's lexer
+classifies the token, and Layer 6 uses that classification to prune the set
+of category parsers to invoke. For all-native languages (e.g. Calculator),
+no probe is emitted and all parsers run unconditionally. See
+[07-semantic-disambiguation.md](07-semantic-disambiguation.md) §2.3 for details.
 
 ---
 

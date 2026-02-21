@@ -174,8 +174,8 @@ fn test_env_add_and_list() {
 
 #[test]
 fn test_env_substitute_and_exec() {
-    // Note: With float-before-int parse order, "a + b" parses as Float (both Float and Int
-    // accept variables). We use float values so substitution works in the Float category.
+    // "a + b" is Ambiguous across Float/Int/Str (all have '+' operator). Float env values
+    // ensure the Float alternative progresses during substitution (Stage B resolution).
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let mut env = lang.create_env();
@@ -503,4 +503,46 @@ fn test_unambiguous_float_literal() {
             result.0
         );
     }
+}
+
+/// `infer_var_types` should find variable `x` in `x + 1` for multi-type Calculator
+/// (previously stubbed to return empty Vec for multi-type languages).
+#[test]
+fn test_calculator_infer_var_types() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let term = lang.parse_term("x + 1").expect("parse x + 1");
+    let var_types = lang.infer_var_types(term.as_ref());
+    let x_info = var_types.iter().find(|v| v.name == "x");
+    assert!(
+        x_info.is_some(),
+        "x should be found in var types, got: {:?}",
+        var_types
+    );
+}
+
+/// `infer_var_type` should find variable `x` by name for multi-type Calculator
+/// (previously stubbed to return None for multi-type languages).
+#[test]
+fn test_calculator_infer_var_type() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let term = lang.parse_term("x + 1").expect("parse x + 1");
+    let x_type = lang.infer_var_type(term.as_ref(), "x");
+    assert!(x_type.is_some(), "x should have inferred type");
+}
+
+/// Bare variable `a` in an all-native language (Calculator) should infer as `Int`
+/// (the primary category). Calculator has no non-native categories, so all parsers
+/// are tried unconditionally. The Ambiguous result gets the primary category preference
+/// from `infer_term_type`.
+#[test]
+fn test_bare_variable_type_is_int() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let term = lang.parse_term("a").expect("parse 'a'");
+    let term_type = lang.infer_term_type(term.as_ref());
+    // Calculator is all-native, so "a" is Ambiguous across all categories;
+    // type should show primary (Int)
+    assert_eq!(format!("{}", term_type), "Int");
 }

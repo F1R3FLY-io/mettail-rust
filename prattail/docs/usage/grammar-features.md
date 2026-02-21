@@ -628,21 +628,47 @@ environment variable substitution, before `try_direct_eval` and
 substitution are reduced before the Ascent Datalog engine processes the
 term.
 
-**Type matching caveat:** Lambda binder types must match the substitution
-domain. `LamProc` binds Proc-typed variables; `LamName` binds Name-typed
-variables. The syntax `^x.{body}` always constructs `LamProc` (primary
-category lambda). The substitution function `substitute_proc` only
-affects Proc-typed positions in the body, **not** Name-typed positions.
+### Inference-Driven Variant Selection
 
-| Expression | Result | Explanation |
-|---|---|---|
-| `$proc(^x.{x}, {})` | `{}` | `x` is Proc, body uses `x` as Proc → substitution succeeds |
-| `$proc(^x.{*(x)}, {})` | `*(x)` (no reduction) | `*(x)` uses `x` as a Name, not Proc; `substitute_proc` does not touch Name positions |
-| `$name(^x.{*(x)}, n)` | Not constructible via `^x.{...}` syntax | `LamName` can only be created programmatically |
+The lambda parser uses `infer_var_type` to select the correct
+`Lam{Domain}` / `MLam{Domain}` variant based on how the binder
+variable is used in the body. For each category in `all_categories`,
+a match arm is generated:
 
-To substitute into Name-typed positions, `LamName` must be constructed
-programmatically (not via `^x.{body}` syntax, which always creates
-`LamProc`).
+```rust
+let inferred = body.infer_var_type(&binder_name);
+let scope = Scope::new(Binder(get_or_create_var(binder_name)), Box::new(body));
+Ok(match inferred {
+    Some(InferredType::Base(VarCategory::Proc)) => Proc::LamProc(scope),
+    Some(InferredType::Base(VarCategory::Name)) => Proc::LamName(scope),
+    Some(InferredType::Base(VarCategory::Int))  => Proc::LamInt(scope),
+    // ... one arm per category ...
+    _ => Proc::LamProc(scope)  // fallback to primary category default
+})
+```
+
+The `_ =>` fallback handles `None` (variable not found in body) and
+`InferredType::Arrow`/`MultiArrow` (higher-order function types) by
+falling back to the default primary category variant.
+
+**Type matching requirement:** The lambda variant **must** match the
+dollar application variant for beta-reduction to succeed. `ApplyName`
+checks for `LamName`; `ApplyProc` checks for `LamProc`. A mismatch
+causes the normalizer to return the un-reduced term.
+
+| Expression | Inferred Type | Lambda Variant | Result |
+|---|---|---|---|
+| `$proc(^x.{x}, {})` | `VarCategory::Proc` | `LamProc` | `{}` |
+| `$name(^loc.{loc!(init)}, n)` | `VarCategory::Name` | `LamName` | `n!(init)` |
+| `$int(^x.{x + 1}, 5)` | `VarCategory::Int` | `LamInt` | `6` |
+| `$proc(^x.{*(x)}, {})` | `VarCategory::Name` | `LamName` | `*(x)` (no reduction — `ApplyProc` expects `LamProc` but finds `LamName`) |
+
+Note: In the last case, `x` appears in `*(x)` which uses `x` as a
+`Name` (the drop operator `*` takes a Name argument). The inference
+correctly creates `LamName`, but the dollar prefix `$proc` creates
+`ApplyProc` — the domain mismatch prevents reduction. The correct
+invocation would be `$name(^x.{*(x)}, n)` which creates `ApplyName`
+matching `LamName`.
 
 ---
 

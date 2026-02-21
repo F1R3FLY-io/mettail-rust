@@ -669,11 +669,36 @@ pub fn write_dollar_handlers(
 pub fn write_lambda_handlers(
     buf: &mut String,
     primary_category: &str,
-    _all_categories: &[String],
+    all_categories: &[String],
 ) -> Vec<PrefixHandler> {
     let cat = primary_category;
     let default_lam_variant = format!("Lam{}", cat);
     let default_mlam_variant = format!("MLam{}", cat);
+
+    // Build inference-driven match arms for selecting the correct Lam/MLam variant
+    // based on infer_var_type() result. Each category gets an arm like:
+    //   Some(InferredType::Base(VarCategory::Name)) => Proc::LamName(scope),
+    let lam_match_arms: String = all_categories
+        .iter()
+        .map(|dom| {
+            format!(
+                "Some(InferredType::Base(VarCategory::{})) => {}::Lam{}(scope), ",
+                dom, cat, dom
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
+
+    let mlam_match_arms: String = all_categories
+        .iter()
+        .map(|dom| {
+            format!(
+                "Some(InferredType::Base(VarCategory::{})) => {}::MLam{}(scope), ",
+                dom, cat, dom
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("");
 
     let handlers = vec![
         // Single lambda: ^x.{body}
@@ -712,7 +737,7 @@ pub fn write_lambda_handlers(
                     expect_token(tokens, pos, |t| matches!(t, Token::LBrace), \"{{\")?; \
                     let body = parse_{cat}(tokens, pos, 0)?; \
                     expect_token(tokens, pos, |t| matches!(t, Token::RBrace), \"}}\")?; \
-                    let _inferred = if let Some(name) = binder_names.first() {{ \
+                    let inferred = if let Some(name) = binder_names.first() {{ \
                         body.infer_var_type(name) \
                     }} else {{ \
                         None \
@@ -721,10 +746,11 @@ pub fn write_lambda_handlers(
                         binder_names.into_iter() \
                             .map(|s| mettail_runtime::Binder(mettail_runtime::get_or_create_var(s))) \
                             .collect(); \
-                    Ok({cat}::{default_mlam_variant}(mettail_runtime::Scope::new( \
-                        binders, \
-                        Box::new(body), \
-                    ))) \
+                    let scope = mettail_runtime::Scope::new(binders, Box::new(body)); \
+                    Ok(match inferred {{ \
+                        {mlam_match_arms} \
+                        _ => {cat}::{default_mlam_variant}(scope) \
+                    }}) \
                 }} \
                 Some(Token::Ident(_)) => {{ \
                     let binder_name = expect_ident(tokens, pos)?; \
@@ -732,11 +758,15 @@ pub fn write_lambda_handlers(
                     expect_token(tokens, pos, |t| matches!(t, Token::LBrace), \"{{\")?; \
                     let body = parse_{cat}(tokens, pos, 0)?; \
                     expect_token(tokens, pos, |t| matches!(t, Token::RBrace), \"}}\")?; \
-                    let _inferred = body.infer_var_type(&binder_name); \
-                    Ok({cat}::{default_lam_variant}(mettail_runtime::Scope::new( \
+                    let inferred = body.infer_var_type(&binder_name); \
+                    let scope = mettail_runtime::Scope::new( \
                         mettail_runtime::Binder(mettail_runtime::get_or_create_var(binder_name)), \
                         Box::new(body), \
-                    ))) \
+                    ); \
+                    Ok(match inferred {{ \
+                        {lam_match_arms} \
+                        _ => {cat}::{default_lam_variant}(scope) \
+                    }}) \
                 }} \
                 _ => {{ \
                     Err(ParseError::UnexpectedToken {{ \

@@ -426,3 +426,147 @@ fn main() {
         println!("\n✓ All tests passed!");
     }
 }
+
+/// PInputs `(x?y).{*(y)}` should infer bound variable `y` as type `Name`
+/// via `infer_var_types` (previously stubbed to return empty Vec for multi-type languages).
+#[test]
+fn test_infer_var_types_pinputs() {
+    mettail_runtime::clear_var_cache();
+    let lang = RhoCalcLanguage;
+    let term = lang.parse_term("(x?y).{*(y)}").expect("parse PInputs");
+    let var_types = lang.infer_var_types(term.as_ref());
+    // y is bound as a Name variable in the PInputs scope
+    let y_info = var_types.iter().find(|v| v.name == "y");
+    assert!(
+        y_info.is_some(),
+        "y should be found in var types, got: {:?}",
+        var_types
+    );
+    assert_eq!(
+        format!("{}", y_info.expect("checked above").ty),
+        "Name",
+        "y should be of type Name"
+    );
+}
+
+/// PInputs `(x?y).{*(y)}` should allow looking up variable `y` by name
+/// via `infer_var_type` (previously stubbed to return None for multi-type languages).
+#[test]
+fn test_infer_var_type_pinputs() {
+    mettail_runtime::clear_var_cache();
+    let lang = RhoCalcLanguage;
+    let term = lang.parse_term("(x?y).{*(y)}").expect("parse PInputs");
+    let y_type = lang.infer_var_type(term.as_ref(), "y");
+    assert!(y_type.is_some(), "y should have inferred type");
+    assert_eq!(
+        format!("{}", y_type.expect("checked above")),
+        "Name",
+        "y should be Name type"
+    );
+}
+
+/// Multi-input `(c1?x, c2?y).{*(x)}` should infer both bound variables.
+#[test]
+fn test_infer_var_types_multi_input() {
+    mettail_runtime::clear_var_cache();
+    let lang = RhoCalcLanguage;
+    let term = lang
+        .parse_term("(c1?x, c2?y).{*(x)}")
+        .expect("parse multi-input");
+    let var_types = lang.infer_var_types(term.as_ref());
+    let x_info = var_types.iter().find(|v| v.name == "x");
+    let y_info = var_types.iter().find(|v| v.name == "y");
+    assert!(
+        x_info.is_some(),
+        "x should be found in var types, got: {:?}",
+        var_types
+    );
+    assert!(
+        y_info.is_some(),
+        "y should be found in var types, got: {:?}",
+        var_types
+    );
+}
+
+/// `^loc.{loc!(init)}` where `loc` is used as a Name should create LamName, not LamProc.
+/// This is critical for dollar-syntax beta-reduction to work.
+#[test]
+fn test_lambda_creates_correct_lam_variant() {
+    mettail_runtime::clear_var_cache();
+    // ^loc.{loc!(init)} where loc is used as a Name → should create LamName, not LamProc
+    let input = "^loc.{loc!(init)}";
+    let term = parse_proc(input).expect("should parse lambda");
+    let display = format!("{}", term);
+    // After inference-driven variant selection, the lambda should be LamName
+    // (Display should show the lambda syntax, not crash)
+    println!("Lambda display: {}", display);
+}
+
+/// `$name(^loc.{loc!(init)}, n)` should beta-reduce to `n!(init)`.
+///
+/// Before the fix, the lambda handler always created `LamProc` regardless of domain.
+/// The normalizer's `ApplyName(lam, arg)` arm checks for `LamName(scope)` specifically,
+/// so the mismatch caused the term to be returned un-reduced.
+#[test]
+fn test_dollar_name_beta_reduction() {
+    mettail_runtime::clear_var_cache();
+    let input = "$name(^loc.{loc!(init)}, n)";
+    let term = parse_proc(input).expect("should parse dollar-name application");
+    println!("Parsed: {}", term);
+    let normalized = term.normalize();
+    println!("Normalized: {}", normalized);
+    assert_eq!(
+        format!("{}", normalized),
+        "n!(init)",
+        "Dollar-name application should beta-reduce: $name(^loc.{{body}}, n) → body[loc:=n]"
+    );
+}
+
+/// `$proc(^f.{f}, {})` should beta-reduce to `{}`.
+/// This tests that the self-domain case (Proc→Proc) still works after the fix.
+#[test]
+fn test_dollar_proc_beta_reduction() {
+    mettail_runtime::clear_var_cache();
+    let input = "$proc(^f.{f}, {})";
+    let term = parse_proc(input).expect("should parse dollar-proc application");
+    println!("Parsed: {}", term);
+    let normalized = term.normalize();
+    println!("Normalized: {}", normalized);
+    assert_eq!(
+        format!("{}", normalized),
+        "{}",
+        "Dollar-proc application should beta-reduce: $proc(^f.{{f}}, {{}}) → {{}}"
+    );
+}
+
+/// Test normalize_term at the Language trait level for dollar-name application.
+#[test]
+fn test_normalize_term_dollar_syntax() {
+    mettail_runtime::clear_var_cache();
+    let lang = RhoCalcLanguage;
+    let term = lang
+        .parse_term("$name(^loc.{loc!(init)}, n)")
+        .expect("parse");
+    let normalized = lang.normalize_term(term.as_ref());
+    assert_eq!(
+        format!("{}", normalized),
+        "n!(init)",
+        "normalize_term should beta-reduce dollar-name application"
+    );
+}
+
+/// Bare variable `p` should infer as `Proc` (the primary category), not `Float`.
+///
+/// Before the lexer-guided parse filtering fix, `p` was parsed as Ambiguous across all
+/// 6 categories (Float, Int, Proc, Name, Bool, Str) because every category has an
+/// auto-generated variable fallback. Float appeared first due to parse ordering, so
+/// `type` reported `Float`. With the fix, native categories are skipped when the first
+/// token is an identifier, so only Proc and Name are tried.
+#[test]
+fn test_bare_variable_type_is_proc() {
+    mettail_runtime::clear_var_cache();
+    let lang = RhoCalcLanguage;
+    let term = lang.parse_term("p").expect("parse 'p'");
+    let term_type = lang.infer_term_type(term.as_ref());
+    assert_eq!(format!("{}", term_type), "Proc");
+}

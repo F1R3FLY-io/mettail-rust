@@ -81,7 +81,7 @@ alternatives to the next layer.
                                      │
                ┌─────────────────────▼──────────────────────────┐
   Layer 6      │  SEMANTIC DISAMBIGUATION                       │
-               │  is_ground() + Ambiguous resolution            │
+               │  lexer probe + is_ground() + Ambiguous         │
                │  Resolves: multi-category parse ambiguity      │
                │            via groundness and substitution      │
                └─────────────────────┬──────────────────────────┘
@@ -101,7 +101,7 @@ alternatives to the next layer.
 | **3. Precedence** | Operator binding and grouping | Binding power pairs | `1+2*3` → `1+(2*3)` |
 | **4. Cross-Category** | Which type category owns a token | FIRST set partition + backtrack | `x` could be `Int` var or `Bool` var |
 | **5. Recovery** | Where to resume after error | FOLLOW sets + sync delimiters | Skip to `)` or `;` after bad expression |
-| **6. Semantic** | Multi-category parse ambiguity | `is_ground()` + substitution + Ascent | `"a + b"` with `a=1.0` → Float wins |
+| **6. Semantic** | Multi-category parse ambiguity | lexer probe + `is_ground()` + substitution + declaration-order Ascent | `"a + b"` with `a=1.0` → Float wins |
 
 ## How the Layers Interact
 

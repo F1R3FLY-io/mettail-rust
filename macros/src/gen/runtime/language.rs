@@ -426,10 +426,12 @@ fn generate_language_struct(
     let _primary_type_str = primary_type.to_string();
 
     // Generate type inference helper
-    let type_inference_impl = generate_type_inference_helpers(primary_type, language);
+    let infer_fn = format_ident!("infer_term_type_typed");
+    let type_inference_impl = generate_type_inference_helpers(primary_type, language, &infer_fn);
 
     // Generate variable collection implementation
-    let var_collection_impl = generate_var_collection_impl(primary_type, language);
+    let collect_fn = format_ident!("collect_all_vars_impl");
+    let var_collection_impl = generate_var_collection_impl(primary_type, language, &collect_fn);
 
     // Generate custom relation extraction code
     let custom_relation_extraction = generate_custom_relation_extraction(language);
@@ -610,7 +612,7 @@ fn generate_language_struct(
 }
 
 /// Generate the collect_all_vars_impl method with proper traversal
-fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) -> TokenStream {
+fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef, impl_fn_name: &Ident) -> TokenStream {
     let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
     // Generate lambda handling arms
@@ -640,7 +642,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                     }
                 }
                 // Recurse into body (body is Box<T>, so deref it)
-                Self::collect_all_vars_impl(root_term, body.as_ref(), result, seen);
+                Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
             }
         });
 
@@ -665,7 +667,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                     }
                 }
                 // Recurse into body (body is Box<T>, so deref it)
-                Self::collect_all_vars_impl(root_term, body.as_ref(), result, seen);
+                Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
             }
         });
 
@@ -674,7 +676,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
         let apply_variant = format_ident!("Apply{}", domain);
         lambda_arms.push(quote! {
             #primary_type::#apply_variant(lam, _arg) => {
-                Self::collect_all_vars_impl(root_term, lam.as_ref(), result, seen);
+                Self::#impl_fn_name(root_term, lam.as_ref(), result, seen);
                 // Note: _arg is of type #domain, not #primary_type, so we can't recurse on it here
             }
         });
@@ -683,7 +685,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
         let mapply_variant = format_ident!("MApply{}", domain);
         lambda_arms.push(quote! {
             #primary_type::#mapply_variant(lam, _args) => {
-                Self::collect_all_vars_impl(root_term, lam.as_ref(), result, seen);
+                Self::#impl_fn_name(root_term, lam.as_ref(), result, seen);
                 // Note: _args contains #domain values, not #primary_type, so we can't recurse on them here
             }
         });
@@ -765,7 +767,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                     if ident.to_string() == primary_type.to_string() =>
                                 {
                                     recurse_calls.push(quote! {
-                                        Self::collect_all_vars_impl(root_term, #field_name.as_ref(), result, seen);
+                                        Self::#impl_fn_name(root_term, #field_name.as_ref(), result, seen);
                                     });
                                 },
                                 TypeExpr::Collection { element, .. } => {
@@ -773,7 +775,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                         if ident.to_string() == primary_type.to_string() {
                                             recurse_calls.push(quote! {
                                                 for (elem, _) in #field_name.iter() {
-                                                    Self::collect_all_vars_impl(root_term, elem, result, seen);
+                                                    Self::#impl_fn_name(root_term, elem, result, seen);
                                                 }
                                             });
                                         }
@@ -816,7 +818,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                                     });
                                                 }
                                             }
-                                            Self::collect_all_vars_impl(root_term, body.as_ref(), result, seen);
+                                            Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
                                         });
                                     }
                                 }
@@ -861,7 +863,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                                     }
                                                 }
                                             }
-                                            Self::collect_all_vars_impl(root_term, body.as_ref(), result, seen);
+                                            Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
                                         });
                                     }
                                 }
@@ -883,7 +885,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                             // Only recurse if it's the primary type
                             if nt_str == primary_type.to_string() {
                                 recurse_calls.push(quote! {
-                                    Self::collect_all_vars_impl(root_term, #field_name.as_ref(), result, seen);
+                                    Self::#impl_fn_name(root_term, #field_name.as_ref(), result, seen);
                                 });
                             }
                             field_idx += 1;
@@ -895,7 +897,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                             if elem_str == primary_type.to_string() {
                                 recurse_calls.push(quote! {
                                     for (elem, _) in #field_name.iter() {
-                                        Self::collect_all_vars_impl(root_term, elem, result, seen);
+                                        Self::#impl_fn_name(root_term, elem, result, seen);
                                     }
                                 });
                             }
@@ -928,7 +930,7 @@ fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef) ->
                                                     });
                                                 }
                                             }
-                                            Self::collect_all_vars_impl(root_term, body.as_ref(), result, seen);
+                                            Self::#impl_fn_name(root_term, body.as_ref(), result, seen);
                                         });
                                     }
                                 }
@@ -1001,52 +1003,56 @@ fn generate_language_struct_multi(
     let custom_relation_extraction = generate_custom_relation_extraction(language);
 
     // NFA-style multi-category parse: try ALL category parsers and collect successes.
-    // When both Int and Float exist, try Float before Int for deterministic ordering
-    // (so Float alternative appears first in Ambiguous).
-    let has_int = language.types.iter().any(|t| t.name.to_string() == "Int");
-    let has_float = language.types.iter().any(|t| t.name.to_string() == "Float");
-    let parse_order: Vec<syn::Ident> = if has_int && has_float {
-        let mut order = Vec::new();
-        order.push(
-            language
-                .types
-                .iter()
-                .find(|t| t.name.to_string() == "Float")
-                .expect("Float type must exist")
-                .name
-                .clone(),
-        );
-        order.push(
-            language
-                .types
-                .iter()
-                .find(|t| t.name.to_string() == "Int")
-                .expect("Int type must exist")
-                .name
-                .clone(),
-        );
-        for t in &language.types {
-            let s = t.name.to_string();
-            if s != "Int" && s != "Float" {
-                order.push(t.name.clone());
-            }
-        }
-        order
-    } else {
-        language.types.iter().map(|t| t.name.clone()).collect()
-    };
+    // Parse order follows declaration order so that Ambiguous alternatives are ordered
+    // by the user's declared priority (first-declared category = first alternative).
+    let parse_order: Vec<syn::Ident> = language.types.iter().map(|t| t.name.clone()).collect();
+
+    // Lexer-guided parse filtering: when the language has at least one non-native category
+    // (e.g. Proc, Name), skip native-only categories (e.g. Float, Int, Bool, Str) when the
+    // first token is an identifier, since identifiers are not native literals.
+    // For all-native languages (e.g. Calculator), no filtering is needed.
+    let has_non_native = language.types.iter().any(|t| t.native_type.is_none());
+    let native_cat_names: std::collections::HashSet<String> = language
+        .types
+        .iter()
+        .filter(|t| t.native_type.is_some())
+        .map(|t| t.name.to_string())
+        .collect();
+
     let parse_tries: Vec<TokenStream> = parse_order
         .iter()
         .map(|cat| {
             let variant = format_ident!("{}", cat);
-            quote! {
+            let try_block = quote! {
                 match #cat::parse(input) {
                     Ok(t) => successes.push(#inner_enum_name::#variant(t)),
                     Err(e) => if first_err.is_none() { first_err = Some(e); },
                 }
+            };
+            // Guard native categories behind an Ident check when non-native categories exist
+            if has_non_native && native_cat_names.contains(&cat.to_string()) {
+                quote! {
+                    if !matches!(first_tok, Some(Token::Ident(_))) {
+                        #try_block
+                    }
+                }
+            } else {
+                try_block
             }
         })
         .collect();
+
+    // Lexer probe: only emitted for languages with non-native categories.
+    // All-native languages (e.g. Calculator) skip this and try all parsers unconditionally.
+    let lexer_probe: TokenStream = if has_non_native {
+        quote! {
+            // Lex once to classify the first token for parse dispatch
+            let probe_tokens = lex(input).map_err(|e| e.to_string())?;
+            let first_tok = probe_tokens.first().map(|(t, _)| t);
+        }
+    } else {
+        quote! {}
+    };
 
     let primary_type_for_step = language.types.first().map(|t| &t.name);
     // Seed arms: push the initial term into the appropriate relation on the unified Ascent struct.
@@ -1111,6 +1117,37 @@ fn generate_language_struct_multi(
         })
         .collect();
 
+    // Per-category type inference functions
+    let per_cat_type_infer_fns: Vec<TokenStream> = language.types.iter().map(|t| {
+        let cat = &t.name;
+        let fn_name = format_ident!("infer_{}_type", cat.to_string().to_lowercase());
+        let type_impl = generate_type_inference_helpers(cat, language, &fn_name);
+        quote! {
+            pub fn #fn_name(term: &#cat) -> mettail_runtime::TermType {
+                #type_impl
+            }
+        }
+    }).collect();
+
+    // Per-category variable collection functions
+    let per_cat_var_collect_fns: Vec<TokenStream> = language.types.iter().map(|t| {
+        let cat = &t.name;
+        let fn_name = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
+        let var_impl = generate_var_collection_impl(cat, language, &fn_name);
+        quote! {
+            fn #fn_name(
+                root_term: &#cat,
+                term: &#cat,
+                result: &mut Vec<mettail_runtime::VarTypeInfo>,
+                seen: &mut std::collections::HashSet<std::string::String>,
+            ) {
+                match term {
+                    #var_impl
+                }
+            }
+        }
+    }).collect();
+
     quote! {
         ascent::ascent! {
             struct #prog_struct_name;
@@ -1130,7 +1167,14 @@ fn generate_language_struct_multi(
             /// Parse without clearing var cache. Tries ALL category parsers (NFA-style).
             /// If exactly 1 succeeds → unambiguous. If N succeed → `Ambiguous(Vec<Inner>)`.
             /// Reports the first parser's error when all fail.
+            ///
+            /// When the language has non-native categories (e.g. Proc, Name), a lexer probe
+            /// classifies the first token: if it's an `Ident`, native-only categories (Float,
+            /// Int, Bool, Str) are skipped since identifiers are not native literals. This
+            /// reduces 6-way ambiguity to 2-way for bare variables in languages like rhocalc.
             pub fn parse_preserving_vars(input: &str) -> Result<#term_name, std::string::String> {
+                #lexer_probe
+
                 let mut successes = Vec::new();
                 let mut first_err = None;
                 #(#parse_tries)*
@@ -1142,36 +1186,22 @@ fn generate_language_struct_multi(
             }
 
             /// Run Ascent on a typed term (seeds the relation for the term's category).
-            /// For Ambiguous terms, runs Ascent on each alternative and merges results.
+            /// For Ambiguous terms, evaluates only the first alternative by declaration
+            /// order. All alternatives that reach Stage C are valid parses, so evaluating
+            /// only the first-declared is deterministic and avoids redundant Ascent runs.
             /// Uses a single named Ascent struct (compiled once) instead of per-category
             /// ascent_run! invocations, reducing monomorphization by ~69%.
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
                 match &term.0 {
                     #inner_enum_name::Ambiguous(alts) => {
-                        let mut all_term_infos = Vec::new();
-                        let mut all_rewrites = Vec::new();
-                        let mut all_custom: std::collections::HashMap<std::string::String, mettail_runtime::RelationData> = std::collections::HashMap::new();
-                        for alt in alts {
-                            let sub_term = #term_name(alt.clone());
-                            let sub_result = Self::run_ascent_typed(&sub_term);
-                            all_term_infos.extend(sub_result.all_terms);
-                            all_rewrites.extend(sub_result.rewrites);
-                            for (k, v) in sub_result.custom_relations {
-                                all_custom.entry(k).or_insert_with(|| mettail_runtime::RelationData {
-                                    param_types: v.param_types.clone(),
-                                    tuples: Vec::new(),
-                                }).tuples.extend(v.tuples);
-                            }
-                        }
-                        // Dedup term_infos by term_id
-                        let mut seen_ids = std::collections::HashSet::new();
-                        all_term_infos.retain(|t| seen_ids.insert(t.term_id));
-                        mettail_runtime::AscentResults {
-                            all_terms: all_term_infos,
-                            rewrites: all_rewrites,
-                            equivalences: Vec::new(),
-                            custom_relations: all_custom,
-                        }
+                        // Declaration-order resolution: evaluate only the first alternative.
+                        // Parse order follows declaration order, so alts[0] is the first-declared
+                        // category that successfully parsed the input. All alternatives that reach
+                        // Stage C are valid parses, so evaluating only the first is semantically
+                        // equivalent to short-circuit evaluation and avoids redundant Ascent runs.
+                        let first = alts.first().expect("Ambiguous must have 2+ alternatives");
+                        let sub_term = #term_name(first.clone());
+                        Self::run_ascent_typed(&sub_term)
                     }
                     _ => {
                         let mut prog = #prog_struct_name::default();
@@ -1192,6 +1222,30 @@ fn generate_language_struct_multi(
             pub fn create_env() -> #env_name {
                 #env_name::new()
             }
+
+            // === Type Inference Helpers (per-category) ===
+
+            fn inferred_to_term_type(t: &InferredType) -> mettail_runtime::TermType {
+                match t {
+                    InferredType::Base(cat) => mettail_runtime::TermType::Base(format!("{:?}", cat)),
+                    InferredType::Arrow(d, c) => mettail_runtime::TermType::Arrow(
+                        Box::new(Self::inferred_to_term_type(d)),
+                        Box::new(Self::inferred_to_term_type(c)),
+                    ),
+                    InferredType::MultiArrow(d, c) => mettail_runtime::TermType::MultiArrow(
+                        Box::new(Self::inferred_to_term_type(d)),
+                        Box::new(Self::inferred_to_term_type(c)),
+                    ),
+                }
+            }
+
+            #(#per_cat_type_infer_fns)*
+        }
+
+        // Variable collection implementation with proper term traversal (per-category)
+        #[allow(unused_variables, unreachable_patterns)]
+        impl #language_name {
+            #(#per_cat_var_collect_fns)*
         }
     }
 }
@@ -1466,18 +1520,23 @@ fn generate_language_trait_impl_multi(
         })
         .collect();
 
-    // infer_term_type: match and return Base(category name)
+    // infer_term_type: dispatch to per-category type inference
     let infer_term_type_arms: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
-            let cat_str = cat.to_string();
             let variant = format_ident!("{}", cat);
-            let lit = LitStr::new(&cat_str, cat.span());
-            quote! { #inner_enum_name::#variant(_) => mettail_runtime::TermType::Base(#lit.to_string()) }
+            let fn_name = format_ident!("infer_{}_type", cat.to_string().to_lowercase());
+            quote! { #inner_enum_name::#variant(inner) => #language_name::#fn_name(inner) }
         })
         .collect();
+
+    // Primary category: first type in the language definition (e.g. Proc for rhocalc, Int for Calculator).
+    // Used to prefer the primary category's type when reporting the type of an Ambiguous term.
+    let primary_type = &language.types[0].name;
+    let primary_variant = format_ident!("{}", primary_type);
+    let primary_type_str = LitStr::new(&primary_type.to_string(), primary_type.span());
 
     // normalize_term for multi-type: normalize the inner variant
     let normalize_arms: Vec<TokenStream> = language
@@ -1520,6 +1579,41 @@ fn generate_language_trait_impl_multi(
             }
         }
     };
+
+    // infer_var_types dispatch arms (per-category)
+    let infer_var_types_arms: Vec<TokenStream> = language.types.iter().map(|t| {
+        let cat = &t.name;
+        let variant = format_ident!("{}", cat);
+        let collect_fn = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
+        quote! {
+            #inner_enum_name::#variant(inner) => {
+                let mut result = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                #language_name::#collect_fn(inner, inner, &mut result, &mut seen);
+                result
+            }
+        }
+    }).collect();
+
+    // infer_var_type dispatch arms (per-category)
+    let infer_var_type_arms: Vec<TokenStream> = language.types.iter().map(|t| {
+        let cat = &t.name;
+        let variant = format_ident!("{}", cat);
+        let collect_fn = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
+        quote! {
+            #inner_enum_name::#variant(inner) => {
+                // Try direct method first
+                if let Some(t) = inner.infer_var_type(var_name) {
+                    return Some(#language_name::inferred_to_term_type(&t));
+                }
+                // Search all variables including bound ones
+                let mut result = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                #language_name::#collect_fn(inner, inner, &mut result, &mut seen);
+                result.into_iter().find(|v| v.name == var_name).map(|v| v.ty)
+            }
+        }
+    }).collect();
 
     quote! {
         impl mettail_runtime::Language for #language_name {
@@ -1666,17 +1760,49 @@ fn generate_language_trait_impl_multi(
                     None => return mettail_runtime::TermType::Unknown,
                 };
                 match &typed_term.0 {
-                    #inner_enum_name::Ambiguous(_) => mettail_runtime::TermType::Base("Ambiguous".to_string()),
+                    #inner_enum_name::Ambiguous(alts) => {
+                        // Prefer primary category type for display when present among alternatives
+                        for alt in alts {
+                            if matches!(alt, #inner_enum_name::#primary_variant(_)) {
+                                return mettail_runtime::TermType::Base(#primary_type_str.to_string());
+                            }
+                        }
+                        mettail_runtime::TermType::Base("Ambiguous".to_string())
+                    },
                     #(#infer_term_type_arms),*
                 }
             }
 
-            fn infer_var_types(&self, _term: &dyn mettail_runtime::Term) -> Vec<mettail_runtime::VarTypeInfo> {
-                Vec::new()
+            fn infer_var_types(&self, term: &dyn mettail_runtime::Term) -> Vec<mettail_runtime::VarTypeInfo> {
+                let typed_term = match term.as_any().downcast_ref::<#term_name>() {
+                    Some(t) => t,
+                    None => return Vec::new(),
+                };
+                match &typed_term.0 {
+                    #inner_enum_name::Ambiguous(alts) => {
+                        if let Some(first) = alts.first() {
+                            let sub = #term_name(first.clone());
+                            self.infer_var_types(&sub)
+                        } else { Vec::new() }
+                    }
+                    #(#infer_var_types_arms),*
+                }
             }
 
-            fn infer_var_type(&self, _term: &dyn mettail_runtime::Term, _var_name: &str) -> Option<mettail_runtime::TermType> {
-                None
+            fn infer_var_type(&self, term: &dyn mettail_runtime::Term, var_name: &str) -> Option<mettail_runtime::TermType> {
+                let typed_term = match term.as_any().downcast_ref::<#term_name>() {
+                    Some(t) => t,
+                    None => return None,
+                };
+                match &typed_term.0 {
+                    #inner_enum_name::Ambiguous(alts) => {
+                        if let Some(first) = alts.first() {
+                            let sub = #term_name(first.clone());
+                            self.infer_var_type(&sub, var_name)
+                        } else { None }
+                    }
+                    #(#infer_var_type_arms),*
+                }
             }
         }
     }
@@ -1687,7 +1813,7 @@ fn generate_language_trait_impl_multi(
 /// This handles detecting lambda variants and building the full function type.
 /// The domain type is inferred from how the binder is USED in the body,
 /// not just from the lambda variant.
-fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef) -> TokenStream {
+fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef, self_fn_name: &Ident) -> TokenStream {
     let primary_type_lit = LitStr::new(&primary_type.to_string(), primary_type.span());
 
     // Get all categories for lambda variant detection (including native, e.g. Int/Bool/Str)
@@ -1707,7 +1833,7 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
             #primary_type::#lam_variant(scope) => {
                 // Use unbind to get binder and body with proper types
                 let (binder, body) = scope.clone().unbind();
-                let body_type = Self::infer_term_type_typed(&body);
+                let body_type = Self::#self_fn_name(&body);
 
                 // Get the binder name to infer its type from usage
                 let binder_name = binder.0.pretty_name.as_ref();
@@ -1734,7 +1860,7 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef)
         lambda_arms.push(quote! {
             #primary_type::#mlam_variant(scope) => {
                 let (_binders, body) = scope.clone().unbind();
-                let body_type = Self::infer_term_type_typed(&body);
+                let body_type = Self::#self_fn_name(&body);
                 mettail_runtime::TermType::MultiArrow(
                     Box::new(mettail_runtime::TermType::Base(#domain_lit.to_string())),
                     Box::new(body_type),

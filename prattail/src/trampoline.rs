@@ -1639,15 +1639,34 @@ fn write_unwind_handlers(
         let default_lam_variant = format!("Lam{}", cat);
         let default_mlam_variant = format!("MLam{}", cat);
 
+        // Build inference-driven match arms for selecting the correct Lam/MLam variant
+        let lam_match_arms: String = config.all_categories.iter().map(|dom| {
+            format!(
+                "Some(InferredType::Base(VarCategory::{})) => {}::Lam{}(scope), ",
+                dom, cat, dom
+            )
+        }).collect::<Vec<_>>().join("");
+
+        let mlam_match_arms: String = config.all_categories.iter().map(|dom| {
+            format!(
+                "Some(InferredType::Base(VarCategory::{})) => {}::MLam{}(scope), ",
+                dom, cat, dom
+            )
+        }).collect::<Vec<_>>().join("");
+
         write!(
             buf,
             "Some({enum_name}::LambdaBody_Single {{ binder_name, saved_bp }}) => {{ \
                 expect_token(tokens, pos, |t| matches!(t, Token::RBrace), \"}}\")?; \
-                let _inferred = lhs.infer_var_type(&binder_name); \
-                lhs = {cat}::{default_lam_variant}(mettail_runtime::Scope::new( \
+                let inferred = lhs.infer_var_type(&binder_name); \
+                let scope = mettail_runtime::Scope::new( \
                     mettail_runtime::Binder(mettail_runtime::get_or_create_var(binder_name)), \
                     Box::new(lhs), \
-                )); \
+                ); \
+                lhs = match inferred {{ \
+                    {lam_match_arms} \
+                    _ => {cat}::{default_lam_variant}(scope) \
+                }}; \
                 cur_bp = saved_bp; \
             }},",
             enum_name = frame_info.enum_name,
@@ -1657,7 +1676,7 @@ fn write_unwind_handlers(
             buf,
             "Some({enum_name}::LambdaBody_Multi {{ binder_names, saved_bp }}) => {{ \
                 expect_token(tokens, pos, |t| matches!(t, Token::RBrace), \"}}\")?; \
-                let _inferred = if let Some(name) = binder_names.first() {{ \
+                let inferred = if let Some(name) = binder_names.first() {{ \
                     lhs.infer_var_type(name) \
                 }} else {{ \
                     None \
@@ -1666,10 +1685,11 @@ fn write_unwind_handlers(
                     binder_names.into_iter() \
                         .map(|s| mettail_runtime::Binder(mettail_runtime::get_or_create_var(s))) \
                         .collect(); \
-                lhs = {cat}::{default_mlam_variant}(mettail_runtime::Scope::new( \
-                    binders, \
-                    Box::new(lhs), \
-                )); \
+                let scope = mettail_runtime::Scope::new(binders, Box::new(lhs)); \
+                lhs = match inferred {{ \
+                    {mlam_match_arms} \
+                    _ => {cat}::{default_mlam_variant}(scope) \
+                }}; \
                 cur_bp = saved_bp; \
             }},",
             enum_name = frame_info.enum_name,
