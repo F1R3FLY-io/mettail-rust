@@ -4,6 +4,21 @@
 //! classes — sets of characters that behave identically across all NFA states.
 //! This reduces the DFA transition table from 256 columns to typically 12-18
 //! equivalence classes, yielding ~15-20x compression.
+//!
+//! ## Optimizations
+//!
+//! - **Flat byte signatures:** Instead of nested `Vec<(u32, Vec<u32>)>`, each byte's
+//!   signature is encoded as a flat `Vec<u8>` (state_idx LE + count LE + targets LE),
+//!   eliminating ~7,680 inner Vec allocations per call.
+//! - **HashMap grouping:** Replaces O(n) linear scan with O(1) HashMap lookup for
+//!   signature → class mapping.
+//! - **Thread-local buffer pooling:** `targets_buf` and `sig_buf` retain capacity
+//!   across calls via `Cell<Vec<T>>` take/set pattern (same as trampoline parser).
+//! - **Pre-allocation:** `class_representatives` and `sig_to_class` pre-allocated
+//!   to typical grammar sizes (32 classes).
+
+use std::cell::Cell;
+use std::collections::HashMap;
 
 use super::{ClassId, Nfa, CharClass};
 
@@ -25,26 +40,48 @@ impl AlphabetPartition {
     }
 }
 
+thread_local! {
+    /// Reusable buffer for collecting transition targets per (state, byte) pair.
+    /// Retains capacity across calls (~100-200 bytes).
+    static TARGETS_BUF: Cell<Vec<u32>> = const { Cell::new(Vec::new()) };
+    /// Reusable buffer for flat byte signature encoding.
+    /// Retains capacity across calls (~200-400 bytes).
+    static SIG_BUF: Cell<Vec<u8>> = const { Cell::new(Vec::new()) };
+}
+
 /// Compute equivalence classes from an NFA.
 ///
 /// Two bytes are equivalent if and only if they trigger the same transitions
 /// in every NFA state. We compute this by:
-/// 1. Building a signature for each byte (which states it transitions to from each state)
-/// 2. Grouping bytes with identical signatures
+/// 1. Building a flat byte signature for each byte (encoded as LE u32 sequences)
+/// 2. Grouping bytes with identical signatures via HashMap
 pub fn compute_equivalence_classes(nfa: &Nfa) -> AlphabetPartition {
-    // Build a signature for each byte value.
-    // The signature is a vector of (state_id, target_states) pairs.
-    // Two bytes with the same signature are equivalent.
+    let n = nfa.states.len();
+    let mut byte_to_class = [0u8; 256];
+    let mut class_representatives: Vec<u8> = Vec::with_capacity(32);
+    let mut num_classes: usize = 0;
 
-    type Signature = Vec<(u32, Vec<u32>)>;
+    // Take TLS buffers and ensure first-call pre-allocation
+    let mut targets_buf = TARGETS_BUF.with(|cell| cell.take());
+    targets_buf.clear();
+    if targets_buf.capacity() < n {
+        targets_buf.reserve(n - targets_buf.capacity());
+    }
 
-    // Reusable buffer for targets within each (state, byte) pair
-    let mut targets_buf: Vec<u32> = Vec::new();
+    let mut sig_buf = SIG_BUF.with(|cell| cell.take());
+    sig_buf.clear();
+    let sig_cap = n * 16;
+    if sig_buf.capacity() < sig_cap {
+        sig_buf.reserve(sig_cap - sig_buf.capacity());
+    }
 
-    let mut byte_signatures: Vec<Signature> = Vec::with_capacity(256);
+    // HashMap for O(1) signature → class lookup (typically 12-25 classes)
+    let mut sig_to_class: HashMap<Vec<u8>, ClassId> = HashMap::with_capacity(32);
 
     for byte in 0u8..=255 {
-        let mut sig: Signature = Vec::new();
+        // Build flat signature: for each state with transitions on this byte,
+        // encode (state_idx: u32 LE, target_count: u32 LE, targets...: u32 LE)
+        sig_buf.clear();
         for (state_idx, state) in nfa.states.iter().enumerate() {
             targets_buf.clear();
             for (class, target) in &state.transitions {
@@ -55,34 +92,30 @@ pub fn compute_equivalence_classes(nfa: &Nfa) -> AlphabetPartition {
             if !targets_buf.is_empty() {
                 targets_buf.sort_unstable();
                 targets_buf.dedup();
-                sig.push((state_idx as u32, targets_buf.clone()));
+                // Flat encoding: state_idx + count + sorted targets (all as LE u32)
+                sig_buf.extend_from_slice(&(state_idx as u32).to_le_bytes());
+                sig_buf.extend_from_slice(&(targets_buf.len() as u32).to_le_bytes());
+                for &t in &targets_buf {
+                    sig_buf.extend_from_slice(&t.to_le_bytes());
+                }
             }
         }
-        byte_signatures.push(sig);
-    }
 
-    // Group bytes by identical signatures.
-    // Linear scan is used because typical grammars produce only 12-25 equivalence classes,
-    // where the overhead of HashMap construction exceeds the benefit of O(1) lookup.
-    let mut byte_to_class = [0u8; 256];
-    let mut class_representatives: Vec<u8> = Vec::new();
-    let mut num_classes: usize = 0;
-
-    let mut sig_to_class: Vec<(Signature, ClassId)> = Vec::new();
-
-    for byte in 0u8..=255 {
-        let sig = &byte_signatures[byte as usize];
-        let class = if let Some((_, existing_class)) = sig_to_class.iter().find(|(s, _)| s == sig) {
-            *existing_class
+        if let Some(&class) = sig_to_class.get(sig_buf.as_slice()) {
+            byte_to_class[byte as usize] = class;
         } else {
             let new_class = num_classes as ClassId;
             num_classes += 1;
-            sig_to_class.push((sig.clone(), new_class));
+            // Clone only happens ~12-18 times (once per unique equivalence class)
+            sig_to_class.insert(sig_buf.clone(), new_class);
             class_representatives.push(byte);
-            new_class
-        };
-        byte_to_class[byte as usize] = class;
+            byte_to_class[byte as usize] = new_class;
+        }
     }
+
+    // Return TLS buffers for reuse
+    TARGETS_BUF.with(|cell| cell.set(targets_buf));
+    SIG_BUF.with(|cell| cell.set(sig_buf));
 
     AlphabetPartition {
         byte_to_class,

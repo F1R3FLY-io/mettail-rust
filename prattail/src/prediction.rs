@@ -178,6 +178,15 @@ pub enum FirstItem {
 }
 
 /// Compute FIRST sets for all categories and build dispatch tables.
+///
+/// ## Optimizations
+///
+/// - **Dirty-flag convergence:** Replaces two `BTreeMap<String, usize>` snapshot
+///   allocations per iteration with a single `changed` boolean, using
+///   `BTreeSet::insert`'s return value to detect new tokens.
+/// - **Reusable buffer:** `tokens_to_add` Vec is reused across iterations
+///   (stack-local, not TLS — `clear()` drops Strings so only the Vec shell
+///   is retained, making TLS marginal for the added complexity).
 pub fn compute_first_sets(
     rules: &[RuleInfo],
     categories: &[String],
@@ -189,15 +198,15 @@ pub fn compute_first_sets(
         first_sets.insert(cat.clone(), FirstSet::new());
     }
 
+    // Reusable buffer for tokens to add (retained across iterations)
+    let mut tokens_to_add: Vec<String> = Vec::with_capacity(16);
+
     // Fixed-point iteration: keep adding to FIRST sets until stable.
     // Each iteration propagates nonterminal FIRST sets one level deeper.
     // Convergence is guaranteed in at most |categories| + 1 iterations
     // (each iteration can expand at least one category's FIRST set).
     loop {
-        let snapshot: BTreeMap<String, usize> = first_sets
-            .iter()
-            .map(|(k, v)| (k.clone(), v.len()))
-            .collect();
+        let mut changed = false;
 
         for rule in rules {
             if rule.is_infix {
@@ -205,37 +214,32 @@ pub fn compute_first_sets(
             }
 
             for item in &rule.first_items {
-                let tokens_to_add: Vec<String> = match item {
+                tokens_to_add.clear();
+                match item {
                     FirstItem::Terminal(t) => {
-                        vec![terminal_to_variant_name(t)]
+                        tokens_to_add.push(terminal_to_variant_name(t));
                     }
                     FirstItem::NonTerminal(cat) => {
                         if let Some(cat_first) = first_sets.get(cat) {
-                            cat_first.tokens.iter().cloned().collect()
-                        } else {
-                            vec![]
+                            tokens_to_add.extend(cat_first.tokens.iter().cloned());
                         }
                     }
                     FirstItem::Ident => {
-                        vec!["Ident".to_string()]
+                        tokens_to_add.push("Ident".to_string());
                     }
                 };
 
                 if let Some(cat_first) = first_sets.get_mut(&rule.category) {
-                    for token in tokens_to_add {
-                        cat_first.insert(&token);
+                    for token in &tokens_to_add {
+                        if cat_first.tokens.insert(token.clone()) {
+                            changed = true;
+                        }
                     }
                 }
             }
         }
 
-        // Check if anything changed
-        let new_sizes: BTreeMap<String, usize> = first_sets
-            .iter()
-            .map(|(k, v)| (k.clone(), v.len()))
-            .collect();
-
-        if snapshot == new_sizes {
+        if !changed {
             break;
         }
     }
@@ -277,14 +281,15 @@ pub fn compute_follow_sets_from_inputs(
         follow.insert("Eof");
     }
 
+    // Fixed-point iteration with dirty-flag convergence.
+    // Replaces two BTreeMap snapshot allocations per iteration with a
+    // single changed boolean, using BTreeSet::insert return values
+    // propagated through the follow set helpers.
     loop {
-        let snapshot: BTreeMap<String, usize> = follow_sets
-            .iter()
-            .map(|(k, v)| (k.clone(), v.len()))
-            .collect();
+        let mut changed = false;
 
         for input in inputs {
-            propagate_follow_from_items(
+            changed |= propagate_follow_from_items(
                 &input.syntax,
                 &input.category,
                 first_sets,
@@ -292,12 +297,7 @@ pub fn compute_follow_sets_from_inputs(
             );
         }
 
-        let new_sizes: BTreeMap<String, usize> = follow_sets
-            .iter()
-            .map(|(k, v)| (k.clone(), v.len()))
-            .collect();
-
-        if snapshot == new_sizes {
+        if !changed {
             break;
         }
     }
@@ -344,21 +344,24 @@ pub fn compute_follow_sets(
 /// For each nonterminal-like item at position i, computes FIRST of the
 /// suffix items[i+1..] and adds it to FOLLOW of that category. If the
 /// suffix is nullable, also propagates FOLLOW(rule_category).
+///
+/// Returns `true` if any FOLLOW set was modified (for dirty-flag convergence).
 fn propagate_follow_from_items(
     items: &[crate::SyntaxItemSpec],
     rule_category: &str,
     first_sets: &BTreeMap<String, FirstSet>,
     follow_sets: &mut BTreeMap<String, FirstSet>,
-) {
+) -> bool {
+    let mut changed = false;
     for i in 0..items.len() {
         let suffix = &items[i + 1..];
 
         match &items[i] {
             crate::SyntaxItemSpec::NonTerminal { category, .. } => {
                 let (suffix_first, suffix_nullable) = first_of_suffix(suffix, first_sets);
-                add_first_to_follow(follow_sets, category, &suffix_first);
+                changed |= add_first_to_follow(follow_sets, category, &suffix_first);
                 if suffix_nullable {
-                    copy_follow(follow_sets, rule_category, category);
+                    changed |= copy_follow(follow_sets, rule_category, category);
                 }
             }
             crate::SyntaxItemSpec::Collection {
@@ -367,16 +370,16 @@ fn propagate_follow_from_items(
                 ..
             } => {
                 // Inside a collection, the separator follows each element
-                add_token_to_follow(
+                changed |= add_token_to_follow(
                     follow_sets,
                     element_category,
                     &terminal_to_variant_name(separator),
                 );
                 // After the last element, the closing delimiter (FIRST of suffix) follows
                 let (suffix_first, suffix_nullable) = first_of_suffix(suffix, first_sets);
-                add_first_to_follow(follow_sets, element_category, &suffix_first);
+                changed |= add_first_to_follow(follow_sets, element_category, &suffix_first);
                 if suffix_nullable {
-                    copy_follow(follow_sets, rule_category, element_category);
+                    changed |= copy_follow(follow_sets, rule_category, element_category);
                 }
             }
             crate::SyntaxItemSpec::ZipMapSep {
@@ -397,9 +400,9 @@ fn propagate_follow_from_items(
                         let body_suffix = &body_items[j + 1..];
                         let (body_suffix_first, body_suffix_nullable) =
                             first_of_suffix(body_suffix, first_sets);
-                        add_first_to_follow(follow_sets, category, &body_suffix_first);
+                        changed |= add_first_to_follow(follow_sets, category, &body_suffix_first);
                         if body_suffix_nullable {
-                            add_first_to_follow(follow_sets, category, &body_tail);
+                            changed |= add_first_to_follow(follow_sets, category, &body_tail);
                         }
                     }
                 }
@@ -414,12 +417,12 @@ fn propagate_follow_from_items(
                         let inner_suffix = &inner[j + 1..];
                         let (inner_suffix_first, inner_suffix_nullable) =
                             first_of_suffix(inner_suffix, first_sets);
-                        add_first_to_follow(follow_sets, category, &inner_suffix_first);
+                        changed |= add_first_to_follow(follow_sets, category, &inner_suffix_first);
                         if inner_suffix_nullable {
                             // After inner items, the suffix after Optional follows
-                            add_first_to_follow(follow_sets, category, &suffix_first);
+                            changed |= add_first_to_follow(follow_sets, category, &suffix_first);
                             if suffix_nullable {
-                                copy_follow(follow_sets, rule_category, category);
+                                changed |= copy_follow(follow_sets, rule_category, category);
                             }
                         }
                     }
@@ -429,6 +432,7 @@ fn propagate_follow_from_items(
             _ => {}
         }
     }
+    changed
 }
 
 /// Compute the FIRST set of a suffix of syntax items.
@@ -499,45 +503,59 @@ fn first_of_suffix(
 }
 
 /// Add all tokens from a FIRST set to a category's FOLLOW set.
+///
+/// Returns `true` if any new token was inserted (for dirty-flag convergence).
 fn add_first_to_follow(
     follow_sets: &mut BTreeMap<String, FirstSet>,
     category: &str,
     first: &FirstSet,
-) {
+) -> bool {
+    let mut changed = false;
     if let Some(follow) = follow_sets.get_mut(category) {
         for token in &first.tokens {
-            follow.insert(token);
+            if follow.tokens.insert(token.clone()) {
+                changed = true;
+            }
         }
     }
+    changed
 }
 
 /// Add a single token to a category's FOLLOW set.
+///
+/// Returns `true` if the token was newly inserted (for dirty-flag convergence).
 fn add_token_to_follow(
     follow_sets: &mut BTreeMap<String, FirstSet>,
     category: &str,
     token: &str,
-) {
+) -> bool {
     if let Some(follow) = follow_sets.get_mut(category) {
-        follow.insert(token);
+        follow.tokens.insert(token.to_string())
+    } else {
+        false
     }
 }
 
 /// Copy FOLLOW(from_category) into FOLLOW(to_category).
 ///
 /// No-op when from_category == to_category (would just add to itself).
+/// Returns `true` if any new token was copied (for dirty-flag convergence).
 fn copy_follow(
     follow_sets: &mut BTreeMap<String, FirstSet>,
     from_category: &str,
     to_category: &str,
-) {
+) -> bool {
     if from_category == to_category {
-        return;
+        return false;
     }
     if let Some(from_follow) = follow_sets.get(from_category).cloned() {
         if let Some(to_follow) = follow_sets.get_mut(to_category) {
+            let before = to_follow.tokens.len();
             to_follow.union(&from_follow);
+            return to_follow.tokens.len() > before;
         }
     }
+    false
 }
 
 /// Build dispatch tables for all categories.

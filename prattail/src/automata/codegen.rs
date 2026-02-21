@@ -616,7 +616,8 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
     }
 
     // Sort by density (densest first) for better packing
-    sparse_rows.sort_by(|a, b| b.1.len().cmp(&a.1.len()));
+    // sort_unstable_by: no temp allocation, ~10% faster than sort_by for small slices
+    sparse_rows.sort_unstable_by(|a, b| b.1.len().cmp(&a.1.len()));
 
     // Greedy offset search
     let mut base = vec![0u32; num_states];

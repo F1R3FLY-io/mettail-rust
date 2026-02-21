@@ -554,10 +554,15 @@ fn build_string_lit_fragment(nfa: &mut Nfa) -> NfaFragment {
 /// Compute the epsilon closure of a set of NFA states.
 ///
 /// Returns all states reachable from `states` via zero or more epsilon transitions.
+/// Pre-allocates `closure` and `stack` to `nfa.states.len()` to prevent
+/// growth-reallocations (upper bound on closure size; n is typically 30-80).
 pub fn epsilon_closure(nfa: &Nfa, states: &[StateId]) -> Vec<StateId> {
-    let mut closure: Vec<StateId> = states.to_vec();
-    let mut stack: Vec<StateId> = states.to_vec();
-    let mut visited = vec![false; nfa.states.len()];
+    let n = nfa.states.len();
+    let mut closure: Vec<StateId> = Vec::with_capacity(n);
+    closure.extend_from_slice(states);
+    let mut stack: Vec<StateId> = Vec::with_capacity(n);
+    stack.extend_from_slice(states);
+    let mut visited = vec![false; n];
 
     for &s in states {
         visited[s as usize] = true;
@@ -576,6 +581,51 @@ pub fn epsilon_closure(nfa: &Nfa, states: &[StateId]) -> Vec<StateId> {
     closure.sort_unstable();
     closure.dedup();
     closure
+}
+
+/// Compute epsilon closure reusing caller-provided buffers.
+///
+/// The caller must ensure `visited` is all-false on entry. This function
+/// resets `visited` flags before returning (only touching set entries),
+/// so the caller can reuse the same buffer across multiple calls.
+/// The reset is O(closure_size), not O(nfa.states.len()).
+///
+/// This variant avoids per-call allocation of `visited`, `closure`, and `stack`
+/// by receiving them as mutable references from the caller (typically TLS buffers
+/// in `subset_construction`).
+pub fn epsilon_closure_reuse(
+    nfa: &Nfa,
+    seeds: &[StateId],
+    visited: &mut [bool],
+    closure: &mut Vec<StateId>,
+    stack: &mut Vec<StateId>,
+) {
+    closure.clear();
+    stack.clear();
+
+    closure.extend_from_slice(seeds);
+    stack.extend_from_slice(seeds);
+    for &s in seeds {
+        visited[s as usize] = true;
+    }
+
+    while let Some(state) = stack.pop() {
+        for &target in &nfa.states[state as usize].epsilon {
+            if !visited[target as usize] {
+                visited[target as usize] = true;
+                closure.push(target);
+                stack.push(target);
+            }
+        }
+    }
+
+    // Reset visited flags for reuse (O(closure_size), not O(nfa.states.len()))
+    for &s in closure.iter() {
+        visited[s as usize] = false;
+    }
+
+    closure.sort_unstable();
+    closure.dedup();
 }
 
 #[cfg(test)]

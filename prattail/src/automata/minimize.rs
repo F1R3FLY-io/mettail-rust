@@ -12,9 +12,29 @@
 //! where p is the number of partitions, instead of the naive O(n² × k) approach.
 //!
 //! **Complexity:** O(n × k × log n) on the number of DFA states and classes.
+//!
+//! ## Optimizations
+//!
+//! - **Inverse map pre-allocation:** A counting pass computes exact predecessor
+//!   counts per (target, class) pair, then inner Vecs are allocated with exact
+//!   capacity — eliminating ~n×k micro-reallocations.
+//! - **Thread-local buffer pooling:** `affected_partitions`, `goes_to_splitter`,
+//!   and `partition_seen` retain capacity across calls via `Cell<Vec<T>>`
+//!   take/set pattern, eliminating ~100+ `Vec<bool>` allocations per call.
+
+use std::cell::Cell;
 
 use super::{ClassId, Dfa, DfaState, StateId, DEAD_STATE};
 use std::collections::BTreeMap;
+
+thread_local! {
+    /// Reusable buffer for affected partition indices during worklist refinement.
+    static AFFECTED: Cell<Vec<usize>> = const { Cell::new(Vec::new()) };
+    /// Reusable buffer for states that transition to the splitter partition.
+    static GOES_TO: Cell<Vec<StateId>> = const { Cell::new(Vec::new()) };
+    /// Reusable boolean buffer for tracking seen partitions (avoids duplicates).
+    static SEEN: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
+}
 
 /// Minimize a DFA using Hopcroft's algorithm with inverse transition map.
 ///
@@ -27,10 +47,25 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
 
     let num_classes = dfa.num_classes;
 
-    // --- Step 1: Build inverse transition map ---
+    // --- Step 1: Build inverse transition map with pre-counted capacities ---
+    // Count predecessors per (target, class) pair for exact inner Vec allocation
+    let mut pred_counts = vec![0u32; n * num_classes];
+    for state in dfa.states.iter() {
+        for (class_id, &target) in state.transitions.iter().enumerate() {
+            if target != DEAD_STATE {
+                pred_counts[target as usize * num_classes + class_id] += 1;
+            }
+        }
+    }
     // inverse[target_state][class_id] = list of predecessor states
     // that transition to target_state on class_id.
-    let mut inverse: Vec<Vec<Vec<StateId>>> = vec![vec![Vec::new(); num_classes]; n];
+    let mut inverse: Vec<Vec<Vec<StateId>>> = (0..n)
+        .map(|state| {
+            (0..num_classes)
+                .map(|class| Vec::with_capacity(pred_counts[state * num_classes + class] as usize))
+                .collect()
+        })
+        .collect();
     for (state_idx, state) in dfa.states.iter().enumerate() {
         let state_id = state_idx as StateId;
         for (class_id, &target) in state.transitions.iter().enumerate() {
@@ -78,9 +113,20 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
     }
 
     // --- Step 4: Iterative refinement with inverse transition map ---
-    // Reusable buffers to avoid repeated allocation
-    let mut affected_partitions: Vec<usize> = Vec::new();
-    let mut goes_to_splitter: Vec<StateId> = Vec::new();
+    // Take TLS buffers and ensure first-call pre-allocation
+    let mut affected_partitions = AFFECTED.with(|cell| cell.take());
+    affected_partitions.clear();
+    if affected_partitions.capacity() < n {
+        affected_partitions.reserve(n - affected_partitions.capacity());
+    }
+
+    let mut goes_to_splitter = GOES_TO.with(|cell| cell.take());
+    goes_to_splitter.clear();
+    if goes_to_splitter.capacity() < n {
+        goes_to_splitter.reserve(n - goes_to_splitter.capacity());
+    }
+
+    let mut partition_seen = SEEN.with(|cell| cell.take());
 
     while let Some((splitter_idx, class_id)) = worklist.pop() {
         // Skip if the partition is empty (may have been emptied by a split)
@@ -92,9 +138,9 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
         // These are the only states that *could* cause a partition to split.
         affected_partitions.clear();
         // Track which partitions have predecessors (to avoid duplicates)
-        // Use a simple Vec<bool> since partition count is small.
-        let num_partitions = partitions.len();
-        let mut partition_seen = vec![false; num_partitions];
+        // TLS Vec<bool>: resize to current partition count, reused across iterations
+        partition_seen.clear();
+        partition_seen.resize(partitions.len(), false);
 
         for &splitter_state in &partitions[splitter_idx] {
             for &pred in &inverse[splitter_state as usize][class_id as usize] {
@@ -182,6 +228,11 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
             }
         }
     }
+
+    // Return TLS buffers for reuse
+    AFFECTED.with(|cell| cell.set(affected_partitions));
+    GOES_TO.with(|cell| cell.set(goes_to_splitter));
+    SEEN.with(|cell| cell.set(partition_seen));
 
     // --- Step 5: Build minimized DFA ---
     let mut new_dfa = Dfa::new(num_classes);

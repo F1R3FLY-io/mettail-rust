@@ -6,1682 +6,1682 @@ ascent_source! {
     rhocalc_source:
 
     // Relations
-relation proc (Proc);
+relation proc(Proc);
 
-# [ds (crate::eqrel)]relation eq_proc (Proc , Proc);
+#[ds(crate::eqrel)] relation eq_proc(Proc, Proc);
 
-relation rw_proc (Proc , Proc);
+relation rw_proc(Proc, Proc);
 
-relation fold_proc (Proc , Proc);
+relation fold_proc(Proc, Proc);
 
-relation name (Name);
+relation name(Name);
 
-# [ds (crate::eqrel)]relation eq_name (Name , Name);
+#[ds(crate::eqrel)] relation eq_name(Name, Name);
 
-relation rw_name (Name , Name);
+relation rw_name(Name, Name);
 
-relation int (Int);
+relation int(Int);
 
-# [ds (crate::eqrel)]relation eq_int (Int , Int);
+#[ds(crate::eqrel)] relation eq_int(Int, Int);
 
-relation rw_int (Int , Int);
+relation rw_int(Int, Int);
 
-relation float (Float);
+relation float(Float);
 
-# [ds (crate::eqrel)]relation eq_float (Float , Float);
+#[ds(crate::eqrel)] relation eq_float(Float, Float);
 
-relation rw_float (Float , Float);
+relation rw_float(Float, Float);
 
-relation bool (Bool);
+relation bool(Bool);
 
-# [ds (crate::eqrel)]relation eq_bool (Bool , Bool);
+#[ds(crate::eqrel)] relation eq_bool(Bool, Bool);
 
-relation rw_bool (Bool , Bool);
+relation rw_bool(Bool, Bool);
 
-relation str (Str);
+relation str(Str);
 
-# [ds (crate::eqrel)]relation eq_str (Str , Str);
+#[ds(crate::eqrel)] relation eq_str(Str, Str);
 
-relation rw_str (Str , Str);
+relation rw_str(Str, Str);
 
-relation step_term (Proc);
+relation step_term(Proc);
 
-relation ppar_contains (Proc , Proc);
+relation ppar_contains(Proc, Proc);
 
 
     // Category rules
-proc (sub . clone ()) <--
-    proc (t),
+proc(sub.clone()) <--
+    proc(t),
     for sub in (match t {
-        Proc::POutput (_ , f1)=> vec ! [f1 . as_ref (). clone ()],
-        Proc::Add (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Sub (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Mul (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Div (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Eq (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Ne (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Gt (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Lt (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::GtEq (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::LtEq (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Not (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::And (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Or (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::ConcatStr (f0 , f1)=> vec ! [f0 . as_ref (). clone (), f1 . as_ref (). clone ()],
-        Proc::Len (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ToInt (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ToFloat (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ToBool (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ToStr (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ApplyProc (lam , arg)=> vec ! [lam . as_ref (). clone (), arg . as_ref (). clone ()],
-        Proc::MApplyProc (lam , args)=> {
-            let mut v = Vec::with_capacity (1 + args . len ());
-            v . push (lam . as_ref (). clone ());
-            v . extend (args . iter (). cloned ());
+        Proc::POutput(_, f1) => vec![f1.as_ref().clone()],
+        Proc::Add(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Sub(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Mul(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Div(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Eq(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Ne(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Gt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Lt(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::GtEq(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::LtEq(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Not(f0) => vec![f0.as_ref().clone()],
+        Proc::And(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Or(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::ConcatStr(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
+        Proc::Len(f0) => vec![f0.as_ref().clone()],
+        Proc::ToInt(f0) => vec![f0.as_ref().clone()],
+        Proc::ToFloat(f0) => vec![f0.as_ref().clone()],
+        Proc::ToBool(f0) => vec![f0.as_ref().clone()],
+        Proc::ToStr(f0) => vec![f0.as_ref().clone()],
+        Proc::ApplyProc(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Proc::MApplyProc(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
             v
         },
-        Proc::LamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::MLamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::LamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::MLamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::LamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::MLamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::LamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::MLamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::LamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::MLamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::LamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Proc::MLamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter ();
+        Proc::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Proc::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Proc::LamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::MLamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Proc::LamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::MLamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Proc::LamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::MLamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Proc::LamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Proc::MLamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
 
-name (sub . clone ()) <--
-    proc (t),
+name(sub.clone()) <--
+    proc(t),
     for sub in (match t {
-        Proc::PDrop (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::POutput (f0 , _)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Proc::MApplyName (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Proc::PDrop(f0) => vec![f0.as_ref().clone()],
+        Proc::POutput(f0, _) => vec![f0.as_ref().clone()],
+        Proc::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        Proc::MApplyName(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-int (sub . clone ()) <--
-    proc (t),
+int(sub.clone()) <--
+    proc(t),
     for sub in (match t {
-        Proc::CastInt (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Proc::MApplyInt (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Proc::CastInt(f0) => vec![f0.as_ref().clone()],
+        Proc::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        Proc::MApplyInt(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-float (sub . clone ()) <--
-    proc (t),
+float(sub.clone()) <--
+    proc(t),
     for sub in (match t {
-        Proc::CastFloat (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Proc::MApplyFloat (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Proc::CastFloat(f0) => vec![f0.as_ref().clone()],
+        Proc::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        Proc::MApplyFloat(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-bool (sub . clone ()) <--
-    proc (t),
+bool(sub.clone()) <--
+    proc(t),
     for sub in (match t {
-        Proc::CastBool (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Proc::MApplyBool (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Proc::CastBool(f0) => vec![f0.as_ref().clone()],
+        Proc::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        Proc::MApplyBool(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-str (sub . clone ()) <--
-    proc (t),
+str(sub.clone()) <--
+    proc(t),
     for sub in (match t {
-        Proc::CastStr (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Proc::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Proc::MApplyStr (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Proc::CastStr(f0) => vec![f0.as_ref().clone()],
+        Proc::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        Proc::MApplyStr(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-proc (sub . clone ()) <--
-    name (t),
+proc(sub.clone()) <--
+    name(t),
     for sub in (match t {
-        Name::NQuote (f0)=> vec ! [f0 . as_ref (). clone ()],
-        Name::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Name::MApplyProc (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Name::NQuote(f0) => vec![f0.as_ref().clone()],
+        Name::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        Name::MApplyProc(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-name (sub . clone ()) <--
-    name (t),
+name(sub.clone()) <--
+    name(t),
     for sub in (match t {
-        Name::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::LamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::MLamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::ApplyName (lam , arg)=> vec ! [lam . as_ref (). clone (), arg . as_ref (). clone ()],
-        Name::MApplyName (lam , args)=> {
-            let mut v = Vec::with_capacity (1 + args . len ());
-            v . push (lam . as_ref (). clone ());
-            v . extend (args . iter (). cloned ());
+        Name::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Name::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::ApplyName(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Name::MApplyName(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
             v
         },
-        Name::LamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::MLamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::LamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::MLamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::LamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::MLamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::LamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::MLamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::LamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Name::MLamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter ();
+        Name::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Name::LamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::MLamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Name::LamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::MLamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Name::LamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::MLamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Name::LamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Name::MLamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
 
-int (sub . clone ()) <--
-    name (t),
+int(sub.clone()) <--
+    name(t),
     for sub in (match t {
-        Name::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Name::MApplyInt (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Name::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        Name::MApplyInt(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-float (sub . clone ()) <--
-    name (t),
+float(sub.clone()) <--
+    name(t),
     for sub in (match t {
-        Name::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Name::MApplyFloat (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Name::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        Name::MApplyFloat(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-bool (sub . clone ()) <--
-    name (t),
+bool(sub.clone()) <--
+    name(t),
     for sub in (match t {
-        Name::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Name::MApplyBool (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Name::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        Name::MApplyBool(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-str (sub . clone ()) <--
-    name (t),
+str(sub.clone()) <--
+    name(t),
     for sub in (match t {
-        Name::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Name::MApplyStr (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Name::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        Name::MApplyStr(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-proc (sub . clone ()) <--
-    int (t),
+proc(sub.clone()) <--
+    int(t),
     for sub in (match t {
-        Int::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Int::MApplyProc (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Int::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        Int::MApplyProc(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-name (sub . clone ()) <--
-    int (t),
+name(sub.clone()) <--
+    int(t),
     for sub in (match t {
-        Int::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Int::MApplyName (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Int::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        Int::MApplyName(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-int (sub . clone ()) <--
-    int (t),
+int(sub.clone()) <--
+    int(t),
     for sub in (match t {
-        Int::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::LamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::MLamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::LamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::MLamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::ApplyInt (lam , arg)=> vec ! [lam . as_ref (). clone (), arg . as_ref (). clone ()],
-        Int::MApplyInt (lam , args)=> {
-            let mut v = Vec::with_capacity (1 + args . len ());
-            v . push (lam . as_ref (). clone ());
-            v . extend (args . iter (). cloned ());
+        Int::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Int::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Int::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::ApplyInt(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Int::MApplyInt(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
             v
         },
-        Int::LamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::MLamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::LamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::MLamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::LamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::MLamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::LamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Int::MLamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter ();
+        Int::LamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::MLamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Int::LamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::MLamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Int::LamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::MLamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Int::LamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Int::MLamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
 
-float (sub . clone ()) <--
-    int (t),
+float(sub.clone()) <--
+    int(t),
     for sub in (match t {
-        Int::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Int::MApplyFloat (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Int::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        Int::MApplyFloat(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-bool (sub . clone ()) <--
-    int (t),
+bool(sub.clone()) <--
+    int(t),
     for sub in (match t {
-        Int::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Int::MApplyBool (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Int::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        Int::MApplyBool(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-str (sub . clone ()) <--
-    int (t),
+str(sub.clone()) <--
+    int(t),
     for sub in (match t {
-        Int::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Int::MApplyStr (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Int::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        Int::MApplyStr(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-proc (sub . clone ()) <--
-    float (t),
+proc(sub.clone()) <--
+    float(t),
     for sub in (match t {
-        Float::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Float::MApplyProc (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Float::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        Float::MApplyProc(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-name (sub . clone ()) <--
-    float (t),
+name(sub.clone()) <--
+    float(t),
     for sub in (match t {
-        Float::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Float::MApplyName (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Float::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        Float::MApplyName(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-int (sub . clone ()) <--
-    float (t),
+int(sub.clone()) <--
+    float(t),
     for sub in (match t {
-        Float::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Float::MApplyInt (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Float::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        Float::MApplyInt(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-float (sub . clone ()) <--
-    float (t),
+float(sub.clone()) <--
+    float(t),
     for sub in (match t {
-        Float::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::LamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::MLamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::LamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::MLamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::LamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::MLamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::ApplyFloat (lam , arg)=> vec ! [lam . as_ref (). clone (), arg . as_ref (). clone ()],
-        Float::MApplyFloat (lam , args)=> {
-            let mut v = Vec::with_capacity (1 + args . len ());
-            v . push (lam . as_ref (). clone ());
-            v . extend (args . iter (). cloned ());
+        Float::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Float::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Float::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Float::LamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::MLamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::ApplyFloat(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Float::MApplyFloat(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
             v
         },
-        Float::LamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::MLamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::LamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::MLamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::LamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Float::MLamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter ();
+        Float::LamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::MLamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Float::LamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::MLamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Float::LamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Float::MLamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
 
-bool (sub . clone ()) <--
-    float (t),
+bool(sub.clone()) <--
+    float(t),
     for sub in (match t {
-        Float::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Float::MApplyBool (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Float::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        Float::MApplyBool(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-str (sub . clone ()) <--
-    float (t),
+str(sub.clone()) <--
+    float(t),
     for sub in (match t {
-        Float::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Float::MApplyStr (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Float::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        Float::MApplyStr(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-proc (sub . clone ()) <--
-    bool (t),
+proc(sub.clone()) <--
+    bool(t),
     for sub in (match t {
-        Bool::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Bool::MApplyProc (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Bool::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        Bool::MApplyProc(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-name (sub . clone ()) <--
-    bool (t),
+name(sub.clone()) <--
+    bool(t),
     for sub in (match t {
-        Bool::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Bool::MApplyName (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Bool::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        Bool::MApplyName(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-int (sub . clone ()) <--
-    bool (t),
+int(sub.clone()) <--
+    bool(t),
     for sub in (match t {
-        Bool::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Bool::MApplyInt (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Bool::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        Bool::MApplyInt(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-float (sub . clone ()) <--
-    bool (t),
+float(sub.clone()) <--
+    bool(t),
     for sub in (match t {
-        Bool::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Bool::MApplyFloat (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Bool::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        Bool::MApplyFloat(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-bool (sub . clone ()) <--
-    bool (t),
+bool(sub.clone()) <--
+    bool(t),
     for sub in (match t {
-        Bool::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::LamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::MLamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::LamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::MLamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::LamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::MLamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::LamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::MLamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::ApplyBool (lam , arg)=> vec ! [lam . as_ref (). clone (), arg . as_ref (). clone ()],
-        Bool::MApplyBool (lam , args)=> {
-            let mut v = Vec::with_capacity (1 + args . len ());
-            v . push (lam . as_ref (). clone ());
-            v . extend (args . iter (). cloned ());
+        Bool::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Bool::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Bool::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Bool::LamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::MLamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Bool::LamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::MLamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::ApplyBool(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Bool::MApplyBool(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
             v
         },
-        Bool::LamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::MLamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::LamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Bool::MLamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter ();
+        Bool::LamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::MLamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Bool::LamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Bool::MLamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
 
-str (sub . clone ()) <--
-    bool (t),
+str(sub.clone()) <--
+    bool(t),
     for sub in (match t {
-        Bool::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Bool::MApplyStr (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Bool::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        Bool::MApplyStr(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-proc (sub . clone ()) <--
-    str (t),
+proc(sub.clone()) <--
+    str(t),
     for sub in (match t {
-        Str::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Str::MApplyProc (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Str::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        Str::MApplyProc(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-name (sub . clone ()) <--
-    str (t),
+name(sub.clone()) <--
+    str(t),
     for sub in (match t {
-        Str::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Str::MApplyName (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Str::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        Str::MApplyName(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-int (sub . clone ()) <--
-    str (t),
+int(sub.clone()) <--
+    str(t),
     for sub in (match t {
-        Str::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Str::MApplyInt (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Str::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        Str::MApplyInt(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-float (sub . clone ()) <--
-    str (t),
+float(sub.clone()) <--
+    str(t),
     for sub in (match t {
-        Str::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Str::MApplyFloat (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Str::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        Str::MApplyFloat(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-bool (sub . clone ()) <--
-    str (t),
+bool(sub.clone()) <--
+    str(t),
     for sub in (match t {
-        Str::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        Str::MApplyBool (_ , args)=> args . iter (). cloned (). collect (),
-        _ => vec ! [],
-    }). into_iter ();
+        Str::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        Str::MApplyBool(_, args) => args.iter().cloned().collect(),
+        _ => vec![],
+    }).into_iter();
 
-str (sub . clone ()) <--
-    str (t),
+str(sub.clone()) <--
+    str(t),
     for sub in (match t {
-        Str::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::LamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::MLamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::LamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::MLamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::LamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::MLamInt (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::LamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::MLamFloat (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::LamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::MLamBool (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::ApplyStr (lam , arg)=> vec ! [lam . as_ref (). clone (), arg . as_ref (). clone ()],
-        Str::MApplyStr (lam , args)=> {
-            let mut v = Vec::with_capacity (1 + args . len ());
-            v . push (lam . as_ref (). clone ());
-            v . extend (args . iter (). cloned ());
+        Str::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Str::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Str::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Str::LamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::MLamInt(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Str::LamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::MLamFloat(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Str::LamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::MLamBool(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::ApplyStr(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        Str::MApplyStr(lam, args) => {
+            let mut v = Vec::with_capacity(1 + args.len());
+            v.push(lam.as_ref().clone());
+            v.extend(args.iter().cloned());
             v
         },
-        Str::LamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        Str::MLamStr (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter ();
+        Str::LamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Str::MLamStr(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        _ => vec![],
+    }).into_iter();
 
-proc (c1 . clone ()) <--
-    proc (c0),
-    rw_proc (c0 , c1);
+proc(c1.clone()) <--
+    proc(c0),
+    rw_proc(c0, c1);
 
-ppar_contains (parent . clone (), elem . clone ()) <--
-    proc (parent),
-    if let Proc::PPar (ref bag_field)= parent,
-    for (elem , _count)in bag_field . iter ();
+ppar_contains(parent.clone(), elem.clone()) <--
+    proc(parent),
+    if let Proc::PPar(ref bag_field) = parent,
+    for (elem, _count) in bag_field.iter();
 
-proc (elem . clone ()) <--
-    ppar_contains (_parent , elem);
+proc(elem.clone()) <--
+    ppar_contains(_parent, elem);
 
-name (elem . clone ()) <--
-    proc (t),
-    if let Proc::PInputs (ref vec_field , _)= t,
-    for elem in vec_field . iter ();
+name(elem.clone()) <--
+    proc(t),
+    if let Proc::PInputs(ref vec_field, _) = t,
+    for elem in vec_field.iter();
 
-proc (Proc::MLamProc (scope . clone ())) <--
-    proc (t),
-    if let Proc::PInputs (_ , scope)= t;
+proc(Proc::MLamProc(scope.clone())) <--
+    proc(t),
+    if let Proc::PInputs(_, scope) = t;
 
-rw_proc (t . clone (), match t {
-    Proc::ApplyProc (_ , arg)=> Proc::ApplyProc (Box::new (new_lam . clone ()), arg . clone ()),
-    Proc::MApplyProc (_ , args)=> Proc::MApplyProc (Box::new (new_lam . clone ()), args . clone ()),
-    Proc::ApplyName (_ , arg)=> Proc::ApplyName (Box::new (new_lam . clone ()), arg . clone ()),
-    Proc::MApplyName (_ , args)=> Proc::MApplyName (Box::new (new_lam . clone ()), args . clone ()),
-    Proc::ApplyInt (_ , arg)=> Proc::ApplyInt (Box::new (new_lam . clone ()), arg . clone ()),
-    Proc::MApplyInt (_ , args)=> Proc::MApplyInt (Box::new (new_lam . clone ()), args . clone ()),
-    Proc::ApplyFloat (_ , arg)=> Proc::ApplyFloat (Box::new (new_lam . clone ()), arg . clone ()),
-    Proc::MApplyFloat (_ , args)=> Proc::MApplyFloat (Box::new (new_lam . clone ()), args . clone ()),
-    Proc::ApplyBool (_ , arg)=> Proc::ApplyBool (Box::new (new_lam . clone ()), arg . clone ()),
-    Proc::MApplyBool (_ , args)=> Proc::MApplyBool (Box::new (new_lam . clone ()), args . clone ()),
-    Proc::ApplyStr (_ , arg)=> Proc::ApplyStr (Box::new (new_lam . clone ()), arg . clone ()),
-    Proc::MApplyStr (_ , args)=> Proc::MApplyStr (Box::new (new_lam . clone ()), args . clone ()),
-    _ => unreachable ! (),
+rw_proc(t.clone(), match t {
+    Proc::ApplyProc(_, arg) => Proc::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
+    Proc::MApplyProc(_, args) => Proc::MApplyProc(Box::new(new_lam.clone()), args.clone()),
+    Proc::ApplyName(_, arg) => Proc::ApplyName(Box::new(new_lam.clone()), arg.clone()),
+    Proc::MApplyName(_, args) => Proc::MApplyName(Box::new(new_lam.clone()), args.clone()),
+    Proc::ApplyInt(_, arg) => Proc::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
+    Proc::MApplyInt(_, args) => Proc::MApplyInt(Box::new(new_lam.clone()), args.clone()),
+    Proc::ApplyFloat(_, arg) => Proc::ApplyFloat(Box::new(new_lam.clone()), arg.clone()),
+    Proc::MApplyFloat(_, args) => Proc::MApplyFloat(Box::new(new_lam.clone()), args.clone()),
+    Proc::ApplyBool(_, arg) => Proc::ApplyBool(Box::new(new_lam.clone()), arg.clone()),
+    Proc::MApplyBool(_, args) => Proc::MApplyBool(Box::new(new_lam.clone()), args.clone()),
+    Proc::ApplyStr(_, arg) => Proc::ApplyStr(Box::new(new_lam.clone()), arg.clone()),
+    Proc::MApplyStr(_, args) => Proc::MApplyStr(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
 }) <--
-    proc (t),
+    proc(t),
     for lam in (match t {
-        Proc::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Proc::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_proc (lam , new_lam);
+        Proc::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Proc::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Proc::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Proc::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Proc::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Proc::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Proc::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(lam, new_lam);
 
-rw_proc (t . clone (), match t {
-    Proc::ApplyProc (lam , _)=> Proc::ApplyProc (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_proc(t.clone(), match t {
+    Proc::ApplyProc(lam, _) => Proc::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    proc (t),
+    proc(t),
     for arg in (match t {
-        Proc::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_proc (arg , new_arg);
+        Proc::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(arg, new_arg);
 
-rw_proc (t . clone (), match t {
-    Proc::ApplyName (lam , _)=> Proc::ApplyName (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_proc(t.clone(), match t {
+    Proc::ApplyName(lam, _) => Proc::ApplyName(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    proc (t),
+    proc(t),
     for arg in (match t {
-        Proc::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_name (arg , new_arg);
+        Proc::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(arg, new_arg);
 
-rw_proc (t . clone (), match t {
-    Proc::ApplyInt (lam , _)=> Proc::ApplyInt (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_proc(t.clone(), match t {
+    Proc::ApplyInt(lam, _) => Proc::ApplyInt(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    proc (t),
+    proc(t),
     for arg in (match t {
-        Proc::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_int (arg , new_arg);
+        Proc::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(arg, new_arg);
 
-rw_proc (t . clone (), match t {
-    Proc::ApplyFloat (lam , _)=> Proc::ApplyFloat (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_proc(t.clone(), match t {
+    Proc::ApplyFloat(lam, _) => Proc::ApplyFloat(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    proc (t),
+    proc(t),
     for arg in (match t {
-        Proc::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_float (arg , new_arg);
+        Proc::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_float(arg, new_arg);
 
-rw_proc (t . clone (), match t {
-    Proc::ApplyBool (lam , _)=> Proc::ApplyBool (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_proc(t.clone(), match t {
+    Proc::ApplyBool(lam, _) => Proc::ApplyBool(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    proc (t),
+    proc(t),
     for arg in (match t {
-        Proc::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_bool (arg , new_arg);
+        Proc::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_bool(arg, new_arg);
 
-rw_proc (t . clone (), match t {
-    Proc::ApplyStr (lam , _)=> Proc::ApplyStr (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_proc(t.clone(), match t {
+    Proc::ApplyStr(lam, _) => Proc::ApplyStr(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    proc (t),
+    proc(t),
     for arg in (match t {
-        Proc::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_str (arg , new_arg);
+        Proc::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_str(arg, new_arg);
 
-name (c1 . clone ()) <--
-    name (c0),
-    rw_name (c0 , c1);
+name(c1.clone()) <--
+    name(c0),
+    rw_name(c0, c1);
 
-rw_name (t . clone (), match t {
-    Name::ApplyProc (_ , arg)=> Name::ApplyProc (Box::new (new_lam . clone ()), arg . clone ()),
-    Name::MApplyProc (_ , args)=> Name::MApplyProc (Box::new (new_lam . clone ()), args . clone ()),
-    Name::ApplyName (_ , arg)=> Name::ApplyName (Box::new (new_lam . clone ()), arg . clone ()),
-    Name::MApplyName (_ , args)=> Name::MApplyName (Box::new (new_lam . clone ()), args . clone ()),
-    Name::ApplyInt (_ , arg)=> Name::ApplyInt (Box::new (new_lam . clone ()), arg . clone ()),
-    Name::MApplyInt (_ , args)=> Name::MApplyInt (Box::new (new_lam . clone ()), args . clone ()),
-    Name::ApplyFloat (_ , arg)=> Name::ApplyFloat (Box::new (new_lam . clone ()), arg . clone ()),
-    Name::MApplyFloat (_ , args)=> Name::MApplyFloat (Box::new (new_lam . clone ()), args . clone ()),
-    Name::ApplyBool (_ , arg)=> Name::ApplyBool (Box::new (new_lam . clone ()), arg . clone ()),
-    Name::MApplyBool (_ , args)=> Name::MApplyBool (Box::new (new_lam . clone ()), args . clone ()),
-    Name::ApplyStr (_ , arg)=> Name::ApplyStr (Box::new (new_lam . clone ()), arg . clone ()),
-    Name::MApplyStr (_ , args)=> Name::MApplyStr (Box::new (new_lam . clone ()), args . clone ()),
-    _ => unreachable ! (),
+rw_name(t.clone(), match t {
+    Name::ApplyProc(_, arg) => Name::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
+    Name::MApplyProc(_, args) => Name::MApplyProc(Box::new(new_lam.clone()), args.clone()),
+    Name::ApplyName(_, arg) => Name::ApplyName(Box::new(new_lam.clone()), arg.clone()),
+    Name::MApplyName(_, args) => Name::MApplyName(Box::new(new_lam.clone()), args.clone()),
+    Name::ApplyInt(_, arg) => Name::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
+    Name::MApplyInt(_, args) => Name::MApplyInt(Box::new(new_lam.clone()), args.clone()),
+    Name::ApplyFloat(_, arg) => Name::ApplyFloat(Box::new(new_lam.clone()), arg.clone()),
+    Name::MApplyFloat(_, args) => Name::MApplyFloat(Box::new(new_lam.clone()), args.clone()),
+    Name::ApplyBool(_, arg) => Name::ApplyBool(Box::new(new_lam.clone()), arg.clone()),
+    Name::MApplyBool(_, args) => Name::MApplyBool(Box::new(new_lam.clone()), args.clone()),
+    Name::ApplyStr(_, arg) => Name::ApplyStr(Box::new(new_lam.clone()), arg.clone()),
+    Name::MApplyStr(_, args) => Name::MApplyStr(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
 }) <--
-    name (t),
+    name(t),
     for lam in (match t {
-        Name::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Name::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_name (lam , new_lam);
+        Name::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Name::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Name::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Name::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Name::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Name::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Name::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(lam, new_lam);
 
-rw_name (t . clone (), match t {
-    Name::ApplyProc (lam , _)=> Name::ApplyProc (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_name(t.clone(), match t {
+    Name::ApplyProc(lam, _) => Name::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    name (t),
+    name(t),
     for arg in (match t {
-        Name::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_proc (arg , new_arg);
+        Name::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(arg, new_arg);
 
-rw_name (t . clone (), match t {
-    Name::ApplyName (lam , _)=> Name::ApplyName (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_name(t.clone(), match t {
+    Name::ApplyName(lam, _) => Name::ApplyName(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    name (t),
+    name(t),
     for arg in (match t {
-        Name::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_name (arg , new_arg);
+        Name::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(arg, new_arg);
 
-rw_name (t . clone (), match t {
-    Name::ApplyInt (lam , _)=> Name::ApplyInt (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_name(t.clone(), match t {
+    Name::ApplyInt(lam, _) => Name::ApplyInt(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    name (t),
+    name(t),
     for arg in (match t {
-        Name::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_int (arg , new_arg);
+        Name::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(arg, new_arg);
 
-rw_name (t . clone (), match t {
-    Name::ApplyFloat (lam , _)=> Name::ApplyFloat (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_name(t.clone(), match t {
+    Name::ApplyFloat(lam, _) => Name::ApplyFloat(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    name (t),
+    name(t),
     for arg in (match t {
-        Name::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_float (arg , new_arg);
+        Name::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_float(arg, new_arg);
 
-rw_name (t . clone (), match t {
-    Name::ApplyBool (lam , _)=> Name::ApplyBool (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_name(t.clone(), match t {
+    Name::ApplyBool(lam, _) => Name::ApplyBool(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    name (t),
+    name(t),
     for arg in (match t {
-        Name::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_bool (arg , new_arg);
+        Name::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_bool(arg, new_arg);
 
-rw_name (t . clone (), match t {
-    Name::ApplyStr (lam , _)=> Name::ApplyStr (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_name(t.clone(), match t {
+    Name::ApplyStr(lam, _) => Name::ApplyStr(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    name (t),
+    name(t),
     for arg in (match t {
-        Name::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_str (arg , new_arg);
+        Name::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_str(arg, new_arg);
 
-int (c1 . clone ()) <--
-    int (c0),
-    rw_int (c0 , c1);
+int(c1.clone()) <--
+    int(c0),
+    rw_int(c0, c1);
 
-rw_int (t . clone (), match t {
-    Int::ApplyProc (_ , arg)=> Int::ApplyProc (Box::new (new_lam . clone ()), arg . clone ()),
-    Int::MApplyProc (_ , args)=> Int::MApplyProc (Box::new (new_lam . clone ()), args . clone ()),
-    Int::ApplyName (_ , arg)=> Int::ApplyName (Box::new (new_lam . clone ()), arg . clone ()),
-    Int::MApplyName (_ , args)=> Int::MApplyName (Box::new (new_lam . clone ()), args . clone ()),
-    Int::ApplyInt (_ , arg)=> Int::ApplyInt (Box::new (new_lam . clone ()), arg . clone ()),
-    Int::MApplyInt (_ , args)=> Int::MApplyInt (Box::new (new_lam . clone ()), args . clone ()),
-    Int::ApplyFloat (_ , arg)=> Int::ApplyFloat (Box::new (new_lam . clone ()), arg . clone ()),
-    Int::MApplyFloat (_ , args)=> Int::MApplyFloat (Box::new (new_lam . clone ()), args . clone ()),
-    Int::ApplyBool (_ , arg)=> Int::ApplyBool (Box::new (new_lam . clone ()), arg . clone ()),
-    Int::MApplyBool (_ , args)=> Int::MApplyBool (Box::new (new_lam . clone ()), args . clone ()),
-    Int::ApplyStr (_ , arg)=> Int::ApplyStr (Box::new (new_lam . clone ()), arg . clone ()),
-    Int::MApplyStr (_ , args)=> Int::MApplyStr (Box::new (new_lam . clone ()), args . clone ()),
-    _ => unreachable ! (),
+rw_int(t.clone(), match t {
+    Int::ApplyProc(_, arg) => Int::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
+    Int::MApplyProc(_, args) => Int::MApplyProc(Box::new(new_lam.clone()), args.clone()),
+    Int::ApplyName(_, arg) => Int::ApplyName(Box::new(new_lam.clone()), arg.clone()),
+    Int::MApplyName(_, args) => Int::MApplyName(Box::new(new_lam.clone()), args.clone()),
+    Int::ApplyInt(_, arg) => Int::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
+    Int::MApplyInt(_, args) => Int::MApplyInt(Box::new(new_lam.clone()), args.clone()),
+    Int::ApplyFloat(_, arg) => Int::ApplyFloat(Box::new(new_lam.clone()), arg.clone()),
+    Int::MApplyFloat(_, args) => Int::MApplyFloat(Box::new(new_lam.clone()), args.clone()),
+    Int::ApplyBool(_, arg) => Int::ApplyBool(Box::new(new_lam.clone()), arg.clone()),
+    Int::MApplyBool(_, args) => Int::MApplyBool(Box::new(new_lam.clone()), args.clone()),
+    Int::ApplyStr(_, arg) => Int::ApplyStr(Box::new(new_lam.clone()), arg.clone()),
+    Int::MApplyStr(_, args) => Int::MApplyStr(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
 }) <--
-    int (t),
+    int(t),
     for lam in (match t {
-        Int::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Int::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_int (lam , new_lam);
+        Int::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Int::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Int::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Int::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Int::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Int::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Int::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(lam, new_lam);
 
-rw_int (t . clone (), match t {
-    Int::ApplyProc (lam , _)=> Int::ApplyProc (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_int(t.clone(), match t {
+    Int::ApplyProc(lam, _) => Int::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    int (t),
+    int(t),
     for arg in (match t {
-        Int::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_proc (arg , new_arg);
+        Int::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(arg, new_arg);
 
-rw_int (t . clone (), match t {
-    Int::ApplyName (lam , _)=> Int::ApplyName (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_int(t.clone(), match t {
+    Int::ApplyName(lam, _) => Int::ApplyName(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    int (t),
+    int(t),
     for arg in (match t {
-        Int::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_name (arg , new_arg);
+        Int::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(arg, new_arg);
 
-rw_int (t . clone (), match t {
-    Int::ApplyInt (lam , _)=> Int::ApplyInt (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_int(t.clone(), match t {
+    Int::ApplyInt(lam, _) => Int::ApplyInt(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    int (t),
+    int(t),
     for arg in (match t {
-        Int::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_int (arg , new_arg);
+        Int::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(arg, new_arg);
 
-rw_int (t . clone (), match t {
-    Int::ApplyFloat (lam , _)=> Int::ApplyFloat (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_int(t.clone(), match t {
+    Int::ApplyFloat(lam, _) => Int::ApplyFloat(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    int (t),
+    int(t),
     for arg in (match t {
-        Int::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_float (arg , new_arg);
+        Int::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_float(arg, new_arg);
 
-rw_int (t . clone (), match t {
-    Int::ApplyBool (lam , _)=> Int::ApplyBool (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_int(t.clone(), match t {
+    Int::ApplyBool(lam, _) => Int::ApplyBool(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    int (t),
+    int(t),
     for arg in (match t {
-        Int::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_bool (arg , new_arg);
+        Int::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_bool(arg, new_arg);
 
-rw_int (t . clone (), match t {
-    Int::ApplyStr (lam , _)=> Int::ApplyStr (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_int(t.clone(), match t {
+    Int::ApplyStr(lam, _) => Int::ApplyStr(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    int (t),
+    int(t),
     for arg in (match t {
-        Int::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_str (arg , new_arg);
+        Int::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_str(arg, new_arg);
 
-float (c1 . clone ()) <--
-    float (c0),
-    rw_float (c0 , c1);
+float(c1.clone()) <--
+    float(c0),
+    rw_float(c0, c1);
 
-rw_float (t . clone (), match t {
-    Float::ApplyProc (_ , arg)=> Float::ApplyProc (Box::new (new_lam . clone ()), arg . clone ()),
-    Float::MApplyProc (_ , args)=> Float::MApplyProc (Box::new (new_lam . clone ()), args . clone ()),
-    Float::ApplyName (_ , arg)=> Float::ApplyName (Box::new (new_lam . clone ()), arg . clone ()),
-    Float::MApplyName (_ , args)=> Float::MApplyName (Box::new (new_lam . clone ()), args . clone ()),
-    Float::ApplyInt (_ , arg)=> Float::ApplyInt (Box::new (new_lam . clone ()), arg . clone ()),
-    Float::MApplyInt (_ , args)=> Float::MApplyInt (Box::new (new_lam . clone ()), args . clone ()),
-    Float::ApplyFloat (_ , arg)=> Float::ApplyFloat (Box::new (new_lam . clone ()), arg . clone ()),
-    Float::MApplyFloat (_ , args)=> Float::MApplyFloat (Box::new (new_lam . clone ()), args . clone ()),
-    Float::ApplyBool (_ , arg)=> Float::ApplyBool (Box::new (new_lam . clone ()), arg . clone ()),
-    Float::MApplyBool (_ , args)=> Float::MApplyBool (Box::new (new_lam . clone ()), args . clone ()),
-    Float::ApplyStr (_ , arg)=> Float::ApplyStr (Box::new (new_lam . clone ()), arg . clone ()),
-    Float::MApplyStr (_ , args)=> Float::MApplyStr (Box::new (new_lam . clone ()), args . clone ()),
-    _ => unreachable ! (),
+rw_float(t.clone(), match t {
+    Float::ApplyProc(_, arg) => Float::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
+    Float::MApplyProc(_, args) => Float::MApplyProc(Box::new(new_lam.clone()), args.clone()),
+    Float::ApplyName(_, arg) => Float::ApplyName(Box::new(new_lam.clone()), arg.clone()),
+    Float::MApplyName(_, args) => Float::MApplyName(Box::new(new_lam.clone()), args.clone()),
+    Float::ApplyInt(_, arg) => Float::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
+    Float::MApplyInt(_, args) => Float::MApplyInt(Box::new(new_lam.clone()), args.clone()),
+    Float::ApplyFloat(_, arg) => Float::ApplyFloat(Box::new(new_lam.clone()), arg.clone()),
+    Float::MApplyFloat(_, args) => Float::MApplyFloat(Box::new(new_lam.clone()), args.clone()),
+    Float::ApplyBool(_, arg) => Float::ApplyBool(Box::new(new_lam.clone()), arg.clone()),
+    Float::MApplyBool(_, args) => Float::MApplyBool(Box::new(new_lam.clone()), args.clone()),
+    Float::ApplyStr(_, arg) => Float::ApplyStr(Box::new(new_lam.clone()), arg.clone()),
+    Float::MApplyStr(_, args) => Float::MApplyStr(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
 }) <--
-    float (t),
+    float(t),
     for lam in (match t {
-        Float::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Float::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_float (lam , new_lam);
+        Float::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Float::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Float::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Float::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Float::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Float::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Float::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_float(lam, new_lam);
 
-rw_float (t . clone (), match t {
-    Float::ApplyProc (lam , _)=> Float::ApplyProc (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_float(t.clone(), match t {
+    Float::ApplyProc(lam, _) => Float::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    float (t),
+    float(t),
     for arg in (match t {
-        Float::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_proc (arg , new_arg);
+        Float::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(arg, new_arg);
 
-rw_float (t . clone (), match t {
-    Float::ApplyName (lam , _)=> Float::ApplyName (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_float(t.clone(), match t {
+    Float::ApplyName(lam, _) => Float::ApplyName(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    float (t),
+    float(t),
     for arg in (match t {
-        Float::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_name (arg , new_arg);
+        Float::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(arg, new_arg);
 
-rw_float (t . clone (), match t {
-    Float::ApplyInt (lam , _)=> Float::ApplyInt (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_float(t.clone(), match t {
+    Float::ApplyInt(lam, _) => Float::ApplyInt(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    float (t),
+    float(t),
     for arg in (match t {
-        Float::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_int (arg , new_arg);
+        Float::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(arg, new_arg);
 
-rw_float (t . clone (), match t {
-    Float::ApplyFloat (lam , _)=> Float::ApplyFloat (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_float(t.clone(), match t {
+    Float::ApplyFloat(lam, _) => Float::ApplyFloat(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    float (t),
+    float(t),
     for arg in (match t {
-        Float::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_float (arg , new_arg);
+        Float::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_float(arg, new_arg);
 
-rw_float (t . clone (), match t {
-    Float::ApplyBool (lam , _)=> Float::ApplyBool (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_float(t.clone(), match t {
+    Float::ApplyBool(lam, _) => Float::ApplyBool(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    float (t),
+    float(t),
     for arg in (match t {
-        Float::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_bool (arg , new_arg);
+        Float::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_bool(arg, new_arg);
 
-rw_float (t . clone (), match t {
-    Float::ApplyStr (lam , _)=> Float::ApplyStr (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_float(t.clone(), match t {
+    Float::ApplyStr(lam, _) => Float::ApplyStr(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    float (t),
+    float(t),
     for arg in (match t {
-        Float::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_str (arg , new_arg);
+        Float::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_str(arg, new_arg);
 
-bool (c1 . clone ()) <--
-    bool (c0),
-    rw_bool (c0 , c1);
+bool(c1.clone()) <--
+    bool(c0),
+    rw_bool(c0, c1);
 
-rw_bool (t . clone (), match t {
-    Bool::ApplyProc (_ , arg)=> Bool::ApplyProc (Box::new (new_lam . clone ()), arg . clone ()),
-    Bool::MApplyProc (_ , args)=> Bool::MApplyProc (Box::new (new_lam . clone ()), args . clone ()),
-    Bool::ApplyName (_ , arg)=> Bool::ApplyName (Box::new (new_lam . clone ()), arg . clone ()),
-    Bool::MApplyName (_ , args)=> Bool::MApplyName (Box::new (new_lam . clone ()), args . clone ()),
-    Bool::ApplyInt (_ , arg)=> Bool::ApplyInt (Box::new (new_lam . clone ()), arg . clone ()),
-    Bool::MApplyInt (_ , args)=> Bool::MApplyInt (Box::new (new_lam . clone ()), args . clone ()),
-    Bool::ApplyFloat (_ , arg)=> Bool::ApplyFloat (Box::new (new_lam . clone ()), arg . clone ()),
-    Bool::MApplyFloat (_ , args)=> Bool::MApplyFloat (Box::new (new_lam . clone ()), args . clone ()),
-    Bool::ApplyBool (_ , arg)=> Bool::ApplyBool (Box::new (new_lam . clone ()), arg . clone ()),
-    Bool::MApplyBool (_ , args)=> Bool::MApplyBool (Box::new (new_lam . clone ()), args . clone ()),
-    Bool::ApplyStr (_ , arg)=> Bool::ApplyStr (Box::new (new_lam . clone ()), arg . clone ()),
-    Bool::MApplyStr (_ , args)=> Bool::MApplyStr (Box::new (new_lam . clone ()), args . clone ()),
-    _ => unreachable ! (),
+rw_bool(t.clone(), match t {
+    Bool::ApplyProc(_, arg) => Bool::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
+    Bool::MApplyProc(_, args) => Bool::MApplyProc(Box::new(new_lam.clone()), args.clone()),
+    Bool::ApplyName(_, arg) => Bool::ApplyName(Box::new(new_lam.clone()), arg.clone()),
+    Bool::MApplyName(_, args) => Bool::MApplyName(Box::new(new_lam.clone()), args.clone()),
+    Bool::ApplyInt(_, arg) => Bool::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
+    Bool::MApplyInt(_, args) => Bool::MApplyInt(Box::new(new_lam.clone()), args.clone()),
+    Bool::ApplyFloat(_, arg) => Bool::ApplyFloat(Box::new(new_lam.clone()), arg.clone()),
+    Bool::MApplyFloat(_, args) => Bool::MApplyFloat(Box::new(new_lam.clone()), args.clone()),
+    Bool::ApplyBool(_, arg) => Bool::ApplyBool(Box::new(new_lam.clone()), arg.clone()),
+    Bool::MApplyBool(_, args) => Bool::MApplyBool(Box::new(new_lam.clone()), args.clone()),
+    Bool::ApplyStr(_, arg) => Bool::ApplyStr(Box::new(new_lam.clone()), arg.clone()),
+    Bool::MApplyStr(_, args) => Bool::MApplyStr(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
 }) <--
-    bool (t),
+    bool(t),
     for lam in (match t {
-        Bool::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Bool::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_bool (lam , new_lam);
+        Bool::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Bool::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Bool::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Bool::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Bool::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Bool::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Bool::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_bool(lam, new_lam);
 
-rw_bool (t . clone (), match t {
-    Bool::ApplyProc (lam , _)=> Bool::ApplyProc (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_bool(t.clone(), match t {
+    Bool::ApplyProc(lam, _) => Bool::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    bool (t),
+    bool(t),
     for arg in (match t {
-        Bool::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_proc (arg , new_arg);
+        Bool::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(arg, new_arg);
 
-rw_bool (t . clone (), match t {
-    Bool::ApplyName (lam , _)=> Bool::ApplyName (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_bool(t.clone(), match t {
+    Bool::ApplyName(lam, _) => Bool::ApplyName(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    bool (t),
+    bool(t),
     for arg in (match t {
-        Bool::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_name (arg , new_arg);
+        Bool::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(arg, new_arg);
 
-rw_bool (t . clone (), match t {
-    Bool::ApplyInt (lam , _)=> Bool::ApplyInt (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_bool(t.clone(), match t {
+    Bool::ApplyInt(lam, _) => Bool::ApplyInt(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    bool (t),
+    bool(t),
     for arg in (match t {
-        Bool::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_int (arg , new_arg);
+        Bool::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(arg, new_arg);
 
-rw_bool (t . clone (), match t {
-    Bool::ApplyFloat (lam , _)=> Bool::ApplyFloat (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_bool(t.clone(), match t {
+    Bool::ApplyFloat(lam, _) => Bool::ApplyFloat(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    bool (t),
+    bool(t),
     for arg in (match t {
-        Bool::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_float (arg , new_arg);
+        Bool::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_float(arg, new_arg);
 
-rw_bool (t . clone (), match t {
-    Bool::ApplyBool (lam , _)=> Bool::ApplyBool (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_bool(t.clone(), match t {
+    Bool::ApplyBool(lam, _) => Bool::ApplyBool(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    bool (t),
+    bool(t),
     for arg in (match t {
-        Bool::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_bool (arg , new_arg);
+        Bool::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_bool(arg, new_arg);
 
-rw_bool (t . clone (), match t {
-    Bool::ApplyStr (lam , _)=> Bool::ApplyStr (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_bool(t.clone(), match t {
+    Bool::ApplyStr(lam, _) => Bool::ApplyStr(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    bool (t),
+    bool(t),
     for arg in (match t {
-        Bool::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_str (arg , new_arg);
+        Bool::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_str(arg, new_arg);
 
-str (c1 . clone ()) <--
-    str (c0),
-    rw_str (c0 , c1);
+str(c1.clone()) <--
+    str(c0),
+    rw_str(c0, c1);
 
-rw_str (t . clone (), match t {
-    Str::ApplyProc (_ , arg)=> Str::ApplyProc (Box::new (new_lam . clone ()), arg . clone ()),
-    Str::MApplyProc (_ , args)=> Str::MApplyProc (Box::new (new_lam . clone ()), args . clone ()),
-    Str::ApplyName (_ , arg)=> Str::ApplyName (Box::new (new_lam . clone ()), arg . clone ()),
-    Str::MApplyName (_ , args)=> Str::MApplyName (Box::new (new_lam . clone ()), args . clone ()),
-    Str::ApplyInt (_ , arg)=> Str::ApplyInt (Box::new (new_lam . clone ()), arg . clone ()),
-    Str::MApplyInt (_ , args)=> Str::MApplyInt (Box::new (new_lam . clone ()), args . clone ()),
-    Str::ApplyFloat (_ , arg)=> Str::ApplyFloat (Box::new (new_lam . clone ()), arg . clone ()),
-    Str::MApplyFloat (_ , args)=> Str::MApplyFloat (Box::new (new_lam . clone ()), args . clone ()),
-    Str::ApplyBool (_ , arg)=> Str::ApplyBool (Box::new (new_lam . clone ()), arg . clone ()),
-    Str::MApplyBool (_ , args)=> Str::MApplyBool (Box::new (new_lam . clone ()), args . clone ()),
-    Str::ApplyStr (_ , arg)=> Str::ApplyStr (Box::new (new_lam . clone ()), arg . clone ()),
-    Str::MApplyStr (_ , args)=> Str::MApplyStr (Box::new (new_lam . clone ()), args . clone ()),
-    _ => unreachable ! (),
+rw_str(t.clone(), match t {
+    Str::ApplyProc(_, arg) => Str::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
+    Str::MApplyProc(_, args) => Str::MApplyProc(Box::new(new_lam.clone()), args.clone()),
+    Str::ApplyName(_, arg) => Str::ApplyName(Box::new(new_lam.clone()), arg.clone()),
+    Str::MApplyName(_, args) => Str::MApplyName(Box::new(new_lam.clone()), args.clone()),
+    Str::ApplyInt(_, arg) => Str::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
+    Str::MApplyInt(_, args) => Str::MApplyInt(Box::new(new_lam.clone()), args.clone()),
+    Str::ApplyFloat(_, arg) => Str::ApplyFloat(Box::new(new_lam.clone()), arg.clone()),
+    Str::MApplyFloat(_, args) => Str::MApplyFloat(Box::new(new_lam.clone()), args.clone()),
+    Str::ApplyBool(_, arg) => Str::ApplyBool(Box::new(new_lam.clone()), arg.clone()),
+    Str::MApplyBool(_, args) => Str::MApplyBool(Box::new(new_lam.clone()), args.clone()),
+    Str::ApplyStr(_, arg) => Str::ApplyStr(Box::new(new_lam.clone()), arg.clone()),
+    Str::MApplyStr(_, args) => Str::MApplyStr(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
 }) <--
-    str (t),
+    str(t),
     for lam in (match t {
-        Str::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::ApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyInt (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::ApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyFloat (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::ApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyBool (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::ApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        Str::MApplyStr (lam , _)=> vec ! [lam . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_str (lam , new_lam);
+        Str::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
+        Str::ApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyName(lam, _) => vec![lam.as_ref().clone()],
+        Str::ApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyInt(lam, _) => vec![lam.as_ref().clone()],
+        Str::ApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyFloat(lam, _) => vec![lam.as_ref().clone()],
+        Str::ApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyBool(lam, _) => vec![lam.as_ref().clone()],
+        Str::ApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        Str::MApplyStr(lam, _) => vec![lam.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_str(lam, new_lam);
 
-rw_str (t . clone (), match t {
-    Str::ApplyProc (lam , _)=> Str::ApplyProc (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_str(t.clone(), match t {
+    Str::ApplyProc(lam, _) => Str::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    str (t),
+    str(t),
     for arg in (match t {
-        Str::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_proc (arg , new_arg);
+        Str::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(arg, new_arg);
 
-rw_str (t . clone (), match t {
-    Str::ApplyName (lam , _)=> Str::ApplyName (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_str(t.clone(), match t {
+    Str::ApplyName(lam, _) => Str::ApplyName(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    str (t),
+    str(t),
     for arg in (match t {
-        Str::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_name (arg , new_arg);
+        Str::ApplyName(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_name(arg, new_arg);
 
-rw_str (t . clone (), match t {
-    Str::ApplyInt (lam , _)=> Str::ApplyInt (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_str(t.clone(), match t {
+    Str::ApplyInt(lam, _) => Str::ApplyInt(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    str (t),
+    str(t),
     for arg in (match t {
-        Str::ApplyInt (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_int (arg , new_arg);
+        Str::ApplyInt(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_int(arg, new_arg);
 
-rw_str (t . clone (), match t {
-    Str::ApplyFloat (lam , _)=> Str::ApplyFloat (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_str(t.clone(), match t {
+    Str::ApplyFloat(lam, _) => Str::ApplyFloat(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    str (t),
+    str(t),
     for arg in (match t {
-        Str::ApplyFloat (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_float (arg , new_arg);
+        Str::ApplyFloat(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_float(arg, new_arg);
 
-rw_str (t . clone (), match t {
-    Str::ApplyBool (lam , _)=> Str::ApplyBool (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_str(t.clone(), match t {
+    Str::ApplyBool(lam, _) => Str::ApplyBool(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    str (t),
+    str(t),
     for arg in (match t {
-        Str::ApplyBool (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_bool (arg , new_arg);
+        Str::ApplyBool(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_bool(arg, new_arg);
 
-rw_str (t . clone (), match t {
-    Str::ApplyStr (lam , _)=> Str::ApplyStr (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_str(t.clone(), match t {
+    Str::ApplyStr(lam, _) => Str::ApplyStr(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    str (t),
+    str(t),
     for arg in (match t {
-        Str::ApplyStr (_ , arg)=> vec ! [arg . as_ref (). clone ()],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_str (arg , new_arg);
+        Str::ApplyStr(_, arg) => vec![arg.as_ref().clone()],
+        _ => vec![],
+    }).into_iter(),
+    rw_str(arg, new_arg);
 
 
     // Equation rules
-eq_proc (t . clone (), t . clone ()) <--
-    proc (t);
+eq_proc(t.clone(), t.clone()) <--
+    proc(t);
 
-eq_name (t . clone (), t . clone ()) <--
-    name (t);
+eq_name(t.clone(), t.clone()) <--
+    name(t);
 
-eq_int (t . clone (), t . clone ()) <--
-    int (t);
+eq_int(t.clone(), t.clone()) <--
+    int(t);
 
-eq_float (t . clone (), t . clone ()) <--
-    float (t);
+eq_float(t.clone(), t.clone()) <--
+    float(t);
 
-eq_bool (t . clone (), t . clone ()) <--
-    bool (t);
+eq_bool(t.clone(), t.clone()) <--
+    bool(t);
 
-eq_str (t . clone (), t . clone ()) <--
-    str (t);
+eq_str(t.clone(), t.clone()) <--
+    str(t);
 
-eq_name (s . clone (), t . clone ()) <--
-    name (s),
-    name (t),
-    for (s_f0 , t_f0)in (match (s , t){
-        (Name::NQuote (sf0), Name::NQuote (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        _ => vec ! [],
-    }). into_iter (),
-    eq_proc (s_f0 , t_f0);
+eq_name(s.clone(), t.clone()) <--
+    name(s),
+    name(t),
+    for (s_f0, t_f0) in (match (s, t) {
+        (Name::NQuote(sf0), Name::NQuote(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_proc(s_f0, t_f0);
 
-eq_proc (s . clone (), t . clone ()) <--
-    proc (s),
-    proc (t),
-    for (s_f0 , t_f0)in (match (s , t){
-        (Proc::CastBool (sf0), Proc::CastBool (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        _ => vec ! [],
-    }). into_iter (),
-    eq_bool (s_f0 , t_f0);
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, t_f0) in (match (s, t) {
+        (Proc::CastBool(sf0), Proc::CastBool(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_bool(s_f0, t_f0);
 
-eq_proc (s . clone (), t . clone ()) <--
-    proc (s),
-    proc (t),
-    for (s_f0 , t_f0)in (match (s , t){
-        (Proc::CastFloat (sf0), Proc::CastFloat (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        _ => vec ! [],
-    }). into_iter (),
-    eq_float (s_f0 , t_f0);
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, t_f0) in (match (s, t) {
+        (Proc::CastFloat(sf0), Proc::CastFloat(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_float(s_f0, t_f0);
 
-eq_proc (s . clone (), t . clone ()) <--
-    proc (s),
-    proc (t),
-    for (s_f0 , t_f0)in (match (s , t){
-        (Proc::CastInt (sf0), Proc::CastInt (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        _ => vec ! [],
-    }). into_iter (),
-    eq_int (s_f0 , t_f0);
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, t_f0) in (match (s, t) {
+        (Proc::CastInt(sf0), Proc::CastInt(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_int(s_f0, t_f0);
 
-eq_proc (s . clone (), t . clone ()) <--
-    proc (s),
-    proc (t),
-    for (s_f0 , t_f0)in (match (s , t){
-        (Proc::PDrop (sf0), Proc::PDrop (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        _ => vec ! [],
-    }). into_iter (),
-    eq_name (s_f0 , t_f0);
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, t_f0) in (match (s, t) {
+        (Proc::PDrop(sf0), Proc::PDrop(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_name(s_f0, t_f0);
 
-eq_proc (s . clone (), t . clone ()) <--
-    proc (s),
-    proc (t),
-    for (s_f0 , s_f1 , t_f0 , t_f1)in (match (s , t){
-        (Proc::POutput (sf0 , sf1), Proc::POutput (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        _ => vec ! [],
-    }). into_iter (),
-    eq_name (s_f0 , t_f0),
-    eq_proc (s_f1 , t_f1);
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, s_f1, t_f0, t_f1) in (match (s, t) {
+        (Proc::POutput(sf0, sf1), Proc::POutput(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_name(s_f0, t_f0),
+    eq_proc(s_f1, t_f1);
 
-eq_proc (s . clone (), t . clone ()) <--
-    proc (s),
-    proc (t),
-    for (s_f0 , t_f0)in (match (s , t){
-        (Proc::Not (sf0), Proc::Not (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        (Proc::Len (sf0), Proc::Len (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        (Proc::ToInt (sf0), Proc::ToInt (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        (Proc::ToFloat (sf0), Proc::ToFloat (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        (Proc::ToBool (sf0), Proc::ToBool (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        (Proc::ToStr (sf0), Proc::ToStr (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        _ => vec ! [],
-    }). into_iter (),
-    eq_proc (s_f0 , t_f0);
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, t_f0) in (match (s, t) {
+        (Proc::Not(sf0), Proc::Not(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        (Proc::Len(sf0), Proc::Len(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        (Proc::ToInt(sf0), Proc::ToInt(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        (Proc::ToFloat(sf0), Proc::ToFloat(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        (Proc::ToBool(sf0), Proc::ToBool(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        (Proc::ToStr(sf0), Proc::ToStr(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_proc(s_f0, t_f0);
 
-eq_proc (s . clone (), t . clone ()) <--
-    proc (s),
-    proc (t),
-    for (s_f0 , s_f1 , t_f0 , t_f1)in (match (s , t){
-        (Proc::Add (sf0 , sf1), Proc::Add (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::Sub (sf0 , sf1), Proc::Sub (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::Mul (sf0 , sf1), Proc::Mul (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::Div (sf0 , sf1), Proc::Div (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::Eq (sf0 , sf1), Proc::Eq (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::Ne (sf0 , sf1), Proc::Ne (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::Gt (sf0 , sf1), Proc::Gt (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::Lt (sf0 , sf1), Proc::Lt (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::GtEq (sf0 , sf1), Proc::GtEq (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::LtEq (sf0 , sf1), Proc::LtEq (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::And (sf0 , sf1), Proc::And (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::Or (sf0 , sf1), Proc::Or (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        (Proc::ConcatStr (sf0 , sf1), Proc::ConcatStr (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
-        _ => vec ! [],
-    }). into_iter (),
-    eq_proc (s_f0 , t_f0),
-    eq_proc (s_f1 , t_f1);
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, s_f1, t_f0, t_f1) in (match (s, t) {
+        (Proc::Add(sf0, sf1), Proc::Add(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::Sub(sf0, sf1), Proc::Sub(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::Mul(sf0, sf1), Proc::Mul(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::Div(sf0, sf1), Proc::Div(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::Eq(sf0, sf1), Proc::Eq(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::Ne(sf0, sf1), Proc::Ne(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::Gt(sf0, sf1), Proc::Gt(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::Lt(sf0, sf1), Proc::Lt(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::GtEq(sf0, sf1), Proc::GtEq(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::LtEq(sf0, sf1), Proc::LtEq(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::And(sf0, sf1), Proc::And(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::Or(sf0, sf1), Proc::Or(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        (Proc::ConcatStr(sf0, sf1), Proc::ConcatStr(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_proc(s_f0, t_f0),
+    eq_proc(s_f1, t_f1);
 
-eq_proc (s . clone (), t . clone ()) <--
-    proc (s),
-    proc (t),
-    for (s_f0 , t_f0)in (match (s , t){
-        (Proc::CastStr (sf0), Proc::CastStr (tf0))=> vec ! [(sf0 . as_ref (). clone (), tf0 . as_ref (). clone ())],
-        _ => vec ! [],
-    }). into_iter (),
-    eq_str (s_f0 , t_f0);
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, t_f0) in (match (s, t) {
+        (Proc::CastStr(sf0), Proc::CastStr(tf0)) => vec![(sf0.as_ref().clone(), tf0.as_ref().clone())],
+        _ => vec![],
+    }).into_iter(),
+    eq_str(s_f0, t_f0);
 
-eq_name (s . clone (), t . clone ()),
-name (t . clone ()) <--
-    name (s),
-    if let Name::NQuote (ref s_f0)= s,
+eq_name(s.clone(), t.clone()),
+name(t.clone()) <--
+    name(s),
+    if let Name::NQuote(ref s_f0) = s,
     let s_f0_deref = &** s_f0,
-    if let Proc::PDrop (ref s_f0_deref_f0)= s_f0_deref,
+    if let Proc::PDrop(ref s_f0_deref_f0) = s_f0_deref,
     let s_f0_deref_f0_deref = &** s_f0_deref_f0,
-    let t = ((s_f0_deref_f0_deref . clone ()). clone ()). normalize ();
+    let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
 
     // Rewrite rules
-rw_proc (s_orig . clone (), t) <--
-    eq_proc (s_orig , s),
-    if let Proc::PPar (ref s_f0)= s,
-    for (s_f0_e0 , _count_0)in s_f0 . iter (),
-    if let Proc::PInputs (ref s_f0_e0_f0 , ref s_f0_e0_f1)= s_f0_e0,
-    let s_f0_e0_f1_binder = s_f0_e0_f1 . unsafe_pattern (). clone (),
-    let s_f0_e0_f1_body_boxed = s_f0_e0_f1 . unsafe_body (),
+rw_proc(s_orig.clone(), t) <--
+    eq_proc(s_orig, s),
+    if let Proc::PPar(ref s_f0) = s,
+    for (s_f0_e0, _count_0) in s_f0.iter(),
+    if let Proc::PInputs(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
+    let s_f0_e0_f1_binder = s_f0_e0_f1.unsafe_pattern().clone(),
+    let s_f0_e0_f1_body_boxed = s_f0_e0_f1.unsafe_body(),
     let s_f0_e0_f1_body = &** s_f0_e0_f1_body_boxed,
-    let __all_matchings_1 = {let __ctx_vec : Vec < _ > = s_f0 . iter (). collect (); let mut __candidates = Vec::new (); for __zip_first_1 in s_f0_e0_f0 . clone (). iter (){let mut __row = Vec::new (); for (__idx , (__zip_search_1 , _))in __ctx_vec . iter (). enumerate (){if let Proc::POutput (ref __match_f0_1 , ref __match_f1_1)= __zip_search_1 {if &** __match_f0_1 == __zip_first_1 {__row . push ((__idx , (** __match_f1_1). clone ()));}}}__candidates . push (__row);}mettail_runtime::enumerate_matchings (& __candidates)},
-    for (__zip_collected_1 , __map_matched_indices_1)in __all_matchings_1 . into_iter (),
-    if __zip_collected_1 . len ()== s_f0_e0_f0 . clone (). len (),
-    let s_f0_rest = {let mut bag = s_f0 . clone (); bag . remove (& s_f0_e0); let __ctx_vec : Vec < _ > = s_f0 . iter (). collect (); for __idx in __map_matched_indices_1 . iter (){if let Some ((elem , _))= __ctx_vec . get (* __idx){bag . remove (elem);}}bag},
-    let t = (Proc::PPar ({let mut bag = (s_f0_rest . clone ()). clone (); Proc::insert_into_ppar (& mut bag , {let (__binders , __body)= ((s_f0_e0_f1 . clone ()). clone ()). unbind (); let __vars : Vec < & mettail_runtime::FreeVar < String >> = __binders . iter (). map (| b | & b . 0). collect (); let __repls = {let __map_coll = (__zip_collected_1 . clone ()). clone (); __map_coll . iter (). map (| __elem | Name::NQuote (Box::new ((__elem). clone ()))). collect::< Vec < _ >> ()}; (* __body). multi_substitute_name (& __vars , & __repls)}); bag})). normalize ();
+    let __all_matchings_1 = { let __ctx_vec : Vec < _ > = s_f0.iter().collect(); let mut __candidates = Vec::new(); for __zip_first_1 in s_f0_e0_f0.clone().iter() { let mut __row = Vec::new(); for (__idx, (__zip_search_1, _)) in __ctx_vec.iter().enumerate() { if let Proc::POutput(ref __match_f0_1, ref __match_f1_1) = __zip_search_1 { if &** __match_f0_1 == __zip_first_1 { __row.push((__idx, (** __match_f1_1).clone())); } } } __candidates.push(__row); } mettail_runtime::enumerate_matchings(& __candidates) },
+    for (__zip_collected_1, __map_matched_indices_1) in __all_matchings_1.into_iter(),
+    if __zip_collected_1.len() == s_f0_e0_f0.clone().len(),
+    let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); let __ctx_vec : Vec < _ > = s_f0.iter().collect(); for __idx in __map_matched_indices_1.iter() { if let Some((elem, _)) = __ctx_vec.get(* __idx) { bag.remove(elem); } } bag },
+    let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, { let (__binders, __body) = ((s_f0_e0_f1.clone()).clone()).unbind(); let __vars : Vec < & mettail_runtime::FreeVar < String >> = __binders.iter().map(| b | & b.0).collect(); let __repls = { let __map_coll = (__zip_collected_1.clone()).clone(); __map_coll.iter().map(| __elem | Name::NQuote(Box::new((__elem).clone()))).collect::< Vec < _ >> () }; (* __body).multi_substitute_name(& __vars, & __repls) }); bag })).normalize();
 
-rw_proc (s_orig . clone (), t) <--
-    eq_proc (s_orig , s),
-    if let Proc::PDrop (ref s_f0)= s,
+rw_proc(s_orig.clone(), t) <--
+    eq_proc(s_orig, s),
+    if let Proc::PDrop(ref s_f0) = s,
     let s_f0_deref = &** s_f0,
-    if let Name::NQuote (ref s_f0_deref_f0)= s_f0_deref,
+    if let Name::NQuote(ref s_f0_deref_f0) = s_f0_deref,
     let s_f0_deref_f0_deref = &** s_f0_deref_f0,
-    let t = ((s_f0_deref_f0_deref . clone ()). clone ()). normalize ();
+    let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
-fold_proc (t . clone (), t . clone ()) <--
-    proc (t),
+fold_proc(t.clone(), t.clone()) <--
+    proc(t),
     if (match t {
         Proc::PZero => true,
-        Proc::PDrop (_)=> true,
-        Proc::PPar (_)=> true,
-        Proc::POutput (_ , _)=> true,
-        Proc::PInputs (_ , _)=> true,
-        Proc::CastInt (_)=> true,
-        Proc::CastFloat (_)=> true,
-        Proc::CastBool (_)=> true,
-        Proc::CastStr (_)=> true,
+        Proc::PDrop(_) => true,
+        Proc::PPar(_) => true,
+        Proc::POutput(_, _) => true,
+        Proc::PInputs(_, _) => true,
+        Proc::CastInt(_) => true,
+        Proc::CastFloat(_) => true,
+        Proc::CastBool(_) => true,
+        Proc::CastStr(_) => true,
         Proc::Err => true,
         _ => false,
     });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Add (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Add(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> Proc::CastInt (Box::new (* a . clone ()+ * b . clone ())),
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> Proc::CastFloat (Box::new (* a . clone ()+ * b . clone ())),
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() + * b.clone())),
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() + * b.clone())),
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Sub (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Sub(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> Proc::CastInt (Box::new (* a . clone ()- * b . clone ())),
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> Proc::CastFloat (Box::new (* a . clone ()- * b . clone ())),
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() - * b.clone())),
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() - * b.clone())),
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Mul (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Mul(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> Proc::CastInt (Box::new (* a . clone ()* * b . clone ())),
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> Proc::CastFloat (Box::new (* a . clone ()* * b . clone ())),
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() * * b.clone())),
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() * * b.clone())),
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Div (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Div(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> Proc::CastInt (Box::new (* a . clone ()/ * b . clone ())),
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> Proc::CastFloat (Box::new (* a . clone ()/ * b . clone ())),
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(* a.clone() / * b.clone())),
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(* a.clone() / * b.clone())),
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Eq (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Eq(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> match (&** a , &** b){(Int::NumLit (i), Int::NumLit (j))=> Proc::CastBool (Box::new (Bool::BoolLit (i == j))), _ => Proc::Err ,},
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> match (&** a , &** b){(Float::FloatLit (x), Float::FloatLit (y))=> Proc::CastBool (Box::new (Bool::BoolLit (x == y))), _ => Proc::Err ,},
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i == j))), _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x == y))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Ne (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Ne(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> match (&** a , &** b){(Int::NumLit (i), Int::NumLit (j))=> Proc::CastBool (Box::new (Bool::BoolLit (i != j))), _ => Proc::Err ,},
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> match (&** a , &** b){(Float::FloatLit (x), Float::FloatLit (y))=> Proc::CastBool (Box::new (Bool::BoolLit (x != y))), _ => Proc::Err ,},
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i != j))), _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x != y))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Gt (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Gt(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> match (&** a , &** b){(Int::NumLit (i), Int::NumLit (j))=> Proc::CastBool (Box::new (Bool::BoolLit (i > j))), _ => Proc::Err ,},
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> match (&** a , &** b){(Float::FloatLit (x), Float::FloatLit (y))=> Proc::CastBool (Box::new (Bool::BoolLit (x > y))), _ => Proc::Err ,},
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i > j))), _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x > y))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Lt (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Lt(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> match (&** a , &** b){(Int::NumLit (i), Int::NumLit (j))=> Proc::CastBool (Box::new (Bool::BoolLit (i < j))), _ => Proc::Err ,},
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> match (&** a , &** b){(Float::FloatLit (x), Float::FloatLit (y))=> Proc::CastBool (Box::new (Bool::BoolLit (x < y))), _ => Proc::Err ,},
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i < j))), _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x < y))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::GtEq (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::GtEq(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> match (&** a , &** b){(Int::NumLit (i), Int::NumLit (j))=> Proc::CastBool (Box::new (Bool::BoolLit (i >= j))), _ => Proc::Err ,},
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> match (&** a , &** b){(Float::FloatLit (x), Float::FloatLit (y))=> Proc::CastBool (Box::new (Bool::BoolLit (x >= y))), _ => Proc::Err ,},
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i >= j))), _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x >= y))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::LtEq (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::LtEq(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastInt (a), Proc::CastInt (b))=> match (&** a , &** b){(Int::NumLit (i), Int::NumLit (j))=> Proc::CastBool (Box::new (Bool::BoolLit (i <= j))), _ => Proc::Err ,},
-        (Proc::CastFloat (a), Proc::CastFloat (b))=> match (&** a , &** b){(Float::FloatLit (x), Float::FloatLit (y))=> Proc::CastBool (Box::new (Bool::BoolLit (x <= y))), _ => Proc::Err ,},
+    let res = ({ match (& a, & b) {
+        (Proc::CastInt(a), Proc::CastInt(b)) => match (&** a, &** b) { (Int::NumLit(i), Int::NumLit(j)) => Proc::CastBool(Box::new(Bool::BoolLit(i <= j))), _ => Proc::Err, },
+        (Proc::CastFloat(a), Proc::CastFloat(b)) => match (&** a, &** b) { (Float::FloatLit(x), Float::FloatLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(x <= y))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Not (inner)= s,
-    fold_proc (inner . as_ref (). clone (), lv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Not(inner) = s,
+    fold_proc(inner.as_ref().clone(), lv),
     let a = lv,
-    let res = ({match & a {
-        Proc::CastBool (b)=> match &** b {Bool::BoolLit (v)=> Proc::CastBool (Box::new (Bool::BoolLit (! v))), _ => Proc::Err ,},
+    let res = ({ match & a {
+        Proc::CastBool(b) => match &** b { Bool::BoolLit(v) => Proc::CastBool(Box::new(Bool::BoolLit(! v))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::And (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
-    let a = lv,
-    let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastBool (a), Proc::CastBool (b))=> match (&** a , &** b){(Bool::BoolLit (x), Bool::BoolLit (y))=> Proc::CastBool (Box::new (Bool::BoolLit (* x &&* y))), _ => Proc::Err ,},
-        _ => Proc::Err,
-    }});
-
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Or (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::And(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastBool (a), Proc::CastBool (b))=> match (&** a , &** b){(Bool::BoolLit (x), Bool::BoolLit (y))=> Proc::CastBool (Box::new (Bool::BoolLit (* x || * y))), _ => Proc::Err ,},
+    let res = ({ match (& a, & b) {
+        (Proc::CastBool(a), Proc::CastBool(b)) => match (&** a, &** b) { (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(* x &&* y))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::ConcatStr (left , right)= s,
-    fold_proc (left . as_ref (). clone (), lv),
-    fold_proc (right . as_ref (). clone (), rv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Or(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
     let a = lv,
     let b = rv,
-    let res = ({match (& a , & b){
-        (Proc::CastStr (a), Proc::CastStr (b))=> match (&** a , &** b){(Str::StringLit (x), Str::StringLit (y))=> Proc::CastStr (Box::new (Str::StringLit (format ! ("{}{}", x , y)))), _ => Proc::Err ,},
+    let res = ({ match (& a, & b) {
+        (Proc::CastBool(a), Proc::CastBool(b)) => match (&** a, &** b) { (Bool::BoolLit(x), Bool::BoolLit(y)) => Proc::CastBool(Box::new(Bool::BoolLit(* x || * y))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::Len (inner)= s,
-    fold_proc (inner . as_ref (). clone (), lv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::ConcatStr(left, right) = s,
+    fold_proc(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let a = lv,
+    let b = rv,
+    let res = ({ match (& a, & b) {
+        (Proc::CastStr(a), Proc::CastStr(b)) => match (&** a, &** b) { (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))), _ => Proc::Err, },
+        _ => Proc::Err,
+    } });
+
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::Len(inner) = s,
+    fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({match & p {
-        Proc::CastStr (inner)=> match &** inner {Str::StringLit (x)=> Proc::CastInt (Box::new (Int::NumLit (x . len ()as i64))), _ => Proc::Err ,},
+    let res = ({ match & p {
+        Proc::CastStr(inner) => match &** inner { Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::ToInt (inner)= s,
-    fold_proc (inner . as_ref (). clone (), lv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::ToInt(inner) = s,
+    fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({match & p {
-        Proc::CastInt (x)=> Proc::CastInt (x . clone ()),
-        Proc::CastFloat (x)=> match &** x {Float::FloatLit (f)=> Proc::CastInt (Box::new (Int::NumLit (f . get ()as i64))), _ => Proc::Err ,},
-        Proc::CastBool (x)=> match &** x {Bool::BoolLit (b)=> Proc::CastInt (Box::new (Int::NumLit (if * b {1}else {0}))), _ => Proc::Err ,},
-        Proc::CastStr (x)=> match &** x {Str::StringLit (s)=> Proc::CastInt (Box::new (Int::NumLit (s . parse (). unwrap_or (0)))), _ => Proc::Err ,},
+    let res = ({ match & p {
+        Proc::CastInt(x) => Proc::CastInt(x.clone()),
+        Proc::CastFloat(x) => match &** x { Float::FloatLit(f) => Proc::CastInt(Box::new(Int::NumLit(f.get() as i64))), _ => Proc::Err, },
+        Proc::CastBool(x) => match &** x { Bool::BoolLit(b) => Proc::CastInt(Box::new(Int::NumLit(if * b { 1 } else { 0 }))), _ => Proc::Err, },
+        Proc::CastStr(x) => match &** x { Str::StringLit(s) => Proc::CastInt(Box::new(Int::NumLit(s.parse().unwrap_or(0)))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::ToFloat (inner)= s,
-    fold_proc (inner . as_ref (). clone (), lv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::ToFloat(inner) = s,
+    fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({match & p {
-        Proc::CastFloat (x)=> Proc::CastFloat (x . clone ()),
-        Proc::CastInt (x)=> match &** x {Int::NumLit (i)=> Proc::CastFloat (Box::new (Float::FloatLit (mettail_runtime::CanonicalFloat64::from (* i as f64)))), _ => Proc::Err ,},
-        Proc::CastBool (x)=> match &** x {Bool::BoolLit (b)=> Proc::CastFloat (Box::new (Float::FloatLit (mettail_runtime::CanonicalFloat64::from (if * b {1.0}else {0.0})))), _ => Proc::Err ,},
-        Proc::CastStr (x)=> match &** x {Str::StringLit (s)=> Proc::CastFloat (Box::new (Float::FloatLit (mettail_runtime::CanonicalFloat64::from (s . parse::< f64 > (). unwrap_or (0.0))))), _ => Proc::Err ,},
+    let res = ({ match & p {
+        Proc::CastFloat(x) => Proc::CastFloat(x.clone()),
+        Proc::CastInt(x) => match &** x { Int::NumLit(i) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(* i as f64)))), _ => Proc::Err, },
+        Proc::CastBool(x) => match &** x { Bool::BoolLit(b) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(if * b { 1.0 } else { 0.0 })))), _ => Proc::Err, },
+        Proc::CastStr(x) => match &** x { Str::StringLit(s) => Proc::CastFloat(Box::new(Float::FloatLit(mettail_runtime::CanonicalFloat64::from(s.parse::< f64 > ().unwrap_or(0.0))))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::ToBool (inner)= s,
-    fold_proc (inner . as_ref (). clone (), lv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::ToBool(inner) = s,
+    fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({match & p {
-        Proc::CastBool (x)=> Proc::CastBool (x . clone ()),
-        Proc::CastInt (x)=> match &** x {Int::NumLit (i)=> Proc::CastBool (Box::new (Bool::BoolLit (* i != 0))), _ => Proc::Err ,},
-        Proc::CastFloat (x)=> match &** x {Float::FloatLit (f)=> Proc::CastBool (Box::new (Bool::BoolLit (f . get ()!= 0.0))), _ => Proc::Err ,},
-        Proc::CastStr (x)=> match &** x {Str::StringLit (s)=> Proc::CastBool (Box::new (Bool::BoolLit (s . parse::< bool > (). unwrap_or (false)))), _ => Proc::Err ,},
+    let res = ({ match & p {
+        Proc::CastBool(x) => Proc::CastBool(x.clone()),
+        Proc::CastInt(x) => match &** x { Int::NumLit(i) => Proc::CastBool(Box::new(Bool::BoolLit(* i != 0))), _ => Proc::Err, },
+        Proc::CastFloat(x) => match &** x { Float::FloatLit(f) => Proc::CastBool(Box::new(Bool::BoolLit(f.get() != 0.0))), _ => Proc::Err, },
+        Proc::CastStr(x) => match &** x { Str::StringLit(s) => Proc::CastBool(Box::new(Bool::BoolLit(s.parse::< bool > ().unwrap_or(false)))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-fold_proc (s . clone (), res) <--
-    proc (s),
-    if let Proc::ToStr (inner)= s,
-    fold_proc (inner . as_ref (). clone (), lv),
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::ToStr(inner) = s,
+    fold_proc(inner.as_ref().clone(), lv),
     let p = lv,
-    let res = ({match & p {
-        Proc::CastStr (x)=> Proc::CastStr (x . clone ()),
-        Proc::CastInt (x)=> match &** x {Int::NumLit (i)=> Proc::CastStr (Box::new (Str::StringLit (i . to_string ()))), _ => Proc::Err ,},
-        Proc::CastFloat (x)=> match &** x {Float::FloatLit (f)=> Proc::CastStr (Box::new (Str::StringLit (f . to_string ()))), _ => Proc::Err ,},
-        Proc::CastBool (x)=> match &** x {Bool::BoolLit (b)=> Proc::CastStr (Box::new (Str::StringLit (b . to_string ()))), _ => Proc::Err ,},
+    let res = ({ match & p {
+        Proc::CastStr(x) => Proc::CastStr(x.clone()),
+        Proc::CastInt(x) => match &** x { Int::NumLit(i) => Proc::CastStr(Box::new(Str::StringLit(i.to_string()))), _ => Proc::Err, },
+        Proc::CastFloat(x) => match &** x { Float::FloatLit(f) => Proc::CastStr(Box::new(Str::StringLit(f.to_string()))), _ => Proc::Err, },
+        Proc::CastBool(x) => match &** x { Bool::BoolLit(b) => Proc::CastStr(Box::new(Str::StringLit(b.to_string()))), _ => Proc::Err, },
         _ => Proc::Err,
-    }});
+    } });
 
-rw_proc (s . clone (), t . clone ()) <--
-    proc (s),
+rw_proc(s.clone(), t.clone()) <--
+    proc(s),
     if (match s {
-        Proc::Add (_ , _)=> true,
-        Proc::Sub (_ , _)=> true,
-        Proc::Mul (_ , _)=> true,
-        Proc::Div (_ , _)=> true,
-        Proc::Eq (_ , _)=> true,
-        Proc::Ne (_ , _)=> true,
-        Proc::Gt (_ , _)=> true,
-        Proc::Lt (_ , _)=> true,
-        Proc::GtEq (_ , _)=> true,
-        Proc::LtEq (_ , _)=> true,
-        Proc::Not (_)=> true,
-        Proc::And (_ , _)=> true,
-        Proc::Or (_ , _)=> true,
-        Proc::ConcatStr (_ , _)=> true,
-        Proc::Len (_)=> true,
-        Proc::ToInt (_)=> true,
-        Proc::ToFloat (_)=> true,
-        Proc::ToBool (_)=> true,
-        Proc::ToStr (_)=> true,
+        Proc::Add(_, _) => true,
+        Proc::Sub(_, _) => true,
+        Proc::Mul(_, _) => true,
+        Proc::Div(_, _) => true,
+        Proc::Eq(_, _) => true,
+        Proc::Ne(_, _) => true,
+        Proc::Gt(_, _) => true,
+        Proc::Lt(_, _) => true,
+        Proc::GtEq(_, _) => true,
+        Proc::LtEq(_, _) => true,
+        Proc::Not(_) => true,
+        Proc::And(_, _) => true,
+        Proc::Or(_, _) => true,
+        Proc::ConcatStr(_, _) => true,
+        Proc::Len(_) => true,
+        Proc::ToInt(_) => true,
+        Proc::ToFloat(_) => true,
+        Proc::ToBool(_) => true,
+        Proc::ToStr(_) => true,
         _ => false,
     }),
-    fold_proc (s , t);
+    fold_proc(s, t);
 
-rw_proc (parent . clone (), result) <--
-    proc (parent),
-    if let Proc::PPar (ref bag)= parent,
-    for (elem , _count)in bag . iter (),
-    rw_proc (elem . clone (), elem_rewritten),
-    let result = Proc::PPar ({let mut new_bag = bag . clone (); new_bag . remove (elem); Proc::insert_into_ppar (& mut new_bag , elem_rewritten . clone ()); new_bag});
+rw_proc(parent.clone(), result) <--
+    proc(parent),
+    if let Proc::PPar(ref bag) = parent,
+    for (elem, _count) in bag.iter(),
+    rw_proc(elem.clone(), elem_rewritten),
+    let result = Proc::PPar({ let mut new_bag = bag.clone(); new_bag.remove(elem); Proc::insert_into_ppar(& mut new_bag, elem_rewritten.clone()); new_bag });
 
-rw_proc (lhs . clone (), match (lhs , vi){
-    (Proc::Add (_ , x1), 0usize)=> Proc::Add (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::Add (x0 , _), 1usize)=> Proc::Add (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Sub (_ , x1), 2usize)=> Proc::Sub (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::Sub (x0 , _), 3usize)=> Proc::Sub (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Mul (_ , x1), 4usize)=> Proc::Mul (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::Mul (x0 , _), 5usize)=> Proc::Mul (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Div (_ , x1), 6usize)=> Proc::Div (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::Div (x0 , _), 7usize)=> Proc::Div (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Eq (_ , x1), 8usize)=> Proc::Eq (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::Eq (x0 , _), 9usize)=> Proc::Eq (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Ne (_ , x1), 10usize)=> Proc::Ne (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::Ne (x0 , _), 11usize)=> Proc::Ne (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Gt (_ , x1), 12usize)=> Proc::Gt (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::Gt (x0 , _), 13usize)=> Proc::Gt (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Lt (_ , x1), 14usize)=> Proc::Lt (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::Lt (x0 , _), 15usize)=> Proc::Lt (x0 . clone (), Box::new (t . clone ())),
-    (Proc::GtEq (_ , x1), 16usize)=> Proc::GtEq (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::GtEq (x0 , _), 17usize)=> Proc::GtEq (x0 . clone (), Box::new (t . clone ())),
-    (Proc::LtEq (_ , x1), 18usize)=> Proc::LtEq (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::LtEq (x0 , _), 19usize)=> Proc::LtEq (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Not (_), 20usize)=> Proc::Not (Box::new (t . clone ())),
-    (Proc::And (_ , x1), 21usize)=> Proc::And (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::And (x0 , _), 22usize)=> Proc::And (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Or (_ , x1), 23usize)=> Proc::Or (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::Or (x0 , _), 24usize)=> Proc::Or (x0 . clone (), Box::new (t . clone ())),
-    (Proc::ConcatStr (_ , x1), 25usize)=> Proc::ConcatStr (Box::new (t . clone ()), x1 . clone ()),
-    (Proc::ConcatStr (x0 , _), 26usize)=> Proc::ConcatStr (x0 . clone (), Box::new (t . clone ())),
-    (Proc::Len (_), 27usize)=> Proc::Len (Box::new (t . clone ())),
-    (Proc::ToInt (_), 28usize)=> Proc::ToInt (Box::new (t . clone ())),
-    (Proc::ToFloat (_), 29usize)=> Proc::ToFloat (Box::new (t . clone ())),
-    (Proc::ToBool (_), 30usize)=> Proc::ToBool (Box::new (t . clone ())),
-    (Proc::ToStr (_), 31usize)=> Proc::ToStr (Box::new (t . clone ())),
-    _ => unreachable ! (),
+rw_proc(lhs.clone(), match (lhs, vi) {
+    (Proc::Add(_, x1), 0usize) => Proc::Add(Box::new(t.clone()), x1.clone()),
+    (Proc::Add(x0, _), 1usize) => Proc::Add(x0.clone(), Box::new(t.clone())),
+    (Proc::Sub(_, x1), 2usize) => Proc::Sub(Box::new(t.clone()), x1.clone()),
+    (Proc::Sub(x0, _), 3usize) => Proc::Sub(x0.clone(), Box::new(t.clone())),
+    (Proc::Mul(_, x1), 4usize) => Proc::Mul(Box::new(t.clone()), x1.clone()),
+    (Proc::Mul(x0, _), 5usize) => Proc::Mul(x0.clone(), Box::new(t.clone())),
+    (Proc::Div(_, x1), 6usize) => Proc::Div(Box::new(t.clone()), x1.clone()),
+    (Proc::Div(x0, _), 7usize) => Proc::Div(x0.clone(), Box::new(t.clone())),
+    (Proc::Eq(_, x1), 8usize) => Proc::Eq(Box::new(t.clone()), x1.clone()),
+    (Proc::Eq(x0, _), 9usize) => Proc::Eq(x0.clone(), Box::new(t.clone())),
+    (Proc::Ne(_, x1), 10usize) => Proc::Ne(Box::new(t.clone()), x1.clone()),
+    (Proc::Ne(x0, _), 11usize) => Proc::Ne(x0.clone(), Box::new(t.clone())),
+    (Proc::Gt(_, x1), 12usize) => Proc::Gt(Box::new(t.clone()), x1.clone()),
+    (Proc::Gt(x0, _), 13usize) => Proc::Gt(x0.clone(), Box::new(t.clone())),
+    (Proc::Lt(_, x1), 14usize) => Proc::Lt(Box::new(t.clone()), x1.clone()),
+    (Proc::Lt(x0, _), 15usize) => Proc::Lt(x0.clone(), Box::new(t.clone())),
+    (Proc::GtEq(_, x1), 16usize) => Proc::GtEq(Box::new(t.clone()), x1.clone()),
+    (Proc::GtEq(x0, _), 17usize) => Proc::GtEq(x0.clone(), Box::new(t.clone())),
+    (Proc::LtEq(_, x1), 18usize) => Proc::LtEq(Box::new(t.clone()), x1.clone()),
+    (Proc::LtEq(x0, _), 19usize) => Proc::LtEq(x0.clone(), Box::new(t.clone())),
+    (Proc::Not(_), 20usize) => Proc::Not(Box::new(t.clone())),
+    (Proc::And(_, x1), 21usize) => Proc::And(Box::new(t.clone()), x1.clone()),
+    (Proc::And(x0, _), 22usize) => Proc::And(x0.clone(), Box::new(t.clone())),
+    (Proc::Or(_, x1), 23usize) => Proc::Or(Box::new(t.clone()), x1.clone()),
+    (Proc::Or(x0, _), 24usize) => Proc::Or(x0.clone(), Box::new(t.clone())),
+    (Proc::ConcatStr(_, x1), 25usize) => Proc::ConcatStr(Box::new(t.clone()), x1.clone()),
+    (Proc::ConcatStr(x0, _), 26usize) => Proc::ConcatStr(x0.clone(), Box::new(t.clone())),
+    (Proc::Len(_), 27usize) => Proc::Len(Box::new(t.clone())),
+    (Proc::ToInt(_), 28usize) => Proc::ToInt(Box::new(t.clone())),
+    (Proc::ToFloat(_), 29usize) => Proc::ToFloat(Box::new(t.clone())),
+    (Proc::ToBool(_), 30usize) => Proc::ToBool(Box::new(t.clone())),
+    (Proc::ToStr(_), 31usize) => Proc::ToStr(Box::new(t.clone())),
+    _ => unreachable!(),
 }) <--
-    proc (lhs),
-    for (field_val , vi)in (match lhs {
-        Proc::Add (x0 , x1)=> vec ! [((** x0). clone (), 0usize), ((** x1). clone (), 1usize)],
-        Proc::And (x0 , x1)=> vec ! [((** x0). clone (), 21usize), ((** x1). clone (), 22usize)],
-        Proc::ConcatStr (x0 , x1)=> vec ! [((** x0). clone (), 25usize), ((** x1). clone (), 26usize)],
-        Proc::Div (x0 , x1)=> vec ! [((** x0). clone (), 6usize), ((** x1). clone (), 7usize)],
-        Proc::Eq (x0 , x1)=> vec ! [((** x0). clone (), 8usize), ((** x1). clone (), 9usize)],
-        Proc::Gt (x0 , x1)=> vec ! [((** x0). clone (), 12usize), ((** x1). clone (), 13usize)],
-        Proc::GtEq (x0 , x1)=> vec ! [((** x0). clone (), 16usize), ((** x1). clone (), 17usize)],
-        Proc::Len (x0)=> vec ! [((** x0). clone (), 27usize)],
-        Proc::Lt (x0 , x1)=> vec ! [((** x0). clone (), 14usize), ((** x1). clone (), 15usize)],
-        Proc::LtEq (x0 , x1)=> vec ! [((** x0). clone (), 18usize), ((** x1). clone (), 19usize)],
-        Proc::Mul (x0 , x1)=> vec ! [((** x0). clone (), 4usize), ((** x1). clone (), 5usize)],
-        Proc::Ne (x0 , x1)=> vec ! [((** x0). clone (), 10usize), ((** x1). clone (), 11usize)],
-        Proc::Not (x0)=> vec ! [((** x0). clone (), 20usize)],
-        Proc::Or (x0 , x1)=> vec ! [((** x0). clone (), 23usize), ((** x1). clone (), 24usize)],
-        Proc::Sub (x0 , x1)=> vec ! [((** x0). clone (), 2usize), ((** x1). clone (), 3usize)],
-        Proc::ToBool (x0)=> vec ! [((** x0). clone (), 30usize)],
-        Proc::ToFloat (x0)=> vec ! [((** x0). clone (), 29usize)],
-        Proc::ToInt (x0)=> vec ! [((** x0). clone (), 28usize)],
-        Proc::ToStr (x0)=> vec ! [((** x0). clone (), 31usize)],
-        _ => vec ! [],
-    }). into_iter (),
-    rw_proc (field_val , t);
+    proc(lhs),
+    for (field_val, vi) in (match lhs {
+        Proc::Add(x0, x1) => vec![((** x0).clone(), 0usize), ((** x1).clone(), 1usize)],
+        Proc::And(x0, x1) => vec![((** x0).clone(), 21usize), ((** x1).clone(), 22usize)],
+        Proc::ConcatStr(x0, x1) => vec![((** x0).clone(), 25usize), ((** x1).clone(), 26usize)],
+        Proc::Div(x0, x1) => vec![((** x0).clone(), 6usize), ((** x1).clone(), 7usize)],
+        Proc::Eq(x0, x1) => vec![((** x0).clone(), 8usize), ((** x1).clone(), 9usize)],
+        Proc::Gt(x0, x1) => vec![((** x0).clone(), 12usize), ((** x1).clone(), 13usize)],
+        Proc::GtEq(x0, x1) => vec![((** x0).clone(), 16usize), ((** x1).clone(), 17usize)],
+        Proc::Len(x0) => vec![((** x0).clone(), 27usize)],
+        Proc::Lt(x0, x1) => vec![((** x0).clone(), 14usize), ((** x1).clone(), 15usize)],
+        Proc::LtEq(x0, x1) => vec![((** x0).clone(), 18usize), ((** x1).clone(), 19usize)],
+        Proc::Mul(x0, x1) => vec![((** x0).clone(), 4usize), ((** x1).clone(), 5usize)],
+        Proc::Ne(x0, x1) => vec![((** x0).clone(), 10usize), ((** x1).clone(), 11usize)],
+        Proc::Not(x0) => vec![((** x0).clone(), 20usize)],
+        Proc::Or(x0, x1) => vec![((** x0).clone(), 23usize), ((** x1).clone(), 24usize)],
+        Proc::Sub(x0, x1) => vec![((** x0).clone(), 2usize), ((** x1).clone(), 3usize)],
+        Proc::ToBool(x0) => vec![((** x0).clone(), 30usize)],
+        Proc::ToFloat(x0) => vec![((** x0).clone(), 29usize)],
+        Proc::ToInt(x0) => vec![((** x0).clone(), 28usize)],
+        Proc::ToStr(x0) => vec![((** x0).clone(), 31usize)],
+        _ => vec![],
+    }).into_iter(),
+    rw_proc(field_val, t);
 
 
     // Custom logic
-proc (p)<-- if let Ok (p)= Proc::parse ("^x.{{ x | serv!(req) }}");
+proc(p) <-- if let Ok(p) = Proc::parse("^x.{{ x | serv!(req) }}");
 
-proc (p)<-- if let Ok (p)= Proc::parse ("^x.{x}");
+proc(p) <-- if let Ok(p) = Proc::parse("^x.{x}");
 
-proc (res)<-- step_term (p), proc (c), if let Proc::LamProc (_)= c , let app = Proc::ApplyProc (Box::new (c . clone ()), Box::new (p . clone ())), let res = app . normalize ();
+proc(res) <-- step_term(p), proc(c), if let Proc::LamProc(_) = c, let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize();
 
-proc (res)<-- step_term (p), proc (c), if let Proc::MLamProc (_)= c , let app = Proc::MApplyProc (Box::new (c . clone ()), vec ! [p . clone ()]), let res = app . normalize ();
+proc(res) <-- step_term(p), proc(c), if let Proc::MLamProc(_) = c, let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize();
 
-relation path (Proc , Proc);
+relation path(Proc, Proc);
 
-path (p0 , p1)<-- rw_proc (p0 , p1);
+path(p0, p1) <-- rw_proc(p0, p1);
 
-path (p0 , p2)<-- path (p0 , p1), path (p1 , p2);
+path(p0, p2) <-- path(p0, p1), path(p1, p2);
 
-relation trans (Proc , Proc , Proc);
+relation trans(Proc, Proc, Proc);
 
-trans (p , c , q)<-- step_term (p), proc (c), if let Proc::LamProc (_)= c , let app = Proc::ApplyProc (Box::new (c . clone ()), Box::new (p . clone ())), let res = app . normalize (), path (res . clone (), q);
+trans(p,c,q) <-- step_term(p), proc(c), if let Proc::LamProc(_) = c, let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize(), path(res.clone(), q);
 
-trans (p , c , q)<-- step_term (p), proc (c), if let Proc::MLamProc (_)= c , let app = Proc::MApplyProc (Box::new (c . clone ()), vec ! [p . clone ()]), let res = app . normalize (), path (res . clone (), q);
+trans(p,c,q) <-- step_term(p), proc(c), if let Proc::MLamProc(_) = c, let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize(), path(res.clone(), q);
 
 }

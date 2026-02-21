@@ -6,13 +6,38 @@
 //! 3. DFA accept state inherits highest-priority accept token
 //!
 //! This inherently eliminates all epsilon transitions.
+//!
+//! ## Optimizations
+//!
+//! - **Thread-local buffer pooling:** `visited`, `ec_closure`, `ec_stack`, and
+//!   `target_set` retain capacity across calls via `Cell<Vec<T>>` take/set pattern.
+//!   Only 1 TLS access per `subset_construction` call (vs ~300 if TLS were at
+//!   the `epsilon_closure` level).
+//! - **`epsilon_closure_reuse`:** Receives buffers from the caller, resetting
+//!   `visited` flags in O(closure_size) instead of O(nfa.states.len()).
+//! - **Pre-allocation:** `state_map` and `worklist` pre-allocated to NFA-size
+//!   heuristic; `visited` exact-sized on first call.
 
+use std::cell::Cell;
 use std::collections::HashMap;
 
 use super::{
-    nfa::epsilon_closure, partition::AlphabetPartition, ClassId, Dfa, DfaState, Nfa, StateId,
+    nfa::{epsilon_closure, epsilon_closure_reuse},
+    partition::AlphabetPartition, ClassId, Dfa, DfaState, Nfa, StateId,
     TokenKind, DEAD_STATE,
 };
+
+thread_local! {
+    /// Reusable visited-state bitmap for epsilon_closure_reuse.
+    /// Exact size: nfa.states.len(). Reused across calls.
+    static VISITED: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
+    /// Reusable closure result buffer for epsilon_closure_reuse.
+    static EC_CLOSURE: Cell<Vec<StateId>> = const { Cell::new(Vec::new()) };
+    /// Reusable stack buffer for epsilon_closure_reuse.
+    static EC_STACK: Cell<Vec<StateId>> = const { Cell::new(Vec::new()) };
+    /// Reusable buffer for collecting move targets before epsilon closure.
+    static TARGET_SET: Cell<Vec<StateId>> = const { Cell::new(Vec::new()) };
+}
 
 /// Convert an NFA to a DFA using subset construction with alphabet partitioning.
 ///
@@ -21,14 +46,39 @@ use super::{
 /// indexed by class ID for O(1) lookup.
 pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
     let num_classes = partition.num_classes;
+    let n = nfa.states.len();
     let mut dfa = Dfa::new(num_classes);
 
-    // Map from sorted set of NFA states → DFA state ID
-    let mut state_map: HashMap<Vec<StateId>, StateId> = HashMap::new();
+    // Pre-allocate HashMap and worklist with NFA-size heuristic
+    let mut state_map: HashMap<Vec<StateId>, StateId> = HashMap::with_capacity(n);
     // Worklist of DFA states to process
-    let mut worklist: Vec<Vec<StateId>> = Vec::new();
+    let mut worklist: Vec<Vec<StateId>> = Vec::with_capacity(n);
 
-    // Start state: epsilon-closure of NFA start
+    // Take TLS buffers and ensure first-call pre-allocation
+    let mut visited = VISITED.with(|cell| cell.take());
+    visited.clear();
+    visited.resize(n, false); // exact size; reuses capacity on subsequent calls
+
+    let mut ec_closure = EC_CLOSURE.with(|cell| cell.take());
+    ec_closure.clear();
+    if ec_closure.capacity() < n {
+        ec_closure.reserve(n - ec_closure.capacity());
+    }
+
+    let mut ec_stack = EC_STACK.with(|cell| cell.take());
+    ec_stack.clear();
+    if ec_stack.capacity() < n {
+        ec_stack.reserve(n - ec_stack.capacity());
+    }
+
+    let mut target_set = TARGET_SET.with(|cell| cell.take());
+    target_set.clear();
+    if target_set.capacity() < n {
+        target_set.reserve(n - target_set.capacity());
+    }
+
+    // Start state: epsilon-closure of NFA start (uses original epsilon_closure
+    // for the initial set since we need an owned Vec for state_map insertion)
     let start_set = epsilon_closure(nfa, &[nfa.start]);
     let start_accept = resolve_accept(nfa, &start_set);
     dfa.states[0].accept = start_accept;
@@ -46,7 +96,7 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
 
             // Compute move(current_set, class_id): all NFA states reachable via
             // transitions on any byte in this equivalence class
-            let mut target_set: Vec<StateId> = Vec::new();
+            target_set.clear();
             for &nfa_state in &current_set {
                 for (char_class, target) in &nfa.states[nfa_state as usize].transitions {
                     if char_class.contains(rep_byte) {
@@ -59,26 +109,32 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
                 continue; // Dead state — no transition for this class
             }
 
-            // Compute epsilon-closure of the target set
-            target_set = epsilon_closure(nfa, &target_set);
+            // Compute epsilon-closure of the target set using reusable buffers
+            epsilon_closure_reuse(nfa, &target_set, &mut visited, &mut ec_closure, &mut ec_stack);
 
             // Look up or create the DFA state for this NFA state set
-            let target_dfa_state = if let Some(&existing) = state_map.get(&target_set) {
+            let target_dfa_state = if let Some(&existing) = state_map.get(ec_closure.as_slice()) {
                 existing
             } else {
-                let accept = resolve_accept(nfa, &target_set);
+                let accept = resolve_accept(nfa, &ec_closure);
                 let new_state = dfa.add_state(DfaState {
                     transitions: vec![DEAD_STATE; num_classes],
                     accept,
                 });
-                state_map.insert(target_set.clone(), new_state);
-                worklist.push(target_set);
+                state_map.insert(ec_closure.clone(), new_state);
+                worklist.push(ec_closure.clone());
                 new_state
             };
 
             dfa.set_transition(current_dfa_state, class_id, target_dfa_state);
         }
     }
+
+    // Return TLS buffers for reuse
+    VISITED.with(|cell| cell.set(visited));
+    EC_CLOSURE.with(|cell| cell.set(ec_closure));
+    EC_STACK.with(|cell| cell.set(ec_stack));
+    TARGET_SET.with(|cell| cell.set(target_set));
 
     dfa
 }
