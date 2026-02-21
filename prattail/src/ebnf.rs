@@ -674,6 +674,7 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
         SyntaxItemSpec::Binder {
             param_name,
             category,
+            ..
         } => format!("^{}:{}", param_name, category),
         SyntaxItemSpec::Collection {
             param_name: _,
@@ -1437,6 +1438,7 @@ mod tests {
             SyntaxItemSpec::Binder {
                 param_name,
                 category,
+                ..
             } => RDSyntaxItem::Binder {
                 param_name: param_name.clone(),
                 binder_category: category.clone(),
@@ -1606,6 +1608,7 @@ mod tests {
                             SyntaxItemSpec::Binder {
                                 param_name: "x".to_string(),
                                 category: "Term".to_string(),
+                                is_multi: false,
                             },
                             SyntaxItemSpec::Terminal(".".to_string()),
                             SyntaxItemSpec::NonTerminal {

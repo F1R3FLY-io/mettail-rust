@@ -6,126 +6,57 @@ use crate::{
     CategorySpec, LanguageSpec, RuleSpec, SyntaxItemSpec,
 };
 
+/// Helper: extract category names from a slice of `CategorySpec`.
+fn category_names(types: &[CategorySpec]) -> Vec<String> {
+    types.iter().map(|t| t.name.clone()).collect()
+}
+
 /// Build a simple calculator language spec for testing.
 fn calculator_spec() -> LanguageSpec {
+    let types = vec![
+        CategorySpec {
+            name: "Int".to_string(),
+            native_type: Some("i32".to_string()),
+            is_primary: true,
+        },
+    ];
+    let cat_names = category_names(&types);
+
     LanguageSpec {
         name: "Calculator".to_string(),
-        types: vec![
-            CategorySpec {
-                name: "Int".to_string(),
-                native_type: Some("i32".to_string()),
-                is_primary: true,
-            },
-        ],
+        types,
         rules: vec![
             // NumLit: integer literal
-            RuleSpec {
-                label: "NumLit".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![],
-                is_infix: false,
-                associativity: Associativity::Left,
-                is_var: false,
-                is_literal: true,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+            RuleSpec::classified("NumLit", "Int", vec![], &cat_names),
             // Add: Int "+" Int
-            RuleSpec {
-                label: "Add".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![
+            RuleSpec::classified(
+                "Add",
+                "Int",
+                vec![
                     SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
                     SyntaxItemSpec::Terminal("+".to_string()),
                     SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
                 ],
-                is_infix: true,
-                associativity: Associativity::Left,
-                is_var: false,
-                is_literal: false,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+                &cat_names,
+            ),
             // Mul: Int "*" Int
-            RuleSpec {
-                label: "Mul".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![
+            RuleSpec::classified(
+                "Mul",
+                "Int",
+                vec![
                     SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
                     SyntaxItemSpec::Terminal("*".to_string()),
                     SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
                 ],
-                is_infix: true,
-                associativity: Associativity::Left,
-                is_var: false,
-                is_literal: false,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+                &cat_names,
+            ),
             // IVar: variable
-            RuleSpec {
-                label: "IVar".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
-                is_infix: false,
-                associativity: Associativity::Left,
-                is_var: true,
-                is_literal: false,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+            RuleSpec::classified(
+                "IVar",
+                "Int",
+                vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
+                &cat_names,
+            ),
         ],
     }
 }
@@ -170,176 +101,63 @@ fn test_generate_parser_code_size() {
 
 #[test]
 fn test_generate_parser_two_categories() {
+    let types = vec![
+        CategorySpec {
+            name: "Int".to_string(),
+            native_type: Some("i32".to_string()),
+            is_primary: true,
+        },
+        CategorySpec {
+            name: "Bool".to_string(),
+            native_type: Some("bool".to_string()),
+            is_primary: false,
+        },
+    ];
+    let cat_names = category_names(&types);
+
     let spec = LanguageSpec {
         name: "TypedCalc".to_string(),
-        types: vec![
-            CategorySpec {
-                name: "Int".to_string(),
-                native_type: Some("i32".to_string()),
-                is_primary: true,
-            },
-            CategorySpec {
-                name: "Bool".to_string(),
-                native_type: Some("bool".to_string()),
-                is_primary: false,
-            },
-        ],
+        types,
         rules: vec![
             // Int rules
-            RuleSpec {
-                label: "NumLit".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![],
-                is_infix: false,
-                associativity: Associativity::Left,
-                is_var: false,
-                is_literal: true,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
-            RuleSpec {
-                label: "Add".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![
+            RuleSpec::classified("NumLit", "Int", vec![], &cat_names),
+            RuleSpec::classified(
+                "Add",
+                "Int",
+                vec![
                     SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
                     SyntaxItemSpec::Terminal("+".to_string()),
                     SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
                 ],
-                is_infix: true,
-                associativity: Associativity::Left,
-                is_var: false,
-                is_literal: false,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
-            RuleSpec {
-                label: "IVar".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
-                is_infix: false,
-                associativity: Associativity::Left,
-                is_var: true,
-                is_literal: false,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+                &cat_names,
+            ),
+            RuleSpec::classified(
+                "IVar",
+                "Int",
+                vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
+                &cat_names,
+            ),
             // Bool rules
-            RuleSpec {
-                label: "BoolLit".to_string(),
-                category: "Bool".to_string(),
-                syntax: vec![],
-                is_infix: false,
-                associativity: Associativity::Left,
-                is_var: false,
-                is_literal: true,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+            RuleSpec::classified("BoolLit", "Bool", vec![], &cat_names),
             // Eq: cross-category: Int "==" Int → Bool
-            RuleSpec {
-                label: "Eq".to_string(),
-                category: "Bool".to_string(),
-                syntax: vec![
+            // Note: classified() correctly derives is_infix=true for cross-category infix rules.
+            // The original manual spec had is_infix=false which was incorrect.
+            RuleSpec::classified(
+                "Eq",
+                "Bool",
+                vec![
                     SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
                     SyntaxItemSpec::Terminal("==".to_string()),
                     SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
                 ],
-                is_infix: false, // cross-category, not same-category infix
-                associativity: Associativity::Left,
-                is_var: false,
-                is_literal: false,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: true,
-                cross_source_category: Some("Int".to_string()),
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
-            RuleSpec {
-                label: "BVar".to_string(),
-                category: "Bool".to_string(),
-                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
-                is_infix: false,
-                associativity: Associativity::Left,
-                is_var: true,
-                is_literal: false,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+                &cat_names,
+            ),
+            RuleSpec::classified(
+                "BVar",
+                "Bool",
+                vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
+                &cat_names,
+            ),
         ],
     };
 
@@ -354,65 +172,30 @@ fn test_generate_parser_two_categories() {
 #[test]
 fn test_generate_parser_with_unary_prefix() {
     let mut spec = calculator_spec();
+    let cat_names = category_names(&spec.types);
 
     // Add Sub as infix rule (shares "-" token with Neg)
-    spec.rules.push(RuleSpec {
-        label: "Sub".to_string(),
-        category: "Int".to_string(),
-        syntax: vec![
+    spec.rules.push(RuleSpec::classified(
+        "Sub",
+        "Int",
+        vec![
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
             SyntaxItemSpec::Terminal("-".to_string()),
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
         ],
-        is_infix: true,
-        associativity: Associativity::Left,
-        is_var: false,
-        is_literal: false,
-        has_binder: false,
-        has_multi_binder: false,
-        is_collection: false,
-        collection_type: None,
-        separator: None,
-        is_cross_category: false,
-        cross_source_category: None,
-        is_cast: false,
-        cast_source_category: None,
-        is_unary_prefix: false,
-        prefix_precedence: None,
-        is_postfix: false,
-        has_rust_code: false,
-        rust_code: None,
-        eval_mode: None,
-    });
+        &cat_names,
+    ));
 
     // Add Neg as unary prefix rule
-    spec.rules.push(RuleSpec {
-        label: "Neg".to_string(),
-        category: "Int".to_string(),
-        syntax: vec![
+    spec.rules.push(RuleSpec::classified(
+        "Neg",
+        "Int",
+        vec![
             SyntaxItemSpec::Terminal("-".to_string()),
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
         ],
-        is_infix: false,
-        associativity: Associativity::Left,
-        is_var: false,
-        is_literal: false,
-        has_binder: false,
-        has_multi_binder: false,
-        is_collection: false,
-        collection_type: None,
-        separator: None,
-        is_cross_category: false,
-        cross_source_category: None,
-        is_cast: false,
-        cast_source_category: None,
-        is_unary_prefix: true,
-        prefix_precedence: None,
-        is_postfix: false,
-        has_rust_code: false,
-        rust_code: None,
-        eval_mode: None,
-    });
+        &cat_names,
+    ));
 
     let code = generate_parser(&spec);
     let code_str = code.to_string();
@@ -426,13 +209,14 @@ fn test_generate_parser_with_unary_prefix() {
 #[test]
 fn test_generate_parser_with_optional() {
     let mut spec = calculator_spec();
+    let cat_names = category_names(&spec.types);
 
     // Add a rule with an Optional syntax item:
     // IfExpr: "if" Int #opt("else" Int) → Int
-    spec.rules.push(RuleSpec {
-        label: "IfExpr".to_string(),
-        category: "Int".to_string(),
-        syntax: vec![
+    spec.rules.push(RuleSpec::classified(
+        "IfExpr",
+        "Int",
+        vec![
             SyntaxItemSpec::Terminal("if".to_string()),
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "cond".to_string() },
             SyntaxItemSpec::Optional {
@@ -442,26 +226,8 @@ fn test_generate_parser_with_optional() {
                 ],
             },
         ],
-        is_infix: false,
-        associativity: Associativity::Left,
-        is_var: false,
-        is_literal: false,
-        has_binder: false,
-        has_multi_binder: false,
-        is_collection: false,
-        collection_type: None,
-        separator: None,
-        is_cross_category: false,
-        cross_source_category: None,
-        is_cast: false,
-        cast_source_category: None,
-        is_unary_prefix: false,
-        prefix_precedence: None,
-        is_postfix: false,
-        has_rust_code: false,
-        rust_code: None,
-        eval_mode: None,
-    });
+        &cat_names,
+    ));
 
     let code = generate_parser(&spec);
     let code_str = code.to_string();
@@ -475,36 +241,21 @@ fn test_generate_parser_with_optional() {
 #[test]
 fn test_generate_parser_with_right_associativity() {
     let mut spec = calculator_spec();
+    let cat_names = category_names(&spec.types);
 
     // Add Pow as right-associative infix
-    spec.rules.push(RuleSpec {
-        label: "Pow".to_string(),
-        category: "Int".to_string(),
-        syntax: vec![
+    let mut pow = RuleSpec::classified(
+        "Pow",
+        "Int",
+        vec![
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
             SyntaxItemSpec::Terminal("^".to_string()),
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
         ],
-        is_infix: true,
-        associativity: Associativity::Right,
-        is_var: false,
-        is_literal: false,
-        has_binder: false,
-        has_multi_binder: false,
-        is_collection: false,
-        collection_type: None,
-        separator: None,
-        is_cross_category: false,
-        cross_source_category: None,
-        is_cast: false,
-        cast_source_category: None,
-        is_unary_prefix: false,
-        prefix_precedence: None,
-        is_postfix: false,
-        has_rust_code: false,
-        rust_code: None,
-        eval_mode: None,
-    });
+        &cat_names,
+    );
+    pow.associativity = Associativity::Right;
+    spec.rules.push(pow);
 
     let code = generate_parser(&spec);
     let code_str = code.to_string();
@@ -518,35 +269,19 @@ fn test_generate_parser_with_right_associativity() {
 #[test]
 fn test_generate_parser_with_postfix() {
     let mut spec = calculator_spec();
+    let cat_names = category_names(&spec.types);
 
     // Add Fact as postfix operator: Int "!" → Int
-    spec.rules.push(RuleSpec {
-        label: "Fact".to_string(),
-        category: "Int".to_string(),
-        syntax: vec![
+    // classified() correctly derives is_postfix=true AND is_infix=true (postfix implies infix).
+    spec.rules.push(RuleSpec::classified(
+        "Fact",
+        "Int",
+        vec![
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
             SyntaxItemSpec::Terminal("!".to_string()),
         ],
-        is_infix: true, // participates in Pratt led loop
-        associativity: Associativity::Left,
-        is_var: false,
-        is_literal: false,
-        has_binder: false,
-        has_multi_binder: false,
-        is_collection: false,
-        collection_type: None,
-        separator: None,
-        is_cross_category: false,
-        cross_source_category: None,
-        is_cast: false,
-        cast_source_category: None,
-        is_unary_prefix: false,
-        prefix_precedence: None,
-        is_postfix: true,
-        has_rust_code: false,
-        rust_code: None,
-        eval_mode: None,
-    });
+        &cat_names,
+    ));
 
     let code = generate_parser(&spec);
     let code_str = code.to_string();
@@ -563,38 +298,21 @@ fn test_generate_parser_with_postfix() {
 #[test]
 fn test_generate_parser_with_mixfix() {
     let mut spec = calculator_spec();
+    let cat_names = category_names(&spec.types);
 
     // Add Ternary as mixfix operator: Int "?" Int ":" Int → Int
-    spec.rules.push(RuleSpec {
-        label: "Ternary".to_string(),
-        category: "Int".to_string(),
-        syntax: vec![
+    spec.rules.push(RuleSpec::classified(
+        "Ternary",
+        "Int",
+        vec![
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "cond".to_string() },
             SyntaxItemSpec::Terminal("?".to_string()),
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "then_val".to_string() },
             SyntaxItemSpec::Terminal(":".to_string()),
             SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "else_val".to_string() },
         ],
-        is_infix: true,
-        associativity: Associativity::Left,
-        is_var: false,
-        is_literal: false,
-        has_binder: false,
-        has_multi_binder: false,
-        is_collection: false,
-        collection_type: None,
-        separator: None,
-        is_cross_category: false,
-        cross_source_category: None,
-        is_cast: false,
-        cast_source_category: None,
-        is_unary_prefix: false,
-        prefix_precedence: None,
-        is_postfix: false,
-        has_rust_code: false,
-        rust_code: None,
-        eval_mode: None,
-    });
+        &cat_names,
+    ));
 
     let code = generate_parser(&spec);
     let code_str = code.to_string();

@@ -521,6 +521,7 @@ fn test_follow_sets_multi_position_rule() {
                 SyntaxItemSpec::Binder {
                     param_name: "x".to_string(),
                     category: "Name".to_string(),
+                    is_multi: false,
                 },
                 SyntaxItemSpec::Terminal("in".to_string()),
                 SyntaxItemSpec::NonTerminal {

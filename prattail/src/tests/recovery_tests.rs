@@ -8,13 +8,13 @@
 //! - Correct sync predicate tokens (FOLLOW set + structural delimiters)
 
 use crate::{
-    binding_power::Associativity,
     generate_parser,
     CategorySpec, LanguageSpec, RuleSpec, SyntaxItemSpec,
 };
 
 /// Build a simple calculator spec (Int with Add, IVar, NumLit).
 fn calculator_spec() -> LanguageSpec {
+    let category_names = vec!["Int".to_string()];
     LanguageSpec {
         name: "Calculator".to_string(),
         types: vec![CategorySpec {
@@ -24,35 +24,12 @@ fn calculator_spec() -> LanguageSpec {
         }],
         rules: vec![
             // NumLit: integer literal
-            RuleSpec {
-                label: "NumLit".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![],
-                is_infix: false,
-                associativity: Associativity::Left,
-                is_var: false,
-                is_literal: true,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+            RuleSpec::classified("NumLit", "Int", vec![], &category_names),
             // Add: Int "+" Int
-            RuleSpec {
-                label: "Add".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![
+            RuleSpec::classified(
+                "Add",
+                "Int",
+                vec![
                     SyntaxItemSpec::NonTerminal {
                         category: "Int".to_string(),
                         param_name: "a".to_string(),
@@ -63,53 +40,17 @@ fn calculator_spec() -> LanguageSpec {
                         param_name: "b".to_string(),
                     },
                 ],
-                is_infix: true,
-                associativity: Associativity::Left,
-                is_var: false,
-                is_literal: false,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+                &category_names,
+            ),
             // IVar: variable
-            RuleSpec {
-                label: "IVar".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![SyntaxItemSpec::IdentCapture {
+            RuleSpec::classified(
+                "IVar",
+                "Int",
+                vec![SyntaxItemSpec::IdentCapture {
                     param_name: "v".to_string(),
                 }],
-                is_infix: false,
-                associativity: Associativity::Left,
-                is_var: true,
-                is_literal: false,
-                has_binder: false,
-                has_multi_binder: false,
-                is_collection: false,
-                collection_type: None,
-                separator: None,
-                is_cross_category: false,
-                cross_source_category: None,
-                is_cast: false,
-                cast_source_category: None,
-                is_unary_prefix: false,
-                prefix_precedence: None,
-                is_postfix: false,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
+                &category_names,
+            ),
         ],
     }
 }
@@ -264,56 +205,21 @@ fn test_multi_category_generates_separate_sync_predicates() {
         native_type: Some("bool".to_string()),
         is_primary: false,
     });
-    spec.rules.push(RuleSpec {
-        label: "BoolLit".to_string(),
-        category: "Bool".to_string(),
-        syntax: vec![],
-        is_infix: false,
-        associativity: Associativity::Left,
-        is_var: false,
-        is_literal: true,
-        has_binder: false,
-        has_multi_binder: false,
-        is_collection: false,
-        collection_type: None,
-        separator: None,
-        is_cross_category: false,
-        cross_source_category: None,
-        is_cast: false,
-        cast_source_category: None,
-        is_unary_prefix: false,
-        prefix_precedence: None,
-        is_postfix: false,
-        has_rust_code: false,
-        rust_code: None,
-        eval_mode: None,
-    });
-    spec.rules.push(RuleSpec {
-        label: "BVar".to_string(),
-        category: "Bool".to_string(),
-        syntax: vec![SyntaxItemSpec::IdentCapture {
+    let category_names = vec!["Int".to_string(), "Bool".to_string()];
+    spec.rules.push(RuleSpec::classified(
+        "BoolLit",
+        "Bool",
+        vec![],
+        &category_names,
+    ));
+    spec.rules.push(RuleSpec::classified(
+        "BVar",
+        "Bool",
+        vec![SyntaxItemSpec::IdentCapture {
             param_name: "v".to_string(),
         }],
-        is_infix: false,
-        associativity: Associativity::Left,
-        is_var: true,
-        is_literal: false,
-        has_binder: false,
-        has_multi_binder: false,
-        is_collection: false,
-        collection_type: None,
-        separator: None,
-        is_cross_category: false,
-        cross_source_category: None,
-        is_cast: false,
-        cast_source_category: None,
-        is_unary_prefix: false,
-        prefix_precedence: None,
-        is_postfix: false,
-        has_rust_code: false,
-        rust_code: None,
-        eval_mode: None,
-    });
+        &category_names,
+    ));
 
     let code = generate_parser(&spec);
     let code_str = code.to_string();

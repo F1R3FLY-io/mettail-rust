@@ -166,6 +166,7 @@ fn binder_rule(label: &str, cat: &str, kw: &str, binder_cat: &str) -> RuleSpec {
             SyntaxItemSpec::Binder {
                 param_name: "x".to_string(),
                 category: binder_cat.to_string(),
+                is_multi: false,
             },
             SyntaxItemSpec::Terminal(".".to_string()),
             SyntaxItemSpec::NonTerminal {
@@ -533,6 +534,7 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
         SyntaxItemSpec::Binder {
             param_name,
             category,
+            ..
         } => RDSyntaxItem::Binder {
             param_name: param_name.clone(),
             binder_category: category.clone(),

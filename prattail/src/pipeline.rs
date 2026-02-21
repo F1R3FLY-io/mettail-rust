@@ -815,6 +815,7 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
         SyntaxItemSpec::Binder {
             param_name,
             category,
+            ..
         } => RDSyntaxItem::Binder {
             param_name: param_name.clone(),
             binder_category: category.clone(),

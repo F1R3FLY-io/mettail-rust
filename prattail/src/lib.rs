@@ -37,6 +37,7 @@
 
 pub mod automata;
 pub mod binding_power;
+pub mod classify;
 pub mod dispatch;
 pub mod ebnf;
 pub mod lexer;
@@ -143,7 +144,7 @@ pub enum SyntaxItemSpec {
     /// An identifier to capture.
     IdentCapture { param_name: String },
     /// A binder position.
-    Binder { param_name: String, category: String },
+    Binder { param_name: String, category: String, is_multi: bool },
     /// A collection with separator.
     Collection {
         param_name: String,
@@ -169,6 +170,113 @@ pub enum SyntaxItemSpec {
     Optional {
         inner: Vec<SyntaxItemSpec>,
     },
+}
+
+/// Minimal input for constructing a `RuleSpec`.
+///
+/// The bridge provides structural fields and DSL annotations only.
+/// PraTTaIL derives all classification flags via [`classify::classify_rule()`].
+#[derive(Debug, Clone)]
+pub struct RuleSpecInput {
+    /// Constructor label (e.g., "PPar", "Add", "PZero").
+    pub label: String,
+    /// Category this rule belongs to.
+    pub category: String,
+    /// Syntax items describing the concrete syntax.
+    pub syntax: Vec<SyntaxItemSpec>,
+    /// Associativity (only meaningful for infix rules).
+    pub associativity: Associativity,
+    /// Explicit prefix binding power for unary prefix operators.
+    pub prefix_precedence: Option<u8>,
+    /// Whether this has a Rust code block (HOL native).
+    pub has_rust_code: bool,
+    /// Rust code expression (as TokenStream).
+    pub rust_code: Option<TokenStream>,
+    /// Eval mode.
+    pub eval_mode: Option<String>,
+}
+
+impl LanguageSpec {
+    /// Construct a `LanguageSpec` from categories and minimal rule inputs.
+    ///
+    /// All classification flags (is_infix, is_postfix, is_cast, etc.) are
+    /// derived automatically via [`classify::classify_rule()`]. The bridge
+    /// only needs to provide structural data and DSL annotations.
+    pub fn new(name: String, types: Vec<CategorySpec>, inputs: Vec<RuleSpecInput>) -> Self {
+        let cat_names: Vec<String> = types.iter().map(|t| t.name.clone()).collect();
+        let rules = inputs
+            .into_iter()
+            .map(|input| {
+                let c = classify::classify_rule(&input.syntax, &input.category, &cat_names);
+                RuleSpec {
+                    label: input.label,
+                    category: input.category,
+                    syntax: input.syntax,
+                    is_infix: c.is_infix,
+                    is_postfix: c.is_postfix,
+                    is_unary_prefix: c.is_unary_prefix,
+                    is_var: c.is_var,
+                    is_literal: c.is_literal,
+                    has_binder: c.has_binder,
+                    has_multi_binder: c.has_multi_binder,
+                    is_collection: c.is_collection,
+                    collection_type: c.collection_type,
+                    separator: c.separator,
+                    is_cross_category: c.is_cross_category,
+                    cross_source_category: c.cross_source_category,
+                    is_cast: c.is_cast,
+                    cast_source_category: c.cast_source_category,
+                    associativity: input.associativity,
+                    prefix_precedence: input.prefix_precedence,
+                    has_rust_code: input.has_rust_code,
+                    rust_code: input.rust_code,
+                    eval_mode: input.eval_mode,
+                }
+            })
+            .collect();
+        LanguageSpec { name, types, rules }
+    }
+}
+
+impl RuleSpec {
+    /// Construct a `RuleSpec` with automatic flag classification.
+    ///
+    /// Convenience for tests and benchmarks — avoids manually setting 15+ derived flags.
+    /// Non-default DSL annotations (associativity, prefix_precedence, etc.) can be
+    /// set on the returned value via field mutation.
+    pub fn classified(
+        label: impl Into<String>,
+        category: impl Into<String>,
+        syntax: Vec<SyntaxItemSpec>,
+        category_names: &[String],
+    ) -> Self {
+        let category = category.into();
+        let c = classify::classify_rule(&syntax, &category, category_names);
+        RuleSpec {
+            label: label.into(),
+            category,
+            syntax,
+            is_infix: c.is_infix,
+            is_postfix: c.is_postfix,
+            is_unary_prefix: c.is_unary_prefix,
+            is_var: c.is_var,
+            is_literal: c.is_literal,
+            has_binder: c.has_binder,
+            has_multi_binder: c.has_multi_binder,
+            is_collection: c.is_collection,
+            collection_type: c.collection_type,
+            separator: c.separator,
+            is_cross_category: c.is_cross_category,
+            cross_source_category: c.cross_source_category,
+            is_cast: c.is_cast,
+            cast_source_category: c.cast_source_category,
+            associativity: Associativity::Left,
+            prefix_precedence: None,
+            has_rust_code: false,
+            rust_code: None,
+            eval_mode: None,
+        }
+    }
 }
 
 /// Generate a complete parser for a language specification.
