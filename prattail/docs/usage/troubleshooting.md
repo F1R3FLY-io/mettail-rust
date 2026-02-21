@@ -386,44 +386,89 @@ The result is `*(x)` (unchanged) instead of the expected `*({})`.
 
 ### Cause
 
-The `^x.{body}` syntax **always** creates `LamProc` — a lambda that
-binds a **Proc**-typed variable. When beta-reducing `$proc(LamProc(scope), arg)`,
-the runtime calls `substitute_proc`, which replaces occurrences of `x` in
-**Proc-typed** positions only.
+The `^x.{body}` syntax uses **inference-driven variant selection**: the parser
+calls `body.infer_var_type("x")` to determine which category `x` occupies in
+the body, then constructs the matching `Lam{Domain}` variant. The mismatch
+in this example is between the **dollar prefix** and the **inferred domain**:
 
-In the expression `*(x)`, the `x` inside `*( )` occupies a **Name-typed**
-position (the `PDrop` rule takes `n:Name`). Since `substitute_proc` does
-not affect Name-typed positions, the `x` is not replaced, and no
-reduction occurs.
+```
+Expression:   $proc(^x.{*(x)}, {})
+
+Step 1: Parse body *(x)
+        x appears in PDrop(n:Name) — x occupies a Name-typed position
+
+Step 2: infer_var_type("x") returns VarCategory::Name
+        → lambda variant: LamName(scope)
+
+Step 3: $proc creates ApplyProc(LamName(scope), {})
+        → ApplyProc checks for LamProc — finds LamName instead
+        → domain mismatch: no beta-reduction occurs
+```
+
+The dollar prefix `$proc` wraps the lambda and argument in `ApplyProc`, which
+expects `LamProc`. But inference correctly determined that `x` is used as a
+`Name`, so the lambda is `LamName`. The `ApplyProc`/`LamName` mismatch
+prevents reduction.
 
 ### Fix
 
-Ensure the binder variable is used in a position matching the binder's type:
+**Match the dollar prefix to the body's usage of the binder variable.** Since
+`infer_var_type` automatically selects the correct lambda variant, the only
+thing the user needs to ensure is that the dollar prefix corresponds to the
+inferred domain:
 
 ```
-# Correct: x used as Proc (primary category)
+# Correct: x used as Name, dollar prefix is $name
+$name(^x.{*(x)}, n)      → *(n)
+
+# Correct: x used as Proc, dollar prefix is $proc
 $proc(^x.{x}, {})        → {}
 
-# Correct: x used in Proc position (parallel composition)
-$proc(^x.{x | x}, {})    → {} | {}
+# Correct: x used as Name (in output position), dollar prefix is $name
+$name(^loc.{loc!(init)}, n)  → n!(init)
 
-# Will NOT reduce: x used as Name, not Proc
+# Correct: x used as Int, dollar prefix is $int
+$int(^x.{x + 1}, 5)      → 6
+
+# Will NOT reduce: dollar prefix $proc vs inferred domain Name
 $proc(^x.{*(x)}, {})     → *(x)
 ```
 
-**General rule:** Use `$proc` when the body uses `x` as a `Proc`. The
-`^x.{body}` syntax can only create `LamProc` (Proc binder). `LamName`
-(Name binder) can only be constructed programmatically, not via the
-`^x.{...}` surface syntax.
+**Decision tree for choosing the dollar prefix:**
+
+```
+What category does x occupy in the body?
+  │
+  ├─ x used as Name (e.g., *(x), x!(q), @(x))  →  $name(^x.{...}, arg)
+  ├─ x used as Proc (e.g., x | y, x itself)     →  $proc(^x.{...}, arg)
+  ├─ x used as Int  (e.g., x + 1)               →  $int(^x.{...}, arg)
+  └─ x used as Bool (e.g., x && true)            →  $bool(^x.{...}, arg)
+```
 
 ### Diagnostic
 
-If unsure which positions are Proc-typed vs Name-typed, check the grammar
-rules. For example, in RhoCalc:
+The `infer_var_type` mechanism handles lambda variant selection automatically.
+To diagnose a non-reducing dollar application:
 
-- `PDrop . n:Name |- "*" "(" n ")" : Proc` — the `n` position is **Name**
-- `POutput . n:Name, q:Proc |- n "!" "(" q ")" : Proc` — `n` is **Name**, `q` is **Proc**
-- `PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc` — `ps` elements are **Proc**
+1. **Identify the binder's domain.** Check what category position `x` occupies
+   in the body by examining the grammar rules:
 
-A binder `^x` created via `^x.{body}` will only substitute into
-positions whose category matches the primary category (Proc).
+   | Rule | Position | Category |
+   |---|---|---|
+   | `PDrop . n:Name \|- "*" "(" n ")" : Proc` | `n` | **Name** |
+   | `POutput . n:Name, q:Proc \|- n "!" "(" q ")" : Proc` | `n` = **Name**, `q` = **Proc** |
+   | `PPar . ps:HashBag(Proc) \|- "{" ps.*sep("\|") "}" : Proc` | `ps` elements = **Proc** |
+   | `Add . a:Int, b:Int \|- a "+" b : Int` | `a`, `b` = **Int** |
+
+2. **Match the dollar prefix.** The dollar prefix must create an `Apply{Domain}`
+   that matches the `Lam{Domain}` variant produced by inference:
+
+   | Inferred Domain | Lambda Variant | Required Dollar Prefix | Application Variant |
+   |---|---|---|---|
+   | `VarCategory::Name` | `LamName` | `$name` | `ApplyName` |
+   | `VarCategory::Proc` | `LamProc` | `$proc` | `ApplyProc` |
+   | `VarCategory::Int` | `LamInt` | `$int` | `ApplyInt` |
+   | `VarCategory::Bool` | `LamBool` | `$bool` | `ApplyBool` |
+
+3. **If the prefix mismatches the inferred domain**, the normalizer receives
+   (e.g.) `ApplyProc(LamName(scope), arg)` and returns the term un-reduced.

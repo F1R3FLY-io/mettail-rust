@@ -427,6 +427,44 @@ write_rd_handler(&mut buf, &rule) -> PrefixHandler
     +---> String appended to buf: fn parse_<label>() { ... }
 ```
 
+### Specialized Handler Generators
+
+In addition to the generic `write_rd_handler` path above, two specialized
+handler generators produce their own `PrefixHandler` entries:
+
+```
+write_lambda_handlers(buf, categories, primary_category)
+    |
+    +---> Generates parse_lambda(tokens, pos) -> Result<Cat, ParseError>
+    |       Three-step pipeline:
+    |         1. Parse body as primary category
+    |         2. Call body.infer_var_type(&binder_name) to determine domain
+    |         3. Match on inferred type → select Lam{Domain} or MLam{Domain} variant
+    |       Pre-builds match arm strings from all_categories:
+    |         "Some(InferredType::Base(VarCategory::Name)) => Cat::LamName(scope),"
+    |         ...one arm per category...
+    |         "_ => Cat::LamCat(scope)"  (fallback to primary category default)
+    |
+    +---> PrefixHandler for Token::Caret (^) in primary category
+
+write_dollar_handlers(buf, categories, primary_category)
+    |
+    +---> For each domain category:
+    |       Generates parse_dollar_{dom}(tokens, pos) -> Result<Cat, ParseError>
+    |         Parses: $dom(lambda_expr, arg)
+    |         Constructs: Cat::Apply{Dom}(Box::new(f), Box::new(arg))
+    |       Generates parse_ddollar_{dom}(tokens, pos) -> Result<Cat, ParseError>
+    |         Parses: $$dom(lambda_expr, arg1, arg2, ...)
+    |         Constructs: Cat::MApply{Dom}(Box::new(f), args)
+    |
+    +---> PrefixHandler for Token::Dollar{Dom} ($dom) and Token::DDollar{Dom} ($$dom)
+```
+
+These are separate from the generic `write_rd_handler` path: lambda handlers
+use inference-driven variant selection (not available in generic RD rules),
+and dollar handlers parse a fixed `(lambda, arg)` structure with per-domain
+application variants.
+
 ---
 
 ## FOLLOW Set Data Flow

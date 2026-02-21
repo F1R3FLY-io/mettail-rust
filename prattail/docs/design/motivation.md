@@ -149,18 +149,38 @@ The parser sees `^` and cannot predict which category's body will follow. This
 is a reduce-reduce conflict at the point where the parser must choose which
 non-terminal to enter for the body.
 
-**The LALRPOP Workaround.** Lambda rules are generated only for the primary
-category. The body always parses as the primary type, and `infer_var_type` at
-parse time determines which AST variant to construct. This means lambdas
-returning non-primary types cannot be written directly in input syntax---they
-can only be constructed programmatically.
+**The LALRPOP Workaround.** Lambda rules were generated only for the primary
+category. The body always parsed as the primary type, and a fixed lambda
+variant was constructed (e.g., always `LamProc` for a Proc-primary language).
+This meant lambdas binding non-primary-category variables could not be
+written directly in input syntax---they could only be constructed
+programmatically (e.g., building `LamName` in Rust code).
 
-**How PraTTaIL Eliminates It.** Because the parser is top-down, lambda
-generation naturally follows the calling context. If `parse_Bool` encounters
-`^`, it calls `parse_lambda` which knows to parse the body as the primary
-category and infer the binder type. The key difference is that every category's
-parser *can* encounter lambda syntax without ambiguity, because the dispatch
-decision is made by the caller before the lambda token is even consumed.
+**How PraTTaIL Eliminates It.** PraTTaIL uses top-down parsing with
+inference-driven variant selection to make **all** lambda domain variants
+constructible from surface syntax. The process has three steps:
+
+```
+^x.{*(x)}
+   │
+   ├─ Step 1: Parse body as primary category
+   │          body = PDrop(NVar("x"))
+   │
+   ├─ Step 2: Call body.infer_var_type("x")
+   │          x appears in PDrop(n:Name) → VarCategory::Name
+   │
+   └─ Step 3: Match on inferred type, construct matching variant
+              VarCategory::Name → Proc::LamName(Scope::new(binder, body))
+```
+
+Because the parser is top-down, every category's parser *can* encounter
+lambda syntax without ambiguity---the dispatch decision is made by the
+caller before the lambda token is consumed. The `infer_var_type` call
+examines the parsed body AST to determine which category the bound
+variable occupies, then a generated `match` expression selects the
+corresponding `Lam{Domain}` variant (one arm per category). This
+eliminates both the reduce-reduce conflict and the limitation that
+non-primary lambda variants were inaccessible from surface syntax.
 
 ### Limitation 4: Var+Terminal Rule Partitioning
 

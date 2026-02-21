@@ -48,6 +48,7 @@ examples/src/*_gen.rs
 # Profiling output
 prattail/docs/benchmarks/*.txt
 perf*.data
+perf*.data.*
 
 # Backup files
 *.bak

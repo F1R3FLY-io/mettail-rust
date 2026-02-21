@@ -6,444 +6,444 @@ ascent_source! {
     ambient_source:
 
     // Relations
-relation proc(Proc);
+relation proc (Proc);
 
-#[ds(crate::eqrel)] relation eq_proc(Proc, Proc);
+# [ds (crate::eqrel)]relation eq_proc (Proc , Proc);
 
-relation rw_proc(Proc, Proc);
+relation rw_proc (Proc , Proc);
 
-relation name(Name);
+relation name (Name);
 
-#[ds(crate::eqrel)] relation eq_name(Name, Name);
+# [ds (crate::eqrel)]relation eq_name (Name , Name);
 
-relation rw_name(Name, Name);
+relation rw_name (Name , Name);
 
-relation step_term(Proc);
+relation step_term (Proc);
 
-relation ppar_contains(Proc, Proc);
+relation ppar_contains (Proc , Proc);
 
 
     // Category rules
-proc(sub.clone()) <--
-    proc(t),
+proc (sub . clone ()) <--
+    proc (t),
     for sub in (match t {
-        Proc::PIn(_, f1) => vec![f1.as_ref().clone()],
-        Proc::POut(_, f1) => vec![f1.as_ref().clone()],
-        Proc::POpen(_, f1) => vec![f1.as_ref().clone()],
-        Proc::PAmb(_, f1) => vec![f1.as_ref().clone()],
-        Proc::PNew(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
-        Proc::ApplyProc(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
-        Proc::MApplyProc(lam, args) => {
-            let mut v = Vec::with_capacity(1 + args.len());
-            v.push(lam.as_ref().clone());
-            v.extend(args.iter().cloned());
+        Proc::PIn (_ , f1)=> vec ! [f1 . as_ref (). clone ()],
+        Proc::POut (_ , f1)=> vec ! [f1 . as_ref (). clone ()],
+        Proc::POpen (_ , f1)=> vec ! [f1 . as_ref (). clone ()],
+        Proc::PAmb (_ , f1)=> vec ! [f1 . as_ref (). clone ()],
+        Proc::PNew (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
+        Proc::ApplyProc (lam , arg)=> vec ! [lam . as_ref (). clone (), arg . as_ref (). clone ()],
+        Proc::MApplyProc (lam , args)=> {
+            let mut v = Vec::with_capacity (1 + args . len ());
+            v . push (lam . as_ref (). clone ());
+            v . extend (args . iter (). cloned ());
             v
         },
-        Proc::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
-        Proc::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
-        Proc::ApplyName(lam, _) => vec![lam.as_ref().clone()],
-        Proc::MApplyName(lam, _) => vec![lam.as_ref().clone()],
-        Proc::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
-        Proc::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
-        _ => vec![],
-    }).into_iter();
+        Proc::LamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
+        Proc::MLamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
+        Proc::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Proc::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Proc::LamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
+        Proc::MLamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
+        _ => vec ! [],
+    }). into_iter ();
 
-name(sub.clone()) <--
-    proc(t),
+name (sub . clone ()) <--
+    proc (t),
     for sub in (match t {
-        Proc::PIn(f0, _) => vec![f0.as_ref().clone()],
-        Proc::POut(f0, _) => vec![f0.as_ref().clone()],
-        Proc::POpen(f0, _) => vec![f0.as_ref().clone()],
-        Proc::PAmb(f0, _) => vec![f0.as_ref().clone()],
-        Proc::ApplyName(_, arg) => vec![arg.as_ref().clone()],
-        Proc::MApplyName(_, args) => args.iter().cloned().collect(),
-        _ => vec![],
-    }).into_iter();
+        Proc::PIn (f0 , _)=> vec ! [f0 . as_ref (). clone ()],
+        Proc::POut (f0 , _)=> vec ! [f0 . as_ref (). clone ()],
+        Proc::POpen (f0 , _)=> vec ! [f0 . as_ref (). clone ()],
+        Proc::PAmb (f0 , _)=> vec ! [f0 . as_ref (). clone ()],
+        Proc::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
+        Proc::MApplyName (_ , args)=> args . iter (). cloned (). collect (),
+        _ => vec ! [],
+    }). into_iter ();
 
-proc(sub.clone()) <--
-    name(t),
+proc (sub . clone ()) <--
+    name (t),
     for sub in (match t {
-        Name::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
-        Name::MApplyProc(_, args) => args.iter().cloned().collect(),
-        _ => vec![],
-    }).into_iter();
+        Name::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
+        Name::MApplyProc (_ , args)=> args . iter (). cloned (). collect (),
+        _ => vec ! [],
+    }). into_iter ();
 
-name(sub.clone()) <--
-    name(t),
+name (sub . clone ()) <--
+    name (t),
     for sub in (match t {
-        Name::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
-        Name::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
-        Name::LamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
-        Name::MLamProc(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
-        Name::ApplyName(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
-        Name::MApplyName(lam, args) => {
-            let mut v = Vec::with_capacity(1 + args.len());
-            v.push(lam.as_ref().clone());
-            v.extend(args.iter().cloned());
+        Name::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Name::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Name::LamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
+        Name::MLamProc (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
+        Name::ApplyName (lam , arg)=> vec ! [lam . as_ref (). clone (), arg . as_ref (). clone ()],
+        Name::MApplyName (lam , args)=> {
+            let mut v = Vec::with_capacity (1 + args . len ());
+            v . push (lam . as_ref (). clone ());
+            v . extend (args . iter (). cloned ());
             v
         },
-        Name::LamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
-        Name::MLamName(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
-        _ => vec![],
-    }).into_iter();
+        Name::LamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
+        Name::MLamName (scope)=> vec ! [scope . inner (). unsafe_body . as_ref (). clone ()],
+        _ => vec ! [],
+    }). into_iter ();
 
-proc(c1.clone()) <--
-    proc(c0),
-    rw_proc(c0, c1);
+proc (c1 . clone ()) <--
+    proc (c0),
+    rw_proc (c0 , c1);
 
-ppar_contains(parent.clone(), elem.clone()) <--
-    proc(parent),
-    if let Proc::PPar(ref bag_field) = parent,
-    for (elem, _count) in bag_field.iter();
+ppar_contains (parent . clone (), elem . clone ()) <--
+    proc (parent),
+    if let Proc::PPar (ref bag_field)= parent,
+    for (elem , _count)in bag_field . iter ();
 
-proc(elem.clone()) <--
-    ppar_contains(_parent, elem);
+proc (elem . clone ()) <--
+    ppar_contains (_parent , elem);
 
-rw_proc(t.clone(), match t {
-    Proc::ApplyProc(_, arg) => Proc::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
-    Proc::MApplyProc(_, args) => Proc::MApplyProc(Box::new(new_lam.clone()), args.clone()),
-    Proc::ApplyName(_, arg) => Proc::ApplyName(Box::new(new_lam.clone()), arg.clone()),
-    Proc::MApplyName(_, args) => Proc::MApplyName(Box::new(new_lam.clone()), args.clone()),
-    _ => unreachable!(),
+rw_proc (t . clone (), match t {
+    Proc::ApplyProc (_ , arg)=> Proc::ApplyProc (Box::new (new_lam . clone ()), arg . clone ()),
+    Proc::MApplyProc (_ , args)=> Proc::MApplyProc (Box::new (new_lam . clone ()), args . clone ()),
+    Proc::ApplyName (_ , arg)=> Proc::ApplyName (Box::new (new_lam . clone ()), arg . clone ()),
+    Proc::MApplyName (_ , args)=> Proc::MApplyName (Box::new (new_lam . clone ()), args . clone ()),
+    _ => unreachable ! (),
 }) <--
-    proc(t),
+    proc (t),
     for lam in (match t {
-        Proc::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
-        Proc::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
-        Proc::ApplyName(lam, _) => vec![lam.as_ref().clone()],
-        Proc::MApplyName(lam, _) => vec![lam.as_ref().clone()],
-        _ => vec![],
-    }).into_iter(),
-    rw_proc(lam, new_lam);
+        Proc::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Proc::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Proc::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Proc::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        _ => vec ! [],
+    }). into_iter (),
+    rw_proc (lam , new_lam);
 
-rw_proc(t.clone(), match t {
-    Proc::ApplyProc(lam, _) => Proc::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
-    _ => unreachable!(),
+rw_proc (t . clone (), match t {
+    Proc::ApplyProc (lam , _)=> Proc::ApplyProc (lam . clone (), Box::new (new_arg . clone ())),
+    _ => unreachable ! (),
 }) <--
-    proc(t),
+    proc (t),
     for arg in (match t {
-        Proc::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
-        _ => vec![],
-    }).into_iter(),
-    rw_proc(arg, new_arg);
+        Proc::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
+        _ => vec ! [],
+    }). into_iter (),
+    rw_proc (arg , new_arg);
 
-rw_proc(t.clone(), match t {
-    Proc::ApplyName(lam, _) => Proc::ApplyName(lam.clone(), Box::new(new_arg.clone())),
-    _ => unreachable!(),
+rw_proc (t . clone (), match t {
+    Proc::ApplyName (lam , _)=> Proc::ApplyName (lam . clone (), Box::new (new_arg . clone ())),
+    _ => unreachable ! (),
 }) <--
-    proc(t),
+    proc (t),
     for arg in (match t {
-        Proc::ApplyName(_, arg) => vec![arg.as_ref().clone()],
-        _ => vec![],
-    }).into_iter(),
-    rw_name(arg, new_arg);
+        Proc::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
+        _ => vec ! [],
+    }). into_iter (),
+    rw_name (arg , new_arg);
 
-name(c1.clone()) <--
-    name(c0),
-    rw_name(c0, c1);
+name (c1 . clone ()) <--
+    name (c0),
+    rw_name (c0 , c1);
 
-rw_name(t.clone(), match t {
-    Name::ApplyProc(_, arg) => Name::ApplyProc(Box::new(new_lam.clone()), arg.clone()),
-    Name::MApplyProc(_, args) => Name::MApplyProc(Box::new(new_lam.clone()), args.clone()),
-    Name::ApplyName(_, arg) => Name::ApplyName(Box::new(new_lam.clone()), arg.clone()),
-    Name::MApplyName(_, args) => Name::MApplyName(Box::new(new_lam.clone()), args.clone()),
-    _ => unreachable!(),
+rw_name (t . clone (), match t {
+    Name::ApplyProc (_ , arg)=> Name::ApplyProc (Box::new (new_lam . clone ()), arg . clone ()),
+    Name::MApplyProc (_ , args)=> Name::MApplyProc (Box::new (new_lam . clone ()), args . clone ()),
+    Name::ApplyName (_ , arg)=> Name::ApplyName (Box::new (new_lam . clone ()), arg . clone ()),
+    Name::MApplyName (_ , args)=> Name::MApplyName (Box::new (new_lam . clone ()), args . clone ()),
+    _ => unreachable ! (),
 }) <--
-    name(t),
+    name (t),
     for lam in (match t {
-        Name::ApplyProc(lam, _) => vec![lam.as_ref().clone()],
-        Name::MApplyProc(lam, _) => vec![lam.as_ref().clone()],
-        Name::ApplyName(lam, _) => vec![lam.as_ref().clone()],
-        Name::MApplyName(lam, _) => vec![lam.as_ref().clone()],
-        _ => vec![],
-    }).into_iter(),
-    rw_name(lam, new_lam);
+        Name::ApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Name::MApplyProc (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Name::ApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        Name::MApplyName (lam , _)=> vec ! [lam . as_ref (). clone ()],
+        _ => vec ! [],
+    }). into_iter (),
+    rw_name (lam , new_lam);
 
-rw_name(t.clone(), match t {
-    Name::ApplyProc(lam, _) => Name::ApplyProc(lam.clone(), Box::new(new_arg.clone())),
-    _ => unreachable!(),
+rw_name (t . clone (), match t {
+    Name::ApplyProc (lam , _)=> Name::ApplyProc (lam . clone (), Box::new (new_arg . clone ())),
+    _ => unreachable ! (),
 }) <--
-    name(t),
+    name (t),
     for arg in (match t {
-        Name::ApplyProc(_, arg) => vec![arg.as_ref().clone()],
-        _ => vec![],
-    }).into_iter(),
-    rw_proc(arg, new_arg);
+        Name::ApplyProc (_ , arg)=> vec ! [arg . as_ref (). clone ()],
+        _ => vec ! [],
+    }). into_iter (),
+    rw_proc (arg , new_arg);
 
-rw_name(t.clone(), match t {
-    Name::ApplyName(lam, _) => Name::ApplyName(lam.clone(), Box::new(new_arg.clone())),
-    _ => unreachable!(),
+rw_name (t . clone (), match t {
+    Name::ApplyName (lam , _)=> Name::ApplyName (lam . clone (), Box::new (new_arg . clone ())),
+    _ => unreachable ! (),
 }) <--
-    name(t),
+    name (t),
     for arg in (match t {
-        Name::ApplyName(_, arg) => vec![arg.as_ref().clone()],
-        _ => vec![],
-    }).into_iter(),
-    rw_name(arg, new_arg);
+        Name::ApplyName (_ , arg)=> vec ! [arg . as_ref (). clone ()],
+        _ => vec ! [],
+    }). into_iter (),
+    rw_name (arg , new_arg);
 
 
     // Equation rules
-eq_proc(t.clone(), t.clone()) <--
-    proc(t);
+eq_proc (t . clone (), t . clone ()) <--
+    proc (t);
 
-eq_name(t.clone(), t.clone()) <--
-    name(t);
+eq_name (t . clone (), t . clone ()) <--
+    name (t);
 
-eq_proc(s.clone(), t.clone()) <--
-    proc(s),
-    proc(t),
-    for (s_f0, s_f1, t_f0, t_f1) in (match (s, t) {
-        (Proc::PIn(sf0, sf1), Proc::PIn(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
-        (Proc::POut(sf0, sf1), Proc::POut(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
-        (Proc::POpen(sf0, sf1), Proc::POpen(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
-        (Proc::PAmb(sf0, sf1), Proc::PAmb(tf0, tf1)) => vec![(sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone())],
-        _ => vec![],
-    }).into_iter(),
-    eq_name(s_f0, t_f0),
-    eq_proc(s_f1, t_f1);
+eq_proc (s . clone (), t . clone ()) <--
+    proc (s),
+    proc (t),
+    for (s_f0 , s_f1 , t_f0 , t_f1)in (match (s , t){
+        (Proc::PIn (sf0 , sf1), Proc::PIn (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
+        (Proc::POut (sf0 , sf1), Proc::POut (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
+        (Proc::POpen (sf0 , sf1), Proc::POpen (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
+        (Proc::PAmb (sf0 , sf1), Proc::PAmb (tf0 , tf1))=> vec ! [(sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ())],
+        _ => vec ! [],
+    }). into_iter (),
+    eq_name (s_f0 , t_f0),
+    eq_proc (s_f1 , t_f1);
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PNew(ref s_f0) = s,
-    let s_f0_binder = s_f0.unsafe_pattern().clone(),
-    let s_f0_body_boxed = s_f0.unsafe_body(),
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PNew (ref s_f0)= s,
+    let s_f0_binder = s_f0 . unsafe_pattern (). clone (),
+    let s_f0_body_boxed = s_f0 . unsafe_body (),
     let s_f0_body = &** s_f0_body_boxed,
-    if let Proc::PNew(ref s_f0_body_f0) = s_f0_body,
-    let s_f0_body_f0_binder = s_f0_body_f0.unsafe_pattern().clone(),
-    let s_f0_body_f0_body_boxed = s_f0_body_f0.unsafe_body(),
+    if let Proc::PNew (ref s_f0_body_f0)= s_f0_body,
+    let s_f0_body_f0_binder = s_f0_body_f0 . unsafe_pattern (). clone (),
+    let s_f0_body_f0_body_boxed = s_f0_body_f0 . unsafe_body (),
     let s_f0_body_f0_body = &** s_f0_body_f0_body_boxed,
-    let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_body_f0_binder.clone().clone(), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f0_body.clone()).clone()))))))).normalize();
+    let t = (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_body_f0_binder . clone (). clone (), Box::new (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_binder . clone (). clone (), Box::new ((s_f0_body_f0_body . clone ()). clone ()))))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PNew(ref s_f0) = s,
-    let s_f0_binder = s_f0.unsafe_pattern().clone(),
-    let s_f0_body_boxed = s_f0.unsafe_body(),
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PNew (ref s_f0)= s,
+    let s_f0_binder = s_f0 . unsafe_pattern (). clone (),
+    let s_f0_body_boxed = s_f0 . unsafe_body (),
     let s_f0_body = &** s_f0_body_boxed,
-    if let Proc::PNew(ref s_f0_body_f0) = s_f0_body,
-    let s_f0_body_f0_binder = s_f0_body_f0.unsafe_pattern().clone(),
-    let s_f0_body_f0_body_boxed = s_f0_body_f0.unsafe_body(),
+    if let Proc::PNew (ref s_f0_body_f0)= s_f0_body,
+    let s_f0_body_f0_binder = s_f0_body_f0 . unsafe_pattern (). clone (),
+    let s_f0_body_f0_body_boxed = s_f0_body_f0 . unsafe_body (),
     let s_f0_body_f0_body = &** s_f0_body_f0_body_boxed,
-    let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_body_f0_binder.clone().clone(), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f0_body.clone()).clone()))))))).normalize();
+    let t = (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_body_f0_binder . clone (). clone (), Box::new (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_binder . clone (). clone (), Box::new ((s_f0_body_f0_body . clone ()). clone ()))))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PPar(ref s_f0) = s,
-    for (s_f0_e0, _count_0) in s_f0.iter(),
-    if let Proc::PNew(ref s_f0_e0_f0) = s_f0_e0,
-    let s_f0_e0_f0_binder = s_f0_e0_f0.unsafe_pattern().clone(),
-    let s_f0_e0_f0_body_boxed = s_f0_e0_f0.unsafe_body(),
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PPar (ref s_f0)= s,
+    for (s_f0_e0 , _count_0)in s_f0 . iter (),
+    if let Proc::PNew (ref s_f0_e0_f0)= s_f0_e0,
+    let s_f0_e0_f0_binder = s_f0_e0_f0 . unsafe_pattern (). clone (),
+    let s_f0_e0_f0_body_boxed = s_f0_e0_f0 . unsafe_body (),
     let s_f0_e0_f0_body = &** s_f0_e0_f0_body_boxed,
-    let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag },
-    if s_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime::BoundTerm::free_vars(elem).contains(& s_f0_e0_f0_binder.0.clone())),
-    let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_e0_f0_binder.clone().clone(), Box::new(Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f0_body.clone()).clone()); bag }))))).normalize();
+    let s_f0_rest = {let mut bag = s_f0 . clone (); bag . remove (& s_f0_e0); bag},
+    if s_f0_rest . clone (). clone (). iter (). all (| (elem , _)| ! mettail_runtime::BoundTerm::free_vars (elem). contains (& s_f0_e0_f0_binder . 0 . clone ())),
+    let t = (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_e0_f0_binder . clone (). clone (), Box::new (Proc::PPar ({let mut bag = (s_f0_rest . clone ()). clone (); Proc::insert_into_ppar (& mut bag , (s_f0_e0_f0_body . clone ()). clone ()); bag}))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PNew(ref s_f0) = s,
-    let s_f0_binder = s_f0.unsafe_pattern().clone(),
-    let s_f0_body_boxed = s_f0.unsafe_body(),
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PNew (ref s_f0)= s,
+    let s_f0_binder = s_f0 . unsafe_pattern (). clone (),
+    let s_f0_body_boxed = s_f0 . unsafe_body (),
     let s_f0_body = &** s_f0_body_boxed,
-    if let Proc::PPar(ref s_f0_body_f0) = s_f0_body,
-    for (s_f0_body_f0_e0, _count_0) in s_f0_body_f0.iter(),
-    let s_f0_body_f0_rest = { let mut bag = s_f0_body_f0.clone(); bag.remove(& s_f0_body_f0_e0); bag },
-    if s_f0_body_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime::BoundTerm::free_vars(elem).contains(& s_f0_binder.0.clone())),
-    let t = (Proc::PPar({ let mut bag = (s_f0_body_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f0_e0.clone()).clone())))); bag })).normalize();
+    if let Proc::PPar (ref s_f0_body_f0)= s_f0_body,
+    for (s_f0_body_f0_e0 , _count_0)in s_f0_body_f0 . iter (),
+    let s_f0_body_f0_rest = {let mut bag = s_f0_body_f0 . clone (); bag . remove (& s_f0_body_f0_e0); bag},
+    if s_f0_body_f0_rest . clone (). clone (). iter (). all (| (elem , _)| ! mettail_runtime::BoundTerm::free_vars (elem). contains (& s_f0_binder . 0 . clone ())),
+    let t = (Proc::PPar ({let mut bag = (s_f0_body_f0_rest . clone ()). clone (); Proc::insert_into_ppar (& mut bag , Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_binder . clone (). clone (), Box::new ((s_f0_body_f0_e0 . clone ()). clone ())))); bag})). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PIn(ref s_f0, ref s_f1) = s,
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PIn (ref s_f0 , ref s_f1)= s,
     let s_f0_deref = &** s_f0,
     let s_f1_deref = &** s_f1,
-    if let Proc::PNew(ref s_f1_deref_f0) = s_f1_deref,
-    let s_f1_deref_f0_binder = s_f1_deref_f0.unsafe_pattern().clone(),
-    let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
+    if let Proc::PNew (ref s_f1_deref_f0)= s_f1_deref,
+    let s_f1_deref_f0_binder = s_f1_deref_f0 . unsafe_pattern (). clone (),
+    let s_f1_deref_f0_body_boxed = s_f1_deref_f0 . unsafe_body (),
     let s_f1_deref_f0_body = &** s_f1_deref_f0_body_boxed,
-    if ! mettail_runtime::BoundTerm::free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
-    let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box::new(Proc::PIn(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
+    if ! mettail_runtime::BoundTerm::free_vars (& s_f1_deref_f0_body . clone ()). contains (& s_f1_deref_f0_binder . 0 . clone ()),
+    let t = (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f1_deref_f0_binder . clone (). clone (), Box::new (Proc::PIn (Box::new ((s_f0_deref . clone ()). clone ()), Box::new ((s_f1_deref_f0_body . clone ()). clone ())))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PNew(ref s_f0) = s,
-    let s_f0_binder = s_f0.unsafe_pattern().clone(),
-    let s_f0_body_boxed = s_f0.unsafe_body(),
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PNew (ref s_f0)= s,
+    let s_f0_binder = s_f0 . unsafe_pattern (). clone (),
+    let s_f0_body_boxed = s_f0 . unsafe_body (),
     let s_f0_body = &** s_f0_body_boxed,
-    if let Proc::PIn(ref s_f0_body_f0, ref s_f0_body_f1) = s_f0_body,
+    if let Proc::PIn (ref s_f0_body_f0 , ref s_f0_body_f1)= s_f0_body,
     let s_f0_body_f0_deref = &** s_f0_body_f0,
     let s_f0_body_f1_deref = &** s_f0_body_f1,
-    if ! mettail_runtime::BoundTerm::free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
-    let t = (Proc::PIn(Box::new((s_f0_body_f0_deref.clone()).clone()), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
+    if ! mettail_runtime::BoundTerm::free_vars (& s_f0_body_f1_deref . clone ()). contains (& s_f0_binder . 0 . clone ()),
+    let t = (Proc::PIn (Box::new ((s_f0_body_f0_deref . clone ()). clone ()), Box::new (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_binder . clone (). clone (), Box::new ((s_f0_body_f1_deref . clone ()). clone ())))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::POut(ref s_f0, ref s_f1) = s,
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::POut (ref s_f0 , ref s_f1)= s,
     let s_f0_deref = &** s_f0,
     let s_f1_deref = &** s_f1,
-    if let Proc::PNew(ref s_f1_deref_f0) = s_f1_deref,
-    let s_f1_deref_f0_binder = s_f1_deref_f0.unsafe_pattern().clone(),
-    let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
+    if let Proc::PNew (ref s_f1_deref_f0)= s_f1_deref,
+    let s_f1_deref_f0_binder = s_f1_deref_f0 . unsafe_pattern (). clone (),
+    let s_f1_deref_f0_body_boxed = s_f1_deref_f0 . unsafe_body (),
     let s_f1_deref_f0_body = &** s_f1_deref_f0_body_boxed,
-    if ! mettail_runtime::BoundTerm::free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
-    let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box::new(Proc::POut(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
+    if ! mettail_runtime::BoundTerm::free_vars (& s_f1_deref_f0_body . clone ()). contains (& s_f1_deref_f0_binder . 0 . clone ()),
+    let t = (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f1_deref_f0_binder . clone (). clone (), Box::new (Proc::POut (Box::new ((s_f0_deref . clone ()). clone ()), Box::new ((s_f1_deref_f0_body . clone ()). clone ())))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PNew(ref s_f0) = s,
-    let s_f0_binder = s_f0.unsafe_pattern().clone(),
-    let s_f0_body_boxed = s_f0.unsafe_body(),
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PNew (ref s_f0)= s,
+    let s_f0_binder = s_f0 . unsafe_pattern (). clone (),
+    let s_f0_body_boxed = s_f0 . unsafe_body (),
     let s_f0_body = &** s_f0_body_boxed,
-    if let Proc::POut(ref s_f0_body_f0, ref s_f0_body_f1) = s_f0_body,
+    if let Proc::POut (ref s_f0_body_f0 , ref s_f0_body_f1)= s_f0_body,
     let s_f0_body_f0_deref = &** s_f0_body_f0,
     let s_f0_body_f1_deref = &** s_f0_body_f1,
-    if ! mettail_runtime::BoundTerm::free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
-    let t = (Proc::POut(Box::new((s_f0_body_f0_deref.clone()).clone()), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
+    if ! mettail_runtime::BoundTerm::free_vars (& s_f0_body_f1_deref . clone ()). contains (& s_f0_binder . 0 . clone ()),
+    let t = (Proc::POut (Box::new ((s_f0_body_f0_deref . clone ()). clone ()), Box::new (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_binder . clone (). clone (), Box::new ((s_f0_body_f1_deref . clone ()). clone ())))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::POpen(ref s_f0, ref s_f1) = s,
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::POpen (ref s_f0 , ref s_f1)= s,
     let s_f0_deref = &** s_f0,
     let s_f1_deref = &** s_f1,
-    if let Proc::PNew(ref s_f1_deref_f0) = s_f1_deref,
-    let s_f1_deref_f0_binder = s_f1_deref_f0.unsafe_pattern().clone(),
-    let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
+    if let Proc::PNew (ref s_f1_deref_f0)= s_f1_deref,
+    let s_f1_deref_f0_binder = s_f1_deref_f0 . unsafe_pattern (). clone (),
+    let s_f1_deref_f0_body_boxed = s_f1_deref_f0 . unsafe_body (),
     let s_f1_deref_f0_body = &** s_f1_deref_f0_body_boxed,
-    if ! mettail_runtime::BoundTerm::free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
-    let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box::new(Proc::POpen(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
+    if ! mettail_runtime::BoundTerm::free_vars (& s_f1_deref_f0_body . clone ()). contains (& s_f1_deref_f0_binder . 0 . clone ()),
+    let t = (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f1_deref_f0_binder . clone (). clone (), Box::new (Proc::POpen (Box::new ((s_f0_deref . clone ()). clone ()), Box::new ((s_f1_deref_f0_body . clone ()). clone ())))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PNew(ref s_f0) = s,
-    let s_f0_binder = s_f0.unsafe_pattern().clone(),
-    let s_f0_body_boxed = s_f0.unsafe_body(),
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PNew (ref s_f0)= s,
+    let s_f0_binder = s_f0 . unsafe_pattern (). clone (),
+    let s_f0_body_boxed = s_f0 . unsafe_body (),
     let s_f0_body = &** s_f0_body_boxed,
-    if let Proc::POpen(ref s_f0_body_f0, ref s_f0_body_f1) = s_f0_body,
+    if let Proc::POpen (ref s_f0_body_f0 , ref s_f0_body_f1)= s_f0_body,
     let s_f0_body_f0_deref = &** s_f0_body_f0,
     let s_f0_body_f1_deref = &** s_f0_body_f1,
-    if ! mettail_runtime::BoundTerm::free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
-    let t = (Proc::POpen(Box::new((s_f0_body_f0_deref.clone()).clone()), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
+    if ! mettail_runtime::BoundTerm::free_vars (& s_f0_body_f1_deref . clone ()). contains (& s_f0_binder . 0 . clone ()),
+    let t = (Proc::POpen (Box::new ((s_f0_body_f0_deref . clone ()). clone ()), Box::new (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_binder . clone (). clone (), Box::new ((s_f0_body_f1_deref . clone ()). clone ())))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PAmb(ref s_f0, ref s_f1) = s,
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PAmb (ref s_f0 , ref s_f1)= s,
     let s_f0_deref = &** s_f0,
     let s_f1_deref = &** s_f1,
-    if let Proc::PNew(ref s_f1_deref_f0) = s_f1_deref,
-    let s_f1_deref_f0_binder = s_f1_deref_f0.unsafe_pattern().clone(),
-    let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
+    if let Proc::PNew (ref s_f1_deref_f0)= s_f1_deref,
+    let s_f1_deref_f0_binder = s_f1_deref_f0 . unsafe_pattern (). clone (),
+    let s_f1_deref_f0_body_boxed = s_f1_deref_f0 . unsafe_body (),
     let s_f1_deref_f0_body = &** s_f1_deref_f0_body_boxed,
-    if ! mettail_runtime::BoundTerm::free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
-    let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box::new(Proc::PAmb(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
+    if ! mettail_runtime::BoundTerm::free_vars (& s_f1_deref_f0_body . clone ()). contains (& s_f1_deref_f0_binder . 0 . clone ()),
+    let t = (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f1_deref_f0_binder . clone (). clone (), Box::new (Proc::PAmb (Box::new ((s_f0_deref . clone ()). clone ()), Box::new ((s_f1_deref_f0_body . clone ()). clone ())))))). normalize ();
 
-eq_proc(s.clone(), t.clone()),
-proc(t.clone()) <--
-    proc(s),
-    if let Proc::PNew(ref s_f0) = s,
-    let s_f0_binder = s_f0.unsafe_pattern().clone(),
-    let s_f0_body_boxed = s_f0.unsafe_body(),
+eq_proc (s . clone (), t . clone ()),
+proc (t . clone ()) <--
+    proc (s),
+    if let Proc::PNew (ref s_f0)= s,
+    let s_f0_binder = s_f0 . unsafe_pattern (). clone (),
+    let s_f0_body_boxed = s_f0 . unsafe_body (),
     let s_f0_body = &** s_f0_body_boxed,
-    if let Proc::PAmb(ref s_f0_body_f0, ref s_f0_body_f1) = s_f0_body,
+    if let Proc::PAmb (ref s_f0_body_f0 , ref s_f0_body_f1)= s_f0_body,
     let s_f0_body_f0_deref = &** s_f0_body_f0,
     let s_f0_body_f1_deref = &** s_f0_body_f1,
-    if ! mettail_runtime::BoundTerm::free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
-    let t = (Proc::PAmb(Box::new((s_f0_body_f0_deref.clone()).clone()), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
+    if ! mettail_runtime::BoundTerm::free_vars (& s_f0_body_f1_deref . clone ()). contains (& s_f0_binder . 0 . clone ()),
+    let t = (Proc::PAmb (Box::new ((s_f0_body_f0_deref . clone ()). clone ()), Box::new (Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (s_f0_binder . clone (). clone (), Box::new ((s_f0_body_f1_deref . clone ()). clone ())))))). normalize ();
 
 
     // Rewrite rules
-rw_proc(s_orig.clone(), t) <--
-    eq_proc(s_orig, s),
-    if let Proc::PPar(ref s_f0) = s,
-    for (s_f0_e0, _count_0) in s_f0.iter(),
-    if let Proc::PAmb(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
+rw_proc (s_orig . clone (), t) <--
+    eq_proc (s_orig , s),
+    if let Proc::PPar (ref s_f0)= s,
+    for (s_f0_e0 , _count_0)in s_f0 . iter (),
+    if let Proc::PAmb (ref s_f0_e0_f0 , ref s_f0_e0_f1)= s_f0_e0,
     let s_f0_e0_f0_deref = &** s_f0_e0_f0,
     let s_f0_e0_f1_deref = &** s_f0_e0_f1,
-    if let Proc::PPar(ref s_f0_e0_f1_deref_f0) = s_f0_e0_f1_deref,
-    for (s_f0_e0_f1_deref_f0_e0, _count_1) in s_f0_e0_f1_deref_f0.iter(),
-    if let Proc::PIn(ref s_f0_e0_f1_deref_f0_e0_f0, ref s_f0_e0_f1_deref_f0_e0_f1) = s_f0_e0_f1_deref_f0_e0,
+    if let Proc::PPar (ref s_f0_e0_f1_deref_f0)= s_f0_e0_f1_deref,
+    for (s_f0_e0_f1_deref_f0_e0 , _count_1)in s_f0_e0_f1_deref_f0 . iter (),
+    if let Proc::PIn (ref s_f0_e0_f1_deref_f0_e0_f0 , ref s_f0_e0_f1_deref_f0_e0_f1)= s_f0_e0_f1_deref_f0_e0,
     let s_f0_e0_f1_deref_f0_e0_f0_deref = &** s_f0_e0_f1_deref_f0_e0_f0,
     let s_f0_e0_f1_deref_f0_e0_f1_deref = &** s_f0_e0_f1_deref_f0_e0_f1,
-    let s_f0_e0_f1_deref_f0_rest = { let mut bag = s_f0_e0_f1_deref_f0.clone(); bag.remove(& s_f0_e0_f1_deref_f0_e0); bag },
-    for (s_f0_e1, _count_2) in s_f0.iter(),
+    let s_f0_e0_f1_deref_f0_rest = {let mut bag = s_f0_e0_f1_deref_f0 . clone (); bag . remove (& s_f0_e0_f1_deref_f0_e0); bag},
+    for (s_f0_e1 , _count_2)in s_f0 . iter (),
     if & s_f0_e1 != & s_f0_e0,
-    if let Proc::PAmb(ref s_f0_e1_f0, ref s_f0_e1_f1) = s_f0_e1,
+    if let Proc::PAmb (ref s_f0_e1_f0 , ref s_f0_e1_f1)= s_f0_e1,
     let s_f0_e1_f0_deref = &** s_f0_e1_f0,
     let s_f0_e1_f1_deref = &** s_f0_e1_f1,
-    let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag.remove(& s_f0_e1); bag },
-    eq_name(s_f0_e0_f1_deref_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
-    let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_e0_f1_deref_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = mettail_runtime::HashBag::new(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = (s_f0_e0_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f1_deref_f0_e0_f1_deref.clone()).clone()); bag })))); Proc::insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone()); bag })))); bag })).normalize();
+    let s_f0_rest = {let mut bag = s_f0 . clone (); bag . remove (& s_f0_e0); bag . remove (& s_f0_e1); bag},
+    eq_name (s_f0_e0_f1_deref_f0_e0_f0_deref . clone (), s_f0_e1_f0_deref . clone ()),
+    let t = (Proc::PPar ({let mut bag = (s_f0_rest . clone ()). clone (); Proc::insert_into_ppar (& mut bag , Proc::PAmb (Box::new ((s_f0_e0_f1_deref_f0_e0_f0_deref . clone ()). clone ()), Box::new (Proc::PPar ({let mut bag = mettail_runtime::HashBag::new (); Proc::insert_into_ppar (& mut bag , Proc::PAmb (Box::new ((s_f0_e0_f0_deref . clone ()). clone ()), Box::new (Proc::PPar ({let mut bag = (s_f0_e0_f1_deref_f0_rest . clone ()). clone (); Proc::insert_into_ppar (& mut bag , (s_f0_e0_f1_deref_f0_e0_f1_deref . clone ()). clone ()); bag})))); Proc::insert_into_ppar (& mut bag , (s_f0_e1_f1_deref . clone ()). clone ()); bag})))); bag})). normalize ();
 
-rw_proc(s_orig.clone(), t) <--
-    eq_proc(s_orig, s),
-    if let Proc::PAmb(ref s_f0, ref s_f1) = s,
+rw_proc (s_orig . clone (), t) <--
+    eq_proc (s_orig , s),
+    if let Proc::PAmb (ref s_f0 , ref s_f1)= s,
     let s_f0_deref = &** s_f0,
     let s_f1_deref = &** s_f1,
-    if let Proc::PPar(ref s_f1_deref_f0) = s_f1_deref,
-    for (s_f1_deref_f0_e0, _count_0) in s_f1_deref_f0.iter(),
-    if let Proc::PAmb(ref s_f1_deref_f0_e0_f0, ref s_f1_deref_f0_e0_f1) = s_f1_deref_f0_e0,
+    if let Proc::PPar (ref s_f1_deref_f0)= s_f1_deref,
+    for (s_f1_deref_f0_e0 , _count_0)in s_f1_deref_f0 . iter (),
+    if let Proc::PAmb (ref s_f1_deref_f0_e0_f0 , ref s_f1_deref_f0_e0_f1)= s_f1_deref_f0_e0,
     let s_f1_deref_f0_e0_f0_deref = &** s_f1_deref_f0_e0_f0,
     let s_f1_deref_f0_e0_f1_deref = &** s_f1_deref_f0_e0_f1,
-    if let Proc::PPar(ref s_f1_deref_f0_e0_f1_deref_f0) = s_f1_deref_f0_e0_f1_deref,
-    for (s_f1_deref_f0_e0_f1_deref_f0_e0, _count_1) in s_f1_deref_f0_e0_f1_deref_f0.iter(),
-    if let Proc::POut(ref s_f1_deref_f0_e0_f1_deref_f0_e0_f0, ref s_f1_deref_f0_e0_f1_deref_f0_e0_f1) = s_f1_deref_f0_e0_f1_deref_f0_e0,
+    if let Proc::PPar (ref s_f1_deref_f0_e0_f1_deref_f0)= s_f1_deref_f0_e0_f1_deref,
+    for (s_f1_deref_f0_e0_f1_deref_f0_e0 , _count_1)in s_f1_deref_f0_e0_f1_deref_f0 . iter (),
+    if let Proc::POut (ref s_f1_deref_f0_e0_f1_deref_f0_e0_f0 , ref s_f1_deref_f0_e0_f1_deref_f0_e0_f1)= s_f1_deref_f0_e0_f1_deref_f0_e0,
     let s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref = &** s_f1_deref_f0_e0_f1_deref_f0_e0_f0,
     let s_f1_deref_f0_e0_f1_deref_f0_e0_f1_deref = &** s_f1_deref_f0_e0_f1_deref_f0_e0_f1,
-    let s_f1_deref_f0_e0_f1_deref_f0_rest = { let mut bag = s_f1_deref_f0_e0_f1_deref_f0.clone(); bag.remove(& s_f1_deref_f0_e0_f1_deref_f0_e0); bag },
-    for (s_f1_deref_f0_e1, _count_2) in s_f1_deref_f0.iter(),
+    let s_f1_deref_f0_e0_f1_deref_f0_rest = {let mut bag = s_f1_deref_f0_e0_f1_deref_f0 . clone (); bag . remove (& s_f1_deref_f0_e0_f1_deref_f0_e0); bag},
+    for (s_f1_deref_f0_e1 , _count_2)in s_f1_deref_f0 . iter (),
     if & s_f1_deref_f0_e1 != & s_f1_deref_f0_e0,
-    let s_f1_deref_f0_rest = { let mut bag = s_f1_deref_f0.clone(); bag.remove(& s_f1_deref_f0_e0); bag.remove(& s_f1_deref_f0_e1); bag },
-    eq_name(s_f0_deref.clone(), s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref.clone()),
-    let t = (Proc::PPar({ let mut bag = (s_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f1_deref_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = (s_f1_deref_f0_e0_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f1_deref_f0_e0_f1_deref_f0_e0_f1_deref.clone()).clone()); bag })))); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_e1.clone()).clone()))); bag })).normalize();
+    let s_f1_deref_f0_rest = {let mut bag = s_f1_deref_f0 . clone (); bag . remove (& s_f1_deref_f0_e0); bag . remove (& s_f1_deref_f0_e1); bag},
+    eq_name (s_f0_deref . clone (), s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref . clone ()),
+    let t = (Proc::PPar ({let mut bag = (s_f1_deref_f0_rest . clone ()). clone (); Proc::insert_into_ppar (& mut bag , Proc::PAmb (Box::new ((s_f1_deref_f0_e0_f0_deref . clone ()). clone ()), Box::new (Proc::PPar ({let mut bag = (s_f1_deref_f0_e0_f1_deref_f0_rest . clone ()). clone (); Proc::insert_into_ppar (& mut bag , (s_f1_deref_f0_e0_f1_deref_f0_e0_f1_deref . clone ()). clone ()); bag})))); Proc::insert_into_ppar (& mut bag , Proc::PAmb (Box::new ((s_f0_deref . clone ()). clone ()), Box::new ((s_f1_deref_f0_e1 . clone ()). clone ()))); bag})). normalize ();
 
-rw_proc(s_orig.clone(), t) <--
-    eq_proc(s_orig, s),
-    if let Proc::PPar(ref s_f0) = s,
-    for (s_f0_e0, _count_0) in s_f0.iter(),
-    if let Proc::POpen(ref s_f0_e0_f0, ref s_f0_e0_f1) = s_f0_e0,
+rw_proc (s_orig . clone (), t) <--
+    eq_proc (s_orig , s),
+    if let Proc::PPar (ref s_f0)= s,
+    for (s_f0_e0 , _count_0)in s_f0 . iter (),
+    if let Proc::POpen (ref s_f0_e0_f0 , ref s_f0_e0_f1)= s_f0_e0,
     let s_f0_e0_f0_deref = &** s_f0_e0_f0,
     let s_f0_e0_f1_deref = &** s_f0_e0_f1,
-    for (s_f0_e1, _count_1) in s_f0.iter(),
+    for (s_f0_e1 , _count_1)in s_f0 . iter (),
     if & s_f0_e1 != & s_f0_e0,
-    if let Proc::PAmb(ref s_f0_e1_f0, ref s_f0_e1_f1) = s_f0_e1,
+    if let Proc::PAmb (ref s_f0_e1_f0 , ref s_f0_e1_f1)= s_f0_e1,
     let s_f0_e1_f0_deref = &** s_f0_e1_f0,
     let s_f0_e1_f1_deref = &** s_f0_e1_f1,
-    let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag.remove(& s_f0_e1); bag },
-    eq_name(s_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
-    let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f1_deref.clone()).clone()); Proc::insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone()); bag })).normalize();
+    let s_f0_rest = {let mut bag = s_f0 . clone (); bag . remove (& s_f0_e0); bag . remove (& s_f0_e1); bag},
+    eq_name (s_f0_e0_f0_deref . clone (), s_f0_e1_f0_deref . clone ()),
+    let t = (Proc::PPar ({let mut bag = (s_f0_rest . clone ()). clone (); Proc::insert_into_ppar (& mut bag , (s_f0_e0_f1_deref . clone ()). clone ()); Proc::insert_into_ppar (& mut bag , (s_f0_e1_f1_deref . clone ()). clone ()); bag})). normalize ();
 
-rw_proc(parent.clone(), result) <--
-    proc(parent),
-    if let Proc::PPar(ref bag) = parent,
-    for (elem, _count) in bag.iter(),
-    rw_proc(elem.clone(), elem_rewritten),
-    let result = Proc::PPar({ let mut new_bag = bag.clone(); new_bag.remove(elem); Proc::insert_into_ppar(& mut new_bag, elem_rewritten.clone()); new_bag });
+rw_proc (parent . clone (), result) <--
+    proc (parent),
+    if let Proc::PPar (ref bag)= parent,
+    for (elem , _count)in bag . iter (),
+    rw_proc (elem . clone (), elem_rewritten),
+    let result = Proc::PPar ({let mut new_bag = bag . clone (); new_bag . remove (elem); Proc::insert_into_ppar (& mut new_bag , elem_rewritten . clone ()); new_bag});
 
-rw_proc(lhs.clone(), rhs) <--
-    proc(lhs),
-    if let Proc::PNew(ref scope) = lhs,
-    let binder = scope.unsafe_pattern().clone(),
-    let body = scope.unsafe_body(),
-    rw_proc((** body).clone(), body_rewritten),
-    let rhs = Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
+rw_proc (lhs . clone (), rhs) <--
+    proc (lhs),
+    if let Proc::PNew (ref scope)= lhs,
+    let binder = scope . unsafe_pattern (). clone (),
+    let body = scope . unsafe_body (),
+    rw_proc ((** body). clone (), body_rewritten),
+    let rhs = Proc::PNew (mettail_runtime::Scope::from_parts_unsafe (binder . clone (), Box::new (body_rewritten . clone ())));
 
-rw_proc(lhs.clone(), match (lhs, vi) {
-    (Proc::PAmb(x0, _), 0usize) => Proc::PAmb(x0.clone(), Box::new(t.clone())),
-    _ => unreachable!(),
+rw_proc (lhs . clone (), match (lhs , vi){
+    (Proc::PAmb (x0 , _), 0usize)=> Proc::PAmb (x0 . clone (), Box::new (t . clone ())),
+    _ => unreachable ! (),
 }) <--
-    proc(lhs),
-    for (field_val, vi) in (match lhs {
-        Proc::PAmb(_, x1) => vec![((** x1).clone(), 0usize)],
-        _ => vec![],
-    }).into_iter(),
-    rw_proc(field_val, t);
+    proc (lhs),
+    for (field_val , vi)in (match lhs {
+        Proc::PAmb (_ , x1)=> vec ! [((** x1). clone (), 0usize)],
+        _ => vec ! [],
+    }). into_iter (),
+    rw_proc (field_val , t);
 
 }
