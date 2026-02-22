@@ -8,7 +8,10 @@
 //! - Collection projections (extracting elements from collections)
 //! - Congruence rules for equality
 
-use super::common::{has_collection_field, is_multi_binder, relation_names};
+use super::common::{
+    compute_category_reachability, has_collection_field, in_cat_filter, is_multi_binder,
+    relation_names, CategoryFilter,
+};
 use crate::ast::grammar::TermParam;
 use crate::ast::{
     grammar::{GrammarItem, GrammarRule},
@@ -18,16 +21,45 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
 
-/// Generate category exploration rules
-pub fn generate_category_rules(language: &LanguageDef) -> TokenStream {
+/// Generate category exploration rules.
+///
+/// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+/// This is used for the core Ascent struct in SCC splitting.
+pub fn generate_category_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> TokenStream {
     let mut rules = Vec::new();
 
-    // Consolidated subterm extraction: one rule per (src, tgt) pair using helper functions
-    let consolidated = super::helpers::generate_consolidated_deconstruction_rules(language);
+    // Compute reachability for pruning dead cross-category rules
+    let reachable = compute_category_reachability(language);
+
+    // For core struct, further restrict reachable to only core-category pairs
+    let core_reachable;
+    let effective_reachable = if let Some(filter) = cat_filter {
+        core_reachable = reachable
+            .iter()
+            .filter(|(s, t)| filter.contains(s) && filter.contains(t))
+            .cloned()
+            .collect();
+        &core_reachable
+    } else {
+        &reachable
+    };
+
+    // Consolidated subterm extraction: one rule per reachable (src, tgt) pair
+    let consolidated =
+        super::helpers::generate_consolidated_deconstruction_rules(language, effective_reachable);
     rules.extend(consolidated);
 
     for lang_type in &language.types {
         let cat = &lang_type.name;
+
+        // Skip categories not in the filter
+        if !in_cat_filter(cat, cat_filter) {
+            continue;
+        }
+
         let rn = relation_names(cat);
         let cat_lower = &rn.cat_lower;
         let rw_rel = &rn.rw_rel;
@@ -68,8 +100,9 @@ pub fn generate_category_rules(language: &LanguageDef) -> TokenStream {
         rules.extend(special_rules);
 
         // Generate consolidated rewrite congruence rules for auto-generated Apply/MApply variants
+        // Only for reachable (src, domain) pairs
         let congruence_rules =
-            super::helpers::generate_consolidated_congruence_rules(cat, language);
+            super::helpers::generate_consolidated_congruence_rules(cat, language, effective_reachable);
         rules.extend(congruence_rules);
     }
 

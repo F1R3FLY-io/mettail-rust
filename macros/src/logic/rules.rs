@@ -7,6 +7,7 @@
 //! 1. The relation they write to (`eq_cat` vs `rw_cat`)
 //! 2. Whether they're bidirectional (equations) or directional (rewrites)
 
+use super::common::{in_cat_filter, CategoryFilter};
 use crate::ast::language::{Condition, FreshnessCondition, FreshnessTarget, LanguageDef};
 use crate::ast::pattern::{AscentClauses, Pattern, VariableBinding};
 use proc_macro2::TokenStream;
@@ -281,7 +282,12 @@ fn premise_to_condition(premise: &crate::ast::language::Premise) -> Option<Condi
 /// Generate all equation rules for a theory.
 /// Equation rules use direct category matching (not equation matching)
 /// because they define the base equations that feed into the eq_* relations.
-pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
+///
+/// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+pub fn generate_equation_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     for eq in &language.equations {
@@ -292,6 +298,11 @@ pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
             .or_else(|| eq.right.category(language));
 
         if let Some(category) = category {
+            // Skip categories not in the filter
+            if !in_cat_filter(category, cat_filter) {
+                continue;
+            }
+
             let eq_rel = format_ident!("eq_{}", category.to_string().to_lowercase());
 
             // Convert premises to Conditions (filter out any congruence - invalid for equations)
@@ -342,7 +353,12 @@ pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
 /// instead of `cat(s)`, allowing rewrites to apply to equation-equivalent terms
 /// without needing expensive closure rules like:
 ///   rw_proc(s1, t) <-- rw_proc(s0, t), eq_proc(s0, s1)
-pub fn generate_base_rewrites(language: &LanguageDef) -> Vec<TokenStream> {
+///
+/// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+pub fn generate_base_rewrites(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     for rw in &language.rewrites {
@@ -353,6 +369,11 @@ pub fn generate_base_rewrites(language: &LanguageDef) -> Vec<TokenStream> {
 
         // Determine category from LHS
         if let Some(category) = rw.left.category(language) {
+            // Skip categories not in the filter
+            if !in_cat_filter(category, cat_filter) {
+                continue;
+            }
+
             let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
 
             // Convert premises to Conditions

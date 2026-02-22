@@ -16,7 +16,15 @@ use syn::{Ident, LitStr};
 ///
 /// `raw_ascent_content` contains the raw Ascent relations + rules (without `ascent_source!` wrapper),
 /// used to define a single named `ascent!` struct per language instead of N `ascent_run!` invocations.
-pub fn generate_language_impl(language: &LanguageDef, raw_ascent_content: &TokenStream) -> TokenStream {
+///
+/// `core_raw_ascent_content` optionally contains a reduced set of rules for the "core" Ascent struct
+/// used in SCC splitting. When `Some`, a second smaller `ascent!` struct is generated with fewer rules
+/// for inputs that only use core categories (e.g., Proc + Name but not Float/Bool/Str).
+pub fn generate_language_impl(
+    language: &LanguageDef,
+    raw_ascent_content: &TokenStream,
+    core_raw_ascent_content: Option<&TokenStream>,
+) -> TokenStream {
     let name = &language.name;
     let name_str = name.to_string();
     let name_lower = name_str.to_lowercase();
@@ -31,7 +39,7 @@ pub fn generate_language_impl(language: &LanguageDef, raw_ascent_content: &Token
     let (term_wrapper, language_struct, language_trait_impl) = if language.types.len() > 1 {
         (
             generate_term_wrapper_multi(name, language),
-            generate_language_struct_multi(name, &name_str, &name_lower, language, raw_ascent_content),
+            generate_language_struct_multi(name, &name_str, &name_lower, language, raw_ascent_content, core_raw_ascent_content),
             generate_language_trait_impl_multi(name, &name_str, &name_lower, language),
         )
     } else {
@@ -993,6 +1001,7 @@ fn generate_language_struct_multi(
     _name_lower: &str,
     language: &LanguageDef,
     raw_ascent_content: &TokenStream,
+    core_raw_ascent_content: Option<&TokenStream>,
 ) -> TokenStream {
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
@@ -1148,11 +1157,170 @@ fn generate_language_struct_multi(
         }
     }).collect();
 
+    // Generate the core Ascent struct if core content is available.
+    // The core struct has fewer rules (only for core categories) but ALL relation
+    // declarations, so it compiles correctly. Non-core relations remain empty.
+    let core_struct_def = core_raw_ascent_content.map(|core_content| {
+        let core_prog_name = format_ident!("{}AscentProgCore", name);
+        quote! {
+            ascent::ascent! {
+                struct #core_prog_name;
+                #core_content
+            }
+        }
+    });
+
+    // Build dispatcher: core-category inputs use the core struct (if available),
+    // non-core inputs use the full struct.
+    let core_prog_name = format_ident!("{}AscentProgCore", name);
+    let core_cats = crate::logic::common::compute_core_categories(language);
+
+    let run_ascent_body = if core_raw_ascent_content.is_some() {
+        // SCC-split dispatcher: core categories → core struct, others → full struct
+        let core_cats_ref = core_cats.as_ref().expect("core_raw_content implies core_cats");
+
+        // Build seed+extract arms for core struct (same logic, different prog type)
+        let core_seed_arms: Vec<TokenStream> = language
+            .types
+            .iter()
+            .filter(|t| core_cats_ref.contains(&t.name.to_string()))
+            .map(|t| {
+                let cat = &t.name;
+                let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
+                let variant = format_ident!("{}", cat);
+                let seed_step_term = primary_type_for_step.map(|pt| {
+                    if pt == cat {
+                        quote! { prog.step_term.push((initial.clone(),)); }
+                    } else {
+                        quote! {}
+                    }
+                }).unwrap_or_default();
+                quote! {
+                    #inner_enum_name::#variant(inner) => {
+                        let initial = inner.clone();
+                        prog.#cat_lower.push((initial.clone(),));
+                        #seed_step_term
+                    }
+                }
+            })
+            .collect();
+
+        let core_extract_arms: Vec<TokenStream> = language
+            .types
+            .iter()
+            .filter(|t| core_cats_ref.contains(&t.name.to_string()))
+            .map(|t| {
+                let cat = &t.name;
+                let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
+                let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
+                let variant = format_ident!("{}", cat);
+                quote! {
+                    #inner_enum_name::#variant(_) => {
+                        let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
+                        let rewrites: Vec<(#cat, #cat)> = prog.#rw_rel.iter().map(|(from, to)| (from.clone(), to.clone())).collect();
+                        let term_infos: Vec<mettail_runtime::TermInfo> = all_terms.iter().map(|t| {
+                            let wrapped = #inner_enum_name::#variant(t.clone());
+                            let term_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut hasher = DefaultHasher::new(); wrapped.hash(&mut hasher); hasher.finish() };
+                            let has_rewrites = rewrites.iter().any(|(from, _)| from == t);
+                            mettail_runtime::TermInfo { term_id, display: format!("{}", t), is_normal_form: !has_rewrites }
+                        }).collect();
+                        let rewrite_list: Vec<mettail_runtime::Rewrite> = rewrites.iter().map(|(from, to)| {
+                            use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher};
+                            let w_from = #inner_enum_name::#variant(from.clone());
+                            let w_to = #inner_enum_name::#variant(to.clone());
+                            let mut h1 = DefaultHasher::new(); let mut h2 = DefaultHasher::new();
+                            w_from.hash(&mut h1); w_to.hash(&mut h2);
+                            mettail_runtime::Rewrite { from_id: h1.finish(), to_id: h2.finish(), rule_name: Some("rewrite".to_string()) }
+                        }).collect();
+                        let mut custom_relations = std::collections::HashMap::new();
+                        #custom_relation_extraction
+                        mettail_runtime::AscentResults { all_terms: term_infos, rewrites: rewrite_list, equivalences: Vec::new(), custom_relations }
+                    }
+                }
+            })
+            .collect();
+
+        // Core category variant patterns (for the match guard)
+        let core_variant_patterns: Vec<TokenStream> = language
+            .types
+            .iter()
+            .filter(|t| core_cats_ref.contains(&t.name.to_string()))
+            .map(|t| {
+                let variant = format_ident!("{}", t.name);
+                quote! { #inner_enum_name::#variant(_) }
+            })
+            .collect();
+
+        quote! {
+            match &term.0 {
+                #inner_enum_name::Ambiguous(alts) => {
+                    let first = alts.first().expect("Ambiguous must have 2+ alternatives");
+                    let sub_term = #term_name(first.clone());
+                    Self::run_ascent_typed(&sub_term)
+                }
+                // Core categories: use the smaller core struct (fewer SCC rules)
+                #(#core_variant_patterns)|* => {
+                    let mut prog = #core_prog_name::default();
+                    match &term.0 {
+                        #(#core_seed_arms)*
+                        _ => unreachable!(),
+                    }
+                    prog.run();
+                    match &term.0 {
+                        #(#core_extract_arms)*
+                        _ => unreachable!(),
+                    }
+                }
+                // Non-core categories: use the full struct (all rules)
+                _ => {
+                    let mut prog = #prog_struct_name::default();
+                    match &term.0 {
+                        #(#seed_arms)*
+                        #inner_enum_name::Ambiguous(_) => unreachable!(),
+                    }
+                    prog.run();
+                    match &term.0 {
+                        #(#extract_arms)*
+                        #inner_enum_name::Ambiguous(_) => unreachable!(),
+                    }
+                }
+            }
+        }
+    } else {
+        // Single struct (no SCC splitting) — original behavior
+        quote! {
+            match &term.0 {
+                #inner_enum_name::Ambiguous(alts) => {
+                    let first = alts.first().expect("Ambiguous must have 2+ alternatives");
+                    let sub_term = #term_name(first.clone());
+                    Self::run_ascent_typed(&sub_term)
+                }
+                _ => {
+                    let mut prog = #prog_struct_name::default();
+                    match &term.0 {
+                        #(#seed_arms)*
+                        #inner_enum_name::Ambiguous(_) => unreachable!(),
+                    }
+                    prog.run();
+                    match &term.0 {
+                        #(#extract_arms)*
+                        #inner_enum_name::Ambiguous(_) => unreachable!(),
+                    }
+                }
+            }
+        }
+    };
+
+    // Optionally emit the core struct definition
+    let core_struct_output = core_struct_def.unwrap_or_default();
+
     quote! {
         ascent::ascent! {
             struct #prog_struct_name;
             #raw_ascent_content
         }
+
+        #core_struct_output
 
         /// Language implementation struct (multi-category: one parser/relation per type).
         pub struct #language_name;
@@ -1189,33 +1357,12 @@ fn generate_language_struct_multi(
             /// For Ambiguous terms, evaluates only the first alternative by declaration
             /// order. All alternatives that reach Stage C are valid parses, so evaluating
             /// only the first-declared is deterministic and avoids redundant Ascent runs.
-            /// Uses a single named Ascent struct (compiled once) instead of per-category
-            /// ascent_run! invocations, reducing monomorphization by ~69%.
+            ///
+            /// SCC splitting: when available, core-category inputs (e.g., Proc, Name) use
+            /// a smaller Ascent struct with fewer rules, reducing fixpoint iteration cost.
+            /// Non-core inputs (e.g., Float, Bool, Str) fall back to the full struct.
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
-                match &term.0 {
-                    #inner_enum_name::Ambiguous(alts) => {
-                        // Declaration-order resolution: evaluate only the first alternative.
-                        // Parse order follows declaration order, so alts[0] is the first-declared
-                        // category that successfully parsed the input. All alternatives that reach
-                        // Stage C are valid parses, so evaluating only the first is semantically
-                        // equivalent to short-circuit evaluation and avoids redundant Ascent runs.
-                        let first = alts.first().expect("Ambiguous must have 2+ alternatives");
-                        let sub_term = #term_name(first.clone());
-                        Self::run_ascent_typed(&sub_term)
-                    }
-                    _ => {
-                        let mut prog = #prog_struct_name::default();
-                        match &term.0 {
-                            #(#seed_arms)*
-                            #inner_enum_name::Ambiguous(_) => unreachable!(),
-                        }
-                        prog.run();
-                        match &term.0 {
-                            #(#extract_arms)*
-                            #inner_enum_name::Ambiguous(_) => unreachable!(),
-                        }
-                    }
-                }
+                #run_ascent_body
             }
 
             /// Create a new empty environment

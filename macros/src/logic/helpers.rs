@@ -18,13 +18,14 @@
 //! ```
 
 use super::common::{
-    collect_nonterminal_fields, count_nonterminals, has_collection_field, is_multi_binder,
-    relation_names,
+    collect_nonterminal_fields, count_nonterminals,
+    generate_tls_pool_iter, has_collection_field, is_multi_binder, relation_names, PoolArm,
 };
 use crate::ast::grammar::{GrammarItem, GrammarRule};
 use crate::ast::language::LanguageDef;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::BTreeSet;
 use syn::Ident;
 
 /// Generate all helper functions for subterm extraction (Area 1).
@@ -42,8 +43,15 @@ pub fn generate_helper_functions(_language: &LanguageDef) -> TokenStream {
 /// Returns rules that replace the per-constructor deconstruction rules.
 /// Each rule uses an inline match expression in a `for` clause to iterate
 /// over subterms, replacing many individual rules with one per (src, tgt) pair.
+///
+/// Uses thread-local Vec pools to avoid heap allocation in steady state.
+/// The empty fallthrough (`_ => {}`) does zero work.
+///
+/// Prunes dead cross-category rules using compile-time reachability analysis.
+/// Only generates rules for (src, tgt) pairs reachable through user-defined constructors.
 pub fn generate_consolidated_deconstruction_rules(
     language: &LanguageDef,
+    reachable: &BTreeSet<(String, String)>,
 ) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
@@ -54,25 +62,39 @@ pub fn generate_consolidated_deconstruction_rules(
 
         for tgt_type in &language.types {
             let tgt = &tgt_type.name;
+
+            // Skip unreachable (src, tgt) pairs — their rules would iterate empty relations
+            if !reachable.contains(&(src.to_string(), tgt.to_string())) {
+                continue;
+            }
+
             let tgt_rn = relation_names(tgt);
             let tgt_lower = &tgt_rn.cat_lower;
 
             // Collect match arms for this (src, tgt) pair
-            let arms = generate_subterm_arms(language, src, tgt);
+            let pool_arms = generate_subterm_pool_arms(language, src, tgt);
 
-            if arms.is_empty() {
+            if pool_arms.is_empty() {
                 continue; // No subterms to extract — skip the rule
             }
 
-            // One rule per (src, tgt) pair with inline match:
-            // tgt(sub.clone()) <-- src(t), for sub in { match t { ...arms..., _ => vec![] } }.into_iter();
+            // Unique pool name per (src, tgt) pair
+            let pool_name = format_ident!(
+                "POOL_{}_{}",
+                src.to_string().to_uppercase(),
+                tgt.to_string().to_uppercase()
+            );
+            let tgt_type_ts = quote! { #tgt };
+            let match_expr = quote! { t };
+
+            let for_iter = generate_tls_pool_iter(&pool_name, &tgt_type_ts, &match_expr, &pool_arms);
+
+            // One rule per (src, tgt) pair with TLS-pooled iteration:
+            // tgt(sub.clone()) <-- src(t), for sub in { ...tls pool... }.into_iter();
             rules.push(quote! {
                 #tgt_lower(sub.clone()) <--
                     #src_lower(t),
-                    for sub in (match t {
-                        #(#arms)*
-                        _ => vec![],
-                    }).into_iter();
+                    for sub in #for_iter;
             });
         }
     }
@@ -84,10 +106,10 @@ pub fn generate_consolidated_deconstruction_rules(
 // Area 1: Subterm extraction helper generation
 // =============================================================================
 
-/// Generate match arms for the subterm extraction of a (src, tgt) pair.
+/// Generate PoolArm entries for the subterm extraction of a (src, tgt) pair.
 ///
-/// Returns the match arms (without the surrounding match/function).
-fn generate_subterm_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) -> Vec<TokenStream> {
+/// Returns PoolArm values for use with `generate_tls_pool_iter`.
+fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) -> Vec<PoolArm> {
     let mut arms = Vec::new();
 
     // 1. User-defined constructors
@@ -100,7 +122,7 @@ fn generate_subterm_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) -> Ve
             continue;
         }
 
-        if let Some(arm) = generate_user_constructor_arm(rule, src, tgt) {
+        if let Some(arm) = generate_user_constructor_pool_arm(rule, src, tgt) {
             arms.push(arm);
         }
     }
@@ -108,34 +130,34 @@ fn generate_subterm_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) -> Ve
     // 2. Auto-generated variants (Apply, MApply, Lam, MLam) for each domain
     for domain_type in &language.types {
         let domain = &domain_type.name;
-        let auto = generate_auto_variant_arms(src, tgt, domain);
+        let auto = generate_auto_variant_pool_arms(src, tgt, domain);
         arms.extend(auto);
     }
 
     arms
 }
 
-/// Generate match arm for a user-defined constructor.
-fn generate_user_constructor_arm(
+/// Generate a PoolArm for a user-defined constructor.
+fn generate_user_constructor_pool_arm(
     rule: &GrammarRule,
     src: &Ident,
     tgt: &Ident,
-) -> Option<TokenStream> {
+) -> Option<PoolArm> {
     if !rule.bindings.is_empty() {
-        generate_binding_constructor_arm(rule, src, tgt)
+        generate_binding_constructor_pool_arm(rule, src, tgt)
     } else {
-        generate_regular_constructor_arm(rule, src, tgt)
+        generate_regular_constructor_pool_arm(rule, src, tgt)
     }
 }
 
-/// Generate match arm for a regular (non-binding, non-collection) constructor.
+/// Generate a PoolArm for a regular (non-binding, non-collection) constructor.
 ///
 /// Extracts all fields whose type matches `tgt`, skipping Var and Integer fields.
-fn generate_regular_constructor_arm(
+fn generate_regular_constructor_pool_arm(
     rule: &GrammarRule,
     src: &Ident,
     tgt: &Ident,
-) -> Option<TokenStream> {
+) -> Option<PoolArm> {
     let label = &rule.label;
     let fields = collect_nonterminal_fields(rule);
 
@@ -171,28 +193,29 @@ fn generate_regular_constructor_arm(
         })
         .collect();
 
-    let extractions: Vec<TokenStream> = matching_indices
+    let pushes: Vec<TokenStream> = matching_indices
         .iter()
         .map(|&i| {
             let name = format_ident!("f{}", i);
-            quote! { #name.as_ref().clone() }
+            quote! { buf.push(#name.as_ref().clone()); }
         })
         .collect();
 
-    Some(quote! {
-        #src::#label(#(#field_bindings),*) => vec![#(#extractions),*],
+    Some(PoolArm {
+        pattern: quote! { #src::#label(#(#field_bindings),*) },
+        pushes,
     })
 }
 
-/// Generate match arm for a binding constructor (e.g., PNew).
+/// Generate a PoolArm for a binding constructor (e.g., PNew).
 ///
 /// Extracts body from scope if body_cat matches tgt, plus any other
 /// non-binder non-body fields that match tgt.
-fn generate_binding_constructor_arm(
+fn generate_binding_constructor_pool_arm(
     rule: &GrammarRule,
     src: &Ident,
     tgt: &Ident,
-) -> Option<TokenStream> {
+) -> Option<PoolArm> {
     let label = &rule.label;
     let (_binder_idx, body_indices) = &rule.bindings[0];
     let body_idx = body_indices[0];
@@ -213,14 +236,15 @@ fn generate_binding_constructor_arm(
         if !body_matches {
             return None;
         }
-        Some(quote! {
-            #src::#label(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        Some(PoolArm {
+            pattern: quote! { #src::#label(scope) },
+            pushes: vec![quote! { buf.push(scope.inner().unsafe_body.as_ref().clone()); }],
         })
     } else {
         // Multiple fields: scope + other fields
         // Build pattern and extraction
         let mut field_bindings = Vec::with_capacity(n);
-        let mut extractions = Vec::new();
+        let mut pushes = Vec::new();
         let mut ast_field_idx = 0usize;
 
         for (i, item) in rule.items.iter().enumerate() {
@@ -230,14 +254,14 @@ fn generate_binding_constructor_arm(
                 let scope_name = format_ident!("scope_f");
                 field_bindings.push(quote! { #scope_name });
                 if body_matches {
-                    extractions.push(quote! { #scope_name.inner().unsafe_body.as_ref().clone() });
+                    pushes.push(quote! { buf.push(#scope_name.inner().unsafe_body.as_ref().clone()); });
                 }
             } else if let GrammarItem::NonTerminal(cat) = item {
                 let name = format_ident!("f{}", ast_field_idx);
                 let cat_str = cat.to_string();
                 if cat_str != "Var" && cat_str != "Integer" && *cat == *tgt {
                     field_bindings.push(quote! { #name });
-                    extractions.push(quote! { #name.as_ref().clone() });
+                    pushes.push(quote! { buf.push(#name.as_ref().clone()); });
                 } else {
                     field_bindings.push(quote! { _ });
                 }
@@ -245,12 +269,13 @@ fn generate_binding_constructor_arm(
             }
         }
 
-        if extractions.is_empty() {
+        if pushes.is_empty() {
             return None;
         }
 
-        Some(quote! {
-            #src::#label(#(#field_bindings),*) => vec![#(#extractions),*],
+        Some(PoolArm {
+            pattern: quote! { #src::#label(#(#field_bindings),*) },
+            pushes,
         })
     }
 }
@@ -270,18 +295,27 @@ fn generate_binding_constructor_arm(
 pub fn generate_consolidated_congruence_rules(
     category: &Ident,
     language: &LanguageDef,
+    reachable: &BTreeSet<(String, String)>,
 ) -> Vec<TokenStream> {
     let mut rules = Vec::new();
     let rn = relation_names(category);
     let cat_lower = &rn.cat_lower;
     let rw_cat = &rn.rw_rel;
+    let cat_upper = category.to_string().to_uppercase();
+    let cat_str = category.to_string();
 
-    let domains: Vec<&Ident> = language.types.iter().map(|t| &t.name).collect();
+    // Only include domains reachable from this category
+    let domains: Vec<&Ident> = language
+        .types
+        .iter()
+        .filter(|t| reachable.contains(&(cat_str.clone(), t.name.to_string())))
+        .map(|t| &t.name)
+        .collect();
 
     // === Lam congruence: ONE rule per source category ===
     // Merges Apply{Dom}-lam and MApply{Dom}-lam across all domains.
     // The lam field is always Box<Cat> regardless of domain.
-    let mut lam_extract_arms = Vec::new();
+    let mut lam_pool_arms = Vec::new();
     let mut lam_rebuild_arms = Vec::new();
 
     for domain in &domains {
@@ -289,11 +323,13 @@ pub fn generate_consolidated_congruence_rules(
         let mapply_variant = format_ident!("MApply{}", domain);
 
         // Extract lam from Apply{Dom} and MApply{Dom}
-        lam_extract_arms.push(quote! {
-            #category::#apply_variant(lam, _) => vec![lam.as_ref().clone()],
+        lam_pool_arms.push(PoolArm {
+            pattern: quote! { #category::#apply_variant(lam, _) },
+            pushes: vec![quote! { buf.push(lam.as_ref().clone()); }],
         });
-        lam_extract_arms.push(quote! {
-            #category::#mapply_variant(lam, _) => vec![lam.as_ref().clone()],
+        lam_pool_arms.push(PoolArm {
+            pattern: quote! { #category::#mapply_variant(lam, _) },
+            pushes: vec![quote! { buf.push(lam.as_ref().clone()); }],
         });
 
         // Rebuild with new lam
@@ -307,17 +343,19 @@ pub fn generate_consolidated_congruence_rules(
         });
     }
 
-    if !lam_extract_arms.is_empty() {
+    if !lam_pool_arms.is_empty() {
+        let pool_name = format_ident!("POOL_{}_CONG_LAM", cat_upper);
+        let elem_type = quote! { #category };
+        let match_expr = quote! { t };
+        let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &lam_pool_arms);
+
         rules.push(quote! {
             #rw_cat(t.clone(), match t {
                 #(#lam_rebuild_arms)*
                 _ => unreachable!(),
             }) <--
                 #cat_lower(t),
-                for lam in (match t {
-                    #(#lam_extract_arms)*
-                    _ => vec![],
-                }).into_iter(),
+                for lam in #for_iter,
                 #rw_cat(lam, new_lam);
         });
     }
@@ -328,6 +366,16 @@ pub fn generate_consolidated_congruence_rules(
         let dom_rn = relation_names(domain);
         let rw_domain = &dom_rn.rw_rel;
         let apply_variant = format_ident!("Apply{}", domain);
+        let dom_upper = domain.to_string().to_uppercase();
+
+        let pool_name = format_ident!("POOL_{}_CONG_ARG_{}", cat_upper, dom_upper);
+        let elem_type = quote! { #domain };
+        let match_expr = quote! { t };
+        let pool_arms = vec![PoolArm {
+            pattern: quote! { #category::#apply_variant(_, arg) },
+            pushes: vec![quote! { buf.push(arg.as_ref().clone()); }],
+        }];
+        let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &pool_arms);
 
         rules.push(quote! {
             #rw_cat(t.clone(), match t {
@@ -336,10 +384,7 @@ pub fn generate_consolidated_congruence_rules(
                 _ => unreachable!(),
             }) <--
                 #cat_lower(t),
-                for arg in (match t {
-                    #category::#apply_variant(_, arg) => vec![arg.as_ref().clone()],
-                    _ => vec![],
-                }).into_iter(),
+                for arg in #for_iter,
                 #rw_domain(arg, new_arg);
         });
     }
@@ -347,9 +392,9 @@ pub fn generate_consolidated_congruence_rules(
     rules
 }
 
-/// Generate match arms for auto-generated variants (Apply, MApply, Lam, MLam)
+/// Generate PoolArm entries for auto-generated variants (Apply, MApply, Lam, MLam)
 /// for a specific domain category.
-fn generate_auto_variant_arms(src: &Ident, tgt: &Ident, domain: &Ident) -> Vec<TokenStream> {
+fn generate_auto_variant_pool_arms(src: &Ident, tgt: &Ident, domain: &Ident) -> Vec<PoolArm> {
     let mut arms = Vec::new();
     let src_is_tgt = *src == *tgt;
     let domain_is_tgt = *domain == *tgt;
@@ -365,18 +410,24 @@ fn generate_auto_variant_arms(src: &Ident, tgt: &Ident, domain: &Ident) -> Vec<T
     //   - arg: Box<domain> → contributes to (src, domain) helper
     if src_is_tgt && domain_is_src {
         // Same-category Apply: both lam and arg are src
-        arms.push(quote! {
-            #src::#apply_variant(lam, arg) => vec![lam.as_ref().clone(), arg.as_ref().clone()],
+        arms.push(PoolArm {
+            pattern: quote! { #src::#apply_variant(lam, arg) },
+            pushes: vec![
+                quote! { buf.push(lam.as_ref().clone()); },
+                quote! { buf.push(arg.as_ref().clone()); },
+            ],
         });
     } else if src_is_tgt {
         // Cross-category Apply: only lam is src
-        arms.push(quote! {
-            #src::#apply_variant(lam, _) => vec![lam.as_ref().clone()],
+        arms.push(PoolArm {
+            pattern: quote! { #src::#apply_variant(lam, _) },
+            pushes: vec![quote! { buf.push(lam.as_ref().clone()); }],
         });
     } else if domain_is_tgt {
         // Cross-category Apply: only arg is domain (== tgt)
-        arms.push(quote! {
-            #src::#apply_variant(_, arg) => vec![arg.as_ref().clone()],
+        arms.push(PoolArm {
+            pattern: quote! { #src::#apply_variant(_, arg) },
+            pushes: vec![quote! { buf.push(arg.as_ref().clone()); }],
         });
     }
 
@@ -385,34 +436,37 @@ fn generate_auto_variant_arms(src: &Ident, tgt: &Ident, domain: &Ident) -> Vec<T
     //   - args: Vec<domain> → contributes to (src, domain) helper
     if src_is_tgt && domain_is_src {
         // Same-category MApply: lam + all args are src
-        arms.push(quote! {
-            #src::#mapply_variant(lam, args) => {
-                let mut v = Vec::with_capacity(1 + args.len());
-                v.push(lam.as_ref().clone());
-                v.extend(args.iter().cloned());
-                v
-            },
+        arms.push(PoolArm {
+            pattern: quote! { #src::#mapply_variant(lam, args) },
+            pushes: vec![
+                quote! { buf.push(lam.as_ref().clone()); },
+                quote! { buf.extend(args.iter().cloned()); },
+            ],
         });
     } else if src_is_tgt {
         // Cross-category MApply: only lam is src
-        arms.push(quote! {
-            #src::#mapply_variant(lam, _) => vec![lam.as_ref().clone()],
+        arms.push(PoolArm {
+            pattern: quote! { #src::#mapply_variant(lam, _) },
+            pushes: vec![quote! { buf.push(lam.as_ref().clone()); }],
         });
     } else if domain_is_tgt {
         // Cross-category MApply: only args are domain (== tgt)
-        arms.push(quote! {
-            #src::#mapply_variant(_, args) => args.iter().cloned().collect(),
+        arms.push(PoolArm {
+            pattern: quote! { #src::#mapply_variant(_, args) },
+            pushes: vec![quote! { buf.extend(args.iter().cloned()); }],
         });
     }
 
     // For Lam{domain}(scope) and MLam{domain}(scope):
     //   - body: src → contributes to (src, src) helper only
     if src_is_tgt {
-        arms.push(quote! {
-            #src::#lam_variant(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        arms.push(PoolArm {
+            pattern: quote! { #src::#lam_variant(scope) },
+            pushes: vec![quote! { buf.push(scope.inner().unsafe_body.as_ref().clone()); }],
         });
-        arms.push(quote! {
-            #src::#mlam_variant(scope) => vec![scope.inner().unsafe_body.as_ref().clone()],
+        arms.push(PoolArm {
+            pattern: quote! { #src::#mlam_variant(scope) },
+            pushes: vec![quote! { buf.push(scope.inner().unsafe_body.as_ref().clone()); }],
         });
     }
 

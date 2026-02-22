@@ -100,8 +100,8 @@ impl<P: Hash, T: Hash> Hash for Scope<P, T> {
 
 impl<P, T> PartialOrd for Scope<P, T>
 where
-    P: Clone + PartialEq + Eq + BoundPattern<String> + fmt::Debug,
-    T: Clone + PartialEq + Eq + BoundTerm<String> + fmt::Debug,
+    P: Clone + PartialEq + Eq + BoundPattern<String> + fmt::Debug + Hash,
+    T: Clone + PartialEq + Eq + BoundTerm<String> + fmt::Debug + Ord,
 {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
@@ -110,27 +110,26 @@ where
 
 impl<P, T> Ord for Scope<P, T>
 where
-    P: Clone + PartialEq + Eq + BoundPattern<String> + fmt::Debug,
-    T: Clone + PartialEq + Eq + BoundTerm<String> + fmt::Debug,
+    P: Clone + PartialEq + Eq + BoundPattern<String> + fmt::Debug + Hash,
+    T: Clone + PartialEq + Eq + BoundTerm<String> + fmt::Debug + Ord,
 {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Clone scopes to unbind without consuming
-        let (p1, t1) = self.clone().unbind();
-        let (p2, t2) = other.clone().unbind();
-
-        // Compare by pretty-printed representation
-        // (since Binder doesn't implement Ord directly)
-        let p1_str = format!("{:?}", p1);
-        let p2_str = format!("{:?}", p2);
-
-        match p1_str.cmp(&p2_str) {
-            Ordering::Equal => {
-                let t1_str = format!("{:?}", t1);
-                let t2_str = format!("{:?}", t2);
-                t1_str.cmp(&t2_str)
-            },
-            ord => ord,
-        }
+        // Zero-allocation comparison using unsafe accessors (no clone/unbind).
+        //
+        // Pattern: Compare by deterministic hash (FreeVar hashes by unique_id only).
+        // This is imperfect for Ord (hash collisions could make non-equal patterns
+        // compare as Equal) but since PartialEq is correct and this ordering is only
+        // used for collection ordering (not semantic equality), it's acceptable.
+        //
+        // Body: Compare directly using T's Ord implementation.
+        let hash_pat = |p: &P| -> u64 {
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            p.hash(&mut h);
+            h.finish()
+        };
+        hash_pat(&self.inner.unsafe_pattern)
+            .cmp(&hash_pat(&other.inner.unsafe_pattern))
+            .then_with(|| self.inner.unsafe_body.cmp(&other.inner.unsafe_body))
     }
 }
 
@@ -266,8 +265,26 @@ impl PartialOrd for OrdVar {
 
 impl Ord for OrdVar {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Compare by Debug representation (variable name)
-        format!("{:?}", self.0).cmp(&format!("{:?}", other.0))
+        // Zero-allocation comparison by variant discriminant, then structural fields.
+        // FreeVar: compare by unique_id (the only field used for PartialEq/Hash).
+        // BoundVar: compare by (scope, binder) — both derive Ord.
+        match (&self.0, &other.0) {
+            (Var::Free(_), Var::Bound(_)) => Ordering::Less,
+            (Var::Bound(_), Var::Free(_)) => Ordering::Greater,
+            (Var::Free(a), Var::Free(b)) => {
+                // UniqueId wraps a u32 but doesn't expose it or derive Ord.
+                // Use deterministic hashing (DefaultHasher) for a total ordering.
+                // DefaultHasher is deterministic within a process — hash(a) == hash(b)
+                // iff a == b for u32-sized types (no collisions in practice).
+                let hash_uid = |uid: &moniker::UniqueId| -> u64 {
+                    let mut h = std::collections::hash_map::DefaultHasher::new();
+                    uid.hash(&mut h);
+                    h.finish()
+                };
+                hash_uid(&a.unique_id).cmp(&hash_uid(&b.unique_id))
+            }
+            (Var::Bound(a), Var::Bound(b)) => a.scope.cmp(&b.scope).then(a.binder.cmp(&b.binder)),
+        }
     }
 }
 

@@ -20,6 +20,7 @@
 use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::types::{EvalMode, TypeExpr};
 use crate::{ast::language::LanguageDef, logic::rules::generate_base_rewrites};
+use common::{in_cat_filter, CategoryFilter};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
@@ -48,6 +49,10 @@ pub struct AscentSourceOutput {
     /// Raw Ascent content (relations + rules) without ascent_source! wrapper, suitable for direct
     /// inclusion in an `ascent! { struct Foo; #raw_content }` invocation.
     pub raw_content: TokenStream,
+    /// Core Ascent content for the "core" struct (fewer rules, same relations).
+    /// Only `Some` for multi-category languages where core != full.
+    /// Used for SCC splitting: the core struct has fewer rules in its fixpoint loop.
+    pub core_raw_content: Option<TokenStream>,
 }
 
 /// Main entry point: Generate complete Ascent source for a theory
@@ -57,9 +62,9 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
 
     let helper_fns = helpers::generate_helper_functions(language);
     let relations = generate_relations(language);
-    let category_rules = generate_category_rules(language);
-    let equation_rules = generate_equation_rules(language);
-    let rewrite_rules = generate_rewrite_rules(language);
+    let category_rules = generate_category_rules(language, None);
+    let equation_rules = generate_equation_rules(language, None);
+    let rewrite_rules = generate_rewrite_rules(language, None);
     let custom_logic = language
         .logic
         .as_ref()
@@ -77,6 +82,25 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
 
         #custom_logic
     };
+
+    // Generate core content if this is a multi-category language with non-trivial core
+    let core_raw_content = common::compute_core_categories(language).map(|core_cats| {
+        let core_category_rules = generate_category_rules(language, Some(&core_cats));
+        let core_equation_rules = generate_equation_rules(language, Some(&core_cats));
+        let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats));
+
+        quote! {
+            #relations
+
+            #core_category_rules
+
+            #core_equation_rules
+
+            #core_rewrite_rules
+
+            #custom_logic
+        }
+    });
 
     let full_output = quote! {
         #helper_fns
@@ -104,7 +128,7 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
         eprintln!("Warning: Failed to write Ascent Datalog file: {}", e);
     }
 
-    AscentSourceOutput { full_output, raw_content }
+    AscentSourceOutput { full_output, raw_content, core_raw_content }
 }
 
 /// Format Ascent source for display and file output
@@ -179,24 +203,29 @@ fn format_ascent_source(
 ///
 /// Note: Rewrite congruences are NOT auto-generated. Users explicitly control
 /// where rewrites propagate by writing `if S => T then ...` rules.
-pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
+///
+/// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+pub fn generate_rewrite_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> TokenStream {
     let mut rules = Vec::new();
 
     // Generate base rewrite clauses (no premise)
-    let base_rewrite_clauses = generate_base_rewrites(language);
+    let base_rewrite_clauses = generate_base_rewrites(language, cat_filter);
     rules.extend(base_rewrite_clauses);
 
     // Generate small-step rules for HOL rust_code (step mode)
-    let hol_step_rules = generate_hol_step_rules(language);
+    let hol_step_rules = generate_hol_step_rules(language, cat_filter);
     rules.extend(hol_step_rules);
 
     // Generate big-step fold rules (one rewrite per fold-mode constructor)
-    let fold_rules = generate_fold_big_step_rules(language);
+    let fold_rules = generate_fold_big_step_rules(language, cat_filter);
     rules.extend(fold_rules);
 
     // Generate explicit congruence rules (with premise: if S => T then ...)
     // These are user-declared rules that control where rewrites propagate
-    let congruence_rules = generate_all_explicit_congruences(language);
+    let congruence_rules = generate_all_explicit_congruences(language, cat_filter);
     rules.extend(congruence_rules);
 
     quote! {
@@ -206,7 +235,10 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
 
 /// Generate small-step rewrite rules for terms that have HOL rust_code (step mode).
 /// e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
-fn generate_hol_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
+fn generate_hol_step_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     // Unified single-pass iteration over language.terms with arity dispatch.
@@ -232,6 +264,10 @@ fn generate_hol_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
             continue;
         }
         let category = &rule.category;
+        // Skip categories not in the filter
+        if !in_cat_filter(category, cat_filter) {
+            continue;
+        }
         if common::native_type_for(language, category).is_none() {
             continue;
         }
@@ -413,11 +449,20 @@ use common::{fold_field_count, fold_param_names, fold_params_all_same_category};
 /// Generate big-step fold rules for constructors with eval_mode Fold.
 /// fold_<cat>(t, v) computes the value term v of t; one rw_<cat>(s, t) step for whole expression.
 /// Supports both native categories (fold to literal) and non-native (e.g. Proc with CastInt/Add).
-fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
+fn generate_fold_big_step_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     for lang_type in &language.types {
         let category = &lang_type.name;
+
+        // Skip categories not in the filter
+        if !in_cat_filter(category, cat_filter) {
+            continue;
+        }
+
         let has_fold = language
             .terms
             .iter()

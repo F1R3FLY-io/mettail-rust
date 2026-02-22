@@ -2,6 +2,17 @@
 
 Six areas of Ascent rule generation were consolidated. Each replaces N per-constructor rules with a single rule containing an inline `match` expression.
 
+## Summary
+
+| Area | Name | Grouping Key | Before | After | Core Theorem |
+|------|------|-------------|--------|-------|-------------|
+| 1 | Subterm Extraction | `(source_cat, target_cat)` | N rules/pair | 1 rule/pair | R1 (`for_match_equiv`) |
+| 2 | Auto-Variant Congruence | All domains (lam), per domain (arg) | 2C rules/cat | 1 + C rules/cat | R1 (`for_match_equiv`) |
+| 3 | Equation Congruence | `(category, field_types_tuple)` | N rules/sig | 1 rule/sig | R3 (`pair_match_equiv`) |
+| 4 | Explicit Rewrite Congruence | `(source_cat, field_cat)` | N rules/pair | 1 rule/pair | V4 (`variant_index_extract_equiv`) |
+| 5 | Fold Triggers | Category | N rules/cat | 1 rule/cat | R2 (`if_match_equiv`) |
+| 6 | Fold Identities | Category | N rules/cat | 1 rule/cat | R2 (`if_match_equiv`) |
+
 ---
 
 ## Area 1: Subterm Extraction
@@ -39,6 +50,22 @@ int(sub.clone()) <--
 ```
 
 **Why it works**: Each arm returns all subterms matching the target category. The `for` clause iterates over them, producing exactly the same facts as the separate rules. Constructors with no matching subterms produce an empty vec and contribute nothing.
+
+**Rule structure:**
+
+```
+BEFORE: N separate rules                    AFTER: 1 consolidated rule
+┌─────────────────────────────────┐         ┌─────────────────────────────────┐
+│ int(f0,f1) <-- int(t),          │         │ int(sub) <-- int(t),            │
+│   if let Int::Add(f0,f1) = t;   │         │   for sub in (match t {         │
+├─────────────────────────────────┤         │     Int::Add(f0,f1) => vec![..],│
+│ int(f0) <-- int(t),             │   ───>  │     Int::Neg(f0)    => vec![..],│
+│   if let Int::Neg(f0) = t;      │         │     Int::Tern(..)   => vec![..],│
+├─────────────────────────────────┤         │     _               => vec![],  │
+│ int(f0,f1,f2) <-- int(t),       │         │   }).into_iter();               │
+│   if let Int::Tern(f0,f1,f2)=t; │         └─────────────────────────────────┘
+└─────────────────────────────────┘
+```
 
 ### Formal Proof Reference
 
@@ -107,6 +134,7 @@ rw_int(t.clone(), match t {
 
 - **Rocq theorem**: `area2_auto_variant_lam_congruence` in `AreaProofs.v` (instance of `for_match_equiv` / R1)
 - **Pedagogical proof**: [formal-proofs.md, Section 2](formal-proofs.md#2-core-theorem-for-match-equivalence-r1) and [Section 6.2](formal-proofs.md#area-2-auto-variant-congruence)
+- **Note**: The lam field extraction is proven equivalent via R1. The rebuild side (determining which Apply/MApply variant to reconstruct) uses the original term `t`, so the combined extraction+rebuild is an instance of R1+V4.
 
 ---
 
@@ -207,6 +235,27 @@ rw_int(lhs.clone(), match (lhs, vi) {
 **Why it works**: The extraction match produces `(field_value, variant_index)` pairs. The variant index uniquely identifies which constructor and which field position was extracted. The rebuild match in the head uses `(lhs, vi)` to reconstruct the correct constructor with the rewritten field, preserving all other fields.
 
 **Design detail**: The extraction match groups entries by constructor (one arm per constructor, possibly yielding multiple `(value, index)` pairs for multi-field constructors), while the rebuild match has one arm per entry (each field position of each constructor gets its own rebuild pattern).
+
+**Rule structure:**
+
+```
+BEFORE: N rules (one per constructor×field)    AFTER: 1 rule with variant indices
+┌─────────────────────────────────────┐        ┌─────────────────────────────────────┐
+│ rw(lhs, Add(new,x1)) <-- int(lhs), │        │ rw(lhs, rebuild(lhs,vi,t)) <--      │
+│   if let Add(x0,x1) = lhs,         │        │   int(lhs),                          │
+│   rw(x0,t);                         │        │   for (fv,vi) in (match lhs {        │
+├─────────────────────────────────────┤        │     Add(x0,x1) => [(x0,0),(x1,1)],  │
+│ rw(lhs, Add(x0,new)) <-- int(lhs), │  ───>  │     Neg(x0)    => [(x0,2)],         │
+│   if let Add(x0,x1) = lhs,         │        │     Sub(x0,x1) => [(x0,3),(x1,4)],  │
+│   rw(x1,t);                         │        │     _          => [],                │
+├─────────────────────────────────────┤        │   }),                                │
+│ rw(lhs, Neg(new)) <-- int(lhs),    │        │   rw(fv, t);                         │
+│   if let Neg(x0) = lhs,            │        └─────────────────────────────────────┘
+│   rw(x0,t);                         │
+├─────────────────────────────────────┤
+│ ... (Sub field 0, Sub field 1)      │
+└─────────────────────────────────────┘
+```
 
 ### Formal Proof Reference
 

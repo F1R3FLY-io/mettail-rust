@@ -45,13 +45,19 @@ pub fn language(input: TokenStream) -> TokenStream {
     let ascent_output = generate_ascent_source(&language_def);
     let ascent_code = ascent_output.full_output;
     let raw_ascent_content = ascent_output.raw_content;
+    let core_raw_ascent_content = ascent_output.core_raw_content;
 
     // Generate metadata for REPL introspection
     let metadata_code = generate_metadata(&language_def);
 
     // Generate language implementation struct (Term wrapper + Language struct)
     // Pass raw Ascent content for direct inclusion in ascent! { struct Foo; ... }
-    let language_code = generate_language_impl(&language_def, &raw_ascent_content);
+    // Also pass core content for SCC-split struct (if available)
+    let language_code = generate_language_impl(
+        &language_def,
+        &raw_ascent_content,
+        core_raw_ascent_content.as_ref(),
+    );
 
     // Generate Blockly block definitions
     let blockly_output = generate_blockly_definitions(&language_def);

@@ -1,0 +1,29 @@
+# Rocq project file for Ascent runtime optimization correctness proofs
+#
+# Verifies correctness of four performance optimizations applied to
+# the PraTTaIL Ascent runtime code generator:
+#
+#   Opt 2. TLS Vec Pool Equivalence     (iteration produces same elements)
+#   Opt 3. Dead Rule Pruning            (unreachable rules derive nothing)
+#   Opt 4. OrdVar / Scope Ordering      (total order / total preorder)
+#   Opt 5. SCC Splitting                (Core fixpoint = Full restriction)
+#
+# Dependency order:
+#   Prelude.v              — Hash model, list utilities
+#   GraphReachability.v    — Directed graph, transitive closure (Opts 3, 5)
+#   TLSPoolEquiv.v         — Opt 2 (standalone, depends only on Prelude)
+#   TotalOrder.v           — Opt 4 (standalone, depends only on Prelude)
+#   DeadRulePruning.v      — Opt 3 (depends on GraphReachability)
+#   SCCSplitting.v         — Opt 5 (depends on GraphReachability, DeadRulePruning)
+#   ConcreteInstantiations.v — Calculator / RhoCalc instances (depends on all)
+
+-Q theories AscentOptimizations
+
+# Source files (dependency order)
+theories/Prelude.v
+theories/GraphReachability.v
+theories/TLSPoolEquiv.v
+theories/TotalOrder.v
+theories/DeadRulePruning.v
+theories/SCCSplitting.v
+theories/ConcreteInstantiations.v

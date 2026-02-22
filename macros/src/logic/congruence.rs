@@ -9,7 +9,10 @@
 //! Equality congruences ARE auto-generated (in equations.rs), since
 //! `eq(x,y) => eq(f(x), f(y))` for all constructors is always sound.
 
-use super::common::{count_nonterminals, relation_names};
+use super::common::{
+    count_nonterminals, generate_tls_pool_iter, in_cat_filter, relation_names, CategoryFilter,
+    PoolArm,
+};
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{LanguageDef, RewriteRule};
 use crate::ast::pattern::{Pattern, PatternTerm};
@@ -27,7 +30,13 @@ struct SimpleCongruenceEntry {
     is_boxed: bool,
 }
 
-pub fn generate_all_explicit_congruences(language: &LanguageDef) -> Vec<TokenStream> {
+/// Generate all explicit congruence rules.
+///
+/// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+pub fn generate_all_explicit_congruences(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     // Group simple congruences by (source_cat, field_cat) for consolidation.
@@ -38,6 +47,17 @@ pub fn generate_all_explicit_congruences(language: &LanguageDef) -> Vec<TokenStr
     for rewrite in &language.rewrites {
         if !rewrite.is_congruence_rule() {
             continue;
+        }
+
+        // Determine category and skip if not in filter
+        let category = rewrite
+            .left
+            .category(language)
+            .or_else(|| rewrite.right.category(language));
+        if let Some(cat) = category {
+            if !in_cat_filter(cat, cat_filter) {
+                continue;
+            }
         }
 
         if let Some(rule) =
@@ -402,6 +422,8 @@ fn generate_binding_congruence(
 /// Groups constructors with the same rewrite target field category into one rule
 /// using inline match expressions for extraction and rebuild.
 ///
+/// Uses thread-local Vec pools for zero-allocation iteration.
+///
 /// Before: N rules (one per constructor×field position)
 /// After: 1 rule with N match arms
 fn generate_consolidated_simple_congruence(
@@ -430,8 +452,8 @@ fn generate_consolidated_simple_congruence(
             .push((vi, entry));
     }
 
-    // === Extraction match arms (one per constructor) ===
-    let mut extract_arms = Vec::new();
+    // === Extraction pool arms (one per constructor) ===
+    let mut pool_arms = Vec::new();
     for ctor_entries in by_constructor.values() {
         let first = ctor_entries[0].1;
         let ctor = &first.constructor;
@@ -451,22 +473,23 @@ fn generate_consolidated_simple_congruence(
             })
             .collect();
 
-        // Build extraction vec: one (field_val, vi) per entry
-        let extractions: Vec<TokenStream> = ctor_entries
+        // Build push operations: one (field_val, vi) per entry
+        let pushes: Vec<TokenStream> = ctor_entries
             .iter()
             .map(|(vi, e)| {
                 let xi = format_ident!("x{}", e.field_idx);
                 let vi_lit = *vi;
                 if e.is_boxed {
-                    quote! { ((**#xi).clone(), #vi_lit) }
+                    quote! { buf.push(((**#xi).clone(), #vi_lit)); }
                 } else {
-                    quote! { ((*#xi).clone(), #vi_lit) }
+                    quote! { buf.push(((*#xi).clone(), #vi_lit)); }
                 }
             })
             .collect();
 
-        extract_arms.push(quote! {
-            #source_cat::#ctor(#(#pattern_fields),*) => vec![#(#extractions),*],
+        pool_arms.push(PoolArm {
+            pattern: quote! { #source_cat::#ctor(#(#pattern_fields),*) },
+            pushes,
         });
     }
 
@@ -511,16 +534,23 @@ fn generate_consolidated_simple_congruence(
         });
     }
 
+    // TLS pool for the (field_val, vi) pairs
+    let pool_name = format_ident!(
+        "POOL_{}_SCONG_{}",
+        source_cat.to_string().to_uppercase(),
+        field_cat.to_string().to_uppercase()
+    );
+    let elem_type = quote! { (#field_cat, usize) };
+    let match_expr = quote! { lhs };
+    let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &pool_arms);
+
     Some(quote! {
         #rw_rel(lhs.clone(), match (lhs, vi) {
             #(#rebuild_arms)*
             _ => unreachable!(),
         }) <--
             #cat_lower(lhs),
-            for (field_val, vi) in (match lhs {
-                #(#extract_arms)*
-                _ => vec![],
-            }).into_iter(),
+            for (field_val, vi) in #for_iter,
             #field_rw_rel(field_val, t);
     })
 }

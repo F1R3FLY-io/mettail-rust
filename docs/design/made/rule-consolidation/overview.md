@@ -1,5 +1,23 @@
 # Ascent Rule Consolidation
 
+## Pipeline Context
+
+Rule consolidation operates within the Ascent code generation pipeline, transforming the generated rules before they are emitted:
+
+```
+language! { ... }
+    │
+    └── Ascent Code Gen ────> Ascent Rules (O(C² × N) rules)
+          │                        │
+          │   Rule Consolidation   │
+          │   (Opt 1)              │
+          v                        v
+          N per-constructor   →   1 consolidated
+          if-let rules            match rule (O(C²) rules)
+```
+
+The formal proofs demonstrate that this transformation preserves semantics — the consolidated Datalog program computes exactly the same fixpoint as the original. For complete proofs, see [formal-proofs.md](formal-proofs.md). For Rocq build instructions and theorem catalog, see [rocq-artifacts.md](rocq-artifacts.md).
+
 ## Problem
 
 Each Ascent Datalog rule expands to ~120 lines of Rust code during proc-macro compilation. When we added a 4th category type (Str) to the calculator language, compilation time increased 18.3x (from 1:32 to 28:00) because the number of auto-generated rules grew quadratically with the number of categories.
@@ -98,7 +116,12 @@ Lambda has only 1 category (Term) so there was nothing to consolidate.
 | `macros/src/logic/relations.rs` | Cleaned up to use `RelationNames` from common |
 | `macros/src/logic/rules.rs` | Unified clause assembly for equations and rewrites |
 
-### See also
+### See Also
 
+- [README.md](README.md) — Executive summary, proof architecture, results
 - [`consolidation-areas.md`](consolidation-areas.md) — Detailed before/after for each of the 6 consolidation areas
+- [`formal-proofs.md`](formal-proofs.md) — Complete formal proofs: definitions, theorems, area applications
+- [`rocq-artifacts.md`](rocq-artifacts.md) — Build instructions, theorem catalog, hypothesis audit
 - [`codegen-dry.md`](codegen-dry.md) — DRY improvements to the codegen source code
+- [Ascent Runtime Optimizations](../ascent-optimizations/) — Opts 2-5: TLS pooling, dead rule pruning, ordering, SCC splitting
+- [Rocq Source](../../../../formal/rocq/rule_consolidation/theories/) — The `.v` proof files

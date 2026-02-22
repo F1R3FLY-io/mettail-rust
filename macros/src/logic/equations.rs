@@ -5,7 +5,7 @@
 //! - Equality congruence rules (if args equal, constructed terms equal)
 //! - User-defined equation rules
 
-use super::common::relation_names;
+use super::common::{generate_tls_pool_iter, in_cat_filter, relation_names, CategoryFilter, PoolArm};
 use crate::ast::grammar::{GrammarItem, GrammarRule};
 use crate::ast::language::LanguageDef;
 use crate::logic::rules as unified_rules;
@@ -20,18 +20,23 @@ use syn::Ident;
 /// 1. Reflexivity rules for all categories
 /// 2. Demand-driven equality congruence for existing terms
 /// 3. User-defined equations
-pub fn generate_equation_rules(language: &LanguageDef) -> TokenStream {
+///
+/// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+pub fn generate_equation_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> TokenStream {
     let mut rules = Vec::new();
 
     // 1. Add reflexivity for eq relations
-    rules.extend(generate_reflexivity_rules(language));
+    rules.extend(generate_reflexivity_rules(language, cat_filter));
 
     // 2. Add demand-driven congruence rules for all constructors
     // These only equate terms that already exist, not synthesize new ones
-    rules.extend(generate_congruence_rules(language));
+    rules.extend(generate_congruence_rules(language, cat_filter));
 
     // 3. Generate user-defined equation rules using unified approach
-    rules.extend(unified_rules::generate_equation_rules(language));
+    rules.extend(unified_rules::generate_equation_rules(language, cat_filter));
 
     quote! {
         #(#rules)*
@@ -39,10 +44,14 @@ pub fn generate_equation_rules(language: &LanguageDef) -> TokenStream {
 }
 
 /// Generate reflexivity rules: eq_cat(t, t) for all t in cat
-fn generate_reflexivity_rules(language: &LanguageDef) -> Vec<TokenStream> {
+fn generate_reflexivity_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     language
         .types
         .iter()
+        .filter(|lang_type| in_cat_filter(&lang_type.name, cat_filter))
         .map(|lang_type| {
             let rn = relation_names(&lang_type.name);
             let cat_lower = &rn.cat_lower;
@@ -59,12 +68,17 @@ fn generate_reflexivity_rules(language: &LanguageDef) -> Vec<TokenStream> {
 /// Groups constructors by `(result_category, field_types_tuple)` and generates
 /// one consolidated rule per group using `match (s, t)` to extract fields.
 ///
+/// Uses thread-local Vec pools for zero-allocation iteration.
+///
 /// Before: one rule per constructor
 /// After: one rule per unique (category, field_types) signature
 ///
 /// For terms that already exist: if their args are equal, then the terms are equal.
 /// This is demand-driven and avoids O(N²) term explosion.
-fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
+fn generate_congruence_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     // Group constructors by (category, ordered field types)
     // Key: (category_str, vec of field_type_str)
     let mut groups: BTreeMap<(String, Vec<String>), Vec<&GrammarRule>> = BTreeMap::new();
@@ -73,6 +87,11 @@ fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
     let int_str = "Integer";
 
     for grammar_rule in &language.terms {
+        // Skip categories not in the filter
+        if !in_cat_filter(&grammar_rule.category, cat_filter) {
+            continue;
+        }
+
         // Skip binders (alpha-equivalence is complex)
         if !grammar_rule.bindings.is_empty() {
             continue;
@@ -115,6 +134,7 @@ fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
 
     // Generate one consolidated rule per group
     let mut rules = Vec::with_capacity(groups.len());
+    let mut pool_counter = 0usize;
 
     for ((cat_str, field_type_strs), constructors) in &groups {
         let category = format_ident!("{}", cat_str);
@@ -128,8 +148,8 @@ fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
         let s_fields: Vec<Ident> = (0..arity).map(|i| format_ident!("s_f{}", i)).collect();
         let t_fields: Vec<Ident> = (0..arity).map(|i| format_ident!("t_f{}", i)).collect();
 
-        // Build match arms for (s, t) extraction
-        let match_arms: Vec<TokenStream> = constructors
+        // Build pool arms for (s, t) extraction
+        let pool_arms: Vec<PoolArm> = constructors
             .iter()
             .map(|rule| {
                 let label = &rule.label;
@@ -138,16 +158,18 @@ fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 let t_pat_fields: Vec<Ident> =
                     (0..arity).map(|i| format_ident!("tf{}", i)).collect();
 
-                // Extractions: s fields then t fields
-                let extractions: Vec<TokenStream> = s_pat_fields
+                // Push a tuple of (s_f0, s_f1, ..., t_f0, t_f1, ...)
+                let push_fields: Vec<TokenStream> = s_pat_fields
                     .iter()
                     .chain(t_pat_fields.iter())
                     .map(|f| quote! { #f.as_ref().clone() })
                     .collect();
 
-                quote! {
-                    (#category::#label(#(#s_pat_fields),*), #category::#label(#(#t_pat_fields),*)) =>
-                        vec![(#(#extractions),*)],
+                PoolArm {
+                    pattern: quote! {
+                        (#category::#label(#(#s_pat_fields),*), #category::#label(#(#t_pat_fields),*))
+                    },
+                    pushes: vec![quote! { buf.push((#(#push_fields),*)); }],
                 }
             })
             .collect();
@@ -167,14 +189,33 @@ fn generate_congruence_rules(language: &LanguageDef) -> Vec<TokenStream> {
             })
             .collect();
 
+        // TLS pool with unique name per group
+        let pool_name = format_ident!(
+            "POOL_{}_EQ_CONG_{}",
+            cat_str.to_uppercase(),
+            pool_counter
+        );
+        pool_counter += 1;
+
+        // Element type is the tuple of all s_fields and t_fields
+        let field_types: Vec<TokenStream> = field_type_strs
+            .iter()
+            .map(|ft_str| {
+                let ft = format_ident!("{}", ft_str);
+                quote! { #ft }
+            })
+            .collect();
+        // Double the field types: s fields then t fields
+        let all_field_types: Vec<&TokenStream> = field_types.iter().chain(field_types.iter()).collect();
+        let elem_type = quote! { (#(#all_field_types),*) };
+        let match_expr = quote! { (s, t) };
+        let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &pool_arms);
+
         rules.push(quote! {
             #eq_rel(s.clone(), t.clone()) <--
                 #cat_rel(s),
                 #cat_rel(t),
-                for (#(#for_bindings),*) in (match (s, t) {
-                    #(#match_arms)*
-                    _ => vec![],
-                }).into_iter(),
+                for (#(#for_bindings),*) in #for_iter,
                 #(#eq_checks),*;
         });
     }
