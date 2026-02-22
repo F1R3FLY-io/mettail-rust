@@ -232,6 +232,47 @@ reporting, partial evaluation) while clearly marking the error region.
 
 ---
 
+## 5.4 Worked Recovery Example
+
+Consider the input `"3 + + 5 * 2"` parsed as category `Int` in a calculator
+grammar with `Add` and `Mul` rules.
+
+**Token stream:**
+```
+[Integer(3), Plus, Plus, Integer(5), Star, Integer(2), Eof]
+ pos=0       pos=1 pos=2 pos=3       pos=4 pos=5      pos=6
+```
+
+**Step-by-step trace (recovering mode):**
+
+1. `parse_Int_recovering(tokens, pos=0, min_bp=0)`:
+   - Prefix: `Integer(3)` → `Some(NumLit(3))`, pos=1
+   - Infix loop: peek `Plus` at pos=1, `infix_bp("Plus") = (1,2)`, `1 ≥ 0` → enter
+   - Consume `Plus`, pos=2
+   - Recursive call: `parse_Int_recovering(tokens, pos=2, min_bp=2)`
+
+2. Inner `parse_Int_recovering(tokens, pos=2, min_bp=2)`:
+   - Prefix: peek `Plus` at pos=2 — not a valid prefix token for Int
+   - **Error:** push `ParseError::UnexpectedToken { found: Plus, expected: "Int expression" }`
+   - Call `sync_to(tokens, pos=2, is_sync_Int)`:
+     - pos=2: `Plus` — is it in FOLLOW(Int)? Yes (`Plus ∈ FOLLOW(Int)`)
+     - Sync at pos=2 (do not advance past the sync token)
+   - Return `(None, [error])` — no partial AST from this sub-parse
+
+3. Back in outer parse: right-hand side returned `None`
+   - Cannot construct `Add(NumLit(3), ???)` — discard partial infix
+   - Return `(Some(NumLit(3)), [error])`
+
+**Contrast with fail-fast:** `parse_Int(tokens, pos=0, min_bp=0)` would return
+`Err("unexpected token '+' at position 2, expected Int expression")` immediately,
+with no partial AST.
+
+**Key difference:** The recovering parser preserves `Some(NumLit(3))` as a
+partial result alongside the error vector, allowing downstream processing
+(e.g., IDE error highlighting) to use what was successfully parsed.
+
+---
+
 ## 6. Sync Predicate Composition
 
 The sync predicate for a category combines three sources (`prediction.rs`,
@@ -273,6 +314,7 @@ The sync predicate generator converts token names to match patterns
 | Data-carrying (`Integer`) | `Token::Integer(_)` |
 | Data-carrying (`Boolean`) | `Token::Boolean(_)` |
 | Data-carrying (`StringLit`) | `Token::StringLit(_)` |
+| Data-carrying (`Float`) | `Token::Float(_)` |
 | Data-carrying (`Dollar`) | `Token::Dollar(_)` |
 | Data-carrying (`DoubleDollar`) | `Token::DoubleDollar(_)` |
 

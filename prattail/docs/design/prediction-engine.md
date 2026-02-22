@@ -159,10 +159,23 @@ each iteration propagates through one level of category references.
 
 ### Definition
 
-A category C is **nullable** if there exists a rule in C whose syntax pattern
-can match zero tokens. This is needed to seed FOLLOW set computation: if a
-category B can produce the empty string, then tokens following B in a syntax
-pattern can also follow the preceding non-terminal.
+A category C is **nullable** if it contains a rule whose syntax pattern has
+zero items — that is, the rule matches without consuming any tokens. Concretely,
+a nullable rule looks like a unit constructor with no syntax:
+
+```
+Unit . |- : Cat;
+```
+
+This rule produces `Cat::Unit` without consuming any input tokens.
+
+### Practical Note
+
+MeTTaIL grammars do not currently have nullable categories — every defined rule
+consumes at least one token. The nullable flag exists for correctness of the
+FOLLOW set fixed-point algorithm: if a category B is nullable, then `FOLLOW(A)`
+must include tokens that can follow B in any syntax pattern where B appears
+after A, because B might produce nothing.
 
 ### Algorithm
 

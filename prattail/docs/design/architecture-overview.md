@@ -128,6 +128,30 @@ Phase   | Input                   | Output                  | Module
 --------+-------------------------+-------------------------+------------------
 ```
 
+### Phase Dependencies
+
+```
+  Phase 1 (Lexer)  ──────────────────────────────────────┐
+  Phase 2 (BP)     ──────────────────────────────┐       │
+  Phase 3 (FIRST/FOLLOW/Dispatch) ───────┐       │       │
+  Phase 4 (RD Handlers) ────────────┐    │       │       │
+                                    │    │       │       │
+                                    v    v       v       │
+                              Phase 5 (Pratt)            │
+                                    │    │               │
+                                    v    v               │
+                              Phase 6 (Dispatch)         │
+                                    │                    │
+                                    v                    v
+                              Phase 7 (Assembly: all phases)
+```
+
+Phases 1-4 are independent and could theoretically run in parallel. Phase 5
+depends on Phases 2, 3, and 4. Phase 6 depends on Phases 3 and 5. Phase 7
+depends on all phases for final assembly. The current implementation is
+sequential (rayon was tested and rejected — scheduling overhead per `join`
+exceeded total codegen work under `taskset -c 0`).
+
 ## 3. Module Structure
 
 ```

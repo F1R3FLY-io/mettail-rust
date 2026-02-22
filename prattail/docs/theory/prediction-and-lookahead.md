@@ -184,6 +184,14 @@ PraTTaIL does not use FOLLOW sets directly because:
 2. The Pratt loop handles "when to stop" via binding power, not FOLLOW sets.
 3. Collection rules use explicit delimiters and separators.
 
+**Note on ALL(\*):** ANTLR 4's ALL(\*) algorithm uses adaptive DFA lookahead —
+on first encounter of an ambiguous prediction, it simulates all alternatives
+in parallel and caches the result in a DFA for future lookups. This is more
+nuanced than "full parser as subroutine"; the cached DFA makes subsequent
+predictions O(1). PraTTaIL avoids this complexity entirely: Pratt parsing
+handles expression-level ambiguity via binding power, and FIRST-set dispatch
+handles rule selection. No adaptive DFA or alternative simulation is needed.
+
 However, FOLLOW sets are implicitly used in two places:
 
 - **Collection parsing:** When parsing a separated list, the parser checks

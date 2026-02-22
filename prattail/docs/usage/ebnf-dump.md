@@ -78,11 +78,11 @@ Angle brackets for parameterized token classes:
 
 | Token | Meaning |
 |---|---|
-| `<integer>` | Integer literal (regex `/[0-9]+/`) |
-| `<float>` | Float literal (regex `/[0-9]+\.[0-9]+/`) |
-| `<boolean>` | Boolean literal (`true` or `false`) |
+| `<integer>` | Integer literal: `digit, { digit }` |
+| `<float>` | Float literal: `digit, { digit }, ".", digit, { digit }` |
+| `<boolean>` | Boolean literal: `"true" \| "false"` |
 | `<string>` | String literal (double-quoted with escapes) |
-| `<ident>` | Identifier (`/[a-zA-Z_][a-zA-Z0-9_]*/`) |
+| `<ident>` | Identifier: `letter \| "_", { letter \| digit \| "_" }` |
 
 ### Optional Groups
 

@@ -108,6 +108,11 @@ The dispatch handles each source independently. Tokens unique to `Int`
 trigger `CastInt`; tokens unique to `Bool` trigger `CastBool`; tokens
 shared between `Int`, `Bool`, and `Proc` require backtracking.
 
+> **Terminology mapping:** The three-way partition in prose maps to
+> `CrossCategoryOverlap` field names as follows: "tokens unique to the source"
+> = `unique_to_a`, "tokens unique to the target" = `unique_to_b`, "tokens
+> shared (ambiguous)" = `ambiguous_tokens`.
+
 ---
 
 ## 3. Comparison Rules (Cross-Type Operators)

@@ -534,6 +534,14 @@ Token::Integer(_) => {
 }
 ```
 
+### Critical Implementation Detail
+
+Cast rules **must** be placed in the Pratt PREFIX handler, not in dispatch
+wrappers. This ensures that after a cast parse completes, the Pratt infix loop
+continues to check for infix operators at the call site. If cast rules were in
+dispatch wrappers instead, the infix loop would never see operators following
+the cast expression. See `pratt.rs` for the generated prefix match arm.
+
 ---
 
 ## 12. Lambda and Application
@@ -550,6 +558,11 @@ PraTTaIL auto-generates lambda abstraction and application syntax for every lang
 Lambda rules are generated **only for the primary category** to avoid grammar
 ambiguity. The binder type is inferred from how the bound variable is used in the
 body.
+
+> **Implementation note:** The lambda keyword in the generated lexer is `"lam "`
+> (with a trailing space) to distinguish it from identifiers that happen to start
+> with `lam`. The lexer's maximal munch + keyword priority ensures correct
+> tokenization.
 
 ### Application Syntax
 

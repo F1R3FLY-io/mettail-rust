@@ -20,13 +20,13 @@ the **lexer pipeline** (automata-based), the **parser pipeline** (Pratt + RD), a
 ## Module Dependency Graph
 
 ```
-                          +-----------+
-                          |  lib.rs   |
-                          | (types +  |
-                          |  entry pt)|
-                          +-----+-----+
-                                |
-                                v
+                         +-----------+
+                         |  lib.rs   |
+                         | (types +  |
+                         |  entry pt)|
+                         +-----+-----+
+                               |
+                               v
                         +--------------+
                         | pipeline.rs  |
                         | (orchestrator|
@@ -41,26 +41,26 @@ the **lexer pipeline** (automata-based), the **parser pipeline** (Pratt + RD), a
     | lexer.rs| |binding_| |prediction| | pratt  | |recursive |
     |         | |power.rs| |   .rs    | |  .rs   | |  .rs     |
     +---------+ +--------+ +----------+ +--------+ +----------+
-          |                      |          |  |         |
-          v                      |          |  |         |
-    +-----+-----+               |          v  v         |
-    | automata/ |               |     +----------+      |
-    | (mod.rs)  |               |     |dispatch  |      |
-    +-----+-----+               |     |  .rs     |      |
-          |                      |     +----------+      |
-    +-----+-----+-----+-----+  |                        |
-    |     |     |     |     |  |                        |
-    v     v     v     v     v  |                        |
-  nfa  part  sub  min  code   |                        |
-  .rs  ition set  imize gen   |                        |
-       .rs   .rs  .rs   .rs   |                        |
-                               |                        |
-                               +---------+--------------+
-                                         |
-                                    (FIRST/FOLLOW
-                                     sets used by
-                                     all parser
-                                     modules)
+          |                      |          |           |
+          v                      |          |           |
+    +-----+-----+                |          v           |
+    | automata/ |                |     +----------+     |
+    | (mod.rs)  |                |     |dispatch  |     |
+    +-----+-----+                |     |  .rs     |     |
+          |                      |     +----------+     |
+    +-----+-----+-----+-----+    |                      |
+    |     |     |     |     |    |                      |
+    v     v     v     v     v    |                      |
+  nfa   part   sub   min   code  |                      |
+  .rs   ition  set   imize gen   |                      |
+        .rs    .rs   .rs   .rs   |                      |
+                                 |                      |
+                                 +----------+-----------+
+                                            |
+                                       (FIRST/FOLLOW
+                                        sets used by
+                                        all parser
+                                        modules)
 ```
 
 ### Detailed Dependency Arrows
@@ -104,6 +104,12 @@ lib.rs
                   |                  prediction.rs (CrossCategoryOverlap, FirstSet)
                   (uses FIRST set overlap analysis for backtracking decisions)
 ```
+
+> **Terminology note:** "dispatch table" refers to the `DispatchTable` data
+> structure built by `prediction.rs` (mapping tokens to parse actions). "Dispatch
+> wrapper" refers to the generated `parse_<Cat>()` wrapper function produced by
+> `dispatch.rs` (which handles cross-category backtracking before delegating to
+> the Pratt parser).
 
 ---
 
@@ -248,7 +254,7 @@ lib.rs
 - `write_recovery_helpers(buf)` -- sync_to, expect_token_rec, expect_ident_rec
 - `write_pratt_parser_recovering(buf, config, bp_table)` -- recovery-aware Pratt parser
 - `write_dispatch_recovering(buf, category)` -- recovery entry point wrapper
-- Per category: `parse_<Cat>()` (Pratt loop), `parse_<Cat>_prefix()` (nud handler)
+- Per category: `parse_<Cat>()` (Pratt loop), `parse_<Cat>_prefix()` (prefix handler)
 - Postfix support: `write_postfix_bp_function()`, `write_make_postfix()`
 - Mixfix support: `write_mixfix_bp_function()`, `write_handle_mixfix()`
 - `PrattConfig` controls: category, primary status, infix/postfix/mixfix existence,

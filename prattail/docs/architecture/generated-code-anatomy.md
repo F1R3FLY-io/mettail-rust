@@ -817,6 +817,177 @@ allocations during generation.
 
 ---
 
+## Part 15: Lambda and Application Codegen
+
+Lambda and application handlers are generated for the **primary category** only.
+Using RhoCalc (primary category: `Proc`) as an example:
+
+### Single Lambda: `^x.{body}`
+
+```rust
+// Generated prefix dispatch arm
+Token::Caret => { parse_lambda(tokens, pos) }
+
+// Generated parse_lambda function (simplified)
+fn parse_lambda<'a>(tokens: &[(Token<'a>, Span)], pos: &mut usize) -> Result<Proc, ParseError> {
+    expect_token(tokens, pos, |t| matches!(t, Token::Caret), "^")?;
+    match peek_token(tokens, *pos) {
+        Some(Token::Ident(_)) => {
+            let binder_name = expect_ident(tokens, pos)?;
+            expect_token(tokens, pos, |t| matches!(t, Token::Dot), ".")?;
+            expect_token(tokens, pos, |t| matches!(t, Token::LBrace), "{")?;
+            let body = parse_Proc(tokens, pos, 0)?;
+            expect_token(tokens, pos, |t| matches!(t, Token::RBrace), "}")?;
+            // Inference-driven variant selection
+            let inferred = body.infer_var_type(&binder_name);
+            let scope = mettail_runtime::Scope::new(
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var(binder_name)),
+                Box::new(body),
+            );
+            Ok(match inferred {
+                Some(InferredType::Base(VarCategory::Proc)) => Proc::LamProc(scope),
+                Some(InferredType::Base(VarCategory::Name)) => Proc::LamName(scope),
+                Some(InferredType::Base(VarCategory::Int))  => Proc::LamInt(scope),
+                Some(InferredType::Base(VarCategory::Bool)) => Proc::LamBool(scope),
+                _ => Proc::LamProc(scope)  // default to primary category
+            })
+        }
+        Some(Token::LBracket) => { /* multi-binder: ^[x,y].{body} → MLam variant */ }
+        _ => Err(ParseError::UnexpectedToken { /* ... */ })
+    }
+}
+```
+
+### Application: `$int(f, x)` and `$$int(f, x, y)`
+
+```rust
+// Single application: $int(f, x) → Proc::ApplyInt(f, x)
+fn parse_dollar_int<'a>(tokens: &[(Token<'a>, Span)], pos: &mut usize) -> Result<Proc, ParseError> {
+    expect_token(tokens, pos, |t| matches!(t, Token::DollarInt), "$int")?;
+    expect_token(tokens, pos, |t| matches!(t, Token::LParen), "(")?;
+    let f = parse_Proc(tokens, pos, 0)?;    // lambda is a Proc
+    expect_token(tokens, pos, |t| matches!(t, Token::Comma), ",")?;
+    let x = parse_Int(tokens, pos, 0)?;     // argument parsed as Int (the domain)
+    expect_token(tokens, pos, |t| matches!(t, Token::RParen), ")")?;
+    Ok(Proc::ApplyInt(Box::new(f), Box::new(x)))
+}
+
+// Multi-application: $$int(f, x1, x2) → Proc::MApplyInt(f, [x1, x2])
+fn parse_ddollar_int<'a>(tokens: &[(Token<'a>, Span)], pos: &mut usize) -> Result<Proc, ParseError> {
+    expect_token(tokens, pos, |t| matches!(t, Token::DdollarIntLp), "$$int(")?;
+    let f = parse_Proc(tokens, pos, 0)?;
+    expect_token(tokens, pos, |t| matches!(t, Token::Comma), ",")?;
+    let mut args: Vec<Int> = Vec::new();
+    loop {
+        let arg = parse_Int(tokens, pos, 0)?;
+        args.push(arg);
+        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::Comma)) {
+            *pos += 1;
+        } else {
+            break;
+        }
+    }
+    expect_token(tokens, pos, |t| matches!(t, Token::RParen), ")")?;
+    Ok(Proc::MApplyInt(Box::new(f), args))
+}
+```
+
+Note that `$$int(` is a **single token** (`Token::DdollarIntLp`) — the opening
+parenthesis is consumed as part of the token to avoid ambiguity with `$int`.
+
+---
+
+## Part 16: Binder and Scope Codegen
+
+Binder rules (e.g., PInputs in RhoCalc) use `moniker`'s `Scope`, `Binder`,
+and `FreeVar` types for proper name binding:
+
+### Single-Binder Construction
+
+```rust
+// For ^x.{body}:
+let scope = mettail_runtime::Scope::new(
+    mettail_runtime::Binder(mettail_runtime::get_or_create_var(binder_name)),
+    //                       ↑ Binder wraps FreeVar<String>
+    Box::new(body),
+);
+```
+
+### Multi-Binder Construction
+
+```rust
+// For ^[x,y,z].{body}:
+let binders: Vec<mettail_runtime::Binder<String>> =
+    binder_names.into_iter()
+        .map(|s| mettail_runtime::Binder(mettail_runtime::get_or_create_var(s)))
+        .collect();
+let scope = mettail_runtime::Scope::new(binders, Box::new(body));
+// Result: Proc::MLamInt(scope) (variant selected by infer_var_type)
+```
+
+### Structural Binder Rules (PInputs)
+
+The RhoCalc `PInputs` rule `(n?x, m?y).{body}` generates a ZipMapSep
+handler that constructs binders from the `?`-separated pairs:
+
+```rust
+// Simplified generated code for PInputs
+let binder = mettail_runtime::Binder(mettail_runtime::get_or_create_var(x_name));
+let scope = mettail_runtime::Scope::new(binders_vec, Box::new(body));
+Proc::PInputs(names_vec, scope)
+```
+
+All `NonTerminal` fields in the AST are `Box<T>` — constructors always wrap
+sub-expressions with `Box::new()`.
+
+---
+
+## Part 17: Collection Codegen
+
+Collection rules (HashBag, HashSet, Vec) generate a parsing loop with
+separator checking:
+
+### HashBag Example: PPar (`{P | P | ...}`)
+
+```rust
+// Generated code for PPar (simplified from recursive.rs)
+fn parse_ppar<'a>(tokens: &[(Token<'a>, Span)], pos: &mut usize) -> Result<Proc, ParseError> {
+    expect_token(tokens, pos, |t| matches!(t, Token::LBrace), "{")?;
+    let mut ps = mettail_runtime::HashBag::new();
+    loop {
+        match parse_Proc(tokens, pos, 0) {
+            Ok(elem) => {
+                ps.insert(elem);
+                // Check for separator "|"
+                if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::Pipe)) {
+                    *pos += 1;  // consume separator, continue loop
+                } else {
+                    break;      // no separator → end of collection
+                }
+            }
+            Err(_) => break,    // parse failure → end of collection (may be empty)
+        }
+    }
+    expect_token(tokens, pos, |t| matches!(t, Token::RBrace), "}")?;
+    Ok(Proc::PPar(ps))
+}
+```
+
+### Collection Kind Dispatch
+
+The collection init and insert method are selected by `CollectionKind`:
+
+| Kind | Init Expression | Insert Method |
+|---|---|---|
+| `HashBag` | `mettail_runtime::HashBag::new()` | `.insert(elem)` |
+| `HashSet` | `std::collections::HashSet::new()` | `.insert(elem)` |
+| `Vec` | `Vec::new()` | `.push(elem)` |
+
+The loop structure is identical for all collection kinds — only the
+initialization and insertion expressions change.
+
+---
+
 ## Tracing an Example Parse
 
 **Input:** `"3 + x * 2 == 5"`

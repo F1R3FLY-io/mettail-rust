@@ -9,7 +9,8 @@ parsing input, and inspecting results.**
 
 PraTTaIL is part of the MeTTaIL workspace. Ensure you have:
 
-- Rust toolchain (stable, 2021 edition)
+- Rust nightly toolchain (the workspace's `rust-toolchain.toml` selects nightly
+  with cranelift; see `.cargo/config.toml` for linker and codegen details)
 - The `mettail-rust` workspace checked out
 - Dependencies resolved (`cargo build` from workspace root)
 

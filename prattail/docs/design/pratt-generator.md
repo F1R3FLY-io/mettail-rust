@@ -135,6 +135,11 @@ crate's bridge layer detects this pattern in `convert_rule()`:
 This classification is set by the `prattail_bridge.rs` module before the
 `LanguageSpec` reaches the parser generator.
 
+> **Source reference:** The classification criteria are checked in the
+> `convert_rule()` function in `macros/src/gen/syntax/parser/prattail_bridge.rs`.
+> This is where `is_unary_prefix`, `is_infix`, `is_postfix`, and `associativity`
+> fields are set on each `RuleSpec`.
+
 ### Infix Detection Criteria
 
 A rule is classified as infix when `RuleSpec.is_infix == true`, which the

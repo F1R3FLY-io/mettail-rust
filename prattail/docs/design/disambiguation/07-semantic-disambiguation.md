@@ -516,6 +516,14 @@ substitute_env(Ambiguous(alts), env):
   from_alternatives(unique)    // may resolve via groundness now
 ```
 
+**Edge case — `progressed` is empty:** When no alternative's Display
+representation changes under substitution, the environment has no relevant
+bindings for any of the alternatives. In this case, all alternatives are kept
+(the `if progressed.is_empty()` branch). This preserves the full set of
+candidates for Stage C's declaration-order resolution, which will select the
+first-declared surviving category. This is correct because the absence of
+binding information means we cannot eliminate any candidate.
+
 **Key insight:** Substitution can only **reduce** ambiguity, never increase it.
 If a variable is bound to a Float value, the Float path progresses (Display
 changes from `"a + b"` to `"1.0 + 2.0"`) while the Int path does not

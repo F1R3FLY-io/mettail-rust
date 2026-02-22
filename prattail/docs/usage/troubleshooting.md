@@ -46,9 +46,11 @@ appear in the body, inference fails.
    ^x.{42}          FAILS: x not used
    ```
 
-2. **For unused binders, use a discard convention.** This is a known limitation:
-   PraTTaIL requires type inference from usage, so unused binders cannot have their
-   type inferred.
+2. **For unused binders, use a discard convention** (naming the binder `_` or
+   `_unused`). Note that this is a naming convention only — PraTTaIL does not
+   implement special `_` handling; the binder is still bound, just conventionally
+   marked as intentionally unused. This is a known limitation: PraTTaIL requires
+   type inference from usage, so unused binders cannot have their type inferred.
 
 3. **For multi-binders, all variables must be used:**
    ```
@@ -123,6 +125,11 @@ But if the input were just `x`:
        );
    }
    ```
+
+   > **Note:** `analyze_cross_category_overlaps()` is an internal PraTTaIL API
+   > accessible only during the compile-time proc-macro context. To inspect
+   > overlaps at development time, add the debug print above to `prediction.rs`
+   > temporarily and run `cargo build`.
 
 ---
 

@@ -258,6 +258,11 @@ reachable from any state in `S` by following zero or more epsilon transitions:
       return sorted(closure)
 ```
 
+> **Why sorted?** The sorted representation is essential because NFA state sets
+> are used as map keys during subset construction. If the closure were returned
+> unsorted, identical state sets could appear in different orders and be treated
+> as distinct DFA states, producing a larger (and incorrect) DFA.
+
 ### 4.3 Worked Example
 
 Using the NFA from section 3.5:

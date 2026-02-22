@@ -995,6 +995,14 @@ The `total_bytes()` method on each table type computes the total
 memory footprint (array lengths × element sizes). The strategy with
 the smallest footprint wins.
 
+Each compression strategy counts different arrays:
+
+| Strategy | Arrays Counted | Description |
+|---|---|---|
+| **CombCompressed** | `TARGETS` + `OFFSETS` + `ROW_CHECK` | Comb-packed transitions, per-state offsets, row check for collision detection |
+| **BitmapCompressed** | `BITMAPS` + `OFFSETS` + `TARGETS` | u32 bitmaps (1 per state, `num_classes ≤ 32`), offsets into dense target array, packed targets |
+| **DirectCoded** | (no table) | Selected when `minimized_states ≤ 30`; transitions become inline `match` arms in generated code |
+
 `LexerStats` reports the selected strategy:
 
 ```rust

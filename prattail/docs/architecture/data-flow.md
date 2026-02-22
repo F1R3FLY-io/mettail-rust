@@ -50,7 +50,9 @@ wraps `Rc<()>` internally (in proc-macro context). The pipeline extracts all dat
 code generation needs into `LexerBundle` and `ParserBundle`, which contain only owned
 `String`, `Vec`, `BTreeMap`, and other Send+Sync types. This design enables future
 parallelism even though the current implementation is sequential (rayon was tested and
-rejected due to 81-197% regression under `taskset -c 0`).
+rejected due to 81-197% regression under `taskset -c 0` — rayon's thread pool scheduling
+overhead per `join` call (~30 μs) exceeded total codegen work for each phase, and under
+single-core pinning the closures ran sequentially with added lock/queue overhead).
 
 ---
 

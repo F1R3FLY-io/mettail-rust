@@ -955,6 +955,30 @@ was correctly rejected based on data.
 
 ---
 
+### Lessons Learned: Rayon Rejection
+
+The rayon parallelism experiment yielded three important lessons:
+
+1. **Parallelism overhead dominates small workloads.** Rayon's thread pool
+   scheduling overhead per `join` call (~30 μs) exceeded the total codegen
+   work for individual pipeline phases. Even for the largest grammar specs
+   (RhoCalc), no single phase took long enough to amortize the overhead.
+
+2. **Single-core benchmarking reveals true overhead.** Under `taskset -c 0`,
+   rayon closures ran sequentially but still paid the full scheduling cost
+   (lock acquisition, work-stealing queue operations, thread synchronization).
+   This turned every `join` into pure overhead with no parallelism benefit,
+   producing the 81-197% regressions observed.
+
+3. **Architecture value is independent of parallelism.** The Send+Sync data
+   bundle extraction was retained because it produces a cleaner state-machine
+   design with clear phase boundaries, even though the immediate motivation
+   (parallel execution) was rejected. The architecture enables future
+   parallelism if grammars grow large enough to amortize the overhead, while
+   providing organizational benefits today.
+
+---
+
 ## Phase 5: Aho-Corasick Keyword Trie (Sprint 5D) (2026-02-16)
 
 ### Motivation

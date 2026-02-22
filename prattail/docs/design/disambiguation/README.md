@@ -153,6 +153,19 @@ show all six layers acting on real input.
 | [06-layer-interactions.md](06-layer-interactions.md) | All | ~700 | End-to-end traces, layer ordering, master flowchart |
 | [07-semantic-disambiguation.md](07-semantic-disambiguation.md) | 6 | ~450 | NFA-style parse, Ambiguous, is_ground(), three-stage resolution |
 
+### File Numbering
+
+Files 01-05 correspond to Layers 1-5 of the disambiguation model. File 06 is
+a cross-cutting interactions document (not a layer) showing end-to-end traces
+through all layers. File 07 corresponds to Layer 6 (semantic disambiguation).
+The file numbers reflect creation order rather than a strict layer numbering.
+
+### Notation Conventions
+
+Binding power pairs are written as `(left_bp, right_bp)` in formal descriptions
+and pseudocode. In ASCII diagrams, the shorthand `(L, R)` may be used for
+compactness.
+
 ## Cross-References to Existing Documentation
 
 Each layer has corresponding deep-dive documentation in the theory and design

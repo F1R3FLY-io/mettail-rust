@@ -254,15 +254,16 @@ between prefix, infix, and postfix operators.
 ### 5.1 The Hierarchy
 
 ```
+  Let M = max infix BP (highest-precedence infix operator's right BP)
+
   BP Number Line:
   ────────────────────────────────────────────────────────→ higher BP
-  0        2      ...     P-1      P    P+1    P+2   ...
-  ↑        ↑               ↑       ↑     ↑      ↑
-  entry    infix range     max     prefix       postfix range
-           (lowest prec    infix    tier
-            operators)
-
-  Where P = max_non_postfix_bp + 2 (from lib.rs)
+  0        2      ...      M      M+2         M+4   ...
+  ↑        ↑               ↑       ↑            ↑
+  entry    infix range     max   prefix BP    postfix range
+           (lowest prec    infix  (all unary   (start at M+4,
+            operators      BP     prefixes     one per postfix
+            first)                share M+2)   operator)
 ```
 
 **Infix operators:** BP range `[2, P-1]`, assigned from declaration order.
@@ -428,8 +429,11 @@ combination of BP comparison and delimiter matching.
 
 ### 8.1 Default Precedence
 
-Mixfix operators default to the **lowest precedence** (assigned before all infix
-operators in the declaration order). This matches common expectations:
+Mixfix operators default to the **lowest precedence**. This happens because
+binding powers are assigned during Pass 1 in declaration order, and mixfix
+operators are typically declared before higher-precedence infix operators.
+Since earlier declarations receive lower BPs, mixfix operators naturally end
+up with the lowest precedence. This matches common expectations:
 
 ```
 a + b ? c : d    →    (a + b) ? c : d    (ternary wraps entire expression)

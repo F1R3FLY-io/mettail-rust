@@ -16,7 +16,8 @@ across all 39 benchmarks is approximately **192x**.
 using the original `parse_bench.rs` which benchmarked both backends. Given the magnitude of
 the speedups (17-893x), the relative ordering is unambiguous regardless of scheduling noise.
 For production benchmarking, CPU affinity (`taskset -c 0`) and performance governor should be
-used for stable measurements.
+used for stable measurements. Hardware specifications for these benchmarks are documented in
+`~/.claude/hardware-specifications.md`.
 
 **Status:** Since Phase 3 (LALRPOP removal), these benchmarks serve as a historical reference
 documenting the performance comparison that justified the migration from LALRPOP to PraTTaIL.

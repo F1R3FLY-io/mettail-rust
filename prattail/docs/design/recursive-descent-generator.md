@@ -823,3 +823,28 @@ Input tokens: [LParen, Ident("n"), Question, Ident("x"), Comma,
 This demonstrates how the RD generator handles the most complex rule in
 the RhoCalc grammar: multi-binder zip+map+sep with delimiters and a
 recursive body parse.
+
+---
+
+## 8. Error Propagation in RD Handlers
+
+RD handlers use the `?` operator for fail-fast error propagation. When any
+sub-parse fails (e.g., a missing delimiter, an unexpected token, or a
+failed recursive parse), the error propagates immediately to the caller
+without partial recovery.
+
+This design is correct for structural constructs because:
+
+1. **Mandatory delimiters:** Structural rules like `( expr )` or `{ body }`
+   require every delimiter to be present. A missing `)` means the construct
+   is malformed — there is no meaningful partial result to return.
+
+2. **Deterministic structure:** Unlike infix expressions (where the Pratt loop
+   can stop at any point and return a valid partial expression), structural
+   rules have a fixed sequence of tokens. Partial execution produces an
+   invalid state.
+
+3. **Recovery at a higher level:** Error recovery is handled by the separate
+   `_recovering` parser variants, which wrap the fail-fast RD handlers and
+   catch their errors. This keeps the fast path (no errors) at zero overhead
+   while still enabling recovery when needed.
