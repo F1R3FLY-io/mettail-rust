@@ -28,8 +28,8 @@ use std::fmt::Write;
 use crate::automata::codegen::terminal_to_variant_name;
 use crate::binding_power::BindingPowerTable;
 use crate::dispatch::CastRule;
-use crate::prediction::FirstSet;
 use crate::pratt::PrefixHandler;
+use crate::prediction::FirstSet;
 use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -50,7 +50,9 @@ fn is_simple_collection(rule: &RDRuleInfo) -> bool {
 /// ZipMapSep rules are too complex for trampoline splitting and must use
 /// their standalone parse functions.
 fn has_zipmapsep(rule: &RDRuleInfo) -> bool {
-    rule.items.iter().any(|item| matches!(item, RDSyntaxItem::ZipMapSep { .. }))
+    rule.items
+        .iter()
+        .any(|item| matches!(item, RDSyntaxItem::ZipMapSep { .. }))
 }
 
 /// Check if a rule should be trampolined (inlined/split) or dispatched to
@@ -107,7 +109,11 @@ pub enum SegmentCapture {
     /// A binder identifier string.
     Binder { name: String },
     /// A collection being built.
-    Collection { name: String, kind: CollectionKind, element_category: String },
+    Collection {
+        name: String,
+        kind: CollectionKind,
+        element_category: String,
+    },
 }
 
 /// Split an RD handler into segments at SAME-CATEGORY nonterminal boundaries.
@@ -162,22 +168,18 @@ pub fn split_rd_handler(rule: &RDRuleInfo) -> Vec<HandlerSegment> {
                         category: category.clone(),
                     });
                 }
-            }
+            },
             RDSyntaxItem::IdentCapture { param_name } => {
                 current_inline.push(item.clone());
-                accumulated_captures.push(SegmentCapture::Ident {
-                    name: param_name.clone(),
-                });
-            }
+                accumulated_captures.push(SegmentCapture::Ident { name: param_name.clone() });
+            },
             RDSyntaxItem::Binder { param_name, .. } => {
                 current_inline.push(item.clone());
-                accumulated_captures.push(SegmentCapture::Binder {
-                    name: param_name.clone(),
-                });
-            }
+                accumulated_captures.push(SegmentCapture::Binder { name: param_name.clone() });
+            },
             RDSyntaxItem::Terminal(_) => {
                 current_inline.push(item.clone());
-            }
+            },
             RDSyntaxItem::Collection { param_name, element_category, kind, .. } => {
                 current_inline.push(item.clone());
                 accumulated_captures.push(SegmentCapture::Collection {
@@ -185,20 +187,22 @@ pub fn split_rd_handler(rule: &RDRuleInfo) -> Vec<HandlerSegment> {
                     kind: *kind,
                     element_category: element_category.clone(),
                 });
-            }
-            RDSyntaxItem::SepList { collection_name, element_category, kind, .. } => {
+            },
+            RDSyntaxItem::SepList {
+                collection_name, element_category, kind, ..
+            } => {
                 current_inline.push(item.clone());
                 accumulated_captures.push(SegmentCapture::Collection {
                     name: collection_name.clone(),
                     kind: *kind,
                     element_category: element_category.clone(),
                 });
-            }
+            },
             RDSyntaxItem::ZipMapSep { .. } | RDSyntaxItem::Optional { .. } => {
                 // These complex items are kept as inline for now
                 // The trampoline will handle them as-is (they have bounded depth)
                 current_inline.push(item.clone());
-            }
+            },
         }
     }
 
@@ -309,9 +313,18 @@ pub fn write_frame_enum(
         variants.push(FrameVariant {
             name: "InfixRHS".to_string(),
             fields: vec![
-                FrameField { name: "lhs".to_string(), type_str: cat.clone() },
-                FrameField { name: "op_pos".to_string(), type_str: "usize".to_string() },
-                FrameField { name: "saved_bp".to_string(), type_str: "u8".to_string() },
+                FrameField {
+                    name: "lhs".to_string(),
+                    type_str: cat.clone(),
+                },
+                FrameField {
+                    name: "op_pos".to_string(),
+                    type_str: "usize".to_string(),
+                },
+                FrameField {
+                    name: "saved_bp".to_string(),
+                    type_str: "u8".to_string(),
+                },
             ],
         });
     }
@@ -319,9 +332,10 @@ pub fn write_frame_enum(
     // GroupClose (always present — parenthesized expressions)
     variants.push(FrameVariant {
         name: "GroupClose".to_string(),
-        fields: vec![
-            FrameField { name: "saved_bp".to_string(), type_str: "u8".to_string() },
-        ],
+        fields: vec![FrameField {
+            name: "saved_bp".to_string(),
+            type_str: "u8".to_string(),
+        }],
     });
 
     // ── Per-unary-prefix variants ──
@@ -333,9 +347,10 @@ pub fn write_frame_enum(
         // The terminal is consumed inline, the nonterminal triggers a frame push
         variants.push(FrameVariant {
             name: format!("UnaryPrefix_{}", rd_rule.label),
-            fields: vec![
-                FrameField { name: "saved_bp".to_string(), type_str: "u8".to_string() },
-            ],
+            fields: vec![FrameField {
+                name: "saved_bp".to_string(),
+                type_str: "u8".to_string(),
+            }],
         });
     }
 
@@ -346,7 +361,10 @@ pub fn write_frame_enum(
         }
         // Skip unary prefix (handled above), collection rules (handled separately),
         // and rules dispatched to standalone functions (ZipMapSep, multi-binder)
-        if rd_rule.prefix_bp.is_some() || is_simple_collection(rd_rule) || should_use_standalone_fn(rd_rule) {
+        if rd_rule.prefix_bp.is_some()
+            || is_simple_collection(rd_rule)
+            || should_use_standalone_fn(rd_rule)
+        {
             continue;
         }
 
@@ -371,24 +389,25 @@ pub fn write_frame_enum(
                             name: name.clone(),
                             type_str: category.clone(),
                         });
-                    }
+                    },
                     SegmentCapture::Ident { name } | SegmentCapture::Binder { name } => {
                         fields.push(FrameField {
                             name: name.clone(),
                             type_str: "String".to_string(),
                         });
-                    }
+                    },
                     SegmentCapture::Collection { name, kind, element_category } => {
                         let type_str = match kind {
-                            CollectionKind::HashBag => format!("mettail_runtime::HashBag<{}>", element_category),
-                            CollectionKind::HashSet => format!("std::collections::HashSet<{}>", element_category),
+                            CollectionKind::HashBag => {
+                                format!("mettail_runtime::HashBag<{}>", element_category)
+                            },
+                            CollectionKind::HashSet => {
+                                format!("std::collections::HashSet<{}>", element_category)
+                            },
                             CollectionKind::Vec => format!("Vec<{}>", element_category),
                         };
-                        fields.push(FrameField {
-                            name: name.clone(),
-                            type_str,
-                        });
-                    }
+                        fields.push(FrameField { name: name.clone(), type_str });
+                    },
                 }
             }
 
@@ -405,12 +424,14 @@ pub fn write_frame_enum(
             continue;
         }
         let collection_type = rd_rule.collection_type.unwrap_or(CollectionKind::HashBag);
-        let element_category = rd_rule.items.iter().find_map(|item| {
-            match item {
+        let element_category = rd_rule
+            .items
+            .iter()
+            .find_map(|item| match item {
                 RDSyntaxItem::Collection { element_category, .. } => Some(element_category.clone()),
                 _ => None,
-            }
-        }).unwrap_or_else(|| cat.clone());
+            })
+            .unwrap_or_else(|| cat.clone());
 
         let type_str = match collection_type {
             CollectionKind::HashBag => format!("mettail_runtime::HashBag<{}>", element_category),
@@ -422,8 +443,14 @@ pub fn write_frame_enum(
             name: format!("CollectionElem_{}", rd_rule.label),
             fields: vec![
                 FrameField { name: "elements".to_string(), type_str },
-                FrameField { name: "saved_pos".to_string(), type_str: "usize".to_string() },
-                FrameField { name: "saved_bp".to_string(), type_str: "u8".to_string() },
+                FrameField {
+                    name: "saved_pos".to_string(),
+                    type_str: "usize".to_string(),
+                },
+                FrameField {
+                    name: "saved_bp".to_string(),
+                    type_str: "u8".to_string(),
+                },
             ],
         });
     }
@@ -432,8 +459,14 @@ pub fn write_frame_enum(
     for op in bp_table.mixfix_operators_for_category(cat) {
         for (i, _part) in op.mixfix_parts.iter().enumerate() {
             let mut fields = vec![
-                FrameField { name: "lhs".to_string(), type_str: cat.clone() },
-                FrameField { name: "saved_bp".to_string(), type_str: "u8".to_string() },
+                FrameField {
+                    name: "lhs".to_string(),
+                    type_str: cat.clone(),
+                },
+                FrameField {
+                    name: "saved_bp".to_string(),
+                    type_str: "u8".to_string(),
+                },
             ];
             // Previous operands as captured fields
             for j in 0..i {
@@ -455,8 +488,14 @@ pub fn write_frame_enum(
         variants.push(FrameVariant {
             name: "LambdaBody_Single".to_string(),
             fields: vec![
-                FrameField { name: "binder_name".to_string(), type_str: "String".to_string() },
-                FrameField { name: "saved_bp".to_string(), type_str: "u8".to_string() },
+                FrameField {
+                    name: "binder_name".to_string(),
+                    type_str: "String".to_string(),
+                },
+                FrameField {
+                    name: "saved_bp".to_string(),
+                    type_str: "u8".to_string(),
+                },
             ],
         });
 
@@ -464,8 +503,14 @@ pub fn write_frame_enum(
         variants.push(FrameVariant {
             name: "LambdaBody_Multi".to_string(),
             fields: vec![
-                FrameField { name: "binder_names".to_string(), type_str: "Vec<String>".to_string() },
-                FrameField { name: "saved_bp".to_string(), type_str: "u8".to_string() },
+                FrameField {
+                    name: "binder_names".to_string(),
+                    type_str: "Vec<String>".to_string(),
+                },
+                FrameField {
+                    name: "saved_bp".to_string(),
+                    type_str: "u8".to_string(),
+                },
             ],
         });
 
@@ -477,18 +522,20 @@ pub fn write_frame_enum(
             // x is a cross-category call (bounded depth), handled inline in the unwind handler.
             variants.push(FrameVariant {
                 name: format!("DollarF_{}", dom_cap),
-                fields: vec![
-                    FrameField { name: "saved_bp".to_string(), type_str: "u8".to_string() },
-                ],
+                fields: vec![FrameField {
+                    name: "saved_bp".to_string(),
+                    type_str: "u8".to_string(),
+                }],
             });
 
             // Multi-apply $$dom(f, x1, x2, ...): frame captures state after parsing f.
             // All args are cross-category calls (bounded depth), handled inline in the unwind handler.
             variants.push(FrameVariant {
                 name: format!("DdollarF_{}", dom_cap),
-                fields: vec![
-                    FrameField { name: "saved_bp".to_string(), type_str: "u8".to_string() },
-                ],
+                fields: vec![FrameField {
+                    name: "saved_bp".to_string(),
+                    type_str: "u8".to_string(),
+                }],
             });
         }
     }
@@ -513,10 +560,7 @@ pub fn write_frame_enum(
     }
     buf.push('}');
 
-    FrameInfo {
-        enum_name,
-        variants,
-    }
+    FrameInfo { enum_name, variants }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -579,7 +623,8 @@ pub fn write_trampolined_parser(
                 std::cell::Cell::new(Vec::new()); \
         }}",
         frame_enum = frame_info.enum_name,
-    ).unwrap();
+    )
+    .unwrap();
 
     // ── 4. Generate wrapper function ──
     // Thin wrapper that takes the pooled Vec from the thread-local (replacing with
@@ -606,7 +651,8 @@ pub fn write_trampolined_parser(
                 result \
             }}) \
         }}",
-    ).unwrap();
+    )
+    .unwrap();
 
     // ── 5. Generate the inner trampolined parse function (_impl) ──
     write_trampoline_body(buf, config, bp_table, prefix_handlers, rd_rules, &frame_info, &parse_fn);
@@ -640,7 +686,8 @@ fn write_trampoline_body(
             stack: &mut Vec<{frame_enum}>, \
         ) -> Result<{cat}, ParseError> {{",
         frame_enum = frame_info.enum_name,
-    ).unwrap();
+    )
+    .unwrap();
 
     // Clear the pooled stack (retains capacity from previous calls).
     buf.push_str("stack.clear();");
@@ -696,7 +743,8 @@ fn write_prefix_phase(
                     expected: \"{expected_escaped}\", \
                     range: eof_range, \
                 }}),",
-    ).unwrap();
+    )
+    .unwrap();
 
     // Collection catch on EOF: finalize with collected elements via break 'prefix
     write_collection_eof_catch(buf, config, rd_rules, frame_info);
@@ -709,7 +757,8 @@ fn write_prefix_phase(
         }}), \
         }} \
         }}",
-    ).unwrap();
+    )
+    .unwrap();
 
     // Emit WFST weight annotations as comments (for debugging/verification)
     #[cfg(feature = "wfst")]
@@ -787,7 +836,8 @@ fn write_prefix_match_arms(
                         break 'prefix {}(tokens, pos)?; \
                     }},",
                     variant, fn_name,
-                ).unwrap();
+                )
+                .unwrap();
                 continue;
             }
 
@@ -803,8 +853,12 @@ fn write_prefix_match_arms(
 
             if let Some(ref nt) = segments[0].nonterminal {
                 // Same-category nonterminal: push frame for continuation, continue 'drive
-                write!(buf, "stack.push({}::{} {{",
-                    frame_info.enum_name, segments[0].frame_variant).unwrap();
+                write!(
+                    buf,
+                    "stack.push({}::{} {{",
+                    frame_info.enum_name, segments[0].frame_variant
+                )
+                .unwrap();
                 write!(buf, "saved_bp: cur_bp,").unwrap();
                 for capture in &segments[0].accumulated_captures {
                     match capture {
@@ -812,8 +866,8 @@ fn write_prefix_match_arms(
                         | SegmentCapture::Binder { name }
                         | SegmentCapture::NonTerminal { name, .. } => {
                             write!(buf, "{},", name).unwrap();
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 }
                 buf.push_str("});");
@@ -846,7 +900,8 @@ fn write_prefix_match_arms(
                     continue 'drive; \
                 }},",
                 variant, frame_info.enum_name, rd_rule.label, bp,
-            ).unwrap();
+            )
+            .unwrap();
         }
     }
 
@@ -858,18 +913,21 @@ fn write_prefix_match_arms(
 
         // Find the opening terminal and collection info
         let opening_terminal = rd_rule.items.iter().find_map(|item| {
-            if let RDSyntaxItem::Terminal(t) = item { Some(t.clone()) } else { None }
-        });
-        let collection_info = rd_rule.items.iter().find_map(|item| {
-            match item {
-                RDSyntaxItem::Collection { element_category, separator, kind, .. } => {
-                    Some((element_category.clone(), separator.clone(), *kind))
-                }
-                _ => None,
+            if let RDSyntaxItem::Terminal(t) = item {
+                Some(t.clone())
+            } else {
+                None
             }
         });
+        let collection_info = rd_rule.items.iter().find_map(|item| match item {
+            RDSyntaxItem::Collection { element_category, separator, kind, .. } => {
+                Some((element_category.clone(), separator.clone(), *kind))
+            },
+            _ => None,
+        });
 
-        if let (Some(terminal), Some((_elem_cat, _sep, kind))) = (opening_terminal, collection_info) {
+        if let (Some(terminal), Some((_elem_cat, _sep, kind))) = (opening_terminal, collection_info)
+        {
             let variant = terminal_to_variant_name(&terminal);
             let init_str = match kind {
                 CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
@@ -890,7 +948,8 @@ fn write_prefix_match_arms(
                     continue 'drive; \
                 }},",
                 variant, frame_info.enum_name, rd_rule.label, init_str,
-            ).unwrap();
+            )
+            .unwrap();
         }
     }
 
@@ -909,7 +968,8 @@ fn write_prefix_match_arms(
             continue 'drive; \
         }},",
         frame_info.enum_name,
-    ).unwrap();
+    )
+    .unwrap();
 
     // ── Cast rule prefix arms ──
     for cast_rule in &config.cast_rules {
@@ -925,7 +985,8 @@ fn write_prefix_match_arms(
                         break 'prefix {}::{}(Box::new(val)); \
                     }},",
                     cast_rule.source_category, cat, cast_rule.label,
-                ).unwrap();
+                )
+                .unwrap();
                 buf.push_str(&arm);
             }
         }
@@ -940,7 +1001,11 @@ fn write_prefix_match_arms(
     // ── Variable fallback (with optional lookahead) ──
     let var_label = format!(
         "{}Var",
-        cat.chars().next().unwrap_or('V').to_uppercase().collect::<String>()
+        cat.chars()
+            .next()
+            .unwrap_or('V')
+            .to_uppercase()
+            .collect::<String>()
     );
 
     // When WFST is enabled, reorder lookahead handlers by weight (lowest first = most likely).
@@ -950,13 +1015,17 @@ fn write_prefix_match_arms(
         let mut sorted = lookahead_handlers;
         if let Some(ref wfst) = config.prediction_wfst {
             sorted.sort_by(|a, b| {
-                let weight_a = a.ident_lookahead.as_ref()
+                let weight_a = a
+                    .ident_lookahead
+                    .as_ref()
                     .and_then(|tok| {
                         let variant = terminal_to_variant_name(tok);
                         wfst.predict(&variant).first().map(|wa| wa.weight)
                     })
                     .unwrap_or(crate::automata::semiring::TropicalWeight::new(f64::INFINITY));
-                let weight_b = b.ident_lookahead.as_ref()
+                let weight_b = b
+                    .ident_lookahead
+                    .as_ref()
                     .and_then(|tok| {
                         let variant = terminal_to_variant_name(tok);
                         wfst.predict(&variant).first().map(|wa| wa.weight)
@@ -994,7 +1063,8 @@ fn write_prefix_match_arms(
                     ))\
                 ); \
             }}",
-        ).unwrap();
+        )
+        .unwrap();
         arm.push_str("} },");
         buf.push_str(&arm);
     } else {
@@ -1009,7 +1079,8 @@ fn write_prefix_match_arms(
                     ))\
                 ); \
             }},",
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // ── Error fallback ──
@@ -1023,7 +1094,8 @@ fn write_prefix_match_arms(
             }}); \
             match stack.pop() {{ \
                 None => return err.map(|_: {cat}| unreachable!()),",
-    ).unwrap();
+    )
+    .unwrap();
     // Collection catch on prefix error
     write_collection_error_catch_inline(buf, config, rd_rules, frame_info);
     write!(
@@ -1031,7 +1103,8 @@ fn write_prefix_match_arms(
         "Some(_) => return err.map(|_: {cat}| unreachable!()), \
         }} \
         }},",
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 /// Write inline items (terminals, ident captures, cross-category NTs) consuming from the token stream.
@@ -1055,23 +1128,24 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                         buf,
                         "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
                         variant, t,
-                    ).unwrap();
+                    )
+                    .unwrap();
                 }
-            }
+            },
             RDSyntaxItem::IdentCapture { param_name } => {
                 write!(buf, "let {} = expect_ident(tokens, pos)?;", param_name).unwrap();
-            }
+            },
             RDSyntaxItem::Binder { param_name, .. } => {
                 write!(buf, "let {} = expect_ident(tokens, pos)?;", param_name).unwrap();
-            }
+            },
             RDSyntaxItem::NonTerminal { category, param_name } => {
                 // Cross-category nonterminal: direct function call (bounded depth)
                 write!(buf, "let {} = parse_{}(tokens, pos, 0)?;", param_name, category).unwrap();
-            }
+            },
             _ => {
                 // Collection, ZipMapSep, Optional — kept as inline but not yet handled
                 // (these are complex items that need special treatment)
-            }
+            },
         }
     }
 }
@@ -1089,25 +1163,38 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
     // Collect all captures from the final segment (which has all accumulated captures)
     let all_captures: Vec<&SegmentCapture> = if let Some(last) = segments.last() {
         let mut seen = std::collections::HashSet::new();
-        last.accumulated_captures.iter().filter(|c| {
-            let name = match c {
-                SegmentCapture::NonTerminal { name, .. }
-                | SegmentCapture::Ident { name }
-                | SegmentCapture::Binder { name }
-                | SegmentCapture::Collection { name, .. } => name.clone(),
-            };
-            seen.insert(name)
-        }).collect()
+        last.accumulated_captures
+            .iter()
+            .filter(|c| {
+                let name = match c {
+                    SegmentCapture::NonTerminal { name, .. }
+                    | SegmentCapture::Ident { name }
+                    | SegmentCapture::Binder { name }
+                    | SegmentCapture::Collection { name, .. } => name.clone(),
+                };
+                seen.insert(name)
+            })
+            .collect()
     } else {
         Vec::new()
     };
 
     if rule.has_binder {
         // Single binder: Cat::Label(extra_args..., Scope::new(Binder(binder), Box::new(body)))
-        let binder_cap = all_captures.iter().find(|c| matches!(c, SegmentCapture::Binder { .. }));
-        let body_cap = all_captures.iter().rev().find(|c| matches!(c, SegmentCapture::NonTerminal { .. }));
-        if let (Some(SegmentCapture::Binder { name: binder_name }), Some(SegmentCapture::NonTerminal { name: body_name, .. })) = (binder_cap, body_cap) {
-            let extra: Vec<&&SegmentCapture> = all_captures.iter()
+        let binder_cap = all_captures
+            .iter()
+            .find(|c| matches!(c, SegmentCapture::Binder { .. }));
+        let body_cap = all_captures
+            .iter()
+            .rev()
+            .find(|c| matches!(c, SegmentCapture::NonTerminal { .. }));
+        if let (
+            Some(SegmentCapture::Binder { name: binder_name }),
+            Some(SegmentCapture::NonTerminal { name: body_name, .. }),
+        ) = (binder_cap, body_cap)
+        {
+            let extra: Vec<&&SegmentCapture> = all_captures
+                .iter()
                 .filter(|c| {
                     let n = match c {
                         SegmentCapture::NonTerminal { name, .. }
@@ -1116,16 +1203,22 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
                         | SegmentCapture::Collection { name, .. } => name,
                     };
                     n != binder_name && n != body_name
-                }).collect();
+                })
+                .collect();
             write!(buf, "break 'prefix {cat}::{label}(").unwrap();
             for c in &extra {
                 write_segment_capture_as_arg(buf, c);
                 buf.push(',');
             }
-            write!(buf, "mettail_runtime::Scope::new(\
+            write!(
+                buf,
+                "mettail_runtime::Scope::new(\
                 mettail_runtime::Binder(mettail_runtime::get_or_create_var({})), \
                 Box::new({}),\
-            ));", binder_name, body_name).unwrap();
+            ));",
+                binder_name, body_name
+            )
+            .unwrap();
         } else {
             write!(buf, "break 'prefix {}::{};", cat, label).unwrap();
         }
@@ -1134,7 +1227,9 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
     } else {
         write!(buf, "break 'prefix {}::{}(", cat, label).unwrap();
         for (i, c) in all_captures.iter().enumerate() {
-            if i > 0 { buf.push(','); }
+            if i > 0 {
+                buf.push(',');
+            }
             write_segment_capture_as_arg(buf, c);
         }
         buf.push_str(");");
@@ -1150,59 +1245,55 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
                 "Token::Integer(v) => {{ let val = *v as i32; *pos += 1; break 'prefix {}::NumLit(val); }},",
                 cat,
             ).unwrap();
-        }
+        },
         "i64" | "isize" => {
             write!(
                 buf,
                 "Token::Integer(v) => {{ let val = *v; *pos += 1; break 'prefix {}::NumLit(val); }},",
                 cat,
             ).unwrap();
-        }
+        },
         "u32" => {
             write!(
                 buf,
                 "Token::Integer(v) => {{ let val = *v as u32; *pos += 1; break 'prefix {}::NumLit(val); }},",
                 cat,
             ).unwrap();
-        }
+        },
         "u64" | "usize" => {
             write!(
                 buf,
                 "Token::Integer(v) => {{ let val = *v as u64; *pos += 1; break 'prefix {}::NumLit(val); }},",
                 cat,
             ).unwrap();
-        }
+        },
         "f32" | "f64" => {
             write!(
                 buf,
                 "Token::Float(v) => {{ let val = (*v).into(); *pos += 1; break 'prefix {}::FloatLit(val); }},",
                 cat,
             ).unwrap();
-        }
+        },
         "bool" => {
             write!(
                 buf,
                 "Token::Boolean(v) => {{ let val = *v; *pos += 1; break 'prefix {}::BoolLit(val); }},",
                 cat,
             ).unwrap();
-        }
+        },
         "str" | "String" => {
             write!(
                 buf,
                 "Token::StringLit(v) => {{ let val = (*v).to_string(); *pos += 1; break 'prefix {}::StringLit(val); }},",
                 cat,
             ).unwrap();
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
 /// Write lambda prefix match arm (^x.{body} or ^[x,y].{body}).
-fn write_lambda_prefix_arm(
-    buf: &mut String,
-    config: &TrampolineConfig,
-    frame_info: &FrameInfo,
-) {
+fn write_lambda_prefix_arm(buf: &mut String, config: &TrampolineConfig, frame_info: &FrameInfo) {
     let _cat = &config.category;
 
     write!(
@@ -1251,11 +1342,7 @@ fn write_lambda_prefix_arm(
 }
 
 /// Write dollar syntax prefix match arms.
-fn write_dollar_prefix_arms(
-    buf: &mut String,
-    config: &TrampolineConfig,
-    frame_info: &FrameInfo,
-) {
+fn write_dollar_prefix_arms(buf: &mut String, config: &TrampolineConfig, frame_info: &FrameInfo) {
     let _cat = &config.category;
 
     for dom in &config.all_categories {
@@ -1275,7 +1362,8 @@ fn write_dollar_prefix_arms(
                 continue 'drive; \
             }},",
             enum_name = frame_info.enum_name,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Multi-apply: $$dom( — consume token (includes opening paren), push frame for f parse
         write!(
@@ -1287,7 +1375,8 @@ fn write_dollar_prefix_arms(
                 continue 'drive; \
             }},",
             enum_name = frame_info.enum_name,
-        ).unwrap();
+        )
+        .unwrap();
     }
 }
 
@@ -1314,20 +1403,25 @@ fn write_infix_loop(
                 *pos += 1; \
                 lhs = make_postfix_{cat}(&op_token, lhs); \
             }}",
-        ).unwrap();
+        )
+        .unwrap();
         wrote_first = true;
     }
 
     // Mixfix (pushes frame for each operand)
     if config.has_mixfix {
-        if wrote_first { buf.push_str(" else "); }
+        if wrote_first {
+            buf.push_str(" else ");
+        }
         write_mixfix_led(buf, config, bp_table, frame_info);
         wrote_first = true;
     }
 
     // Infix (pushes frame for RHS)
     if config.has_infix {
-        if wrote_first { buf.push_str(" else "); }
+        if wrote_first {
+            buf.push_str(" else ");
+        }
         write!(
             buf,
             "if let Some((l_bp, r_bp)) = infix_bp_{cat}(token) {{ \
@@ -1339,7 +1433,8 @@ fn write_infix_loop(
                 continue 'drive; \
             }}",
             enum_name = frame_info.enum_name,
-        ).unwrap();
+        )
+        .unwrap();
         wrote_first = true;
     }
 
@@ -1367,7 +1462,8 @@ fn write_mixfix_led(
             if l_bp < cur_bp {{ break; }} \
             let _op_token = token.clone(); \
             *pos += 1;",
-    ).unwrap();
+    )
+    .unwrap();
 
     // Dispatch to the first mixfix operand based on operator
     let mixfix_ops = bp_table.mixfix_operators_for_category(cat);
@@ -1381,7 +1477,8 @@ fn write_mixfix_led(
             continue 'drive;",
             enum_name = frame_info.enum_name,
             label = op.label,
-        ).unwrap();
+        )
+        .unwrap();
     } else {
         // Multiple mixfix operators — match on token
         buf.push_str("match &_op_token {");
@@ -1397,7 +1494,8 @@ fn write_mixfix_led(
                 variant,
                 enum_name = frame_info.enum_name,
                 label = op.label,
-            ).unwrap();
+            )
+            .unwrap();
         }
         buf.push_str("_ => unreachable!(\"mixfix_bp returned Some for non-mixfix token\"),");
         buf.push('}');
@@ -1427,7 +1525,8 @@ fn write_unwind_handlers(
                 cur_bp = saved_bp; \
             }},",
             enum_name = frame_info.enum_name,
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // ── GroupClose ──
@@ -1438,7 +1537,8 @@ fn write_unwind_handlers(
             cur_bp = saved_bp; \
         }},",
         enum_name = frame_info.enum_name,
-    ).unwrap();
+    )
+    .unwrap();
 
     // ── UnaryPrefix variants ──
     for rd_rule in rd_rules {
@@ -1453,12 +1553,17 @@ fn write_unwind_handlers(
             }},",
             enum_name = frame_info.enum_name,
             label = rd_rule.label,
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     // ── RD handler segment continuations ──
     for rd_rule in rd_rules {
-        if rd_rule.category != *cat || is_simple_collection(rd_rule) || rd_rule.prefix_bp.is_some() || should_use_standalone_fn(rd_rule) {
+        if rd_rule.category != *cat
+            || is_simple_collection(rd_rule)
+            || rd_rule.prefix_bp.is_some()
+            || should_use_standalone_fn(rd_rule)
+        {
             continue;
         }
 
@@ -1481,7 +1586,7 @@ fn write_unwind_handlers(
                     | SegmentCapture::Binder { name }
                     | SegmentCapture::Collection { name, .. } => {
                         field_names.push(name.clone());
-                    }
+                    },
                 }
             }
 
@@ -1491,7 +1596,8 @@ fn write_unwind_handlers(
                 enum_name = frame_info.enum_name,
                 variant = segment.frame_variant,
                 fields = field_names.join(", "),
-            ).unwrap();
+            )
+            .unwrap();
 
             // Assign the parsed nonterminal result to its param name
             write!(buf, "let {} = lhs;", nt.param_name).unwrap();
@@ -1503,8 +1609,8 @@ fn write_unwind_handlers(
 
                 if let Some(ref next_nt) = next.nonterminal {
                     // Push frame for the next continuation
-                    write!(buf, "stack.push({}::{} {{",
-                        frame_info.enum_name, next.frame_variant).unwrap();
+                    write!(buf, "stack.push({}::{} {{", frame_info.enum_name, next.frame_variant)
+                        .unwrap();
                     write!(buf, "saved_bp,").unwrap();
                     // All accumulated captures from previous segments + this nonterminal
                     for capture in &next.accumulated_captures {
@@ -1514,7 +1620,7 @@ fn write_unwind_handlers(
                             | SegmentCapture::Binder { name }
                             | SegmentCapture::Collection { name, .. } => {
                                 write!(buf, "{},", name).unwrap();
-                            }
+                            },
                         }
                     }
                     buf.push_str("});");
@@ -1524,8 +1630,12 @@ fn write_unwind_handlers(
                         buf.push_str("continue 'drive;");
                     } else {
                         // Cross-category: direct call
-                        write!(buf, "let {} = parse_{}(tokens, pos, {})?;",
-                            next_nt.param_name, next_nt.category, next_nt.bp).unwrap();
+                        write!(
+                            buf,
+                            "let {} = parse_{}(tokens, pos, {})?;",
+                            next_nt.param_name, next_nt.category, next_nt.bp
+                        )
+                        .unwrap();
                         write!(buf, "lhs = {};", next_nt.param_name).unwrap();
                         // Will be handled by the NEXT unwind iteration
                     }
@@ -1558,14 +1668,16 @@ fn write_unwind_handlers(
         };
 
         // Find separator and closing terminal
-        let sep_info = rd_rule.items.iter().find_map(|item| {
-            match item {
-                RDSyntaxItem::Collection { separator, .. } => Some(separator.clone()),
-                _ => None,
-            }
+        let sep_info = rd_rule.items.iter().find_map(|item| match item {
+            RDSyntaxItem::Collection { separator, .. } => Some(separator.clone()),
+            _ => None,
         });
         let closing_terminal = rd_rule.items.iter().rev().find_map(|item| {
-            if let RDSyntaxItem::Terminal(t) = item { Some(t.clone()) } else { None }
+            if let RDSyntaxItem::Terminal(t) = item {
+                Some(t.clone())
+            } else {
+                None
+            }
         });
 
         write!(
@@ -1592,7 +1704,8 @@ fn write_unwind_handlers(
                 sep_variant,
                 enum_name = frame_info.enum_name,
                 label = rd_rule.label,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // Finalize: expect closing terminal, construct
@@ -1602,7 +1715,8 @@ fn write_unwind_handlers(
                 buf,
                 "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
                 close_variant, closing,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         write!(buf, "lhs = {}::{}(elements);", cat, rd_rule.label).unwrap();
@@ -1630,7 +1744,8 @@ fn write_unwind_handlers(
                 "Some({enum_name}::Mixfix_{label}_{i} {{ {field_list} }}) => {{",
                 enum_name = frame_info.enum_name,
                 label = op.label,
-            ).unwrap();
+            )
+            .unwrap();
 
             // Assign current lhs (outer variable) as this operand's result
             let param_ident = format!("param_{}", part.param_name);
@@ -1643,7 +1758,8 @@ fn write_unwind_handlers(
                     buf,
                     "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
                     sep_variant, terminal,
-                ).unwrap();
+                )
+                .unwrap();
             }
 
             if is_last {
@@ -1657,8 +1773,13 @@ fn write_unwind_handlers(
             } else {
                 // Push frame for next operand, preserving orig_lhs and accumulated params
                 let next_i = i + 1;
-                write!(buf, "stack.push({enum_name}::Mixfix_{label}_{next_i} {{ lhs: orig_lhs,",
-                    enum_name = frame_info.enum_name, label = op.label).unwrap();
+                write!(
+                    buf,
+                    "stack.push({enum_name}::Mixfix_{label}_{next_i} {{ lhs: orig_lhs,",
+                    enum_name = frame_info.enum_name,
+                    label = op.label
+                )
+                .unwrap();
                 buf.push_str("saved_bp,");
                 for j in 0..=i {
                     write!(buf, "param_{},", op.mixfix_parts[j].param_name).unwrap();
@@ -1678,19 +1799,29 @@ fn write_unwind_handlers(
         let default_mlam_variant = format!("MLam{}", cat);
 
         // Build inference-driven match arms for selecting the correct Lam/MLam variant
-        let lam_match_arms: String = config.all_categories.iter().map(|dom| {
-            format!(
-                "Some(InferredType::Base(VarCategory::{})) => {}::Lam{}(scope), ",
-                dom, cat, dom
-            )
-        }).collect::<Vec<_>>().join("");
+        let lam_match_arms: String = config
+            .all_categories
+            .iter()
+            .map(|dom| {
+                format!(
+                    "Some(InferredType::Base(VarCategory::{})) => {}::Lam{}(scope), ",
+                    dom, cat, dom
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("");
 
-        let mlam_match_arms: String = config.all_categories.iter().map(|dom| {
-            format!(
-                "Some(InferredType::Base(VarCategory::{})) => {}::MLam{}(scope), ",
-                dom, cat, dom
-            )
-        }).collect::<Vec<_>>().join("");
+        let mlam_match_arms: String = config
+            .all_categories
+            .iter()
+            .map(|dom| {
+                format!(
+                    "Some(InferredType::Base(VarCategory::{})) => {}::MLam{}(scope), ",
+                    dom, cat, dom
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("");
 
         write!(
             buf,
@@ -1708,7 +1839,8 @@ fn write_unwind_handlers(
                 cur_bp = saved_bp; \
             }},",
             enum_name = frame_info.enum_name,
-        ).unwrap();
+        )
+        .unwrap();
 
         write!(
             buf,
@@ -1731,7 +1863,8 @@ fn write_unwind_handlers(
                 cur_bp = saved_bp; \
             }},",
             enum_name = frame_info.enum_name,
-        ).unwrap();
+        )
+        .unwrap();
 
         // Dollar syntax unwind handlers
         write_dollar_unwind_handlers(buf, config, frame_info);
@@ -1771,7 +1904,8 @@ fn write_dollar_unwind_handlers(
                 cur_bp = saved_bp; \
             }},",
             enum_name = frame_info.enum_name,
-        ).unwrap();
+        )
+        .unwrap();
 
         // DdollarF: after parsing f, parse args
         write!(
@@ -1794,7 +1928,8 @@ fn write_dollar_unwind_handlers(
                 cur_bp = saved_bp; \
             }},",
             enum_name = frame_info.enum_name,
-        ).unwrap();
+        )
+        .unwrap();
 
         // DdollarArgs: collecting additional args (trampolined version)
         // For now, dollar args are cross-category calls (bounded depth), so we
@@ -1821,7 +1956,11 @@ fn write_collection_eof_catch(
         }
 
         let closing_terminal = rd_rule.items.iter().rev().find_map(|item| {
-            if let RDSyntaxItem::Terminal(t) = item { Some(t.clone()) } else { None }
+            if let RDSyntaxItem::Terminal(t) = item {
+                Some(t.clone())
+            } else {
+                None
+            }
         });
 
         write!(
@@ -1830,7 +1969,8 @@ fn write_collection_eof_catch(
                 *pos = saved_pos;",
             enum_name = frame_info.enum_name,
             label = rd_rule.label,
-        ).unwrap();
+        )
+        .unwrap();
 
         if let Some(ref closing) = closing_terminal {
             let close_variant = terminal_to_variant_name(closing);
@@ -1840,7 +1980,8 @@ fn write_collection_eof_catch(
                     expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
                 }}",
                 close_variant, closing,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // Use break 'prefix to exit the prefix block with the finalized collection.
@@ -1850,7 +1991,8 @@ fn write_collection_eof_catch(
             "cur_bp = saved_bp; \
             break 'prefix {cat}::{label}(elements);",
             label = rd_rule.label,
-        ).unwrap();
+        )
+        .unwrap();
         buf.push_str("},");
     }
 }
@@ -1872,7 +2014,11 @@ fn write_collection_error_catch_inline(
         }
 
         let closing_terminal = rd_rule.items.iter().rev().find_map(|item| {
-            if let RDSyntaxItem::Terminal(t) = item { Some(t.clone()) } else { None }
+            if let RDSyntaxItem::Terminal(t) = item {
+                Some(t.clone())
+            } else {
+                None
+            }
         });
 
         write!(
@@ -1881,7 +2027,8 @@ fn write_collection_error_catch_inline(
                 *pos = saved_pos;",
             enum_name = frame_info.enum_name,
             label = rd_rule.label,
-        ).unwrap();
+        )
+        .unwrap();
 
         if let Some(ref closing) = closing_terminal {
             let close_variant = terminal_to_variant_name(closing);
@@ -1889,7 +2036,8 @@ fn write_collection_error_catch_inline(
                 buf,
                 "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
                 close_variant, closing,
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         // Use break 'prefix to exit the prefix block with the finalized collection.
@@ -1900,7 +2048,8 @@ fn write_collection_error_catch_inline(
             break 'prefix {cat}::{label}(elements); \
             }},",
             label = rd_rule.label,
-        ).unwrap();
+        )
+        .unwrap();
     }
 }
 
@@ -1914,7 +2063,8 @@ fn write_rd_constructor_from_segments(
     let label = &rule.label;
 
     // Collect all captures across all segments
-    let _all_captures: Vec<&SegmentCapture> = segments.iter()
+    let _all_captures: Vec<&SegmentCapture> = segments
+        .iter()
         .flat_map(|s| s.accumulated_captures.iter())
         .collect();
 
@@ -1940,11 +2090,21 @@ fn write_rd_constructor_from_segments(
 
     if rule.has_binder {
         // Single binder rule
-        let binder_cap = unique_captures.iter().find(|c| matches!(c, SegmentCapture::Binder { .. }));
-        let body_cap = unique_captures.iter().rev().find(|c| matches!(c, SegmentCapture::NonTerminal { .. }));
+        let binder_cap = unique_captures
+            .iter()
+            .find(|c| matches!(c, SegmentCapture::Binder { .. }));
+        let body_cap = unique_captures
+            .iter()
+            .rev()
+            .find(|c| matches!(c, SegmentCapture::NonTerminal { .. }));
 
-        if let (Some(SegmentCapture::Binder { name: binder_name }), Some(SegmentCapture::NonTerminal { name: body_name, .. })) = (binder_cap, body_cap) {
-            let extra_caps: Vec<&&SegmentCapture> = unique_captures.iter()
+        if let (
+            Some(SegmentCapture::Binder { name: binder_name }),
+            Some(SegmentCapture::NonTerminal { name: body_name, .. }),
+        ) = (binder_cap, body_cap)
+        {
+            let extra_caps: Vec<&&SegmentCapture> = unique_captures
+                .iter()
                 .filter(|c| {
                     let n = match c {
                         SegmentCapture::NonTerminal { name, .. }
@@ -1968,14 +2128,25 @@ fn write_rd_constructor_from_segments(
                     Box::new({}), \
                 ));",
                 binder_name, body_name,
-            ).unwrap();
+            )
+            .unwrap();
         }
     } else if rule.has_multi_binder {
-        let binder_cap = unique_captures.iter().find(|c| matches!(c, SegmentCapture::Binder { .. }));
-        let body_cap = unique_captures.iter().rev().find(|c| matches!(c, SegmentCapture::NonTerminal { .. }));
+        let binder_cap = unique_captures
+            .iter()
+            .find(|c| matches!(c, SegmentCapture::Binder { .. }));
+        let body_cap = unique_captures
+            .iter()
+            .rev()
+            .find(|c| matches!(c, SegmentCapture::NonTerminal { .. }));
 
-        if let (Some(SegmentCapture::Binder { name: binder_name }), Some(SegmentCapture::NonTerminal { name: body_name, .. })) = (binder_cap, body_cap) {
-            let extra_caps: Vec<&&SegmentCapture> = unique_captures.iter()
+        if let (
+            Some(SegmentCapture::Binder { name: binder_name }),
+            Some(SegmentCapture::NonTerminal { name: body_name, .. }),
+        ) = (binder_cap, body_cap)
+        {
+            let extra_caps: Vec<&&SegmentCapture> = unique_captures
+                .iter()
                 .filter(|c| {
                     let n = match c {
                         SegmentCapture::NonTerminal { name, .. }
@@ -1993,7 +2164,8 @@ fn write_rd_constructor_from_segments(
                     .map(|s| mettail_runtime::Binder(mettail_runtime::get_or_create_var(s))) \
                     .collect();",
                 binder_name,
-            ).unwrap();
+            )
+            .unwrap();
 
             write!(buf, "lhs = {cat}::{label}(").unwrap();
             for c in &extra_caps {
@@ -2007,14 +2179,17 @@ fn write_rd_constructor_from_segments(
                     Box::new({}), \
                 ));",
                 body_name,
-            ).unwrap();
+            )
+            .unwrap();
         }
     } else if unique_captures.is_empty() {
         write!(buf, "lhs = {cat}::{label};").unwrap();
     } else {
         write!(buf, "lhs = {cat}::{label}(").unwrap();
         for (i, c) in unique_captures.iter().enumerate() {
-            if i > 0 { buf.push(','); }
+            if i > 0 {
+                buf.push(',');
+            }
             write_segment_capture_as_arg(buf, c);
         }
         buf.push_str(");");
@@ -2026,7 +2201,7 @@ fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture) {
     match capture {
         SegmentCapture::NonTerminal { name, .. } => {
             write!(buf, "Box::new({})", name).unwrap();
-        }
+        },
         SegmentCapture::Ident { name } => {
             write!(
                 buf,
@@ -2034,15 +2209,16 @@ fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture) {
                     mettail_runtime::get_or_create_var({})\
                 ))",
                 name,
-            ).unwrap();
-        }
+            )
+            .unwrap();
+        },
         SegmentCapture::Binder { name } => {
             // Binders are handled specially in the constructor
             buf.push_str(name);
-        }
+        },
         SegmentCapture::Collection { name, .. } => {
             buf.push_str(name);
-        }
+        },
     }
 }
 
@@ -2079,7 +2255,8 @@ pub fn write_trampolined_parser_recovering(
             min_bp: u8, \
             errors: &mut Vec<ParseError>, \
         ) -> Option<{cat}> {{",
-    ).unwrap();
+    )
+    .unwrap();
 
     let own_parse_fn = if config.needs_dispatch {
         format!("parse_{}_own", cat)
@@ -2098,7 +2275,8 @@ pub fn write_trampolined_parser_recovering(
                 None \
             }} \
         }} }}",
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2115,6 +2293,6 @@ fn capitalize_first(s: &str) -> String {
             result.extend(first.to_uppercase());
             result.extend(chars);
             result
-        }
+        },
     }
 }

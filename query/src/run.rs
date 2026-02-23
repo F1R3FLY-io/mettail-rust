@@ -83,11 +83,8 @@ mod tests {
             equivalences: vec![],
             custom_relations,
         };
-        let rows = run_query(
-            "query(result) <-- path(a, result), !rw_proc(result, _).",
-            &results,
-        )
-        .unwrap();
+        let rows =
+            run_query("query(result) <-- path(a, result), !rw_proc(result, _).", &results).unwrap();
         // path(a, result) gives result=b and result=c. !rw_proc(result,_) removes result in rw_proc's first col {a,b}. So only c remains.
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0], vec!["c"]);

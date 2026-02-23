@@ -14,12 +14,10 @@
 mod bench_specs;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
-use mettail_prattail::{generate_parser, DispatchStrategy, LanguageSpec};
 use mettail_prattail::grammar_gen::generate_bench_inputs;
+use mettail_prattail::{generate_parser, DispatchStrategy, LanguageSpec};
 
-use bench_specs::{
-    minimal_spec, small_spec, medium_spec, complex_spec, synthetic_spec,
-};
+use bench_specs::{complex_spec, medium_spec, minimal_spec, small_spec, synthetic_spec};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Helpers
@@ -49,21 +47,17 @@ fn dispatch_ab(c: &mut Criterion) {
     for (name, spec) in &specs {
         // Static dispatch
         let static_spec = with_dispatch(spec, DispatchStrategy::Static);
-        group.bench_with_input(
-            BenchmarkId::new("static", name),
-            &static_spec,
-            |b, s| b.iter(|| generate_parser(s)),
-        );
+        group.bench_with_input(BenchmarkId::new("static", name), &static_spec, |b, s| {
+            b.iter(|| generate_parser(s))
+        });
 
         // Weighted dispatch (only available with wfst feature)
         #[cfg(feature = "wfst")]
         {
             let weighted_spec = with_dispatch(spec, DispatchStrategy::Weighted);
-            group.bench_with_input(
-                BenchmarkId::new("weighted", name),
-                &weighted_spec,
-                |b, s| b.iter(|| generate_parser(s)),
-            );
+            group.bench_with_input(BenchmarkId::new("weighted", name), &weighted_spec, |b, s| {
+                b.iter(|| generate_parser(s))
+            });
         }
     }
 
@@ -84,21 +78,17 @@ fn dispatch_scaling(c: &mut Criterion) {
 
         // Static
         let static_spec = with_dispatch(&spec, DispatchStrategy::Static);
-        group.bench_with_input(
-            BenchmarkId::new("static", n),
-            &static_spec,
-            |b, s| b.iter(|| generate_parser(s)),
-        );
+        group.bench_with_input(BenchmarkId::new("static", n), &static_spec, |b, s| {
+            b.iter(|| generate_parser(s))
+        });
 
         // Weighted (wfst feature)
         #[cfg(feature = "wfst")]
         {
             let weighted_spec = with_dispatch(&spec, DispatchStrategy::Weighted);
-            group.bench_with_input(
-                BenchmarkId::new("weighted", n),
-                &weighted_spec,
-                |b, s| b.iter(|| generate_parser(s)),
-            );
+            group.bench_with_input(BenchmarkId::new("weighted", n), &weighted_spec, |b, s| {
+                b.iter(|| generate_parser(s))
+            });
         }
     }
 
@@ -123,9 +113,7 @@ fn dispatch_grammar_gen(c: &mut Criterion) {
         group.bench_with_input(
             BenchmarkId::from_parameter(name),
             &(spec, *category),
-            |b, (s, cat)| {
-                b.iter(|| generate_bench_inputs(s, cat, 5, 50))
-            },
+            |b, (s, cat)| b.iter(|| generate_bench_inputs(s, cat, 5, 50)),
         );
     }
 

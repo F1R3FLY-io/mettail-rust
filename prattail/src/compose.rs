@@ -50,7 +50,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use crate::binding_power::Associativity;
-use crate::{BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpecInput, SyntaxItemSpec};
+use crate::{
+    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpecInput, SyntaxItemSpec,
+};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // CompositionError
@@ -96,7 +98,6 @@ pub enum CompositionError {
         bp_a: u8,
         bp_b: u8,
     },
-
     // Note: MultiplePrimaryCategories is intentionally NOT an error.
     // When two grammars both declare a primary, merge_categories() keeps
     // the first grammar's primary and demotes the second. This matches
@@ -116,52 +117,35 @@ impl fmt::Display for CompositionError {
                     "category '{}' has conflicting native types: {:?} vs {:?}",
                     category, native_type_a, native_type_b
                 )
-            }
-            CompositionError::DuplicateRuleLabel {
-                label,
-                category_a,
-                category_b,
-            } => {
+            },
+            CompositionError::DuplicateRuleLabel { label, category_a, category_b } => {
                 write!(
                     f,
                     "rule label '{}' appears in both grammars (categories: '{}' and '{}')",
                     label, category_a, category_b
                 )
-            }
-            CompositionError::InvalidCategoryReference {
-                rule_label,
-                referenced_category,
-            } => {
+            },
+            CompositionError::InvalidCategoryReference { rule_label, referenced_category } => {
                 write!(
                     f,
                     "rule '{}' references non-existent category '{}'",
                     rule_label, referenced_category
                 )
-            }
-            CompositionError::AssociativityConflict {
-                terminal,
-                category,
-                assoc_a,
-                assoc_b,
-            } => {
+            },
+            CompositionError::AssociativityConflict { terminal, category, assoc_a, assoc_b } => {
                 write!(
                     f,
                     "operator '{}' in category '{}' has conflicting associativity: {:?} vs {:?}",
                     terminal, category, assoc_a, assoc_b
                 )
-            }
-            CompositionError::BindingPowerConflict {
-                terminal,
-                category,
-                bp_a,
-                bp_b,
-            } => {
+            },
+            CompositionError::BindingPowerConflict { terminal, category, bp_a, bp_b } => {
                 write!(
                     f,
                     "operator '{}' in category '{}' has conflicting binding powers: {} vs {}",
                     terminal, category, bp_a, bp_b
                 )
-            }
+            },
         }
     }
 }
@@ -303,9 +287,8 @@ fn merge_rules(
     errors: &mut Vec<CompositionError>,
 ) -> Vec<RuleSpecInput> {
     let mut labels: BTreeMap<String, String> = BTreeMap::new(); // label → category
-    let mut result: Vec<RuleSpecInput> = Vec::with_capacity(
-        spec_a.rules.len() + spec_b.rules.len(),
-    );
+    let mut result: Vec<RuleSpecInput> =
+        Vec::with_capacity(spec_a.rules.len() + spec_b.rules.len());
 
     // Convert rules from grammar A
     for rule in &spec_a.rules {
@@ -360,7 +343,7 @@ fn validate_category_refs(
 ) {
     for item in items {
         match item {
-            SyntaxItemSpec::Terminal(_) | SyntaxItemSpec::IdentCapture { .. } => {}
+            SyntaxItemSpec::Terminal(_) | SyntaxItemSpec::IdentCapture { .. } => {},
 
             SyntaxItemSpec::NonTerminal { category, .. } => {
                 if !valid_categories.contains(category) {
@@ -369,7 +352,7 @@ fn validate_category_refs(
                         referenced_category: category.clone(),
                     });
                 }
-            }
+            },
 
             SyntaxItemSpec::Binder { category, .. } => {
                 if !valid_categories.contains(category) {
@@ -378,18 +361,16 @@ fn validate_category_refs(
                         referenced_category: category.clone(),
                     });
                 }
-            }
+            },
 
-            SyntaxItemSpec::Collection {
-                element_category, ..
-            } => {
+            SyntaxItemSpec::Collection { element_category, .. } => {
                 if !valid_categories.contains(element_category) {
                     errors.push(CompositionError::InvalidCategoryReference {
                         rule_label: rule_label.to_string(),
                         referenced_category: element_category.clone(),
                     });
                 }
-            }
+            },
 
             SyntaxItemSpec::ZipMapSep {
                 left_category,
@@ -411,11 +392,11 @@ fn validate_category_refs(
                 }
                 // Recurse into body_items
                 validate_category_refs(body_items, rule_label, valid_categories, errors);
-            }
+            },
 
             SyntaxItemSpec::Optional { inner } => {
                 validate_category_refs(inner, rule_label, valid_categories, errors);
-            }
+            },
         }
     }
 }
@@ -438,10 +419,7 @@ fn check_associativity_conflicts(
     for rule in &spec_a.rules {
         if rule.is_infix {
             if let Some(terminal) = infix_terminal(&rule.syntax) {
-                a_ops.insert(
-                    (terminal.clone(), rule.category.clone()),
-                    rule.associativity,
-                );
+                a_ops.insert((terminal.clone(), rule.category.clone()), rule.associativity);
             }
         }
     }
@@ -477,11 +455,11 @@ fn infix_terminal(syntax: &[SyntaxItemSpec]) -> Option<String> {
         match item {
             SyntaxItemSpec::NonTerminal { .. } if !seen_nonterminal => {
                 seen_nonterminal = true;
-            }
+            },
             SyntaxItemSpec::Terminal(t) if seen_nonterminal => {
                 return Some(t.clone());
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     None
@@ -609,9 +587,7 @@ pub fn composition_summary(
 /// Folds left: `compose(A, B)`, then `compose(AB, C)`, etc.
 ///
 /// Returns the first set of errors encountered.
-pub fn compose_many(
-    specs: &[&LanguageSpec],
-) -> Result<LanguageSpec, Vec<CompositionError>> {
+pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<CompositionError>> {
     if specs.is_empty() {
         return Ok(LanguageSpec {
             name: "empty".to_string(),
@@ -676,11 +652,7 @@ impl fmt::Display for WfstCompositionSummary {
         write!(
             f,
             "{} | WFSTs: {} ({} merged), actions: {}, states: {}",
-            self.base,
-            self.wfst_count,
-            self.wfsts_merged,
-            self.total_actions,
-            self.total_states,
+            self.base, self.wfst_count, self.wfsts_merged, self.total_actions, self.total_states,
         )
     }
 }
@@ -737,16 +709,16 @@ pub fn compose_with_wfst(
                 merged_wfst.union(b);
                 prediction_wfsts.insert(name.clone(), merged_wfst);
                 wfsts_merged += 1;
-            }
+            },
             (Some(a), None) => {
                 prediction_wfsts.insert(name.clone(), a.clone());
-            }
+            },
             (None, Some(b)) => {
                 prediction_wfsts.insert(name.clone(), b.clone());
-            }
+            },
             (None, None) => {
                 // No WFST for this category from either source — skip
-            }
+            },
         }
     }
 
@@ -813,25 +785,13 @@ mod tests {
         let spec_a = make_simple_spec(
             "Arith",
             &[("Int", Some("i32"), true)],
-            &[
-                (
-                    "NumLit",
-                    "Int",
-                    vec![SyntaxItemSpec::Terminal("0".to_string())],
-                ),
-            ],
+            &[("NumLit", "Int", vec![SyntaxItemSpec::Terminal("0".to_string())])],
         );
 
         let spec_b = make_simple_spec(
             "Logic",
             &[("Bool", Some("bool"), true)],
-            &[
-                (
-                    "True",
-                    "Bool",
-                    vec![SyntaxItemSpec::Terminal("true".to_string())],
-                ),
-            ],
+            &[("True", "Bool", vec![SyntaxItemSpec::Terminal("true".to_string())])],
         );
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
@@ -850,27 +810,17 @@ mod tests {
         let spec_a = make_simple_spec(
             "Base",
             &[("Expr", None, true)],
-            &[
-                (
-                    "Num",
-                    "Expr",
-                    vec![SyntaxItemSpec::Terminal("0".to_string())],
-                ),
-            ],
+            &[("Num", "Expr", vec![SyntaxItemSpec::Terminal("0".to_string())])],
         );
 
         let spec_b = make_simple_spec(
             "Extension",
             &[("Expr", None, true)],
-            &[
-                (
-                    "Var",
-                    "Expr",
-                    vec![SyntaxItemSpec::IdentCapture {
-                        param_name: "x".to_string(),
-                    }],
-                ),
-            ],
+            &[(
+                "Var",
+                "Expr",
+                vec![SyntaxItemSpec::IdentCapture { param_name: "x".to_string() }],
+            )],
         );
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
@@ -881,24 +831,16 @@ mod tests {
 
     #[test]
     fn test_compose_native_type_mismatch() {
-        let spec_a = make_simple_spec(
-            "A",
-            &[("Int", Some("i32"), true)],
-            &[],
-        );
+        let spec_a = make_simple_spec("A", &[("Int", Some("i32"), true)], &[]);
 
-        let spec_b = make_simple_spec(
-            "B",
-            &[("Int", Some("i64"), true)],
-            &[],
-        );
+        let spec_b = make_simple_spec("B", &[("Int", Some("i64"), true)], &[]);
 
         let err = compose_languages(&spec_a, &spec_b).expect_err("should fail");
         assert_eq!(err.len(), 1);
         match &err[0] {
             CompositionError::CategoryNativeTypeMismatch { category, .. } => {
                 assert_eq!(category, "Int");
-            }
+            },
             other => panic!("Expected CategoryNativeTypeMismatch, got {:?}", other),
         }
     }
@@ -908,25 +850,17 @@ mod tests {
         let spec_a = make_simple_spec(
             "A",
             &[("Expr", None, true)],
-            &[
-                (
-                    "Num",
-                    "Expr",
-                    vec![SyntaxItemSpec::Terminal("0".to_string())],
-                ),
-            ],
+            &[("Num", "Expr", vec![SyntaxItemSpec::Terminal("0".to_string())])],
         );
 
         let spec_b = make_simple_spec(
             "B",
             &[("Expr", None, true)],
-            &[
-                (
-                    "Num", // duplicate label
-                    "Expr",
-                    vec![SyntaxItemSpec::Terminal("1".to_string())],
-                ),
-            ],
+            &[(
+                "Num", // duplicate label
+                "Expr",
+                vec![SyntaxItemSpec::Terminal("1".to_string())],
+            )],
         );
 
         let err = compose_languages(&spec_a, &spec_b).expect_err("should fail");
@@ -938,11 +872,7 @@ mod tests {
 
     #[test]
     fn test_compose_invalid_category_reference() {
-        let spec_a = make_simple_spec(
-            "A",
-            &[("Expr", None, true)],
-            &[],
-        );
+        let spec_a = make_simple_spec("A", &[("Expr", None, true)], &[]);
 
         // spec_b has a rule that references "Int" which doesn't exist in either grammar
         let types_b = vec![CategorySpec {
@@ -955,9 +885,7 @@ mod tests {
             "Assign",
             "Stmt",
             vec![
-                SyntaxItemSpec::IdentCapture {
-                    param_name: "x".to_string(),
-                },
+                SyntaxItemSpec::IdentCapture { param_name: "x".to_string() },
                 SyntaxItemSpec::Terminal("=".to_string()),
                 SyntaxItemSpec::NonTerminal {
                     category: "Int".to_string(),
@@ -991,11 +919,7 @@ mod tests {
             "A",
             &[("Int", Some("i32"), true)],
             &[
-                (
-                    "NumLit",
-                    "Int",
-                    vec![SyntaxItemSpec::Terminal("0".to_string())],
-                ),
+                ("NumLit", "Int", vec![SyntaxItemSpec::Terminal("0".to_string())]),
                 (
                     "Add",
                     "Int",
@@ -1017,30 +941,32 @@ mod tests {
         let spec_b = make_simple_spec(
             "B",
             &[("Int", Some("i32"), false)],
-            &[
-                (
-                    "Mul",
-                    "Int",
-                    vec![
-                        SyntaxItemSpec::NonTerminal {
-                            category: "Int".to_string(),
-                            param_name: "a".to_string(),
-                        },
-                        SyntaxItemSpec::Terminal("*".to_string()),
-                        SyntaxItemSpec::NonTerminal {
-                            category: "Int".to_string(),
-                            param_name: "b".to_string(),
-                        },
-                    ],
-                ),
-            ],
+            &[(
+                "Mul",
+                "Int",
+                vec![
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    SyntaxItemSpec::Terminal("*".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                ],
+            )],
         );
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
 
         assert_eq!(merged.rules.len(), 3);
 
-        let num_lit = merged.rules.iter().find(|r| r.label == "NumLit").expect("NumLit");
+        let num_lit = merged
+            .rules
+            .iter()
+            .find(|r| r.label == "NumLit")
+            .expect("NumLit");
         assert!(!num_lit.is_infix);
         assert!(!num_lit.is_var);
 
@@ -1056,41 +982,23 @@ mod tests {
         let spec_a = make_simple_spec(
             "A",
             &[("Int", Some("i32"), true)],
-            &[
-                (
-                    "NumLit",
-                    "Int",
-                    vec![SyntaxItemSpec::Terminal("0".to_string())],
-                ),
-            ],
+            &[("NumLit", "Int", vec![SyntaxItemSpec::Terminal("0".to_string())])],
         );
 
         let spec_b = make_simple_spec(
             "B",
             &[("Bool", Some("bool"), false)],
-            &[
-                (
-                    "True",
-                    "Bool",
-                    vec![SyntaxItemSpec::Terminal("true".to_string())],
-                ),
-            ],
+            &[("True", "Bool", vec![SyntaxItemSpec::Terminal("true".to_string())])],
         );
 
         let spec_c = make_simple_spec(
             "C",
             &[("Str", None, false)],
-            &[
-                (
-                    "StrLit",
-                    "Str",
-                    vec![SyntaxItemSpec::Terminal("\"\"".to_string())],
-                ),
-            ],
+            &[("StrLit", "Str", vec![SyntaxItemSpec::Terminal("\"\"".to_string())])],
         );
 
-        let merged = compose_many(&[&spec_a, &spec_b, &spec_c])
-            .expect("composition should succeed");
+        let merged =
+            compose_many(&[&spec_a, &spec_b, &spec_c]).expect("composition should succeed");
 
         assert_eq!(merged.types.len(), 3);
         assert_eq!(merged.rules.len(), 3);
@@ -1104,25 +1012,13 @@ mod tests {
         let spec_a = make_simple_spec(
             "A",
             &[("Int", Some("i32"), true), ("Bool", Some("bool"), false)],
-            &[
-                (
-                    "NumLit",
-                    "Int",
-                    vec![SyntaxItemSpec::Terminal("0".to_string())],
-                ),
-            ],
+            &[("NumLit", "Int", vec![SyntaxItemSpec::Terminal("0".to_string())])],
         );
 
         let spec_b = make_simple_spec(
             "B",
             &[("Int", Some("i32"), false), ("Str", None, false)],
-            &[
-                (
-                    "StrLit",
-                    "Str",
-                    vec![SyntaxItemSpec::Terminal("\"\"".to_string())],
-                ),
-            ],
+            &[("StrLit", "Str", vec![SyntaxItemSpec::Terminal("\"\"".to_string())])],
         );
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
@@ -1158,16 +1054,9 @@ mod tests {
     fn test_compose_cross_category_rules() {
         let spec_a = make_simple_spec(
             "A",
+            &[("Expr", None, true), ("Int", Some("i32"), false)],
             &[
-                ("Expr", None, true),
-                ("Int", Some("i32"), false),
-            ],
-            &[
-                (
-                    "NumLit",
-                    "Int",
-                    vec![SyntaxItemSpec::Terminal("0".to_string())],
-                ),
+                ("NumLit", "Int", vec![SyntaxItemSpec::Terminal("0".to_string())]),
                 // Cross-category: Expr → Int (cast)
                 (
                     "IntCast",
@@ -1182,16 +1071,9 @@ mod tests {
 
         let spec_b = make_simple_spec(
             "B",
+            &[("Expr", None, false), ("Bool", Some("bool"), false)],
             &[
-                ("Expr", None, false),
-                ("Bool", Some("bool"), false),
-            ],
-            &[
-                (
-                    "TrueLit",
-                    "Bool",
-                    vec![SyntaxItemSpec::Terminal("true".to_string())],
-                ),
+                ("TrueLit", "Bool", vec![SyntaxItemSpec::Terminal("true".to_string())]),
                 // Cross-category: Expr → Bool (cast)
                 (
                     "BoolCast",
@@ -1209,11 +1091,19 @@ mod tests {
         assert_eq!(merged.types.len(), 3); // Expr, Int, Bool
         assert_eq!(merged.rules.len(), 4);
 
-        let int_cast = merged.rules.iter().find(|r| r.label == "IntCast").expect("IntCast");
+        let int_cast = merged
+            .rules
+            .iter()
+            .find(|r| r.label == "IntCast")
+            .expect("IntCast");
         assert!(int_cast.is_cast);
         assert_eq!(int_cast.cast_source_category.as_deref(), Some("Int"));
 
-        let bool_cast = merged.rules.iter().find(|r| r.label == "BoolCast").expect("BoolCast");
+        let bool_cast = merged
+            .rules
+            .iter()
+            .find(|r| r.label == "BoolCast")
+            .expect("BoolCast");
         assert!(bool_cast.is_cast);
         assert_eq!(bool_cast.cast_source_category.as_deref(), Some("Bool"));
     }
@@ -1223,13 +1113,7 @@ mod tests {
         let spec_a = make_simple_spec(
             "A",
             &[("Expr", None, true), ("Int", Some("i32"), false)],
-            &[
-                (
-                    "NumLit",
-                    "Int",
-                    vec![SyntaxItemSpec::Terminal("0".to_string())],
-                ),
-            ],
+            &[("NumLit", "Int", vec![SyntaxItemSpec::Terminal("0".to_string())])],
         );
 
         let spec_b = LanguageSpec {
@@ -1264,7 +1148,11 @@ mod tests {
         assert_eq!(merged.types.len(), 2);
         assert_eq!(merged.rules.len(), 2);
 
-        let list = merged.rules.iter().find(|r| r.label == "List").expect("List");
+        let list = merged
+            .rules
+            .iter()
+            .find(|r| r.label == "List")
+            .expect("List");
         assert!(list.is_collection);
     }
 
@@ -1313,20 +1201,18 @@ mod tests {
                 is_primary: true,
             }];
             let cat_names = vec!["Int".to_string()];
-            let rules = vec![
-                RuleSpec::classified(
-                    "Neg",
-                    "Int",
-                    vec![
-                        SyntaxItemSpec::Terminal("-".to_string()),
-                        SyntaxItemSpec::NonTerminal {
-                            category: "Int".to_string(),
-                            param_name: "a".to_string(),
-                        },
-                    ],
-                    &cat_names,
-                ),
-            ];
+            let rules = vec![RuleSpec::classified(
+                "Neg",
+                "Int",
+                vec![
+                    SyntaxItemSpec::Terminal("-".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                ],
+                &cat_names,
+            )];
             let mut spec = LanguageSpec {
                 name: "A".to_string(),
                 types,
@@ -1348,20 +1234,18 @@ mod tests {
                 is_primary: false,
             }];
             let cat_names = vec!["Int".to_string()];
-            let rules = vec![
-                RuleSpec::classified(
-                    "Negate",
-                    "Int",
-                    vec![
-                        SyntaxItemSpec::Terminal("-".to_string()),
-                        SyntaxItemSpec::NonTerminal {
-                            category: "Int".to_string(),
-                            param_name: "a".to_string(),
-                        },
-                    ],
-                    &cat_names,
-                ),
-            ];
+            let rules = vec![RuleSpec::classified(
+                "Negate",
+                "Int",
+                vec![
+                    SyntaxItemSpec::Terminal("-".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                ],
+                &cat_names,
+            )];
             let mut spec = LanguageSpec {
                 name: "B".to_string(),
                 types,
@@ -1375,11 +1259,15 @@ mod tests {
         };
 
         let err = compose_languages(&spec_a, &spec_b).expect_err("should fail with BP conflict");
-        assert!(err.iter().any(|e| matches!(
-            e,
-            CompositionError::BindingPowerConflict { terminal, bp_a, bp_b, .. }
-            if terminal == "-" && *bp_a == 10 && *bp_b == 20
-        )), "Expected BindingPowerConflict for '-', got: {:?}", err);
+        assert!(
+            err.iter().any(|e| matches!(
+                e,
+                CompositionError::BindingPowerConflict { terminal, bp_a, bp_b, .. }
+                if terminal == "-" && *bp_a == 10 && *bp_b == 20
+            )),
+            "Expected BindingPowerConflict for '-', got: {:?}",
+            err
+        );
     }
 
     #[test]
@@ -1392,20 +1280,18 @@ mod tests {
                 is_primary: true,
             }];
             let cat_names = vec!["Int".to_string()];
-            let rules = vec![
-                RuleSpec::classified(
-                    "Neg",
-                    "Int",
-                    vec![
-                        SyntaxItemSpec::Terminal("-".to_string()),
-                        SyntaxItemSpec::NonTerminal {
-                            category: "Int".to_string(),
-                            param_name: "a".to_string(),
-                        },
-                    ],
-                    &cat_names,
-                ),
-            ];
+            let rules = vec![RuleSpec::classified(
+                "Neg",
+                "Int",
+                vec![
+                    SyntaxItemSpec::Terminal("-".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                ],
+                &cat_names,
+            )];
             let mut spec = LanguageSpec {
                 name: "A".to_string(),
                 types,
@@ -1425,20 +1311,18 @@ mod tests {
                 is_primary: false,
             }];
             let cat_names = vec!["Int".to_string()];
-            let rules = vec![
-                RuleSpec::classified(
-                    "Negate",
-                    "Int",
-                    vec![
-                        SyntaxItemSpec::Terminal("-".to_string()),
-                        SyntaxItemSpec::NonTerminal {
-                            category: "Int".to_string(),
-                            param_name: "a".to_string(),
-                        },
-                    ],
-                    &cat_names,
-                ),
-            ];
+            let rules = vec![RuleSpec::classified(
+                "Negate",
+                "Int",
+                vec![
+                    SyntaxItemSpec::Terminal("-".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                ],
+                &cat_names,
+            )];
             let mut spec = LanguageSpec {
                 name: "B".to_string(),
                 types,
@@ -1468,37 +1352,37 @@ mod tests {
         let spec_a = make_simple_spec(
             "Arith",
             &[("Int", Some("i32"), true)],
-            &[(
-                "NumLit",
-                "Int",
-                vec![SyntaxItemSpec::Terminal("0".to_string())],
-            )],
+            &[("NumLit", "Int", vec![SyntaxItemSpec::Terminal("0".to_string())])],
         );
         let spec_b = make_simple_spec(
             "Logic",
             &[("Bool", Some("bool"), true)],
-            &[(
-                "True",
-                "Bool",
-                vec![SyntaxItemSpec::Terminal("true".to_string())],
-            )],
+            &[("True", "Bool", vec![SyntaxItemSpec::Terminal("true".to_string())])],
         );
 
         // Build WFSTs for each grammar
         let token_map_a = TokenIdMap::from_names(vec!["Zero".to_string()].into_iter());
         let mut builder_a = PredictionWfstBuilder::new("Int", token_map_a);
-        builder_a.add_action("Zero", DispatchAction::Direct {
-            rule_label: "NumLit".to_string(),
-            parse_fn: "parse_numlit".to_string(),
-        }, TropicalWeight::new(0.0));
+        builder_a.add_action(
+            "Zero",
+            DispatchAction::Direct {
+                rule_label: "NumLit".to_string(),
+                parse_fn: "parse_numlit".to_string(),
+            },
+            TropicalWeight::new(0.0),
+        );
         let wfst_a = builder_a.build();
 
         let token_map_b = TokenIdMap::from_names(vec!["True".to_string()].into_iter());
         let mut builder_b = PredictionWfstBuilder::new("Bool", token_map_b);
-        builder_b.add_action("True", DispatchAction::Direct {
-            rule_label: "True".to_string(),
-            parse_fn: "parse_true".to_string(),
-        }, TropicalWeight::new(0.0));
+        builder_b.add_action(
+            "True",
+            DispatchAction::Direct {
+                rule_label: "True".to_string(),
+                parse_fn: "parse_true".to_string(),
+            },
+            TropicalWeight::new(0.0),
+        );
         let wfst_b = builder_b.build();
 
         let mut wfsts_a = BTreeMap::new();
@@ -1509,8 +1393,9 @@ mod tests {
         let terminals_a: BTreeSet<String> = ["0"].iter().map(|s| s.to_string()).collect();
         let terminals_b: BTreeSet<String> = ["true"].iter().map(|s| s.to_string()).collect();
 
-        let result = compose_with_wfst(&spec_a, &spec_b, &wfsts_a, &wfsts_b, &terminals_a, &terminals_b)
-            .expect("composition should succeed");
+        let result =
+            compose_with_wfst(&spec_a, &spec_b, &wfsts_a, &wfsts_b, &terminals_a, &terminals_b)
+                .expect("composition should succeed");
 
         assert_eq!(result.prediction_wfsts.len(), 2);
         assert_eq!(result.summary.wfsts_merged, 0); // disjoint = no merges
@@ -1530,11 +1415,7 @@ mod tests {
         let spec_a = make_simple_spec(
             "Base",
             &[("Expr", None, true)],
-            &[(
-                "Num",
-                "Expr",
-                vec![SyntaxItemSpec::Terminal("0".to_string())],
-            )],
+            &[("Num", "Expr", vec![SyntaxItemSpec::Terminal("0".to_string())])],
         );
         let spec_b = make_simple_spec(
             "Extension",
@@ -1542,26 +1423,30 @@ mod tests {
             &[(
                 "Var",
                 "Expr",
-                vec![SyntaxItemSpec::IdentCapture {
-                    param_name: "x".to_string(),
-                }],
+                vec![SyntaxItemSpec::IdentCapture { param_name: "x".to_string() }],
             )],
         );
 
         // WFSTs for shared category "Expr"
         let token_map_a = TokenIdMap::from_names(vec!["Zero".to_string()].into_iter());
         let mut builder_a = PredictionWfstBuilder::new("Expr", token_map_a);
-        builder_a.add_action("Zero", DispatchAction::Direct {
-            rule_label: "Num".to_string(),
-            parse_fn: "parse_num".to_string(),
-        }, TropicalWeight::new(0.0));
+        builder_a.add_action(
+            "Zero",
+            DispatchAction::Direct {
+                rule_label: "Num".to_string(),
+                parse_fn: "parse_num".to_string(),
+            },
+            TropicalWeight::new(0.0),
+        );
         let wfst_a = builder_a.build();
 
         let token_map_b = TokenIdMap::from_names(vec!["Ident".to_string()].into_iter());
         let mut builder_b = PredictionWfstBuilder::new("Expr", token_map_b);
-        builder_b.add_action("Ident", DispatchAction::Variable {
-            category: "Expr".to_string(),
-        }, TropicalWeight::new(2.0));
+        builder_b.add_action(
+            "Ident",
+            DispatchAction::Variable { category: "Expr".to_string() },
+            TropicalWeight::new(2.0),
+        );
         let wfst_b = builder_b.build();
 
         let mut wfsts_a = BTreeMap::new();
@@ -1572,8 +1457,9 @@ mod tests {
         let terminals_a: BTreeSet<String> = ["0"].iter().map(|s| s.to_string()).collect();
         let terminals_b: BTreeSet<String> = ["x"].iter().map(|s| s.to_string()).collect();
 
-        let result = compose_with_wfst(&spec_a, &spec_b, &wfsts_a, &wfsts_b, &terminals_a, &terminals_b)
-            .expect("composition should succeed");
+        let result =
+            compose_with_wfst(&spec_a, &spec_b, &wfsts_a, &wfsts_b, &terminals_a, &terminals_b)
+                .expect("composition should succeed");
 
         assert_eq!(result.prediction_wfsts.len(), 1); // one shared category
         assert_eq!(result.summary.wfsts_merged, 1); // one union performed
@@ -1603,36 +1489,36 @@ mod tests {
         let spec_a = make_simple_spec(
             "A",
             &[("Expr", None, true)],
-            &[(
-                "NumA",
-                "Expr",
-                vec![SyntaxItemSpec::Terminal("0".to_string())],
-            )],
+            &[("NumA", "Expr", vec![SyntaxItemSpec::Terminal("0".to_string())])],
         );
         let spec_b = make_simple_spec(
             "B",
             &[("Expr", None, false)],
-            &[(
-                "NumB",
-                "Expr",
-                vec![SyntaxItemSpec::Terminal("1".to_string())],
-            )],
+            &[("NumB", "Expr", vec![SyntaxItemSpec::Terminal("1".to_string())])],
         );
 
         let token_map = TokenIdMap::from_names(vec!["Zero".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
-        builder.add_action("Zero", DispatchAction::Direct {
-            rule_label: "NumA".to_string(),
-            parse_fn: "parse_numa".to_string(),
-        }, TropicalWeight::new(0.0));
+        builder.add_action(
+            "Zero",
+            DispatchAction::Direct {
+                rule_label: "NumA".to_string(),
+                parse_fn: "parse_numa".to_string(),
+            },
+            TropicalWeight::new(0.0),
+        );
         let wfst_a = builder.build();
 
         let token_map = TokenIdMap::from_names(vec!["One".to_string()].into_iter());
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
-        builder.add_action("One", DispatchAction::Direct {
-            rule_label: "NumB".to_string(),
-            parse_fn: "parse_numb".to_string(),
-        }, TropicalWeight::new(0.0));
+        builder.add_action(
+            "One",
+            DispatchAction::Direct {
+                rule_label: "NumB".to_string(),
+                parse_fn: "parse_numb".to_string(),
+            },
+            TropicalWeight::new(0.0),
+        );
         let wfst_b = builder.build();
 
         let mut wfsts_a = BTreeMap::new();
@@ -1643,8 +1529,9 @@ mod tests {
         let terminals_a: BTreeSet<String> = ["0"].iter().map(|s| s.to_string()).collect();
         let terminals_b: BTreeSet<String> = ["1"].iter().map(|s| s.to_string()).collect();
 
-        let result = compose_with_wfst(&spec_a, &spec_b, &wfsts_a, &wfsts_b, &terminals_a, &terminals_b)
-            .expect("composition should succeed");
+        let result =
+            compose_with_wfst(&spec_a, &spec_b, &wfsts_a, &wfsts_b, &terminals_a, &terminals_b)
+                .expect("composition should succeed");
 
         let display = format!("{}", result.summary);
         assert!(display.contains("WFSTs: 1"));

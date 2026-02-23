@@ -1,12 +1,12 @@
 //! Tests for FIRST/FOLLOW set computation and dispatch table generation.
 
+use crate::binding_power::Associativity;
 use crate::prediction::{
     analyze_cross_category_overlaps, build_dispatch_tables, compute_first_sets,
     compute_follow_sets, FirstItem, FirstSet, RuleInfo,
 };
-use crate::{RuleSpec, SyntaxItemSpec};
-use crate::binding_power::Associativity;
 use crate::recursive::CollectionKind;
+use crate::{RuleSpec, SyntaxItemSpec};
 
 #[test]
 fn test_first_sets_simple() {
@@ -135,12 +135,9 @@ fn test_cross_category_overlap_analysis() {
     bool_first.insert("KwFalse");
 
     let categories = vec!["Int".to_string(), "Bool".to_string()];
-    let first_sets = [
-        ("Int".to_string(), int_first),
-        ("Bool".to_string(), bool_first),
-    ]
-    .into_iter()
-    .collect();
+    let first_sets = [("Int".to_string(), int_first), ("Bool".to_string(), bool_first)]
+        .into_iter()
+        .collect();
 
     let overlaps = analyze_cross_category_overlaps(&categories, &first_sets);
 
@@ -196,16 +193,16 @@ fn test_dispatch_table_unambiguous() {
     let proc_table = tables.get("Proc").expect("should have Proc dispatch table");
 
     // EmptyBraces → direct dispatch to PZero
-    assert!(proc_table.entries.contains_key("EmptyBraces"),
-        "EmptyBraces should be in dispatch table");
+    assert!(
+        proc_table.entries.contains_key("EmptyBraces"),
+        "EmptyBraces should be in dispatch table"
+    );
 
     // Star → direct dispatch to PDrop
-    assert!(proc_table.entries.contains_key("Star"),
-        "Star should be in dispatch table");
+    assert!(proc_table.entries.contains_key("Star"), "Star should be in dispatch table");
 
     // Ident → variable (or lookahead if ambiguous with other rules)
-    assert!(proc_table.entries.contains_key("Ident"),
-        "Ident should be in dispatch table");
+    assert!(proc_table.entries.contains_key("Ident"), "Ident should be in dispatch table");
 }
 
 #[test]
@@ -254,12 +251,7 @@ fn test_first_set_nullable() {
 // ── FOLLOW set tests ──
 
 /// Helper to create a minimal RuleSpec for testing FOLLOW set computation.
-fn make_rule(
-    label: &str,
-    category: &str,
-    syntax: Vec<SyntaxItemSpec>,
-    is_infix: bool,
-) -> RuleSpec {
+fn make_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>, is_infix: bool) -> RuleSpec {
     RuleSpec {
         label: label.to_string(),
         category: category.to_string(),
@@ -347,28 +339,29 @@ fn test_follow_sets_grouping() {
     // Syntax: Group = "(" a:Int ")"
     //
     // Expected FOLLOW(Int) includes RParen (from parenthesized expression)
-    let rules = vec![
-        make_rule(
-            "Group",
-            "Int",
-            vec![
-                SyntaxItemSpec::Terminal("(".to_string()),
-                SyntaxItemSpec::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                SyntaxItemSpec::Terminal(")".to_string()),
-            ],
-            false,
-        ),
-    ];
+    let rules = vec![make_rule(
+        "Group",
+        "Int",
+        vec![
+            SyntaxItemSpec::Terminal("(".to_string()),
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "a".to_string(),
+            },
+            SyntaxItemSpec::Terminal(")".to_string()),
+        ],
+        false,
+    )];
 
     let categories = vec!["Int".to_string()];
     let first_sets = compute_first_sets(&[], &categories);
     let follow_sets = compute_follow_sets(&rules, &categories, &first_sets, "Int");
 
     let int_follow = follow_sets.get("Int").expect("should have Int FOLLOW set");
-    assert!(int_follow.contains("RParen"), "FOLLOW(Int) should contain RParen (from grouping)");
+    assert!(
+        int_follow.contains("RParen"),
+        "FOLLOW(Int) should contain RParen (from grouping)"
+    );
     assert!(int_follow.contains("Eof"), "FOLLOW(Int) should contain Eof (primary category)");
 }
 
@@ -415,7 +408,9 @@ fn test_follow_sets_cast_propagation() {
     let first_sets = compute_first_sets(&[], &categories);
     let follow_sets = compute_follow_sets(&rules, &categories, &first_sets, "Int");
 
-    let bool_follow = follow_sets.get("Bool").expect("should have Bool FOLLOW set");
+    let bool_follow = follow_sets
+        .get("Bool")
+        .expect("should have Bool FOLLOW set");
     assert!(
         bool_follow.contains("KwThen"),
         "FOLLOW(Bool) should contain KwThen (from if-then)"
@@ -427,10 +422,7 @@ fn test_follow_sets_cast_propagation() {
         int_follow.contains("KwThen"),
         "FOLLOW(Int) should contain KwThen (propagated from FOLLOW(Bool) via cast)"
     );
-    assert!(
-        int_follow.contains("Eof"),
-        "FOLLOW(Int) should contain Eof (primary category)"
-    );
+    assert!(int_follow.contains("Eof"), "FOLLOW(Int) should contain Eof (primary category)");
 }
 
 #[test]
@@ -553,11 +545,10 @@ fn test_follow_sets_multi_position_rule() {
     let first_sets = compute_first_sets(&[], &categories);
     let follow_sets = compute_follow_sets(&rules, &categories, &first_sets, "Proc");
 
-    let proc_follow = follow_sets.get("Proc").expect("should have Proc FOLLOW set");
-    assert!(
-        proc_follow.contains("Pipe"),
-        "FOLLOW(Proc) should contain Pipe (from P | Q)"
-    );
+    let proc_follow = follow_sets
+        .get("Proc")
+        .expect("should have Proc FOLLOW set");
+    assert!(proc_follow.contains("Pipe"), "FOLLOW(Proc) should contain Pipe (from P | Q)");
     assert!(
         proc_follow.contains("Eof"),
         "FOLLOW(Proc) should contain Eof (primary category)"
@@ -602,13 +593,17 @@ fn test_follow_sets_zipmapsep() {
     let first_sets = compute_first_sets(&[], &categories);
     let follow_sets = compute_follow_sets(&rules, &categories, &first_sets, "Proc");
 
-    let name_follow = follow_sets.get("Name").expect("should have Name FOLLOW set");
+    let name_follow = follow_sets
+        .get("Name")
+        .expect("should have Name FOLLOW set");
     assert!(
         name_follow.contains("Question"),
         "FOLLOW(Name) should contain Question (from n ? x body pattern)"
     );
 
-    let proc_follow = follow_sets.get("Proc").expect("should have Proc FOLLOW set");
+    let proc_follow = follow_sets
+        .get("Proc")
+        .expect("should have Proc FOLLOW set");
     // After Proc in body, either separator "," or closing ")" follows
     assert!(
         proc_follow.contains("Comma"),
@@ -628,34 +623,30 @@ fn test_incremental_first_sets_extends_existing() {
     use crate::prediction::incremental_first_sets;
 
     // Existing grammar A has Int with terminal "0"
-    let existing_rules = vec![
-        RuleInfo {
-            label: "NumLit".to_string(),
-            category: "Int".to_string(),
-            first_items: vec![FirstItem::Terminal("0".to_string())],
-            is_infix: false,
-            is_var: false,
-            is_literal: true,
-            is_cross_category: false,
-            is_cast: false,
-        },
-    ];
+    let existing_rules = vec![RuleInfo {
+        label: "NumLit".to_string(),
+        category: "Int".to_string(),
+        first_items: vec![FirstItem::Terminal("0".to_string())],
+        is_infix: false,
+        is_var: false,
+        is_literal: true,
+        is_cross_category: false,
+        is_cast: false,
+    }];
     let existing_categories = vec!["Int".to_string()];
     let existing_first = compute_first_sets(&existing_rules, &existing_categories);
 
     // New grammar B adds Bool with terminal "true"
-    let new_rules = vec![
-        RuleInfo {
-            label: "True".to_string(),
-            category: "Bool".to_string(),
-            first_items: vec![FirstItem::Terminal("true".to_string())],
-            is_infix: false,
-            is_var: false,
-            is_literal: false,
-            is_cross_category: false,
-            is_cast: false,
-        },
-    ];
+    let new_rules = vec![RuleInfo {
+        label: "True".to_string(),
+        category: "Bool".to_string(),
+        first_items: vec![FirstItem::Terminal("true".to_string())],
+        is_infix: false,
+        is_var: false,
+        is_literal: false,
+        is_cross_category: false,
+        is_cast: false,
+    }];
     let new_categories = vec!["Bool".to_string()];
 
     let merged = incremental_first_sets(&existing_first, &new_rules, &new_categories);
@@ -703,18 +694,16 @@ fn test_incremental_first_sets_matches_full_recomputation() {
     let first_a = compute_first_sets(&rules_a, &cats_a);
 
     // Grammar B: Bool with "true"
-    let rules_b = vec![
-        RuleInfo {
-            label: "True".to_string(),
-            category: "Bool".to_string(),
-            first_items: vec![FirstItem::Terminal("true".to_string())],
-            is_infix: false,
-            is_var: false,
-            is_literal: false,
-            is_cross_category: false,
-            is_cast: false,
-        },
-    ];
+    let rules_b = vec![RuleInfo {
+        label: "True".to_string(),
+        category: "Bool".to_string(),
+        first_items: vec![FirstItem::Terminal("true".to_string())],
+        is_infix: false,
+        is_var: false,
+        is_literal: false,
+        is_cross_category: false,
+        is_cast: false,
+    }];
     let cats_b = vec!["Bool".to_string()];
 
     // Incremental
@@ -729,8 +718,11 @@ fn test_incremental_first_sets_matches_full_recomputation() {
     for cat in &all_cats {
         let inc = incremental.get(cat).expect("incremental has category");
         let ful = full.get(cat).expect("full has category");
-        assert_eq!(inc.tokens, ful.tokens,
-            "FIRST({}) mismatch: incremental={:?} vs full={:?}", cat, inc.tokens, ful.tokens);
+        assert_eq!(
+            inc.tokens, ful.tokens,
+            "FIRST({}) mismatch: incremental={:?} vs full={:?}",
+            cat, inc.tokens, ful.tokens
+        );
     }
 }
 
@@ -747,19 +739,17 @@ fn test_incremental_follow_sets_extends_existing() {
     existing_follow.insert("Int".to_string(), int_follow);
 
     // New rule: Group = "(" Int ")" — adds RParen to FOLLOW(Int)
-    let new_inputs = vec![
-        FollowSetInput {
-            category: "Int".to_string(),
-            syntax: vec![
-                SyntaxItemSpec::Terminal("(".to_string()),
-                SyntaxItemSpec::NonTerminal {
-                    category: "Int".to_string(),
-                    param_name: "a".to_string(),
-                },
-                SyntaxItemSpec::Terminal(")".to_string()),
-            ],
-        },
-    ];
+    let new_inputs = vec![FollowSetInput {
+        category: "Int".to_string(),
+        syntax: vec![
+            SyntaxItemSpec::Terminal("(".to_string()),
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "a".to_string(),
+            },
+            SyntaxItemSpec::Terminal(")".to_string()),
+        ],
+    }];
 
     let first_sets = std::collections::BTreeMap::new();
     let merged = incremental_follow_sets(&existing_follow, &new_inputs, &[], &first_sets);
@@ -775,8 +765,10 @@ fn test_incremental_follow_sets_extends_existing() {
 fn test_merge_terminal_sets() {
     use crate::prediction::merge_terminal_sets;
 
-    let a: std::collections::BTreeSet<String> = ["+", "-", "0"].iter().map(|s| s.to_string()).collect();
-    let b: std::collections::BTreeSet<String> = ["-", "*", "1"].iter().map(|s| s.to_string()).collect();
+    let a: std::collections::BTreeSet<String> =
+        ["+", "-", "0"].iter().map(|s| s.to_string()).collect();
+    let b: std::collections::BTreeSet<String> =
+        ["-", "*", "1"].iter().map(|s| s.to_string()).collect();
 
     let merged = merge_terminal_sets(&a, &b);
 

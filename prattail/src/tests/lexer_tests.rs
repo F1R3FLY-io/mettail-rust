@@ -27,32 +27,14 @@ fn test_extract_terminals_simple() {
 
     let input = extract_terminals(&rules, &types, false, &[]);
 
-    assert!(
-        input.needs.ident,
-        "should need identifiers"
-    );
-    assert!(
-        input.needs.integer,
-        "should need integers for i32 native type"
-    );
-    assert!(
-        !input.needs.float,
-        "should not need floats"
-    );
-    assert!(
-        !input.needs.string_lit,
-        "should not need string literals"
-    );
+    assert!(input.needs.ident, "should need identifiers");
+    assert!(input.needs.integer, "should need integers for i32 native type");
+    assert!(!input.needs.float, "should not need floats");
+    assert!(!input.needs.string_lit, "should not need string literals");
 
     // Should have at least + and * terminals
-    assert!(
-        input.terminals.iter().any(|t| t.text == "+"),
-        "should include '+' terminal"
-    );
-    assert!(
-        input.terminals.iter().any(|t| t.text == "*"),
-        "should include '*' terminal"
-    );
+    assert!(input.terminals.iter().any(|t| t.text == "+"), "should include '+' terminal");
+    assert!(input.terminals.iter().any(|t| t.text == "*"), "should include '*' terminal");
 }
 
 #[test]
@@ -87,14 +69,12 @@ fn test_extract_terminals_with_bool() {
 
 #[test]
 fn test_generate_lexer_produces_code() {
-    let rules = vec![
-        GrammarRuleInfo {
-            label: "Add".to_string(),
-            category: "Int".to_string(),
-            terminals: vec!["+".to_string()],
-            is_infix: true,
-        },
-    ];
+    let rules = vec![GrammarRuleInfo {
+        label: "Add".to_string(),
+        category: "Int".to_string(),
+        terminals: vec!["+".to_string()],
+        is_infix: true,
+    }];
 
     let types = vec![TypeInfo {
         name: "Int".to_string(),
@@ -129,20 +109,80 @@ fn test_generate_lexer_produces_code() {
 #[test]
 fn test_lexer_stats_rhocalc() {
     let rules = vec![
-        GrammarRuleInfo { label: "PZero".to_string(), category: "Proc".to_string(), terminals: vec!["{}".to_string()], is_infix: false },
-        GrammarRuleInfo { label: "PDrop".to_string(), category: "Proc".to_string(), terminals: vec!["*".to_string()], is_infix: false },
-        GrammarRuleInfo { label: "PPar".to_string(), category: "Proc".to_string(), terminals: vec!["{".to_string(), "|".to_string(), "}".to_string()], is_infix: false },
-        GrammarRuleInfo { label: "POutput".to_string(), category: "Proc".to_string(), terminals: vec!["!".to_string(), "(".to_string(), ")".to_string()], is_infix: false },
-        GrammarRuleInfo { label: "PInputs".to_string(), category: "Proc".to_string(), terminals: vec!["(".to_string(), "?".to_string(), ",".to_string(), ")".to_string(), ".".to_string(), "{".to_string(), "}".to_string()], is_infix: false },
-        GrammarRuleInfo { label: "Add".to_string(), category: "Proc".to_string(), terminals: vec!["+".to_string()], is_infix: true },
-        GrammarRuleInfo { label: "Err".to_string(), category: "Proc".to_string(), terminals: vec!["error".to_string()], is_infix: false },
-        GrammarRuleInfo { label: "CastInt".to_string(), category: "Proc".to_string(), terminals: vec![], is_infix: false },
+        GrammarRuleInfo {
+            label: "PZero".to_string(),
+            category: "Proc".to_string(),
+            terminals: vec!["{}".to_string()],
+            is_infix: false,
+        },
+        GrammarRuleInfo {
+            label: "PDrop".to_string(),
+            category: "Proc".to_string(),
+            terminals: vec!["*".to_string()],
+            is_infix: false,
+        },
+        GrammarRuleInfo {
+            label: "PPar".to_string(),
+            category: "Proc".to_string(),
+            terminals: vec!["{".to_string(), "|".to_string(), "}".to_string()],
+            is_infix: false,
+        },
+        GrammarRuleInfo {
+            label: "POutput".to_string(),
+            category: "Proc".to_string(),
+            terminals: vec!["!".to_string(), "(".to_string(), ")".to_string()],
+            is_infix: false,
+        },
+        GrammarRuleInfo {
+            label: "PInputs".to_string(),
+            category: "Proc".to_string(),
+            terminals: vec![
+                "(".to_string(),
+                "?".to_string(),
+                ",".to_string(),
+                ")".to_string(),
+                ".".to_string(),
+                "{".to_string(),
+                "}".to_string(),
+            ],
+            is_infix: false,
+        },
+        GrammarRuleInfo {
+            label: "Add".to_string(),
+            category: "Proc".to_string(),
+            terminals: vec!["+".to_string()],
+            is_infix: true,
+        },
+        GrammarRuleInfo {
+            label: "Err".to_string(),
+            category: "Proc".to_string(),
+            terminals: vec!["error".to_string()],
+            is_infix: false,
+        },
+        GrammarRuleInfo {
+            label: "CastInt".to_string(),
+            category: "Proc".to_string(),
+            terminals: vec![],
+            is_infix: false,
+        },
     ];
 
     let types = vec![
-        TypeInfo { name: "Proc".to_string(), language_name: "RhoCalc".to_string(), native_type_name: None },
-        TypeInfo { name: "Name".to_string(), language_name: "RhoCalc".to_string(), native_type_name: None },
-        TypeInfo { name: "Int".to_string(), language_name: "RhoCalc".to_string(), native_type_name: Some("i32".to_string()) },
+        TypeInfo {
+            name: "Proc".to_string(),
+            language_name: "RhoCalc".to_string(),
+            native_type_name: None,
+        },
+        TypeInfo {
+            name: "Name".to_string(),
+            language_name: "RhoCalc".to_string(),
+            native_type_name: None,
+        },
+        TypeInfo {
+            name: "Int".to_string(),
+            language_name: "RhoCalc".to_string(),
+            native_type_name: Some("i32".to_string()),
+        },
     ];
 
     let input = extract_terminals(&rules, &types, false, &[]);

@@ -282,7 +282,7 @@ impl Ord for OrdVar {
                     h.finish()
                 };
                 hash_uid(&a.unique_id).cmp(&hash_uid(&b.unique_id))
-            }
+            },
             (Var::Bound(a), Var::Bound(b)) => a.scope.cmp(&b.scope).then(a.binder.cmp(&b.binder)),
         }
     }

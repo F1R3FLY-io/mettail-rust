@@ -19,8 +19,8 @@ use syn::parse_macro_input;
 use ast::language::LanguageDef;
 use ast::validation::validate_language;
 use gen::{
-    generate_all, generate_blockly_definitions, generate_language_impl,
-    generate_metadata, write_blockly_blocks, write_blockly_categories,
+    generate_all, generate_blockly_definitions, generate_language_impl, generate_metadata,
+    write_blockly_blocks, write_blockly_categories,
 };
 use logic::{generate_ascent_source, rules::generate_freshness_functions};
 

@@ -227,7 +227,8 @@ pub fn write_category_dispatch_weighted(
 
     // Collect all ambiguous tokens and their cross-category rules,
     // then sort by WFST weight
-    let mut ambiguous_by_token: BTreeMap<String, Vec<(&CrossCategoryRule, String)>> = BTreeMap::new();
+    let mut ambiguous_by_token: BTreeMap<String, Vec<(&CrossCategoryRule, String)>> =
+        BTreeMap::new();
     let mut deterministic_arms: Vec<String> = Vec::new();
 
     for rule in cross_category_rules {

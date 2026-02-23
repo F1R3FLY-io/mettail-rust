@@ -15,10 +15,7 @@ use crate::automata::{
 fn build_pipeline(
     terminals: &[(&str, TokenKind)],
     needs: BuiltinNeeds,
-) -> (
-    crate::automata::Dfa,
-    crate::automata::partition::AlphabetPartition,
-) {
+) -> (crate::automata::Dfa, crate::automata::partition::AlphabetPartition) {
     let terminal_patterns: Vec<TerminalPattern> = terminals
         .iter()
         .map(|(text, kind)| TerminalPattern {
@@ -94,10 +91,7 @@ fn test_multi_char_operators() {
 
 #[test]
 fn test_identifiers() {
-    let (dfa, partition) = build_pipeline(
-        &[],
-        BuiltinNeeds { ident: true, ..Default::default() },
-    );
+    let (dfa, partition) = build_pipeline(&[], BuiltinNeeds { ident: true, ..Default::default() });
 
     assert_eq!(lex_string(&dfa, &partition, "x"), Some(TokenKind::Ident));
     assert_eq!(lex_string(&dfa, &partition, "foo"), Some(TokenKind::Ident));
@@ -108,10 +102,8 @@ fn test_identifiers() {
 
 #[test]
 fn test_integers() {
-    let (dfa, partition) = build_pipeline(
-        &[],
-        BuiltinNeeds { integer: true, ..Default::default() },
-    );
+    let (dfa, partition) =
+        build_pipeline(&[], BuiltinNeeds { integer: true, ..Default::default() });
 
     assert_eq!(lex_string(&dfa, &partition, "0"), Some(TokenKind::Integer));
     assert_eq!(lex_string(&dfa, &partition, "42"), Some(TokenKind::Integer));
@@ -120,10 +112,7 @@ fn test_integers() {
 
 #[test]
 fn test_floats() {
-    let (dfa, partition) = build_pipeline(
-        &[],
-        BuiltinNeeds { float: true, ..Default::default() },
-    );
+    let (dfa, partition) = build_pipeline(&[], BuiltinNeeds { float: true, ..Default::default() });
 
     assert_eq!(lex_string(&dfa, &partition, "3.14"), Some(TokenKind::Float));
     assert_eq!(lex_string(&dfa, &partition, "0.0"), Some(TokenKind::Float));
@@ -153,7 +142,10 @@ fn test_keyword_vs_ident_priority() {
     );
 
     // Keywords should be recognized as their specific token kind
-    assert_eq!(lex_string(&dfa, &partition, "error"), Some(TokenKind::Fixed("error".to_string())));
+    assert_eq!(
+        lex_string(&dfa, &partition, "error"),
+        Some(TokenKind::Fixed("error".to_string()))
+    );
     assert_eq!(lex_string(&dfa, &partition, "true"), Some(TokenKind::True));
     assert_eq!(lex_string(&dfa, &partition, "false"), Some(TokenKind::False));
 
@@ -220,7 +212,10 @@ fn test_rhocalc_terminals() {
     // Verify all terminals are recognized
     assert_eq!(lex_string(&dfa, &partition, "+"), Some(TokenKind::Fixed("+".to_string())));
     assert_eq!(lex_string(&dfa, &partition, "{}"), Some(TokenKind::Fixed("{}".to_string())));
-    assert_eq!(lex_string(&dfa, &partition, "error"), Some(TokenKind::Fixed("error".to_string())));
+    assert_eq!(
+        lex_string(&dfa, &partition, "error"),
+        Some(TokenKind::Fixed("error".to_string()))
+    );
     assert_eq!(lex_string(&dfa, &partition, "x"), Some(TokenKind::Ident));
     assert_eq!(lex_string(&dfa, &partition, "42"), Some(TokenKind::Integer));
 
@@ -346,10 +341,7 @@ fn ambient_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
         })
         .collect();
 
-    let needs = BuiltinNeeds {
-        ident: true,
-        ..Default::default()
-    };
+    let needs = BuiltinNeeds { ident: true, ..Default::default() };
 
     (terminals, needs)
 }
@@ -419,14 +411,13 @@ fn lambda_terminals() -> (Vec<TerminalPattern>, BuiltinNeeds) {
         .map(|(text, kind)| TerminalPattern {
             text: text.to_string(),
             kind,
-            is_keyword: text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == ' '),
+            is_keyword: text
+                .chars()
+                .all(|c| c.is_alphanumeric() || c == '_' || c == ' '),
         })
         .collect();
 
-    let needs = BuiltinNeeds {
-        ident: true,
-        ..Default::default()
-    };
+    let needs = BuiltinNeeds { ident: true, ..Default::default() };
 
     (terminals, needs)
 }

@@ -7,9 +7,7 @@
 
 mod bench_specs;
 
-use criterion::{
-    criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
 
 use mettail_prattail::generate_parser;

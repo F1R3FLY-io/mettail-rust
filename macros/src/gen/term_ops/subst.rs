@@ -686,7 +686,10 @@ fn generate_category_substitution(category: &Ident, language: &LanguageDef) -> T
 // =============================================================================
 
 /// Collect all variants for a category from grammar rules and auto-generated variants
-pub(crate) fn collect_category_variants(category: &Ident, language: &LanguageDef) -> Vec<VariantKind> {
+pub(crate) fn collect_category_variants(
+    category: &Ident,
+    language: &LanguageDef,
+) -> Vec<VariantKind> {
     let mut variants = Vec::new();
 
     // From grammar rules

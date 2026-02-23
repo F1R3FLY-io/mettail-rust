@@ -8,8 +8,8 @@
 //! - Correct sync predicate tokens (FOLLOW set + structural delimiters)
 
 use crate::{
-    generate_parser,
-    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec,
+    generate_parser, BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec,
+    SyntaxItemSpec,
 };
 
 /// Build a simple calculator spec (Int with Add, IVar, NumLit).
@@ -46,9 +46,7 @@ fn calculator_spec() -> LanguageSpec {
             RuleSpec::classified(
                 "IVar",
                 "Int",
-                vec![SyntaxItemSpec::IdentCapture {
-                    param_name: "v".to_string(),
-                }],
+                vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
                 &category_names,
             ),
         ],
@@ -119,8 +117,11 @@ fn test_sync_predicate_includes_eof() {
     let code_str = code.to_string();
 
     // Extract the is_sync_Int function body
-    let sync_fn_start = code_str.find("is_sync_Int").expect("is_sync_Int should exist");
-    let sync_fn_area = &code_str[sync_fn_start..sync_fn_start + 500.min(code_str.len() - sync_fn_start)];
+    let sync_fn_start = code_str
+        .find("is_sync_Int")
+        .expect("is_sync_Int should exist");
+    let sync_fn_area =
+        &code_str[sync_fn_start..sync_fn_start + 500.min(code_str.len() - sync_fn_start)];
 
     assert!(
         sync_fn_area.contains("Eof"),
@@ -136,8 +137,11 @@ fn test_sync_predicate_includes_structural_delimiters() {
     let code_str = code.to_string();
 
     // Calculator includes () so RParen should be in the sync set
-    let sync_fn_start = code_str.find("is_sync_Int").expect("is_sync_Int should exist");
-    let sync_fn_area = &code_str[sync_fn_start..sync_fn_start + 500.min(code_str.len() - sync_fn_start)];
+    let sync_fn_start = code_str
+        .find("is_sync_Int")
+        .expect("is_sync_Int should exist");
+    let sync_fn_area =
+        &code_str[sync_fn_start..sync_fn_start + 500.min(code_str.len() - sync_fn_start)];
 
     assert!(
         sync_fn_area.contains("RParen"),
@@ -209,32 +213,20 @@ fn test_multi_category_generates_separate_sync_predicates() {
         is_primary: false,
     });
     let category_names = vec!["Int".to_string(), "Bool".to_string()];
-    spec.rules.push(RuleSpec::classified(
-        "BoolLit",
-        "Bool",
-        vec![],
-        &category_names,
-    ));
+    spec.rules
+        .push(RuleSpec::classified("BoolLit", "Bool", vec![], &category_names));
     spec.rules.push(RuleSpec::classified(
         "BVar",
         "Bool",
-        vec![SyntaxItemSpec::IdentCapture {
-            param_name: "v".to_string(),
-        }],
+        vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
         &category_names,
     ));
 
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    assert!(
-        code_str.contains("is_sync_Int"),
-        "should generate sync predicate for Int"
-    );
-    assert!(
-        code_str.contains("is_sync_Bool"),
-        "should generate sync predicate for Bool"
-    );
+    assert!(code_str.contains("is_sync_Int"), "should generate sync predicate for Int");
+    assert!(code_str.contains("is_sync_Bool"), "should generate sync predicate for Bool");
     assert!(
         code_str.contains("parse_Int_recovering"),
         "should generate recovering parser for Int"

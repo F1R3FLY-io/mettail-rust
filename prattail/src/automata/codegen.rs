@@ -44,7 +44,9 @@ pub fn generate_lexer_code(
     language_name: &str,
 ) -> (TokenStream, CodegenStrategy) {
     let (buf, strategy) = generate_lexer_string(dfa, partition, token_kinds, language_name);
-    let ts = buf.parse::<TokenStream>().expect("generated lexer code must be valid Rust");
+    let ts = buf
+        .parse::<TokenStream>()
+        .expect("generated lexer code must be valid Rust");
     (ts, strategy)
 }
 
@@ -101,43 +103,43 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
 
     for kind in token_kinds {
         match kind {
-            TokenKind::Eof | TokenKind::Ident => {}
+            TokenKind::Eof | TokenKind::Ident => {},
             TokenKind::Integer => {
                 if seen.insert("Integer".to_string()) {
                     buf.push_str("Integer(i64),");
                 }
-            }
+            },
             TokenKind::Float => {
                 if seen.insert("Float".to_string()) {
                     buf.push_str("Float(f64),");
                 }
-            }
+            },
             TokenKind::True | TokenKind::False => {
                 if seen.insert("Boolean".to_string()) {
                     buf.push_str("Boolean(bool),");
                 }
-            }
+            },
             TokenKind::StringLit => {
                 if seen.insert("StringLit".to_string()) {
                     buf.push_str("StringLit(&'a str),");
                 }
-            }
+            },
             TokenKind::Fixed(text) => {
                 let variant_name = terminal_to_variant_name(text);
                 if seen.insert(variant_name.clone()) {
                     write!(buf, "{},", variant_name).unwrap();
                 }
-            }
+            },
             TokenKind::Dollar => {
                 if seen.insert("Dollar".to_string()) {
                     buf.push_str("Dollar(&'a str),");
                 }
-            }
+            },
             TokenKind::DoubleDollar => {
                 if seen.insert("DoubleDollar".to_string()) {
                     buf.push_str("DoubleDollar(&'a str),");
                 }
-            }
+            },
         }
     }
 
@@ -332,23 +334,23 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind) {
         TokenKind::Ident => buf.push_str("Token::Ident(text)"),
         TokenKind::Integer => {
             buf.push_str("Token::Integer(text.parse::<i64>().expect(\"invalid integer literal\"))");
-        }
+        },
         TokenKind::Float => {
             buf.push_str("Token::Float(text.parse::<f64>().expect(\"invalid float literal\"))");
-        }
+        },
         TokenKind::True => buf.push_str("Token::Boolean(true)"),
         TokenKind::False => buf.push_str("Token::Boolean(false)"),
         TokenKind::StringLit => {
             buf.push_str("Token::StringLit(&text[1..text.len()-1])");
-        }
+        },
         TokenKind::Fixed(text) => {
             let variant_name = terminal_to_variant_name(text);
             write!(buf, "Token::{}", variant_name).unwrap();
-        }
+        },
         TokenKind::Dollar => buf.push_str("Token::Dollar(&text[1..])"),
         TokenKind::DoubleDollar => {
             buf.push_str("Token::DoubleDollar(&text[2..text.len()-1])");
-        }
+        },
     }
 }
 
@@ -424,9 +426,11 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     // WFST weight emission: accept_weight() + lex_weighted()
     #[cfg(feature = "wfst")]
     {
-        buf.push_str("/// Get the tropical weight for an accepting DFA state.\n\
+        buf.push_str(
+            "/// Get the tropical weight for an accepting DFA state.\n\
                        /// Lower weight = higher priority. Non-accepting returns infinity.\n\
-                       fn accept_weight(state: u32) -> f64 {");
+                       fn accept_weight(state: u32) -> f64 {",
+        );
         write_accept_weight_arms(buf, dfa);
         buf.push('}');
         write_lex_weighted_function_direct_coded(buf);
@@ -659,7 +663,11 @@ pub fn analyze_sparsity(dfa: &Dfa) -> SparsityInfo {
     let total_entries = dfa.states.len() * dfa.num_classes;
 
     for state in &dfa.states {
-        let live = state.transitions.iter().filter(|&&t| t != DEAD_STATE).count();
+        let live = state
+            .transitions
+            .iter()
+            .filter(|&&t| t != DEAD_STATE)
+            .count();
         live_per_state.push(live);
         total_live += live;
     }
@@ -708,7 +716,7 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
     // Greedy offset search
     let mut base = vec![0u32; num_states];
     let default = vec![u32::MAX; num_states]; // DEAD_STATE
-    // Start with a reasonable size, will grow as needed
+                                              // Start with a reasonable size, will grow as needed
     let initial_capacity = num_states * 2 + num_classes;
     let mut next = vec![u32::MAX; initial_capacity];
     let mut check = vec![u32::MAX; initial_capacity]; // u32::MAX means "unoccupied"
@@ -773,12 +781,7 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
     next.truncate(pad_to);
     check.truncate(pad_to);
 
-    CombTable {
-        base,
-        default,
-        next,
-        check,
-    }
+    CombTable { base, default, next, check }
 }
 
 /// Build bitmap-compressed transition tables for a DFA.
@@ -811,11 +814,7 @@ pub fn build_bitmap_tables(dfa: &Dfa) -> BitmapTables {
         bitmaps.push(bitmap);
     }
 
-    BitmapTables {
-        bitmaps,
-        offsets,
-        targets,
-    }
+    BitmapTables { bitmaps, offsets, targets }
 }
 
 /// Write the comb-compressed transition tables as static arrays.
@@ -823,7 +822,9 @@ fn write_comb_tables(buf: &mut String, comb: &CombTable) {
     // BASE array
     write!(buf, "static BASE: [u32; {}] = [", comb.base.len()).unwrap();
     for (i, &b) in comb.base.iter().enumerate() {
-        if i > 0 { buf.push(','); }
+        if i > 0 {
+            buf.push(',');
+        }
         write!(buf, "{}", b).unwrap();
     }
     buf.push_str("];");
@@ -831,7 +832,9 @@ fn write_comb_tables(buf: &mut String, comb: &CombTable) {
     // DEFAULT array
     write!(buf, "static DEFAULT: [u32; {}] = [", comb.default.len()).unwrap();
     for (i, &d) in comb.default.iter().enumerate() {
-        if i > 0 { buf.push(','); }
+        if i > 0 {
+            buf.push(',');
+        }
         write!(buf, "{}", d).unwrap();
     }
     buf.push_str("];");
@@ -839,7 +842,9 @@ fn write_comb_tables(buf: &mut String, comb: &CombTable) {
     // NEXT array
     write!(buf, "static NEXT: [u32; {}] = [", comb.next.len()).unwrap();
     for (i, &n) in comb.next.iter().enumerate() {
-        if i > 0 { buf.push(','); }
+        if i > 0 {
+            buf.push(',');
+        }
         write!(buf, "{}", n).unwrap();
     }
     buf.push_str("];");
@@ -847,7 +852,9 @@ fn write_comb_tables(buf: &mut String, comb: &CombTable) {
     // CHECK array
     write!(buf, "static CHECK: [u32; {}] = [", comb.check.len()).unwrap();
     for (i, &c) in comb.check.iter().enumerate() {
-        if i > 0 { buf.push(','); }
+        if i > 0 {
+            buf.push(',');
+        }
         write!(buf, "{}", c).unwrap();
     }
     buf.push_str("];");
@@ -858,7 +865,9 @@ fn write_bitmap_tables(buf: &mut String, tables: &BitmapTables) {
     // BITMAPS array
     write!(buf, "static BITMAPS: [u32; {}] = [", tables.bitmaps.len()).unwrap();
     for (i, &b) in tables.bitmaps.iter().enumerate() {
-        if i > 0 { buf.push(','); }
+        if i > 0 {
+            buf.push(',');
+        }
         write!(buf, "{}", b).unwrap();
     }
     buf.push_str("];");
@@ -866,7 +875,9 @@ fn write_bitmap_tables(buf: &mut String, tables: &BitmapTables) {
     // OFFSETS array
     write!(buf, "static OFFSETS: [u16; {}] = [", tables.offsets.len()).unwrap();
     for (i, &o) in tables.offsets.iter().enumerate() {
-        if i > 0 { buf.push(','); }
+        if i > 0 {
+            buf.push(',');
+        }
         write!(buf, "{}", o).unwrap();
     }
     buf.push_str("];");
@@ -874,7 +885,9 @@ fn write_bitmap_tables(buf: &mut String, tables: &BitmapTables) {
     // TARGETS array
     write!(buf, "static TARGETS: [u32; {}] = [", tables.targets.len()).unwrap();
     for (i, &t) in tables.targets.iter().enumerate() {
-        if i > 0 { buf.push(','); }
+        if i > 0 {
+            buf.push(',');
+        }
         write!(buf, "{}", t).unwrap();
     }
     buf.push_str("];");
@@ -914,12 +927,7 @@ fn write_comb_driven_lexer(
     write_class_table(buf, partition);
     write_comb_tables(buf, comb);
 
-    write!(
-        buf,
-        "const NUM_CLASSES: usize = {};",
-        partition.num_classes
-    )
-    .unwrap();
+    write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
 
     buf.push_str(
         "fn is_whitespace(b: u8) -> bool { matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r') }",
@@ -946,9 +954,11 @@ fn write_comb_driven_lexer(
     // WFST weight emission: accept_weight() + lex_weighted()
     #[cfg(feature = "wfst")]
     {
-        buf.push_str("/// Get the tropical weight for an accepting DFA state.\n\
+        buf.push_str(
+            "/// Get the tropical weight for an accepting DFA state.\n\
                        /// Lower weight = higher priority. Non-accepting returns infinity.\n\
-                       fn accept_weight(state: u32) -> f64 {");
+                       fn accept_weight(state: u32) -> f64 {",
+        );
         write_accept_weight_arms(buf, dfa);
         buf.push('}');
         write_lex_weighted_function_with_dfa_next(buf);
@@ -965,12 +975,7 @@ fn write_bitmap_driven_lexer(
     write_class_table(buf, partition);
     write_bitmap_tables(buf, tables);
 
-    write!(
-        buf,
-        "const NUM_CLASSES: usize = {};",
-        partition.num_classes
-    )
-    .unwrap();
+    write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
 
     buf.push_str(
         "fn is_whitespace(b: u8) -> bool { matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r') }",
@@ -998,9 +1003,11 @@ fn write_bitmap_driven_lexer(
     // WFST weight emission: accept_weight() + lex_weighted()
     #[cfg(feature = "wfst")]
     {
-        buf.push_str("/// Get the tropical weight for an accepting DFA state.\n\
+        buf.push_str(
+            "/// Get the tropical weight for an accepting DFA state.\n\
                        /// Lower weight = higher priority. Non-accepting returns infinity.\n\
-                       fn accept_weight(state: u32) -> f64 {");
+                       fn accept_weight(state: u32) -> f64 {",
+        );
         write_accept_weight_arms(buf, dfa);
         buf.push('}');
         write_lex_weighted_function_with_dfa_next(buf);
@@ -1154,7 +1161,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
 
     for kind in token_kinds {
         match kind {
-            TokenKind::Eof | TokenKind::Ident => {}
+            TokenKind::Eof | TokenKind::Ident => {},
             TokenKind::Integer => {
                 if seen.insert("Integer".to_string()) {
                     variants.push(quote! {
@@ -1162,7 +1169,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                         Integer(i64)
                     });
                 }
-            }
+            },
             TokenKind::Float => {
                 if seen.insert("Float".to_string()) {
                     variants.push(quote! {
@@ -1170,7 +1177,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                         Float(f64)
                     });
                 }
-            }
+            },
             TokenKind::True | TokenKind::False => {
                 if seen.insert("Boolean".to_string()) {
                     variants.push(quote! {
@@ -1178,7 +1185,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                         Boolean(bool)
                     });
                 }
-            }
+            },
             TokenKind::StringLit => {
                 if seen.insert("StringLit".to_string()) {
                     variants.push(quote! {
@@ -1186,7 +1193,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                         StringLit(String)
                     });
                 }
-            }
+            },
             TokenKind::Fixed(text) => {
                 let variant_name = terminal_to_variant_name(text);
                 if seen.insert(variant_name.clone()) {
@@ -1197,7 +1204,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                         #variant_ident
                     });
                 }
-            }
+            },
             TokenKind::Dollar => {
                 if seen.insert("Dollar".to_string()) {
                     variants.push(quote! {
@@ -1205,7 +1212,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                         Dollar(String)
                     });
                 }
-            }
+            },
             TokenKind::DoubleDollar => {
                 if seen.insert("DoubleDollar".to_string()) {
                     variants.push(quote! {
@@ -1213,7 +1220,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                         DoubleDollar(String)
                     });
                 }
-            }
+            },
         }
     }
 
@@ -1575,7 +1582,7 @@ pub fn token_kind_to_constructor(kind: &TokenKind) -> TokenStream {
             let variant_name = terminal_to_variant_name(text);
             let variant_ident = format_ident!("{}", variant_name);
             quote! { Token::#variant_ident }
-        }
+        },
         TokenKind::Dollar => quote! {
             Token::Dollar(text[1..].to_string())
         },
@@ -1696,7 +1703,7 @@ pub fn terminal_to_variant_name(terminal: &str) -> String {
                 }
                 result
             }
-        }
+        },
     }
 }
 
@@ -1835,7 +1842,11 @@ mod tests {
                 (")", TokenKind::Fixed(")".to_string())),
                 ("error", TokenKind::Fixed("error".to_string())),
             ],
-            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
         );
 
         let num_classes = partition.num_classes;
@@ -1900,7 +1911,11 @@ mod tests {
         ];
         let (dfa, partition) = build_test_dfa(
             &specs,
-            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
         );
 
         let num_classes = partition.num_classes;
@@ -1916,11 +1931,7 @@ mod tests {
             num_classes,
             sparsity.dead_fraction * 100.0
         );
-        eprintln!(
-            "  Flat:  {} bytes ({} entries)",
-            flat_bytes,
-            dfa.states.len() * num_classes
-        );
+        eprintln!("  Flat:  {} bytes ({} entries)", flat_bytes, dfa.states.len() * num_classes);
         eprintln!(
             "  Comb:  {} bytes (NEXT: {}, CHECK: {}, BASE: {}, DEFAULT: {})",
             comb_bytes,
@@ -1930,10 +1941,7 @@ mod tests {
             comb.default.len()
         );
         if flat_bytes > 0 {
-            eprintln!(
-                "  Ratio: {:.1}%",
-                comb_bytes as f64 / flat_bytes as f64 * 100.0
-            );
+            eprintln!("  Ratio: {:.1}%", comb_bytes as f64 / flat_bytes as f64 * 100.0);
         }
     }
 
@@ -1947,8 +1955,8 @@ mod tests {
         let num_classes = 4;
         let mut dfa = Dfa::new(num_classes);
         let s1 = dfa.add_state(DfaState::with_classes(num_classes));
-        dfa.set_transition(0, 0, s1);  // state 0, class 0 → s1
-        dfa.set_transition(0, 2, s1);  // state 0, class 2 → s1
+        dfa.set_transition(0, 0, s1); // state 0, class 0 → s1
+        dfa.set_transition(0, 2, s1); // state 0, class 2 → s1
 
         let tables = build_bitmap_tables(&dfa);
 
@@ -1974,13 +1982,14 @@ mod tests {
                 ("(", TokenKind::Fixed("(".to_string())),
                 (")", TokenKind::Fixed(")".to_string())),
             ],
-            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
         );
 
-        assert!(
-            partition.num_classes <= 32,
-            "bitmap test requires ≤32 classes"
-        );
+        assert!(partition.num_classes <= 32, "bitmap test requires ≤32 classes");
 
         let tables = build_bitmap_tables(&dfa);
 
@@ -2022,7 +2031,11 @@ mod tests {
                 ("+", TokenKind::Fixed("+".to_string())),
                 ("-", TokenKind::Fixed("-".to_string())),
             ],
-            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
         );
 
         let token_kinds = vec![

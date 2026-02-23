@@ -147,13 +147,13 @@ fn set_or_upgrade_accept(nfa: &mut Nfa, state: StateId, kind: &TokenKind) {
         None => {
             nfa_state.accept = Some(kind.clone());
             nfa_state.weight = TropicalWeight::from_priority(kind.priority());
-        }
+        },
         Some(existing) => {
             if kind.priority() > existing.priority() {
                 nfa_state.accept = Some(kind.clone());
                 nfa_state.weight = TropicalWeight::from_priority(kind.priority());
             }
-        }
+        },
     }
 }
 
@@ -168,10 +168,7 @@ fn redirect_edge(nfa: &mut Nfa, parent: StateId, byte: u8, new_target: StateId) 
             }
         }
     }
-    panic!(
-        "redirect_edge: no transition on byte {} from state {}",
-        byte, parent
-    );
+    panic!("redirect_edge: no transition on byte {} from state {}", byte, parent);
 }
 
 /// Freeze suffix states in the DAFSA construction path.
@@ -240,10 +237,7 @@ fn build_keyword_trie(nfa: &mut Nfa, terminals: &[TerminalPattern]) -> StateId {
     let mut prev_bytes: Vec<u8> = Vec::new();
 
     for terminal in terminals {
-        assert!(
-            !terminal.text.is_empty(),
-            "terminal string must not be empty"
-        );
+        assert!(!terminal.text.is_empty(), "terminal string must not be empty");
 
         let bytes = terminal.text.as_bytes();
 
@@ -264,7 +258,9 @@ fn build_keyword_trie(nfa: &mut Nfa, terminals: &[TerminalPattern]) -> StateId {
         let mut current = if path.is_empty() {
             trie_root
         } else {
-            path.last().expect("path should not be empty after truncation").state
+            path.last()
+                .expect("path should not be empty after truncation")
+                .state
         };
 
         // Edge case: entire terminal is already in the common prefix (e.g., duplicate
@@ -321,14 +317,14 @@ fn build_keyword_trie(nfa: &mut Nfa, terminals: &[TerminalPattern]) -> StateId {
 /// **Preserved for testing**: used to verify DAFSA produces functionally equivalent
 /// DFAs via `test_dafsa_produces_same_dfa` and `test_dafsa_vs_prefix_identical_codegen`.
 #[cfg(test)]
-pub(crate) fn build_keyword_trie_prefix_only(nfa: &mut Nfa, terminals: &[TerminalPattern]) -> StateId {
+pub(crate) fn build_keyword_trie_prefix_only(
+    nfa: &mut Nfa,
+    terminals: &[TerminalPattern],
+) -> StateId {
     let trie_root = nfa.add_state(NfaState::new());
 
     for terminal in terminals {
-        assert!(
-            !terminal.text.is_empty(),
-            "terminal string must not be empty"
-        );
+        assert!(!terminal.text.is_empty(), "terminal string must not be empty");
 
         let mut current = trie_root;
         let bytes = terminal.text.as_bytes();
@@ -419,10 +415,7 @@ fn build_string_fragment(nfa: &mut Nfa, text: &str, kind: TokenKind) -> NfaFragm
             // Last character: transition to accept state
             let accept = nfa.add_state(NfaState::accepting(kind.clone()));
             nfa.add_transition(current, accept, CharClass::Single(byte));
-            return NfaFragment {
-                start,
-                accept,
-            };
+            return NfaFragment { start, accept };
         } else {
             // Intermediate character: transition to next state
             let next = nfa.add_state(NfaState::new());
@@ -670,10 +663,7 @@ mod tests {
 
         // original start (0) + fragment start + accept = 3
         assert_eq!(nfa.states.len(), 3);
-        assert_eq!(
-            nfa.states[frag.accept as usize].accept,
-            Some(TokenKind::Ident)
-        );
+        assert_eq!(nfa.states[frag.accept as usize].accept, Some(TokenKind::Ident));
     }
 
     #[test]
@@ -944,11 +934,7 @@ mod tests {
         //   = (1) + (2) + (2) + (1) + (2) + (1) + (2) = 11 intermediate/accept states
         //   + 7 fragment starts = 18 states (excl. global start)
         // Trie: = → ==(4), !=(3), + → ++(4), - → ->(4) = ~10 states + trie_root
-        assert!(
-            trie_states <= 11,
-            "trie should have at most 11 states (got {})",
-            trie_states
-        );
+        assert!(trie_states <= 11, "trie should have at most 11 states (got {})", trie_states);
 
         // Verify trie root exists and is reachable
         assert!(trie_root > 0, "trie root should not be global start");
@@ -1086,10 +1072,7 @@ mod tests {
 
         // The '=' state should accept single '='
         let eq_state = nfa.states[root as usize].transitions[0].1;
-        assert_eq!(
-            nfa.states[eq_state as usize].accept,
-            Some(TokenKind::Fixed("=".to_string()))
-        );
+        assert_eq!(nfa.states[eq_state as usize].accept, Some(TokenKind::Fixed("=".to_string())));
 
         // The '=' state should have a transition to '==' state
         let eq_eq_state = nfa.states[eq_state as usize].transitions[0].1;
@@ -1196,8 +1179,7 @@ mod tests {
     fn test_dafsa_produces_same_dfa() {
         // End-to-end: both trie variants should produce functionally equivalent DFAs.
         use crate::automata::{
-            minimize::minimize_dfa,
-            partition::compute_equivalence_classes,
+            minimize::minimize_dfa, partition::compute_equivalence_classes,
             subset::subset_construction,
         };
 
@@ -1253,8 +1235,8 @@ mod tests {
 
         // Verify DFA equivalence by testing all terminals + identifiers + integers
         let test_inputs = vec![
-            "+", "++", "-", "->", "=", "==", "!=", "(", ")", "error",
-            "x", "foo", "bar123", "42", "0", "999",
+            "+", "++", "-", "->", "=", "==", "!=", "(", ")", "error", "x", "foo", "bar123", "42",
+            "0", "999",
         ];
 
         for input in test_inputs {
@@ -1272,9 +1254,8 @@ mod tests {
     fn test_dafsa_state_count_report() {
         // Diagnostic: print before/after NFA state counts for visibility
         let terminals: Vec<TerminalPattern> = [
-            "+", "++", "-", "->", "=", "==", "!=", "<=", ">=",
-            "(", ")", "{", "}", "[", "]", ",", ";",
-            "error", "true", "false", "if", "else", "while", "for",
+            "+", "++", "-", "->", "=", "==", "!=", "<=", ">=", "(", ")", "{", "}", "[", "]", ",",
+            ";", "error", "true", "false", "if", "else", "while", "for",
         ]
         .iter()
         .enumerate()
@@ -1317,8 +1298,7 @@ mod tests {
             "  Reduction:   {} states saved ({:.1}%)",
             prefix_reachable.saturating_sub(dafsa_reachable),
             if prefix_reachable > 0 {
-                (prefix_reachable.saturating_sub(dafsa_reachable) as f64
-                    / prefix_reachable as f64)
+                (prefix_reachable.saturating_sub(dafsa_reachable) as f64 / prefix_reachable as f64)
                     * 100.0
             } else {
                 0.0
@@ -1409,18 +1389,15 @@ mod tests {
     #[test]
     fn test_weight_propagation_through_pipeline() {
         use crate::automata::{
-            minimize::minimize_dfa,
-            partition::compute_equivalence_classes,
+            minimize::minimize_dfa, partition::compute_equivalence_classes,
             subset::subset_construction,
         };
 
-        let terminals = vec![
-            TerminalPattern {
-                text: "error".to_string(),
-                kind: TokenKind::Fixed("error".to_string()),
-                is_keyword: true,
-            },
-        ];
+        let terminals = vec![TerminalPattern {
+            text: "error".to_string(),
+            kind: TokenKind::Fixed("error".to_string()),
+            is_keyword: true,
+        }];
         let needs = BuiltinNeeds {
             ident: true,
             integer: true,
@@ -1440,10 +1417,7 @@ mod tests {
             state = dfa.transition(state, class);
             assert_ne!(state, crate::automata::DEAD_STATE);
         }
-        assert_eq!(
-            dfa.states[state as usize].accept,
-            Some(TokenKind::Fixed("error".to_string()))
-        );
+        assert_eq!(dfa.states[state as usize].accept, Some(TokenKind::Fixed("error".to_string())));
         assert_eq!(
             dfa.states[state as usize].weight.value(),
             0.0,
@@ -1457,10 +1431,7 @@ mod tests {
             state = dfa.transition(state, class);
             assert_ne!(state, crate::automata::DEAD_STATE);
         }
-        assert_eq!(
-            dfa.states[state as usize].accept,
-            Some(TokenKind::Ident),
-        );
+        assert_eq!(dfa.states[state as usize].accept, Some(TokenKind::Ident),);
         assert_eq!(
             dfa.states[state as usize].weight.value(),
             9.0,
@@ -1474,10 +1445,7 @@ mod tests {
             state = dfa.transition(state, class);
             assert_ne!(state, crate::automata::DEAD_STATE);
         }
-        assert_eq!(
-            dfa.states[state as usize].accept,
-            Some(TokenKind::Integer),
-        );
+        assert_eq!(dfa.states[state as usize].accept, Some(TokenKind::Integer),);
         assert_eq!(
             dfa.states[state as usize].weight.value(),
             8.0,
@@ -1495,35 +1463,26 @@ mod tests {
         // Upgrade to Fixed (priority 10, weight 0.0)
         set_or_upgrade_accept(&mut nfa, state, &TokenKind::Fixed("kw".to_string()));
         assert_eq!(nfa.states[state as usize].weight.value(), 0.0);
-        assert_eq!(
-            nfa.states[state as usize].accept,
-            Some(TokenKind::Fixed("kw".to_string()))
-        );
+        assert_eq!(nfa.states[state as usize].accept, Some(TokenKind::Fixed("kw".to_string())));
     }
 
     #[test]
     fn test_set_or_upgrade_accept_no_downgrade_weight() {
         let mut nfa = Nfa::new();
-        let state = nfa.add_state(NfaState::accepting(
-            TokenKind::Fixed("kw".to_string()),
-        )); // priority 10, weight 0.0
+        let state = nfa.add_state(NfaState::accepting(TokenKind::Fixed("kw".to_string()))); // priority 10, weight 0.0
 
         assert_eq!(nfa.states[state as usize].weight.value(), 0.0);
 
         // Attempt to downgrade to Ident (priority 1, weight 9.0) — should NOT change
         set_or_upgrade_accept(&mut nfa, state, &TokenKind::Ident);
         assert_eq!(nfa.states[state as usize].weight.value(), 0.0);
-        assert_eq!(
-            nfa.states[state as usize].accept,
-            Some(TokenKind::Fixed("kw".to_string()))
-        );
+        assert_eq!(nfa.states[state as usize].accept, Some(TokenKind::Fixed("kw".to_string())));
     }
 
     #[test]
     fn test_weight_preserved_through_minimization() {
         use crate::automata::{
-            minimize::minimize_dfa,
-            partition::compute_equivalence_classes,
+            minimize::minimize_dfa, partition::compute_equivalence_classes,
             subset::subset_construction,
         };
 

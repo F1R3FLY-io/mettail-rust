@@ -30,10 +30,7 @@ use crate::automata::semiring::Semiring;
 /// # Returns
 ///
 /// `alpha[i]` = total weight of all paths from node 0 to node `i`.
-pub fn forward_scores<W: Semiring>(
-    edges: &[Vec<(usize, W)>],
-    num_nodes: usize,
-) -> Vec<W> {
+pub fn forward_scores<W: Semiring>(edges: &[Vec<(usize, W)>], num_nodes: usize) -> Vec<W> {
     let mut alpha = vec![W::zero(); num_nodes];
     alpha[0] = W::one();
 
@@ -134,10 +131,7 @@ mod tests {
     ///              0 →(3.0)→ 2 →(1.0)→ 3
     fn diamond_edges() -> Vec<Vec<(usize, TropicalWeight)>> {
         vec![
-            vec![
-                (1, TropicalWeight::new(1.0)),
-                (2, TropicalWeight::new(3.0)),
-            ],
+            vec![(1, TropicalWeight::new(1.0)), (2, TropicalWeight::new(3.0))],
             vec![(3, TropicalWeight::new(2.0))],
             vec![(3, TropicalWeight::new(1.0))],
             vec![],
@@ -172,10 +166,7 @@ mod tests {
         // Tropical forward = Viterbi (min-cost path)
         // Triangle: 0 →(1.0)→ 1 →(1.0)→ 2, and 0 →(5.0)→ 2
         let edges = vec![
-            vec![
-                (1, TropicalWeight::new(1.0)),
-                (2, TropicalWeight::new(5.0)),
-            ],
+            vec![(1, TropicalWeight::new(1.0)), (2, TropicalWeight::new(5.0))],
             vec![(2, TropicalWeight::new(1.0))],
             vec![],
         ];
@@ -195,10 +186,7 @@ mod tests {
         fn test_forward_scores_diamond_log() {
             // Same diamond as tropical but with LogWeight
             let edges: Vec<Vec<(usize, LogWeight)>> = vec![
-                vec![
-                    (1, LogWeight::new(1.0)),
-                    (2, LogWeight::new(3.0)),
-                ],
+                vec![(1, LogWeight::new(1.0)), (2, LogWeight::new(3.0))],
                 vec![(3, LogWeight::new(2.0))],
                 vec![(3, LogWeight::new(1.0))],
                 vec![],
@@ -220,10 +208,7 @@ mod tests {
         #[test]
         fn test_forward_backward_consistency_log() {
             let edges: Vec<Vec<(usize, LogWeight)>> = vec![
-                vec![
-                    (1, LogWeight::new(1.0)),
-                    (2, LogWeight::new(2.0)),
-                ],
+                vec![(1, LogWeight::new(1.0)), (2, LogWeight::new(2.0))],
                 vec![(3, LogWeight::new(1.0))],
                 vec![(3, LogWeight::new(1.0))],
                 vec![],

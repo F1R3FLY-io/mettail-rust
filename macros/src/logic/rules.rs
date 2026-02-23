@@ -139,7 +139,8 @@ pub fn generate_rule_clause_with_category(
     };
 
     // Assemble body clauses in order: first_clause, LHS pattern, eq_checks, conditions, RHS binding
-    let mut body = Vec::with_capacity(1 + clauses.len() + eq_checks.len() + condition_clauses.len() + 1);
+    let mut body =
+        Vec::with_capacity(1 + clauses.len() + eq_checks.len() + condition_clauses.len() + 1);
     body.push(first_clause);
     body.extend(clauses.iter().cloned());
     body.extend(eq_checks.iter().cloned());

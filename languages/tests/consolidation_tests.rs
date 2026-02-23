@@ -30,22 +30,19 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
 
     leaf.prop_recursive(max_depth, 64, 4, |inner| {
         prop_oneof![
-            (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::AddInt(Box::new(a), Box::new(b))),
-            (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::SubInt(Box::new(a), Box::new(b))),
-            (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::MulInt(Box::new(a), Box::new(b))),
-            (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::DivInt(Box::new(a), Box::new(b))),
-            (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::ModInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::AddInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::SubInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::MulInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::DivInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::ModInt(Box::new(a), Box::new(b))),
             inner.clone().prop_map(|a| Int::Neg(Box::new(a))),
-            (inner.clone(), inner.clone())
-                .prop_map(|(a, b)| Int::PowInt(Box::new(a), Box::new(b))),
+            (inner.clone(), inner.clone()).prop_map(|(a, b)| Int::PowInt(Box::new(a), Box::new(b))),
             inner.clone().prop_map(|a| Int::Fact(Box::new(a))),
-            (inner.clone(), inner.clone(), inner.clone())
-                .prop_map(|(c, t, e)| Int::Tern(Box::new(c), Box::new(t), Box::new(e))),
+            (inner.clone(), inner.clone(), inner.clone()).prop_map(|(c, t, e)| Int::Tern(
+                Box::new(c),
+                Box::new(t),
+                Box::new(e)
+            )),
             (inner.clone(), inner.clone())
                 .prop_map(|(a, b)| Int::CustomOp(Box::new(a), Box::new(b))),
         ]
@@ -146,7 +143,7 @@ fn extract_subterms_consolidated(t: &Int) -> Vec<Int> {
         Int::Fact(f0) => vec![f0.as_ref().clone()],
         Int::Tern(f0, f1, f2) => {
             vec![f0.as_ref().clone(), f1.as_ref().clone(), f2.as_ref().clone()]
-        }
+        },
         Int::CustomOp(f0, f1) => vec![f0.as_ref().clone(), f1.as_ref().clone()],
         _ => vec![],
     }
@@ -157,32 +154,30 @@ fn vi_extract(t: &Int) -> Vec<(Int, usize)> {
     match t {
         Int::AddInt(x0, x1) => {
             vec![(x0.as_ref().clone(), 0), (x1.as_ref().clone(), 1)]
-        }
+        },
         Int::SubInt(x0, x1) => {
             vec![(x0.as_ref().clone(), 2), (x1.as_ref().clone(), 3)]
-        }
+        },
         Int::MulInt(x0, x1) => {
             vec![(x0.as_ref().clone(), 4), (x1.as_ref().clone(), 5)]
-        }
+        },
         Int::DivInt(x0, x1) => {
             vec![(x0.as_ref().clone(), 6), (x1.as_ref().clone(), 7)]
-        }
+        },
         Int::ModInt(x0, x1) => {
             vec![(x0.as_ref().clone(), 8), (x1.as_ref().clone(), 9)]
-        }
+        },
         Int::Neg(x0) => vec![(x0.as_ref().clone(), 10)],
         Int::PowInt(x0, x1) => {
             vec![(x0.as_ref().clone(), 11), (x1.as_ref().clone(), 12)]
-        }
+        },
         Int::Fact(x0) => vec![(x0.as_ref().clone(), 13)],
-        Int::Tern(x0, x1, x2) => vec![
-            (x0.as_ref().clone(), 14),
-            (x1.as_ref().clone(), 15),
-            (x2.as_ref().clone(), 16),
-        ],
+        Int::Tern(x0, x1, x2) => {
+            vec![(x0.as_ref().clone(), 14), (x1.as_ref().clone(), 15), (x2.as_ref().clone(), 16)]
+        },
         Int::CustomOp(x0, x1) => {
             vec![(x0.as_ref().clone(), 17), (x1.as_ref().clone(), 18)]
-        }
+        },
         _ => vec![],
     }
 }
@@ -204,15 +199,9 @@ fn vi_rebuild(t: &Int, vi: usize, new_val: Int) -> Int {
         (Int::PowInt(_, x1), 11) => Int::PowInt(Box::new(new_val), x1.clone()),
         (Int::PowInt(x0, _), 12) => Int::PowInt(x0.clone(), Box::new(new_val)),
         (Int::Fact(_), 13) => Int::Fact(Box::new(new_val)),
-        (Int::Tern(_, x1, x2), 14) => {
-            Int::Tern(Box::new(new_val), x1.clone(), x2.clone())
-        }
-        (Int::Tern(x0, _, x2), 15) => {
-            Int::Tern(x0.clone(), Box::new(new_val), x2.clone())
-        }
-        (Int::Tern(x0, x1, _), 16) => {
-            Int::Tern(x0.clone(), x1.clone(), Box::new(new_val))
-        }
+        (Int::Tern(_, x1, x2), 14) => Int::Tern(Box::new(new_val), x1.clone(), x2.clone()),
+        (Int::Tern(x0, _, x2), 15) => Int::Tern(x0.clone(), Box::new(new_val), x2.clone()),
+        (Int::Tern(x0, x1, _), 16) => Int::Tern(x0.clone(), x1.clone(), Box::new(new_val)),
         (Int::CustomOp(_, x1), 17) => Int::CustomOp(Box::new(new_val), x1.clone()),
         (Int::CustomOp(x0, _), 18) => Int::CustomOp(x0.clone(), Box::new(new_val)),
         _ => unreachable!("invalid variant index {} for {:?}", vi, classify_int(t)),
@@ -291,14 +280,14 @@ fn pair_extract_consolidated(s: &Int, t: &Int) -> Vec<(Int, Int)> {
         ],
         (Int::Neg(s0), Int::Neg(t0)) => {
             vec![(s0.as_ref().clone(), t0.as_ref().clone())]
-        }
+        },
         (Int::PowInt(s0, s1), Int::PowInt(t0, t1)) => vec![
             (s0.as_ref().clone(), t0.as_ref().clone()),
             (s1.as_ref().clone(), t1.as_ref().clone()),
         ],
         (Int::Fact(s0), Int::Fact(t0)) => {
             vec![(s0.as_ref().clone(), t0.as_ref().clone())]
-        }
+        },
         (Int::Tern(s0, s1, s2), Int::Tern(t0, t1, t2)) => vec![
             (s0.as_ref().clone(), t0.as_ref().clone()),
             (s1.as_ref().clone(), t1.as_ref().clone()),
@@ -485,11 +474,7 @@ fn test_variant_index_injectivity() {
         Int::Neg(Box::new(Int::NumLit(0))),
         Int::PowInt(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
         Int::Fact(Box::new(Int::NumLit(0))),
-        Int::Tern(
-            Box::new(Int::NumLit(0)),
-            Box::new(Int::NumLit(1)),
-            Box::new(Int::NumLit(2)),
-        ),
+        Int::Tern(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1)), Box::new(Int::NumLit(2))),
         Int::CustomOp(Box::new(Int::NumLit(0)), Box::new(Int::NumLit(1))),
     ];
 
@@ -513,11 +498,7 @@ fn test_variant_index_injectivity() {
     }
 
     // Verify we have the expected number of variant indices (19 fields total)
-    assert_eq!(
-        all_vis.len(),
-        19,
-        "Expected 19 variant indices (2+2+2+2+2+1+2+1+3+2)"
-    );
+    assert_eq!(all_vis.len(), 19, "Expected 19 variant indices (2+2+2+2+2+1+2+1+3+2)");
 }
 
 /// Test that NumLit (leaf) produces empty extractions.

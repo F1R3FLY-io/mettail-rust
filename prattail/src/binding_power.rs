@@ -89,9 +89,7 @@ pub struct BindingPowerTable {
 impl BindingPowerTable {
     /// Create a new empty binding power table.
     pub fn new() -> Self {
-        BindingPowerTable {
-            operators: Vec::new(),
-        }
+        BindingPowerTable { operators: Vec::new() }
     }
 
     /// Get all regular infix operators for a given category (excludes postfix, mixfix, cross-category).
@@ -99,10 +97,7 @@ impl BindingPowerTable {
         self.operators
             .iter()
             .filter(|op| {
-                op.category == category
-                    && !op.is_cross_category
-                    && !op.is_postfix
-                    && !op.is_mixfix
+                op.category == category && !op.is_cross_category && !op.is_postfix && !op.is_mixfix
             })
             .collect()
     }
@@ -234,12 +229,12 @@ pub fn analyze_binding_powers(rules: &[InfixRuleInfo]) -> BindingPowerTable {
                     let bp = (precedence, precedence + 1);
                     precedence += 2;
                     bp
-                }
+                },
                 Associativity::Right => {
                     let bp = (precedence + 1, precedence);
                     precedence += 2;
                     bp
-                }
+                },
             };
 
             table.operators.push(InfixOperator {

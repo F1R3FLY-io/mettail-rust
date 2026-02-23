@@ -1,7 +1,7 @@
 //! Full rule parse via ascent_syntax_export: type inference, program build, validate, then build Query from pre-parsed structure.
 
 use crate::ast::{BodyAtom, Query, Term, Variable};
-use crate::parse::pre_parse::{PreParseError, PreParsedBodyAtom, PreParsedRule, pre_parse_rule};
+use crate::parse::pre_parse::{pre_parse_rule, PreParseError, PreParsedBodyAtom, PreParsedRule};
 use crate::schema::QuerySchema;
 use ascent_syntax_export::{parse_ascent_program_text, BodyItemNode};
 
@@ -22,12 +22,14 @@ impl std::fmt::Display for ParseError {
             ParseError::PreParse(e) => write!(f, "{}", e),
             ParseError::Ascent(e) => write!(f, "Parse error: {}", e),
             ParseError::SingleRule => write!(f, "Expected exactly one rule; got multiple or none"),
-            ParseError::IncludeSourceInBody => write!(f, "include_source! is not allowed in query body"),
+            ParseError::IncludeSourceInBody => {
+                write!(f, "include_source! is not allowed in query body")
+            },
             ParseError::Unsafe(msg) => write!(f, "{}", msg),
             ParseError::NonStratified(msg) => write!(f, "{}", msg),
             ParseError::UnknownRelation { relation } => {
                 write!(f, "Unknown relation '{}' (not in schema)", relation)
-            }
+            },
         }
     }
 }
@@ -61,9 +63,7 @@ fn type_of_variable_in_positive_body(
         }
         let param_types = schema
             .get(&atom.relation)
-            .ok_or_else(|| ParseError::UnknownRelation {
-                relation: atom.relation.clone(),
-            })?;
+            .ok_or_else(|| ParseError::UnknownRelation { relation: atom.relation.clone() })?;
         for (j, arg) in atom.args.iter().enumerate() {
             if arg == var {
                 let ty = param_types
@@ -82,11 +82,7 @@ fn type_of_variable_in_positive_body(
 
 /// Build the full Ascent program string: relation declaration + rule.
 fn build_program_string(pre: &PreParsedRule, head_types: &[String]) -> String {
-    let decl = format!(
-        "relation {}({});",
-        pre.head_rel,
-        head_types.join(", ")
-    );
+    let decl = format!("relation {}({});", pre.head_rel, head_types.join(", "));
     format!("{}\n{}", decl, rule_only(pre))
 }
 
@@ -110,9 +106,7 @@ fn rule_only(pre: &PreParsedRule) -> String {
 fn validate_body_relations(pre: &PreParsedRule, schema: &QuerySchema) -> Result<(), ParseError> {
     for atom in &pre.body_atoms {
         if !schema.contains_relation(&atom.relation) {
-            return Err(ParseError::UnknownRelation {
-                relation: atom.relation.clone(),
-            });
+            return Err(ParseError::UnknownRelation { relation: atom.relation.clone() });
         }
     }
     Ok(())
@@ -131,29 +125,18 @@ fn arg_to_term(s: &str) -> Term {
 
 /// Build our Query AST from the pre-parsed rule (after ascent validation).
 fn query_from_pre_parsed(pre: PreParsedRule) -> Query {
-    let head_terms: Vec<Term> = pre
-        .head_args
-        .into_iter()
-        .map(|a| arg_to_term(&a))
-        .collect();
+    let head_terms: Vec<Term> = pre.head_args.into_iter().map(|a| arg_to_term(&a)).collect();
     let head = crate::ast::Atom {
         relation: pre.head_rel,
         terms: head_terms,
     };
-    let body: Vec<BodyAtom> = pre
-        .body_atoms
-        .into_iter()
-        .map(body_atom_from_pre)
-        .collect();
+    let body: Vec<BodyAtom> = pre.body_atoms.into_iter().map(body_atom_from_pre).collect();
     Query { head, body }
 }
 
 fn body_atom_from_pre(a: PreParsedBodyAtom) -> BodyAtom {
     let terms: Vec<Term> = a.args.iter().map(|s| arg_to_term(s)).collect();
-    let inner = BodyAtom::Relation {
-        name: a.relation,
-        terms,
-    };
+    let inner = BodyAtom::Relation { name: a.relation, terms };
     if a.negated {
         BodyAtom::Negation(Box::new(inner))
     } else {
@@ -182,7 +165,9 @@ pub fn parse_query(rule_str: &str, schema: &QuerySchema) -> Result<Query, ParseE
     }
     let query = query_from_pre_parsed(pre);
     query.is_safe().map_err(ParseError::Unsafe)?;
-    query.check_stratification().map_err(ParseError::NonStratified)?;
+    query
+        .check_stratification()
+        .map_err(ParseError::NonStratified)?;
     Ok(query)
 }
 
@@ -204,11 +189,8 @@ mod tests {
     #[test]
     fn test_parse_query_simple() {
         let schema = rhocalc_like_schema();
-        let q = parse_query(
-            "query(result) <-- path(term, result), !rw_proc(result, _).",
-            &schema,
-        )
-        .unwrap();
+        let q = parse_query("query(result) <-- path(term, result), !rw_proc(result, _).", &schema)
+            .unwrap();
         assert_eq!(q.head.relation, "query");
         assert_eq!(q.head.terms.len(), 1);
         assert!(matches!(&q.head.terms[0], Term::Variable(v) if v.name == "result"));

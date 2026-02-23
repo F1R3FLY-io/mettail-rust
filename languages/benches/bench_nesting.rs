@@ -9,9 +9,9 @@
 mod bench_common;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::time::Duration;
 use mettail_languages::calculator::*;
 use mettail_languages::lambda::*;
+use std::time::Duration;
 
 use bench_common::{
     gen_lambda_app_mix, gen_nested_application, gen_nested_lambda, gen_nested_parens, DEPTH_SIZES,

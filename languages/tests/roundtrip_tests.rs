@@ -33,51 +33,39 @@ fn arb_int_term(max_depth: u32) -> impl Strategy<Value = Int> {
     let leaf = (-50i32..50).prop_map(|n| Int::NumLit(n));
 
     leaf.prop_recursive(
-        max_depth,  // max depth
-        64,         // max nodes
-        4,          // items per collection (unused here, but required)
+        max_depth, // max depth
+        64,        // max nodes
+        4,         // items per collection (unused here, but required)
         |inner| {
             prop_oneof![
                 // AddInt: left + right
-                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::AddInt(Box::new(a), Box::new(b))
-                }),
+                (inner.clone(), inner.clone())
+                    .prop_map(|(a, b)| { Int::AddInt(Box::new(a), Box::new(b)) }),
                 // SubInt: left - right
-                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::SubInt(Box::new(a), Box::new(b))
-                }),
+                (inner.clone(), inner.clone())
+                    .prop_map(|(a, b)| { Int::SubInt(Box::new(a), Box::new(b)) }),
                 // MulInt: left * right
-                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::MulInt(Box::new(a), Box::new(b))
-                }),
+                (inner.clone(), inner.clone())
+                    .prop_map(|(a, b)| { Int::MulInt(Box::new(a), Box::new(b)) }),
                 // DivInt: left / right
-                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::DivInt(Box::new(a), Box::new(b))
-                }),
+                (inner.clone(), inner.clone())
+                    .prop_map(|(a, b)| { Int::DivInt(Box::new(a), Box::new(b)) }),
                 // ModInt: left % right
-                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::ModInt(Box::new(a), Box::new(b))
-                }),
+                (inner.clone(), inner.clone())
+                    .prop_map(|(a, b)| { Int::ModInt(Box::new(a), Box::new(b)) }),
                 // Neg: -operand
-                inner.clone().prop_map(|a| {
-                    Int::Neg(Box::new(a))
-                }),
+                inner.clone().prop_map(|a| { Int::Neg(Box::new(a)) }),
                 // PowInt: base ^ exponent
-                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::PowInt(Box::new(a), Box::new(b))
-                }),
+                (inner.clone(), inner.clone())
+                    .prop_map(|(a, b)| { Int::PowInt(Box::new(a), Box::new(b)) }),
                 // Fact: operand!
-                inner.clone().prop_map(|a| {
-                    Int::Fact(Box::new(a))
-                }),
+                inner.clone().prop_map(|a| { Int::Fact(Box::new(a)) }),
                 // Tern: cond ? then : else
-                (inner.clone(), inner.clone(), inner.clone()).prop_map(|(c, t, e)| {
-                    Int::Tern(Box::new(c), Box::new(t), Box::new(e))
-                }),
+                (inner.clone(), inner.clone(), inner.clone())
+                    .prop_map(|(c, t, e)| { Int::Tern(Box::new(c), Box::new(t), Box::new(e)) }),
                 // CustomOp: a ~ b
-                (inner.clone(), inner.clone()).prop_map(|(a, b)| {
-                    Int::CustomOp(Box::new(a), Box::new(b))
-                }),
+                (inner.clone(), inner.clone())
+                    .prop_map(|(a, b)| { Int::CustomOp(Box::new(a), Box::new(b)) }),
             ]
         },
     )
@@ -208,11 +196,8 @@ fn roundtrip_unary_ops() {
 #[test]
 fn roundtrip_ternary() {
     mettail_runtime::clear_var_cache();
-    let term = Int::Tern(
-        Box::new(Int::NumLit(1)),
-        Box::new(Int::NumLit(42)),
-        Box::new(Int::NumLit(0)),
-    );
+    let term =
+        Int::Tern(Box::new(Int::NumLit(1)), Box::new(Int::NumLit(42)), Box::new(Int::NumLit(0)));
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
     let parsed = Int::parse(&displayed);
@@ -244,10 +229,7 @@ fn roundtrip_nested_expressions() {
 
     // -(3 + 4)
     mettail_runtime::clear_var_cache();
-    let term = Int::Neg(Box::new(Int::AddInt(
-        Box::new(Int::NumLit(3)),
-        Box::new(Int::NumLit(4)),
-    )));
+    let term = Int::Neg(Box::new(Int::AddInt(Box::new(Int::NumLit(3)), Box::new(Int::NumLit(4)))));
     let displayed = format!("{}", term);
     mettail_runtime::clear_var_cache();
     let parsed = Int::parse(&displayed);

@@ -12,9 +12,7 @@
 
 mod bench_specs;
 
-use criterion::{
-    criterion_group, criterion_main, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
 use std::time::Duration;
 
 use mettail_prattail::automata::codegen::generate_lexer_code;
@@ -24,9 +22,7 @@ use mettail_prattail::automata::partition::compute_equivalence_classes;
 use mettail_prattail::automata::subset::subset_construction;
 use mettail_prattail::lexer::{extract_terminals, generate_lexer};
 
-use bench_specs::{
-    complex_spec, medium_spec, minimal_spec, prepare, small_spec, synthetic_spec,
-};
+use bench_specs::{complex_spec, medium_spec, minimal_spec, prepare, small_spec, synthetic_spec};
 
 fn bench_extract_terminals(c: &mut Criterion) {
     let mut group = c.benchmark_group("lexer/extract_terminals");
@@ -43,13 +39,9 @@ fn bench_extract_terminals(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| extract_terminals(&prepared.grammar_rules, &prepared.type_infos, false, &[]));
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| extract_terminals(&prepared.grammar_rules, &prepared.type_infos, false, &[]));
+        });
     }
 
     group.finish();
@@ -70,13 +62,9 @@ fn bench_full_pipeline(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| generate_lexer(&prepared.lexer_input));
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| generate_lexer(&prepared.lexer_input));
+        });
     }
 
     group.finish();
@@ -97,13 +85,9 @@ fn bench_build_nfa(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| build_nfa(&prepared.lexer_input.terminals, &prepared.lexer_input.needs));
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| build_nfa(&prepared.lexer_input.terminals, &prepared.lexer_input.needs));
+        });
     }
 
     group.finish();
@@ -124,13 +108,9 @@ fn bench_partition(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| compute_equivalence_classes(&prepared.nfa));
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| compute_equivalence_classes(&prepared.nfa));
+        });
     }
 
     group.finish();
@@ -151,13 +131,9 @@ fn bench_subset_construction(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| subset_construction(&prepared.nfa, &prepared.partition));
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| subset_construction(&prepared.nfa, &prepared.partition));
+        });
     }
 
     group.finish();
@@ -178,13 +154,9 @@ fn bench_minimize(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| minimize_dfa(&prepared.dfa));
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| minimize_dfa(&prepared.dfa));
+        });
     }
 
     group.finish();
@@ -205,20 +177,16 @@ fn bench_codegen(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| {
-                    generate_lexer_code(
-                        &prepared.min_dfa,
-                        &prepared.partition,
-                        &prepared.token_kinds,
-                        &prepared.spec.name,
-                    )
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| {
+                generate_lexer_code(
+                    &prepared.min_dfa,
+                    &prepared.partition,
+                    &prepared.token_kinds,
+                    &prepared.spec.name,
+                )
+            });
+        });
     }
 
     group.finish();
@@ -235,13 +203,9 @@ fn bench_lexer_scaling(c: &mut Criterion) {
         let prepared = prepare(&spec);
         let n_terminals = prepared.lexer_input.terminals.len() as u64;
         group.throughput(Throughput::Elements(n_terminals));
-        group.bench_with_input(
-            BenchmarkId::from_parameter(n),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| generate_lexer(&prepared.lexer_input));
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(n), &prepared, |b, prepared| {
+            b.iter(|| generate_lexer(&prepared.lexer_input));
+        });
     }
 
     group.finish();

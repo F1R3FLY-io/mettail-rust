@@ -18,8 +18,8 @@
 //! ```
 
 use super::common::{
-    collect_nonterminal_fields, count_nonterminals,
-    generate_tls_pool_iter, has_collection_field, is_multi_binder, relation_names, PoolArm,
+    collect_nonterminal_fields, count_nonterminals, generate_tls_pool_iter, has_collection_field,
+    is_multi_binder, relation_names, PoolArm,
 };
 use crate::ast::grammar::{GrammarItem, GrammarRule};
 use crate::ast::language::LanguageDef;
@@ -87,7 +87,8 @@ pub fn generate_consolidated_deconstruction_rules(
             let tgt_type_ts = quote! { #tgt };
             let match_expr = quote! { t };
 
-            let for_iter = generate_tls_pool_iter(&pool_name, &tgt_type_ts, &match_expr, &pool_arms);
+            let for_iter =
+                generate_tls_pool_iter(&pool_name, &tgt_type_ts, &match_expr, &pool_arms);
 
             // One rule per (src, tgt) pair with TLS-pooled iteration:
             // tgt(sub.clone()) <-- src(t), for sub in { ...tls pool... }.into_iter();
@@ -254,7 +255,9 @@ fn generate_binding_constructor_pool_arm(
                 let scope_name = format_ident!("scope_f");
                 field_bindings.push(quote! { #scope_name });
                 if body_matches {
-                    pushes.push(quote! { buf.push(#scope_name.inner().unsafe_body.as_ref().clone()); });
+                    pushes.push(
+                        quote! { buf.push(#scope_name.inner().unsafe_body.as_ref().clone()); },
+                    );
                 }
             } else if let GrammarItem::NonTerminal(cat) = item {
                 let name = format_ident!("f{}", ast_field_idx);

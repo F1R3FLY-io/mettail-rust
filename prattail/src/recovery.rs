@@ -126,15 +126,14 @@ pub enum RepairAction {
 impl fmt::Display for RepairAction {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RepairAction::SkipToSync {
-                skip_count,
-                sync_token,
-            } => write!(f, "skip {} tokens to sync token {}", skip_count, sync_token),
+            RepairAction::SkipToSync { skip_count, sync_token } => {
+                write!(f, "skip {} tokens to sync token {}", skip_count, sync_token)
+            },
             RepairAction::InsertToken { token } => write!(f, "insert token {}", token),
             RepairAction::DeleteToken => write!(f, "delete token"),
             RepairAction::SubstituteToken { replacement } => {
                 write!(f, "substitute with token {}", replacement)
-            }
+            },
         }
     }
 }
@@ -194,11 +193,7 @@ impl RecoveryWfst {
     /// * `category` — Category name (e.g., "Int", "Proc").
     /// * `sync_token_names` — Names of sync tokens (from FOLLOW set + structural).
     /// * `token_map` — Bidirectional token name ↔ ID map.
-    pub fn new(
-        category: String,
-        sync_token_names: &[String],
-        token_map: &TokenIdMap,
-    ) -> Self {
+    pub fn new(category: String, sync_token_names: &[String], token_map: &TokenIdMap) -> Self {
         let sync_tokens: BTreeSet<TokenId> = sync_token_names
             .iter()
             .filter_map(|name| token_map.get(name))
@@ -230,17 +225,14 @@ impl RecoveryWfst {
     ///    (cost `SUBSTITUTE`), only if tokens remain.
     ///
     /// Returns `None` if no recovery is possible (e.g., at EOF with no sync tokens).
-    pub fn find_best_recovery(
-        &self,
-        token_ids: &[TokenId],
-        pos: usize,
-    ) -> Option<RepairResult> {
+    pub fn find_best_recovery(&self, token_ids: &[TokenId], pos: usize) -> Option<RepairResult> {
         let remaining = &token_ids[pos..];
         let mut best: Option<RepairResult> = None;
 
         // Strategy 1: SkipToSync — skip tokens until a sync point
         let max_lookahead = remaining.len().min(costs::MAX_SKIP_LOOKAHEAD);
-        #[allow(clippy::needless_range_loop)] // `skip` used for arithmetic, cost calc, struct field, and position offset
+        #[allow(clippy::needless_range_loop)]
+        // `skip` used for arithmetic, cost calc, struct field, and position offset
         for skip in 0..max_lookahead {
             let token_at = remaining[skip];
             if self.sync_tokens.contains(&token_at) {
@@ -252,10 +244,7 @@ impl RecoveryWfst {
                     TropicalWeight::new(skip as f64 * costs::SKIP_PER_TOKEN.value())
                 };
                 let result = RepairResult {
-                    action: RepairAction::SkipToSync {
-                        skip_count: skip,
-                        sync_token: token_at,
-                    },
+                    action: RepairAction::SkipToSync { skip_count: skip, sync_token: token_at },
                     new_pos: pos + skip,
                     cost,
                 };
@@ -289,9 +278,7 @@ impl RecoveryWfst {
         if !remaining.is_empty() {
             for &sync_id in &self.sync_tokens {
                 let result = RepairResult {
-                    action: RepairAction::SubstituteToken {
-                        replacement: sync_id,
-                    },
+                    action: RepairAction::SubstituteToken { replacement: sync_id },
                     new_pos: pos + 1, // consume the substituted token
                     cost: costs::SUBSTITUTE,
                 };
@@ -350,7 +337,7 @@ fn pick_better(existing: Option<RepairResult>, candidate: RepairResult) -> Repai
             } else {
                 prev
             }
-        }
+        },
     }
 }
 
@@ -443,9 +430,7 @@ pub fn viterbi_recovery_beam(
 
             // Beam pruning: skip edges whose cost exceeds threshold
             if let Some(beam) = beam_width {
-                if !dist[sink].is_zero()
-                    && new_cost.value() > dist[sink].value() + beam.value()
-                {
+                if !dist[sink].is_zero() && new_cost.value() > dist[sink].value() + beam.value() {
                     continue;
                 }
             }
@@ -495,10 +480,7 @@ pub fn viterbi_recovery_beam(
     };
 
     Some(RepairResult {
-        action: RepairAction::SkipToSync {
-            skip_count,
-            sync_token,
-        },
+        action: RepairAction::SkipToSync { skip_count, sync_token },
         new_pos: pos + sync_node,
         cost: dist[sink],
     })
@@ -700,7 +682,7 @@ impl RecoveryContext {
         match self.frame_kind {
             FrameKind::Collection => m *= 0.5,
             FrameKind::Group => m *= 0.5,
-            _ => {}
+            _ => {},
         }
 
         if self.binding_power > 20 {
@@ -862,9 +844,7 @@ impl ParseSimulator {
             let idx = pos + offset;
             if idx >= token_ids.len() {
                 // Ran out of tokens — this is fine (valid continuation to EOF)
-                return SimulationResult::ValidContinuation {
-                    tokens_consumed: consumed,
-                };
+                return SimulationResult::ValidContinuation { tokens_consumed: consumed };
             }
 
             let token = token_ids[idx];
@@ -890,9 +870,7 @@ impl ParseSimulator {
             if let Some(fol) = follow {
                 if fol.contains(&token) {
                     // Category parse would end here — valid
-                    return SimulationResult::ValidContinuation {
-                        tokens_consumed: consumed,
-                    };
+                    return SimulationResult::ValidContinuation { tokens_consumed: consumed };
                 }
             }
 
@@ -901,9 +879,7 @@ impl ParseSimulator {
         }
 
         // Reached lookahead depth — valid continuation
-        SimulationResult::ValidContinuation {
-            tokens_consumed: consumed,
-        }
+        SimulationResult::ValidContinuation { tokens_consumed: consumed }
     }
 
     /// Compute a cost multiplier based on simulation result.
@@ -915,7 +891,7 @@ impl ParseSimulator {
             SimulationResult::ValidContinuation { .. } => 0.5,
             SimulationResult::FailedAt { position } => {
                 1.0 + (self.lookahead_depth.saturating_sub(*position)) as f64 * 0.2
-            }
+            },
         }
     }
 }
@@ -947,7 +923,8 @@ impl RecoveryWfst {
 
         // ── Strategy 1: SkipToSync ─────────────────────────────────────────
         let max_lookahead = remaining.len().min(costs::MAX_SKIP_LOOKAHEAD);
-        #[allow(clippy::needless_range_loop)] // `skip` used for arithmetic, cost calc, struct field, and position offset
+        #[allow(clippy::needless_range_loop)]
+        // `skip` used for arithmetic, cost calc, struct field, and position offset
         for skip in 0..max_lookahead {
             let token_at = remaining[skip];
             if self.sync_tokens.contains(&token_at) {
@@ -975,10 +952,7 @@ impl RecoveryWfst {
                 };
 
                 let result = RepairResult {
-                    action: RepairAction::SkipToSync {
-                        skip_count: skip,
-                        sync_token: token_at,
-                    },
+                    action: RepairAction::SkipToSync { skip_count: skip, sync_token: token_at },
                     new_pos: pos + skip,
                     cost: adjusted_cost,
                 };
@@ -1052,9 +1026,7 @@ impl RecoveryWfst {
                 };
 
                 let result = RepairResult {
-                    action: RepairAction::SubstituteToken {
-                        replacement: sync_id,
-                    },
+                    action: RepairAction::SubstituteToken { replacement: sync_id },
                     new_pos: pos + 1,
                     cost: TropicalWeight::new(base_cost.value() * tier1_mult * tier3_mult),
                 };
@@ -1072,11 +1044,9 @@ mod tests {
 
     fn make_token_map() -> TokenIdMap {
         TokenIdMap::from_names(
-            vec![
-                "Plus", "Minus", "Star", "Integer", "Ident", "RParen", "Semi", "Eof",
-            ]
-            .into_iter()
-            .map(String::from),
+            vec!["Plus", "Minus", "Star", "Integer", "Ident", "RParen", "Semi", "Eof"]
+                .into_iter()
+                .map(String::from),
         )
     }
 
@@ -1115,17 +1085,16 @@ mod tests {
             token_map.get("Eof").expect("Eof"),
         ];
 
-        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        let result = wfst
+            .find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
 
         // Best should be SkipToSync(skip=2, sync=Semi) with cost 2*0.5=1.0
         match &result.action {
-            RepairAction::SkipToSync {
-                skip_count,
-                sync_token,
-            } => {
+            RepairAction::SkipToSync { skip_count, sync_token } => {
                 assert_eq!(*skip_count, 2);
                 assert_eq!(*sync_token, token_map.get("Semi").expect("Semi"));
-            }
+            },
             other => panic!("Expected SkipToSync, got {:?}", other),
         }
         assert_eq!(result.new_pos, 2);
@@ -1139,18 +1108,18 @@ mod tests {
         let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
 
         // tokens: [Semi, Eof]
-        let token_ids: Vec<TokenId> = vec![
-            token_map.get("Semi").expect("Semi"),
-            token_map.get("Eof").expect("Eof"),
-        ];
+        let token_ids: Vec<TokenId> =
+            vec![token_map.get("Semi").expect("Semi"), token_map.get("Eof").expect("Eof")];
 
-        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        let result = wfst
+            .find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
 
         // Already at sync: cost = 0.0 (tropical one), skip_count = 0
         match &result.action {
             RepairAction::SkipToSync { skip_count, .. } => {
                 assert_eq!(*skip_count, 0);
-            }
+            },
             other => panic!("Expected SkipToSync, got {:?}", other),
         }
         assert_eq!(result.cost, TropicalWeight::one());
@@ -1170,7 +1139,9 @@ mod tests {
         let ident_id = token_map.get("Ident").expect("Ident");
         let token_ids: Vec<TokenId> = vec![ident_id; 5];
 
-        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        let result = wfst
+            .find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
 
         // Delete is cheapest (1.0) when there's no sync point
         assert_eq!(result.action, RepairAction::DeleteToken);
@@ -1186,10 +1157,12 @@ mod tests {
         // Empty remaining tokens — only InsertToken is possible
         let token_ids: Vec<TokenId> = vec![];
 
-        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        let result = wfst
+            .find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
 
         match &result.action {
-            RepairAction::InsertToken { .. } => {} // expected
+            RepairAction::InsertToken { .. } => {}, // expected
             other => panic!("Expected InsertToken at EOF, got {:?}", other),
         }
         assert_eq!(result.cost, costs::INSERT);
@@ -1197,10 +1170,7 @@ mod tests {
 
     #[test]
     fn test_repair_action_display() {
-        let action = RepairAction::SkipToSync {
-            skip_count: 3,
-            sync_token: 5,
-        };
+        let action = RepairAction::SkipToSync { skip_count: 3, sync_token: 5 };
         assert_eq!(format!("{}", action), "skip 3 tokens to sync token 5");
 
         let action = RepairAction::DeleteToken;
@@ -1220,10 +1190,7 @@ mod tests {
             new_pos: 5,
             cost: TropicalWeight::new(1.0),
         };
-        assert_eq!(
-            format!("{}", result),
-            "repair: delete token (cost: 1.0, new_pos: 5)"
-        );
+        assert_eq!(format!("{}", result), "repair: delete token (cost: 1.0, new_pos: 5)");
     }
 
     #[test]
@@ -1241,18 +1208,14 @@ mod tests {
             token_map.get("Eof").expect("Eof"),
         ];
 
-        let result =
-            viterbi_recovery(&token_ids, 0, &sync_tokens).expect("should find recovery");
+        let result = viterbi_recovery(&token_ids, 0, &sync_tokens).expect("should find recovery");
 
         // Viterbi should find: skip 2 tokens (Ident, Plus) to reach Semi
         match &result.action {
-            RepairAction::SkipToSync {
-                skip_count,
-                sync_token,
-            } => {
+            RepairAction::SkipToSync { skip_count, sync_token } => {
                 assert_eq!(*skip_count, 2);
                 assert_eq!(*sync_token, token_map.get("Semi").expect("Semi"));
-            }
+            },
             other => panic!("Expected SkipToSync, got {:?}", other),
         }
         assert_eq!(result.new_pos, 2);
@@ -1268,13 +1231,12 @@ mod tests {
         // Already at sync
         let token_ids: Vec<TokenId> = vec![token_map.get("Semi").expect("Semi")];
 
-        let result =
-            viterbi_recovery(&token_ids, 0, &sync_tokens).expect("should find recovery");
+        let result = viterbi_recovery(&token_ids, 0, &sync_tokens).expect("should find recovery");
 
         match &result.action {
             RepairAction::SkipToSync { skip_count, .. } => {
                 assert_eq!(*skip_count, 0);
-            }
+            },
             other => panic!("Expected SkipToSync with skip_count=0, got {:?}", other),
         }
         assert_eq!(result.cost, TropicalWeight::one()); // zero cost
@@ -1369,7 +1331,7 @@ mod tests {
             RepairAction::SkipToSync { skip_count, sync_token } => {
                 assert_eq!(*skip_count, 2);
                 assert_eq!(*sync_token, token_map.get("Semi").expect("Semi"));
-            }
+            },
             other => panic!("Expected SkipToSync to Semi, got {:?}", other),
         }
 
@@ -1384,7 +1346,7 @@ mod tests {
             RepairAction::SkipToSync { skip_count, sync_token } => {
                 assert_eq!(*skip_count, 2);
                 assert_eq!(*sync_token, token_map.get("Semi").expect("Semi"));
-            }
+            },
             other => panic!("Expected SkipToSync to Semi with beam, got {:?}", other),
         }
         // Costs should be identical — beam only prunes, doesn't change the best path
@@ -1404,8 +1366,8 @@ mod tests {
             token_map.get("Semi").expect("Semi"),
         ];
 
-        let result_original = viterbi_recovery(&token_ids, 0, &sync_tokens)
-            .expect("should find recovery");
+        let result_original =
+            viterbi_recovery(&token_ids, 0, &sync_tokens).expect("should find recovery");
         let result_beam_none = viterbi_recovery_beam(&token_ids, 0, &sync_tokens, None)
             .expect("should find recovery with None beam");
 
@@ -1635,7 +1597,7 @@ mod tests {
         match result {
             SimulationResult::ValidContinuation { tokens_consumed } => {
                 assert_eq!(tokens_consumed, 3);
-            }
+            },
             other => panic!("Expected ValidContinuation, got {:?}", other),
         }
 
@@ -1664,16 +1626,14 @@ mod tests {
 
         // Simulate: [Integer, Plus] from pos 0
         // Integer → FIRST ✓, Plus → not in FIRST/FOLLOW/infix → fail at position 1
-        let token_ids: Vec<TokenId> = vec![
-            token_map.get("Integer").expect("Integer"),
-            token_map.get("Plus").expect("Plus"),
-        ];
+        let token_ids: Vec<TokenId> =
+            vec![token_map.get("Integer").expect("Integer"), token_map.get("Plus").expect("Plus")];
 
         let result = sim.simulate_after_repair(&token_ids, 0, "Expr");
         match result {
             SimulationResult::FailedAt { position } => {
                 assert_eq!(position, 1);
-            }
+            },
             other => panic!("Expected FailedAt, got {:?}", other),
         }
 
@@ -1688,10 +1648,8 @@ mod tests {
         let sync_names = vec!["Semi".to_string()];
         let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
 
-        let token_ids: Vec<TokenId> = vec![
-            token_map.get("Ident").expect("Ident"),
-            token_map.get("Semi").expect("Semi"),
-        ];
+        let token_ids: Vec<TokenId> =
+            vec![token_map.get("Ident").expect("Ident"), token_map.get("Semi").expect("Semi")];
 
         let ctx = RecoveryContext::default();
 
@@ -1707,19 +1665,14 @@ mod tests {
 
     #[test]
     fn test_simulator_empty_input() {
-        let sim = ParseSimulator::new(
-            BTreeMap::new(),
-            BTreeMap::new(),
-            BTreeMap::new(),
-            5,
-        );
+        let sim = ParseSimulator::new(BTreeMap::new(), BTreeMap::new(), BTreeMap::new(), 5);
 
         // Empty tokens → valid continuation (reached end of input)
         let result = sim.simulate_after_repair(&[], 0, "Expr");
         match result {
             SimulationResult::ValidContinuation { tokens_consumed } => {
                 assert_eq!(tokens_consumed, 0);
-            }
+            },
             other => panic!("Expected ValidContinuation at empty input, got {:?}", other),
         }
     }
@@ -1759,14 +1712,17 @@ mod tests {
 
         // Flatten into the CSR format
         let sync_ids: Vec<u16> = original.sync_tokens().iter().copied().collect();
-        let sync_sources: Vec<(u16, u8)> = sync_ids.iter().map(|&id| {
-            let tag = match original.token_name(id) {
-                Some("Eof") => 0_u8,
-                Some("RParen" | "RBrace" | "RBracket" | "Semi" | "Comma") => 1_u8,
-                _ => 2_u8,
-            };
-            (id, tag)
-        }).collect();
+        let sync_sources: Vec<(u16, u8)> = sync_ids
+            .iter()
+            .map(|&id| {
+                let tag = match original.token_name(id) {
+                    Some("Eof") => 0_u8,
+                    Some("RParen" | "RBrace" | "RBracket" | "Semi" | "Comma") => 1_u8,
+                    _ => 2_u8,
+                };
+                (id, tag)
+            })
+            .collect();
 
         // Collect token names
         let mut names: Vec<String> = Vec::new();
@@ -1780,18 +1736,17 @@ mod tests {
         let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
 
         // Reconstruct
-        let reconstructed = RecoveryWfst::from_flat(
-            "Int",
-            &sync_ids,
-            &sync_sources,
-            &name_refs,
-        );
+        let reconstructed = RecoveryWfst::from_flat("Int", &sync_ids, &sync_sources, &name_refs);
 
         assert_eq!(reconstructed.category(), "Int");
         assert_eq!(reconstructed.sync_tokens().len(), original.sync_tokens().len());
         // The sync token IDs should be identical
         assert_eq!(
-            reconstructed.sync_tokens().iter().copied().collect::<Vec<_>>(),
+            reconstructed
+                .sync_tokens()
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
             original.sync_tokens().iter().copied().collect::<Vec<_>>(),
         );
     }
@@ -1806,13 +1761,13 @@ mod tests {
     #[test]
     fn test_parse_simulator_from_flat() {
         let first: &[(&str, &[u16])] = &[
-            ("Expr", &[0, 1]),  // token IDs 0 and 1 are in FIRST(Expr)
+            ("Expr", &[0, 1]), // token IDs 0 and 1 are in FIRST(Expr)
         ];
         let follow: &[(&str, &[u16])] = &[
-            ("Expr", &[2, 3]),  // token IDs 2 and 3 are in FOLLOW(Expr)
+            ("Expr", &[2, 3]), // token IDs 2 and 3 are in FOLLOW(Expr)
         ];
         let infix: &[(&str, &[u16])] = &[
-            ("Expr", &[4]),     // token ID 4 is an infix operator
+            ("Expr", &[4]), // token ID 4 is an infix operator
         ];
 
         let sim = ParseSimulator::from_flat(first, follow, infix, 5);
@@ -1824,7 +1779,7 @@ mod tests {
         match result {
             SimulationResult::ValidContinuation { tokens_consumed } => {
                 assert_eq!(tokens_consumed, 3); // consumed 0, 4, 1 — stopped at 2 (FOLLOW)
-            }
+            },
             other => panic!("Expected ValidContinuation, got {:?}", other),
         }
     }

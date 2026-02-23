@@ -137,7 +137,7 @@ mod tests {
         );
 
         assert_eq!(map.len(), 3); // deduped
-        // Sorted: Minus(0), Plus(1), Star(2)
+                                  // Sorted: Minus(0), Plus(1), Star(2)
         assert_eq!(map.get("Minus"), Some(0));
         assert_eq!(map.get("Plus"), Some(1));
         assert_eq!(map.get("Star"), Some(2));
@@ -145,9 +145,7 @@ mod tests {
 
     #[test]
     fn test_token_id_map_iter() {
-        let map = TokenIdMap::from_names(
-            vec!["A", "B", "C"].into_iter().map(String::from),
-        );
+        let map = TokenIdMap::from_names(vec!["A", "B", "C"].into_iter().map(String::from));
 
         let pairs: Vec<_> = map.iter().collect();
         assert_eq!(pairs, vec![("A", 0), ("B", 1), ("C", 2)]);

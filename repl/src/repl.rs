@@ -6,9 +6,9 @@ use anyhow::Result;
 use colored::Colorize;
 use mettail_query::run_query as query_run_query;
 use mettail_runtime::{AscentResults, Language, TermInfo};
-use std::any::Any;
 use rustyline::error::ReadlineError;
 use rustyline::{DefaultEditor, Result as RustyResult};
+use std::any::Any;
 use std::time::Instant;
 
 /// Replace whole-word occurrences of env-bound identifiers in the input with their display form.
@@ -109,7 +109,8 @@ impl Repl {
 
                     if let Err(e) = self.handle_command(line) {
                         let error_str = format!("{}", e);
-                        let display = crate::pretty::format_parse_error_with_context(line, &error_str);
+                        let display =
+                            crate::pretty::format_parse_error_with_context(line, &error_str);
                         eprintln!("{} {}", "Error:".red().bold(), display);
                     }
                 },
@@ -1392,8 +1393,7 @@ impl Repl {
         self.state.ensure_environment(|| language.create_env());
 
         // Substitute env bindings (save t, etc.). We do *not* add "current_term" to env here.
-        let mut substituted =
-            pre_substitute_env(line, language, self.state.environment().unwrap());
+        let mut substituted = pre_substitute_env(line, language, self.state.environment().unwrap());
 
         // Substitute "current_term" with a Rust string literal so the Ascent (syn) parser sees one argument.
         // The term's display can contain { } | . etc. which are valid Rust tokens; only a string literal is safe.

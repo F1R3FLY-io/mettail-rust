@@ -86,9 +86,7 @@ pub fn generate_bench_inputs(
 fn group_rules_by_category(spec: &LanguageSpec) -> BTreeMap<String, Vec<&RuleSpec>> {
     let mut map: BTreeMap<String, Vec<&RuleSpec>> = BTreeMap::new();
     for rule in &spec.rules {
-        map.entry(rule.category.clone())
-            .or_default()
-            .push(rule);
+        map.entry(rule.category.clone()).or_default().push(rule);
     }
     map
 }
@@ -101,22 +99,21 @@ fn is_leaf_rule(rule: &RuleSpec, cat_names: &[String]) -> bool {
     }
     // A rule is a leaf if none of its syntax items are NonTerminals referencing
     // grammar categories (which would require recursive generation).
-    !rule.syntax.iter().any(|item| has_nonterminal(item, cat_names))
+    !rule
+        .syntax
+        .iter()
+        .any(|item| has_nonterminal(item, cat_names))
 }
 
 /// Check if a syntax item contains a NonTerminal referencing a grammar category.
 fn has_nonterminal(item: &SyntaxItemSpec, cat_names: &[String]) -> bool {
     match item {
         SyntaxItemSpec::NonTerminal { category, .. } => cat_names.contains(category),
-        SyntaxItemSpec::Collection { element_category, .. } => {
-            cat_names.contains(element_category)
-        }
+        SyntaxItemSpec::Collection { element_category, .. } => cat_names.contains(element_category),
         SyntaxItemSpec::ZipMapSep { body_items, .. } => {
             body_items.iter().any(|bi| has_nonterminal(bi, cat_names))
-        }
-        SyntaxItemSpec::Optional { inner } => {
-            inner.iter().any(|i| has_nonterminal(i, cat_names))
-        }
+        },
+        SyntaxItemSpec::Optional { inner } => inner.iter().any(|i| has_nonterminal(i, cat_names)),
         SyntaxItemSpec::Terminal(_)
         | SyntaxItemSpec::IdentCapture { .. }
         | SyntaxItemSpec::Binder { .. } => false,
@@ -137,11 +134,13 @@ fn arb_expression_inner(
     };
 
     // Partition into leaf and recursive rules
-    let leaf_rules: Vec<&RuleSpec> = rules.iter()
+    let leaf_rules: Vec<&RuleSpec> = rules
+        .iter()
         .filter(|r| is_leaf_rule(r, cat_names))
         .copied()
         .collect();
-    let recursive_rules: Vec<&RuleSpec> = rules.iter()
+    let recursive_rules: Vec<&RuleSpec> = rules
+        .iter()
         .filter(|r| !is_leaf_rule(r, cat_names))
         .copied()
         .collect();
@@ -149,11 +148,7 @@ fn arb_expression_inner(
     // Build leaf strategy
     let leaf_strategy = if leaf_rules.is_empty() {
         // Fallback: generate an identifier
-        prop_oneof![
-            Just("a".to_string()),
-            Just("b".to_string()),
-            Just("x".to_string()),
-        ].boxed()
+        prop_oneof![Just("a".to_string()), Just("b".to_string()), Just("x".to_string()),].boxed()
     } else {
         let leaf_strats: Vec<BoxedStrategy<String>> = leaf_rules
             .iter()
@@ -175,19 +170,21 @@ fn arb_expression_inner(
     let cat_names_owned = cat_names.to_vec();
     let category_owned = category.to_string();
 
-    leaf_strategy.prop_recursive(
-        max_depth,  // depth
-        256,        // max size
-        4,          // items per collection
-        move |inner| {
-            build_recursive_strategy(
-                &rules_by_cat_owned,
-                &category_owned,
-                &cat_names_owned,
-                inner,
-            )
-        },
-    ).boxed()
+    leaf_strategy
+        .prop_recursive(
+            max_depth, // depth
+            256,       // max size
+            4,         // items per collection
+            move |inner| {
+                build_recursive_strategy(
+                    &rules_by_cat_owned,
+                    &category_owned,
+                    &cat_names_owned,
+                    inner,
+                )
+            },
+        )
+        .boxed()
 }
 
 /// Build a strategy for a single leaf rule (no recursive NonTerminals).
@@ -198,7 +195,8 @@ fn rule_to_leaf_strategy(rule: &RuleSpec) -> BoxedStrategy<String> {
             Just("b".to_string()),
             Just("c".to_string()),
             Just("x".to_string()),
-        ].boxed();
+        ]
+        .boxed();
     }
     if rule.is_literal {
         // Generate a native literal based on the rule label
@@ -207,31 +205,28 @@ fn rule_to_leaf_strategy(rule: &RuleSpec) -> BoxedStrategy<String> {
             return prop_oneof![Just("true".to_string()), Just("false".to_string())].boxed();
         }
         if label_lower.contains("str") {
-            return prop_oneof![
-                Just("\"hello\"".to_string()),
-                Just("\"world\"".to_string()),
-            ].boxed();
+            return prop_oneof![Just("\"hello\"".to_string()), Just("\"world\"".to_string()),]
+                .boxed();
         }
         if label_lower.contains("float") {
-            return prop_oneof![
-                Just("1.0".to_string()),
-                Just("3.14".to_string()),
-            ].boxed();
+            return prop_oneof![Just("1.0".to_string()), Just("3.14".to_string()),].boxed();
         }
         // Default: integer literal
         return (1..100i64).prop_map(|n| n.to_string()).boxed();
     }
 
     // Terminal-only rule: concatenate terminals with spaces
-    let parts: Vec<String> = rule.syntax.iter().filter_map(|item| {
-        match item {
+    let parts: Vec<String> = rule
+        .syntax
+        .iter()
+        .filter_map(|item| match item {
             SyntaxItemSpec::Terminal(t) => Some(t.clone()),
             SyntaxItemSpec::IdentCapture { .. } | SyntaxItemSpec::Binder { .. } => {
                 Some("x".to_string())
-            }
+            },
             _ => None,
-        }
-    }).collect();
+        })
+        .collect();
 
     if parts.is_empty() {
         Just("x".to_string()).boxed()
@@ -284,7 +279,8 @@ fn rule_to_strategy(
             Just("b".to_string()),
             Just("c".to_string()),
             Just("x".to_string()),
-        ].boxed();
+        ]
+        .boxed();
     }
     if rule.is_literal {
         let label_lower = rule.label.to_lowercase();
@@ -301,26 +297,25 @@ fn rule_to_strategy(
     }
 
     // Build strategies for each syntax item
-    let item_strats: Vec<BoxedStrategy<String>> = rule.syntax.iter().map(|item| {
-        syntax_item_strategy(item, rules_by_cat, cat_names, inner, current_cat)
-    }).collect();
+    let item_strats: Vec<BoxedStrategy<String>> = rule
+        .syntax
+        .iter()
+        .map(|item| syntax_item_strategy(item, rules_by_cat, cat_names, inner, current_cat))
+        .collect();
 
     match item_strats.len() {
         0 => Just("x".to_string()).boxed(),
         1 => item_strats.into_iter().next().expect("checked len == 1"),
         _ => {
             // Compose multiple strategies into a space-separated string
-            item_strats.into_iter()
+            item_strats
+                .into_iter()
                 .fold(Just(String::new()).boxed(), |acc, next| {
-                    (acc, next).prop_map(|(a, b)| {
-                        if a.is_empty() {
-                            b
-                        } else {
-                            smart_join(&a, &b)
-                        }
-                    }).boxed()
+                    (acc, next)
+                        .prop_map(|(a, b)| if a.is_empty() { b } else { smart_join(&a, &b) })
+                        .boxed()
                 })
-        }
+        },
     }
 }
 
@@ -346,26 +341,22 @@ fn syntax_item_strategy(
             } else {
                 Just("x".to_string()).boxed()
             }
-        }
+        },
 
-        SyntaxItemSpec::IdentCapture { .. } => {
-            prop_oneof![
-                Just("a".to_string()),
-                Just("b".to_string()),
-                Just("c".to_string()),
-                Just("x".to_string()),
-                Just("y".to_string()),
-                Just("z".to_string()),
-            ].boxed()
-        }
+        SyntaxItemSpec::IdentCapture { .. } => prop_oneof![
+            Just("a".to_string()),
+            Just("b".to_string()),
+            Just("c".to_string()),
+            Just("x".to_string()),
+            Just("y".to_string()),
+            Just("z".to_string()),
+        ]
+        .boxed(),
 
         SyntaxItemSpec::Binder { .. } => {
-            prop_oneof![
-                Just("x".to_string()),
-                Just("y".to_string()),
-                Just("z".to_string()),
-            ].boxed()
-        }
+            prop_oneof![Just("x".to_string()), Just("y".to_string()), Just("z".to_string()),]
+                .boxed()
+        },
 
         SyntaxItemSpec::Collection { element_category, separator, .. } => {
             let elem_strat = if element_category == current_cat {
@@ -380,11 +371,12 @@ fn syntax_item_strategy(
             prop::collection::vec(elem_strat, 1..=3)
                 .prop_map(move |v| v.join(&format!(" {} ", sep)))
                 .boxed()
-        }
+        },
 
         SyntaxItemSpec::ZipMapSep { body_items, separator, .. } => {
             // Generate each body element then join with separator
-            let body_strat: Vec<BoxedStrategy<String>> = body_items.iter()
+            let body_strat: Vec<BoxedStrategy<String>> = body_items
+                .iter()
                 .map(|bi| syntax_item_strategy(bi, rules_by_cat, cat_names, inner, current_cat))
                 .collect();
 
@@ -393,41 +385,58 @@ fn syntax_item_strategy(
                 Just("x".to_string()).boxed()
             } else {
                 // Generate 1-3 copies of the body pattern
-                let body_vec_strat: BoxedStrategy<String> = body_strat
-                    .into_iter()
-                    .fold(Just(String::new()).boxed(), |acc, next| {
-                        (acc, next).prop_map(|(a, b)| {
-                            if a.is_empty() { b } else { smart_join(&a, &b) }
-                        }).boxed()
-                    });
+                let body_vec_strat: BoxedStrategy<String> =
+                    body_strat
+                        .into_iter()
+                        .fold(Just(String::new()).boxed(), |acc, next| {
+                            (acc, next)
+                                .prop_map(
+                                    |(a, b)| {
+                                        if a.is_empty() {
+                                            b
+                                        } else {
+                                            smart_join(&a, &b)
+                                        }
+                                    },
+                                )
+                                .boxed()
+                        });
 
                 prop::collection::vec(body_vec_strat, 1..=3)
                     .prop_map(move |v| v.join(&format!(" {} ", sep)))
                     .boxed()
             }
-        }
+        },
 
         SyntaxItemSpec::Optional { inner: opt_items } => {
-            let inner_strats: Vec<BoxedStrategy<String>> = opt_items.iter()
+            let inner_strats: Vec<BoxedStrategy<String>> = opt_items
+                .iter()
                 .map(|i| syntax_item_strategy(i, rules_by_cat, cat_names, inner, current_cat))
                 .collect();
 
             if inner_strats.is_empty() {
                 Just(String::new()).boxed()
             } else {
-                let combined = inner_strats.into_iter()
-                    .fold(Just(String::new()).boxed(), |acc, next| {
-                        (acc, next).prop_map(|(a, b)| {
-                            if a.is_empty() { b } else { smart_join(&a, &b) }
-                        }).boxed()
-                    });
+                let combined =
+                    inner_strats
+                        .into_iter()
+                        .fold(Just(String::new()).boxed(), |acc, next| {
+                            (acc, next)
+                                .prop_map(
+                                    |(a, b)| {
+                                        if a.is_empty() {
+                                            b
+                                        } else {
+                                            smart_join(&a, &b)
+                                        }
+                                    },
+                                )
+                                .boxed()
+                        });
 
-                prop_oneof![
-                    Just(String::new()),
-                    combined,
-                ].boxed()
+                prop_oneof![Just(String::new()), combined,].boxed()
             }
-        }
+        },
     }
 }
 
@@ -442,20 +451,19 @@ fn cross_category_leaf_strategy(
         None => return Just("x".to_string()).boxed(),
     };
 
-    let leaf_rules: Vec<&RuleSpecOwned> = rules.iter()
+    let leaf_rules: Vec<&RuleSpecOwned> = rules
+        .iter()
         .filter(|r| is_leaf_rule_owned(r, &cat_names_empty))
         .collect();
 
     if leaf_rules.is_empty() {
         // Fallback: identifier
-        return prop_oneof![
-            Just("a".to_string()),
-            Just("b".to_string()),
-            Just("x".to_string()),
-        ].boxed();
+        return prop_oneof![Just("a".to_string()), Just("b".to_string()), Just("x".to_string()),]
+            .boxed();
     }
 
-    let strats: Vec<BoxedStrategy<String>> = leaf_rules.iter()
+    let strats: Vec<BoxedStrategy<String>> = leaf_rules
+        .iter()
         .map(|r| rule_to_leaf_strategy_owned(r))
         .collect();
 
@@ -463,18 +471,22 @@ fn cross_category_leaf_strategy(
 }
 
 fn is_leaf_rule_owned(rule: &RuleSpecOwned, _cat_names: &[String]) -> bool {
-    rule.is_var || rule.is_literal || rule.syntax.iter().all(|item| {
-        matches!(item, SyntaxItemSpec::Terminal(_) | SyntaxItemSpec::IdentCapture { .. } | SyntaxItemSpec::Binder { .. })
-    })
+    rule.is_var
+        || rule.is_literal
+        || rule.syntax.iter().all(|item| {
+            matches!(
+                item,
+                SyntaxItemSpec::Terminal(_)
+                    | SyntaxItemSpec::IdentCapture { .. }
+                    | SyntaxItemSpec::Binder { .. }
+            )
+        })
 }
 
 fn rule_to_leaf_strategy_owned(rule: &RuleSpecOwned) -> BoxedStrategy<String> {
     if rule.is_var {
-        return prop_oneof![
-            Just("a".to_string()),
-            Just("b".to_string()),
-            Just("x".to_string()),
-        ].boxed();
+        return prop_oneof![Just("a".to_string()), Just("b".to_string()), Just("x".to_string()),]
+            .boxed();
     }
     if rule.is_literal {
         let label_lower = rule.label.to_lowercase();
@@ -490,15 +502,17 @@ fn rule_to_leaf_strategy_owned(rule: &RuleSpecOwned) -> BoxedStrategy<String> {
         return (1..100i64).prop_map(|n| n.to_string()).boxed();
     }
 
-    let parts: Vec<String> = rule.syntax.iter().filter_map(|item| {
-        match item {
+    let parts: Vec<String> = rule
+        .syntax
+        .iter()
+        .filter_map(|item| match item {
             SyntaxItemSpec::Terminal(t) => Some(t.clone()),
             SyntaxItemSpec::IdentCapture { .. } | SyntaxItemSpec::Binder { .. } => {
                 Some("x".to_string())
-            }
+            },
             _ => None,
-        }
-    }).collect();
+        })
+        .collect();
 
     if parts.is_empty() {
         Just("x".to_string()).boxed()
@@ -583,8 +597,10 @@ impl RuleSpecOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec};
     use crate::binding_power::Associativity;
+    use crate::{
+        BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec,
+    };
 
     /// Build a minimal calculator spec for testing.
     fn calculator_spec() -> LanguageSpec {
@@ -608,9 +624,15 @@ mod tests {
                     "Add",
                     "Expr",
                     vec![
-                        SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "a".to_string() },
+                        SyntaxItemSpec::NonTerminal {
+                            category: "Expr".to_string(),
+                            param_name: "a".to_string(),
+                        },
                         SyntaxItemSpec::Terminal("+".to_string()),
-                        SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "b".to_string() },
+                        SyntaxItemSpec::NonTerminal {
+                            category: "Expr".to_string(),
+                            param_name: "b".to_string(),
+                        },
                     ],
                     &cat_names,
                 ),
@@ -619,7 +641,10 @@ mod tests {
                     "Expr",
                     vec![
                         SyntaxItemSpec::Terminal("-".to_string()),
-                        SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "a".to_string() },
+                        SyntaxItemSpec::NonTerminal {
+                            category: "Expr".to_string(),
+                            param_name: "a".to_string(),
+                        },
                     ],
                     &cat_names,
                 ),
@@ -655,7 +680,8 @@ mod tests {
         for expr in &inputs {
             assert!(
                 !expr.contains('+'),
-                "depth 0 should produce only leaves (no '+' operator): {:?}", expr
+                "depth 0 should produce only leaves (no '+' operator): {:?}",
+                expr
             );
         }
     }

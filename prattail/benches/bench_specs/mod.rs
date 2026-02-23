@@ -22,13 +22,15 @@ use mettail_prattail::binding_power::{
 };
 use mettail_prattail::dispatch::{categories_needing_dispatch, CastRule, CrossCategoryRule};
 use mettail_prattail::lexer::{extract_terminals, GrammarRuleInfo, LexerInput, TypeInfo};
+use mettail_prattail::pratt::{PrattConfig, PrefixHandler};
 use mettail_prattail::prediction::{
     analyze_cross_category_overlaps, build_dispatch_tables, compute_first_sets,
     CrossCategoryOverlap, DispatchTable, FirstItem, FirstSet, RuleInfo,
 };
-use mettail_prattail::pratt::{PrattConfig, PrefixHandler};
 use mettail_prattail::recursive::{write_rd_handler, CollectionKind, RDRuleInfo, RDSyntaxItem};
-use mettail_prattail::{BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec};
+use mettail_prattail::{
+    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec,
+};
 
 // proc_macro2::TokenStream no longer needed — all codegen is string-based
 
@@ -90,13 +92,8 @@ fn infix_rule_right(label: &str, cat: &str, op: &str) -> RuleSpec {
 }
 
 fn var_rule(label: &str, cat: &str) -> RuleSpec {
-    let mut r = base_rule(
-        label,
-        cat,
-        vec![SyntaxItemSpec::IdentCapture {
-            param_name: "x".to_string(),
-        }],
-    );
+    let mut r =
+        base_rule(label, cat, vec![SyntaxItemSpec::IdentCapture { param_name: "x".to_string() }]);
     r.is_var = true;
     r
 }
@@ -314,11 +311,7 @@ pub fn medium_spec() -> LanguageSpec {
         rules: vec![
             // Proc rules
             var_rule("PVar", "Proc"),
-            base_rule(
-                "PZero",
-                "Proc",
-                vec![SyntaxItemSpec::Terminal("0".to_string())],
-            ),
+            base_rule("PZero", "Proc", vec![SyntaxItemSpec::Terminal("0".to_string())]),
             infix_rule("PPar", "Proc", "|"),
             binder_rule("PNew", "Proc", "new", "Name"),
             collection_rule("PBag", "Proc", "Proc", "|", CollectionKind::HashBag, "{", "}"),
@@ -366,11 +359,7 @@ pub fn complex_spec() -> LanguageSpec {
         rules: vec![
             // Proc rules
             var_rule("PVar", "Proc"),
-            base_rule(
-                "PZero",
-                "Proc",
-                vec![SyntaxItemSpec::Terminal("Nil".to_string())],
-            ),
+            base_rule("PZero", "Proc", vec![SyntaxItemSpec::Terminal("Nil".to_string())]),
             infix_rule("PPar", "Proc", "|"),
             binder_rule("PNew", "Proc", "new", "Name"),
             cast_rule("PCastInt", "Proc", "Int"),
@@ -514,19 +503,15 @@ fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
             SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
             SyntaxItemSpec::Collection { separator, .. } => {
                 terminals.push(separator.clone());
-            }
-            SyntaxItemSpec::ZipMapSep {
-                body_items,
-                separator,
-                ..
-            } => {
+            },
+            SyntaxItemSpec::ZipMapSep { body_items, separator, .. } => {
                 terminals.extend(collect_terminals_recursive(body_items));
                 terminals.push(separator.clone());
-            }
+            },
             SyntaxItemSpec::Optional { inner } => {
                 terminals.extend(collect_terminals_recursive(inner));
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     terminals.sort();
@@ -538,21 +523,14 @@ fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
 fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
     match item {
         SyntaxItemSpec::Terminal(t) => RDSyntaxItem::Terminal(t.clone()),
-        SyntaxItemSpec::NonTerminal {
-            category,
-            param_name,
-        } => RDSyntaxItem::NonTerminal {
+        SyntaxItemSpec::NonTerminal { category, param_name } => RDSyntaxItem::NonTerminal {
             category: category.clone(),
             param_name: param_name.clone(),
         },
-        SyntaxItemSpec::IdentCapture { param_name } => RDSyntaxItem::IdentCapture {
-            param_name: param_name.clone(),
+        SyntaxItemSpec::IdentCapture { param_name } => {
+            RDSyntaxItem::IdentCapture { param_name: param_name.clone() }
         },
-        SyntaxItemSpec::Binder {
-            param_name,
-            category,
-            ..
-        } => RDSyntaxItem::Binder {
+        SyntaxItemSpec::Binder { param_name, category, .. } => RDSyntaxItem::Binder {
             param_name: param_name.clone(),
             binder_category: category.clone(),
         },
@@ -616,7 +594,10 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
         })
         .collect();
 
-    let has_binders = spec.rules.iter().any(|r| r.has_binder || r.has_multi_binder);
+    let has_binders = spec
+        .rules
+        .iter()
+        .any(|r| r.has_binder || r.has_multi_binder);
     let category_names: Vec<String> = spec.types.iter().map(|t| t.name.clone()).collect();
     let lexer_input = extract_terminals(&grammar_rules, &type_infos, has_binders, &category_names);
 
@@ -702,7 +683,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
                         } else {
                             FirstItem::Ident
                         }
-                    }
+                    },
                     SyntaxItemSpec::IdentCapture { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Binder { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Collection { .. } => FirstItem::Ident,
@@ -727,17 +708,17 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
                 match native_type.as_str() {
                     "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => {
                         first_set.insert("Integer");
-                    }
+                    },
                     "f32" | "f64" => {
                         first_set.insert("Float");
-                    }
+                    },
                     "bool" => {
                         first_set.insert("Boolean");
-                    }
+                    },
                     "str" | "String" => {
                         first_set.insert("StringLit");
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         }
@@ -957,9 +938,7 @@ pub fn prepare_wfst(spec: &LanguageSpec) -> WfstPreparedSpec {
             TokenKind::True => "True".to_string(),
             TokenKind::False => "False".to_string(),
             TokenKind::StringLit => "StringLit".to_string(),
-            TokenKind::Fixed(s) => {
-                mettail_prattail::automata::codegen::terminal_to_variant_name(s)
-            }
+            TokenKind::Fixed(s) => mettail_prattail::automata::codegen::terminal_to_variant_name(s),
             TokenKind::Dollar => "Dollar".to_string(),
             TokenKind::DoubleDollar => "DoubleDollar".to_string(),
         })
@@ -1008,9 +987,8 @@ pub fn prepare_wfst(spec: &LanguageSpec) -> WfstPreparedSpec {
         sync_names.push("Eof".to_string());
         for delim in &structural {
             if grammar_terminals.contains(*delim) {
-                sync_names.push(
-                    mettail_prattail::automata::codegen::terminal_to_variant_name(delim),
-                );
+                sync_names
+                    .push(mettail_prattail::automata::codegen::terminal_to_variant_name(delim));
             }
         }
         // Also add FOLLOW set tokens if available in first_sets for related categories
@@ -1021,11 +999,7 @@ pub fn prepare_wfst(spec: &LanguageSpec) -> WfstPreparedSpec {
                 }
             }
         }
-        recovery_wfsts.push(RecoveryWfst::new(
-            cat.clone(),
-            &sync_names,
-            &token_id_map,
-        ));
+        recovery_wfsts.push(RecoveryWfst::new(cat.clone(), &sync_names, &token_id_map));
     }
 
     // ── Sample token names for prediction benchmarks ──

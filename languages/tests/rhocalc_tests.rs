@@ -105,8 +105,7 @@ fn run_test(test: &TestCase) -> Result<(), String> {
 
     // Check expected output if provided
     if let Some(expected_str) = test.expected_output {
-        let expected = parse_proc(expected_str)?
-            .normalize();
+        let expected = parse_proc(expected_str)?.normalize();
         let expected_display = expected.to_string();
 
         // Check if expected output is in the rewrite relation or path
@@ -437,11 +436,7 @@ fn test_infer_var_types_pinputs() {
     let var_types = lang.infer_var_types(term.as_ref());
     // y is bound as a Name variable in the PInputs scope
     let y_info = var_types.iter().find(|v| v.name == "y");
-    assert!(
-        y_info.is_some(),
-        "y should be found in var types, got: {:?}",
-        var_types
-    );
+    assert!(y_info.is_some(), "y should be found in var types, got: {:?}", var_types);
     assert_eq!(
         format!("{}", y_info.expect("checked above").ty),
         "Name",
@@ -458,11 +453,7 @@ fn test_infer_var_type_pinputs() {
     let term = lang.parse_term("(x?y).{*(y)}").expect("parse PInputs");
     let y_type = lang.infer_var_type(term.as_ref(), "y");
     assert!(y_type.is_some(), "y should have inferred type");
-    assert_eq!(
-        format!("{}", y_type.expect("checked above")),
-        "Name",
-        "y should be Name type"
-    );
+    assert_eq!(format!("{}", y_type.expect("checked above")), "Name", "y should be Name type");
 }
 
 /// Multi-input `(c1?x, c2?y).{*(x)}` should infer both bound variables.
@@ -476,16 +467,8 @@ fn test_infer_var_types_multi_input() {
     let var_types = lang.infer_var_types(term.as_ref());
     let x_info = var_types.iter().find(|v| v.name == "x");
     let y_info = var_types.iter().find(|v| v.name == "y");
-    assert!(
-        x_info.is_some(),
-        "x should be found in var types, got: {:?}",
-        var_types
-    );
-    assert!(
-        y_info.is_some(),
-        "y should be found in var types, got: {:?}",
-        var_types
-    );
+    assert!(x_info.is_some(), "x should be found in var types, got: {:?}", var_types);
+    assert!(y_info.is_some(), "y should be found in var types, got: {:?}", var_types);
 }
 
 /// `^loc.{loc!(init)}` where `loc` is used as a Name should create LamName, not LamProc.

@@ -1,9 +1,8 @@
 //! Integration tests for the full parser generation pipeline.
 
 use crate::{
-    binding_power::Associativity,
-    generate_parser,
-    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec,
+    binding_power::Associativity, generate_parser, BeamWidthConfig, CategorySpec, DispatchStrategy,
+    LanguageSpec, RuleSpec, SyntaxItemSpec,
 };
 
 /// Helper: extract category names from a slice of `CategorySpec`.
@@ -13,13 +12,11 @@ fn category_names(types: &[CategorySpec]) -> Vec<String> {
 
 /// Build a simple calculator language spec for testing.
 fn calculator_spec() -> LanguageSpec {
-    let types = vec![
-        CategorySpec {
-            name: "Int".to_string(),
-            native_type: Some("i32".to_string()),
-            is_primary: true,
-        },
-    ];
+    let types = vec![CategorySpec {
+        name: "Int".to_string(),
+        native_type: Some("i32".to_string()),
+        is_primary: true,
+    }];
     let cat_names = category_names(&types);
 
     LanguageSpec {
@@ -33,9 +30,15 @@ fn calculator_spec() -> LanguageSpec {
                 "Add",
                 "Int",
                 vec![
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
                     SyntaxItemSpec::Terminal("+".to_string()),
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
                 ],
                 &cat_names,
             ),
@@ -44,9 +47,15 @@ fn calculator_spec() -> LanguageSpec {
                 "Mul",
                 "Int",
                 vec![
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
                     SyntaxItemSpec::Terminal("*".to_string()),
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
                 ],
                 &cat_names,
             ),
@@ -95,11 +104,7 @@ fn test_generate_parser_code_size() {
 
     // For a simple calculator, generated code should be compact
     // (much less than LALRPOP's ~1,000 lines for Calculator)
-    assert!(
-        lines < 500,
-        "generated code should be compact, got ~{} lines",
-        lines
-    );
+    assert!(lines < 500, "generated code should be compact, got ~{} lines", lines);
 }
 
 #[test]
@@ -128,9 +133,15 @@ fn test_generate_parser_two_categories() {
                 "Add",
                 "Int",
                 vec![
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
                     SyntaxItemSpec::Terminal("+".to_string()),
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
                 ],
                 &cat_names,
             ),
@@ -149,9 +160,15 @@ fn test_generate_parser_two_categories() {
                 "Eq",
                 "Bool",
                 vec![
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
                     SyntaxItemSpec::Terminal("==".to_string()),
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "b".to_string(),
+                    },
                 ],
                 &cat_names,
             ),
@@ -185,9 +202,15 @@ fn test_generate_parser_with_unary_prefix() {
         "Sub",
         "Int",
         vec![
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "a".to_string(),
+            },
             SyntaxItemSpec::Terminal("-".to_string()),
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "b".to_string(),
+            },
         ],
         &cat_names,
     ));
@@ -198,7 +221,10 @@ fn test_generate_parser_with_unary_prefix() {
         "Int",
         vec![
             SyntaxItemSpec::Terminal("-".to_string()),
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "a".to_string(),
+            },
         ],
         &cat_names,
     ));
@@ -224,11 +250,17 @@ fn test_generate_parser_with_optional() {
         "Int",
         vec![
             SyntaxItemSpec::Terminal("if".to_string()),
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "cond".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "cond".to_string(),
+            },
             SyntaxItemSpec::Optional {
                 inner: vec![
                     SyntaxItemSpec::Terminal("else".to_string()),
-                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "alt".to_string() },
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "alt".to_string(),
+                    },
                 ],
             },
         ],
@@ -241,7 +273,10 @@ fn test_generate_parser_with_optional() {
     // Verify the IfExpr RD handler is generated
     assert!(code_str.contains("parse_ifexpr"), "should contain parse_ifexpr function");
     // Verify optional group codegen (save/restore pattern)
-    assert!(code_str.contains("saved_pos"), "should contain saved_pos for optional save/restore");
+    assert!(
+        code_str.contains("saved_pos"),
+        "should contain saved_pos for optional save/restore"
+    );
 }
 
 #[test]
@@ -254,9 +289,15 @@ fn test_generate_parser_with_right_associativity() {
         "Pow",
         "Int",
         vec![
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "a".to_string(),
+            },
             SyntaxItemSpec::Terminal("^".to_string()),
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "b".to_string(),
+            },
         ],
         &cat_names,
     );
@@ -283,7 +324,10 @@ fn test_generate_parser_with_postfix() {
         "Fact",
         "Int",
         vec![
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "a".to_string(),
+            },
             SyntaxItemSpec::Terminal("!".to_string()),
         ],
         &cat_names,
@@ -311,11 +355,20 @@ fn test_generate_parser_with_mixfix() {
         "Ternary",
         "Int",
         vec![
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "cond".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "cond".to_string(),
+            },
             SyntaxItemSpec::Terminal("?".to_string()),
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "then_val".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "then_val".to_string(),
+            },
             SyntaxItemSpec::Terminal(":".to_string()),
-            SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "else_val".to_string() },
+            SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "else_val".to_string(),
+            },
         ],
         &cat_names,
     ));
@@ -351,10 +404,7 @@ mod wfst_lexer_weight_tests {
     };
 
     /// Helper: generate lexer string from terminal specs.
-    fn generate_lexer_for(
-        terminal_specs: &[(&str, TokenKind)],
-        needs: BuiltinNeeds,
-    ) -> String {
+    fn generate_lexer_for(terminal_specs: &[(&str, TokenKind)], needs: BuiltinNeeds) -> String {
         let terminals: Vec<TerminalPattern> = terminal_specs
             .iter()
             .map(|(text, kind)| TerminalPattern {
@@ -379,7 +429,11 @@ mod wfst_lexer_weight_tests {
                 ("+", TokenKind::Fixed("+".to_string())),
                 ("-", TokenKind::Fixed("-".to_string())),
             ],
-            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
         );
 
         assert!(
@@ -399,10 +453,12 @@ mod wfst_lexer_weight_tests {
     #[test]
     fn test_generated_code_contains_weight_values() {
         let code = generate_lexer_for(
-            &[
-                ("+", TokenKind::Fixed("+".to_string())),
-            ],
-            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+            &[("+", TokenKind::Fixed("+".to_string()))],
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
         );
 
         // Fixed terminals have priority 10 → weight 0.0 (10 - 10)
@@ -412,14 +468,8 @@ mod wfst_lexer_weight_tests {
             code.contains("0.0_f64"),
             "should contain weight 0.0 for Fixed terminals (priority 10)"
         );
-        assert!(
-            code.contains("9.0_f64"),
-            "should contain weight 9.0 for Ident (priority 1)"
-        );
-        assert!(
-            code.contains("8.0_f64"),
-            "should contain weight 8.0 for Integer (priority 2)"
-        );
+        assert!(code.contains("9.0_f64"), "should contain weight 9.0 for Ident (priority 1)");
+        assert!(code.contains("8.0_f64"), "should contain weight 8.0 for Integer (priority 2)");
     }
 
     #[test]
@@ -431,7 +481,12 @@ mod wfst_lexer_weight_tests {
                 ("(", TokenKind::Fixed("(".to_string())),
                 (")", TokenKind::Fixed(")".to_string())),
             ],
-            BuiltinNeeds { ident: true, integer: true, float: true, ..Default::default() },
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                float: true,
+                ..Default::default()
+            },
         );
 
         // If this doesn't panic, the generated code is valid Rust
@@ -443,10 +498,12 @@ mod wfst_lexer_weight_tests {
     #[test]
     fn test_lex_weighted_output_includes_f64_return_type() {
         let code = generate_lexer_for(
-            &[
-                ("+", TokenKind::Fixed("+".to_string())),
-            ],
-            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+            &[("+", TokenKind::Fixed("+".to_string()))],
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
         );
 
         // lex_weighted should return Vec<(Token<'a>, Range, f64)>
@@ -497,10 +554,7 @@ mod wfst_lexer_weight_tests {
             code_str.contains("WFST_BEAM_WIDTH_"),
             "pipeline should generate WFST beam width static"
         );
-        assert!(
-            code_str.contains("LazyLock"),
-            "pipeline should generate LazyLock constructor"
-        );
+        assert!(code_str.contains("LazyLock"), "pipeline should generate LazyLock constructor");
         assert!(
             code_str.contains("PredictionWfst"),
             "pipeline should reference PredictionWfst in generated code"
@@ -514,10 +568,7 @@ mod wfst_lexer_weight_tests {
         let code = generate_parser(&spec);
         // If generate_parser returns without panicking, the code parsed as TokenStream
         // successfully. Verify it's non-empty.
-        assert!(
-            !code.is_empty(),
-            "generated code with WFST statics should not be empty"
-        );
+        assert!(!code.is_empty(), "generated code with WFST statics should not be empty");
     }
 
     /// Build a calculator spec with Weighted dispatch strategy to trigger WFST embedding.
@@ -525,13 +576,11 @@ mod wfst_lexer_weight_tests {
         #[allow(unused_imports)]
         use crate::RuleSpecInput;
 
-        let types = vec![
-            CategorySpec {
-                name: "Int".to_string(),
-                native_type: Some("i32".to_string()),
-                is_primary: true,
-            },
-        ];
+        let types = vec![CategorySpec {
+            name: "Int".to_string(),
+            native_type: Some("i32".to_string()),
+            is_primary: true,
+        }];
 
         LanguageSpec::with_options(
             "Calculator".to_string(),
@@ -551,9 +600,15 @@ mod wfst_lexer_weight_tests {
                     label: "Add".to_string(),
                     category: "Int".to_string(),
                     syntax: vec![
-                        SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+                        SyntaxItemSpec::NonTerminal {
+                            category: "Int".to_string(),
+                            param_name: "a".to_string(),
+                        },
                         SyntaxItemSpec::Terminal("+".to_string()),
-                        SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
+                        SyntaxItemSpec::NonTerminal {
+                            category: "Int".to_string(),
+                            param_name: "b".to_string(),
+                        },
                     ],
                     associativity: Associativity::Left,
                     prefix_precedence: None,
@@ -612,15 +667,19 @@ mod wfst_lexer_weight_tests {
     fn test_non_wfst_lex_unchanged() {
         // Verify that the standard lex() function is still present and unchanged
         let code = generate_lexer_for(
-            &[
-                ("+", TokenKind::Fixed("+".to_string())),
-            ],
-            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+            &[("+", TokenKind::Fixed("+".to_string()))],
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
         );
 
         // Standard lex should return Vec<(Token<'a>, Range)> (no weight)
         assert!(
-            code.contains("pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String>"),
+            code.contains(
+                "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String>"
+            ),
             "standard lex() should return Vec<(Token<'a>, Range)> without weight"
         );
     }

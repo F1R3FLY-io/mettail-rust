@@ -111,10 +111,9 @@ impl<T, S> TokenSource<T, S> {
     pub fn token_at(&self, pos: usize) -> Option<&(T, S)> {
         match self {
             TokenSource::Linear(tokens) => tokens.get(pos),
-            TokenSource::Lattice(lattice) => lattice
-                .edges_from(pos)
-                .first()
-                .map(|edge| &edge.token_span),
+            TokenSource::Lattice(lattice) => {
+                lattice.edges_from(pos).first().map(|edge| &edge.token_span)
+            },
         }
     }
 
@@ -143,10 +142,7 @@ impl<T: Clone, S: Clone> TokenSource<T, S> {
     /// let tokens = source.resolve()?;
     /// ```
     pub fn from_weighted(tokens: Vec<(T, S, f64)>) -> Self {
-        let stripped: Vec<(T, S)> = tokens
-            .into_iter()
-            .map(|(t, s, _w)| (t, s))
-            .collect();
+        let stripped: Vec<(T, S)> = tokens.into_iter().map(|(t, s, _w)| (t, s)).collect();
         TokenSource::Linear(stripped)
     }
 
@@ -170,7 +166,7 @@ impl<T: Clone, S: Clone> TokenSource<T, S> {
                     Some(path) => Ok(path.tokens),
                     None => Err("token lattice: final node unreachable".to_string()),
                 }
-            }
+            },
         }
     }
 
@@ -189,9 +185,10 @@ impl<T: Clone, S: Clone> TokenSource<T, S> {
                 };
                 match viterbi_best_path_beam(&lattice, final_node, beam_width) {
                     Some(path) => Ok(path.tokens),
-                    None => Err("token lattice: final node unreachable (beam may be too narrow)".to_string()),
+                    None => Err("token lattice: final node unreachable (beam may be too narrow)"
+                        .to_string()),
                 }
-            }
+            },
         }
     }
 }
@@ -201,13 +198,8 @@ impl<T: fmt::Display, S: fmt::Display> fmt::Display for TokenSource<T, S> {
         match self {
             TokenSource::Linear(tokens) => write!(f, "Linear({} tokens)", tokens.len()),
             TokenSource::Lattice(lattice) => {
-                write!(
-                    f,
-                    "Lattice({} nodes, {} edges)",
-                    lattice.num_nodes(),
-                    lattice.num_edges(),
-                )
-            }
+                write!(f, "Lattice({} nodes, {} edges)", lattice.num_nodes(), lattice.num_edges(),)
+            },
         }
     }
 }
@@ -261,9 +253,7 @@ impl<T, S> TokenLattice<T, S> {
 
     /// Create a new lattice with pre-allocated node capacity.
     pub fn with_capacity(node_capacity: usize) -> Self {
-        TokenLattice {
-            edges: Vec::with_capacity(node_capacity),
-        }
+        TokenLattice { edges: Vec::with_capacity(node_capacity) }
     }
 
     /// Ensure the lattice has at least `node_count` nodes.
@@ -293,10 +283,7 @@ impl<T, S> TokenLattice<T, S> {
     /// Get edges leaving a node.
     #[inline]
     pub fn edges_from(&self, node: usize) -> &[LatticeEdge<T, S>] {
-        self.edges
-            .get(node)
-            .map(|v| v.as_slice())
-            .unwrap_or(&[])
+        self.edges.get(node).map(|v| v.as_slice()).unwrap_or(&[])
     }
 
     /// Number of nodes in the lattice.
@@ -407,9 +394,7 @@ pub fn viterbi_best_path_beam<T: Clone, S: Clone>(
 
             // Beam pruning: skip edges whose cost already exceeds threshold
             if let Some(beam) = beam_width {
-                if !best_final.is_zero()
-                    && new_dist.value() > best_final.value() + beam.value()
-                {
+                if !best_final.is_zero() && new_dist.value() > best_final.value() + beam.value() {
                     continue;
                 }
             }
@@ -449,10 +434,7 @@ pub fn viterbi_best_path_beam<T: Clone, S: Clone>(
         })
         .collect();
 
-    Some(ViterbiPath {
-        tokens,
-        total_weight: dist[final_node],
-    })
+    Some(ViterbiPath { tokens, total_weight: dist[final_node] })
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -463,9 +445,7 @@ pub fn viterbi_best_path_beam<T: Clone, S: Clone>(
 ///
 /// Creates a chain lattice: node 0 → node 1 → ... → node N, with one edge
 /// per token, all at weight 0.0 (tropical one).
-pub fn linear_to_lattice<T, S>(
-    tokens: Vec<(T, S)>,
-) -> TokenLattice<T, S> {
+pub fn linear_to_lattice<T, S>(tokens: Vec<(T, S)>) -> TokenLattice<T, S> {
     use crate::automata::semiring::Semiring;
 
     let n = tokens.len();
@@ -508,8 +488,8 @@ pub fn n_best_paths<T: Clone, S: Clone>(
     final_node: usize,
     n: usize,
 ) -> Vec<ViterbiPath<T, S>> {
-    use std::collections::BinaryHeap;
     use crate::automata::semiring::Semiring;
+    use std::collections::BinaryHeap;
 
     if n == 0 || final_node >= lattice.num_nodes() {
         return Vec::new();
@@ -572,10 +552,7 @@ pub fn n_best_paths<T: Clone, S: Clone>(
                 let edge = &lattice.edges_from(from_node)[edge_idx];
                 tokens.push(edge.token_span.clone());
             }
-            results.push(ViterbiPath {
-                tokens,
-                total_weight: state.weight,
-            });
+            results.push(ViterbiPath { tokens, total_weight: state.weight });
             count_at_final += 1;
             if count_at_final >= n {
                 break;
@@ -724,10 +701,7 @@ mod tests {
 
     #[test]
     fn test_linear_to_lattice() {
-        let tokens = vec![
-            ("Plus".to_string(), (0, 1)),
-            ("Integer".to_string(), (2, 3)),
-        ];
+        let tokens = vec![("Plus".to_string(), (0, 1)), ("Integer".to_string(), (2, 3))];
 
         let lattice = linear_to_lattice(tokens);
         assert_eq!(lattice.num_nodes(), 3);
@@ -760,9 +734,8 @@ mod tests {
         assert_eq!(path.total_weight, TropicalWeight::new(1.0));
 
         // With beam=1.5: should still find path 1 (weight 1.0), beam prunes path 3
-        let path_beam = viterbi_best_path_beam(
-            &lattice, 3, Some(TropicalWeight::new(1.5))
-        ).expect("should find path with beam");
+        let path_beam = viterbi_best_path_beam(&lattice, 3, Some(TropicalWeight::new(1.5)))
+            .expect("should find path with beam");
         assert_eq!(path_beam.total_weight, TropicalWeight::new(1.0));
         assert_eq!(path_beam.tokens[0].0, "a");
     }

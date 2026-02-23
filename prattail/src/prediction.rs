@@ -24,10 +24,7 @@ pub struct FirstSet {
 
 impl FirstSet {
     pub fn new() -> Self {
-        FirstSet {
-            tokens: BTreeSet::new(),
-            nullable: false,
-        }
+        FirstSet { tokens: BTreeSet::new(), nullable: false }
     }
 
     pub fn insert(&mut self, token: &str) {
@@ -187,10 +184,7 @@ pub enum FirstItem {
 /// - **Reusable buffer:** `tokens_to_add` Vec is reused across iterations
 ///   (stack-local, not TLS — `clear()` drops Strings so only the Vec shell
 ///   is retained, making TLS marginal for the added complexity).
-pub fn compute_first_sets(
-    rules: &[RuleInfo],
-    categories: &[String],
-) -> BTreeMap<String, FirstSet> {
+pub fn compute_first_sets(rules: &[RuleInfo], categories: &[String]) -> BTreeMap<String, FirstSet> {
     let mut first_sets: BTreeMap<String, FirstSet> = BTreeMap::new();
 
     // Initialize empty FIRST sets for all categories
@@ -218,15 +212,15 @@ pub fn compute_first_sets(
                 match item {
                     FirstItem::Terminal(t) => {
                         tokens_to_add.push(terminal_to_variant_name(t));
-                    }
+                    },
                     FirstItem::NonTerminal(cat) => {
                         if let Some(cat_first) = first_sets.get(cat) {
                             tokens_to_add.extend(cat_first.tokens.iter().cloned());
                         }
-                    }
+                    },
                     FirstItem::Ident => {
                         tokens_to_add.push("Ident".to_string());
-                    }
+                    },
                 };
 
                 if let Some(cat_first) = first_sets.get_mut(&rule.category) {
@@ -363,12 +357,8 @@ fn propagate_follow_from_items(
                 if suffix_nullable {
                     changed |= copy_follow(follow_sets, rule_category, category);
                 }
-            }
-            crate::SyntaxItemSpec::Collection {
-                element_category,
-                separator,
-                ..
-            } => {
+            },
+            crate::SyntaxItemSpec::Collection { element_category, separator, .. } => {
                 // Inside a collection, the separator follows each element
                 changed |= add_token_to_follow(
                     follow_sets,
@@ -381,12 +371,8 @@ fn propagate_follow_from_items(
                 if suffix_nullable {
                     changed |= copy_follow(follow_sets, rule_category, element_category);
                 }
-            }
-            crate::SyntaxItemSpec::ZipMapSep {
-                body_items,
-                separator,
-                ..
-            } => {
+            },
+            crate::SyntaxItemSpec::ZipMapSep { body_items, separator, .. } => {
                 // Compute the "tail" tokens after a body iteration:
                 // either the separator (another iteration) or the closing delimiter
                 let (suffix_first, _) = first_of_suffix(suffix, first_sets);
@@ -406,7 +392,7 @@ fn propagate_follow_from_items(
                         }
                     }
                 }
-            }
+            },
             crate::SyntaxItemSpec::Optional { inner } => {
                 // Walk inner items. At the end of the optional group,
                 // the suffix after the Optional follows.
@@ -427,9 +413,9 @@ fn propagate_follow_from_items(
                         }
                     }
                 }
-            }
+            },
             // Terminal, IdentCapture, Binder — no category-level FOLLOW propagation
-            _ => {}
+            _ => {},
         }
     }
     changed
@@ -453,7 +439,7 @@ fn first_of_suffix(
                 result.insert(&terminal_to_variant_name(t));
                 nullable = false;
                 break; // Terminal is not nullable
-            }
+            },
             crate::SyntaxItemSpec::NonTerminal { category, .. } => {
                 if let Some(cat_first) = first_sets.get(category) {
                     for token in &cat_first.tokens {
@@ -468,13 +454,12 @@ fn first_of_suffix(
                     nullable = false;
                     break;
                 }
-            }
-            crate::SyntaxItemSpec::IdentCapture { .. }
-            | crate::SyntaxItemSpec::Binder { .. } => {
+            },
+            crate::SyntaxItemSpec::IdentCapture { .. } | crate::SyntaxItemSpec::Binder { .. } => {
                 result.insert("Ident");
                 nullable = false;
                 break; // Identifiers are not nullable
-            }
+            },
             crate::SyntaxItemSpec::Collection { element_category, .. } => {
                 // FIRST of a collection = FIRST of the element category
                 if let Some(cat_first) = first_sets.get(element_category) {
@@ -483,19 +468,19 @@ fn first_of_suffix(
                     }
                 }
                 // Collections can be empty (0 elements), so nullable — continue
-            }
+            },
             crate::SyntaxItemSpec::ZipMapSep { body_items, .. } => {
                 // FIRST = FIRST of first body item
                 let (body_first, _) = first_of_suffix(body_items, first_sets);
                 result.union(&body_first);
                 // ZipMapSep can be empty (0 iterations), so nullable — continue
-            }
+            },
             crate::SyntaxItemSpec::Optional { inner } => {
                 // FIRST of Optional = FIRST of inner items
                 let (inner_first, _) = first_of_suffix(inner, first_sets);
                 result.union(&inner_first);
                 // Optional is nullable by definition — continue
-            }
+            },
         }
     }
 
@@ -605,15 +590,15 @@ pub fn incremental_first_sets(
                 match item {
                     FirstItem::Terminal(t) => {
                         tokens_to_add.push(crate::automata::codegen::terminal_to_variant_name(t));
-                    }
+                    },
                     FirstItem::NonTerminal(cat) => {
                         if let Some(cat_first) = first_sets.get(cat) {
                             tokens_to_add.extend(cat_first.tokens.iter().cloned());
                         }
-                    }
+                    },
                     FirstItem::Ident => {
                         tokens_to_add.push("Ident".to_string());
-                    }
+                    },
                 };
                 if let Some(cat_first) = first_sets.get_mut(&rule.category) {
                     for token in &tokens_to_add {
@@ -677,10 +662,7 @@ pub fn incremental_follow_sets(
 /// Used during grammar composition to incrementally build the terminal set
 /// for the merged grammar without re-scanning all rules.
 #[cfg(feature = "wfst")]
-pub fn merge_terminal_sets(
-    a: &BTreeSet<String>,
-    b: &BTreeSet<String>,
-) -> BTreeSet<String> {
+pub fn merge_terminal_sets(a: &BTreeSet<String>, b: &BTreeSet<String>) -> BTreeSet<String> {
     let mut merged = a.clone();
     merged.extend(b.iter().cloned());
     merged
@@ -711,9 +693,7 @@ pub fn build_dispatch_tables(
 
         for rule in &cat_rules {
             if rule.is_var {
-                default_action = Some(DispatchAction::Variable {
-                    category: cat.clone(),
-                });
+                default_action = Some(DispatchAction::Variable { category: cat.clone() });
                 // Variables start with Ident
                 token_to_rules
                     .entry("Ident".to_string())
@@ -726,24 +706,21 @@ pub fn build_dispatch_tables(
                 let tokens: Vec<String> = match item {
                     FirstItem::Terminal(t) => {
                         vec![terminal_to_variant_name(t)]
-                    }
+                    },
                     FirstItem::NonTerminal(ref_cat) => {
                         if let Some(ref_first) = first_sets.get(ref_cat) {
                             ref_first.tokens.iter().cloned().collect()
                         } else {
                             vec![]
                         }
-                    }
+                    },
                     FirstItem::Ident => {
                         vec!["Ident".to_string()]
-                    }
+                    },
                 };
 
                 for token in tokens {
-                    token_to_rules
-                        .entry(token)
-                        .or_default()
-                        .push(rule);
+                    token_to_rules.entry(token).or_default().push(rule);
                 }
             }
         }
@@ -754,12 +731,8 @@ pub fn build_dispatch_tables(
                 // Unambiguous: direct dispatch
                 let rule = matching_rules[0];
                 if rule.is_var {
-                    entries.insert(
-                        token.clone(),
-                        DispatchAction::Variable {
-                            category: cat.clone(),
-                        },
-                    );
+                    entries
+                        .insert(token.clone(), DispatchAction::Variable { category: cat.clone() });
                 } else if rule.is_cast {
                     // Cast rule: parse source category and wrap
                     if let Some(FirstItem::NonTerminal(src_cat)) = rule.first_items.first() {
@@ -783,19 +756,13 @@ pub fn build_dispatch_tables(
             } else {
                 // Ambiguous: multiple rules start with the same token
                 // Use lookahead to disambiguate
-                let non_var_rules: Vec<&&RuleInfo> = matching_rules
-                    .iter()
-                    .filter(|r| !r.is_var)
-                    .collect();
+                let non_var_rules: Vec<&&RuleInfo> =
+                    matching_rules.iter().filter(|r| !r.is_var).collect();
 
                 if non_var_rules.is_empty() {
                     // Only variable rules — use variable dispatch
-                    entries.insert(
-                        token.clone(),
-                        DispatchAction::Variable {
-                            category: cat.clone(),
-                        },
-                    );
+                    entries
+                        .insert(token.clone(), DispatchAction::Variable { category: cat.clone() });
                 } else if non_var_rules.len() == 1 && matching_rules.iter().any(|r| r.is_var) {
                     // One non-var rule + variable fallback: use lookahead
                     let rule = non_var_rules[0];
@@ -835,10 +802,7 @@ pub fn build_dispatch_tables(
 
                     entries.insert(
                         token.clone(),
-                        DispatchAction::Lookahead {
-                            alternatives,
-                            fallback,
-                        },
+                        DispatchAction::Lookahead { alternatives, fallback },
                     );
                 }
             }
@@ -930,15 +894,10 @@ pub enum GrammarWarning {
     },
     /// An RD rule's first syntax item is a NonTerminal of the same category,
     /// which causes infinite recursion in the generated recursive descent parser.
-    LeftRecursion {
-        rule_label: String,
-        category: String,
-    },
+    LeftRecursion { rule_label: String, category: String },
     /// A category is declared in `types` but never referenced in any rule's
     /// syntax as a NonTerminal or Collection element.
-    UnusedCategory {
-        category: String,
-    },
+    UnusedCategory { category: String },
 }
 
 impl std::fmt::Display for GrammarWarning {
@@ -1051,46 +1010,44 @@ fn detect_left_recursion(
     warnings: &mut Vec<GrammarWarning>,
 ) {
     for (label, category, syntax) in all_syntax {
-        if let Some(crate::SyntaxItemSpec::NonTerminal {
-            category: ref first_cat,
-            ..
-        }) = syntax.first()
+        if let Some(crate::SyntaxItemSpec::NonTerminal { category: ref first_cat, .. }) =
+            syntax.first()
         {
             if first_cat == category {
-                    // This is an infix rule if it's pattern is [NT, T, NT] — skip those.
-                    // Left-recursion in infix rules is handled by Pratt parsing.
-                    // Only warn for non-infix rules (RD handlers).
-                    let terminal_count = syntax
-                        .iter()
-                        .filter(|i| matches!(i, crate::SyntaxItemSpec::Terminal(_)))
-                        .count();
-                    let nt_count = syntax
-                        .iter()
-                        .filter(|i| matches!(i, crate::SyntaxItemSpec::NonTerminal { .. }))
-                        .count();
+                // This is an infix rule if it's pattern is [NT, T, NT] — skip those.
+                // Left-recursion in infix rules is handled by Pratt parsing.
+                // Only warn for non-infix rules (RD handlers).
+                let terminal_count = syntax
+                    .iter()
+                    .filter(|i| matches!(i, crate::SyntaxItemSpec::Terminal(_)))
+                    .count();
+                let nt_count = syntax
+                    .iter()
+                    .filter(|i| matches!(i, crate::SyntaxItemSpec::NonTerminal { .. }))
+                    .count();
 
-                    // Infix pattern: exactly 2 NTs of same category with terminal(s) between.
-                    // Skip those — Pratt handles left-recursion for infix.
-                    let is_infix_pattern = nt_count == 2
-                        && terminal_count >= 1
-                        && syntax.len() >= 3
-                        && matches!(syntax.last(), Some(crate::SyntaxItemSpec::NonTerminal { category: ref last_cat, .. }) if last_cat == category);
+                // Infix pattern: exactly 2 NTs of same category with terminal(s) between.
+                // Skip those — Pratt handles left-recursion for infix.
+                let is_infix_pattern = nt_count == 2
+                    && terminal_count >= 1
+                    && syntax.len() >= 3
+                    && matches!(syntax.last(), Some(crate::SyntaxItemSpec::NonTerminal { category: ref last_cat, .. }) if last_cat == category);
 
-                    // Postfix pattern: exactly 1 NT + 1 terminal
-                    let is_postfix_pattern = nt_count == 1 && terminal_count == 1 && syntax.len() == 2;
+                // Postfix pattern: exactly 1 NT + 1 terminal
+                let is_postfix_pattern = nt_count == 1 && terminal_count == 1 && syntax.len() == 2;
 
-                    // Mixfix: 3+ NTs with terminals — also handled by Pratt
-                    let is_mixfix_pattern = nt_count >= 3 && terminal_count >= 2;
+                // Mixfix: 3+ NTs with terminals — also handled by Pratt
+                let is_mixfix_pattern = nt_count >= 3 && terminal_count >= 2;
 
-                    if !is_infix_pattern && !is_postfix_pattern && !is_mixfix_pattern {
-                        warnings.push(GrammarWarning::LeftRecursion {
-                            rule_label: label.clone(),
-                            category: category.clone(),
-                        });
-                    }
+                if !is_infix_pattern && !is_postfix_pattern && !is_mixfix_pattern {
+                    warnings.push(GrammarWarning::LeftRecursion {
+                        rule_label: label.clone(),
+                        category: category.clone(),
+                    });
                 }
             }
         }
+    }
 }
 
 /// Detect unused categories: declared but never referenced in any rule's syntax.
@@ -1115,9 +1072,7 @@ fn detect_unused_categories(
 
     for cat in categories {
         if !referenced.contains(cat) {
-            warnings.push(GrammarWarning::UnusedCategory {
-                category: cat.clone(),
-            });
+            warnings.push(GrammarWarning::UnusedCategory { category: cat.clone() });
         }
     }
 }
@@ -1131,12 +1086,10 @@ fn collect_referenced_categories(
         match item {
             crate::SyntaxItemSpec::NonTerminal { category, .. } => {
                 referenced.insert(category.clone());
-            }
-            crate::SyntaxItemSpec::Collection {
-                element_category, ..
-            } => {
+            },
+            crate::SyntaxItemSpec::Collection { element_category, .. } => {
                 referenced.insert(element_category.clone());
-            }
+            },
             crate::SyntaxItemSpec::ZipMapSep {
                 left_category,
                 right_category,
@@ -1146,14 +1099,14 @@ fn collect_referenced_categories(
                 referenced.insert(left_category.clone());
                 referenced.insert(right_category.clone());
                 collect_referenced_categories(body_items, referenced);
-            }
+            },
             crate::SyntaxItemSpec::Optional { inner } => {
                 collect_referenced_categories(inner, referenced);
-            }
+            },
             crate::SyntaxItemSpec::Binder { category, .. } => {
                 referenced.insert(category.clone());
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 }
@@ -1207,28 +1160,30 @@ pub fn build_dispatch_action_tables(
                 // Unary prefix — still Direct, just with a different parse_fn
                 if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
                     let variant = terminal_to_variant_name(t);
-                    entries.entry(variant).or_insert_with(|| DispatchAction::Direct {
-                        rule_label: rd_rule.label.clone(),
-                        parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
-                    });
+                    entries
+                        .entry(variant)
+                        .or_insert_with(|| DispatchAction::Direct {
+                            rule_label: rd_rule.label.clone(),
+                            parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
+                        });
                 }
                 continue;
             }
 
-            let starts_with_terminal = matches!(
-                rd_rule.items.first(),
-                Some(crate::recursive::RDSyntaxItem::Terminal(_))
-            );
+            let starts_with_terminal =
+                matches!(rd_rule.items.first(), Some(crate::recursive::RDSyntaxItem::Terminal(_)));
             if !starts_with_terminal {
                 continue;
             }
 
             if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
                 let variant = terminal_to_variant_name(t);
-                entries.entry(variant).or_insert_with(|| DispatchAction::Direct {
-                    rule_label: rd_rule.label.clone(),
-                    parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
-                });
+                entries
+                    .entry(variant)
+                    .or_insert_with(|| DispatchAction::Direct {
+                        rule_label: rd_rule.label.clone(),
+                        parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
+                    });
             }
         }
 
@@ -1242,18 +1197,22 @@ pub fn build_dispatch_action_tables(
                 _ => vec![],
             };
             for variant in literal_variants {
-                entries.entry(variant.to_string()).or_insert_with(|| DispatchAction::Direct {
-                    rule_label: format!("{}Lit", cat),
-                    parse_fn: format!("parse_{}_literal", cat.to_lowercase()),
-                });
+                entries
+                    .entry(variant.to_string())
+                    .or_insert_with(|| DispatchAction::Direct {
+                        rule_label: format!("{}Lit", cat),
+                        parse_fn: format!("parse_{}_literal", cat.to_lowercase()),
+                    });
             }
         }
 
         // ── Grouping: parenthesized expression ──
-        entries.entry("LParen".to_string()).or_insert_with(|| DispatchAction::Grouping {
-            open: "(".to_string(),
-            close: ")".to_string(),
-        });
+        entries
+            .entry("LParen".to_string())
+            .or_insert_with(|| DispatchAction::Grouping {
+                open: "(".to_string(),
+                close: ")".to_string(),
+            });
 
         // ── Cast rules targeting this category ──
         for cast_rule in cast_rules {
@@ -1268,10 +1227,12 @@ pub fn build_dispatch_action_tables(
                     source_first.clone()
                 };
                 for token in &unique_to_source.tokens {
-                    entries.entry(token.clone()).or_insert_with(|| DispatchAction::Cast {
-                        source_category: cast_rule.source_category.clone(),
-                        wrapper_label: cast_rule.label.clone(),
-                    });
+                    entries
+                        .entry(token.clone())
+                        .or_insert_with(|| DispatchAction::Cast {
+                            source_category: cast_rule.source_category.clone(),
+                            wrapper_label: cast_rule.label.clone(),
+                        });
                 }
             }
         }
@@ -1318,9 +1279,9 @@ pub fn build_dispatch_action_tables(
         }
 
         // ── Variable fallback ──
-        entries.entry("Ident".to_string()).or_insert_with(|| DispatchAction::Variable {
-            category: cat.clone(),
-        });
+        entries
+            .entry("Ident".to_string())
+            .or_insert_with(|| DispatchAction::Variable { category: cat.clone() });
 
         tables.insert(cat.clone(), entries);
     }
@@ -1410,10 +1371,7 @@ fn token_to_match_pattern(token: &str) -> String {
 }
 
 /// Generate a FIRST set as a `contains` check in generated code.
-pub fn generate_first_set_check(
-    first_set: &FirstSet,
-    token_var: &str,
-) -> TokenStream {
+pub fn generate_first_set_check(first_set: &FirstSet, token_var: &str) -> TokenStream {
     let token_ident = format_ident!("{}", token_var);
     let checks: Vec<TokenStream> = first_set
         .tokens

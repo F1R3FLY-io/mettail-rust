@@ -62,10 +62,7 @@ impl RuleWeights {
             .iter()
             .map(|label| (label.clone(), LogWeight::one()))
             .collect();
-        RuleWeights {
-            weights,
-            learning_rate: 0.1,
-        }
+        RuleWeights { weights, learning_rate: 0.1 }
     }
 
     /// Set the learning rate for SGD.
@@ -93,11 +90,7 @@ impl RuleWeights {
     /// In the log semiring:
     /// `loss = correct_path_weight - total_weight`
     /// (since `LogWeight` represents `-ln(p)`, the ratio becomes a difference).
-    pub fn compute_loss(
-        &self,
-        correct_path_weight: LogWeight,
-        total_weight: LogWeight,
-    ) -> f64 {
+    pub fn compute_loss(&self, correct_path_weight: LogWeight, total_weight: LogWeight) -> f64 {
         if total_weight.is_zero() {
             return f64::INFINITY;
         }
@@ -139,11 +132,7 @@ impl RuleWeights {
     ///
     /// For each example, the "correct" counts are the rule labels in the
     /// expected parse, and the "all" counts are uniform (1.0 for every rule).
-    pub fn train(
-        &mut self,
-        examples: &[TrainingExample],
-        epochs: usize,
-    ) -> TrainingStats {
+    pub fn train(&mut self, examples: &[TrainingExample], epochs: usize) -> TrainingStats {
         let mut epoch_losses = Vec::with_capacity(epochs);
         let num_rules = self.weights.len();
 
@@ -315,16 +304,14 @@ pub struct TrainedModelMetadata {
 impl TrainedModel {
     /// Save trained model to JSON file.
     pub fn save(&self, path: &str) -> std::io::Result<()> {
-        let json = serde_json::to_string_pretty(self)
-            .map_err(std::io::Error::other)?;
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         std::fs::write(path, json)
     }
 
     /// Load trained model from JSON file.
     pub fn load(path: &str) -> std::io::Result<Self> {
         let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json)
-            .map_err(std::io::Error::other)
+        serde_json::from_str(&json).map_err(std::io::Error::other)
     }
 
     /// Deserialize from an embedded JSON string (e.g., from `include_str!`).
@@ -347,12 +334,7 @@ mod tests {
     use super::*;
 
     fn test_rule_labels() -> Vec<String> {
-        vec![
-            "Add".to_string(),
-            "Mul".to_string(),
-            "Lit".to_string(),
-            "Var".to_string(),
-        ]
+        vec!["Add".to_string(), "Mul".to_string(), "Lit".to_string(), "Var".to_string()]
     }
 
     #[test]
@@ -383,10 +365,8 @@ mod tests {
         rw.set_learning_rate(0.5);
 
         // "Correct" parse uses Add more than expected
-        let expected_correct: BTreeMap<String, f64> =
-            BTreeMap::from([("Add".to_string(), 2.0)]);
-        let expected_all: BTreeMap<String, f64> =
-            BTreeMap::from([("Add".to_string(), 0.5)]);
+        let expected_correct: BTreeMap<String, f64> = BTreeMap::from([("Add".to_string(), 2.0)]);
+        let expected_all: BTreeMap<String, f64> = BTreeMap::from([("Add".to_string(), 0.5)]);
 
         let add_before = rw.get("Add").value();
         rw.update(&expected_correct, &expected_all);
@@ -480,10 +460,7 @@ mod tests {
     #[test]
     fn test_trained_model_file_roundtrip() {
         let model = TrainedModel {
-            rule_weights: BTreeMap::from([
-                ("Add".to_string(), 0.5),
-                ("Lit".to_string(), 0.3),
-            ]),
+            rule_weights: BTreeMap::from([("Add".to_string(), 0.5), ("Lit".to_string(), 0.3)]),
             recommended_beam_width: Some(2.0),
             metadata: TrainedModelMetadata {
                 epochs: 5,
@@ -538,10 +515,7 @@ mod tests {
     #[test]
     fn test_from_embedded_roundtrip() {
         let model = TrainedModel {
-            rule_weights: BTreeMap::from([
-                ("Var".to_string(), 1.5),
-                ("Mul".to_string(), 0.7),
-            ]),
+            rule_weights: BTreeMap::from([("Var".to_string(), 1.5), ("Mul".to_string(), 0.7)]),
             recommended_beam_width: None,
             metadata: TrainedModelMetadata {
                 epochs: 3,

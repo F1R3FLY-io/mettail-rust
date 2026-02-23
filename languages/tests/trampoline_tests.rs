@@ -5,7 +5,7 @@
 //! The trampoline converts all same-category recursion into iteration,
 //! bounded only by available heap memory.
 
-use mettail_languages::calculator::{Int, Bool};
+use mettail_languages::calculator::{Bool, Int};
 
 // ── Helper: generate deeply nested parenthesized expression ──
 
@@ -227,5 +227,9 @@ fn test_deep_parens_value_correct() {
     let ast = result.expect("should parse");
     // The AST should be Add(NumLit(1), NumLit(2)) regardless of parens
     let display = format!("{}", ast);
-    assert!(display.contains("1") && display.contains("2"), "AST should contain 1 and 2: {}", display);
+    assert!(
+        display.contains("1") && display.contains("2"),
+        "AST should contain 1 and 2: {}",
+        display
+    );
 }

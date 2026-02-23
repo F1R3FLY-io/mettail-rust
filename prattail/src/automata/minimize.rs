@@ -341,7 +341,10 @@ pub fn canonicalize_state_order(dfa: &mut Dfa) {
     }
 
     // Check if already in BFS order (common case — skip reordering)
-    let already_ordered = new_order.iter().enumerate().all(|(i, &old)| old == i as StateId);
+    let already_ordered = new_order
+        .iter()
+        .enumerate()
+        .all(|(i, &old)| old == i as StateId);
     if already_ordered && new_order.len() == n {
         return;
     }
@@ -453,7 +456,9 @@ mod tests {
         let min_dfa = minimize_dfa(&dfa);
 
         // Snapshot state after first canonicalization (already done in minimize_dfa)
-        let first_pass_states: Vec<_> = min_dfa.states.iter()
+        let first_pass_states: Vec<_> = min_dfa
+            .states
+            .iter()
             .map(|s| (s.transitions.clone(), s.accept.clone()))
             .collect();
 
@@ -461,7 +466,9 @@ mod tests {
         let mut dfa_copy = min_dfa.clone();
         canonicalize_state_order(&mut dfa_copy);
 
-        let second_pass_states: Vec<_> = dfa_copy.states.iter()
+        let second_pass_states: Vec<_> = dfa_copy
+            .states
+            .iter()
             .map(|s| (s.transitions.clone(), s.accept.clone()))
             .collect();
 
@@ -503,10 +510,7 @@ mod tests {
         let class = partition.classify(b'=');
         state = min_dfa.transition(state, class);
         assert_ne!(state, DEAD_STATE);
-        assert_eq!(
-            min_dfa.states[state as usize].accept,
-            Some(TokenKind::Fixed("=".to_string()))
-        );
+        assert_eq!(min_dfa.states[state as usize].accept, Some(TokenKind::Fixed("=".to_string())));
 
         // After lexing "==", should accept Fixed("==")
         let state2 = min_dfa.transition(state, class);

@@ -12,11 +12,11 @@
 mod bench_common;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::time::Duration;
 use mettail_languages::ambient;
 use mettail_languages::calculator;
 use mettail_languages::lambda;
 use mettail_languages::rhocalc;
+use std::time::Duration;
 
 use bench_common::{
     gen_chained_negation, gen_infix_chain, gen_mixed_precedence, gen_nested_application,
@@ -37,8 +37,7 @@ fn gen_calculator_composite(n: usize) -> String {
     let right = gen_right_assoc_chain(n.min(20)); // cap ^ depth to avoid stack issues
     let mixed = gen_mixed_precedence(n);
     let neg = gen_chained_negation(n.min(50)); // cap negation depth
-    format!("{} + ({}) + ({})", neg, left, right)
-        + &format!(" + ({})", mixed)
+    format!("{} + ({}) + ({})", neg, left, right) + &format!(" + ({})", mixed)
 }
 
 fn bench_calculator_scaling(c: &mut Criterion) {
@@ -200,8 +199,7 @@ fn bench_ambient_matrix(c: &mut Criterion) {
             let leaf = gen_parallel(width, "0");
             let mut result = leaf;
             for _ in 1..depth {
-                let inner_terms: Vec<String> =
-                    (0..width - 1).map(|_| "0".to_string()).collect();
+                let inner_terms: Vec<String> = (0..width - 1).map(|_| "0".to_string()).collect();
                 result = format!("{{{} | {}}}", inner_terms.join(" | "), result);
             }
             let input = result;

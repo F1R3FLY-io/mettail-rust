@@ -25,10 +25,7 @@ use syn::Ident;
 ///
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
 /// This is used for the core Ascent struct in SCC splitting.
-pub fn generate_category_rules(
-    language: &LanguageDef,
-    cat_filter: CategoryFilter,
-) -> TokenStream {
+pub fn generate_category_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> TokenStream {
     let mut rules = Vec::new();
 
     // Compute reachability for pruning dead cross-category rules
@@ -101,8 +98,11 @@ pub fn generate_category_rules(
 
         // Generate consolidated rewrite congruence rules for auto-generated Apply/MApply variants
         // Only for reachable (src, domain) pairs
-        let congruence_rules =
-            super::helpers::generate_consolidated_congruence_rules(cat, language, effective_reachable);
+        let congruence_rules = super::helpers::generate_consolidated_congruence_rules(
+            cat,
+            language,
+            effective_reachable,
+        );
         rules.extend(congruence_rules);
     }
 
@@ -110,7 +110,6 @@ pub fn generate_category_rules(
         #(#rules)*
     }
 }
-
 
 /// Generate deconstruction for a constructor that has both a collection field and a binding
 /// (e.g. PInputs(Vec(Name), Scope<..., Proc>)).
@@ -323,4 +322,3 @@ fn generate_projection_seeding_rules(category: &Ident, language: &LanguageDef) -
 
     rules
 }
-

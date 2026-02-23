@@ -260,7 +260,11 @@ fn write_led_chain(buf: &mut String, config: &PrattConfig) {
 /// Write the binding power lookup function.
 fn write_bp_function(buf: &mut String, config: &PrattConfig, bp_table: &BindingPowerTable) {
     let cat = &config.category;
-    write!(buf, "fn infix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{").unwrap();
+    write!(
+        buf,
+        "fn infix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{"
+    )
+    .unwrap();
 
     for op in bp_table.operators_for_category(cat) {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
@@ -295,7 +299,11 @@ fn write_make_infix(buf: &mut String, config: &PrattConfig, bp_table: &BindingPo
 /// Write the postfix binding power lookup function.
 fn write_postfix_bp_function(buf: &mut String, config: &PrattConfig, bp_table: &BindingPowerTable) {
     let cat = &config.category;
-    write!(buf, "fn postfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<u8> {{ match token {{").unwrap();
+    write!(
+        buf,
+        "fn postfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<u8> {{ match token {{"
+    )
+    .unwrap();
 
     for op in bp_table.postfix_operators_for_category(cat) {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
@@ -419,11 +427,7 @@ fn write_token_pattern(buf: &mut String, token: &str) {
 }
 
 /// Write the prefix (nud) handler function.
-fn write_prefix_handler(
-    buf: &mut String,
-    config: &PrattConfig,
-    prefix_handlers: &[PrefixHandler],
-) {
+fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers: &[PrefixHandler]) {
     let cat = &config.category;
     let parse_fn = format!("parse_{}", cat);
 
@@ -454,44 +458,44 @@ fn write_prefix_handler(
                     "Token::Integer(v) => {{ let val = *v as i32; *pos += 1; Ok({}::NumLit(val)) }}",
                     cat,
                 ));
-            }
+            },
             "i64" | "isize" => {
                 match_arms.push(format!(
                     "Token::Integer(v) => {{ let val = *v; *pos += 1; Ok({}::NumLit(val)) }}",
                     cat,
                 ));
-            }
+            },
             "u32" => {
                 match_arms.push(format!(
                     "Token::Integer(v) => {{ let val = *v as u32; *pos += 1; Ok({}::NumLit(val)) }}",
                     cat,
                 ));
-            }
+            },
             "u64" | "usize" => {
                 match_arms.push(format!(
                     "Token::Integer(v) => {{ let val = *v as u64; *pos += 1; Ok({}::NumLit(val)) }}",
                     cat,
                 ));
-            }
+            },
             "f32" | "f64" => {
                 match_arms.push(format!(
                     "Token::Float(v) => {{ let val = (*v).into(); *pos += 1; Ok({}::FloatLit(val)) }}",
                     cat,
                 ));
-            }
+            },
             "bool" => {
                 match_arms.push(format!(
                     "Token::Boolean(v) => {{ let val = *v; *pos += 1; Ok({}::BoolLit(val)) }}",
                     cat,
                 ));
-            }
+            },
             "str" | "String" => {
                 match_arms.push(format!(
                     "Token::StringLit(v) => {{ let val = (*v).to_string(); *pos += 1; Ok({}::StringLit(val)) }}",
                     cat,
                 ));
-            }
-            _ => {} // Unknown native type — no auto-literal
+            },
+            _ => {}, // Unknown native type — no auto-literal
         }
     }
 
@@ -545,7 +549,8 @@ fn write_prefix_handler(
         for handler in &lookahead_handlers {
             let terminal = handler.ident_lookahead.as_ref().expect("checked above");
             let variant = crate::automata::codegen::terminal_to_variant_name(terminal);
-            write!(arm, "Some(Token::{}) => {}(tokens, pos),", variant, handler.parse_fn_name).unwrap();
+            write!(arm, "Some(Token::{}) => {}(tokens, pos),", variant, handler.parse_fn_name)
+                .unwrap();
         }
         // Default: variable fallback
         write!(
@@ -813,9 +818,11 @@ pub fn write_pratt_parser_recovering(
 
     if has_led {
         // Led loop with recovery
-        buf.push_str("loop { \
+        buf.push_str(
+            "loop { \
             if *pos >= tokens.len() { break; } \
-            let token = &tokens[*pos].0;");
+            let token = &tokens[*pos].0;",
+        );
 
         write_led_chain_recovering(buf, config, bp_table);
 
@@ -830,7 +837,11 @@ pub fn write_pratt_parser_recovering(
 /// For postfix and mixfix: same as non-recovering (no sub-parse to fail for postfix;
 /// mixfix wraps sub-parses with recovery).
 /// For infix: wraps RHS parse in recovery — on error, push error + sync + break.
-fn write_led_chain_recovering(buf: &mut String, config: &PrattConfig, _bp_table: &BindingPowerTable) {
+fn write_led_chain_recovering(
+    buf: &mut String,
+    config: &PrattConfig,
+    _bp_table: &BindingPowerTable,
+) {
     let cat = &config.category;
     let parse_fn = if config.needs_dispatch {
         format!("parse_{}_own", cat)
@@ -916,10 +927,7 @@ fn write_led_chain_recovering(buf: &mut String, config: &PrattConfig, _bp_table:
 ///
 /// Generates `parse_<Cat>_recovering(tokens, pos, min_bp, errors) -> Option<Cat>`.
 /// Falls back to `parse_<Cat>_own_recovering` after cross-category dispatch.
-pub fn write_dispatch_recovering(
-    buf: &mut String,
-    category: &str,
-) {
+pub fn write_dispatch_recovering(buf: &mut String, category: &str) {
     use std::fmt::Write;
     write!(
         buf,
@@ -942,7 +950,11 @@ pub fn write_dispatch_recovering(
 
 /// Public wrapper: write BP function (for trampoline codegen).
 pub fn write_bp_function_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
-    write!(buf, "fn infix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{").unwrap();
+    write!(
+        buf,
+        "fn infix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{"
+    )
+    .unwrap();
     for op in bp_table.operators_for_category(cat) {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
         write!(buf, "Token::{} => Some(({}, {})),", variant, op.left_bp, op.right_bp).unwrap();
@@ -958,14 +970,23 @@ pub fn write_make_infix_pub(buf: &mut String, cat: &str, bp_table: &BindingPower
     ).unwrap();
     for op in bp_table.operators_for_category(cat) {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
-        write!(buf, "Token::{} => {}::{}(Box::new(lhs), Box::new(rhs)),", variant, cat, op.label).unwrap();
+        write!(
+            buf,
+            "Token::{} => {}::{}(Box::new(lhs), Box::new(rhs)),",
+            variant, cat, op.label
+        )
+        .unwrap();
     }
     buf.push_str("_ => unreachable!(\"make_infix called with non-infix token\") } }");
 }
 
 /// Public wrapper: write postfix BP function (for trampoline codegen).
 pub fn write_postfix_bp_function_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
-    write!(buf, "fn postfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<u8> {{ match token {{").unwrap();
+    write!(
+        buf,
+        "fn postfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<u8> {{ match token {{"
+    )
+    .unwrap();
     for op in bp_table.postfix_operators_for_category(cat) {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
         write!(buf, "Token::{} => Some({}),", variant, op.left_bp).unwrap();
@@ -978,7 +999,8 @@ pub fn write_make_postfix_pub(buf: &mut String, cat: &str, bp_table: &BindingPow
     write!(
         buf,
         "fn make_postfix_{cat}<'a>(token: &Token<'a>, operand: {cat}) -> {cat} {{ match token {{",
-    ).unwrap();
+    )
+    .unwrap();
     for op in bp_table.postfix_operators_for_category(cat) {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
         write!(buf, "Token::{} => {}::{}(Box::new(operand)),", variant, cat, op.label).unwrap();
@@ -991,7 +1013,8 @@ pub fn write_mixfix_bp_function_pub(buf: &mut String, cat: &str, bp_table: &Bind
     write!(
         buf,
         "fn mixfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{",
-    ).unwrap();
+    )
+    .unwrap();
     for op in bp_table.mixfix_operators_for_category(cat) {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
         write!(buf, "Token::{} => Some(({}, {})),", variant, op.left_bp, op.right_bp).unwrap();

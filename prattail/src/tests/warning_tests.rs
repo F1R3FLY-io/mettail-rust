@@ -63,7 +63,9 @@ fn test_no_ambiguity_for_different_terminals() {
     let warnings = detect_grammar_warnings(&rules, &categories, &syntax);
 
     assert!(
-        !warnings.iter().any(|w| matches!(w, GrammarWarning::AmbiguousPrefix { .. })),
+        !warnings
+            .iter()
+            .any(|w| matches!(w, GrammarWarning::AmbiguousPrefix { .. })),
         "should not detect ambiguity for different terminals: {:?}",
         warnings
     );
@@ -82,7 +84,9 @@ fn test_no_ambiguity_for_infix_rules() {
     let warnings = detect_grammar_warnings(&rules, &categories, &syntax);
 
     assert!(
-        !warnings.iter().any(|w| matches!(w, GrammarWarning::AmbiguousPrefix { .. })),
+        !warnings
+            .iter()
+            .any(|w| matches!(w, GrammarWarning::AmbiguousPrefix { .. })),
         "infix rules should not contribute to prefix ambiguity: {:?}",
         warnings
     );
@@ -106,7 +110,9 @@ fn test_no_ambiguity_for_var_rules() {
 
     // Var rules are excluded, so only Foo matches Ident — no ambiguity
     assert!(
-        !warnings.iter().any(|w| matches!(w, GrammarWarning::AmbiguousPrefix { .. })),
+        !warnings
+            .iter()
+            .any(|w| matches!(w, GrammarWarning::AmbiguousPrefix { .. })),
         "var rules should not contribute to prefix ambiguity: {:?}",
         warnings
     );
@@ -169,7 +175,9 @@ fn test_no_left_recursion_for_infix_pattern() {
     let warnings = detect_grammar_warnings(&rules, &categories, &syntax);
 
     assert!(
-        !warnings.iter().any(|w| matches!(w, GrammarWarning::LeftRecursion { .. })),
+        !warnings
+            .iter()
+            .any(|w| matches!(w, GrammarWarning::LeftRecursion { .. })),
         "infix pattern should not trigger left-recursion warning: {:?}",
         warnings
     );
@@ -195,7 +203,9 @@ fn test_no_left_recursion_for_postfix_pattern() {
     let warnings = detect_grammar_warnings(&rules, &categories, &syntax);
 
     assert!(
-        !warnings.iter().any(|w| matches!(w, GrammarWarning::LeftRecursion { .. })),
+        !warnings
+            .iter()
+            .any(|w| matches!(w, GrammarWarning::LeftRecursion { .. })),
         "postfix pattern should not trigger left-recursion warning: {:?}",
         warnings
     );
@@ -218,7 +228,9 @@ fn test_no_left_recursion_for_different_category() {
     let warnings = detect_grammar_warnings(&rules, &categories, &syntax);
 
     assert!(
-        !warnings.iter().any(|w| matches!(w, GrammarWarning::LeftRecursion { .. })),
+        !warnings
+            .iter()
+            .any(|w| matches!(w, GrammarWarning::LeftRecursion { .. })),
         "cross-category first item should not trigger left-recursion: {:?}",
         warnings
     );
@@ -254,11 +266,7 @@ fn test_no_unused_category_when_referenced_in_syntax() {
     let rules = vec![];
     let categories = vec!["Int".to_string(), "Bool".to_string()];
     let syntax = vec![
-        (
-            "NumLit".to_string(),
-            "Int".to_string(),
-            vec![],
-        ),
+        ("NumLit".to_string(), "Int".to_string(), vec![]),
         (
             "Eq".to_string(),
             "Bool".to_string(),
@@ -279,7 +287,9 @@ fn test_no_unused_category_when_referenced_in_syntax() {
     let warnings = detect_grammar_warnings(&rules, &categories, &syntax);
 
     assert!(
-        !warnings.iter().any(|w| matches!(w, GrammarWarning::UnusedCategory { .. })),
+        !warnings
+            .iter()
+            .any(|w| matches!(w, GrammarWarning::UnusedCategory { .. })),
         "referenced categories should not trigger unused warning: {:?}",
         warnings
     );
@@ -290,16 +300,14 @@ fn test_no_unused_category_when_has_rules() {
     let rules = vec![];
     let categories = vec!["Int".to_string()];
     // Int has a rule targeting it — it's "used"
-    let syntax = vec![(
-        "NumLit".to_string(),
-        "Int".to_string(),
-        vec![],
-    )];
+    let syntax = vec![("NumLit".to_string(), "Int".to_string(), vec![])];
 
     let warnings = detect_grammar_warnings(&rules, &categories, &syntax);
 
     assert!(
-        !warnings.iter().any(|w| matches!(w, GrammarWarning::UnusedCategory { .. })),
+        !warnings
+            .iter()
+            .any(|w| matches!(w, GrammarWarning::UnusedCategory { .. })),
         "categories with rules should not be marked as unused: {:?}",
         warnings
     );
@@ -327,9 +335,7 @@ fn test_warning_display_format() {
     assert!(s2.contains("left-recursive"));
     assert!(s2.contains("Bad"));
 
-    let w3 = GrammarWarning::UnusedCategory {
-        category: "Orphan".to_string(),
-    };
+    let w3 = GrammarWarning::UnusedCategory { category: "Orphan".to_string() };
     let s3 = format!("{}", w3);
     assert!(s3.contains("never referenced"));
     assert!(s3.contains("Orphan"));

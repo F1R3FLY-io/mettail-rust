@@ -213,15 +213,8 @@ mod tests {
         );
 
         // There should be at least one accepting state
-        let num_accepting = dfa
-            .states
-            .iter()
-            .filter(|s| s.accept.is_some())
-            .count();
-        assert!(
-            num_accepting > 0,
-            "DFA should have at least one accepting state"
-        );
+        let num_accepting = dfa.states.iter().filter(|s| s.accept.is_some()).count();
+        assert!(num_accepting > 0, "DFA should have at least one accepting state");
     }
 
     #[test]

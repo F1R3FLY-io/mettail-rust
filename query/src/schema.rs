@@ -13,9 +13,7 @@ pub struct QuerySchema {
 
 impl QuerySchema {
     pub fn new() -> Self {
-        QuerySchema {
-            relations: HashMap::new(),
-        }
+        QuerySchema { relations: HashMap::new() }
     }
 
     pub fn from_custom_relations(

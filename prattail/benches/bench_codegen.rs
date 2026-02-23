@@ -33,18 +33,14 @@ fn bench_rd_handlers(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| {
-                    let mut buf = String::with_capacity(4096);
-                    for rd_rule in &prepared.rd_rules {
-                        let _ = write_rd_handler(&mut buf, rd_rule);
-                    }
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| {
+                let mut buf = String::with_capacity(4096);
+                for rd_rule in &prepared.rd_rules {
+                    let _ = write_rd_handler(&mut buf, rd_rule);
+                }
+            });
+        });
     }
 
     group.finish();
@@ -65,23 +61,14 @@ fn bench_pratt_parser(c: &mut Criterion) {
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| {
-                    let mut buf = String::with_capacity(4096);
-                    for ppc in &prepared.pratt_configs {
-                        write_pratt_parser(
-                            &mut buf,
-                            &ppc.config,
-                            &prepared.bp_table,
-                            &ppc.handlers,
-                        );
-                    }
-                });
-            },
-        );
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| {
+                let mut buf = String::with_capacity(4096);
+                for ppc in &prepared.pratt_configs {
+                    write_pratt_parser(&mut buf, &ppc.config, &prepared.bp_table, &ppc.handlers);
+                }
+            });
+        });
     }
 
     group.finish();
@@ -94,40 +81,33 @@ fn bench_dispatch(c: &mut Criterion) {
     group.sample_size(200);
 
     // Only specs with cross-category rules produce dispatch code
-    let specs = [
-        ("small", small_spec()),
-        ("complex", complex_spec()),
-    ];
+    let specs = [("small", small_spec()), ("complex", complex_spec())];
 
     for (name, spec) in &specs {
         let prepared = prepare(spec);
-        group.bench_with_input(
-            BenchmarkId::from_parameter(name),
-            &prepared,
-            |b, prepared| {
-                b.iter(|| {
-                    let mut buf = String::with_capacity(4096);
-                    for cat in &prepared.categories {
-                        let cat_cross: Vec<_> = prepared
-                            .cross_rules
-                            .iter()
-                            .filter(|r| r.result_category == *cat)
-                            .cloned()
-                            .collect();
-                        if !cat_cross.is_empty() {
-                            write_category_dispatch(
-                                &mut buf,
-                                cat,
-                                &cat_cross,
-                                &[],
-                                &prepared.overlaps,
-                                &prepared.first_sets,
-                            );
-                        }
+        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
+            b.iter(|| {
+                let mut buf = String::with_capacity(4096);
+                for cat in &prepared.categories {
+                    let cat_cross: Vec<_> = prepared
+                        .cross_rules
+                        .iter()
+                        .filter(|r| r.result_category == *cat)
+                        .cloned()
+                        .collect();
+                    if !cat_cross.is_empty() {
+                        write_category_dispatch(
+                            &mut buf,
+                            cat,
+                            &cat_cross,
+                            &[],
+                            &prepared.overlaps,
+                            &prepared.first_sets,
+                        );
                     }
-                });
-            },
-        );
+                }
+            });
+        });
     }
 
     group.finish();
@@ -149,11 +129,5 @@ fn bench_helpers(c: &mut Criterion) {
     group.finish();
 }
 
-criterion_group!(
-    benches,
-    bench_rd_handlers,
-    bench_pratt_parser,
-    bench_dispatch,
-    bench_helpers,
-);
+criterion_group!(benches, bench_rd_handlers, bench_pratt_parser, bench_dispatch, bench_helpers,);
 criterion_main!(benches);

@@ -20,7 +20,7 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 
-use super::{ClassId, Nfa, CharClass};
+use super::{CharClass, ClassId, Nfa};
 
 /// Result of alphabet partitioning: a mapping from byte → equivalence class.
 #[derive(Debug, Clone)]

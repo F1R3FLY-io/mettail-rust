@@ -63,32 +63,24 @@ fn generate_is_ground_arm(category: &Ident, variant: &VariantKind) -> TokenStrea
     match variant {
         VariantKind::Var { label } => {
             quote! { #category::#label(_) => false }
-        }
+        },
         VariantKind::Literal { label } => {
             quote! { #category::#label(_) => true }
-        }
+        },
         VariantKind::Nullary { label } => {
             quote! { #category::#label => true }
-        }
-        VariantKind::Regular { label, fields } => {
-            generate_regular_arm(category, label, fields)
-        }
-        VariantKind::Collection {
-            label, coll_type, ..
-        } => {
+        },
+        VariantKind::Regular { label, fields } => generate_regular_arm(category, label, fields),
+        VariantKind::Collection { label, coll_type, .. } => {
             let check = collection_all_ground(quote! { coll }, coll_type);
             quote! { #category::#label(coll) => #check }
-        }
-        VariantKind::Binder {
-            label,
-            pre_scope_fields,
-            ..
-        } => generate_binder_arm(category, label, pre_scope_fields),
-        VariantKind::MultiBinder {
-            label,
-            pre_scope_fields,
-            ..
-        } => generate_binder_arm(category, label, pre_scope_fields),
+        },
+        VariantKind::Binder { label, pre_scope_fields, .. } => {
+            generate_binder_arm(category, label, pre_scope_fields)
+        },
+        VariantKind::MultiBinder { label, pre_scope_fields, .. } => {
+            generate_binder_arm(category, label, pre_scope_fields)
+        },
     }
 }
 
@@ -99,10 +91,10 @@ fn collection_all_ground(name: TokenStream, coll_type: &CollectionType) -> Token
     match coll_type {
         CollectionType::HashBag => {
             quote! { #name.iter().all(|(x, _count)| x.is_ground()) }
-        }
+        },
         CollectionType::Vec | CollectionType::HashSet => {
             quote! { #name.iter().all(|x| x.is_ground()) }
-        }
+        },
     }
 }
 
@@ -121,14 +113,8 @@ fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
 ///
 /// Pattern: `Cat::Label(f0, f1, ...)` where each field is checked recursively.
 /// Collection fields use the appropriate iteration pattern for their type.
-fn generate_regular_arm(
-    category: &Ident,
-    label: &Ident,
-    fields: &[FieldInfo],
-) -> TokenStream {
-    let field_names: Vec<Ident> = (0..fields.len())
-        .map(|i| format_ident!("f{}", i))
-        .collect();
+fn generate_regular_arm(category: &Ident, label: &Ident, fields: &[FieldInfo]) -> TokenStream {
+    let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
 
     let checks: Vec<TokenStream> = fields
         .iter()

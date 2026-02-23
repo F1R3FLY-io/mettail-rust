@@ -90,10 +90,7 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         }
         if let Some(elem_cat) = language.collection_element_type(&rule.label) {
             let parent_cat = &rule.category;
-            let rel_name = format_ident!(
-                "{}_contains",
-                rule.label.to_string().to_lowercase()
-            );
+            let rel_name = format_ident!("{}_contains", rule.label.to_string().to_lowercase());
             out.push(RelationForExtraction {
                 name: rel_name,
                 param_types: vec![parent_cat.to_string(), elem_cat.to_string()],
@@ -106,10 +103,7 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         for rel in &logic.relations {
             let name = format_ident!("{}", rel.name.to_string());
             let param_types: Vec<String> = rel.param_types.iter().map(|t| t.to_string()).collect();
-            out.push(RelationForExtraction {
-                name,
-                param_types,
-            });
+            out.push(RelationForExtraction { name, param_types });
         }
     }
 

@@ -24,8 +24,8 @@ use common::{in_cat_filter, CategoryFilter};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
-pub mod common;
 mod categories;
+pub mod common;
 mod equations;
 pub mod helpers;
 mod relations;
@@ -128,7 +128,11 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
         eprintln!("Warning: Failed to write Ascent Datalog file: {}", e);
     }
 
-    AscentSourceOutput { full_output, raw_content, core_raw_content }
+    AscentSourceOutput {
+        full_output,
+        raw_content,
+        core_raw_content,
+    }
 }
 
 /// Format Ascent source for display and file output
@@ -205,10 +209,7 @@ fn format_ascent_source(
 /// where rewrites propagate by writing `if S => T then ...` rules.
 ///
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
-pub fn generate_rewrite_rules(
-    language: &LanguageDef,
-    cat_filter: CategoryFilter,
-) -> TokenStream {
+pub fn generate_rewrite_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> TokenStream {
     let mut rules = Vec::new();
 
     // Generate base rewrite clauses (no premise)
@@ -218,7 +219,6 @@ pub fn generate_rewrite_rules(
     // Generate small-step rules for HOL rust_code (step mode)
     let hol_step_rules = generate_hol_step_rules(language, cat_filter);
     rules.extend(hol_step_rules);
-
 
     // Generate big-step fold rules (one rewrite per fold-mode constructor)
     let fold_rules = generate_fold_big_step_rules(language, cat_filter);
@@ -236,10 +236,7 @@ pub fn generate_rewrite_rules(
 
 /// Generate small-step rewrite rules for terms that have HOL rust_code (step mode).
 /// e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
-fn generate_hol_step_rules(
-    language: &LanguageDef,
-    cat_filter: CategoryFilter,
-) -> Vec<TokenStream> {
+fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     // Unified single-pass iteration over language.terms with arity dispatch.
@@ -300,7 +297,9 @@ fn generate_hol_step_rules(
                         let left_lit = common::literal_label_for(language, left_ty);
                         let right_lit = common::literal_label_for(language, right_ty);
                         match (left_lit, right_lit) {
-                            (Some(ll), Some(rl)) => Some((left_ty.clone(), ll, right_ty.clone(), rl)),
+                            (Some(ll), Some(rl)) => {
+                                Some((left_ty.clone(), ll, right_ty.clone(), rl))
+                            },
                             _ => None,
                         }
                     } else {
@@ -330,13 +329,15 @@ fn generate_hol_step_rules(
                         let b = b_ref.clone(),
                         let t = #category::#result_lit_label((#rust_code));
                 });
-            }
+            },
             1 => {
                 // Unary step rule (e.g. Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step)
                 let Some(ref term_context) = rule.term_context else {
                     continue;
                 };
-                let [TermParam::Simple { name: param_name, ty: ref param_ty }] = term_context.as_slice() else {
+                let [TermParam::Simple { name: param_name, ty: ref param_ty }] =
+                    term_context.as_slice()
+                else {
                     continue;
                 };
                 let TypeExpr::Base(arg_category) = param_ty else {
@@ -356,7 +357,7 @@ fn generate_hol_step_rules(
                         let #param_name = s_ref.clone(),
                         let t = #category::#result_lit_label((#rust_code));
                 });
-            }
+            },
             _ => {
                 // N-ary step rule (3+ arguments)
                 let Some(ref term_context) = rule.term_context else {
@@ -371,7 +372,7 @@ fn generate_hol_step_rules(
                             } else {
                                 None
                             }
-                        }
+                        },
                         _ => None,
                     })
                     .collect();
@@ -432,7 +433,7 @@ fn generate_hol_step_rules(
                         #(#let_bindings)*
                         let __dst = #category::#result_lit_label((#rust_code));
                 });
-            }
+            },
         }
     }
 
@@ -548,7 +549,9 @@ fn generate_fold_big_step_rules(
 
             // Area 6: Consolidated identity rule — one rule per non-native category
             // Replaces N per-constructor identity rules with one inline match
-            let identity_arms: Vec<TokenStream> = language.terms.iter()
+            let identity_arms: Vec<TokenStream> = language
+                .terms
+                .iter()
                 .filter(|r| r.category == *category && r.eval_mode != Some(EvalMode::Fold))
                 .map(|rule| {
                     let label = &rule.label;
@@ -633,7 +636,9 @@ fn generate_fold_big_step_rules(
 
         // Area 5: Consolidated fold trigger — one rule per category
         // Replaces N per-constructor trigger rules with one inline match
-        let trigger_arms: Vec<TokenStream> = language.terms.iter()
+        let trigger_arms: Vec<TokenStream> = language
+            .terms
+            .iter()
             .filter(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold))
             .map(|rule| {
                 let label = &rule.label;
@@ -681,8 +686,8 @@ fn split_at_top_level(s: &str, delimiter: char) -> Vec<&str> {
             c if c == delimiter && depth == 0 => {
                 result.push(&s[start..i]);
                 start = i + 1;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -777,8 +782,8 @@ fn format_block_arm(arm: &str, arm_indent: &str) -> String {
                     close_pos = Some(i);
                     break;
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -807,7 +812,11 @@ fn format_block_arm(arm: &str, arm_indent: &str) -> String {
     // ["a", " b", ""]). We must preserve this so the reformatted block has
     // the same Rust semantics (returns `()` rather than the last expression).
     let has_trailing_semi = stmts.last().is_some_and(|s| s.trim().is_empty());
-    let non_empty: Vec<&str> = stmts.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let non_empty: Vec<&str> = stmts
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
     for (i, stmt) in non_empty.iter().enumerate() {
         result.push_str(&stmt_indent);
         result.push_str(stmt);
@@ -870,8 +879,8 @@ fn format_long_clause(clause: &str, base_indent: &str) -> String {
                         close_pos = Some(i);
                         break;
                     }
-                }
-                _ => {}
+                },
+                _ => {},
             }
         }
 
@@ -1009,7 +1018,7 @@ mod tests {
                 '(' | '{' | '[' => depth += 1,
                 ')' | '}' | ']' => depth = (depth - 1).max(0),
                 c if c == needle && depth == 0 => count += 1,
-                _ => {}
+                _ => {},
             }
         }
         count
@@ -1022,20 +1031,13 @@ mod tests {
     /// Produces strings where every `(`, `{`, `[` has a matching `)`, `}`, `]`
     /// and brackets are properly nested. May contain `;` at any level.
     fn arb_well_bracketed(max_depth: u32) -> impl Strategy<Value = String> {
-        let leaf = prop_oneof![
-            "[a-zA-Z0-9_ ]{0,10}",
-            "[a-zA-Z0-9_ ]*;[a-zA-Z0-9_ ]*",
-        ];
+        let leaf = prop_oneof!["[a-zA-Z0-9_ ]{0,10}", "[a-zA-Z0-9_ ]*;[a-zA-Z0-9_ ]*",];
         leaf.prop_recursive(max_depth, 256, 4, |inner| {
             prop_oneof![
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| format!("{}({})", a, b)),
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| format!("{}{{{}}}", a, b)),
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| format!("{}[{}]", a, b)),
-                (inner.clone(), inner.clone())
-                    .prop_map(|(a, b)| format!("{}{}", a, b)),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("{}({})", a, b)),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("{}{{{}}}", a, b)),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("{}[{}]", a, b)),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("{}{}", a, b)),
             ]
         })
     }
@@ -1219,10 +1221,7 @@ mod tests {
     #[test]
     fn test_split_at_top_level_nested() {
         // Semicolons inside brackets are not split points
-        assert_eq!(
-            split_at_top_level("f(a; b); c", ';'),
-            vec!["f(a; b)", " c"]
-        );
+        assert_eq!(split_at_top_level("f(a; b); c", ';'), vec!["f(a; b)", " c"]);
     }
 
     #[test]

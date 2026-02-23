@@ -41,14 +41,9 @@ pub enum RDSyntaxItem {
     /// A fixed terminal token to match (e.g., "(", "+", "error").
     Terminal(String),
     /// A nonterminal to parse (category name, parameter name).
-    NonTerminal {
-        category: String,
-        param_name: String,
-    },
+    NonTerminal { category: String, param_name: String },
     /// An identifier to capture (not a category — a raw identifier).
-    IdentCapture {
-        param_name: String,
-    },
+    IdentCapture { param_name: String },
     /// A binder position.
     Binder {
         param_name: String,
@@ -78,9 +73,7 @@ pub enum RDSyntaxItem {
         separator: String,
     },
     /// An optional group.
-    Optional {
-        inner: Vec<RDSyntaxItem>,
-    },
+    Optional { inner: Vec<RDSyntaxItem> },
 }
 
 /// Kind of collection.
@@ -141,10 +134,7 @@ pub fn write_rd_handler(buf: &mut String, rule: &RDRuleInfo) -> PrefixHandler {
     } else if let Some(ref terminal) = first_terminal {
         // Rule starts with a terminal — direct dispatch
         let variant = terminal_to_variant_name(terminal);
-        (
-            format!("Token::{} => {{ {}(tokens, pos) }}", variant, parse_fn_name),
-            None,
-        )
+        (format!("Token::{} => {{ {}(tokens, pos) }}", variant, parse_fn_name), None)
     } else {
         // No terminals at all — cannot dispatch (handled by fallback)
         (String::new(), None)
@@ -168,14 +158,14 @@ struct Capture {
 
 #[derive(Debug, Clone)]
 enum CaptureKind {
-    Simple,        // Regular parsed value
+    Simple, // Regular parsed value
     // Reserved for future use: explicit Box::new() wrapping when generated
     // enum variants distinguish between boxed and unboxed nonterminal fields.
     // Currently all NonTerminal fields are boxed uniformly via write_constructor_arg().
     // Boxed,
-    Collection,    // Vec/HashBag/HashSet
-    Binder,        // Binder for scope
-    Ident,         // Captured identifier string
+    Collection, // Vec/HashBag/HashSet
+    Binder,     // Binder for scope
+    Ident,      // Captured identifier string
 }
 
 fn collection_init_str(kind: &CollectionKind) -> &'static str {
@@ -217,34 +207,30 @@ fn write_parse_items(
                     variant, t,
                 )
                 .unwrap();
-            }
+            },
             RDSyntaxItem::NonTerminal { category, param_name } => {
                 let bp = prefix_bp.unwrap_or(0);
-                write!(
-                    buf,
-                    "let {} = parse_{}(tokens, pos, {})?;",
-                    param_name, category, bp,
-                )
-                .unwrap();
+                write!(buf, "let {} = parse_{}(tokens, pos, {})?;", param_name, category, bp,)
+                    .unwrap();
                 captures.push(Capture {
                     name: param_name.clone(),
                     kind: CaptureKind::Simple,
                 });
-            }
+            },
             RDSyntaxItem::IdentCapture { param_name } => {
                 write!(buf, "let {} = expect_ident(tokens, pos)?;", param_name).unwrap();
                 captures.push(Capture {
                     name: param_name.clone(),
                     kind: CaptureKind::Ident,
                 });
-            }
+            },
             RDSyntaxItem::Binder { param_name, .. } => {
                 write!(buf, "let {} = expect_ident(tokens, pos)?;", param_name).unwrap();
                 captures.push(Capture {
                     name: param_name.clone(),
                     kind: CaptureKind::Binder,
                 });
-            }
+            },
             RDSyntaxItem::Collection {
                 param_name,
                 element_category,
@@ -278,7 +264,7 @@ fn write_parse_items(
                     name: param_name.clone(),
                     kind: CaptureKind::Collection,
                 });
-            }
+            },
             RDSyntaxItem::SepList {
                 collection_name,
                 element_category,
@@ -312,7 +298,7 @@ fn write_parse_items(
                     name: collection_name.clone(),
                     kind: CaptureKind::Collection,
                 });
-            }
+            },
             RDSyntaxItem::ZipMapSep {
                 left_name,
                 right_name,
@@ -354,7 +340,7 @@ fn write_parse_items(
                                 variant, t,
                             )
                             .unwrap();
-                        }
+                        },
                         RDSyntaxItem::NonTerminal { category, param_name } => {
                             if param_name == left_name {
                                 write!(
@@ -371,14 +357,10 @@ fn write_parse_items(
                                 )
                                 .unwrap();
                             } else {
-                                write!(
-                                    buf,
-                                    "let _ = parse_{}(tokens, pos, 0)?;",
-                                    category,
-                                )
-                                .unwrap();
+                                write!(buf, "let _ = parse_{}(tokens, pos, 0)?;", category,)
+                                    .unwrap();
                             }
-                        }
+                        },
                         RDSyntaxItem::Binder { param_name, .. }
                         | RDSyntaxItem::IdentCapture { param_name } => {
                             if param_name == left_name {
@@ -398,8 +380,8 @@ fn write_parse_items(
                             } else {
                                 buf.push_str("let _ = expect_ident(tokens, pos)?;");
                             }
-                        }
-                        _ => {}
+                        },
+                        _ => {},
                     }
                 }
 
@@ -415,16 +397,24 @@ fn write_parse_items(
 
                 captures.push(Capture {
                     name: left_name.clone(),
-                    kind: if left_is_binder { CaptureKind::Binder } else { CaptureKind::Collection },
+                    kind: if left_is_binder {
+                        CaptureKind::Binder
+                    } else {
+                        CaptureKind::Collection
+                    },
                 });
                 captures.push(Capture {
                     name: right_name.clone(),
-                    kind: if right_is_binder { CaptureKind::Binder } else { CaptureKind::Collection },
+                    kind: if right_is_binder {
+                        CaptureKind::Binder
+                    } else {
+                        CaptureKind::Collection
+                    },
                 });
-            }
+            },
             RDSyntaxItem::Optional { inner } => {
                 write_optional_body(buf, inner, captures);
-            }
+            },
         }
     }
 }
@@ -613,10 +603,7 @@ pub fn write_dollar_handlers(
         handlers.push(PrefixHandler {
             category: cat.to_string(),
             label: format!("Dollar{}", dom_capitalized),
-            match_arm: format!(
-                "Token::{} => {{ {}(tokens, pos) }}",
-                dollar_variant, single_fn
-            ),
+            match_arm: format!("Token::{} => {{ {}(tokens, pos) }}", dollar_variant, single_fn),
             ident_lookahead: None,
             parse_fn_name: single_fn,
         });
@@ -653,10 +640,7 @@ pub fn write_dollar_handlers(
         handlers.push(PrefixHandler {
             category: cat.to_string(),
             label: format!("Ddollar{}Lp", dom_capitalized),
-            match_arm: format!(
-                "Token::{} => {{ {}(tokens, pos) }}",
-                ddollar_variant, multi_fn
-            ),
+            match_arm: format!("Token::{} => {{ {}(tokens, pos) }}", ddollar_variant, multi_fn),
             ident_lookahead: None,
             parse_fn_name: multi_fn,
         });

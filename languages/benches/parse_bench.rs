@@ -3,11 +3,11 @@
 //! Run with: cargo bench -p mettail-languages --bench parse_bench
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use std::time::Duration;
 use mettail_languages::ambient::*;
 use mettail_languages::calculator::*;
 use mettail_languages::lambda::*;
 use mettail_languages::rhocalc::*;
+use std::time::Duration;
 
 // =============================================================================
 // Ambient Calculus inputs
@@ -23,14 +23,8 @@ fn ambient_inputs() -> Vec<(&'static str, &'static str)> {
         ("nested", "n[{in(m,p)}]"),
         ("complex", "{n[{in(m,p)}] | m[r]}"),
         ("new", "new(x,p)"),
-        (
-            "deep_nested",
-            "{n[{in(m,p) | inner[data]}] | m[{r | local}]}",
-        ),
-        (
-            "multi_parallel",
-            "{a[{in(parent,x)}] | b[{in(parent,y)}] | parent[z]}",
-        ),
+        ("deep_nested", "{n[{in(m,p) | inner[data]}] | m[{r | local}]}"),
+        ("multi_parallel", "{a[{in(parent,x)}] | b[{in(parent,y)}] | parent[z]}"),
     ]
 }
 
@@ -86,10 +80,7 @@ fn rhocalc_inputs() -> Vec<(&'static str, &'static str)> {
         ("drop_quote", "*(@(p))"),
         ("nested_output", "{x!(p) | y!(q)}"),
         ("multi_input", "(x?a, y?b).{*(a)}"),
-        (
-            "complex",
-            "{c!(0) | (c?x).{*(x)} | d!(1) | (d?y).{*(y)}}",
-        ),
+        ("complex", "{c!(0) | (c?x).{*(x)} | d!(1) | (d?y).{*(y)}}"),
     ]
 }
 

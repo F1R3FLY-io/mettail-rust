@@ -41,8 +41,7 @@ pub fn generate_all_explicit_congruences(
 
     // Group simple congruences by (source_cat, field_cat) for consolidation.
     // BTreeMap gives deterministic ordering for reproducible code generation.
-    let mut simple_groups: BTreeMap<(String, String), Vec<SimpleCongruenceEntry>> =
-        BTreeMap::new();
+    let mut simple_groups: BTreeMap<(String, String), Vec<SimpleCongruenceEntry>> = BTreeMap::new();
 
     for rewrite in &language.rewrites {
         if !rewrite.is_congruence_rule() {
@@ -60,8 +59,7 @@ pub fn generate_all_explicit_congruences(
             }
         }
 
-        if let Some(rule) =
-            classify_and_generate_congruence(rewrite, language, &mut simple_groups)
+        if let Some(rule) = classify_and_generate_congruence(rewrite, language, &mut simple_groups)
         {
             rules.push(rule);
         }
@@ -131,14 +129,17 @@ fn classify_and_generate_congruence(
             let is_boxed = field_is_boxed_in_ast(grammar_rule, field_idx);
 
             let key = (category.to_string(), field_category.to_string());
-            simple_groups.entry(key).or_default().push(SimpleCongruenceEntry {
-                constructor,
-                field_idx,
-                n_fields: n,
-                is_boxed,
-            });
+            simple_groups
+                .entry(key)
+                .or_default()
+                .push(SimpleCongruenceEntry {
+                    constructor,
+                    field_idx,
+                    n_fields: n,
+                    is_boxed,
+                });
             None // Will be generated later in consolidated form
-        }
+        },
     }
 }
 

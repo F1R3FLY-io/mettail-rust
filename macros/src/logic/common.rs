@@ -168,7 +168,7 @@ pub fn fold_params_all_same_category(rule: &GrammarRule, category: &Ident) -> bo
                 } else {
                     false
                 }
-            }
+            },
             _ => true, // Binders etc. are OK
         })
     } else {
@@ -230,10 +230,10 @@ pub fn compute_category_reachability(language: &LanguageDef) -> BTreeSet<(String
                 match param {
                     TermParam::Simple { ty, .. } => {
                         collect_type_refs(&src, ty, &categories, &mut edges);
-                    }
+                    },
                     TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                         collect_type_refs(&src, ty, &categories, &mut edges);
-                    }
+                    },
                 }
             }
         } else {
@@ -245,20 +245,20 @@ pub fn compute_category_reachability(language: &LanguageDef) -> BTreeSet<(String
                         if categories.contains(&tgt) && tgt != "Var" && tgt != "Integer" {
                             edges.entry(src.clone()).or_default().insert(tgt);
                         }
-                    }
+                    },
                     GrammarItem::Collection { element_type, .. } => {
                         let tgt = element_type.to_string();
                         if categories.contains(&tgt) {
                             edges.entry(src.clone()).or_default().insert(tgt);
                         }
-                    }
+                    },
                     GrammarItem::Binder { category: binder_domain } => {
                         let tgt = binder_domain.to_string();
                         if categories.contains(&tgt) {
                             edges.entry(src.clone()).or_default().insert(tgt);
                         }
-                    }
-                    GrammarItem::Terminal(_) => {}
+                    },
+                    GrammarItem::Terminal(_) => {},
                 }
             }
         }
@@ -310,17 +310,17 @@ fn collect_type_refs(
             if categories.contains(&tgt) && tgt != "Var" && tgt != "Integer" {
                 edges.entry(src.to_string()).or_default().insert(tgt);
             }
-        }
+        },
         TypeExpr::Collection { element, .. } => {
             collect_type_refs(src, element, categories, edges);
-        }
+        },
         TypeExpr::Arrow { domain, codomain } => {
             collect_type_refs(src, domain, categories, edges);
             collect_type_refs(src, codomain, categories, edges);
-        }
+        },
         TypeExpr::MultiBinder(inner) => {
             collect_type_refs(src, inner, categories, edges);
-        }
+        },
     }
 }
 

@@ -277,7 +277,7 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
                     "step" => Some(EvalMode::Step),
                     _ => unreachable!(),
                 }
-            }
+            },
             "right" | "prefix" => None, // handled below
             _ => {
                 let bad = input.parse::<syn::Ident>()?;
@@ -303,7 +303,7 @@ fn parse_grammar_rule_new(label: Ident, input: ParseStream) -> SynResult<Grammar
                 is_right_assoc = true;
             } else if kw == "prefix" {
                 let _ = input.parse::<syn::Ident>()?; // consume "prefix"
-                // Parse (N)
+                                                      // Parse (N)
                 let content;
                 syn::parenthesized!(content in input);
                 let bp_lit: syn::LitInt = content.parse()?;

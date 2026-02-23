@@ -540,12 +540,7 @@ mod tests {
             for &p in &probs {
                 let w = LogWeight::from_probability(p);
                 let p_back = w.to_probability();
-                assert!(
-                    (p - p_back).abs() < 1e-12,
-                    "roundtrip failed for p={}: got {}",
-                    p,
-                    p_back
-                );
+                assert!((p - p_back).abs() < 1e-12, "roundtrip failed for p={}: got {}", p, p_back);
             }
         }
 

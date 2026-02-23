@@ -5,7 +5,9 @@
 //! - Equality congruence rules (if args equal, constructed terms equal)
 //! - User-defined equation rules
 
-use super::common::{generate_tls_pool_iter, in_cat_filter, relation_names, CategoryFilter, PoolArm};
+use super::common::{
+    generate_tls_pool_iter, in_cat_filter, relation_names, CategoryFilter, PoolArm,
+};
 use crate::ast::grammar::{GrammarItem, GrammarRule};
 use crate::ast::language::LanguageDef;
 use crate::logic::rules as unified_rules;
@@ -22,10 +24,7 @@ use syn::Ident;
 /// 3. User-defined equations
 ///
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
-pub fn generate_equation_rules(
-    language: &LanguageDef,
-    cat_filter: CategoryFilter,
-) -> TokenStream {
+pub fn generate_equation_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> TokenStream {
     let mut rules = Vec::new();
 
     // 1. Add reflexivity for eq relations
@@ -188,11 +187,7 @@ fn generate_congruence_rules(
             .collect();
 
         // TLS pool with unique name per group
-        let pool_name = format_ident!(
-            "POOL_{}_EQ_CONG_{}",
-            cat_str.to_uppercase(),
-            pool_counter
-        );
+        let pool_name = format_ident!("POOL_{}_EQ_CONG_{}", cat_str.to_uppercase(), pool_counter);
 
         // Element type is the tuple of all s_fields and t_fields
         let field_types: Vec<TokenStream> = field_type_strs
@@ -203,7 +198,8 @@ fn generate_congruence_rules(
             })
             .collect();
         // Double the field types: s fields then t fields
-        let all_field_types: Vec<&TokenStream> = field_types.iter().chain(field_types.iter()).collect();
+        let all_field_types: Vec<&TokenStream> =
+            field_types.iter().chain(field_types.iter()).collect();
         let elem_type = quote! { (#(#all_field_types),*) };
         let match_expr = quote! { (s, t) };
         let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &pool_arms);

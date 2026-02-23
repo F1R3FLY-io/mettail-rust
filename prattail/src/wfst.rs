@@ -168,7 +168,7 @@ impl PredictionWfst {
                     .into_iter()
                     .filter(|a| a.weight.value() <= threshold)
                     .collect()
-            }
+            },
             _ => actions,
         }
     }
@@ -228,7 +228,9 @@ impl PredictionWfst {
         let mut actions = Vec::new();
         let mut states = Vec::with_capacity(state_offsets.len());
 
-        for (state_idx, &(trans_start, trans_count, is_final, final_weight)) in state_offsets.iter().enumerate() {
+        for (state_idx, &(trans_start, trans_count, is_final, final_weight)) in
+            state_offsets.iter().enumerate()
+        {
             let mut state = WfstState {
                 id: state_idx as WfstStateId,
                 is_final,
@@ -241,7 +243,8 @@ impl PredictionWfst {
                 let action_idx = actions.len() as u32;
 
                 // Create a placeholder action — the label is derived from token name
-                let token_name = token_names.get(token_id as usize)
+                let token_name = token_names
+                    .get(token_id as usize)
                     .map(|s| s.to_string())
                     .unwrap_or_else(|| format!("token_{}", token_id));
                 actions.push(WeightedAction {
@@ -292,7 +295,8 @@ impl PredictionWfst {
     /// action and transition sets.
     pub fn union(&mut self, other: &PredictionWfst) {
         // Build a mapping from other's token names to self's token IDs
-        let mut other_to_self_token: Vec<Option<TokenId>> = Vec::with_capacity(other.token_map.len());
+        let mut other_to_self_token: Vec<Option<TokenId>> =
+            Vec::with_capacity(other.token_map.len());
         for i in 0..other.token_map.len() {
             if let Some(name) = other.token_map.name(i as TokenId) {
                 let self_id = self.token_map.get_or_insert(name);
@@ -320,7 +324,8 @@ impl PredictionWfst {
 
                 // Create a new final state for this action
                 let final_id = self.states.len() as WfstStateId;
-                self.states.push(WfstState::final_state(final_id, TropicalWeight::one()));
+                self.states
+                    .push(WfstState::final_state(final_id, TropicalWeight::one()));
 
                 if let Some(start) = self.states.get_mut(self.start as usize) {
                     start.transitions.push(WeightedTransition {
@@ -401,18 +406,10 @@ impl PredictionWfstBuilder {
     }
 
     /// Add a dispatch action for a token with the given weight.
-    pub fn add_action(
-        &mut self,
-        token_name: &str,
-        action: DispatchAction,
-        weight: TropicalWeight,
-    ) {
+    pub fn add_action(&mut self, token_name: &str, action: DispatchAction, weight: TropicalWeight) {
         let token_id = self.token_map.get_or_insert(token_name);
         let action_idx = self.actions.len() as u32;
-        self.actions.push(WeightedAction {
-            action,
-            weight,
-        });
+        self.actions.push(WeightedAction { action, weight });
         self.transitions.push((token_id, action_idx, weight));
     }
 
@@ -485,20 +482,14 @@ pub fn build_prediction_wfsts(
         let mut builder = PredictionWfstBuilder::new(category, token_map.clone());
 
         if let Some(category_actions) = dispatch_actions.get(category) {
-            let token_order: Vec<(&String, &DispatchAction)> =
-                category_actions.iter().collect();
+            let token_order: Vec<(&String, &DispatchAction)> = category_actions.iter().collect();
             // Maintain declaration order (BTreeMap iterates in key order = sorted token names)
             // We use enumeration index as a proxy for declaration order
 
             for (order, (token_name, action)) in token_order.iter().enumerate() {
                 // Determine weight based on ambiguity analysis
                 let weight = compute_action_weight(
-                    token_name,
-                    action,
-                    category,
-                    first_sets,
-                    overlaps,
-                    order,
+                    token_name, action, category, first_sets, overlaps, order,
                 );
 
                 builder.add_action(token_name, (*action).clone(), weight);
@@ -532,15 +523,13 @@ fn compute_action_weight(
     match action {
         DispatchAction::Direct { .. } => TropicalWeight::new(0.0),
         DispatchAction::Grouping { .. } => TropicalWeight::new(0.0),
-        DispatchAction::CrossCategory {
-            needs_backtrack, ..
-        } => {
+        DispatchAction::CrossCategory { needs_backtrack, .. } => {
             if *needs_backtrack {
                 TropicalWeight::new(0.5)
             } else {
                 TropicalWeight::new(0.0)
             }
-        }
+        },
         DispatchAction::Cast { .. } => TropicalWeight::new(0.5),
         DispatchAction::Lookahead { .. } => TropicalWeight::new(1.0 + order as f64),
         DispatchAction::Variable { .. } => TropicalWeight::new(2.0),
@@ -559,10 +548,7 @@ fn compute_action_weight(
 ///
 /// Returns the generated dispatch code as a String fragment, or `None` if
 /// no WFST-based dispatch is needed for this category.
-pub fn generate_weighted_dispatch(
-    wfst: &PredictionWfst,
-    category: &str,
-) -> Option<String> {
+pub fn generate_weighted_dispatch(wfst: &PredictionWfst, category: &str) -> Option<String> {
     if wfst.actions.is_empty() {
         return None;
     }
@@ -627,11 +613,8 @@ mod tests {
 
     #[test]
     fn test_prediction_wfst_builder_basic() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Plus", "Minus", "Ident"]
-                .into_iter()
-                .map(String::from),
-        );
+        let token_map =
+            TokenIdMap::from_names(vec!["Plus", "Minus", "Ident"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
 
@@ -653,9 +636,7 @@ mod tests {
         );
         builder.add_action(
             "Ident",
-            DispatchAction::Variable {
-                category: "Expr".to_string(),
-            },
+            DispatchAction::Variable { category: "Expr".to_string() },
             TropicalWeight::new(2.0),
         );
 
@@ -668,11 +649,7 @@ mod tests {
 
     #[test]
     fn test_prediction_wfst_predict_deterministic() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Plus", "Minus"]
-                .into_iter()
-                .map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Plus", "Minus"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
@@ -698,7 +675,9 @@ mod tests {
         let results = wfst.predict("Plus");
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].weight, TropicalWeight::new(0.0));
-        assert!(matches!(&results[0].action, DispatchAction::Direct { rule_label, .. } if rule_label == "Add"));
+        assert!(
+            matches!(&results[0].action, DispatchAction::Direct { rule_label, .. } if rule_label == "Add")
+        );
 
         // Unknown token → empty
         let results = wfst.predict("Star");
@@ -707,18 +686,14 @@ mod tests {
 
     #[test]
     fn test_prediction_wfst_predict_ambiguous_ordered_by_weight() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Ident"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Ident"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
 
         // Same token, two actions, different weights
         builder.add_action(
             "Ident",
-            DispatchAction::Variable {
-                category: "Expr".to_string(),
-            },
+            DispatchAction::Variable { category: "Expr".to_string() },
             TropicalWeight::new(2.0), // higher weight = less preferred
         );
         builder.add_action(
@@ -765,9 +740,7 @@ mod tests {
         // Variable → 2.0
         let w = super::compute_action_weight(
             "Ident",
-            &DispatchAction::Variable {
-                category: "Expr".to_string(),
-            },
+            &DispatchAction::Variable { category: "Expr".to_string() },
             "Expr",
             &first_sets,
             &overlaps,
@@ -831,16 +804,12 @@ mod tests {
 
     #[test]
     fn test_generate_weighted_dispatch_produces_comments() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Ident"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Ident"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Ident",
-            DispatchAction::Variable {
-                category: "Expr".to_string(),
-            },
+            DispatchAction::Variable { category: "Expr".to_string() },
             TropicalWeight::new(2.0),
         );
         builder.add_action(
@@ -862,9 +831,7 @@ mod tests {
 
     #[test]
     fn test_beam_pruning_none_is_identity() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Ident"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Ident"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
@@ -890,9 +857,7 @@ mod tests {
 
     #[test]
     fn test_beam_pruning_filters_high_weight() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Ident"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Ident"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
@@ -929,9 +894,7 @@ mod tests {
 
     #[test]
     fn test_beam_pruning_preserves_best() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Plus"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Plus"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
@@ -952,12 +915,10 @@ mod tests {
 
     #[test]
     fn test_beam_width_from_builder() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Plus"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Plus"].into_iter().map(String::from));
 
-        let builder = PredictionWfstBuilder::new("Expr", token_map)
-            .with_beam_width(TropicalWeight::new(2.0));
+        let builder =
+            PredictionWfstBuilder::new("Expr", token_map).with_beam_width(TropicalWeight::new(2.0));
 
         let wfst = builder.build();
         assert_eq!(wfst.beam_width(), Some(TropicalWeight::new(2.0)));
@@ -969,11 +930,8 @@ mod tests {
     fn test_from_flat_roundtrip() {
         // Build a WFST via the builder, then verify from_flat() reconstructs
         // equivalent structure from the CSR representation.
-        let token_map = TokenIdMap::from_names(
-            vec!["Plus", "Minus", "Ident"]
-                .into_iter()
-                .map(String::from),
-        );
+        let token_map =
+            TokenIdMap::from_names(vec!["Plus", "Minus", "Ident"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
@@ -994,9 +952,7 @@ mod tests {
         );
         builder.add_action(
             "Ident",
-            DispatchAction::Variable {
-                category: "Expr".to_string(),
-            },
+            DispatchAction::Variable { category: "Expr".to_string() },
             TropicalWeight::new(2.0),
         );
 
@@ -1058,7 +1014,8 @@ mod tests {
         ];
         let token_names: &[&str] = &["Plus"];
 
-        let wfst = PredictionWfst::from_flat("Cat", state_offsets, transitions, token_names, Some(1.5));
+        let wfst =
+            PredictionWfst::from_flat("Cat", state_offsets, transitions, token_names, Some(1.5));
         assert_eq!(wfst.beam_width(), Some(TropicalWeight::new(1.5)));
         assert_eq!(wfst.num_states(), 2);
         assert_eq!(wfst.num_actions(), 1);
@@ -1077,9 +1034,7 @@ mod tests {
     #[cfg(feature = "wfst-log")]
     #[test]
     fn test_with_trained_weights_overrides_matching() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Plus", "Ident"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Plus", "Ident"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
@@ -1092,9 +1047,7 @@ mod tests {
         );
         builder.add_action(
             "Ident",
-            DispatchAction::Variable {
-                category: "Expr".to_string(),
-            },
+            DispatchAction::Variable { category: "Expr".to_string() },
             TropicalWeight::new(2.0), // original weight
         );
 
@@ -1132,9 +1085,7 @@ mod tests {
     #[cfg(feature = "wfst-log")]
     #[test]
     fn test_with_trained_weights_updates_transitions() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Plus"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Plus"].into_iter().map(String::from));
 
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
@@ -1173,8 +1124,8 @@ mod tests {
 
     #[test]
     fn test_beam_width_from_language_spec() {
-        use crate::{BeamWidthConfig, LanguageSpec, CategorySpec, RuleSpecInput, SyntaxItemSpec};
         use crate::binding_power::Associativity;
+        use crate::{BeamWidthConfig, CategorySpec, LanguageSpec, RuleSpecInput, SyntaxItemSpec};
 
         // Create a minimal LanguageSpec with beam_width set
         let spec = LanguageSpec::with_options(
@@ -1194,9 +1145,9 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
             }],
-            BeamWidthConfig::Explicit(1.5),           // beam_width
-            None,                                      // log_semiring_model_path
-            crate::DispatchStrategy::Static,           // dispatch_strategy
+            BeamWidthConfig::Explicit(1.5),  // beam_width
+            None,                            // log_semiring_model_path
+            crate::DispatchStrategy::Static, // dispatch_strategy
         );
 
         assert_eq!(spec.beam_width, BeamWidthConfig::Explicit(1.5));
@@ -1212,9 +1163,7 @@ mod tests {
     #[test]
     fn test_union_disjoint_tokens() {
         // WFST A: Plus → Add
-        let token_map_a = TokenIdMap::from_names(
-            vec!["Plus"].into_iter().map(String::from),
-        );
+        let token_map_a = TokenIdMap::from_names(vec!["Plus"].into_iter().map(String::from));
         let mut builder_a = PredictionWfstBuilder::new("Expr", token_map_a);
         builder_a.add_action(
             "Plus",
@@ -1227,9 +1176,7 @@ mod tests {
         let mut wfst_a = builder_a.build();
 
         // WFST B: Minus → Sub
-        let token_map_b = TokenIdMap::from_names(
-            vec!["Minus"].into_iter().map(String::from),
-        );
+        let token_map_b = TokenIdMap::from_names(vec!["Minus"].into_iter().map(String::from));
         let mut builder_b = PredictionWfstBuilder::new("Expr", token_map_b);
         builder_b.add_action(
             "Minus",
@@ -1263,23 +1210,17 @@ mod tests {
     #[test]
     fn test_union_overlapping_tokens() {
         // WFST A: Ident → Variable (w=2.0)
-        let token_map_a = TokenIdMap::from_names(
-            vec!["Ident"].into_iter().map(String::from),
-        );
+        let token_map_a = TokenIdMap::from_names(vec!["Ident"].into_iter().map(String::from));
         let mut builder_a = PredictionWfstBuilder::new("Expr", token_map_a);
         builder_a.add_action(
             "Ident",
-            DispatchAction::Variable {
-                category: "Expr".to_string(),
-            },
+            DispatchAction::Variable { category: "Expr".to_string() },
             TropicalWeight::new(2.0),
         );
         let mut wfst_a = builder_a.build();
 
         // WFST B: Ident → CrossCategory (w=0.5)
-        let token_map_b = TokenIdMap::from_names(
-            vec!["Ident"].into_iter().map(String::from),
-        );
+        let token_map_b = TokenIdMap::from_names(vec!["Ident"].into_iter().map(String::from));
         let mut builder_b = PredictionWfstBuilder::new("Expr", token_map_b);
         builder_b.add_action(
             "Ident",
@@ -1307,16 +1248,12 @@ mod tests {
 
     #[test]
     fn test_union_preserves_beam_width() {
-        let token_map_a = TokenIdMap::from_names(
-            vec!["Plus"].into_iter().map(String::from),
-        );
+        let token_map_a = TokenIdMap::from_names(vec!["Plus"].into_iter().map(String::from));
         let builder_a = PredictionWfstBuilder::new("Expr", token_map_a)
             .with_beam_width(TropicalWeight::new(1.5));
         let mut wfst_a = builder_a.build();
 
-        let token_map_b = TokenIdMap::from_names(
-            vec!["Minus"].into_iter().map(String::from),
-        );
+        let token_map_b = TokenIdMap::from_names(vec!["Minus"].into_iter().map(String::from));
         let builder_b = PredictionWfstBuilder::new("Expr", token_map_b)
             .with_beam_width(TropicalWeight::new(2.0));
         let wfst_b = builder_b.build();
@@ -1329,9 +1266,7 @@ mod tests {
 
     #[test]
     fn test_union_empty_other() {
-        let token_map = TokenIdMap::from_names(
-            vec!["Plus"].into_iter().map(String::from),
-        );
+        let token_map = TokenIdMap::from_names(vec!["Plus"].into_iter().map(String::from));
         let mut builder = PredictionWfstBuilder::new("Expr", token_map);
         builder.add_action(
             "Plus",

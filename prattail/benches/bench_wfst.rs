@@ -122,7 +122,11 @@ fn bench_construction(c: &mut Criterion) {
         for (name, spec) in &specs {
             let prepared = prepare_wfst(spec);
             // Collect token names to reconstruct
-            let token_names: Vec<String> = prepared.token_id_map.iter().map(|(n, _)| n.to_string()).collect();
+            let token_names: Vec<String> = prepared
+                .token_id_map
+                .iter()
+                .map(|(n, _)| n.to_string())
+                .collect();
 
             group.bench_with_input(BenchmarkId::from_parameter(name), &token_names, |b, names| {
                 b.iter(|| TokenIdMap::from_names(names.iter().cloned()));
@@ -384,15 +388,11 @@ fn bench_recovery(c: &mut Criterion) {
             let token_ids = build_sample_token_ids(&prepared.token_id_map, 20);
             let beam = Some(TropicalWeight::new(2.0));
 
-            group.bench_with_input(
-                BenchmarkId::from_parameter(name),
-                &token_ids,
-                |b, ids| {
-                    b.iter(|| {
-                        let _ = viterbi_recovery_beam(ids, 3, &sync_tokens, beam);
-                    });
-                },
-            );
+            group.bench_with_input(BenchmarkId::from_parameter(name), &token_ids, |b, ids| {
+                b.iter(|| {
+                    let _ = viterbi_recovery_beam(ids, 3, &sync_tokens, beam);
+                });
+            });
         }
         group.finish();
     }
@@ -532,23 +532,15 @@ fn bench_log_semiring(c: &mut Criterion) {
         for &n in &[50usize, 100, 500] {
             // Tropical
             let dag_trop = build_synthetic_dag(n, edges_per_node, tropical_weight_fn);
-            group.bench_with_input(
-                BenchmarkId::new("tropical", n),
-                &dag_trop,
-                |b, dag| {
-                    b.iter(|| forward_scores::<TropicalWeight>(dag, n));
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("tropical", n), &dag_trop, |b, dag| {
+                b.iter(|| forward_scores::<TropicalWeight>(dag, n));
+            });
 
             // Log
             let dag_log = build_synthetic_dag(n, edges_per_node, log_weight_fn);
-            group.bench_with_input(
-                BenchmarkId::new("log", n),
-                &dag_log,
-                |b, dag| {
-                    b.iter(|| forward_scores::<LogWeight>(dag, n));
-                },
-            );
+            group.bench_with_input(BenchmarkId::new("log", n), &dag_log, |b, dag| {
+                b.iter(|| forward_scores::<LogWeight>(dag, n));
+            });
         }
         group.finish();
     }
@@ -631,7 +623,8 @@ fn bench_space(c: &mut Criterion) {
                     let mut total_bytes = 0u64;
                     for _ in 0..iters {
                         reset_peak();
-                        let _rec = RecoveryWfst::new(primary_cat.clone(), &sync_names, &token_id_map);
+                        let _rec =
+                            RecoveryWfst::new(primary_cat.clone(), &sync_names, &token_id_map);
                         total_bytes += peak_bytes() as u64;
                     }
                     Duration::from_nanos(total_bytes / iters)

@@ -40,13 +40,27 @@ pub fn generate_language_impl(
     let (term_wrapper, language_struct, language_trait_impl) = if language.types.len() > 1 {
         (
             generate_term_wrapper_multi(name, language),
-            generate_language_struct_multi(name, &name_str, &name_lower, language, raw_ascent_content, core_raw_ascent_content),
+            generate_language_struct_multi(
+                name,
+                &name_str,
+                &name_lower,
+                language,
+                raw_ascent_content,
+                core_raw_ascent_content,
+            ),
             generate_language_trait_impl_multi(name, &name_str, &name_lower, language),
         )
     } else {
         (
             generate_term_wrapper(name, primary_type),
-            generate_language_struct(name, primary_type, &name_str, &name_lower, language, raw_ascent_content),
+            generate_language_struct(
+                name,
+                primary_type,
+                &name_str,
+                &name_lower,
+                language,
+                raw_ascent_content,
+            ),
             generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language),
         )
     };
@@ -621,7 +635,11 @@ fn generate_language_struct(
 }
 
 /// Generate the collect_all_vars_impl method with proper traversal
-fn generate_var_collection_impl(primary_type: &Ident, language: &LanguageDef, impl_fn_name: &Ident) -> TokenStream {
+fn generate_var_collection_impl(
+    primary_type: &Ident,
+    language: &LanguageDef,
+    impl_fn_name: &Ident,
+) -> TokenStream {
     let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
 
     // Generate lambda handling arms
@@ -1073,13 +1091,15 @@ fn generate_language_struct_multi(
             let cat = &t.name;
             let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
             let variant = format_ident!("{}", cat);
-            let seed_step_term = primary_type_for_step.map(|pt| {
-                if pt == cat {
-                    quote! { prog.step_term.push((initial.clone(),)); }
-                } else {
-                    quote! {}
-                }
-            }).unwrap_or_default();
+            let seed_step_term = primary_type_for_step
+                .map(|pt| {
+                    if pt == cat {
+                        quote! { prog.step_term.push((initial.clone(),)); }
+                    } else {
+                        quote! {}
+                    }
+                })
+                .unwrap_or_default();
             quote! {
                 #inner_enum_name::#variant(inner) => {
                     let initial = inner.clone();
@@ -1128,35 +1148,43 @@ fn generate_language_struct_multi(
         .collect();
 
     // Per-category type inference functions
-    let per_cat_type_infer_fns: Vec<TokenStream> = language.types.iter().map(|t| {
-        let cat = &t.name;
-        let fn_name = format_ident!("infer_{}_type", cat.to_string().to_lowercase());
-        let type_impl = generate_type_inference_helpers(cat, language, &fn_name);
-        quote! {
-            pub fn #fn_name(term: &#cat) -> mettail_runtime::TermType {
-                #type_impl
-            }
-        }
-    }).collect();
-
-    // Per-category variable collection functions
-    let per_cat_var_collect_fns: Vec<TokenStream> = language.types.iter().map(|t| {
-        let cat = &t.name;
-        let fn_name = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
-        let var_impl = generate_var_collection_impl(cat, language, &fn_name);
-        quote! {
-            fn #fn_name(
-                root_term: &#cat,
-                term: &#cat,
-                result: &mut Vec<mettail_runtime::VarTypeInfo>,
-                seen: &mut std::collections::HashSet<std::string::String>,
-            ) {
-                match term {
-                    #var_impl
+    let per_cat_type_infer_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let fn_name = format_ident!("infer_{}_type", cat.to_string().to_lowercase());
+            let type_impl = generate_type_inference_helpers(cat, language, &fn_name);
+            quote! {
+                pub fn #fn_name(term: &#cat) -> mettail_runtime::TermType {
+                    #type_impl
                 }
             }
-        }
-    }).collect();
+        })
+        .collect();
+
+    // Per-category variable collection functions
+    let per_cat_var_collect_fns: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let fn_name = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
+            let var_impl = generate_var_collection_impl(cat, language, &fn_name);
+            quote! {
+                fn #fn_name(
+                    root_term: &#cat,
+                    term: &#cat,
+                    result: &mut Vec<mettail_runtime::VarTypeInfo>,
+                    seen: &mut std::collections::HashSet<std::string::String>,
+                ) {
+                    match term {
+                        #var_impl
+                    }
+                }
+            }
+        })
+        .collect();
 
     // Generate the core Ascent struct if core content is available.
     // The core struct has fewer rules (only for core categories) but ALL relation
@@ -1178,7 +1206,9 @@ fn generate_language_struct_multi(
 
     let run_ascent_body = if core_raw_ascent_content.is_some() {
         // SCC-split dispatcher: core categories → core struct, others → full struct
-        let core_cats_ref = core_cats.as_ref().expect("core_raw_content implies core_cats");
+        let core_cats_ref = core_cats
+            .as_ref()
+            .expect("core_raw_content implies core_cats");
 
         // Build seed+extract arms for core struct (same logic, different prog type)
         let core_seed_arms: Vec<TokenStream> = language
@@ -1189,13 +1219,15 @@ fn generate_language_struct_multi(
                 let cat = &t.name;
                 let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
                 let variant = format_ident!("{}", cat);
-                let seed_step_term = primary_type_for_step.map(|pt| {
-                    if pt == cat {
-                        quote! { prog.step_term.push((initial.clone(),)); }
-                    } else {
-                        quote! {}
-                    }
-                }).unwrap_or_default();
+                let seed_step_term = primary_type_for_step
+                    .map(|pt| {
+                        if pt == cat {
+                            quote! { prog.step_term.push((initial.clone(),)); }
+                        } else {
+                            quote! {}
+                        }
+                    })
+                    .unwrap_or_default();
                 quote! {
                     #inner_enum_name::#variant(inner) => {
                         let initial = inner.clone();
@@ -1445,7 +1477,9 @@ fn generate_language_trait_impl(
 
     // try_direct_eval: only for single-type languages whose primary type has native_type
     let primary_lang_type = language.types.first().expect("at least one type");
-    let try_direct_eval_method: TokenStream = if let Some(ref native_type) = primary_lang_type.native_type {
+    let try_direct_eval_method: TokenStream = if let Some(ref native_type) =
+        primary_lang_type.native_type
+    {
         let literal_label = generate_literal_label(native_type);
         quote! {
             fn try_direct_eval(&self, term: &dyn mettail_runtime::Term) -> Option<Box<dyn mettail_runtime::Term>> {
@@ -1729,39 +1763,47 @@ fn generate_language_trait_impl_multi(
     };
 
     // infer_var_types dispatch arms (per-category)
-    let infer_var_types_arms: Vec<TokenStream> = language.types.iter().map(|t| {
-        let cat = &t.name;
-        let variant = format_ident!("{}", cat);
-        let collect_fn = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
-        quote! {
-            #inner_enum_name::#variant(inner) => {
-                let mut result = Vec::new();
-                let mut seen = std::collections::HashSet::new();
-                #language_name::#collect_fn(inner, inner, &mut result, &mut seen);
-                result
+    let infer_var_types_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            let collect_fn = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
+            quote! {
+                #inner_enum_name::#variant(inner) => {
+                    let mut result = Vec::new();
+                    let mut seen = std::collections::HashSet::new();
+                    #language_name::#collect_fn(inner, inner, &mut result, &mut seen);
+                    result
+                }
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     // infer_var_type dispatch arms (per-category)
-    let infer_var_type_arms: Vec<TokenStream> = language.types.iter().map(|t| {
-        let cat = &t.name;
-        let variant = format_ident!("{}", cat);
-        let collect_fn = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
-        quote! {
-            #inner_enum_name::#variant(inner) => {
-                // Try direct method first
-                if let Some(t) = inner.infer_var_type(var_name) {
-                    return Some(#language_name::inferred_to_term_type(&t));
+    let infer_var_type_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let variant = format_ident!("{}", cat);
+            let collect_fn = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
+            quote! {
+                #inner_enum_name::#variant(inner) => {
+                    // Try direct method first
+                    if let Some(t) = inner.infer_var_type(var_name) {
+                        return Some(#language_name::inferred_to_term_type(&t));
+                    }
+                    // Search all variables including bound ones
+                    let mut result = Vec::new();
+                    let mut seen = std::collections::HashSet::new();
+                    #language_name::#collect_fn(inner, inner, &mut result, &mut seen);
+                    result.into_iter().find(|v| v.name == var_name).map(|v| v.ty)
                 }
-                // Search all variables including bound ones
-                let mut result = Vec::new();
-                let mut seen = std::collections::HashSet::new();
-                #language_name::#collect_fn(inner, inner, &mut result, &mut seen);
-                result.into_iter().find(|v| v.name == var_name).map(|v| v.ty)
             }
-        }
-    }).collect();
+        })
+        .collect();
 
     quote! {
         impl mettail_runtime::Language for #language_name {
@@ -1961,7 +2003,11 @@ fn generate_language_trait_impl_multi(
 /// This handles detecting lambda variants and building the full function type.
 /// The domain type is inferred from how the binder is USED in the body,
 /// not just from the lambda variant.
-fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef, self_fn_name: &Ident) -> TokenStream {
+fn generate_type_inference_helpers(
+    primary_type: &Ident,
+    language: &LanguageDef,
+    self_fn_name: &Ident,
+) -> TokenStream {
     let primary_type_lit = LitStr::new(&primary_type.to_string(), primary_type.span());
 
     // Get all categories for lambda variant detection (including native, e.g. Int/Bool/Str)
@@ -2044,10 +2090,7 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
         let param_type_strs = &rel.param_types;
 
         let arity = rel.param_types.len();
-        let tuple_vars: Vec<syn::Ident> = (0..arity)
-            .map(|i| format_ident!("e{}", i))
-            .collect();
-
+        let tuple_vars: Vec<syn::Ident> = (0..arity).map(|i| format_ident!("e{}", i)).collect();
 
         let format_exprs: Vec<TokenStream> = tuple_vars
             .iter()

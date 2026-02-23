@@ -6,8 +6,8 @@
 //! - Error position tracking via Range/Position
 
 use crate::{
-    generate_parser,
-    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec,
+    generate_parser, BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec,
+    SyntaxItemSpec,
 };
 
 /// Build a simple calculator spec for error tests.
@@ -45,9 +45,7 @@ fn calculator_spec() -> LanguageSpec {
             RuleSpec::classified(
                 "IVar",
                 "Int",
-                vec![SyntaxItemSpec::IdentCapture {
-                    param_name: "v".to_string(),
-                }],
+                vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
                 &category_names,
             ),
         ],
@@ -67,18 +65,12 @@ fn typed_calc_spec() -> LanguageSpec {
         native_type: Some("bool".to_string()),
         is_primary: false,
     });
-    spec.rules.push(RuleSpec::classified(
-        "BoolLit",
-        "Bool",
-        vec![],
-        &category_names,
-    ));
+    spec.rules
+        .push(RuleSpec::classified("BoolLit", "Bool", vec![], &category_names));
     spec.rules.push(RuleSpec::classified(
         "BVar",
         "Bool",
-        vec![SyntaxItemSpec::IdentCapture {
-            param_name: "v".to_string(),
-        }],
+        vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
         &category_names,
     ));
     spec
@@ -92,10 +84,7 @@ fn test_generated_code_contains_parse_error_enum() {
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    assert!(
-        code_str.contains("ParseError"),
-        "generated code should contain ParseError enum"
-    );
+    assert!(code_str.contains("ParseError"), "generated code should contain ParseError enum");
     assert!(
         code_str.contains("UnexpectedToken"),
         "generated code should contain UnexpectedToken variant"
@@ -104,10 +93,7 @@ fn test_generated_code_contains_parse_error_enum() {
         code_str.contains("UnexpectedEof"),
         "generated code should contain UnexpectedEof variant"
     );
-    assert!(
-        code_str.contains("LexError"),
-        "generated code should contain LexError variant"
-    );
+    assert!(code_str.contains("LexError"), "generated code should contain LexError variant");
     assert!(
         code_str.contains("TrailingTokens"),
         "generated code should contain TrailingTokens variant"
@@ -120,18 +106,9 @@ fn test_generated_code_contains_position_and_range() {
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    assert!(
-        code_str.contains("Position"),
-        "generated code should contain Position struct"
-    );
-    assert!(
-        code_str.contains("byte_offset"),
-        "Position should have byte_offset field"
-    );
-    assert!(
-        code_str.contains("Range"),
-        "generated code should contain Range struct"
-    );
+    assert!(code_str.contains("Position"), "generated code should contain Position struct");
+    assert!(code_str.contains("byte_offset"), "Position should have byte_offset field");
+    assert!(code_str.contains("Range"), "generated code should contain Range struct");
 }
 
 // -- Expected message generation --

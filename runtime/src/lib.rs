@@ -30,4 +30,3 @@ pub use language::*;
 // Matchings enumeration for zip+map correlated search (used by generated rewrite clauses)
 mod matchings;
 pub use matchings::*;
-

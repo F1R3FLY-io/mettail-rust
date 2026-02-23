@@ -4,4 +4,4 @@ mod ascent_parse;
 mod pre_parse;
 
 pub use ascent_parse::{parse_query, ParseError};
-pub use pre_parse::{PreParseError, PreParsedBodyAtom, PreParsedRule, pre_parse_rule};
+pub use pre_parse::{pre_parse_rule, PreParseError, PreParsedBodyAtom, PreParsedRule};

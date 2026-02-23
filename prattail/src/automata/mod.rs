@@ -160,10 +160,7 @@ pub struct Nfa {
 impl Nfa {
     /// Create a new NFA with a single non-accepting start state.
     pub fn new() -> Self {
-        Nfa {
-            states: vec![NfaState::new()],
-            start: 0,
-        }
+        Nfa { states: vec![NfaState::new()], start: 0 }
     }
 
     /// Add a new state and return its ID.

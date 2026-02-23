@@ -9,8 +9,8 @@
 mod bench_common;
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use std::time::Duration;
 use mettail_languages::calculator::*;
+use std::time::Duration;
 
 use bench_common::{gen_chained_negation, gen_not_chain, gen_prefix_infix, DEPTH_SIZES, SIZES};
 

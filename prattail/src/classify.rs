@@ -54,8 +54,7 @@ pub fn classify_rule(
     let (is_cross_category, cross_source_category) =
         classify_cross_category(syntax, category, category_names);
 
-    let (is_cast, cast_source_category) =
-        classify_cast(syntax, category, category_names, is_var);
+    let (is_cast, cast_source_category) = classify_cast(syntax, category, category_names, is_var);
 
     // Infix: same-category leading NT + operator, OR postfix, OR cross-category.
     // Cross-category infix (e.g., `Int == Int` producing `Bool`) implies infix
@@ -90,7 +89,7 @@ fn has_binder_recursive(syntax: &[SyntaxItemSpec], check_multi: bool) -> bool {
         SyntaxItemSpec::Binder { is_multi, .. } => *is_multi == check_multi,
         SyntaxItemSpec::ZipMapSep { body_items, .. } => {
             has_binder_recursive(body_items, check_multi)
-        }
+        },
         SyntaxItemSpec::Optional { inner } => has_binder_recursive(inner, check_multi),
         _ => false,
     })
@@ -109,10 +108,7 @@ fn classify_is_var(syntax: &[SyntaxItemSpec]) -> bool {
 /// separately by `classify_cross_category` and ORed into `is_infix` in
 /// `classify_rule`. Rules like `PAmb . Proc ::= Name "[" Proc "]"` where the
 /// first NT is a *different* category are NOT infix — they are prefix RD rules.
-fn classify_is_infix(
-    syntax: &[SyntaxItemSpec],
-    category: &str,
-) -> bool {
+fn classify_is_infix(syntax: &[SyntaxItemSpec], category: &str) -> bool {
     if syntax.len() < 3 {
         return false;
     }
@@ -164,12 +160,11 @@ fn classify_is_unary_prefix(
 }
 
 /// Check if a rule is a collection rule. Returns (is_collection, kind, separator).
-fn classify_collection(syntax: &[SyntaxItemSpec]) -> (bool, Option<CollectionKind>, Option<String>) {
+fn classify_collection(
+    syntax: &[SyntaxItemSpec],
+) -> (bool, Option<CollectionKind>, Option<String>) {
     for item in syntax {
-        if let SyntaxItemSpec::Collection {
-            kind, separator, ..
-        } = item
-        {
+        if let SyntaxItemSpec::Collection { kind, separator, .. } = item {
             return (true, Some(*kind), Some(separator.clone()));
         }
     }
@@ -188,20 +183,12 @@ fn classify_cross_category(
         return (false, None);
     }
     if let (
-        SyntaxItemSpec::NonTerminal {
-            category: left_cat, ..
-        },
+        SyntaxItemSpec::NonTerminal { category: left_cat, .. },
         SyntaxItemSpec::Terminal(_),
-        SyntaxItemSpec::NonTerminal {
-            category: right_cat,
-            ..
-        },
+        SyntaxItemSpec::NonTerminal { category: right_cat, .. },
     ) = (&syntax[0], &syntax[1], &syntax[2])
     {
-        if left_cat == right_cat
-            && left_cat != category
-            && category_names.contains(left_cat)
-        {
+        if left_cat == right_cat && left_cat != category && category_names.contains(left_cat) {
             return (true, Some(left_cat.clone()));
         }
     }
@@ -222,11 +209,7 @@ fn classify_cast(
     if syntax.len() != 1 {
         return (false, None);
     }
-    if let SyntaxItemSpec::NonTerminal {
-        category: source_cat,
-        ..
-    } = &syntax[0]
-    {
+    if let SyntaxItemSpec::NonTerminal { category: source_cat, .. } = &syntax[0] {
         if source_cat != category && category_names.contains(source_cat) {
             return (true, Some(source_cat.clone()));
         }
@@ -244,12 +227,7 @@ mod tests {
     use crate::SyntaxItemSpec;
 
     fn cat_names() -> Vec<String> {
-        vec![
-            "Int".to_string(),
-            "Bool".to_string(),
-            "Proc".to_string(),
-            "Name".to_string(),
-        ]
+        vec!["Int".to_string(), "Bool".to_string(), "Proc".to_string(), "Name".to_string()]
     }
 
     #[test]
@@ -302,9 +280,7 @@ mod tests {
 
     #[test]
     fn test_var_classification() {
-        let syntax = vec![SyntaxItemSpec::IdentCapture {
-            param_name: "x".to_string(),
-        }];
+        let syntax = vec![SyntaxItemSpec::IdentCapture { param_name: "x".to_string() }];
         let c = classify_rule(&syntax, "Int", &cat_names());
         assert!(c.is_var, "should be var");
         assert!(!c.is_cast, "var should not be cast");
@@ -325,11 +301,7 @@ mod tests {
         }];
         let c = classify_rule(&syntax, "Proc", &cat_names());
         assert!(c.is_cast, "single NT from different known category should be cast");
-        assert_eq!(
-            c.cast_source_category,
-            Some("Int".to_string()),
-            "cast source should be Int"
-        );
+        assert_eq!(c.cast_source_category, Some("Int".to_string()), "cast source should be Int");
     }
 
     #[test]
@@ -347,11 +319,7 @@ mod tests {
         ];
         let c = classify_rule(&syntax, "Bool", &cat_names());
         assert!(c.is_cross_category, "should be cross-category");
-        assert_eq!(
-            c.cross_source_category,
-            Some("Int".to_string()),
-            "cross source should be Int"
-        );
+        assert_eq!(c.cross_source_category, Some("Int".to_string()), "cross source should be Int");
         assert!(c.is_infix, "cross-category should also be infix");
     }
 

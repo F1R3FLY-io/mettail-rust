@@ -21,18 +21,23 @@ use std::collections::BTreeMap;
 use proc_macro2::TokenStream;
 
 use crate::binding_power::{analyze_binding_powers, BindingPowerTable, InfixRuleInfo, MixfixPart};
-use crate::dispatch::{categories_needing_dispatch, write_category_dispatch, CastRule, CrossCategoryRule};
+use crate::dispatch::{
+    categories_needing_dispatch, write_category_dispatch, CastRule, CrossCategoryRule,
+};
 use crate::lexer::{extract_terminals, generate_lexer_as_string, GrammarRuleInfo, TypeInfo};
 use crate::pratt::{
-    write_dispatch_recovering, write_parser_helpers,
-    write_recovery_helpers, PrefixHandler,
+    write_dispatch_recovering, write_parser_helpers, write_recovery_helpers, PrefixHandler,
 };
 use crate::prediction::{
     analyze_cross_category_overlaps, compute_first_sets, compute_follow_sets_from_inputs,
     detect_grammar_warnings, generate_sync_predicate, FirstItem, FollowSetInput, RuleInfo,
 };
-use crate::recursive::{write_dollar_handlers, write_lambda_handlers, write_rd_handler, RDRuleInfo, RDSyntaxItem};
-use crate::trampoline::{write_trampolined_parser, write_trampolined_parser_recovering, TrampolineConfig};
+use crate::recursive::{
+    write_dollar_handlers, write_lambda_handlers, write_rd_handler, RDRuleInfo, RDSyntaxItem,
+};
+use crate::trampoline::{
+    write_trampolined_parser, write_trampolined_parser_recovering, TrampolineConfig,
+};
 use crate::{LanguageSpec, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -89,10 +94,7 @@ pub enum PipelineState {
         parser_bundle: ParserBundle,
     },
     /// Both code strings generated, ready to merge.
-    Generated {
-        lexer_code: String,
-        parser_code: String,
-    },
+    Generated { lexer_code: String, parser_code: String },
     /// Final output produced.
     Complete(TokenStream),
 }
@@ -105,28 +107,19 @@ impl PipelineState {
     /// - `Complete → panic`: pipeline is already done
     pub fn advance(self) -> Self {
         match self {
-            PipelineState::Ready {
-                lexer_bundle,
-                parser_bundle,
-            } => {
+            PipelineState::Ready { lexer_bundle, parser_bundle } => {
                 let lexer_code = generate_lexer_code(&lexer_bundle);
                 let parser_code = generate_parser_code(&parser_bundle);
-                PipelineState::Generated {
-                    lexer_code,
-                    parser_code,
-                }
-            }
-            PipelineState::Generated {
-                lexer_code,
-                parser_code,
-            } => {
+                PipelineState::Generated { lexer_code, parser_code }
+            },
+            PipelineState::Generated { lexer_code, parser_code } => {
                 let mut combined = lexer_code;
                 combined.push_str(&parser_code);
                 let ts = combined
                     .parse::<TokenStream>()
                     .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream");
                 PipelineState::Complete(ts)
-            }
+            },
             PipelineState::Complete(_) => panic!("Pipeline already complete"),
         }
     }
@@ -163,10 +156,7 @@ pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
         crate::ebnf::write_ebnf_output(&ebnf, &spec.name, &dump_target);
     }
 
-    let mut state = PipelineState::Ready {
-        lexer_bundle,
-        parser_bundle,
-    };
+    let mut state = PipelineState::Ready { lexer_bundle, parser_bundle };
     loop {
         state = state.advance();
         if let PipelineState::Complete(ts) = state {
@@ -208,7 +198,10 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         })
         .collect();
 
-    let has_binders = spec.rules.iter().any(|r| r.has_binder || r.has_multi_binder);
+    let has_binders = spec
+        .rules
+        .iter()
+        .any(|r| r.has_binder || r.has_multi_binder);
 
     let lexer_category_names: Vec<String> = spec.types.iter().map(|t| t.name.clone()).collect();
     let lexer_bundle = LexerBundle {
@@ -297,7 +290,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
                         } else {
                             FirstItem::Ident
                         }
-                    }
+                    },
                     SyntaxItemSpec::IdentCapture { .. }
                     | SyntaxItemSpec::Binder { .. }
                     | SyntaxItemSpec::Collection { .. }
@@ -442,17 +435,17 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
                 match native_type.as_str() {
                     "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => {
                         first_set.insert("Integer");
-                    }
+                    },
                     "f32" | "f64" => {
                         first_set.insert("Float");
-                    }
+                    },
                     "bool" => {
                         first_set.insert("Boolean");
-                    }
+                    },
                     "str" | "String" => {
                         first_set.insert("StringLit");
-                    }
-                    _ => {}
+                    },
+                    _ => {},
                 }
             }
         }
@@ -506,9 +499,9 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
     #[cfg(feature = "wfst")]
     let (prediction_wfsts, recovery_wfsts, _token_id_map) = if use_wfst {
         use crate::prediction::build_dispatch_action_tables;
-        use crate::wfst::build_prediction_wfsts;
         use crate::recovery::build_recovery_wfsts;
         use crate::token_id::TokenIdMap;
+        use crate::wfst::build_prediction_wfsts;
 
         // Build native type map for dispatch action table extraction
         let native_types: std::collections::BTreeMap<String, Option<String>> = bundle
@@ -529,12 +522,8 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         );
 
         // Build prediction WFSTs (per-category, weight-ordered dispatch)
-        let mut prediction_wfsts = build_prediction_wfsts(
-            &category_names,
-            &first_sets,
-            &overlaps,
-            &dispatch_actions,
-        );
+        let mut prediction_wfsts =
+            build_prediction_wfsts(&category_names, &first_sets, &overlaps, &dispatch_actions);
 
         // Apply beam width configuration
         if let Some(beam_value) = bundle.beam_width.to_option() {
@@ -629,9 +618,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
     }
 
     // Determine dispatch categories
-    let dispatch_categories =
-        categories_needing_dispatch(&bundle.cross_rules, &bundle.cast_rules);
-
+    let dispatch_categories = categories_needing_dispatch(&bundle.cross_rules, &bundle.cast_rules);
 
     // Write parser helpers
     write_parser_helpers(&mut buf);
@@ -726,14 +713,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         let used_weighted = false;
 
         if !used_weighted {
-            write_category_dispatch(
-                &mut buf,
-                &cat.name,
-                &cat_cross,
-                &[],
-                &overlaps,
-                &first_sets,
-            );
+            write_category_dispatch(&mut buf, &cat.name, &cat_cross, &[], &overlaps, &first_sets);
         }
     }
 
@@ -823,10 +803,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         {
             // Use WFST recovery when available
             if recovery_wfsts.iter().any(|w| w.category() == cat.name) {
-                write_trampolined_parser_recovering_wfst(
-                    &mut buf,
-                    &tramp_config,
-                );
+                write_trampolined_parser_recovering_wfst(&mut buf, &tramp_config);
             } else {
                 write_trampolined_parser_recovering(
                     &mut buf,
@@ -858,7 +835,11 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
 
     // Debug dump: write generated parser code to file for inspection
     if let Ok(dump_dir) = std::env::var("PRATTAIL_DUMP_PARSER") {
-        let dir = if dump_dir == "1" { ".".to_string() } else { dump_dir };
+        let dir = if dump_dir == "1" {
+            ".".to_string()
+        } else {
+            dump_dir
+        };
         let cat_suffix = category_names.join("-");
         let filename = format!("{}/prattail-parser-{}.rs", dir, cat_suffix);
         if let Ok(()) = std::fs::write(&filename, &buf) {
@@ -883,7 +864,7 @@ fn capitalize_first(s: &str) -> String {
             result.extend(first.to_uppercase());
             result.extend(chars);
             result
-        }
+        },
     }
 }
 
@@ -898,19 +879,15 @@ fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
             SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
             SyntaxItemSpec::Collection { separator, .. } => {
                 terminals.push(separator.clone());
-            }
-            SyntaxItemSpec::ZipMapSep {
-                body_items,
-                separator,
-                ..
-            } => {
+            },
+            SyntaxItemSpec::ZipMapSep { body_items, separator, .. } => {
                 terminals.extend(collect_terminals_recursive(body_items));
                 terminals.push(separator.clone());
-            }
+            },
             SyntaxItemSpec::Optional { inner } => {
                 terminals.extend(collect_terminals_recursive(inner));
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     terminals.sort();
@@ -956,34 +933,28 @@ fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
 
     for item in syntax {
         match item {
-            SyntaxItemSpec::NonTerminal {
-                category: _,
-                param_name: _,
-            } if skip_count == 0 => {
+            SyntaxItemSpec::NonTerminal { category: _, param_name: _ } if skip_count == 0 => {
                 // First NonTerminal = left operand, skip it
                 skip_count += 1;
-            }
+            },
             SyntaxItemSpec::Terminal(_) if !after_trigger => {
                 // First Terminal = trigger, skip it
                 after_trigger = true;
-            }
-            SyntaxItemSpec::NonTerminal {
-                category,
-                param_name,
-            } if after_trigger => {
+            },
+            SyntaxItemSpec::NonTerminal { category, param_name } if after_trigger => {
                 parts.push(MixfixPart {
                     operand_category: category.clone(),
                     param_name: param_name.clone(),
                     following_terminal: None, // will be filled below
                 });
-            }
+            },
             SyntaxItemSpec::Terminal(t) if after_trigger => {
                 // This terminal follows the previous part
                 if let Some(last_part) = parts.last_mut() {
                     last_part.following_terminal = Some(t.clone());
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -996,21 +967,14 @@ fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
 fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
     match item {
         SyntaxItemSpec::Terminal(t) => RDSyntaxItem::Terminal(t.clone()),
-        SyntaxItemSpec::NonTerminal {
-            category,
-            param_name,
-        } => RDSyntaxItem::NonTerminal {
+        SyntaxItemSpec::NonTerminal { category, param_name } => RDSyntaxItem::NonTerminal {
             category: category.clone(),
             param_name: param_name.clone(),
         },
-        SyntaxItemSpec::IdentCapture { param_name } => RDSyntaxItem::IdentCapture {
-            param_name: param_name.clone(),
+        SyntaxItemSpec::IdentCapture { param_name } => {
+            RDSyntaxItem::IdentCapture { param_name: param_name.clone() }
         },
-        SyntaxItemSpec::Binder {
-            param_name,
-            category,
-            ..
-        } => RDSyntaxItem::Binder {
+        SyntaxItemSpec::Binder { param_name, category, .. } => RDSyntaxItem::Binder {
             param_name: param_name.clone(),
             binder_category: category.clone(),
         },
@@ -1087,7 +1051,8 @@ fn emit_prediction_wfst_static(
 
         // ── Flatten transitions into CSR format ──
         let mut transitions_flat: Vec<(u16, u32, f64)> = Vec::new();
-        let mut state_offsets: Vec<(usize, usize, bool, f64)> = Vec::with_capacity(wfst.states.len());
+        let mut state_offsets: Vec<(usize, usize, bool, f64)> =
+            Vec::with_capacity(wfst.states.len());
 
         for state in &wfst.states {
             let trans_start = transitions_flat.len();
@@ -1095,7 +1060,12 @@ fn emit_prediction_wfst_static(
             for t in &state.transitions {
                 transitions_flat.push((t.input, t.to, t.weight.value()));
             }
-            state_offsets.push((trans_start, trans_count, state.is_final, state.final_weight.value()));
+            state_offsets.push((
+                trans_start,
+                trans_count,
+                state.is_final,
+                state.final_weight.value(),
+            ));
         }
 
         // ── Collect token names from the token map ──
@@ -1108,48 +1078,54 @@ fn emit_prediction_wfst_static(
 
         // ── Emit static arrays ──
         // Transitions
-        write!(buf,
-            "static WFST_TRANSITIONS_{cat}: &[(u16, u32, f64)] = &[",
-            cat = category,
-        ).unwrap();
+        write!(buf, "static WFST_TRANSITIONS_{cat}: &[(u16, u32, f64)] = &[", cat = category,)
+            .unwrap();
         for (i, (token_id, target, weight)) in transitions_flat.iter().enumerate() {
-            if i > 0 { buf.push(','); }
+            if i > 0 {
+                buf.push(',');
+            }
             write!(buf, "({}_u16, {}_u32, {:?}_f64)", token_id, target, weight).unwrap();
         }
         buf.push_str("];");
 
         // State offsets
-        write!(buf,
+        write!(
+            buf,
             "static WFST_STATE_OFFSETS_{cat}: &[(usize, usize, bool, f64)] = &[",
             cat = category,
-        ).unwrap();
+        )
+        .unwrap();
         for (i, (start, count, is_final, fw)) in state_offsets.iter().enumerate() {
-            if i > 0 { buf.push(','); }
+            if i > 0 {
+                buf.push(',');
+            }
             write!(buf, "({}_usize, {}_usize, {}, {:?}_f64)", start, count, is_final, fw).unwrap();
         }
         buf.push_str("];");
 
         // Token names
-        write!(buf,
-            "static WFST_TOKEN_NAMES_{cat}: &[&str] = &[",
-            cat = category,
-        ).unwrap();
+        write!(buf, "static WFST_TOKEN_NAMES_{cat}: &[&str] = &[", cat = category,).unwrap();
         for (i, name) in token_names.iter().enumerate() {
-            if i > 0 { buf.push(','); }
+            if i > 0 {
+                buf.push(',');
+            }
             write!(buf, "\"{}\"", name).unwrap();
         }
         buf.push_str("];");
 
         // Beam width
         match wfst.beam_width {
-            Some(bw) => write!(buf,
+            Some(bw) => write!(
+                buf,
                 "static WFST_BEAM_WIDTH_{}: Option<f64> = Some({:?}_f64);",
-                category, bw.value(),
-            ).unwrap(),
-            None => write!(buf,
-                "static WFST_BEAM_WIDTH_{cat}: Option<f64> = None;",
-                cat = category,
-            ).unwrap(),
+                category,
+                bw.value(),
+            )
+            .unwrap(),
+            None => {
+                write!(buf, "static WFST_BEAM_WIDTH_{cat}: Option<f64> = None;", cat = category,)
+                    .unwrap()
+            },
         }
 
         // LazyLock constructor
@@ -1185,10 +1161,7 @@ fn emit_prediction_wfst_static(
 /// These arrays are consumed by `RecoveryWfst::from_flat()` at runtime when
 /// full context-aware recovery is needed (Sprint 4).
 #[cfg(feature = "wfst")]
-fn emit_recovery_wfst_static(
-    buf: &mut String,
-    recovery_wfsts: &[crate::recovery::RecoveryWfst],
-) {
+fn emit_recovery_wfst_static(buf: &mut String, recovery_wfsts: &[crate::recovery::RecoveryWfst]) {
     use std::fmt::Write;
 
     for recovery_wfst in recovery_wfsts {
@@ -1196,22 +1169,22 @@ fn emit_recovery_wfst_static(
 
         // Sync token IDs (sorted)
         let sync_ids: Vec<u16> = recovery_wfst.sync_tokens().iter().copied().collect();
-        write!(buf,
-            "static RECOVERY_SYNC_TOKENS_{cat}: &[u16] = &[",
-        ).unwrap();
+        write!(buf, "static RECOVERY_SYNC_TOKENS_{cat}: &[u16] = &[",).unwrap();
         for (i, id) in sync_ids.iter().enumerate() {
-            if i > 0 { buf.push(','); }
+            if i > 0 {
+                buf.push(',');
+            }
             write!(buf, "{}_u16", id).unwrap();
         }
         buf.push_str("];");
 
         // Sync sources: (token_id, source_tag)
         // 0=Eof, 1=StructuralDelimiter, 2=FollowSet
-        write!(buf,
-            "static RECOVERY_SYNC_SOURCES_{cat}: &[(u16, u8)] = &[",
-        ).unwrap();
+        write!(buf, "static RECOVERY_SYNC_SOURCES_{cat}: &[(u16, u8)] = &[",).unwrap();
         for (i, &id) in sync_ids.iter().enumerate() {
-            if i > 0 { buf.push(','); }
+            if i > 0 {
+                buf.push(',');
+            }
             let source_tag = match recovery_wfst.token_name(id) {
                 Some("Eof") => 0_u8,
                 Some("RParen" | "RBrace" | "RBracket" | "Semi" | "Comma") => 1_u8,
@@ -1232,11 +1205,11 @@ fn emit_recovery_wfst_static(
         token_names.sort();
         token_names.dedup();
 
-        write!(buf,
-            "static RECOVERY_TOKEN_NAMES_{cat}: &[&str] = &[",
-        ).unwrap();
+        write!(buf, "static RECOVERY_TOKEN_NAMES_{cat}: &[&str] = &[",).unwrap();
         for (i, name) in token_names.iter().enumerate() {
-            if i > 0 { buf.push(','); }
+            if i > 0 {
+                buf.push(',');
+            }
             write!(buf, "\"{}\"", name).unwrap();
         }
         buf.push_str("];");
@@ -1296,12 +1269,18 @@ fn generate_wfst_recovery_fn(
     }
 
     // Build bracket-specific insert patterns for close delimiters
-    let has_rparen = recovery_wfst.sync_tokens().iter().any(|&id|
-        recovery_wfst.token_name(id) == Some("RParen"));
-    let has_rbrace = recovery_wfst.sync_tokens().iter().any(|&id|
-        recovery_wfst.token_name(id) == Some("RBrace"));
-    let has_rbracket = recovery_wfst.sync_tokens().iter().any(|&id|
-        recovery_wfst.token_name(id) == Some("RBracket"));
+    let has_rparen = recovery_wfst
+        .sync_tokens()
+        .iter()
+        .any(|&id| recovery_wfst.token_name(id) == Some("RParen"));
+    let has_rbrace = recovery_wfst
+        .sync_tokens()
+        .iter()
+        .any(|&id| recovery_wfst.token_name(id) == Some("RBrace"));
+    let has_rbracket = recovery_wfst
+        .sync_tokens()
+        .iter()
+        .any(|&id| recovery_wfst.token_name(id) == Some("RBracket"));
 
     let max_skip: usize = 32; // Same as recovery::costs::MAX_SKIP_LOOKAHEAD
 
@@ -1359,11 +1338,13 @@ fn generate_wfst_recovery_fn(
         cat = category,
         max_skip = max_skip,
         sync_pats = sync_patterns.join(" | "),
-    ).unwrap();
+    )
+    .unwrap();
 
     // Emit bracket-specific insert logic
     if has_rparen {
-        write!(buf,
+        write!(
+            buf,
             "if open_parens > 0 {{ \
                 let cost = base_insert * 0.3; /* strongly prefer closing unmatched parens */ \
                 if cost < best_cost {{ \
@@ -1371,10 +1352,12 @@ fn generate_wfst_recovery_fn(
                     best_pos = Some(start); /* phantom insert — don't advance */ \
                 }} \
             }}"
-        ).unwrap();
+        )
+        .unwrap();
     }
     if has_rbrace {
-        write!(buf,
+        write!(
+            buf,
             "if open_braces > 0 {{ \
                 let cost = base_insert * 0.3; \
                 if cost < best_cost {{ \
@@ -1382,10 +1365,12 @@ fn generate_wfst_recovery_fn(
                     best_pos = Some(start); \
                 }} \
             }}"
-        ).unwrap();
+        )
+        .unwrap();
     }
     if has_rbracket {
-        write!(buf,
+        write!(
+            buf,
             "if open_brackets > 0 {{ \
                 let cost = base_insert * 0.3; \
                 if cost < best_cost {{ \
@@ -1393,7 +1378,8 @@ fn generate_wfst_recovery_fn(
                     best_pos = Some(start); \
                 }} \
             }}"
-        ).unwrap();
+        )
+        .unwrap();
     }
 
     write!(
@@ -1414,7 +1400,8 @@ fn generate_wfst_recovery_fn(
                 None => false \
             }} \
          }}",
-    ).unwrap();
+    )
+    .unwrap();
 }
 
 /// Generate recovering parser variant that uses WFST recovery instead of sync_to.
@@ -1480,5 +1467,6 @@ fn write_trampolined_parser_recovering_wfst(
                 }} \
             }} \
         }}",
-    ).unwrap();
+    )
+    .unwrap();
 }

@@ -230,12 +230,13 @@ pub fn extract_terminals(
     // Check for native types
     for ty in types {
         match ty.native_type_name.as_deref() {
-            Some("i32") | Some("i64") | Some("u32") | Some("u64") | Some("isize") | Some("usize") => {
+            Some("i32") | Some("i64") | Some("u32") | Some("u64") | Some("isize")
+            | Some("usize") => {
                 needs.integer = true;
-            }
+            },
             Some("f32") | Some("f64") => {
                 needs.float = true;
-            }
+            },
             Some("bool") => {
                 needs.boolean = true;
                 // Add "true" and "false" as keyword terminals
@@ -249,11 +250,11 @@ pub fn extract_terminals(
                     kind: TokenKind::False,
                     is_keyword: true,
                 });
-            }
+            },
             Some("str") | Some("String") => {
                 needs.string_lit = true;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -271,7 +272,8 @@ pub fn extract_terminals(
         }
     }
 
-    let language_name = types.first()
+    let language_name = types
+        .first()
         .map(|t| t.language_name.clone())
         .unwrap_or_else(|| "Unknown".to_string());
 

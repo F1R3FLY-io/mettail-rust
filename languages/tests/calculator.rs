@@ -191,11 +191,7 @@ fn test_env_substitute_and_exec() {
     let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
     let normal = results.normal_forms();
     let displays: Vec<&str> = normal.iter().map(|nf| nf.display.as_str()).collect();
-    assert!(
-        displays.contains(&"3.0"),
-        "expected normal form \"3.0\" among {:?}",
-        displays
-    );
+    assert!(displays.contains(&"3.0"), "expected normal form \"3.0\" among {:?}", displays);
 }
 
 #[test]
@@ -454,11 +450,7 @@ fn test_env_int_substitute_and_exec() {
         .iter()
         .map(|nf| nf.display.as_str())
         .collect();
-    assert!(
-        displays.contains(&"3"),
-        "expected \"3\" among {:?}",
-        displays
-    );
+    assert!(displays.contains(&"3"), "expected \"3\" among {:?}", displays);
 }
 
 #[test]
@@ -466,11 +458,7 @@ fn test_ambiguous_parse_variable_expr() {
     // "a + b" should parse successfully (ambiguous across Float/Int).
     mettail_runtime::clear_var_cache();
     let result = calc::CalculatorLanguage::parse("a + b");
-    assert!(
-        result.is_ok(),
-        "ambiguous expression should parse: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "ambiguous expression should parse: {:?}", result);
     // Display should show the expression regardless of internal ambiguity
     assert_eq!(format!("{}", result.expect("already checked")), "a + b");
 }
@@ -483,10 +471,7 @@ fn test_unambiguous_int_literal() {
     if let calc::CalculatorTermInner::Int(inner) = &result.0 {
         assert_eq!(inner.eval(), 42);
     } else {
-        panic!(
-            "expected Int variant for '42', got {:?}",
-            result.0
-        );
+        panic!("expected Int variant for '42', got {:?}", result.0);
     }
 }
 
@@ -498,10 +483,7 @@ fn test_unambiguous_float_literal() {
     if let calc::CalculatorTermInner::Float(_) = &result.0 {
         // ok
     } else {
-        panic!(
-            "expected Float variant for '1.5', got {:?}",
-            result.0
-        );
+        panic!("expected Float variant for '1.5', got {:?}", result.0);
     }
 }
 
@@ -514,11 +496,7 @@ fn test_calculator_infer_var_types() {
     let term = lang.parse_term("x + 1").expect("parse x + 1");
     let var_types = lang.infer_var_types(term.as_ref());
     let x_info = var_types.iter().find(|v| v.name == "x");
-    assert!(
-        x_info.is_some(),
-        "x should be found in var types, got: {:?}",
-        var_types
-    );
+    assert!(x_info.is_some(), "x should be found in var types, got: {:?}", var_types);
 }
 
 /// `infer_var_type` should find variable `x` by name for multi-type Calculator

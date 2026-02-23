@@ -371,9 +371,9 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
         // Parse value: float, integer, boolean, string literal, or keyword identifier
         let value = if content.peek(syn::LitFloat) {
             let lit = content.parse::<syn::LitFloat>()?;
-            let f: f64 = lit.base10_parse().map_err(|e| {
-                syn::Error::new(lit.span(), format!("invalid float value: {}", e))
-            })?;
+            let f: f64 = lit
+                .base10_parse()
+                .map_err(|e| syn::Error::new(lit.span(), format!("invalid float value: {}", e)))?;
             AttributeValue::Float(f)
         } else if content.peek(syn::LitInt) {
             let lit = content.parse::<syn::LitInt>()?;
@@ -401,10 +401,10 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
         match key.as_str() {
             "beam_width" => {
                 match &value {
-                    AttributeValue::Float(_) => {} // explicit beam width
+                    AttributeValue::Float(_) => {}, // explicit beam width
                     AttributeValue::Keyword(kw) => match kw.as_str() {
-                        "none" | "disabled" => {} // beam pruning disabled
-                        "auto" => {} // auto-select from trained model
+                        "none" | "disabled" => {}, // beam pruning disabled
+                        "auto" => {},              // auto-select from trained model
                         _ => {
                             return Err(syn::Error::new(
                                 key_ident.span(),
@@ -414,16 +414,16 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                                     kw
                                 ),
                             ));
-                        }
+                        },
                     },
                     _ => {
                         return Err(syn::Error::new(
                             key_ident.span(),
                             "beam_width must be a float (e.g., 1.5), 'none', 'disabled', or 'auto'",
                         ));
-                    }
+                    },
                 }
-            }
+            },
             "log_semiring_model_path" => {
                 if !matches!(&value, AttributeValue::Str(_)) {
                     return Err(syn::Error::new(
@@ -431,30 +431,28 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                         "log_semiring_model_path must be a string path (e.g., log_semiring_model_path: \"model.json\")",
                     ));
                 }
-            }
-            "dispatch" => {
-                match &value {
-                    AttributeValue::Keyword(kw) => match kw.as_str() {
-                        "static" | "weighted" | "auto" => {}
-                        _ => {
-                            return Err(syn::Error::new(
-                                key_ident.span(),
-                                format!(
-                                    "dispatch: invalid keyword '{}'. \
-                                     Use 'static', 'weighted', or 'auto'",
-                                    kw
-                                ),
-                            ));
-                        }
-                    },
+            },
+            "dispatch" => match &value {
+                AttributeValue::Keyword(kw) => match kw.as_str() {
+                    "static" | "weighted" | "auto" => {},
                     _ => {
                         return Err(syn::Error::new(
                             key_ident.span(),
-                            "dispatch must be a keyword: 'static', 'weighted', or 'auto'",
+                            format!(
+                                "dispatch: invalid keyword '{}'. \
+                                     Use 'static', 'weighted', or 'auto'",
+                                kw
+                            ),
                         ));
-                    }
-                }
-            }
+                    },
+                },
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "dispatch must be a keyword: 'static', 'weighted', or 'auto'",
+                    ));
+                },
+            },
             unknown => {
                 return Err(syn::Error::new(
                     key_ident.span(),
@@ -463,7 +461,7 @@ fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue
                         unknown
                     ),
                 ));
-            }
+            },
         }
 
         options.insert(key, value);

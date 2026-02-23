@@ -49,15 +49,15 @@ pub mod trampoline;
 
 // ── WFST modules (feature = "wfst") ────────────────────────────────────────
 #[cfg(feature = "wfst")]
-pub mod token_id;
-#[cfg(feature = "wfst")]
-pub mod wfst;
+pub mod compose;
 #[cfg(feature = "wfst")]
 pub mod lattice;
 #[cfg(feature = "wfst")]
 pub mod recovery;
 #[cfg(feature = "wfst")]
-pub mod compose;
+pub mod token_id;
+#[cfg(feature = "wfst")]
+pub mod wfst;
 
 // ── Log semiring modules (feature = "wfst-log", implies "wfst") ────────────
 #[cfg(feature = "wfst-log")]
@@ -186,14 +186,12 @@ impl DispatchStrategy {
             DispatchStrategy::Static => DispatchStrategy::Static,
             DispatchStrategy::Weighted => DispatchStrategy::Weighted,
             DispatchStrategy::Auto => {
-                if (total_rules >= 30 && cross_category_count > 0)
-                    || ambiguous_overlap_count >= 3
-                {
+                if (total_rules >= 30 && cross_category_count > 0) || ambiguous_overlap_count >= 3 {
                     DispatchStrategy::Weighted
                 } else {
                     DispatchStrategy::Static
                 }
-            }
+            },
         }
     }
 }
@@ -296,7 +294,11 @@ pub enum SyntaxItemSpec {
     /// An identifier to capture.
     IdentCapture { param_name: String },
     /// A binder position.
-    Binder { param_name: String, category: String, is_multi: bool },
+    Binder {
+        param_name: String,
+        category: String,
+        is_multi: bool,
+    },
     /// A collection with separator.
     Collection {
         param_name: String,
@@ -319,9 +321,7 @@ pub enum SyntaxItemSpec {
     /// An optional group of syntax items.
     /// Wraps inner items in a save/restore block: if parsing fails,
     /// the position is reverted and parsing continues.
-    Optional {
-        inner: Vec<SyntaxItemSpec>,
-    },
+    Optional { inner: Vec<SyntaxItemSpec> },
 }
 
 /// Minimal input for constructing a `RuleSpec`.
@@ -355,7 +355,14 @@ impl LanguageSpec {
     /// derived automatically via [`classify::classify_rule()`]. The bridge
     /// only needs to provide structural data and DSL annotations.
     pub fn new(name: String, types: Vec<CategorySpec>, inputs: Vec<RuleSpecInput>) -> Self {
-        Self::with_options(name, types, inputs, BeamWidthConfig::Disabled, None, DispatchStrategy::Static)
+        Self::with_options(
+            name,
+            types,
+            inputs,
+            BeamWidthConfig::Disabled,
+            None,
+            DispatchStrategy::Static,
+        )
     }
 
     /// Construct a `LanguageSpec` with optional configuration.
@@ -402,7 +409,14 @@ impl LanguageSpec {
                 }
             })
             .collect();
-        LanguageSpec { name, types, rules, beam_width, log_semiring_model_path, dispatch_strategy }
+        LanguageSpec {
+            name,
+            types,
+            rules,
+            beam_width,
+            log_semiring_model_path,
+            dispatch_strategy,
+        }
     }
 }
 

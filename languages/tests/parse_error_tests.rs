@@ -48,10 +48,7 @@ fn test_unexpected_token_operator_at_start() {
 fn test_unexpected_token_double_operator() {
     mettail_runtime::clear_var_cache();
     let result = Int::parse_structured("1 + + 2");
-    assert!(
-        result.is_err(),
-        "should fail on consecutive operators (1 + + 2)"
-    );
+    assert!(result.is_err(), "should fail on consecutive operators (1 + + 2)");
 }
 
 // ── TrailingTokens: extra tokens after valid expression ──
@@ -147,11 +144,7 @@ fn test_trailing_token_position() {
         "trailing '2' should be at column 2, got {}",
         range.start.column
     );
-    assert_eq!(
-        range.start.line, 0,
-        "should be on line 0, got {}",
-        range.start.line
-    );
+    assert_eq!(range.start.line, 0, "should be on line 0, got {}", range.start.line);
 }
 
 #[test]
@@ -218,10 +211,7 @@ fn test_parse_with_source_includes_source_line() {
 fn test_error_inside_parentheses() {
     mettail_runtime::clear_var_cache();
     let result = Int::parse_structured("(1 +)");
-    assert!(
-        result.is_err(),
-        "should fail on incomplete expression inside parens"
-    );
+    assert!(result.is_err(), "should fail on incomplete expression inside parens");
 }
 
 #[test]
@@ -240,10 +230,7 @@ fn test_parse_returns_string_error() {
     assert!(result.is_err(), "parse() should fail on trailing tokens");
     let err_msg = result.unwrap_err();
     // parse() returns a string error from Display
-    assert!(
-        !err_msg.is_empty(),
-        "parse() error string should not be empty"
-    );
+    assert!(!err_msg.is_empty(), "parse() error string should not be empty");
 }
 
 // ── Bool category errors ──
@@ -272,10 +259,7 @@ fn test_bool_parse_error() {
 fn test_recovery_valid_input_no_errors() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Int::parse_recovering("1 + 2");
-    assert!(
-        result.is_some(),
-        "valid input should produce Some result"
-    );
+    assert!(result.is_some(), "valid input should produce Some result");
     assert!(
         errors.is_empty(),
         "valid input should produce no errors, got {} error(s)",
@@ -295,14 +279,8 @@ fn test_recovery_single_literal() {
 fn test_recovery_lex_error_returns_none() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Int::parse_recovering("@");
-    assert!(
-        result.is_none(),
-        "lex error should return None (unrecoverable)"
-    );
-    assert!(
-        !errors.is_empty(),
-        "lex error should produce at least one error"
-    );
+    assert!(result.is_none(), "lex error should return None (unrecoverable)");
+    assert!(!errors.is_empty(), "lex error should produce at least one error");
 }
 
 #[test]
@@ -310,14 +288,8 @@ fn test_recovery_prefix_error_returns_none() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Int::parse_recovering("+");
     // A bare "+" has no valid prefix — should fail prefix and return None
-    assert!(
-        result.is_none(),
-        "bare operator should fail prefix and return None"
-    );
-    assert!(
-        !errors.is_empty(),
-        "prefix failure should produce at least one error"
-    );
+    assert!(result.is_none(), "bare operator should fail prefix and return None");
+    assert!(!errors.is_empty(), "prefix failure should produce at least one error");
 }
 
 #[test]
@@ -339,14 +311,8 @@ fn test_recovery_trailing_tokens_reported() {
     let (result, errors) = Int::parse_recovering("1 2");
     // "1 2" — "1" parses fine, "2" is a trailing token. The recovering parser
     // should report this as a TrailingTokens error.
-    assert!(
-        result.is_some(),
-        "should successfully parse '1' from '1 2'"
-    );
-    assert!(
-        !errors.is_empty(),
-        "should report trailing tokens error for '1 2'"
-    );
+    assert!(result.is_some(), "should successfully parse '1' from '1 2'");
+    assert!(!errors.is_empty(), "should report trailing tokens error for '1 2'");
     let err_debug = format!("{:?}", errors[0]);
     assert!(
         err_debug.contains("TrailingTokens"),
@@ -359,26 +325,14 @@ fn test_recovery_trailing_tokens_reported() {
 fn test_recovery_empty_input() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Int::parse_recovering("");
-    assert!(
-        result.is_none(),
-        "empty input should return None (prefix failure)"
-    );
-    assert!(
-        !errors.is_empty(),
-        "empty input should produce an error"
-    );
+    assert!(result.is_none(), "empty input should return None (prefix failure)");
+    assert!(!errors.is_empty(), "empty input should produce an error");
 }
 
 #[test]
 fn test_recovery_complex_valid_expression() {
     mettail_runtime::clear_var_cache();
     let (result, errors) = Int::parse_recovering("(1 + 2) + 3");
-    assert!(
-        result.is_some(),
-        "complex valid expression should parse successfully"
-    );
-    assert!(
-        errors.is_empty(),
-        "complex valid expression should have no errors"
-    );
+    assert!(result.is_some(), "complex valid expression should parse successfully");
+    assert!(errors.is_empty(), "complex valid expression should have no errors");
 }

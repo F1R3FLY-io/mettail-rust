@@ -38,9 +38,7 @@ impl std::error::Error for PreParseError {}
 pub fn pre_parse_rule(s: &str) -> Result<PreParsedRule, PreParseError> {
     let s = s.trim();
     if s.is_empty() {
-        return Err(PreParseError {
-            message: "Empty rule".into(),
-        });
+        return Err(PreParseError { message: "Empty rule".into() });
     }
 
     // Split on "<--" at top level (not inside parens)
@@ -54,11 +52,7 @@ pub fn pre_parse_rule(s: &str) -> Result<PreParsedRule, PreParseError> {
     // Parse body: comma-separated atoms at top level
     let body_atoms = parse_body(body_str)?;
 
-    Ok(PreParsedRule {
-        head_rel,
-        head_args,
-        body_atoms,
-    })
+    Ok(PreParsedRule { head_rel, head_args, body_atoms })
 }
 
 /// Find "<--" not inside parentheses.
@@ -70,10 +64,10 @@ fn split_on_arrow(s: &str) -> Result<(&str, &str), PreParseError> {
         match (bytes.get(i), bytes.get(i + 1), bytes.get(i + 2)) {
             (Some(b'<'), Some(b'-'), Some(b'-')) if depth == 0 => {
                 return Ok((s[..i].trim(), s[i + 3..].trim()));
-            }
+            },
             (Some(b'('), _, _) => depth = depth.saturating_add(1),
             (Some(b')'), _, _) => depth = depth.saturating_sub(1),
-            _ => {}
+            _ => {},
         }
         i += 1;
     }
@@ -85,22 +79,25 @@ fn split_on_arrow(s: &str) -> Result<(&str, &str), PreParseError> {
 /// Parse "rel(arg1, arg2, ...)" into (rel, args). Args are trimmed strings.
 fn parse_atom(s: &str) -> Result<(String, Vec<String>), PreParseError> {
     let s = s.trim();
-    let open = s
-        .find('(')
-        .ok_or_else(|| PreParseError {
-            message: "Atom must be relation(args)".into(),
-        })?;
+    let open = s.find('(').ok_or_else(|| PreParseError {
+        message: "Atom must be relation(args)".into(),
+    })?;
     let rel = s[..open].trim();
-    if rel.is_empty() || !rel.chars().next().map(|c| c.is_alphabetic()).unwrap_or(false) {
+    if rel.is_empty()
+        || !rel
+            .chars()
+            .next()
+            .map(|c| c.is_alphabetic())
+            .unwrap_or(false)
+    {
         return Err(PreParseError {
             message: "Relation name must be an identifier".into(),
         });
     }
     let args_str = s[open + 1..].trim();
-    let close = find_matching_paren(args_str, b'(')
-        .ok_or_else(|| PreParseError {
-            message: "Unmatched parentheses in atom".into(),
-        })?;
+    let close = find_matching_paren(args_str, b'(').ok_or_else(|| PreParseError {
+        message: "Unmatched parentheses in atom".into(),
+    })?;
     let args_str = args_str[..close].trim();
     let args = if args_str.is_empty() {
         Vec::new()
@@ -125,8 +122,8 @@ fn split_top_level(s: &str, sep: char) -> Vec<String> {
             _ if c == sep && depth == 0 => {
                 result.push(s[start..i].to_string());
                 start = i + 1;
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     result.push(s[start..].to_string());
@@ -167,11 +164,7 @@ fn parse_body(s: &str) -> Result<Vec<PreParsedBodyAtom>, PreParseError> {
             (false, part)
         };
         let (relation, args) = parse_atom(rest)?;
-        atoms.push(PreParsedBodyAtom {
-            negated,
-            relation,
-            args,
-        });
+        atoms.push(PreParsedBodyAtom { negated, relation, args });
     }
     Ok(atoms)
 }
@@ -182,7 +175,8 @@ mod tests {
 
     #[test]
     fn test_simple_rule() {
-        let r = pre_parse_rule("query(result) <-- path(term, result), !rw_proc(result, _).").unwrap();
+        let r =
+            pre_parse_rule("query(result) <-- path(term, result), !rw_proc(result, _).").unwrap();
         assert_eq!(r.head_rel, "query");
         assert_eq!(r.head_args, ["result"]);
         assert_eq!(r.body_atoms.len(), 2);

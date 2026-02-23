@@ -16,9 +16,8 @@ use crate::ast::{
 };
 use crate::gen::native::native_type_to_string;
 use mettail_prattail::{
-    binding_power::Associativity,
-    recursive::CollectionKind,
-    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpecInput, SyntaxItemSpec,
+    binding_power::Associativity, recursive::CollectionKind, BeamWidthConfig, CategorySpec,
+    DispatchStrategy, LanguageSpec, RuleSpecInput, SyntaxItemSpec,
 };
 
 /// Convert a `LanguageDef` to a PraTTaIL `LanguageSpec`.
@@ -57,10 +56,14 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         _ => unreachable!("beam_width type validated at parse time"),
     };
 
-    let log_semiring_model_path = language.options.get("log_semiring_model_path").map(|v| match v {
-        AttributeValue::Str(s) => s.clone(),
-        _ => unreachable!("log_semiring_model_path type validated at parse time"),
-    });
+    let log_semiring_model_path =
+        language
+            .options
+            .get("log_semiring_model_path")
+            .map(|v| match v {
+                AttributeValue::Str(s) => s.clone(),
+                _ => unreachable!("log_semiring_model_path type validated at parse time"),
+            });
 
     let dispatch_strategy = match language.options.get("dispatch") {
         Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
@@ -86,10 +89,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.
 ///
 /// Only performs structural mapping — no flag classification.
-fn convert_rule(
-    rule: &GrammarRule,
-    cat_names: &[String],
-) -> RuleSpecInput {
+fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
     // Convert syntax items
     let syntax = if let Some(ref pattern) = rule.syntax_pattern {
         convert_syntax_pattern(pattern, rule.term_context.as_deref().unwrap_or(&[]), cat_names)
@@ -128,7 +128,7 @@ fn convert_syntax_pattern(
         match expr {
             SyntaxExpr::Literal(text) => {
                 items.push(SyntaxItemSpec::Terminal(text.clone()));
-            }
+            },
             SyntaxExpr::Param(name) => {
                 let name_str = name.to_string();
                 // Look up the parameter type from context
@@ -136,10 +136,10 @@ fn convert_syntax_pattern(
                     TermParam::Simple { name: n, .. } => n.to_string() == name_str,
                     TermParam::Abstraction { binder, body, .. } => {
                         binder.to_string() == name_str || body.to_string() == name_str
-                    }
+                    },
                     TermParam::MultiAbstraction { binder, body, .. } => {
                         binder.to_string() == name_str || body.to_string() == name_str
-                    }
+                    },
                 }) {
                     match param {
                         TermParam::Simple { ty, .. } => {
@@ -150,11 +150,9 @@ fn convert_syntax_pattern(
                                     param_name: name_str,
                                 });
                             } else {
-                                items.push(SyntaxItemSpec::IdentCapture {
-                                    param_name: name_str,
-                                });
+                                items.push(SyntaxItemSpec::IdentCapture { param_name: name_str });
                             }
-                        }
+                        },
                         TermParam::Abstraction { binder, body: _, ty, .. } => {
                             if binder.to_string() == name_str {
                                 items.push(SyntaxItemSpec::Binder {
@@ -169,7 +167,7 @@ fn convert_syntax_pattern(
                                     param_name: name_str,
                                 });
                             }
-                        }
+                        },
                         TermParam::MultiAbstraction { binder, body: _, ty, .. } => {
                             if binder.to_string() == name_str {
                                 items.push(SyntaxItemSpec::Binder {
@@ -184,19 +182,17 @@ fn convert_syntax_pattern(
                                     param_name: name_str,
                                 });
                             }
-                        }
+                        },
                     }
                 } else {
                     // Unknown parameter — treat as ident capture
-                    items.push(SyntaxItemSpec::IdentCapture {
-                        param_name: name_str,
-                    });
+                    items.push(SyntaxItemSpec::IdentCapture { param_name: name_str });
                 }
-            }
+            },
             SyntaxExpr::Op(op) => {
                 // Pattern operations are handled as collections or special items
                 convert_pattern_op(op, context, cat_names, &mut items);
-            }
+            },
         }
     }
 
@@ -216,10 +212,10 @@ fn classify_param_from_context(
         TermParam::Simple { name, .. } => name.to_string() == name_str,
         TermParam::Abstraction { binder, body, .. } => {
             binder.to_string() == name_str || body.to_string() == name_str
-        }
+        },
         TermParam::MultiAbstraction { binder, body, .. } => {
             binder.to_string() == name_str || body.to_string() == name_str
-        }
+        },
     }) {
         match param {
             TermParam::Abstraction { binder, ty, .. } if binder.to_string() == name_str => {
@@ -228,14 +224,14 @@ fn classify_param_from_context(
                     category: extract_base_category(ty),
                     is_multi: false,
                 }
-            }
+            },
             TermParam::MultiAbstraction { binder, ty, .. } if binder.to_string() == name_str => {
                 SyntaxItemSpec::Binder {
                     param_name: name_str.to_string(),
                     category: extract_base_category(ty),
                     is_multi: true,
                 }
-            }
+            },
             TermParam::Simple { ty, .. } => {
                 let base_cat = extract_base_category(ty);
                 if cat_names.contains(&base_cat) {
@@ -244,11 +240,9 @@ fn classify_param_from_context(
                         param_name: name_str.to_string(),
                     }
                 } else {
-                    SyntaxItemSpec::IdentCapture {
-                        param_name: name_str.to_string(),
-                    }
+                    SyntaxItemSpec::IdentCapture { param_name: name_str.to_string() }
                 }
-            }
+            },
             // body of an abstraction — treat as nonterminal
             TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
                 let base_cat = extract_base_category(ty);
@@ -256,12 +250,10 @@ fn classify_param_from_context(
                     category: base_cat,
                     param_name: name_str.to_string(),
                 }
-            }
+            },
         }
     } else {
-        SyntaxItemSpec::IdentCapture {
-            param_name: name_str.to_string(),
-        }
+        SyntaxItemSpec::IdentCapture { param_name: name_str.to_string() }
     }
 }
 
@@ -273,11 +265,7 @@ fn convert_pattern_op(
     items: &mut Vec<SyntaxItemSpec>,
 ) {
     match op {
-        PatternOp::Sep {
-            collection,
-            separator,
-            source,
-        } => {
+        PatternOp::Sep { collection, separator, source } => {
             if let Some(source_op) = source {
                 // Chained pattern: e.g., *zip(ns,xs).*map(|n,x| n "?" x).*sep(",")
                 convert_chained_sep(source_op, separator, context, cat_names, items);
@@ -293,13 +281,13 @@ fn convert_pattern_op(
                     kind,
                 });
             }
-        }
+        },
         PatternOp::Zip { left, right } => {
             // Zip is usually followed by Map and Sep — handle at the Map level.
             // Classify each parameter correctly (binder vs nonterminal vs ident).
             items.push(classify_param_from_context(&left.to_string(), context, cat_names));
             items.push(classify_param_from_context(&right.to_string(), context, cat_names));
-        }
+        },
         PatternOp::Map { source: _, params: _, body } => {
             // Map transforms — convert the body items.
             // Parameters inside the map body are local closure params (e.g., |n,x|)
@@ -308,7 +296,7 @@ fn convert_pattern_op(
                 match expr {
                     SyntaxExpr::Literal(text) => {
                         items.push(SyntaxItemSpec::Terminal(text.clone()));
-                    }
+                    },
                     SyntaxExpr::Param(name) => {
                         // Map closure params reference original context params.
                         // Classify them correctly.
@@ -317,13 +305,13 @@ fn convert_pattern_op(
                             context,
                             cat_names,
                         ));
-                    }
+                    },
                     SyntaxExpr::Op(inner_op) => {
                         convert_pattern_op(inner_op, context, cat_names, items);
-                    }
+                    },
                 }
             }
-        }
+        },
         PatternOp::Opt { inner } => {
             // Optional groups: collect inner items and wrap in SyntaxItemSpec::Optional
             let mut opt_items = Vec::new();
@@ -331,25 +319,22 @@ fn convert_pattern_op(
                 match expr {
                     SyntaxExpr::Literal(text) => {
                         opt_items.push(SyntaxItemSpec::Terminal(text.clone()));
-                    }
+                    },
                     SyntaxExpr::Param(name) => {
-                        let item = classify_param_from_context(
-                            &name.to_string(), context, cat_names,
-                        );
+                        let item =
+                            classify_param_from_context(&name.to_string(), context, cat_names);
                         opt_items.push(item);
-                    }
+                    },
                     SyntaxExpr::Op(inner_op) => {
                         convert_pattern_op(inner_op, context, cat_names, &mut opt_items);
-                    }
+                    },
                 }
             }
             items.push(SyntaxItemSpec::Optional { inner: opt_items });
-        }
+        },
         PatternOp::Var(name) => {
-            items.push(SyntaxItemSpec::IdentCapture {
-                param_name: name.to_string(),
-            });
-        }
+            items.push(SyntaxItemSpec::IdentCapture { param_name: name.to_string() });
+        },
     }
 }
 
@@ -400,13 +385,13 @@ fn convert_chained_sep(
                                 } else {
                                     classify_param_from_context(&name_str, context, cat_names)
                                 }
-                            }
+                            },
                             SyntaxExpr::Op(_) => {
                                 // Nested ops in map body — fallback to ident capture
                                 SyntaxItemSpec::IdentCapture {
                                     param_name: "__nested_op__".to_string(),
                                 }
-                            }
+                            },
                         })
                         .collect();
 
@@ -418,7 +403,7 @@ fn convert_chained_sep(
                         body_items,
                         separator: separator.to_string(),
                     });
-                }
+                },
                 _ => {
                     // Unsupported map source — fall back to simple collection
                     items.push(SyntaxItemSpec::Collection {
@@ -427,9 +412,9 @@ fn convert_chained_sep(
                         separator: separator.to_string(),
                         kind: CollectionKind::Vec,
                     });
-                }
+                },
             }
-        }
+        },
         _ => {
             // Unsupported sep source — fall back to simple collection
             items.push(SyntaxItemSpec::Collection {
@@ -438,7 +423,7 @@ fn convert_chained_sep(
                 separator: separator.to_string(),
                 kind: CollectionKind::Vec,
             });
-        }
+        },
     }
 }
 
@@ -448,20 +433,20 @@ fn find_param_category(name: &str, context: &[TermParam]) -> String {
         match param {
             TermParam::Simple { name: n, ty, .. } if n.to_string() == name => {
                 return extract_base_category(ty);
-            }
+            },
             TermParam::Abstraction { binder, ty, .. } if binder.to_string() == name => {
                 return extract_base_category(ty);
-            }
+            },
             TermParam::Abstraction { body, ty, .. } if body.to_string() == name => {
                 return extract_base_category(ty);
-            }
+            },
             TermParam::MultiAbstraction { binder, ty, .. } if binder.to_string() == name => {
                 return extract_base_category(ty);
-            }
+            },
             TermParam::MultiAbstraction { body, ty, .. } if body.to_string() == name => {
                 return extract_base_category(ty);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     "Unknown".to_string()
@@ -478,31 +463,27 @@ fn convert_grammar_items(
         match gi {
             GrammarItem::Terminal(text) => {
                 items.push(SyntaxItemSpec::Terminal(text.clone()));
-            }
+            },
             GrammarItem::NonTerminal(nt) => {
                 let nt_str = nt.to_string();
                 if nt_str == "Var" || nt_str == "Ident" {
-                    items.push(SyntaxItemSpec::IdentCapture {
-                        param_name: nt_str.to_lowercase(),
-                    });
+                    items.push(SyntaxItemSpec::IdentCapture { param_name: nt_str.to_lowercase() });
                 } else if cat_names.contains(&nt_str) {
                     items.push(SyntaxItemSpec::NonTerminal {
                         category: nt_str.clone(),
                         param_name: nt_str.to_lowercase(),
                     });
                 } else {
-                    items.push(SyntaxItemSpec::IdentCapture {
-                        param_name: nt_str.to_lowercase(),
-                    });
+                    items.push(SyntaxItemSpec::IdentCapture { param_name: nt_str.to_lowercase() });
                 }
-            }
+            },
             GrammarItem::Binder { category } => {
                 items.push(SyntaxItemSpec::Binder {
                     param_name: format!("binder_{}", category.to_string().to_lowercase()),
                     category: category.to_string(),
                     is_multi: false,
                 });
-            }
+            },
             GrammarItem::Collection {
                 coll_type,
                 element_type,
@@ -528,7 +509,7 @@ fn convert_grammar_items(
                 if let Some((_, ref close)) = delimiters {
                     items.push(SyntaxItemSpec::Terminal(close.clone()));
                 }
-            }
+            },
         }
     }
 
@@ -548,15 +529,9 @@ fn extract_base_category(ty: &TypeExpr) -> String {
 /// Find collection info (element category and kind) from term context.
 fn find_collection_info(name: &str, context: &[TermParam]) -> (String, CollectionKind) {
     for param in context {
-        if let TermParam::Simple {
-            name: n, ty, ..
-        } = param
-        {
+        if let TermParam::Simple { name: n, ty, .. } = param {
             if n.to_string() == name {
-                if let TypeExpr::Collection {
-                    coll_type, element, ..
-                } = ty
-                {
+                if let TypeExpr::Collection { coll_type, element, .. } = ty {
                     let elem_cat = extract_base_category(element);
                     let kind = match coll_type {
                         CollectionType::HashBag => CollectionKind::HashBag,

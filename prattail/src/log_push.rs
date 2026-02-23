@@ -61,10 +61,7 @@ pub fn log_push_weights(
 ///
 /// Returns the maximum deviation from 1.0 across all reachable nodes.
 /// After log-pushing, this should be very small (< 1e-6).
-pub fn check_normalization(
-    edges: &[Vec<(usize, LogWeight)>],
-    num_nodes: usize,
-) -> f64 {
+pub fn check_normalization(edges: &[Vec<(usize, LogWeight)>], num_nodes: usize) -> f64 {
     let mut max_deviation = 0.0_f64;
 
     for (_node, edge_list) in edges.iter().enumerate().take(num_nodes) {
@@ -100,10 +97,7 @@ mod tests {
         // Diamond: 0 →(1.0)→ 1 →(2.0)→ 3
         //          0 →(3.0)→ 2 →(1.0)→ 3
         let mut edges: Vec<Vec<(usize, LogWeight)>> = vec![
-            vec![
-                (1, LogWeight::new(1.0)),
-                (2, LogWeight::new(3.0)),
-            ],
+            vec![(1, LogWeight::new(1.0)), (2, LogWeight::new(3.0))],
             vec![(3, LogWeight::new(2.0))],
             vec![(3, LogWeight::new(1.0))],
             vec![],
@@ -130,10 +124,7 @@ mod tests {
         // Chain: 0 →(1.0)→ 1 →(2.0)→ 2
         //        0 →(5.0)→ 2
         let mut edges: Vec<Vec<(usize, LogWeight)>> = vec![
-            vec![
-                (1, LogWeight::new(1.0)),
-                (2, LogWeight::new(5.0)),
-            ],
+            vec![(1, LogWeight::new(1.0)), (2, LogWeight::new(5.0))],
             vec![(2, LogWeight::new(2.0))],
             vec![],
         ];
@@ -146,9 +137,24 @@ mod tests {
         log_push_weights(&mut edges, 3, 2);
 
         // After pushing, compute new path weights
-        let path_012 = edges[0].iter().find(|e| e.0 == 1).expect("edge 0→1").1.value()
-            + edges[1].iter().find(|e| e.0 == 2).expect("edge 1→2").1.value();
-        let path_02 = edges[0].iter().find(|e| e.0 == 2).expect("edge 0→2").1.value();
+        let path_012 = edges[0]
+            .iter()
+            .find(|e| e.0 == 1)
+            .expect("edge 0→1")
+            .1
+            .value()
+            + edges[1]
+                .iter()
+                .find(|e| e.0 == 2)
+                .expect("edge 1→2")
+                .1
+                .value();
+        let path_02 = edges[0]
+            .iter()
+            .find(|e| e.0 == 2)
+            .expect("edge 0→2")
+            .1
+            .value();
 
         // Best path should still be 0→1→2
         assert!(
