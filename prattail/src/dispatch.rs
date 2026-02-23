@@ -361,9 +361,9 @@ pub fn write_category_dispatch_weighted(
     dispatch_arms.push(format!("_ => parse_{}_own(tokens, pos, min_bp)", category));
 
     // Emit WFST weight summary as comment
-    write!(
+    writeln!(
         buf,
-        "// WFST-ordered dispatch for {cat}: {n} arms\n",
+        "// WFST-ordered dispatch for {cat}: {n} arms",
         cat = category,
         n = dispatch_arms.len(),
     )

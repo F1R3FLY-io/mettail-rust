@@ -82,10 +82,11 @@ use recursive::CollectionKind;
 ///
 /// Controls how aggressively the parser prunes low-probability alternatives
 /// during WFST-based prediction and recovery.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum BeamWidthConfig {
     /// Beam pruning disabled (default). Actions are not pruned by weight.
     /// Set via `beam_width: none` or `beam_width: disabled` in the DSL.
+    #[default]
     Disabled,
 
     /// Explicit beam width. Actions with weight > best + width are pruned.
@@ -100,11 +101,7 @@ pub enum BeamWidthConfig {
     Auto,
 }
 
-impl Default for BeamWidthConfig {
-    fn default() -> Self {
-        BeamWidthConfig::Disabled
-    }
-}
+// BeamWidthConfig derives Default via #[default] on the Disabled variant.
 
 impl BeamWidthConfig {
     /// Convert to an `Option<f64>` for use in WFST construction.

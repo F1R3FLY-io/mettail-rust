@@ -151,7 +151,7 @@ impl PredictionWfst {
             .collect();
 
         // Sort by weight: lowest (best) first
-        results.sort_by(|a, b| a.weight.cmp(&b.weight));
+        results.sort_by_key(|a| a.weight);
         results
     }
 
@@ -479,7 +479,7 @@ pub fn build_prediction_wfsts(
     for first_set in first_sets.values() {
         all_tokens.extend(first_set.tokens.iter().cloned());
     }
-    let token_map = TokenIdMap::from_names(all_tokens.into_iter());
+    let token_map = TokenIdMap::from_names(all_tokens);
 
     for category in categories {
         let mut builder = PredictionWfstBuilder::new(category, token_map.clone());
@@ -582,7 +582,7 @@ pub fn generate_weighted_dispatch(
 
     // Sort each group by weight
     for group in token_groups.values_mut() {
-        group.sort_by(|a, b| a.weight.cmp(&b.weight));
+        group.sort_by_key(|a| a.weight);
     }
 
     // Count ambiguous tokens (multiple actions for same token)

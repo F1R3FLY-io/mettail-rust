@@ -72,6 +72,12 @@ pub struct Planner {
     steps: Vec<Step>,
 }
 
+impl Default for Planner {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Planner {
     pub fn new() -> Self {
         Planner {
@@ -171,8 +177,8 @@ impl Planner {
         }
         let mut next_non_key = num_join_keys;
         for old_pos in 0..old_num_cols {
-            if !old_to_new.contains_key(&old_pos) {
-                old_to_new.insert(old_pos, next_non_key);
+            if let std::collections::hash_map::Entry::Vacant(e) = old_to_new.entry(old_pos) {
+                e.insert(next_non_key);
                 next_non_key += 1;
             }
         }

@@ -67,14 +67,14 @@ pub fn check_normalization(
 ) -> f64 {
     let mut max_deviation = 0.0_f64;
 
-    for node in 0..num_nodes {
-        if edges[node].is_empty() {
+    for (_node, edge_list) in edges.iter().enumerate().take(num_nodes) {
+        if edge_list.is_empty() {
             continue; // sink node, no outgoing
         }
 
         // Sum probabilities of outgoing edges
         let mut total = LogWeight::zero();
-        for &(_, ref w) in &edges[node] {
+        for (_, w) in edge_list {
             total = total.plus(w);
         }
 

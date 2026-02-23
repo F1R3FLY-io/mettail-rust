@@ -18,7 +18,7 @@ fn main() {
     let src_dir: Option<PathBuf> = env::var("ASCENT_MACRO_SRC")
         .ok()
         .filter(|s| Path::new(s).join("ascent_syntax.rs").exists())
-        .map(|s| PathBuf::from(s))
+        .map(PathBuf::from)
         .or_else(|| {
             let p = Path::new("../../ascent/ascent_macro/src");
             if p.join("ascent_syntax.rs").exists() {

@@ -143,7 +143,7 @@ fn query_from_pre_parsed(pre: PreParsedRule) -> Query {
     let body: Vec<BodyAtom> = pre
         .body_atoms
         .into_iter()
-        .map(|a| body_atom_from_pre(a))
+        .map(body_atom_from_pre)
         .collect();
     Query { head, body }
 }

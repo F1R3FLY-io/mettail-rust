@@ -37,7 +37,7 @@ pub mod rules;
 // Re-export key functions
 pub use categories::generate_category_rules;
 pub use equations::generate_equation_rules;
-pub use relations::{generate_relations, list_all_relations_for_extraction, RelationForExtraction};
+pub use relations::{generate_relations, list_all_relations_for_extraction};
 
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
@@ -806,7 +806,7 @@ fn format_block_arm(arm: &str, arm_indent: &str) -> String {
     // the original block body ended with `;` (e.g., `{ a; b; }` splits to
     // ["a", " b", ""]). We must preserve this so the reformatted block has
     // the same Rust semantics (returns `()` rather than the last expression).
-    let has_trailing_semi = stmts.last().map_or(false, |s| s.trim().is_empty());
+    let has_trailing_semi = stmts.last().is_some_and(|s| s.trim().is_empty());
     let non_empty: Vec<&str> = stmts.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
     for (i, stmt) in non_empty.iter().enumerate() {
         result.push_str(&stmt_indent);

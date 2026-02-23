@@ -134,9 +134,7 @@ fn generate_congruence_rules(
 
     // Generate one consolidated rule per group
     let mut rules = Vec::with_capacity(groups.len());
-    let mut pool_counter = 0usize;
-
-    for ((cat_str, field_type_strs), constructors) in &groups {
+    for (pool_counter, ((cat_str, field_type_strs), constructors)) in groups.iter().enumerate() {
         let category = format_ident!("{}", cat_str);
         let rn = relation_names(&category);
         let cat_rel = &rn.cat_lower;
@@ -195,7 +193,6 @@ fn generate_congruence_rules(
             cat_str.to_uppercase(),
             pool_counter
         );
-        pool_counter += 1;
 
         // Element type is the tuple of all s_fields and t_fields
         let field_types: Vec<TokenStream> = field_type_strs

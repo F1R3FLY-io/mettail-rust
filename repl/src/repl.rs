@@ -21,7 +21,7 @@ fn pre_substitute_env(input: &str, language: &dyn Language, env: &dyn Any) -> St
     }
     // Sort by name length descending so "foobar" is replaced before "foo"
     let mut bindings: Vec<_> = bindings.into_iter().map(|(n, d, _)| (n, d)).collect();
-    bindings.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    bindings.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
     let mut result = input.to_string();
     for (name, display) in bindings {

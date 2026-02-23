@@ -17,8 +17,10 @@ pub enum AttributeValue {
     /// Floating-point value (e.g., `beam_width: 1.5`).
     Float(f64),
     /// Integer value.
+    #[expect(dead_code)] // Parsed from DSL, not yet consumed
     Int(i64),
     /// Boolean value.
+    #[expect(dead_code)] // Parsed from DSL, not yet consumed
     Bool(bool),
     /// String value (e.g., `log_semiring_model_path: "path/to/model.json"`).
     Str(String),

@@ -322,7 +322,7 @@ impl<T, S> TokenLattice<T, S> {
     /// the lowest-weight (most likely) alternative.
     pub fn sort_edges_by_weight(&mut self) {
         for edges in &mut self.edges {
-            edges.sort_by(|a, b| a.weight.cmp(&b.weight));
+            edges.sort_by_key(|e| e.weight);
         }
     }
 }

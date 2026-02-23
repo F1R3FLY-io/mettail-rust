@@ -336,7 +336,7 @@ pub type CategoryFilter<'a> = Option<&'a BTreeSet<String>>;
 /// - No filter is set (`None`) — all categories pass
 /// - The category's name is in the filter set
 pub fn in_cat_filter(cat: &Ident, filter: CategoryFilter) -> bool {
-    filter.map_or(true, |f| f.contains(&cat.to_string()))
+    filter.is_none_or(|f| f.contains(&cat.to_string()))
 }
 
 /// Compute the set of "core" categories for SCC splitting.

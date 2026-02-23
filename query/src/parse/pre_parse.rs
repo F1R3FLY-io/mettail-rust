@@ -161,8 +161,8 @@ fn parse_body(s: &str) -> Result<Vec<PreParsedBodyAtom>, PreParseError> {
         if part.is_empty() {
             continue;
         }
-        let (negated, rest) = if part.starts_with('!') {
-            (true, part[1..].trim())
+        let (negated, rest) = if let Some(stripped) = part.strip_prefix('!') {
+            (true, stripped.trim())
         } else {
             (false, part)
         };

@@ -240,6 +240,7 @@ impl RecoveryWfst {
 
         // Strategy 1: SkipToSync — skip tokens until a sync point
         let max_lookahead = remaining.len().min(costs::MAX_SKIP_LOOKAHEAD);
+        #[allow(clippy::needless_range_loop)] // `skip` used for arithmetic, cost calc, struct field, and position offset
         for skip in 0..max_lookahead {
             let token_at = remaining[skip];
             if self.sync_tokens.contains(&token_at) {
@@ -565,7 +566,7 @@ pub fn build_recovery_wfsts(
 /// - **Group**: Missing closing delimiters are common → cheaper close-insert.
 /// - **InfixRHS**: Bad operand → cheaper skip (find next statement).
 /// - **Mixfix**: Wrong token in multi-part operator → cheaper substitute.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum FrameKind {
     /// Pratt prefix handler (atom, unary prefix).
     Prefix,
@@ -586,14 +587,11 @@ pub enum FrameKind {
     /// Cast wrapper (cross-category).
     CastWrap,
     /// Generic/unknown context.
+    #[default]
     Other,
 }
 
-impl Default for FrameKind {
-    fn default() -> Self {
-        FrameKind::Other
-    }
-}
+// FrameKind derives Default via #[default] on the Other variant.
 
 /// The source of a sync token, used for cost stratification.
 ///
@@ -949,6 +947,7 @@ impl RecoveryWfst {
 
         // ── Strategy 1: SkipToSync ─────────────────────────────────────────
         let max_lookahead = remaining.len().min(costs::MAX_SKIP_LOOKAHEAD);
+        #[allow(clippy::needless_range_loop)] // `skip` used for arithmetic, cost calc, struct field, and position offset
         for skip in 0..max_lookahead {
             let token_at = remaining[skip];
             if self.sync_tokens.contains(&token_at) {

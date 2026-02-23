@@ -703,7 +703,7 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
 
     // Sort by density (densest first) for better packing
     // sort_unstable_by: no temp allocation, ~10% faster than sort_by for small slices
-    sparse_rows.sort_unstable_by(|a, b| b.1.len().cmp(&a.1.len()));
+    sparse_rows.sort_unstable_by_key(|row| std::cmp::Reverse(row.1.len()));
 
     // Greedy offset search
     let mut base = vec![0u32; num_states];
@@ -1659,8 +1659,7 @@ pub fn terminal_to_variant_name(terminal: &str) -> String {
                     result.push_str("Lp");
                     return result;
                 }
-            } else if terminal.starts_with('$') {
-                let inner = &terminal[1..];
+            } else if let Some(inner) = terminal.strip_prefix('$') {
                 if !inner.is_empty() && inner.chars().all(|c| c.is_alphanumeric() || c == '_') {
                     let mut result = String::from("Dollar");
                     let mut capitalize_next = true;

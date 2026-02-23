@@ -589,7 +589,7 @@ pub fn incremental_first_sets(
 
     // Ensure all new categories have entries
     for cat in new_categories {
-        first_sets.entry(cat.clone()).or_insert_with(FirstSet::new);
+        first_sets.entry(cat.clone()).or_default();
     }
 
     // Fixed-point iteration over new rules only
@@ -650,7 +650,7 @@ pub fn incremental_follow_sets(
 
     // Ensure all new categories have entries
     for cat in new_categories {
-        follow_sets.entry(cat.clone()).or_insert_with(FirstSet::new);
+        follow_sets.entry(cat.clone()).or_default();
     }
 
     // Fixed-point iteration over new inputs

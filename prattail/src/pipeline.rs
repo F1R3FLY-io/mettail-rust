@@ -80,6 +80,8 @@ pub struct ParserBundle {
 /// Pipeline state machine for parallel code generation.
 ///
 /// Each state holds the data needed for the next transition.
+// Compile-time state machine with 3 total moves — never stored in collections.
+#[allow(clippy::large_enum_variant)]
 pub enum PipelineState {
     /// Bundles extracted, ready for parallel codegen.
     Ready {
@@ -557,7 +559,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         all_tokens.push("RBracket".to_string());
         all_tokens.push("Semi".to_string());
         all_tokens.push("Comma".to_string());
-        let token_id_map = TokenIdMap::from_names(all_tokens.into_iter());
+        let token_id_map = TokenIdMap::from_names(all_tokens);
 
         // Collect grammar terminals for recovery WFST construction
         let grammar_terminals_wfst: std::collections::BTreeSet<String> = {
