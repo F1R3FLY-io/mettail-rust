@@ -7,6 +7,7 @@
 use crate::ast::grammar::GrammarItem;
 use crate::ast::language::LanguageDef;
 use crate::gen::{generate_literal_label, generate_var_label};
+use crate::logic::list_all_relations_for_extraction;
 use proc_macro2::Span;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -2025,20 +2026,11 @@ fn generate_type_inference_helpers(primary_type: &Ident, language: &LanguageDef,
     }
 }
 
-/// Generate code to extract custom relations from the Ascent program
-///
-/// For each relation declared in the logic block, generates code like:
-/// ```ignore
-/// custom_relations.insert("path".to_string(), mettail_runtime::RelationData {
-///     param_types: vec!["Proc".to_string(), "Proc".to_string()],
-///     tuples: prog.path.iter().map(|(a, b)| vec![format!("{}", a), format!("{}", b)]).collect(),
-/// });
-/// ```
+/// Generate code to extract all relations (generated + custom) from the Ascent program.
+/// Uses the unified list from list_all_relations_for_extraction so custom_relations
+/// is the single source for query schema and data.
 fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
-    let relations = match &language.logic {
-        Some(logic_block) => &logic_block.relations,
-        None => return quote! {},
-    };
+    let relations = list_all_relations_for_extraction(language);
 
     if relations.is_empty() {
         return quote! {};
@@ -2049,13 +2041,14 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
     for rel in relations {
         let rel_name = &rel.name;
         let rel_name_str = rel_name.to_string();
-        let param_type_strs: Vec<String> = rel.param_types.iter().map(|t| t.to_string()).collect();
+        let param_type_strs = &rel.param_types;
 
-        // Generate tuple element names based on arity
         let arity = rel.param_types.len();
-        let tuple_vars: Vec<syn::Ident> = (0..arity).map(|i| format_ident!("e{}", i)).collect();
+        let tuple_vars: Vec<syn::Ident> = (0..arity)
+            .map(|i| format_ident!("e{}", i))
+            .collect();
 
-        // Generate format expressions for each element
+
         let format_exprs: Vec<TokenStream> = tuple_vars
             .iter()
             .map(|v| quote! { format!("{}", #v) })

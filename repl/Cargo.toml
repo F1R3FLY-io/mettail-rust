@@ -17,6 +17,7 @@ wfst-log = ["mettail-languages/wfst-log", "mettail-macros/wfst-log"]
 mettail-runtime = { path = "../runtime" }
 mettail-languages = { path = "../languages" }
 mettail-macros = { path = "../macros" }
+mettail-query = { path = "../query" }
 
 moniker = {workspace = true}
 

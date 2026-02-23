@@ -1,5 +1,5 @@
 [workspace]
-members = ["macros", "runtime", "languages", "repl", "prattail",
+members = ["macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query",
     # "ascent/ascent",
     # "ascent/ascent_base",
     # "ascent/ascent_macro",
@@ -49,6 +49,9 @@ indexmap = "2.0"
 
 # ascent_macro = { path = "ascent/ascent_macro" }
 # ascent_base = { path = "ascent/ascent_base" }
+
+ascent_syntax_export = { path = "ascent_syntax_export" }
+query = { path = "query" }
 
 [profile.dev]
 codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)

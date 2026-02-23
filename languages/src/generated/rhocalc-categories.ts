@@ -38,6 +38,7 @@ export const categoryInfo = {
 			"ToFloat",
 			"ToBool",
 			"ToStr",
+			"PNew",
 			"Err"
 		],
 		colour: "208bfe",

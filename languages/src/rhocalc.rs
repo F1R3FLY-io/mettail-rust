@@ -22,11 +22,9 @@ language! {
         PZero .
         |- "{}" : Proc;
 
-        PDrop . n:Name
-        |- "*" "(" n ")" : Proc ;
+        PDrop . n:Name  |- "*" "(" n ")" : Proc ;
 
-        PPar . ps:HashBag(Proc)
-        |- "{" ps.*sep("|") "}" : Proc;
+        PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
 
         POutput . n:Name, q:Proc
         |- n "!" "(" q ")" : Proc ;
@@ -284,6 +282,8 @@ language! {
             }}
         ] fold;
 
+        PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc;
+
         Err . |- "error" : Proc;
     },
 
@@ -347,6 +347,23 @@ language! {
     logic {
         proc(p) <-- if let Ok(p) = Proc::parse("^x.{{ x | serv!(req) }}");
         proc(p) <-- if let Ok(p) = Proc::parse("^x.{x}");
+
+        // relation can_comm(Proc,Name);
+        // can_comm(p,n) <--
+        //     proc(p),name(n),
+        //     if let Proc::PPar(elems) = p,
+        //     for elem1 in elems.clone(),
+        //     if let Proc::POutput(channel,_) = elem1,
+        //     if *channel == *n,
+        //     for elem2 in elems.clone(),
+        //     if let Proc::PInputs(ns, _) = elem2,
+        //     if ns.len() == 1,
+        //     if *ns.first().unwrap() == *n;
+
+        // relation garbage(Name,Proc);
+        // garbage(n,p) <--
+        //     proc(p),name(n),
+        //     !(proc(k), trans(p,k,q), can_comm(q,n));
 
         // Only apply contexts to the stepped term (step_term), so res is bounded and rw_proc(res,q) can be computed.
         proc(res) <--

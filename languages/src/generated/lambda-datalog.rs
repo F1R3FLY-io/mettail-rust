@@ -6,128 +6,128 @@ ascent_source! {
     lambda_source:
 
     // Relations
-relation term (Term);
+relation term(Term);
 
-# [ds (crate::eqrel)]relation eq_term (Term , Term);
+#[ds(crate::eqrel)] relation eq_term(Term, Term);
 
-relation rw_term (Term , Term);
+relation rw_term(Term, Term);
 
-relation step_term (Term);
+relation step_term(Term);
 
 
     // Category rules
-term (sub . clone ()) <--
-    term (t),
-    for sub in {std::thread_local ! {static POOL_TERM_TERM : std::cell::Cell < Vec < Term >> = const {std::cell::Cell::new (Vec::new ())};}let mut buf = POOL_TERM_TERM . with (| p | p . take ()); buf . clear (); match t {
-        Term::Lam (scope)=> {
-            buf . push (scope . inner (). unsafe_body . as_ref (). clone ());
+term(sub.clone()) <--
+    term(t),
+    for sub in { std::thread_local! { static POOL_TERM_TERM : std::cell::Cell < Vec < Term >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_TERM_TERM.with(| p | p.take()); buf.clear(); match t {
+        Term::Lam(scope) => {
+            buf.push(scope.inner().unsafe_body.as_ref().clone());
         },
-        Term::App (f0 , f1)=> {
-            buf . push (f0 . as_ref (). clone ());
-            buf . push (f1 . as_ref (). clone ());
+        Term::App(f0, f1) => {
+            buf.push(f0.as_ref().clone());
+            buf.push(f1.as_ref().clone());
         },
-        Term::ApplyTerm (lam , arg)=> {
-            buf . push (lam . as_ref (). clone ());
-            buf . push (arg . as_ref (). clone ());
+        Term::ApplyTerm(lam, arg) => {
+            buf.push(lam.as_ref().clone());
+            buf.push(arg.as_ref().clone());
         },
-        Term::MApplyTerm (lam , args)=> {
-            buf . push (lam . as_ref (). clone ());
-            buf . extend (args . iter (). cloned ());
+        Term::MApplyTerm(lam, args) => {
+            buf.push(lam.as_ref().clone());
+            buf.extend(args.iter().cloned());
         },
-        Term::LamTerm (scope)=> {
-            buf . push (scope . inner (). unsafe_body . as_ref (). clone ());
+        Term::LamTerm(scope) => {
+            buf.push(scope.inner().unsafe_body.as_ref().clone());
         },
-        Term::MLamTerm (scope)=> {
-            buf . push (scope . inner (). unsafe_body . as_ref (). clone ());
+        Term::MLamTerm(scope) => {
+            buf.push(scope.inner().unsafe_body.as_ref().clone());
         },
         _ => {},
-    }let iter_buf = std::mem::take (& mut buf); POOL_TERM_TERM . with (| p | p . set (buf)); iter_buf}. into_iter ();
+    } let iter_buf = std::mem::take(& mut buf); POOL_TERM_TERM.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-term (c1 . clone ()) <--
-    term (c0),
-    rw_term (c0 , c1);
+term(c1.clone()) <--
+    term(c0),
+    rw_term(c0, c1);
 
-rw_term (t . clone (), match t {
-    Term::ApplyTerm (_ , arg)=> Term::ApplyTerm (Box::new (new_lam . clone ()), arg . clone ()),
-    Term::MApplyTerm (_ , args)=> Term::MApplyTerm (Box::new (new_lam . clone ()), args . clone ()),
-    _ => unreachable ! (),
+rw_term(t.clone(), match t {
+    Term::ApplyTerm(_, arg) => Term::ApplyTerm(Box::new(new_lam.clone()), arg.clone()),
+    Term::MApplyTerm(_, args) => Term::MApplyTerm(Box::new(new_lam.clone()), args.clone()),
+    _ => unreachable!(),
 }) <--
-    term (t),
-    for lam in {std::thread_local ! {static POOL_TERM_CONG_LAM : std::cell::Cell < Vec < Term >> = const {std::cell::Cell::new (Vec::new ())};}let mut buf = POOL_TERM_CONG_LAM . with (| p | p . take ()); buf . clear (); match t {
-        Term::ApplyTerm (lam , _)=> {
-            buf . push (lam . as_ref (). clone ());
+    term(t),
+    for lam in { std::thread_local! { static POOL_TERM_CONG_LAM : std::cell::Cell < Vec < Term >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_TERM_CONG_LAM.with(| p | p.take()); buf.clear(); match t {
+        Term::ApplyTerm(lam, _) => {
+            buf.push(lam.as_ref().clone());
         },
-        Term::MApplyTerm (lam , _)=> {
-            buf . push (lam . as_ref (). clone ());
+        Term::MApplyTerm(lam, _) => {
+            buf.push(lam.as_ref().clone());
         },
         _ => {},
-    }let iter_buf = std::mem::take (& mut buf); POOL_TERM_CONG_LAM . with (| p | p . set (buf)); iter_buf}. into_iter (),
-    rw_term (lam , new_lam);
+    } let iter_buf = std::mem::take(& mut buf); POOL_TERM_CONG_LAM.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    rw_term(lam, new_lam);
 
-rw_term (t . clone (), match t {
-    Term::ApplyTerm (lam , _)=> Term::ApplyTerm (lam . clone (), Box::new (new_arg . clone ())),
-    _ => unreachable ! (),
+rw_term(t.clone(), match t {
+    Term::ApplyTerm(lam, _) => Term::ApplyTerm(lam.clone(), Box::new(new_arg.clone())),
+    _ => unreachable!(),
 }) <--
-    term (t),
-    for arg in {std::thread_local ! {static POOL_TERM_CONG_ARG_TERM : std::cell::Cell < Vec < Term >> = const {std::cell::Cell::new (Vec::new ())};}let mut buf = POOL_TERM_CONG_ARG_TERM . with (| p | p . take ()); buf . clear (); match t {
-        Term::ApplyTerm (_ , arg)=> {
-            buf . push (arg . as_ref (). clone ());
+    term(t),
+    for arg in { std::thread_local! { static POOL_TERM_CONG_ARG_TERM : std::cell::Cell < Vec < Term >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_TERM_CONG_ARG_TERM.with(| p | p.take()); buf.clear(); match t {
+        Term::ApplyTerm(_, arg) => {
+            buf.push(arg.as_ref().clone());
         },
         _ => {},
-    }let iter_buf = std::mem::take (& mut buf); POOL_TERM_CONG_ARG_TERM . with (| p | p . set (buf)); iter_buf}. into_iter (),
-    rw_term (arg , new_arg);
+    } let iter_buf = std::mem::take(& mut buf); POOL_TERM_CONG_ARG_TERM.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    rw_term(arg, new_arg);
 
 
     // Equation rules
-eq_term (t . clone (), t . clone ()) <--
-    term (t);
+eq_term(t.clone(), t.clone()) <--
+    term(t);
 
-eq_term (s . clone (), t . clone ()) <--
-    term (s),
-    term (t),
-    for (s_f0 , s_f1 , t_f0 , t_f1)in {std::thread_local ! {static POOL_TERM_EQ_CONG_0 : std::cell::Cell < Vec < (Term , Term , Term , Term)>> = const {std::cell::Cell::new (Vec::new ())};}let mut buf = POOL_TERM_EQ_CONG_0 . with (| p | p . take ()); buf . clear (); match (s , t){
-        (Term::App (sf0 , sf1), Term::App (tf0 , tf1))=> {
-            buf . push ((sf0 . as_ref (). clone (), sf1 . as_ref (). clone (), tf0 . as_ref (). clone (), tf1 . as_ref (). clone ()));
+eq_term(s.clone(), t.clone()) <--
+    term(s),
+    term(t),
+    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_TERM_EQ_CONG_0 : std::cell::Cell < Vec < (Term, Term, Term, Term) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_TERM_EQ_CONG_0.with(| p | p.take()); buf.clear(); match (s, t) {
+        (Term::App(sf0, sf1), Term::App(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         _ => {},
-    }let iter_buf = std::mem::take (& mut buf); POOL_TERM_EQ_CONG_0 . with (| p | p . set (buf)); iter_buf}. into_iter (),
-    eq_term (s_f0 , t_f0),
-    eq_term (s_f1 , t_f1);
+    } let iter_buf = std::mem::take(& mut buf); POOL_TERM_EQ_CONG_0.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    eq_term(s_f0, t_f0),
+    eq_term(s_f1, t_f1);
 
 
     // Rewrite rules
-rw_term (s_orig . clone (), t) <--
-    eq_term (s_orig , s),
-    if let Term::App (ref s_f0 , ref s_f1)= s,
+rw_term(s_orig.clone(), t) <--
+    eq_term(s_orig, s),
+    if let Term::App(ref s_f0, ref s_f1) = s,
     let s_f0_deref = &** s_f0,
-    if let Term::Lam (ref s_f0_deref_f0)= s_f0_deref,
-    let s_f0_deref_f0_binder = s_f0_deref_f0 . unsafe_pattern (). clone (),
-    let s_f0_deref_f0_body_boxed = s_f0_deref_f0 . unsafe_body (),
+    if let Term::Lam(ref s_f0_deref_f0) = s_f0_deref,
+    let s_f0_deref_f0_binder = s_f0_deref_f0.unsafe_pattern().clone(),
+    let s_f0_deref_f0_body_boxed = s_f0_deref_f0.unsafe_body(),
     let s_f0_deref_f0_body = &** s_f0_deref_f0_body_boxed,
     let s_f1_deref = &** s_f1,
-    let t = ({let (__binder , __body)= ((s_f0_deref_f0 . clone ()). clone ()). unbind (); (* __body). substitute_term (& __binder . 0 , & (s_f1_deref . clone ()). clone ())}). normalize ();
+    let t = ({ let (__binder, __body) = ((s_f0_deref_f0.clone()).clone()).unbind(); (* __body).substitute_term(& __binder.0, & (s_f1_deref.clone()).clone()) }).normalize();
 
-rw_term (lhs . clone (), rhs) <--
-    term (lhs),
-    if let Term::Lam (ref scope)= lhs,
-    let binder = scope . unsafe_pattern (). clone (),
-    let body = scope . unsafe_body (),
-    rw_term ((** body). clone (), body_rewritten),
-    let rhs = Term::Lam (mettail_runtime::Scope::from_parts_unsafe (binder . clone (), Box::new (body_rewritten . clone ())));
+rw_term(lhs.clone(), rhs) <--
+    term(lhs),
+    if let Term::Lam(ref scope) = lhs,
+    let binder = scope.unsafe_pattern().clone(),
+    let body = scope.unsafe_body(),
+    rw_term((** body).clone(), body_rewritten),
+    let rhs = Term::Lam(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
 
-rw_term (lhs . clone (), match (lhs , vi){
-    (Term::App (_ , x1), 0usize)=> Term::App (Box::new (t . clone ()), x1 . clone ()),
-    (Term::App (x0 , _), 1usize)=> Term::App (x0 . clone (), Box::new (t . clone ())),
-    _ => unreachable ! (),
+rw_term(lhs.clone(), match (lhs, vi) {
+    (Term::App(_, x1), 0usize) => Term::App(Box::new(t.clone()), x1.clone()),
+    (Term::App(x0, _), 1usize) => Term::App(x0.clone(), Box::new(t.clone())),
+    _ => unreachable!(),
 }) <--
-    term (lhs),
-    for (field_val , vi)in {std::thread_local ! {static POOL_TERM_SCONG_TERM : std::cell::Cell < Vec < (Term , usize)>> = const {std::cell::Cell::new (Vec::new ())};}let mut buf = POOL_TERM_SCONG_TERM . with (| p | p . take ()); buf . clear (); match lhs {
-        Term::App (x0 , x1)=> {
-            buf . push (((** x0). clone (), 0usize));
-            buf . push (((** x1). clone (), 1usize));
+    term(lhs),
+    for (field_val, vi) in { std::thread_local! { static POOL_TERM_SCONG_TERM : std::cell::Cell < Vec < (Term, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_TERM_SCONG_TERM.with(| p | p.take()); buf.clear(); match lhs {
+        Term::App(x0, x1) => {
+            buf.push(((** x0).clone(), 0usize));
+            buf.push(((** x1).clone(), 1usize));
         },
         _ => {},
-    }let iter_buf = std::mem::take (& mut buf); POOL_TERM_SCONG_TERM . with (| p | p . set (buf)); iter_buf}. into_iter (),
-    rw_term (field_val , t);
+    } let iter_buf = std::mem::take(& mut buf); POOL_TERM_SCONG_TERM.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    rw_term(field_val, t);
 
 }

@@ -1,0 +1,3 @@
+# Vendored parser source is committed so the crate builds without cloning ascent.
+# To regenerate: set ASCENT_MACRO_SRC or clone ascent at ../../ascent and run build.
+

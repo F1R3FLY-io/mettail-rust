@@ -37,7 +37,7 @@ pub mod rules;
 // Re-export key functions
 pub use categories::generate_category_rules;
 pub use equations::generate_equation_rules;
-pub use relations::generate_relations;
+pub use relations::{generate_relations, list_all_relations_for_extraction, RelationForExtraction};
 
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
@@ -218,6 +218,7 @@ pub fn generate_rewrite_rules(
     // Generate small-step rules for HOL rust_code (step mode)
     let hol_step_rules = generate_hol_step_rules(language, cat_filter);
     rules.extend(hol_step_rules);
+
 
     // Generate big-step fold rules (one rewrite per fold-mode constructor)
     let fold_rules = generate_fold_big_step_rules(language, cat_filter);
@@ -573,6 +574,13 @@ fn generate_fold_big_step_rules(
             }
 
             // fold_C(s, res) for each constructor with rust_code and eval_mode Fold (unary or binary)
+            // If the category has an Err variant, only emit when res is not Err (so we don't
+            // rewrite e.g. Add(2, *(3)) to error when the right arg hasn't been evaluated yet).
+            let err_label = format_ident!("Err");
+            let category_has_err = language
+                .terms
+                .iter()
+                .any(|r| r.category == *category && r.label == err_label);
             for rule in &language.terms {
                 if rule.category != *category
                     || rule.eval_mode != Some(EvalMode::Fold)
@@ -583,6 +591,16 @@ fn generate_fold_big_step_rules(
                 let param_names = fold_param_names(rule);
                 let label = &rule.label;
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
+
+                // Only emit fold when result is not Err (e.g. Add only rewrites when both args are ints).
+                let filter_err = if category_has_err {
+                    quote! {
+                        ,
+                        if (match & res { #category :: #err_label => false , _ => true })
+                    }
+                } else {
+                    quote! {}
+                };
 
                 if param_names.len() == 2 {
                     let p0 = &param_names[0];
@@ -595,7 +613,8 @@ fn generate_fold_big_step_rules(
                             #fold_rel(right.as_ref().clone(), rv),
                             let #p0 = lv,
                             let #p1 = rv,
-                            let res = (#rust_code);
+                            let res = (#rust_code)
+                            #filter_err;
                     });
                 } else if param_names.len() == 1 {
                     let p0 = &param_names[0];
@@ -605,7 +624,8 @@ fn generate_fold_big_step_rules(
                             if let #category::#label(inner) = s,
                             #fold_rel(inner.as_ref().clone(), lv),
                             let #p0 = lv,
-                            let res = (#rust_code);
+                            let res = (#rust_code)
+                            #filter_err;
                     });
                 }
             }
