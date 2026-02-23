@@ -3,7 +3,7 @@
 use crate::{
     binding_power::Associativity,
     generate_parser,
-    CategorySpec, LanguageSpec, RuleSpec, SyntaxItemSpec,
+    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec,
 };
 
 /// Helper: extract category names from a slice of `CategorySpec`.
@@ -58,6 +58,9 @@ fn calculator_spec() -> LanguageSpec {
                 &cat_names,
             ),
         ],
+        beam_width: BeamWidthConfig::Disabled,
+        log_semiring_model_path: None,
+        dispatch_strategy: DispatchStrategy::Static,
     }
 }
 
@@ -159,6 +162,9 @@ fn test_generate_parser_two_categories() {
                 &cat_names,
             ),
         ],
+        beam_width: BeamWidthConfig::Disabled,
+        log_semiring_model_path: None,
+        dispatch_strategy: DispatchStrategy::Static,
     };
 
     let code = generate_parser(&spec);
@@ -326,4 +332,296 @@ fn test_generate_parser_with_mixfix() {
     // Verify regular infix handling still exists for Add and Mul
     assert!(code_str.contains("infix_bp"), "should contain infix_bp function");
     assert!(code_str.contains("make_infix"), "should contain make_infix function");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WFST lexer weight emission tests (feature = "wfst")
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(feature = "wfst")]
+mod wfst_lexer_weight_tests {
+    use super::*;
+    use crate::automata::{
+        codegen::generate_lexer_string,
+        minimize::minimize_dfa,
+        nfa::{build_nfa, BuiltinNeeds},
+        partition::compute_equivalence_classes,
+        subset::subset_construction,
+        TerminalPattern, TokenKind,
+    };
+
+    /// Helper: generate lexer string from terminal specs.
+    fn generate_lexer_for(
+        terminal_specs: &[(&str, TokenKind)],
+        needs: BuiltinNeeds,
+    ) -> String {
+        let terminals: Vec<TerminalPattern> = terminal_specs
+            .iter()
+            .map(|(text, kind)| TerminalPattern {
+                text: text.to_string(),
+                kind: kind.clone(),
+                is_keyword: text.chars().all(|c| c.is_alphanumeric()),
+            })
+            .collect();
+        let token_kinds: Vec<TokenKind> = terminal_specs.iter().map(|(_, k)| k.clone()).collect();
+        let nfa = build_nfa(&terminals, &needs);
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+        let dfa = minimize_dfa(&dfa);
+        let (code, _) = generate_lexer_string(&dfa, &partition, &token_kinds, "test");
+        code
+    }
+
+    #[test]
+    fn test_generated_code_contains_lex_weighted() {
+        let code = generate_lexer_for(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+                ("-", TokenKind::Fixed("-".to_string())),
+            ],
+            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+        );
+
+        assert!(
+            code.contains("lex_weighted"),
+            "generated lexer should contain lex_weighted function"
+        );
+        assert!(
+            code.contains("accept_weight"),
+            "generated lexer should contain accept_weight function"
+        );
+        assert!(
+            code.contains("lex_weighted_with_file_id"),
+            "generated lexer should contain lex_weighted_with_file_id function"
+        );
+    }
+
+    #[test]
+    fn test_generated_code_contains_weight_values() {
+        let code = generate_lexer_for(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+            ],
+            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+        );
+
+        // Fixed terminals have priority 10 → weight 0.0 (10 - 10)
+        // Ident has priority 1 → weight 9.0 (10 - 1)
+        // Integer has priority 2 → weight 8.0 (10 - 2)
+        assert!(
+            code.contains("0.0_f64"),
+            "should contain weight 0.0 for Fixed terminals (priority 10)"
+        );
+        assert!(
+            code.contains("9.0_f64"),
+            "should contain weight 9.0 for Ident (priority 1)"
+        );
+        assert!(
+            code.contains("8.0_f64"),
+            "should contain weight 8.0 for Integer (priority 2)"
+        );
+    }
+
+    #[test]
+    fn test_generated_lex_weighted_is_valid_rust() {
+        let code = generate_lexer_for(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+                ("*", TokenKind::Fixed("*".to_string())),
+                ("(", TokenKind::Fixed("(".to_string())),
+                (")", TokenKind::Fixed(")".to_string())),
+            ],
+            BuiltinNeeds { ident: true, integer: true, float: true, ..Default::default() },
+        );
+
+        // If this doesn't panic, the generated code is valid Rust
+        let _ts: proc_macro2::TokenStream = code
+            .parse()
+            .expect("generated code with lex_weighted should be valid Rust");
+    }
+
+    #[test]
+    fn test_lex_weighted_output_includes_f64_return_type() {
+        let code = generate_lexer_for(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+            ],
+            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+        );
+
+        // lex_weighted should return Vec<(Token<'a>, Range, f64)>
+        assert!(
+            code.contains("Vec<(Token<'a>, Range, f64)>"),
+            "lex_weighted should return Vec<(Token<'a>, Range, f64)>"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_generates_lex_weighted() {
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+
+        assert!(
+            code_str.contains("lex_weighted"),
+            "pipeline-generated code should contain lex_weighted"
+        );
+        assert!(
+            code_str.contains("accept_weight"),
+            "pipeline-generated code should contain accept_weight"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_generates_wfst_static_embedding() {
+        // When dispatch strategy is Weighted, the pipeline should generate
+        // CSR static arrays and LazyLock constructors for prediction WFSTs.
+        let spec = calculator_spec_weighted();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+
+        // Should contain WFST static arrays for the category
+        assert!(
+            code_str.contains("WFST_TRANSITIONS_"),
+            "pipeline should generate WFST transition arrays"
+        );
+        assert!(
+            code_str.contains("WFST_STATE_OFFSETS_"),
+            "pipeline should generate WFST state offset arrays"
+        );
+        assert!(
+            code_str.contains("WFST_TOKEN_NAMES_"),
+            "pipeline should generate WFST token name arrays"
+        );
+        assert!(
+            code_str.contains("WFST_BEAM_WIDTH_"),
+            "pipeline should generate WFST beam width static"
+        );
+        assert!(
+            code_str.contains("LazyLock"),
+            "pipeline should generate LazyLock constructor"
+        );
+        assert!(
+            code_str.contains("PredictionWfst"),
+            "pipeline should reference PredictionWfst in generated code"
+        );
+    }
+
+    #[test]
+    fn test_pipeline_wfst_static_embedding_valid_rust() {
+        // The full generated code (with WFST statics) should be valid Rust
+        let spec = calculator_spec_weighted();
+        let code = generate_parser(&spec);
+        // If generate_parser returns without panicking, the code parsed as TokenStream
+        // successfully. Verify it's non-empty.
+        assert!(
+            !code.is_empty(),
+            "generated code with WFST statics should not be empty"
+        );
+    }
+
+    /// Build a calculator spec with Weighted dispatch strategy to trigger WFST embedding.
+    fn calculator_spec_weighted() -> LanguageSpec {
+        #[allow(unused_imports)]
+        use crate::RuleSpecInput;
+
+        let types = vec![
+            CategorySpec {
+                name: "Int".to_string(),
+                native_type: Some("i32".to_string()),
+                is_primary: true,
+            },
+        ];
+
+        LanguageSpec::with_options(
+            "Calculator".to_string(),
+            types,
+            vec![
+                RuleSpecInput {
+                    label: "NumLit".to_string(),
+                    category: "Int".to_string(),
+                    syntax: vec![],
+                    associativity: Associativity::Left,
+                    prefix_precedence: None,
+                    has_rust_code: false,
+                    rust_code: None,
+                    eval_mode: None,
+                },
+                RuleSpecInput {
+                    label: "Add".to_string(),
+                    category: "Int".to_string(),
+                    syntax: vec![
+                        SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+                        SyntaxItemSpec::Terminal("+".to_string()),
+                        SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
+                    ],
+                    associativity: Associativity::Left,
+                    prefix_precedence: None,
+                    has_rust_code: false,
+                    rust_code: None,
+                    eval_mode: None,
+                },
+            ],
+            BeamWidthConfig::Explicit(1.5),
+            None,
+            DispatchStrategy::Weighted,
+        )
+    }
+
+    #[test]
+    fn test_pipeline_generates_recovery_static_embedding() {
+        // When dispatch strategy is Weighted, recovery WFST statics should be emitted
+        let spec = calculator_spec_weighted();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+
+        assert!(
+            code_str.contains("RECOVERY_SYNC_TOKENS_"),
+            "pipeline should generate recovery sync token arrays"
+        );
+        assert!(
+            code_str.contains("RECOVERY_SYNC_SOURCES_"),
+            "pipeline should generate recovery sync source arrays"
+        );
+        assert!(
+            code_str.contains("RECOVERY_TOKEN_NAMES_"),
+            "pipeline should generate recovery token name arrays"
+        );
+    }
+
+    #[test]
+    fn test_wfst_recovery_fn_has_context_params() {
+        // The generated wfst_recover_Cat function should accept context parameters
+        let spec = calculator_spec_weighted();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+
+        // Should have the full context-aware signature
+        assert!(
+            code_str.contains("wfst_recover_"),
+            "pipeline should generate wfst_recover function"
+        );
+        // Check for bracket balance parameters
+        assert!(
+            code_str.contains("open_parens") || code_str.contains("open_brackets"),
+            "wfst_recover function should have bracket balance parameters"
+        );
+    }
+
+    #[test]
+    fn test_non_wfst_lex_unchanged() {
+        // Verify that the standard lex() function is still present and unchanged
+        let code = generate_lexer_for(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+            ],
+            BuiltinNeeds { ident: true, integer: true, ..Default::default() },
+        );
+
+        // Standard lex should return Vec<(Token<'a>, Range)> (no weight)
+        assert!(
+            code.contains("pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String>"),
+            "standard lex() should return Vec<(Token<'a>, Range)> without weight"
+        );
+    }
 }

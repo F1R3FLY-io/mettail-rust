@@ -23,8 +23,9 @@ use std::collections::HashMap;
 
 use super::{
     nfa::{epsilon_closure, epsilon_closure_reuse},
-    partition::AlphabetPartition, ClassId, Dfa, DfaState, Nfa, StateId,
-    TokenKind, DEAD_STATE,
+    partition::AlphabetPartition,
+    semiring::{Semiring, TropicalWeight},
+    ClassId, Dfa, DfaState, Nfa, StateId, TokenKind, DEAD_STATE,
 };
 
 thread_local! {
@@ -80,8 +81,9 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
     // Start state: epsilon-closure of NFA start (uses original epsilon_closure
     // for the initial set since we need an owned Vec for state_map insertion)
     let start_set = epsilon_closure(nfa, &[nfa.start]);
-    let start_accept = resolve_accept(nfa, &start_set);
+    let (start_accept, start_weight) = resolve_accept(nfa, &start_set);
     dfa.states[0].accept = start_accept;
+    dfa.states[0].weight = start_weight;
     state_map.insert(start_set.clone(), 0);
     worklist.push(start_set);
 
@@ -116,10 +118,11 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
             let target_dfa_state = if let Some(&existing) = state_map.get(ec_closure.as_slice()) {
                 existing
             } else {
-                let accept = resolve_accept(nfa, &ec_closure);
+                let (accept, weight) = resolve_accept(nfa, &ec_closure);
                 let new_state = dfa.add_state(DfaState {
                     transitions: vec![DEAD_STATE; num_classes],
                     accept,
+                    weight,
                 });
                 state_map.insert(ec_closure.clone(), new_state);
                 worklist.push(ec_closure.clone());
@@ -139,15 +142,27 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
     dfa
 }
 
-/// Resolve the accept token for a set of NFA states.
+/// Resolve the accept token and weight for a set of NFA states.
+///
 /// If multiple NFA states in the set are accepting, the one with highest
-/// priority wins.
-fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> Option<TokenKind> {
-    states
-        .iter()
-        .filter_map(|&s| nfa.states[s as usize].accept.as_ref())
-        .max_by_key(|kind| kind.priority())
-        .cloned()
+/// priority (lowest tropical weight) wins. Returns `(token_kind, weight)`.
+fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> (Option<TokenKind>, TropicalWeight) {
+    let mut best_kind: Option<&TokenKind> = None;
+    let mut best_weight = TropicalWeight::zero(); // infinity = unreachable
+
+    for &s in states {
+        let nfa_state = &nfa.states[s as usize];
+        if let Some(ref kind) = nfa_state.accept {
+            // Tropical plus = min: lower weight wins (higher priority)
+            let w = nfa_state.weight;
+            if best_kind.is_none() || w < best_weight {
+                best_kind = Some(kind);
+                best_weight = w;
+            }
+        }
+    }
+
+    (best_kind.cloned(), best_weight)
 }
 
 #[cfg(test)]

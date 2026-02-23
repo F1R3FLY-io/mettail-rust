@@ -8,6 +8,10 @@ name = "mettail"
 path = "src/main.rs"
 doc = false  # Same binary as root package; document only from workspace root to avoid path collision
 
+[features]
+wfst = ["mettail-languages/wfst", "mettail-macros/wfst"]
+wfst-log = ["mettail-languages/wfst-log", "mettail-macros/wfst-log"]
+
 [dependencies]
 # Core MeTTaIL
 mettail-runtime = { path = "../runtime" }

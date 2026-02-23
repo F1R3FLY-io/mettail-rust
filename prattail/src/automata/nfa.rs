@@ -9,7 +9,10 @@
 
 use std::collections::HashMap;
 
-use super::{CharClass, Nfa, NfaFragment, NfaState, StateId, TerminalPattern, TokenKind};
+use super::{
+    semiring::TropicalWeight, CharClass, Nfa, NfaFragment, NfaState, StateId, TerminalPattern,
+    TokenKind,
+};
 
 /// Build a complete NFA from a set of terminal patterns plus built-in
 /// character-class patterns (identifiers, integers, floats, strings).
@@ -136,15 +139,19 @@ fn find_transition(nfa: &Nfa, state: StateId, byte: u8) -> Option<StateId> {
 }
 
 /// Set or upgrade the accept token on a state (higher priority wins).
+///
+/// Also updates the tropical weight to match the new token's priority.
 fn set_or_upgrade_accept(nfa: &mut Nfa, state: StateId, kind: &TokenKind) {
     let nfa_state = &mut nfa.states[state as usize];
     match &nfa_state.accept {
         None => {
             nfa_state.accept = Some(kind.clone());
+            nfa_state.weight = TropicalWeight::from_priority(kind.priority());
         }
         Some(existing) => {
             if kind.priority() > existing.priority() {
                 nfa_state.accept = Some(kind.clone());
+                nfa_state.weight = TropicalWeight::from_priority(kind.priority());
             }
         }
     }
@@ -1362,5 +1369,206 @@ mod tests {
             }
         }
         dfa.states[state as usize].accept.clone()
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Tropical weight tests — verify weights propagate correctly through
+    // NFA → DFA → minimize pipeline
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_nfa_state_weight_default() {
+        let state = NfaState::new();
+        assert!(state.weight.is_infinite(), "non-accepting state should have infinite weight");
+        assert!(state.accept.is_none());
+    }
+
+    #[test]
+    fn test_nfa_state_weight_from_priority() {
+        // Fixed terminal: priority 10 → weight 0.0 (best)
+        let fixed = NfaState::accepting(TokenKind::Fixed("+".to_string()));
+        assert_eq!(fixed.weight.value(), 0.0, "Fixed(+) should have weight 0.0");
+
+        // Ident: priority 1 → weight 9.0
+        let ident = NfaState::accepting(TokenKind::Ident);
+        assert_eq!(ident.weight.value(), 9.0, "Ident should have weight 9.0");
+
+        // Integer: priority 2 → weight 8.0
+        let integer = NfaState::accepting(TokenKind::Integer);
+        assert_eq!(integer.weight.value(), 8.0, "Integer should have weight 8.0");
+
+        // Float: priority 3 → weight 7.0
+        let float = NfaState::accepting(TokenKind::Float);
+        assert_eq!(float.weight.value(), 7.0, "Float should have weight 7.0");
+
+        // Boolean: priority 10 → weight 0.0
+        let boolean = NfaState::accepting(TokenKind::True);
+        assert_eq!(boolean.weight.value(), 0.0, "True should have weight 0.0");
+    }
+
+    #[test]
+    fn test_weight_propagation_through_pipeline() {
+        use crate::automata::{
+            minimize::minimize_dfa,
+            partition::compute_equivalence_classes,
+            subset::subset_construction,
+        };
+
+        let terminals = vec![
+            TerminalPattern {
+                text: "error".to_string(),
+                kind: TokenKind::Fixed("error".to_string()),
+                is_keyword: true,
+            },
+        ];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: true,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs);
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = minimize_dfa(&subset_construction(&nfa, &partition));
+
+        // Simulate lexing "error" — should get Fixed("error") with weight 0.0
+        let mut state = dfa.start;
+        for &byte in b"error" {
+            let class = partition.classify(byte);
+            state = dfa.transition(state, class);
+            assert_ne!(state, crate::automata::DEAD_STATE);
+        }
+        assert_eq!(
+            dfa.states[state as usize].accept,
+            Some(TokenKind::Fixed("error".to_string()))
+        );
+        assert_eq!(
+            dfa.states[state as usize].weight.value(),
+            0.0,
+            "keyword 'error' (priority 10) should have weight 0.0"
+        );
+
+        // Simulate lexing "foo" — should get Ident with weight 9.0
+        let mut state = dfa.start;
+        for &byte in b"foo" {
+            let class = partition.classify(byte);
+            state = dfa.transition(state, class);
+            assert_ne!(state, crate::automata::DEAD_STATE);
+        }
+        assert_eq!(
+            dfa.states[state as usize].accept,
+            Some(TokenKind::Ident),
+        );
+        assert_eq!(
+            dfa.states[state as usize].weight.value(),
+            9.0,
+            "identifier 'foo' (priority 1) should have weight 9.0"
+        );
+
+        // Simulate lexing "42" — should get Integer with weight 8.0
+        let mut state = dfa.start;
+        for &byte in b"42" {
+            let class = partition.classify(byte);
+            state = dfa.transition(state, class);
+            assert_ne!(state, crate::automata::DEAD_STATE);
+        }
+        assert_eq!(
+            dfa.states[state as usize].accept,
+            Some(TokenKind::Integer),
+        );
+        assert_eq!(
+            dfa.states[state as usize].weight.value(),
+            8.0,
+            "integer '42' (priority 2) should have weight 8.0"
+        );
+    }
+
+    #[test]
+    fn test_set_or_upgrade_accept_updates_weight() {
+        let mut nfa = Nfa::new();
+        let state = nfa.add_state(NfaState::accepting(TokenKind::Ident)); // priority 1, weight 9.0
+
+        assert_eq!(nfa.states[state as usize].weight.value(), 9.0);
+
+        // Upgrade to Fixed (priority 10, weight 0.0)
+        set_or_upgrade_accept(&mut nfa, state, &TokenKind::Fixed("kw".to_string()));
+        assert_eq!(nfa.states[state as usize].weight.value(), 0.0);
+        assert_eq!(
+            nfa.states[state as usize].accept,
+            Some(TokenKind::Fixed("kw".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_set_or_upgrade_accept_no_downgrade_weight() {
+        let mut nfa = Nfa::new();
+        let state = nfa.add_state(NfaState::accepting(
+            TokenKind::Fixed("kw".to_string()),
+        )); // priority 10, weight 0.0
+
+        assert_eq!(nfa.states[state as usize].weight.value(), 0.0);
+
+        // Attempt to downgrade to Ident (priority 1, weight 9.0) — should NOT change
+        set_or_upgrade_accept(&mut nfa, state, &TokenKind::Ident);
+        assert_eq!(nfa.states[state as usize].weight.value(), 0.0);
+        assert_eq!(
+            nfa.states[state as usize].accept,
+            Some(TokenKind::Fixed("kw".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_weight_preserved_through_minimization() {
+        use crate::automata::{
+            minimize::minimize_dfa,
+            partition::compute_equivalence_classes,
+            subset::subset_construction,
+        };
+
+        // Two categories of accepting states: Fixed (weight 0.0) and Ident (weight 9.0)
+        // After minimization, these must remain distinct.
+        let terminals = vec![
+            TerminalPattern {
+                text: "+".to_string(),
+                kind: TokenKind::Fixed("+".to_string()),
+                is_keyword: false,
+            },
+            TerminalPattern {
+                text: "-".to_string(),
+                kind: TokenKind::Fixed("-".to_string()),
+                is_keyword: false,
+            },
+        ];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: true,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs);
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = minimize_dfa(&subset_construction(&nfa, &partition));
+
+        // Verify: all accepting states have correct weights
+        for state in &dfa.states {
+            if let Some(ref kind) = state.accept {
+                let expected_weight = TropicalWeight::from_priority(kind.priority());
+                assert_eq!(
+                    state.weight, expected_weight,
+                    "state accepting {:?} has weight {:?} but expected {:?}",
+                    kind, state.weight, expected_weight
+                );
+            } else {
+                assert!(
+                    state.weight.is_infinite(),
+                    "non-accepting state should have infinite weight, got {:?}",
+                    state.weight
+                );
+            }
+        }
     }
 }

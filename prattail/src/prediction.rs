@@ -558,6 +558,134 @@ fn copy_follow(
     false
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// Incremental FIRST/FOLLOW for grammar composition
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Incrementally extend FIRST sets after grammar composition.
+///
+/// Takes existing FIRST sets (from grammar A) and newly-added rules (from grammar B)
+/// and computes the fixed-point extension. Categories that only appear in the new
+/// rules are initialized with empty FIRST sets before the fixed-point iteration.
+///
+/// This avoids recomputing FIRST sets for grammar A's rules from scratch. The
+/// result is equivalent to calling `compute_first_sets()` on the full merged
+/// rule set, but skips already-converged rules from grammar A.
+///
+/// ## Correctness
+///
+/// The fixed-point iteration runs over *all* rules (both existing and new) because
+/// new rules may reference existing categories, extending their FIRST sets.
+/// However, existing rules that don't reference new categories are already stable
+/// and converge in zero iterations, so the cost is proportional to the new rules'
+/// dependency depth, not the total grammar size.
+#[cfg(feature = "wfst")]
+pub fn incremental_first_sets(
+    existing: &BTreeMap<String, FirstSet>,
+    new_rules: &[RuleInfo],
+    new_categories: &[String],
+) -> BTreeMap<String, FirstSet> {
+    let mut first_sets = existing.clone();
+
+    // Ensure all new categories have entries
+    for cat in new_categories {
+        first_sets.entry(cat.clone()).or_insert_with(FirstSet::new);
+    }
+
+    // Fixed-point iteration over new rules only
+    let mut tokens_to_add: Vec<String> = Vec::with_capacity(16);
+    loop {
+        let mut changed = false;
+        for rule in new_rules {
+            if rule.is_infix {
+                continue;
+            }
+            for item in &rule.first_items {
+                tokens_to_add.clear();
+                match item {
+                    FirstItem::Terminal(t) => {
+                        tokens_to_add.push(crate::automata::codegen::terminal_to_variant_name(t));
+                    }
+                    FirstItem::NonTerminal(cat) => {
+                        if let Some(cat_first) = first_sets.get(cat) {
+                            tokens_to_add.extend(cat_first.tokens.iter().cloned());
+                        }
+                    }
+                    FirstItem::Ident => {
+                        tokens_to_add.push("Ident".to_string());
+                    }
+                };
+                if let Some(cat_first) = first_sets.get_mut(&rule.category) {
+                    for token in &tokens_to_add {
+                        if cat_first.tokens.insert(token.clone()) {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    first_sets
+}
+
+/// Incrementally extend FOLLOW sets after grammar composition.
+///
+/// Takes existing FOLLOW sets (from grammar A), new rules (from grammar B),
+/// and the merged FIRST sets, and computes the fixed-point extension.
+///
+/// Like `incremental_first_sets`, this runs the fixed-point over the new rules
+/// only. Existing rules that don't reference new categories are already stable.
+#[cfg(feature = "wfst")]
+pub fn incremental_follow_sets(
+    existing: &BTreeMap<String, FirstSet>,
+    new_inputs: &[FollowSetInput],
+    new_categories: &[String],
+    first_sets: &BTreeMap<String, FirstSet>,
+) -> BTreeMap<String, FirstSet> {
+    let mut follow_sets = existing.clone();
+
+    // Ensure all new categories have entries
+    for cat in new_categories {
+        follow_sets.entry(cat.clone()).or_insert_with(FirstSet::new);
+    }
+
+    // Fixed-point iteration over new inputs
+    loop {
+        let mut changed = false;
+        for input in new_inputs {
+            changed |= propagate_follow_from_items(
+                &input.syntax,
+                &input.category,
+                first_sets,
+                &mut follow_sets,
+            );
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    follow_sets
+}
+
+/// Merge two terminal sets, returning the union.
+///
+/// Used during grammar composition to incrementally build the terminal set
+/// for the merged grammar without re-scanning all rules.
+#[cfg(feature = "wfst")]
+pub fn merge_terminal_sets(
+    a: &BTreeSet<String>,
+    b: &BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut merged = a.clone();
+    merged.extend(b.iter().cloned());
+    merged
+}
+
 /// Build dispatch tables for all categories.
 ///
 /// For each category, determines which token triggers which parse alternative,
@@ -1028,6 +1156,176 @@ fn collect_referenced_categories(
             _ => {}
         }
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Dispatch action table extraction (for WFST weight assignment)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Build per-category dispatch action tables from grammar analysis.
+///
+/// Produces `BTreeMap<category_name, BTreeMap<token_variant, DispatchAction>>` — the same
+/// token-to-action mapping that `write_prefix_match_arms()` and `write_category_dispatch()`
+/// encode as generated match arms, but as structured data suitable for WFST weight
+/// assignment.
+///
+/// This function extracts the dispatch decisions without generating code, enabling the
+/// WFST builder (`build_prediction_wfsts`) to assign weights to each action based on
+/// ambiguity analysis.
+///
+/// The tables include:
+/// - **Direct dispatch**: terminal-first RD rules → `Direct { rule_label, parse_fn }`
+/// - **Variable fallback**: Ident token → `Variable { category }`
+/// - **Native literals**: Integer/Float/Boolean/StringLit → `Direct` for native type rules
+/// - **Grouping**: LParen → `Grouping { open: "(", close: ")" }`
+/// - **Cast**: tokens unique to source category → `Cast { source, wrapper }`
+/// - **Cross-category**: from cross-category rules and overlap analysis
+#[cfg(feature = "wfst")]
+pub fn build_dispatch_action_tables(
+    categories: &[String],
+    first_sets: &BTreeMap<String, FirstSet>,
+    overlaps: &BTreeMap<(String, String), CrossCategoryOverlap>,
+    rd_rules: &[crate::recursive::RDRuleInfo],
+    cross_rules: &[crate::dispatch::CrossCategoryRule],
+    cast_rules: &[crate::dispatch::CastRule],
+    native_types: &BTreeMap<String, Option<String>>,
+) -> BTreeMap<String, BTreeMap<String, DispatchAction>> {
+    use crate::automata::codegen::terminal_to_variant_name;
+
+    let mut tables: BTreeMap<String, BTreeMap<String, DispatchAction>> = BTreeMap::new();
+
+    for cat in categories {
+        let mut entries: BTreeMap<String, DispatchAction> = BTreeMap::new();
+
+        // ── Terminal-first RD rules → Direct dispatch ──
+        for rd_rule in rd_rules {
+            if rd_rule.category != *cat {
+                continue;
+            }
+            // Skip infix-like, collection-first, and nonterminal-first rules
+            if rd_rule.prefix_bp.is_some() {
+                // Unary prefix — still Direct, just with a different parse_fn
+                if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
+                    let variant = terminal_to_variant_name(t);
+                    entries.entry(variant).or_insert_with(|| DispatchAction::Direct {
+                        rule_label: rd_rule.label.clone(),
+                        parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
+                    });
+                }
+                continue;
+            }
+
+            let starts_with_terminal = matches!(
+                rd_rule.items.first(),
+                Some(crate::recursive::RDSyntaxItem::Terminal(_))
+            );
+            if !starts_with_terminal {
+                continue;
+            }
+
+            if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
+                let variant = terminal_to_variant_name(t);
+                entries.entry(variant).or_insert_with(|| DispatchAction::Direct {
+                    rule_label: rd_rule.label.clone(),
+                    parse_fn: format!("parse_{}", rd_rule.label.to_lowercase()),
+                });
+            }
+        }
+
+        // ── Native literal dispatch ──
+        if let Some(Some(native_type)) = native_types.get(cat) {
+            let literal_variants: Vec<&str> = match native_type.as_str() {
+                "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => vec!["Integer"],
+                "f32" | "f64" => vec!["Float"],
+                "bool" => vec!["Boolean"],
+                "str" | "String" => vec!["StringLit"],
+                _ => vec![],
+            };
+            for variant in literal_variants {
+                entries.entry(variant.to_string()).or_insert_with(|| DispatchAction::Direct {
+                    rule_label: format!("{}Lit", cat),
+                    parse_fn: format!("parse_{}_literal", cat.to_lowercase()),
+                });
+            }
+        }
+
+        // ── Grouping: parenthesized expression ──
+        entries.entry("LParen".to_string()).or_insert_with(|| DispatchAction::Grouping {
+            open: "(".to_string(),
+            close: ")".to_string(),
+        });
+
+        // ── Cast rules targeting this category ──
+        for cast_rule in cast_rules {
+            if cast_rule.target_category != *cat {
+                continue;
+            }
+            if let Some(source_first) = first_sets.get(&cast_rule.source_category) {
+                let own_first = first_sets.get(cat);
+                let unique_to_source = if let Some(own) = own_first {
+                    source_first.difference(own)
+                } else {
+                    source_first.clone()
+                };
+                for token in &unique_to_source.tokens {
+                    entries.entry(token.clone()).or_insert_with(|| DispatchAction::Cast {
+                        source_category: cast_rule.source_category.clone(),
+                        wrapper_label: cast_rule.label.clone(),
+                    });
+                }
+            }
+        }
+
+        // ── Cross-category rules targeting this category ──
+        for cross_rule in cross_rules {
+            if cross_rule.result_category != *cat {
+                continue;
+            }
+            if let Some(source_first) = first_sets.get(&cross_rule.source_category) {
+                let own_first = first_sets.get(cat);
+                let op_variant = terminal_to_variant_name(&cross_rule.operator);
+
+                // Tokens unique to source → deterministic cross-category dispatch
+                if let Some(own) = own_first {
+                    let unique_to_source = source_first.difference(own);
+                    for token in &unique_to_source.tokens {
+                        entries.entry(token.clone()).or_insert_with(|| {
+                            DispatchAction::CrossCategory {
+                                source_category: cross_rule.source_category.clone(),
+                                operator_token: op_variant.clone(),
+                                rule_label: cross_rule.label.clone(),
+                                needs_backtrack: false,
+                            }
+                        });
+                    }
+
+                    // Ambiguous tokens → needs backtracking
+                    let overlap_key = (cross_rule.source_category.clone(), cat.clone());
+                    if let Some(overlap) = overlaps.get(&overlap_key) {
+                        for token in &overlap.ambiguous_tokens.tokens {
+                            entries.entry(token.clone()).or_insert_with(|| {
+                                DispatchAction::CrossCategory {
+                                    source_category: cross_rule.source_category.clone(),
+                                    operator_token: op_variant.clone(),
+                                    rule_label: cross_rule.label.clone(),
+                                    needs_backtrack: true,
+                                }
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Variable fallback ──
+        entries.entry("Ident".to_string()).or_insert_with(|| DispatchAction::Variable {
+            category: cat.clone(),
+        });
+
+        tables.insert(cat.clone(), entries);
+    }
+
+    tables
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

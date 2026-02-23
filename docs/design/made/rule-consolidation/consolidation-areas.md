@@ -4,14 +4,14 @@ Six areas of Ascent rule generation were consolidated. Each replaces N per-const
 
 ## Summary
 
-| Area | Name | Grouping Key | Before | After | Core Theorem |
-|------|------|-------------|--------|-------|-------------|
-| 1 | Subterm Extraction | `(source_cat, target_cat)` | N rules/pair | 1 rule/pair | R1 (`for_match_equiv`) |
-| 2 | Auto-Variant Congruence | All domains (lam), per domain (arg) | 2C rules/cat | 1 + C rules/cat | R1 (`for_match_equiv`) |
-| 3 | Equation Congruence | `(category, field_types_tuple)` | N rules/sig | 1 rule/sig | R3 (`pair_match_equiv`) |
-| 4 | Explicit Rewrite Congruence | `(source_cat, field_cat)` | N rules/pair | 1 rule/pair | V4 (`variant_index_extract_equiv`) |
-| 5 | Fold Triggers | Category | N rules/cat | 1 rule/cat | R2 (`if_match_equiv`) |
-| 6 | Fold Identities | Category | N rules/cat | 1 rule/cat | R2 (`if_match_equiv`) |
+| Area | Name                        | Grouping Key                        | Before       | After           | Core Theorem                       |
+|------|-----------------------------|-------------------------------------|--------------|-----------------|------------------------------------|
+| 1    | Subterm Extraction          | `(source_cat, target_cat)`          | N rules/pair | 1 rule/pair     | R1 (`for_match_equiv`)             |
+| 2    | Auto-Variant Congruence     | All domains (lam), per domain (arg) | 2C rules/cat | 1 + C rules/cat | R1 (`for_match_equiv`)             |
+| 3    | Equation Congruence         | `(category, field_types_tuple)`     | N rules/sig  | 1 rule/sig      | R3 (`pair_match_equiv`)            |
+| 4    | Explicit Rewrite Congruence | `(source_cat, field_cat)`           | N rules/pair | 1 rule/pair     | V4 (`variant_index_extract_equiv`) |
+| 5    | Fold Triggers               | Category                            | N rules/cat  | 1 rule/cat      | R2 (`if_match_equiv`)              |
+| 6    | Fold Identities             | Category                            | N rules/cat  | 1 rule/cat      | R2 (`if_match_equiv`)              |
 
 ---
 

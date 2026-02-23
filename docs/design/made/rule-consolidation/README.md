@@ -6,14 +6,14 @@ Rule consolidation (Opt 1) replaces N per-constructor Ascent Datalog rules with 
 
 Six consolidation areas have been formally verified in Rocq (Coq 9.1), covering all pattern-matching consolidation transforms applied by the MeTTaIL code generator:
 
-| Area | Description | Core Theorem | Rocq File | Lines |
-|------|-------------|--------------|-----------|-------|
-| 1 | Subterm Extraction | R1: `for_match_equiv` | `RuleConsolidation.v` | 400 |
-| 2 | Auto-Variant Congruence | R1: `for_match_equiv` | `RuleConsolidation.v` | 400 |
-| 3 | Equation Congruence | R3: `pair_match_equiv` | `RuleConsolidation.v` | 400 |
-| 4 | Explicit Rewrite Congruence | V4: `variant_index_extract_equiv` | `VariantIndexRebuild.v` | 266 |
-| 5 | Fold Triggers | R2: `if_match_equiv` | `RuleConsolidation.v` | 400 |
-| 6 | Fold Identities | R2: `if_match_equiv` | `RuleConsolidation.v` | 400 |
+| Area | Description                 | Core Theorem                      | Rocq File               | Lines |
+|------|-----------------------------|-----------------------------------|-------------------------|-------|
+| 1    | Subterm Extraction          | R1: `for_match_equiv`             | `RuleConsolidation.v`   | 400   |
+| 2    | Auto-Variant Congruence     | R1: `for_match_equiv`             | `RuleConsolidation.v`   | 400   |
+| 3    | Equation Congruence         | R3: `pair_match_equiv`            | `RuleConsolidation.v`   | 400   |
+| 4    | Explicit Rewrite Congruence | V4: `variant_index_extract_equiv` | `VariantIndexRebuild.v` | 266   |
+| 5    | Fold Triggers               | R2: `if_match_equiv`              | `RuleConsolidation.v`   | 400   |
+| 6    | Fold Identities             | R2: `if_match_equiv`              | `RuleConsolidation.v`   | 400   |
 
 **Total: 5 Rocq files, 1,469 lines, zero `Admitted`.**
 
@@ -71,25 +71,25 @@ Infrastructure: `eqb_IntKind_spec` (decidable equality), `all_IntKinds_complete`
 
 ## Results
 
-| Language   | Before | After | Reduction |
-|-----------|--------|-------|-----------|
-| Calculator | 138    | 61    | 56%       |
-| Rho Calc   | 116    | 52    | 55%       |
-| Ambient    | 84     | 35    | 58%       |
-| Lambda     | 9      | 9     | 0%        |
-| **Total**  | **347**| **157** | **55%** |
+| Language   | Before  | After   | Reduction |
+|------------|---------|---------|-----------|
+| Calculator | 138     | 61      | 56%       |
+| Rho Calc   | 116     | 52      | 55%       |
+| Ambient    | 84      | 35      | 58%       |
+| Lambda     | 9       | 9       | 0%        |
+| **Total**  | **347** | **157** | **55%**   |
 
 Lambda has only 1 category (Term) so there was nothing to consolidate.
 
 ## File Index
 
-| File | Description |
-|------|-------------|
-| [overview.md](overview.md) | Problem statement, technique, results, source file inventory |
-| [consolidation-areas.md](consolidation-areas.md) | Detailed before/after for each of the 6 consolidation areas |
-| [formal-proofs.md](formal-proofs.md) | Complete formal proofs: definitions, theorems, and area applications |
-| [rocq-artifacts.md](rocq-artifacts.md) | Build instructions, theorem catalog, hypothesis audit |
-| [codegen-dry.md](codegen-dry.md) | DRY improvements to the codegen source code |
+| File                                             | Description                                                          |
+|--------------------------------------------------|----------------------------------------------------------------------|
+| [overview.md](overview.md)                       | Problem statement, technique, results, source file inventory         |
+| [consolidation-areas.md](consolidation-areas.md) | Detailed before/after for each of the 6 consolidation areas          |
+| [formal-proofs.md](formal-proofs.md)             | Complete formal proofs: definitions, theorems, and area applications |
+| [rocq-artifacts.md](rocq-artifacts.md)           | Build instructions, theorem catalog, hypothesis audit                |
+| [codegen-dry.md](codegen-dry.md)                 | DRY improvements to the codegen source code                          |
 
 ## See Also
 

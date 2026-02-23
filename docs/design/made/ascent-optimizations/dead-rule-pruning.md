@@ -146,76 +146,77 @@ Only considers reachable source categories.
 ### 6.1 Category Graph
 
 ```
+        ┌──────────┐
+        │ edge_P→P │
+        │ ┌────────┴─┐
+        └>│   Proc   │<──┐
+          └───┬──────┘   │
+              │          │
+        ┌─────┴──────┐   │
+        │ edge_P→N   │   │ edge_N→P
+        v            │   │
+      ┌───────┐      │   │
+      │ Name  │──────┘   │
+      └───┬───┘          │
+          │ edge_N→N     │
+          └──────────────┘
+
           ┌───────┐
-    ┌────>│ Proc  │<────┐
-    │     └───┬───┘     │
-    │         │         │
-    │   ┌─────┴─────┐   │
-    │   │ edge_P→N  │   │ edge_N→P
-    │   v           │   │
-    │ ┌───────┐     │   │
-    │ │ Name  │─────┘   │
-    │ └───┬───┘         │
-    │     │ edge_N→N    │
-    │     └─────────────┘
-    │   edge_P→P
-    │
-    │     ┌───────┐
-    │     │ Expr  │───────> {Proc, Name, Expr, Ground}
-    │     └───────┘
-    │
-    │     ┌───────┐
-    │     │ Chan  │───────> Name
-    │     └───────┘
-    │
-    │     ┌─────────┐
-    │     │ Ground  │  (no outgoing edges — literals)
-    │     └─────────┘
-    │
-    │     ┌───────┐
-    │     │ Float │  (no outgoing edges — literals)
-    │     └───────┘
+          │ Expr  │───────> {Proc, Name, Expr, Ground}
+          └───────┘
+
+          ┌───────┐
+          │ Chan  │───────> Name
+          └───────┘
+
+          ┌─────────┐
+          │ Ground  │  (no outgoing edges — literals)
+          └─────────┘
+
+          ┌───────┐
+          │ Float │  (no outgoing edges — literals)
+          └───────┘
 ```
 
 ### 6.2 Dead Pairs from Proc
 
 Since `Proc` can only reach `{Proc, Name}` (proven in `rho_Proc_reach_only_Proc_Name`), the following pairs are dead:
 
-| Source | Target | Dead? | Reason |
-|--------|--------|-------|--------|
-| Proc | Expr | Dead | Proc cannot reach Expr |
-| Proc | Chan | Dead | Proc cannot reach Chan |
-| Proc | Ground | Dead | Proc cannot reach Ground |
-| Proc | Float | Dead | Proc cannot reach Float |
-| Name | Expr | Dead | Name only reaches {Proc, Name} |
-| Name | Chan | Dead | Name only reaches {Proc, Name} |
-| Name | Ground | Dead | Name only reaches {Proc, Name} |
-| Name | Float | Dead | Name only reaches {Proc, Name} |
+| Source | Target | Dead? | Reason                         |
+|--------|--------|-------|--------------------------------|
+| Proc   | Expr   | Dead  | Proc cannot reach Expr         |
+| Proc   | Chan   | Dead  | Proc cannot reach Chan         |
+| Proc   | Ground | Dead  | Proc cannot reach Ground       |
+| Proc   | Float  | Dead  | Proc cannot reach Float        |
+| Name   | Expr   | Dead  | Name only reaches {Proc, Name} |
+| Name   | Chan   | Dead  | Name only reaches {Proc, Name} |
+| Name   | Ground | Dead  | Name only reaches {Proc, Name} |
+| Name   | Float  | Dead  | Name only reaches {Proc, Name} |
 
 These 8 dead rules (out of 36 total pairs) are pruned, reducing rule count by 22%.
 
 ## 7. Hypothesis Justification
 
-| Hypothesis | Statement | Justification |
-|------------|-----------|---------------|
-| P1: `extract_empty_when_unreachable` | `¬reach(src,tgt) → extract(src,tgt,t) = []` | Code generator only emits match arms for constructors that exist. If no constructor path `src → tgt` exists, the generated match has no arms producing `tgt` values — it falls through to the default `[] / {}` arm. See `categories.rs:50-53` and `helpers.rs`. |
-| `reach_dec` | `∀ src tgt, {reach src tgt} + {¬reach src tgt}` | Reachability is decidable on finite graphs: `compute_category_reachability` computes the transitive closure as a `BTreeSet`. Membership is decidable. |
-| `all_cats_complete` | `∀ c, In c all_cats` | All categories are enumerated from `language.types`, which is the complete list of declared types. |
+| Hypothesis                           | Statement                                       | Justification                                                                                                                                                                                                                                                    |
+|--------------------------------------|-------------------------------------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| P1: `extract_empty_when_unreachable` | `¬reach(src,tgt) → extract(src,tgt,t) = []`     | Code generator only emits match arms for constructors that exist. If no constructor path `src → tgt` exists, the generated match has no arms producing `tgt` values — it falls through to the default `[] / {}` arm. See `categories.rs:50-53` and `helpers.rs`. |
+| `reach_dec`                          | `∀ src tgt, {reach src tgt} + {¬reach src tgt}` | Reachability is decidable on finite graphs: `compute_category_reachability` computes the transitive closure as a `BTreeSet`. Membership is decidable.                                                                                                            |
+| `all_cats_complete`                  | `∀ c, In c all_cats`                            | All categories are enumerated from `language.types`, which is the complete list of declared types.                                                                                                                                                               |
 
 ## 8. Spec-to-Code Traceability
 
-| Rocq Definition | Rust / Ascent Code | Location |
-|-----------------|-------------------|----------|
-| `Node` | category names (`String`) | `common.rs:216` |
-| `edge` | direct adjacency list from constructor fields | `common.rs:219-265` |
-| `reach` | transitive closure loop | `common.rs:267-297` |
-| `extract` | generated match arms per `(src, tgt)` pair | `categories.rs:50-53` |
-| dead rule skip | reachability check before rule gen | `categories.rs:34-48` |
-| `rule_derive` | consolidated subterm extraction rule | `helpers.rs` |
-| `full_derive` | Ascent fixpoint iteration step | `ascent!` macro output |
-| `P2_dead_rule_derives_nothing` | — | `DeadRulePruning.v:109-120` |
-| `P3_pruned_equals_full` | — | `DeadRulePruning.v:150-163` |
-| `fixpoint_unchanged` | — | `DeadRulePruning.v:176-181` |
+| Rocq Definition                | Rust / Ascent Code                            | Location                    |
+|--------------------------------|-----------------------------------------------|-----------------------------|
+| `Node`                         | category names (`String`)                     | `common.rs:216`             |
+| `edge`                         | direct adjacency list from constructor fields | `common.rs:219-265`         |
+| `reach`                        | transitive closure loop                       | `common.rs:267-297`         |
+| `extract`                      | generated match arms per `(src, tgt)` pair    | `categories.rs:50-53`       |
+| dead rule skip                 | reachability check before rule gen            | `categories.rs:34-48`       |
+| `rule_derive`                  | consolidated subterm extraction rule          | `helpers.rs`                |
+| `full_derive`                  | Ascent fixpoint iteration step                | `ascent!` macro output      |
+| `P2_dead_rule_derives_nothing` | —                                             | `DeadRulePruning.v:109-120` |
+| `P3_pruned_equals_full`        | —                                             | `DeadRulePruning.v:150-163` |
+| `fixpoint_unchanged`           | —                                             | `DeadRulePruning.v:176-181` |
 
 ## 9. Rocq Source Reference
 

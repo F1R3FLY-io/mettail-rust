@@ -46,22 +46,22 @@ parse(tokens, pos, min_bp):
 Binding power pairs encode both precedence and associativity:
 
 ```
-+------------------+-----------------------------------+-------------------+
-| Associativity    | Binding powers                    | Example           |
-+------------------+-----------------------------------+-------------------+
-| Left-associative | left_bp < right_bp                | + gets (2, 3)     |
-|                  | a + b + c  =  (a + b) + c        | - gets (2, 3)     |
-|                  | After parsing a+b, l_bp=2 < 3, so |                   |
-|                  | the next + breaks the inner loop   |                   |
-|                  | and a+b becomes the lhs.           |                   |
-+------------------+-----------------------------------+-------------------+
-| Right-associative| left_bp > right_bp                | ^ gets (5, 4)     |
-|                  | a ^ b ^ c  =  a ^ (b ^ c)        |                   |
-|                  | After parsing a, l_bp=5 >= 0, so  |                   |
-|                  | we consume ^ and recurse with      |                   |
-|                  | min_bp=4. Inside, b sees ^, and    |                   |
-|                  | l_bp=5 >= 4, so it consumes ^ too. |                   |
-+------------------+-----------------------------------+-------------------+
+┌──────────────────┬────────────────────────────────────┬───────────────────┐
+│ Associativity    │ Binding powers                     │ Example           │
+├──────────────────┼────────────────────────────────────┼───────────────────┤
+│ Left-associative │ left_bp < right_bp                 │ + gets (2, 3)     │
+│                  │ a + b + c  =  (a + b) + c          │ - gets (2, 3)     │
+│                  │ After parsing a+b, l_bp=2 < 3, so  │                   │
+│                  │ the next + breaks the inner loop   │                   │
+│                  │ and a+b becomes the lhs.           │                   │
+├──────────────────┼────────────────────────────────────┼───────────────────┤
+│ Right-associative│ left_bp > right_bp                 │ ^ gets (5, 4)     │
+│                  │ a ^ b ^ c  =  a ^ (b ^ c)          │                   │
+│                  │ After parsing a, l_bp=5 >= 0, so   │                   │
+│                  │ we consume ^ and recurse with      │                   │
+│                  │ min_bp=4. Inside, b sees ^, and    │                   │
+│                  │ l_bp=5 >= 4, so it consumes ^ too. │                   │
+└──────────────────┴────────────────────────────────────┴───────────────────┘
 ```
 
 ---
@@ -71,30 +71,30 @@ Binding power pairs encode both precedence and associativity:
 PraTTaIL classifies each grammar rule into one of four categories:
 
 ```
-+------------------+----------------------------------------+-------------------+
-| Classification   | Criteria                               | Handled by        |
-+------------------+----------------------------------------+-------------------+
-| Infix            | is_infix == true                       | Pratt loop        |
-|                  | Pattern: Cat OP Cat -> Cat              | (infix_bp,        |
-|                  | Both operands and result are same cat   |  make_infix)      |
-+------------------+----------------------------------------+-------------------+
-| Unary Prefix     | is_unary_prefix == true                | RD handler +      |
-|                  | Pattern: "OP" Cat -> Cat                | prefix dispatch   |
-|                  | Exactly [Terminal, NonTerminal(same)]   | Uses high bp      |
-|                  | Examples: Neg ("-" a), Not ("not" a)    | (max_infix+2)     |
-+------------------+----------------------------------------+-------------------+
-| Prefix           | Not infix, not var, not literal         | RD handler +      |
-|                  | First syntax item is a Terminal          | prefix dispatch   |
-|                  | Pattern: "terminal" ... -> Cat           | Uses bp=0         |
-+------------------+----------------------------------------+-------------------+
-| Atom             | is_var == true OR is_literal == true    | Auto-generated    |
-|                  | Variables: bare Ident -> Cat::CatVar    | in prefix handler |
-|                  | Literals: Integer/Boolean/String/Float  |                   |
-+------------------+----------------------------------------+-------------------+
-| Structural       | Not infix, has complex syntax           | RD handler        |
-|                  | Binders, collections, patterns           | (standalone fn)   |
-|                  | Pattern: "(" zip(...) ")" "." "{" ... "}" |                 |
-+------------------+----------------------------------------+-------------------+
+┌──────────────────┬───────────────────────────────────────────┬───────────────────┐
+│ Classification   │ Criteria                                  │ Handled by        │
+├──────────────────┼───────────────────────────────────────────┼───────────────────┤
+│ Infix            │ is_infix == true                          │ Pratt loop        │
+│                  │ Pattern: Cat OP Cat → Cat                 │ (infix_bp,        │
+│                  │ Both operands and result are same cat     │  make_infix)      │
+├──────────────────┼───────────────────────────────────────────┼───────────────────┤
+│ Unary Prefix     │ is_unary_prefix == true                   │ RD handler +      │
+│                  │ Pattern: "OP" Cat → Cat                   │ prefix dispatch   │
+│                  │ Exactly [Terminal, NonTerminal(same)]     │ Uses high bp      │
+│                  │ Examples: Neg ("-" a), Not ("not" a)      │ (max_infix+2)     │
+├──────────────────┼───────────────────────────────────────────┼───────────────────┤
+│ Prefix           │ Not infix, not var, not literal           │ RD handler +      │
+│                  │ First syntax item is a Terminal           │ prefix dispatch   │
+│                  │ Pattern: "terminal" ... → Cat             │ Uses bp=0         │
+├──────────────────┼───────────────────────────────────────────┼───────────────────┤
+│ Atom             │ is_var == true OR is_literal == true      │ Auto-generated    │
+│                  │ Variables: bare Ident → Cat::CatVar       │ in prefix handler │
+│                  │ Literals: Integer/Boolean/String/Float    │                   │
+├──────────────────┼───────────────────────────────────────────┼───────────────────┤
+│ Structural       │ Not infix, has complex syntax             │ RD handler        │
+│                  │ Binders, collections, patterns            │ (standalone fn)   │
+│                  │ Pattern: "(" zip(...) ")" "." "{" ... "}" │                   │
+└──────────────────┴───────────────────────────────────────────┴───────────────────┘
 ```
 
 ### Classification Algorithm
@@ -103,23 +103,23 @@ PraTTaIL classifies each grammar rule into one of four categories:
 for each rule R in LanguageSpec.rules:
   if R.is_infix:
     classify as INFIX
-    -> extract InfixRuleInfo for binding power analysis
+    → extract InfixRuleInfo for binding power analysis
   elif R.is_var:
     classify as ATOM (variable)
-    -> auto-generate Ident match arm in prefix handler
+    → auto-generate Ident match arm in prefix handler
   elif R.is_literal:
     classify as ATOM (literal)
-    -> auto-generate Integer/Boolean/StringLit/Float match arm
+    → auto-generate Integer/Boolean/StringLit/Float match arm
   elif R.is_unary_prefix:
     classify as UNARY PREFIX
-    -> generate RD handler with prefix_bp = max_infix_bp + 2
-    -> add prefix dispatch arm for the leading terminal
+    → generate RD handler with prefix_bp = max_infix_bp + 2
+    → add prefix dispatch arm for the leading terminal
   elif R.syntax starts with Terminal and has complex structure:
     classify as STRUCTURAL
-    -> generate RD handler function + prefix dispatch arm
+    → generate RD handler function + prefix dispatch arm
   else:
     classify as PREFIX
-    -> generate RD handler function + prefix dispatch arm
+    → generate RD handler function + prefix dispatch arm
 ```
 
 ### Unary Prefix Detection
@@ -148,7 +148,7 @@ macros crate sets based on the HOL judgement syntax:
 ```
 Add . a:Int, b:Int |- a "+" b : Int
       ^^^^^  ^^^^^    ^  ^^^  ^
-      left   right   left OP  right  -> both params match result category
+      left   right   left OP  right  → both params match result category
 ```
 
 The macros crate checks:
@@ -215,14 +215,14 @@ terms {
 Resulting binding power table:
 
 ```
-+----------+---------+----------+----------+---------------+
-| Operator | Assoc   | left_bp  | right_bp | Meaning       |
-+----------+---------+----------+----------+---------------+
-| +        | Left    |    2     |    3     | 1+2+3=(1+2)+3 |
-| -        | Left    |    4     |    5     | 1-2-3=(1-2)-3 |
-| *        | Left    |    6     |    7     | 2*3*4=(2*3)*4 |
-| ^        | Right   |    9     |    8     | 2^3^2=2^(3^2) |
-+----------+---------+----------+----------+---------------+
+┌──────────┬─────────┬──────────┬──────────┬───────────────┐
+│ Operator │ Assoc   │ left_bp  │ right_bp │ Meaning       │
+├──────────┼─────────┼──────────┼──────────┼───────────────┤
+│ +        │ Left    │    2     │    3     │ 1+2+3=(1+2)+3 │
+│ -        │ Left    │    4     │    5     │ 1-2-3=(1-2)-3 │
+│ *        │ Left    │    6     │    7     │ 2*3*4=(2*3)*4 │
+│ ^        │ Right   │    9     │    8     │ 2^3^2=2^(3^2) │
+└──────────┴─────────┴──────────┴──────────┴───────────────┘
 ```
 
 ### Unary Prefix Binding Power
@@ -239,12 +239,12 @@ For each category C:
 For the Calculator example above (max infix bp for Int = 9):
 
 ```
-+----------+-------------------+-------------------------------------------------+
-| Operator | prefix_bp         | Effect                                          |
-+----------+-------------------+-------------------------------------------------+
-| - (Neg)  | 11 (= 9 + 2)     | -3+5 = (-3)+5 because parse_Int(tokens,pos,11)  |
-|          |                   | returns after NumLit(3), before seeing "+"       |
-+----------+-------------------+-------------------------------------------------+
+┌──────────┬───────────────────┬─────────────────────────────────────────────────┐
+│ Operator │ prefix_bp         │ Effect                                          │
+├──────────┼───────────────────┼─────────────────────────────────────────────────┤
+│ - (Neg)  │ 11 (= 9 + 2)      │ -3+5 = (-3)+5 because parse_Int(tokens,pos,11)  │
+│          │                   │ returns after NumLit(3), before seeing "+"      │
+└──────────┴───────────────────┴─────────────────────────────────────────────────┘
 ```
 
 This binding power is stored in `RDRuleInfo.prefix_bp` and used as the `min_bp`
@@ -282,7 +282,7 @@ The `operators_for_category(cat)` method filters by category, so:
 Each category gets its **own** `infix_bp` and `make_infix` functions,
 scoped to that category's operators.
 
-Cross-category operators (like `==` in `Int "==" Int -> Bool`) are stored
+Cross-category operators (like `==` in `Int "==" Int → Bool`) are stored
 with `is_cross_category: true` and filtered out of the per-category Pratt
 loop. They are handled by the dispatch layer instead.
 
@@ -402,7 +402,7 @@ Key properties:
    Pratt loop to break before calling `make_infix`.
 
 4. **Cross-category operators are excluded.** Operators like `==` in
-   `Int "==" Int -> Bool` do not appear in `make_infix` for either `Int`
+   `Int "==" Int → Bool` do not appear in `make_infix` for either `Int`
    or `Bool`. They are handled by the dispatch layer's own match arms.
 
 ---
@@ -419,22 +419,22 @@ from the Pratt loop's first line: `let mut lhs = parse_Cat_prefix(tokens, pos)?`
 
 ```
                     parse_Cat(tokens, pos, min_bp)
-                           |
-                           v
+                           │
+                           ▼
                     parse_Cat_prefix(tokens, pos)
-                           |
-                    +------+------+
-                    | Dispatch    |  <--- Prediction engine's dispatch table
-                    | Table       |       determines which handler to call
-                    +------+------+
-                           |
-              +------------+------------+
-              |            |            |
+                           │
+                    ┌──────┴──────┐
+                    │ Dispatch    │  ←── Prediction engine's dispatch table
+                    │ Table       │       determines which handler to call
+                    └──────┬──────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
          Direct(PZero) Lookahead   Variable
-              |         (peek+1)      |
-              v            |          v
-         parse_pzero()     |     Cat::CatVar(...)
-                           v
+              │         (peek+1)        │
+              ▼            │            ▼
+         parse_pzero()     │     Cat::CatVar(...)
+                           ▼
                     parse_poutput() or Cat::PVar(...)
 ```
 
@@ -468,20 +468,20 @@ Pratt parser with additional logic:
 
 ```
 parse_Bool(tokens, pos, min_bp)         // dispatch wrapper
-    |
-    +-- unique-to-source tokens -> parse_Int, expect ==, parse_Int
-    |
-    +-- unique-to-target tokens -> parse_Bool_own(tokens, pos)
-    |
-    +-- ambiguous tokens -> save/restore, try cross then own
-    |
-    +-- fallback -> parse_Bool_own(tokens, pos)
+    │
+    ├── unique-to-source tokens → parse_Int, expect ==, parse_Int
+    │
+    ├── unique-to-target tokens → parse_Bool_own(tokens, pos)
+    │
+    ├── ambiguous tokens → save/restore, try cross then own
+    │
+    └── fallback → parse_Bool_own(tokens, pos)
 
 parse_Bool_own(tokens, pos)             // original Pratt parser
-    |
-    +-- parse_Bool_prefix(tokens, pos)  // prefix dispatch
-    |
-    +-- Pratt infix loop (&&, ==)       // same-category infix
+    │
+    ├── parse_Bool_prefix(tokens, pos)  // prefix dispatch
+    │
+    └── Pratt infix loop (&&, ==)       // same-category infix
 ```
 
 The original `parse_Bool` (with the Pratt loop) is renamed to
@@ -501,7 +501,7 @@ Add . a:Proc, b:Proc |- a "+" b : Proc   (left-associative)
 ### Binding Power Table
 
 ```
-+ -> (left_bp: 2, right_bp: 3, label: "Add", category: "Proc")
++ → (left_bp: 2, right_bp: 3, label: "Add", category: "Proc")
 ```
 
 ### Parsing `{} + *(@({})) + error`
@@ -512,7 +512,7 @@ Tokens: `[EmptyBraces, Plus, Star, LParen, At, LParen, EmptyBraces, RParen,
 ```
 parse_Proc(tokens, pos=0, min_bp=0):
   1. parse_Proc_prefix(pos=0):
-     match EmptyBraces -> parse_pzero():
+     match EmptyBraces → parse_pzero():
        consume EmptyBraces, pos=1
        return Proc::PZero
 
@@ -521,23 +521,23 @@ parse_Proc(tokens, pos=0, min_bp=0):
   2. Pratt loop iteration 1:
      peek(pos=1) = Plus
      infix_bp(Plus) = Some((2, 3))
-     l_bp=2 >= min_bp=0 -> continue
+     l_bp=2 >= min_bp=0 → continue
      consume Plus, pos=2
      parse_Proc(tokens, pos=2, min_bp=3):
        parse_Proc_prefix(pos=2):
-         match Star -> parse_pdrop():
+         match Star → parse_pdrop():
            consume Star, pos=3
            consume LParen, pos=4
            parse_Name(tokens, pos=4, min_bp=0):
              parse_Name_prefix(pos=4):
-               match At -> parse_nquote():
+               match At → parse_nquote():
                  consume At, pos=5
                  consume LParen, pos=6
                  parse_Proc(tokens, pos=6, min_bp=0):
                    parse_Proc_prefix(pos=6):
-                     match EmptyBraces -> PZero, pos=7
+                     match EmptyBraces → PZero, pos=7
                    peek(pos=7) = RParen
-                   infix_bp(RParen) = None -> break
+                   infix_bp(RParen) = None → break
                    return PZero
                  consume RParen, pos=8
                  return Name::NQuote(Box::new(PZero))
@@ -548,7 +548,7 @@ parse_Proc(tokens, pos=0, min_bp=0):
 
        Pratt loop: peek(pos=9) = Plus
        infix_bp(Plus) = Some((2, 3))
-       l_bp=2 < min_bp=3 -> break!   (right operand ends here)
+       l_bp=2 < min_bp=3 → break!   (right operand ends here)
        return PDrop(NQuote(PZero))
 
      rhs = PDrop(NQuote(PZero))
@@ -558,15 +558,15 @@ parse_Proc(tokens, pos=0, min_bp=0):
   3. Pratt loop iteration 2:
      peek(pos=9) = Plus
      infix_bp(Plus) = Some((2, 3))
-     l_bp=2 >= min_bp=0 -> continue
+     l_bp=2 >= min_bp=0 → continue
      consume Plus, pos=10
      parse_Proc(tokens, pos=10, min_bp=3):
        parse_Proc_prefix(pos=10):
-         match KwError -> parse_err():
+         match KwError → parse_err():
            consume KwError, pos=11
            return Proc::Err
        peek(pos=11) = Eof
-       infix_bp(Eof) = None -> break
+       infix_bp(Eof) = None → break
        return Proc::Err
 
      rhs = Proc::Err
@@ -575,7 +575,7 @@ parse_Proc(tokens, pos=0, min_bp=0):
 
   4. Pratt loop iteration 3:
      peek(pos=11) = Eof
-     infix_bp(Eof) = None -> break
+     infix_bp(Eof) = None → break
 
   Return: Add(Add(PZero, PDrop(NQuote(PZero))), Err)
 ```

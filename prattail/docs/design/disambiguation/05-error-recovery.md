@@ -307,15 +307,15 @@ fn is_sync_Int<'a>(token: &Token<'a>) -> bool {
 The sync predicate generator converts token names to match patterns
 (`prediction.rs`, lines 1082-1094):
 
-| Token | Match Pattern |
-|-------|---------------|
-| Simple terminal (`Plus`) | `Token::Plus` |
-| Data-carrying (`Ident`) | `Token::Ident(_)` |
-| Data-carrying (`Integer`) | `Token::Integer(_)` |
-| Data-carrying (`Boolean`) | `Token::Boolean(_)` |
-| Data-carrying (`StringLit`) | `Token::StringLit(_)` |
-| Data-carrying (`Float`) | `Token::Float(_)` |
-| Data-carrying (`Dollar`) | `Token::Dollar(_)` |
+| Token                          | Match Pattern            |
+|--------------------------------|--------------------------|
+| Simple terminal (`Plus`)       | `Token::Plus`            |
+| Data-carrying (`Ident`)        | `Token::Ident(_)`        |
+| Data-carrying (`Integer`)      | `Token::Integer(_)`      |
+| Data-carrying (`Boolean`)      | `Token::Boolean(_)`      |
+| Data-carrying (`StringLit`)    | `Token::StringLit(_)`    |
+| Data-carrying (`Float`)        | `Token::Float(_)`        |
+| Data-carrying (`Dollar`)       | `Token::Dollar(_)`       |
 | Data-carrying (`DoubleDollar`) | `Token::DoubleDollar(_)` |
 
 The wildcard `_` on data-carrying tokens ensures the predicate matches regardless
@@ -363,13 +363,13 @@ ensures each recovery level uses contextually appropriate sync predicates.
                 (from Layer 2)   (grammar-filtered)    (skip to)    (continue)
 ```
 
-| Mechanism | Ambiguity Resolved | Implementation |
-|-----------|-------------------|----------------|
-| FOLLOW sets | Where can parsing legally resume? | `compute_follow_sets()` |
-| Structural delimiters | Grammar-aware sync points | Grammar terminal set check |
-| Separate functions | Zero overhead on happy path | `parse_Cat` vs `parse_Cat_recovering` |
-| Panic-mode skip | Skip to next sync point | `sync_to()` function |
-| Sync predicates | Combined sync check | `is_sync_Cat()` function |
+| Mechanism             | Ambiguity Resolved                | Implementation                        |
+|-----------------------|-----------------------------------|---------------------------------------|
+| FOLLOW sets           | Where can parsing legally resume? | `compute_follow_sets()`               |
+| Structural delimiters | Grammar-aware sync points         | Grammar terminal set check            |
+| Separate functions    | Zero overhead on happy path       | `parse_Cat` vs `parse_Cat_recovering` |
+| Panic-mode skip       | Skip to next sync point           | `sync_to()` function                  |
+| Sync predicates       | Combined sync check               | `is_sync_Cat()` function              |
 
 **Layer 5 output:** An AST that may contain error nodes in regions where parsing
 failed, but where subsequent valid portions of the input are correctly parsed.

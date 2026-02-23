@@ -109,7 +109,7 @@ Peak: 434 KB total (342 KB useful heap + 85 KB overhead + 6 KB stack)
 
 ---
 
-## Decision Matrix: Bottleneck -> Experiment Mapping
+## Decision Matrix: Bottleneck → Experiment Mapping
 
 | Bottleneck | Measured Impact (Small) | Measured Impact (N=100) | Experiment | Validated? |
 |-----------|------------------------|------------------------|------------|------------|
@@ -221,7 +221,7 @@ pipeline time, and from being the #1 hotspot to #3 (behind codegen and partition
 
 ### Verdict
 **ACCEPT** -- Hypothesis confirmed. minimize_dfa reduced from 20.8% to 5.3% of pipeline time
-(157 -> 31.7 us). The -79.8% improvement on the small spec exceeds the predicted reduction
+(157 → 31.7 us). The -79.8% improvement on the small spec exceeds the predicted reduction
 to <3% self-time in the perf profile (actual: 7.4% inclusive, well below the 13.5% baseline).
 Super-linear scaling behavior was the primary motivation and is dramatically improved.
 
@@ -310,7 +310,7 @@ RcVec cloning) remains the dominant cost, now concentrated in `generate_direct_c
 and `generate_accept_match_arms`.
 
 ### Verdict
-**ACCEPT** -- Small spec codegen improved 431 -> 356 us (-17.5%). The improvement is modest
+**ACCEPT** -- Small spec codegen improved 431 → 356 us (-17.5%). The improvement is modest
 relative to the hypothesis (-17.5% vs predicted 50-60% reduction in overhead), because the
 dominant cost is in `quote!` macro calls for match arms and state bodies, not just the
 per-literal calls we optimized. Further gains would require restructuring the entire
@@ -396,7 +396,7 @@ The HashMap overhead vs BTreeMap tradeoff is marginal for the typical DFA sizes 
 **Scaling dramatically improved.** The super-linear onset is still present but attenuated:
 - Before: N=50/N=5 ratio = 9.5x, N=100/N=5 = 24.5x
 - After: N=50/N=5 ratio = 5.7x, N=100/N=5 = 11.7x
-- N=100 absolute time: 8.66 ms -> 3.26 ms (**-62.4%**)
+- N=100 absolute time: 8.66 ms → 3.26 ms (**-62.4%**)
 
 ### End-to-End Generator (bench_end_to_end)
 
@@ -427,7 +427,7 @@ The HashMap overhead vs BTreeMap tradeoff is marginal for the typical DFA sizes 
 | subset_construction | **7.1%** | 3.0% | +4.1pp (relative increase) |
 | build_nfa | **0.95%** | <1% | unchanged |
 
-Key observation: minimize_dfa's absolute reduction from 157 -> 31.7 us (-79.8%) means it
+Key observation: minimize_dfa's absolute reduction from 157 → 31.7 us (-79.8%) means it
 consumes far less CPU even though its relative share only dropped from 13.5% to 7.4%.
 The relative shares of partition and subset appear to increase because the total pipeline
 time shrank, making their (less optimized) contribution more prominent.

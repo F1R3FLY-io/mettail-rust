@@ -20,43 +20,43 @@ the **lexer pipeline** (automata-based), the **parser pipeline** (Pratt + RD), a
 ## Module Dependency Graph
 
 ```
-                         +-----------+
-                         |  lib.rs   |
-                         | (types +  |
-                         |  entry pt)|
-                         +-----+-----+
-                               |
-                               v
-                        +--------------+
-                        | pipeline.rs  |
-                        | (orchestrator|
-                        |  + state     |
-                        |  machine)    |
-                        +------+-------+
-                               |
-          +----------+---------+---------+----------+
-          |          |         |         |          |
-          v          v         v         v          v
-    +---------+ +--------+ +----------+ +--------+ +----------+
-    | lexer.rs| |binding_| |prediction| | pratt  | |recursive |
-    |         | |power.rs| |   .rs    | |  .rs   | |  .rs     |
-    +---------+ +--------+ +----------+ +--------+ +----------+
-          |                      |          |           |
-          v                      |          |           |
-    +-----+-----+                |          v           |
-    | automata/ |                |     +----------+     |
-    | (mod.rs)  |                |     |dispatch  |     |
-    +-----+-----+                |     |  .rs     |     |
-          |                      |     +----------+     |
-    +-----+-----+-----+-----+    |                      |
-    |     |     |     |     |    |                      |
-    v     v     v     v     v    |                      |
-  nfa   part   sub   min   code  |                      |
-  .rs   ition  set   imize gen   |                      |
-        .rs    .rs   .rs   .rs   |                      |
-                                 |                      |
-                                 +----------+-----------+
-                                            |
+                         ┌───────────┐
+                         │  lib.rs   │
+                         │ (types +  │
+                         │  entry pt)│
+                         └─────┊─────┘
+                               │
+                               ▼
+                        ┌──────────────┐
+                        │ pipeline.rs  │
+                        │ (orchestrator│
+                        │  + state     │
+                        │  machine)    │
+                        └──────┊───────┘
+                               │
+          ┌──────────┬─────────┼─────────┬──────────┐
+          │          │         │         │          │
+          ▼          ▼         ▼         ▼          ▼
+    ┌─────────┐ ┌────────┐ ┌──────────┐ ┌────────┐ ┌──────────┐
+    │ lexer.rs│ │binding_│ │prediction│ │ pratt  │ │recursive │
+    │         │ │power.rs│ │   .rs    │ │  .rs   │ │  .rs     │
+    └─────────┘ └────────┘ └──────────┘ └────────┘ └──────────┘
+          │                      │          │           │
+          ▼                      │          │           │
+    ┌─────┊─────┐                │          ▼           │
+    │ automata/ │                │     ┌──────────┐     │
+    │ (mod.rs)  │                │     │dispatch  │     │
+    └─────┊─────┘                │     │  .rs     │     │
+          │                      │     └──────────┘     │
+    ┌─────┼─────┬─────┬─────┐    │                      │
+    │     │     │     │     │    │                      │
+    ▼     ▼     ▼     ▼     ▼    │                      │
+  nfa   part   sub   min   code  │                      │
+  .rs   ition  set   imize gen   │                      │
+        .rs    .rs   .rs   .rs   │                      │
+                                 │                      │
+                                 └──────────┬───────────┘
+                                            │
                                        (FIRST/FOLLOW
                                         sets used by
                                         all parser
@@ -67,41 +67,41 @@ the **lexer pipeline** (automata-based), the **parser pipeline** (Pratt + RD), a
 
 ```
 lib.rs
-  |
-  +---> pipeline.rs (orchestrator -- coordinates all modules below)
-          |
-          +---> lexer.rs ------> automata/mod.rs (types: TokenKind, TerminalPattern, etc.)
-          |       |                  |
-          |       |                  +---> automata/nfa.rs      (Thompson's + Aho-Corasick trie)
-          |       |                  +---> automata/partition.rs (alphabet partitioning)
-          |       |                  +---> automata/subset.rs    (NFA -> DFA)
-          |       |                  +---> automata/minimize.rs  (Hopcroft's minimization)
-          |       |                  +---> automata/codegen.rs   (DFA -> Rust code as String)
-          |       |
-          |       +---> automata/codegen.rs (terminal_to_variant_name)
-          |       +---> automata/minimize.rs (minimize_dfa)
-          |       +---> automata/nfa.rs (build_nfa, BuiltinNeeds)
-          |       +---> automata/partition.rs (compute_equivalence_classes)
-          |       +---> automata/subset.rs (subset_construction)
-          |
-          +---> binding_power.rs ---> automata/codegen.rs (terminal_to_variant_name)
-          |       (standalone analysis; no deps on other parser modules)
-          |
-          +---> prediction.rs -----> automata/codegen.rs (terminal_to_variant_name)
-          |       (FIRST sets, FOLLOW sets, nullable detection, dispatch tables,
-          |        grammar warnings, sync predicate generation)
-          |
-          +---> pratt.rs ----------> binding_power.rs (BindingPowerTable)
-          |       |                  prediction.rs (DispatchTable, FirstSet, sync predicates)
-          |       +----------------> automata/codegen.rs (terminal_to_variant_name)
-          |       (also generates: recovery helpers, recovering parsers, entry points)
-          |
-          +---> recursive.rs ------> automata/codegen.rs (terminal_to_variant_name)
-          |       |                  pratt.rs (PrefixHandler)
-          |       (produces PrefixHandler values consumed by pratt.rs)
-          |
-          +---> dispatch.rs -------> automata/codegen.rs (terminal_to_variant_name)
-                  |                  prediction.rs (CrossCategoryOverlap, FirstSet)
+  │
+  └──→ pipeline.rs (orchestrator ── coordinates all modules below)
+          │
+          ├──→ lexer.rs ──────→ automata/mod.rs (types: TokenKind, TerminalPattern, etc.)
+          │       │                  │
+          │       │                  ├──→ automata/nfa.rs      (Thompson's + Aho-Corasick trie)
+          │       │                  ├──→ automata/partition.rs (alphabet partitioning)
+          │       │                  ├──→ automata/subset.rs    (NFA → DFA)
+          │       │                  ├──→ automata/minimize.rs  (Hopcroft's minimization)
+          │       │                  └──→ automata/codegen.rs   (DFA → Rust code as String)
+          │       │
+          │       ├──→ automata/codegen.rs (terminal_to_variant_name)
+          │       ├──→ automata/minimize.rs (minimize_dfa)
+          │       ├──→ automata/nfa.rs (build_nfa, BuiltinNeeds)
+          │       ├──→ automata/partition.rs (compute_equivalence_classes)
+          │       └──→ automata/subset.rs (subset_construction)
+          │
+          ├──→ binding_power.rs ──→ automata/codegen.rs (terminal_to_variant_name)
+          │       (standalone analysis; no deps on other parser modules)
+          │
+          ├──→ prediction.rs ────→ automata/codegen.rs (terminal_to_variant_name)
+          │       (FIRST sets, FOLLOW sets, nullable detection, dispatch tables,
+          │        grammar warnings, sync predicate generation)
+          │
+          ├──→ pratt.rs ─────────→ binding_power.rs (BindingPowerTable)
+          │       │                  prediction.rs (DispatchTable, FirstSet, sync predicates)
+          │       └────────────────→ automata/codegen.rs (terminal_to_variant_name)
+          │       (also generates: recovery helpers, recovering parsers, entry points)
+          │
+          ├──→ recursive.rs ─────→ automata/codegen.rs (terminal_to_variant_name)
+          │       │                  pratt.rs (PrefixHandler)
+          │       (produces PrefixHandler values consumed by pratt.rs)
+          │
+          └──→ dispatch.rs ──────→ automata/codegen.rs (terminal_to_variant_name)
+                  │                  prediction.rs (CrossCategoryOverlap, FirstSet)
                   (uses FIRST set overlap analysis for backtracking decisions)
 ```
 
@@ -129,7 +129,7 @@ lib.rs
 ### `pipeline.rs` -- Pipeline Orchestrator (State Machine)
 
 - **State machine**: `PipelineState` enum with states:
-  `Ready` -> `Generated` -> `Complete`
+  `Ready` → `Generated` → `Complete`
 - **Public API**: `run_pipeline(spec: &LanguageSpec) -> TokenStream`
 - **Send+Sync data bundles** (extracted from `!Send` `LanguageSpec`):
   - `LexerBundle` { grammar_rules, type_infos }
@@ -200,15 +200,15 @@ lib.rs
 - Generates `Position` and `Range` structs for structured source locations
 - Generates `ParseError` enum: `UnexpectedToken`, `UnexpectedEof`, `TrailingTokens`, `InvalidLiteral`
 - `terminal_to_variant_name(terminal) -> String` converts operator strings to Rust
-  identifiers (e.g., `"+"` -> `"Plus"`, `"error"` -> `"KwError"`)
+  identifiers (e.g., `"+"` → `"Plus"`, `"error"` → `"KwError"`)
 
 ### `lexer.rs` -- Lexer Pipeline Orchestrator
 
 - `generate_lexer(input) -> (TokenStream, LexerStats)`
 - `generate_lexer_as_string(input) -> (String, LexerStats)` (used by pipeline)
 - `extract_terminals(grammar_rules, type_infos) -> LexerInput`
-- Chains: terminals -> NFA (with Aho-Corasick trie) -> partition -> DFA -> minimize -> codegen
-- Detects native types (i32/i64 -> integer, f64 -> float, bool -> boolean, String -> string)
+- Chains: terminals → NFA (with Aho-Corasick trie) → partition → DFA → minimize → codegen
+- Detects native types (i32/i64 → integer, f64 → float, bool → boolean, String → string)
 - Injects `true`/`false` keyword terminals for bool types
 - Returns pipeline statistics (NFA/DFA/minimized state counts, equivalence class count)
 
@@ -282,9 +282,9 @@ lib.rs
 
 - `write_category_dispatch(buf, category, cross_rules, cast_rules, overlaps, first_sets)`
 - Wraps the core Pratt parser with cross-category logic:
-  - Tokens unique to source category -> deterministic cross-category parse
-  - Ambiguous tokens (in both FIRST sets) -> save/restore backtracking
-  - Cast rules -> parse source category and wrap in target constructor
+  - Tokens unique to source category → deterministic cross-category parse
+  - Ambiguous tokens (in both FIRST sets) → save/restore backtracking
+  - Cast rules → parse source category and wrap in target constructor
 - `CrossCategoryRule`: source/result categories, operator, backtrack flag
 - `CastRule`: source/target categories, wrapper constructor label
 
@@ -334,20 +334,20 @@ Additional unit tests are embedded in source modules:
 
 ```
 LanguageSpec
-    |
-    v
+    │
+    ▼
 [pipeline.rs: extract_from_spec()]
-    |
-    +---> LexerBundle  ---> [lexer pipeline]     --> String (Token<'a> enum + lex function)
-    +---> ParserBundle
-            |
-            +---> [binding power]       --> BindingPowerTable (infix, postfix, mixfix)
-            +---> [prediction]          --> FirstSets + FollowSets + DispatchTables + Overlaps
-            +---> [grammar warnings]    --> Vec<GrammarWarning> (compile-time diagnostics)
-            +---> [recursive descent]   --> Vec<PrefixHandler> + String (RD function bodies)
-            +---> [pratt generation]    --> String (per-category Pratt parsers)
-            +---> [recovery generation] --> String (sync predicates + recovering parsers)
-            +---> [cross-category]      --> String (dispatch wrappers)
-    |
-    +---> [assembly: single str::parse::<TokenStream>()] --> TokenStream (complete parser)
+    │
+    ├──→ LexerBundle  ──→ [lexer pipeline]     ──→ String (Token<'a> enum + lex function)
+    ├──→ ParserBundle
+    │       │
+    │       ├──→ [binding power]       ──→ BindingPowerTable (infix, postfix, mixfix)
+    │       ├──→ [prediction]          ──→ FirstSets + FollowSets + DispatchTables + Overlaps
+    │       ├──→ [grammar warnings]    ──→ Vec<GrammarWarning> (compile-time diagnostics)
+    │       ├──→ [recursive descent]   ──→ Vec<PrefixHandler> + String (RD function bodies)
+    │       ├──→ [pratt generation]    ──→ String (per-category Pratt parsers)
+    │       ├──→ [recovery generation] ──→ String (sync predicates + recovering parsers)
+    │       └──→ [cross-category]      ──→ String (dispatch wrappers)
+    │
+    └──→ [assembly: single str::parse::<TokenStream>()] ──→ TokenStream (complete parser)
 ```

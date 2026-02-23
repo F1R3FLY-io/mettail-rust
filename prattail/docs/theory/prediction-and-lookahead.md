@@ -27,7 +27,7 @@ When the parser sees the next token, it must decide which rule to try:
   ──────────────────────────
   "0"           PZero
   "for"         PInput
-  identifier    POutput? or PVar?  <-- ambiguity
+  identifier    POutput? or PVar?  ←── ambiguity
 ```
 
 The `identifier` case is ambiguous: it could be the start of `POutput`
@@ -46,11 +46,11 @@ terminal tokens that can appear as the first token when parsing that symbol.
 Formally, for a string of grammar symbols `alpha`:
 
 ```
-  FIRST(alpha) = { t in Terminals : alpha =>* t beta, for some beta }
-                 union (if alpha =>* epsilon then { epsilon } else {})
+  FIRST(α) = { t ∈ Terminals : α ⇒* t β, for some β }
+             ∪ (if α ⇒* ε then { ε } else {})
 ```
 
-For PraTTaIL, which does not have epsilon-producing rules in the traditional
+For PraTTaIL, which does not have ε-producing rules in the traditional
 sense, the FIRST set of a category is simply the set of tokens that can
 begin any rule in that category.
 
@@ -163,23 +163,23 @@ The **FOLLOW set** of a nonterminal `A` is the set of terminal tokens that
 can appear immediately after `A` in any valid derivation:
 
 ```
-  FOLLOW(A) = { t in Terminals : S =>* alpha A t beta }
-              union (if S =>* alpha A then { $ })
+  FOLLOW(A) = { t ∈ Terminals : S ⇒* α A t β }
+              ∪ (if S ⇒* α A then { $ })
 ```
 
 where `$` represents end-of-input.
 
 ### 3.2 When FOLLOW Sets Matter
 
-FOLLOW sets are essential in LL(1) parsing for handling nullable (epsilon)
-productions. If a rule `A -> alpha | epsilon` has `epsilon` as an
-alternative, the parser must choose `epsilon` when the current token is in
+FOLLOW sets are essential in LL(1) parsing for handling nullable (ε)
+productions. If a rule `A → α | ε` has `ε` as an
+alternative, the parser must choose `ε` when the current token is in
 `FOLLOW(A)` (meaning `A` should produce nothing, and the token belongs to
 the enclosing context).
 
 PraTTaIL does not use FOLLOW sets directly because:
 
-1. PraTTaIL's grammar rules do not have epsilon alternatives (every rule
+1. PraTTaIL's grammar rules do not have ε alternatives (every rule
    produces at least one token).
 2. The Pratt loop handles "when to stop" via binding power, not FOLLOW sets.
 3. Collection rules use explicit delimiters and separators.
@@ -200,7 +200,7 @@ However, FOLLOW sets are implicitly used in two places:
   list element.
 
 - **Cross-category dispatch:** When a cross-category rule like
-  `Int "==" Int -> Bool` is tried and fails, the parser backtracks. The
+  `Int "==" Int → Bool` is tried and fails, the parser backtracks. The
   decision of _when_ to backtrack is informed by whether the next token
   could validly follow the source-category parse.
 
@@ -212,17 +212,17 @@ However, FOLLOW sets are implicitly used in two places:
       for all other A: FOLLOW[A] = {}
 
       repeat:
-          for each rule A -> X1 X2 ... Xn:
+          for each rule A → X1 X2 ... Xn:
               for each Xi that is a nonterminal:
                   // Add FIRST(Xi+1 Xi+2 ... Xn) to FOLLOW(Xi)
                   // (what can follow Xi within this rule)
                   trailer = FIRST(Xi+1 Xi+2 ... Xn)
-                  FOLLOW[Xi] = FOLLOW[Xi] union (trailer - {epsilon})
+                  FOLLOW[Xi] = FOLLOW[Xi] ∪ (trailer ∖ {ε})
 
-                  // If Xi+1 ... Xn can derive epsilon,
+                  // If Xi+1 ... Xn can derive ε,
                   // add FOLLOW(A) to FOLLOW(Xi)
-                  if epsilon in FIRST(Xi+1 ... Xn):
-                      FOLLOW[Xi] = FOLLOW[Xi] union FOLLOW[A]
+                  if ε ∈ FIRST(Xi+1 ... Xn):
+                      FOLLOW[Xi] = FOLLOW[Xi] ∪ FOLLOW[A]
 
       until no change
 ```
@@ -239,7 +239,7 @@ PraTTaIL builds one dispatch table per category:
 ```
   DispatchTable for Proc:
   ┌─────────────┬─────────────────────────────────────────────┐
-  │ Token       │ Action                                       │
+  │ Token       │ Action                                      │
   ├─────────────┼─────────────────────────────────────────────┤
   │ KwZero      │ Direct: call parse_pzero()                  │
   │ KwFor       │ Direct: call parse_pinput()                 │
@@ -260,24 +260,24 @@ PraTTaIL defines five types of dispatch actions:
 
 ```
   ┌────────────────────────────────────────────────────────────────┐
-  │ Action        │ Condition                │ Behavior             │
+  │ Action        │ Condition                │ Behavior            │
   ├────────────────────────────────────────────────────────────────┤
-  │ Direct        │ Token uniquely           │ Call the parse       │
-  │               │ identifies a rule        │ function directly    │
+  │ Direct        │ Token uniquely           │ Call the parse      │
+  │               │ identifies a rule        │ function directly   │
   ├────────────────────────────────────────────────────────────────┤
   │ Lookahead     │ Multiple rules share     │ Peek at token+1 to  │
-  │               │ the same first token     │ disambiguate         │
+  │               │ the same first token     │ disambiguate        │
   ├────────────────────────────────────────────────────────────────┤
-  │ CrossCategory │ Token belongs to a       │ Try source category  │
-  │               │ source category in a     │ parse, then check    │
-  │               │ cross-category rule      │ for operator         │
+  │ CrossCategory │ Token belongs to a       │ Try source category │
+  │               │ source category in a     │ parse, then check   │
+  │               │ cross-category rule      │ for operator        │
   ├────────────────────────────────────────────────────────────────┤
-  │ Cast          │ Token uniquely triggers  │ Parse source and     │
-  │               │ embedding one category   │ wrap in target       │
-  │               │ into another             │ constructor          │
+  │ Cast          │ Token uniquely triggers  │ Parse source and    │
+  │               │ embedding one category   │ wrap in target      │
+  │               │ into another             │ constructor         │
   ├────────────────────────────────────────────────────────────────┤
-  │ Variable      │ Fallback when no other   │ Treat as variable    │
-  │               │ rule matches             │ reference            │
+  │ Variable      │ Fallback when no other   │ Treat as variable   │
+  │               │ rule matches             │ reference           │
   └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -289,13 +289,13 @@ Conceptually, the disambiguating lookahead forms a small DFA:
 
 ```
   Ident ambiguity in Proc category:
-    POutput starts: Name "!" ...  ->  Ident then "!"
-    PVar starts:    Ident         ->  Ident then anything else
+    POutput starts: Name "!" ...  →  Ident then "!"
+    PVar starts:    Ident         →  Ident then anything else
 
   Decision DFA:
-         ┌── Ident ──> (?)  ── "!" ──> POutput
-    (s0) ┤                   ── other ──> PVar
-         └── (not Ident) ──> (error)
+         ┌── Ident ──→ (?)  ── "!" ──→ POutput
+    (s0) ┤                   ── other ──→ PVar
+         └── (not Ident) ──→ (error)
 
   In practice, PraTTaIL generates:
     Token::Ident => {
@@ -342,11 +342,11 @@ every pair of categories:
 ```
   function analyze_cross_category_overlaps(categories, FIRST):
       for each pair (A, B):
-          ambiguous  = FIRST(A) intersect FIRST(B)
-          unique_A   = FIRST(A) - FIRST(B)
-          unique_B   = FIRST(B) - FIRST(A)
+          ambiguous  = FIRST(A) ∩ FIRST(B)
+          unique_A   = FIRST(A) ∖ FIRST(B)
+          unique_B   = FIRST(B) ∖ FIRST(A)
 
-          if ambiguous is not empty:
+          if ambiguous ≠ ∅:
               record CrossCategoryOverlap(A, B, ambiguous, unique_A, unique_B)
 ```
 
@@ -364,21 +364,21 @@ every pair of categories:
 ### 5.4 Dispatch Strategy Based on Overlap
 
 ```
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │ Token type      │ Strategy                                          │
-  ├─────────────────────────────────────────────────────────────────────┤
+  ┌────────────────────────────────────────────────────────────────────┐
+  │ Token type      │ Strategy                                         │
+  ├────────────────────────────────────────────────────────────────────┤
   │ Unique to       │ Deterministic: directly parse source category,   │
   │ source category │ then check for cross-category operator.          │
   │ (Integer, Minus)│ No backtracking needed.                          │
-  │                 │                                                   │
+  │                 │                                                  │
   │ Unique to       │ Deterministic: parse own category directly.      │
   │ target category │ No backtracking needed.                          │
-  │ (Boolean, Bang) │                                                   │
-  │                 │                                                   │
+  │ (Boolean, Bang) │                                                  │
+  │                 │                                                  │
   │ Ambiguous       │ Save position, try cross-category parse.         │
   │ (Ident, LParen) │ If operator found after source parse, commit.    │
   │                 │ If not, restore position and parse own category. │
-  └─────────────────────────────────────────────────────────────────────┘
+  └────────────────────────────────────────────────────────────────────┘
 ```
 
 ### 5.5 Generated Code Pattern
@@ -442,12 +442,12 @@ PraTTaIL does **not** use full packrat memoization. Instead, it minimizes the
 need for memoization through prediction:
 
 ```
-  ┌─────────────────────────────────────────────────────────────────┐
+  ┌────────────────────────────────────────────────────────────────┐
   │ Packrat approach:  Try everything, memoize to avoid re-parsing │
-  │                                                                 │
+  │                                                                │
   │ PraTTaIL approach: Predict the correct alternative using FIRST │
-  │                    sets, only backtrack when truly ambiguous    │
-  └─────────────────────────────────────────────────────────────────┘
+  │                    sets, only backtrack when truly ambiguous   │
+  └────────────────────────────────────────────────────────────────┘
 ```
 
 The key insight is that **most parse decisions are deterministic** once FIRST
@@ -461,9 +461,9 @@ could prevent redundant re-parsing. For example:
 
 ```
   Parsing "x + y == z + w" as a Bool expression:
-    1. Try: parse_Int(pos=0) -> succeeds, returns Int::Add(x, y)
+    1. Try: parse_Int(pos=0) → succeeds, returns Int::Add(x, y)
     2. Check for "==": found at pos=3, consume
-    3. Parse_Int(pos=4) -> succeeds, returns Int::Add(z, w)
+    3. Parse_Int(pos=4) → succeeds, returns Int::Add(z, w)
     4. Result: Bool::BEq(Add(x,y), Add(z,w))
 
   Without memoization, if step 1 fails (no "==" follows), we backtrack
@@ -508,9 +508,9 @@ In LL(1) parsing, the parse table is a 2D array indexed by
   table[A][t] = the production to use when parsing A and next token is t
 
   Conditions for LL(1):
-    For all pairs of alternatives A -> alpha | beta:
-      1. FIRST(alpha) intersect FIRST(beta) = {}
-      2. If epsilon in FIRST(alpha), then FIRST(beta) intersect FOLLOW(A) = {}
+    For all pairs of alternatives A → α | β:
+      1. FIRST(α) ∩ FIRST(β) = ∅
+      2. If ε ∈ FIRST(α), then FIRST(β) ∩ FOLLOW(A) = ∅
 ```
 
 ### 7.2 How PraTTaIL Differs
@@ -519,23 +519,23 @@ PraTTaIL's dispatch tables are conceptually similar to LL(1) parse tables
 but differ in three ways:
 
 ```
-  ┌────────────────────┬─────────────────────────────────────────────┐
-  │ LL(1)              │ PraTTaIL                                     │
-  ├────────────────────┼─────────────────────────────────────────────┤
+  ┌────────────────────┬────────────────────────────────────────────┐
+  │ LL(1)              │ PraTTaIL                                   │
+  ├────────────────────┼────────────────────────────────────────────┤
   │ Single table for   │ Separate dispatch table per category, plus │
-  │ entire grammar     │ Pratt loop handles infix operators          │
-  │                    │                                             │
+  │ entire grammar     │ Pratt loop handles infix operators         │
+  │                    │                                            │
   │ Conflicts are      │ Conflicts handled by:                      │
   │ grammar errors     │   - Lookahead (peek at token+1)            │
   │ (must refactor     │   - Cross-category backtracking            │
   │  grammar)          │   - Variable fallback                      │
-  │                    │                                             │
+  │                    │                                            │
   │ Left recursion     │ Left recursion handled natively by Pratt   │
   │ forbidden          │ loop (not a grammar restriction)           │
-  │                    │                                             │
+  │                    │                                            │
   │ One token          │ Adaptive: 1 token when sufficient,         │
   │ lookahead only     │ 2+ tokens at ambiguous points              │
-  └────────────────────┴─────────────────────────────────────────────┘
+  └────────────────────┴────────────────────────────────────────────┘
 ```
 
 ### 7.3 Worked Comparison
@@ -563,10 +563,10 @@ This works because the FIRST sets are disjoint. No conflict.
 **PraTTaIL approach:** Build a dispatch table for `Proc`:
 
 ```
-  KwFor  -> Direct(PInput, parse_pinput)
-  KwNew  -> Direct(PNew, parse_pnew)
-  Ident  -> Variable(Proc)
-  _      -> error
+  KwFor  → Direct(PInput, parse_pinput)
+  KwNew  → Direct(PNew, parse_pnew)
+  Ident  → Variable(Proc)
+  _      → error
 ```
 
 The result is essentially the same as LL(1) for this non-ambiguous case.
@@ -583,9 +583,9 @@ In LR(1) parsing, lookahead is used differently. An LR(1) **item** is a
 production with a position marker and a lookahead token:
 
 ```
-  [A -> alpha . beta, t]
+  [A → α · β, t]
 
-  Meaning: "We have seen alpha and expect to see beta.
+  Meaning: "We have seen α and expect to see β.
             After reducing, the next token should be t."
 ```
 
@@ -594,23 +594,23 @@ The lookahead `t` determines when to reduce (shift-reduce decisions).
 ### 8.2 PraTTaIL vs. LR(1)
 
 ```
-  ┌────────────────────┬─────────────────────────────────────────────┐
-  │ LR(1) lookahead    │ PraTTaIL lookahead                          │
-  ├────────────────────┼─────────────────────────────────────────────┤
+  ┌────────────────────┬────────────────────────────────────────────┐
+  │ LR(1) lookahead    │ PraTTaIL lookahead                         │
+  ├────────────────────┼────────────────────────────────────────────┤
   │ Used to decide     │ Used to decide which alternative to try    │
   │ shift vs. reduce   │ (prediction, not shift/reduce)             │
-  │                    │                                             │
+  │                    │                                            │
   │ Operates on the    │ Operates on the token stream directly      │
   │ parse stack        │ (top-down, not bottom-up)                  │
-  │                    │                                             │
+  │                    │                                            │
   │ Conflict means     │ Overlap means graceful degradation to      │
   │ grammar is not     │ backtracking (never a grammar error)       │
-  │ LR(1)              │                                             │
-  │                    │                                             │
+  │ LR(1)              │                                            │
+  │                    │                                            │
   │ Fixed: always      │ Adaptive: 0 lookahead for direct dispatch, │
   │ exactly 1 token    │ 1-2 for ambiguous, full backtrack for      │
   │                    │ cross-category                             │
-  └────────────────────┴─────────────────────────────────────────────┘
+  └────────────────────┴────────────────────────────────────────────┘
 ```
 
 The fundamental philosophical difference is that LR(1) lookahead is used
@@ -625,9 +625,9 @@ try). This is the top-down vs. bottom-up distinction applied to prediction.
 ### 9.1 The Prediction Pipeline
 
 ```
-  Grammar rules
-       │
-       ▼
+                Grammar rules
+                     │
+                     ▼
   ┌──────────────────────────────────────────┐
   │ 1. Compute FIRST sets                    │  compute_first_sets()
   │    Fixed-point iteration over categories │
@@ -637,7 +637,7 @@ try). This is the top-down vs. bottom-up distinction applied to prediction.
   ┌──────────────────────────────────────────┐
   │ 2. Build dispatch tables                 │  build_dispatch_tables()
   │    For each category:                    │
-  │      token -> rules mapping              │
+  │      token → rules mapping               │
   │      1 rule: Direct dispatch             │
   │      N rules: Lookahead dispatch         │
   │      var + other: Variable fallback      │
@@ -647,7 +647,7 @@ try). This is the top-down vs. bottom-up distinction applied to prediction.
   ┌──────────────────────────────────────────┐
   │ 3. Analyze cross-category overlaps       │  analyze_cross_category_overlaps()
   │    For each category pair (A, B):        │
-  │      Compute FIRST(A) intersect FIRST(B) │
+  │      Compute FIRST(A) ∩ FIRST(B)         │
   │      Identify unique and ambiguous tokens│
   └──────────────────┬───────────────────────┘
                      │
@@ -670,35 +670,35 @@ When the parser needs to parse a category `C` and sees token `t`:
     ▼
   Is t in DispatchTable[C]?
     │
-    ├── Yes, Direct(rule) ──────────────> Call parse_rule()
+    ├── Yes, Direct(rule) ──────────────→ Call parse_rule()
     │
-    ├── Yes, Lookahead(alts) ───────────> Peek at token+1
+    ├── Yes, Lookahead(alts) ───────────→ Peek at token+1
     │                                       │
-    │                                       ├── Match alt ──> Call parse_alt()
-    │                                       └── No match ──> Variable fallback
+    │                                       ├── Match alt ──→ Call parse_alt()
+    │                                       └── No match ──→ Variable fallback
     │
-    ├── Yes, CrossCategory(src, op) ────> Save pos
+    ├── Yes, CrossCategory(src, op) ────→ Save pos
     │                                     Try parse_src()
     │                                       │
-    │                                       ├── Success + op found ──> Commit
-    │                                       └── Failure or no op ──> Restore pos
-    │                                                                  parse_C_own()
+    │                                       ├── Success + op found ──→ Commit
+    │                                       └── Failure or no op ──→ Restore pos
+    │                                                                 parse_C_own()
     │
-    ├── Yes, Cast(src, wrapper) ────────> parse_src(), wrap in Cat::wrapper()
+    ├── Yes, Cast(src, wrapper) ────────→ parse_src(), wrap in Cat::wrapper()
     │
-    ├── Yes, Variable(C) ──────────────> Parse as variable
+    ├── Yes, Variable(C) ──────────────→ Parse as variable
     │
-    └── No ──────────────────────────────> Error: unexpected token
+    └── No ──────────────────────────────→ Error: unexpected token
 ```
 
 ### 9.3 Complexity
 
 ```
   ┌──────────────────────────────┬─────────────────────────────────┐
-  │ Phase                        │ Complexity                       │
+  │ Phase                        │ Complexity                      │
   ├──────────────────────────────┼─────────────────────────────────┤
   │ FIRST set computation        │ O(|rules| * |categories| *      │
-  │                              │   |terminals|)                   │
+  │                              │   |terminals|)                  │
   │ Dispatch table construction  │ O(|rules| * |terminals|)        │
   │ Overlap analysis             │ O(|categories|^2 * |terminals|) │
   │ Per-token dispatch (runtime) │ O(1) for direct dispatch        │

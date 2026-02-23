@@ -22,73 +22,73 @@ layer's choices:
 
 ```
   ┌───────────────────────────────────────────────────────────────────────┐
-  │                         SOURCE TEXT                                  │
-  │  "b && (x == y)"                                                    │
+  │                         SOURCE TEXT                                   │
+  │  "b && (x == y)"                                                      │
   └──────────────────────────────┬────────────────────────────────────────┘
                                  │
   ┌──────────────────────────────▼────────────────────────────────────────┐
-  │  LAYER 1: LEXICAL DISAMBIGUATION                                     │
-  │  DFA + maximal munch + priority                                      │
-  │  Resolves: token boundaries, keyword/ident, operator boundaries      │
-  │                                                                      │
-  │  "b"    → Ident("b")                                                 │
-  │  "&&"   → AmpAmp         (maximal munch: && not & + &)               │
-  │  "("    → LParen                                                     │
-  │  "x"    → Ident("x")                                                 │
-  │  "=="   → EqEq           (maximal munch: == not = + =)               │
-  │  "y"    → Ident("y")                                                 │
-  │  ")"    → RParen                                                     │
+  │  LAYER 1: LEXICAL DISAMBIGUATION                                      │
+  │  DFA + maximal munch + priority                                       │
+  │  Resolves: token boundaries, keyword/ident, operator boundaries       │
+  │                                                                       │
+  │  "b"    → Ident("b")                                                  │
+  │  "&&"   → AmpAmp         (maximal munch: && not & + &)                │
+  │  "("    → LParen                                                      │
+  │  "x"    → Ident("x")                                                  │
+  │  "=="   → EqEq           (maximal munch: == not = + =)                │
+  │  "y"    → Ident("y")                                                  │
+  │  ")"    → RParen                                                      │
   └──────────────────────────────┬────────────────────────────────────────┘
                                  │
   ┌──────────────────────────────▼────────────────────────────────────────┐
-  │  TOKEN STREAM                                                        │
-  │  [Ident("b"), AmpAmp, LParen, Ident("x"), EqEq, Ident("y"), RParen] │
+  │  TOKEN STREAM                                                         │
+  │  [Ident("b"), AmpAmp, LParen, Ident("x"), EqEq, Ident("y"), RParen]   │
   └──────────────────────────────┬────────────────────────────────────────┘
                                  │
   ┌──────────────────────────────▼────────────────────────────────────────┐
-  │  LAYER 2: PARSE PREDICTION                                           │
-  │  FIRST sets + dispatch tables                                        │
-  │  Resolves: which rule to try first                                   │
-  │                                                                      │
-  │  Goal: parse Bool. First token: Ident("b")                           │
-  │  Dispatch: Ident is in FIRST(Int) ∩ FIRST(Bool) → AMBIGUOUS          │
-  │  → Try cross-category first (Layer 4)                                │
+  │  LAYER 2: PARSE PREDICTION                                            │
+  │  FIRST sets + dispatch tables                                         │
+  │  Resolves: which rule to try first                                    │
+  │                                                                       │
+  │  Goal: parse Bool. First token: Ident("b")                            │
+  │  Dispatch: Ident is in FIRST(Int) ∩ FIRST(Bool) → AMBIGUOUS           │
+  │  → Try cross-category first (Layer 4)                                 │
   └──────────────────────────────┬────────────────────────────────────────┘
                                  │
   ┌──────────────────────────────▼────────────────────────────────────────┐
-  │  LAYER 4: CROSS-CATEGORY RESOLUTION                                  │
-  │  FIRST set partition + save/restore                                  │
-  │  Resolves: Ident("b") → Int var? Or Bool var?                        │
-  │                                                                      │
-  │  Save pos. parse_Int("b") → IVar("b"). Peek: AmpAmp ≠ EqEq.        │
-  │  Cross-category FAILS. Restore pos. → parse_Bool_own                 │
+  │  LAYER 4: CROSS-CATEGORY RESOLUTION                                   │
+  │  FIRST set partition + save/restore                                   │
+  │  Resolves: Ident("b") → Int var? Or Bool var?                         │
+  │                                                                       │
+  │  Save pos. parse_Int("b") → IVar("b"). Peek: AmpAmp ≠ EqEq.           │
+  │  Cross-category FAILS. Restore pos. → parse_Bool_own                  │
   └──────────────────────────────┬────────────────────────────────────────┘
                                  │
   ┌──────────────────────────────▼────────────────────────────────────────┐
-  │  LAYER 3: OPERATOR PRECEDENCE                                        │
-  │  Binding power pairs + Pratt loop                                    │
-  │  Resolves: "b" as Bool var, "&&" infix, "(x == y)" as right operand │
-  │                                                                      │
-  │  PREFIX: Ident("b") → BVar("b")                                     │
-  │  INFIX:  AmpAmp, left_bp=2, min_bp=0 → && binds                    │
-  │  RHS:    parse_Bool(min_bp=3) → enters nested call (all layers)     │
-  │                                                                      │
-  │  NESTED: "(" triggers grouping → parse_Bool(min_bp=0) for interior  │
-  │    → Layer 4: Ident("x") ambiguous → try Int → IVar("x")            │
-  │    → Peek: EqEq ✓ → cross-category succeeds!                        │
-  │    → parse_Int → IVar("y") → Bool::Eq(IVar("x"), IVar("y"))         │
-  │  Close ")" → grouping complete                                      │
-  │                                                                      │
-  │  Result: BAnd(BVar("b"), Eq(IVar("x"), IVar("y")))                  │
+  │  LAYER 3: OPERATOR PRECEDENCE                                         │
+  │  Binding power pairs + Pratt loop                                     │
+  │  Resolves: "b" as Bool var, "&&" infix, "(x == y)" as right operand   │
+  │                                                                       │
+  │  PREFIX: Ident("b") → BVar("b")                                       │
+  │  INFIX:  AmpAmp, left_bp=2, min_bp=0 → && binds                       │
+  │  RHS:    parse_Bool(min_bp=3) → enters nested call (all layers)       │
+  │                                                                       │
+  │  NESTED: "(" triggers grouping → parse_Bool(min_bp=0) for interior    │
+  │    → Layer 4: Ident("x") ambiguous → try Int → IVar("x")              │
+  │    → Peek: EqEq ✓ → cross-category succeeds!                          │
+  │    → parse_Int → IVar("y") → Bool::Eq(IVar("x"), IVar("y"))           │
+  │  Close ")" → grouping complete                                        │
+  │                                                                       │
+  │  Result: BAnd(BVar("b"), Eq(IVar("x"), IVar("y")))                    │
   └──────────────────────────────┬────────────────────────────────────────┘
                                  │
   ┌──────────────────────────────▼────────────────────────────────────────┐
-  │  LAYER 5: ERROR RECOVERY                                             │
-  │  (Not activated -- parse succeeded)                                  │
+  │  LAYER 5: ERROR RECOVERY                                              │
+  │  (Not activated -- parse succeeded)                                   │
   └──────────────────────────────┬────────────────────────────────────────┘
                                  │
   ┌──────────────────────────────▼────────────────────────────────────────┐
-  │  AST: BAnd(BVar("b"), Eq(IVar("x"), IVar("y")))                     │
+  │  AST: BAnd(BVar("b"), Eq(IVar("x"), IVar("y")))                       │
   └───────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -226,18 +226,18 @@ Return: BAnd(BVar("b"), Eq(IVar("x"), IVar("y")))
 
 ### 2.6 Decision Summary
 
-| # | Layer | Decision | Mechanism |
-|---|-------|----------|-----------|
-| 1 | 1 | `"b"` → `Ident("b")` | Maximal munch (1 char, space terminates) |
-| 2 | 1 | `"&&"` → `AmpAmp` (not `Amp + Amp`) | Maximal munch (2 > 1) |
-| 3 | 1 | `"=="` → `EqEq` (not `Eq + Eq`) | Maximal munch (2 > 1) |
-| 4-5 | 1 | `"x"`, `"y"` → `Ident` | Maximal munch (1 char) |
-| 6 | 2 | `Ident` ambiguous → try cross-cat | FIRST set overlap |
-| 7 | 4 | Cross-cat fails (peek AmpAmp ≠ EqEq) | Operator peek + restore |
-| 8 | 3 | `&&` binds (`left_bp=2 ≥ min_bp=0`) | BP comparison |
-| 9 | 2 | `(` → grouping handler | Dispatch table (Direct) |
-| 10 | 4 | Cross-cat succeeds (peek EqEq = EqEq) | Operator peek |
-| 11 | 3 | Eof → break infix loop | No operator found |
+| #   | Layer | Decision                              | Mechanism                                |
+|-----|-------|---------------------------------------|------------------------------------------|
+| 1   | 1     | `"b"` → `Ident("b")`                  | Maximal munch (1 char, space terminates) |
+| 2   | 1     | `"&&"` → `AmpAmp` (not `Amp + Amp`)   | Maximal munch (2 > 1)                    |
+| 3   | 1     | `"=="` → `EqEq` (not `Eq + Eq`)       | Maximal munch (2 > 1)                    |
+| 4-5 | 1     | `"x"`, `"y"` → `Ident`                | Maximal munch (1 char)                   |
+| 6   | 2     | `Ident` ambiguous → try cross-cat     | FIRST set overlap                        |
+| 7   | 4     | Cross-cat fails (peek AmpAmp ≠ EqEq)  | Operator peek + restore                  |
+| 8   | 3     | `&&` binds (`left_bp=2 ≥ min_bp=0`)   | BP comparison                            |
+| 9   | 2     | `(` → grouping handler                | Dispatch table (Direct)                  |
+| 10  | 4     | Cross-cat succeeds (peek EqEq = EqEq) | Operator peek                            |
+| 11  | 3     | Eof → break infix loop                | No operator found                        |
 
 ---
 
@@ -422,26 +422,26 @@ Return: BAnd(Eq(IAdd(NumLit(3), IVar("x")), ISub(IVar("y"), NumLit(1))), BTrue)
 
 ### 4.6 Complete Decision Table
 
-| # | Layer | Token(s) | Decision | Mechanism |
-|---|-------|----------|----------|-----------|
-| L1a | 1 | `"3"` | → `Integer(3)` | Maximal munch |
-| L1b | 1 | `"+"` | → `Plus` | Single char |
-| L1c | 1 | `"x"` | → `Ident("x")` | Maximal munch |
-| L1d | 1 | `"=="` | → `EqEq` (not `Eq`+`Eq`) | Maximal munch |
-| L1e | 1 | `"y"` | → `Ident("y")` | Maximal munch |
-| L1f | 1 | `"-"` | → `Minus` | Single char |
-| L1g | 1 | `"1"` | → `Integer(1)` | Maximal munch |
-| L1h | 1 | `"&&"` | → `AmpAmp` (not `Amp`+`Amp`) | Maximal munch |
-| L1i | 1 | `"true"` | → `Boolean(true)` (not `Ident`) | Priority (10 > 1) |
-| L2a | 2 | `Integer` | → deterministic cross-cat dispatch | Unique to Int |
-| L3a | 3 | `Plus` | → + binds (`2 ≥ 0`) | BP comparison |
-| L3b | 3 | `EqEq` | → not Int op → break | Led chain (no match) |
-| L3c | 3 | `EqEq` | → not Int op → break | Led chain (no match) |
-| L4a | 4 | `EqEq` | → cross-cat operator matches | Operator peek |
-| L3d | 3 | `Minus` | → - binds (`2 ≥ 0`) | BP comparison |
-| L3e | 3 | `AmpAmp` | → not Int op → break | Led chain (no match) |
-| L3f | 3 | `AmpAmp` | → not Int op → break | Led chain (no match) |
-| L3g | 3 | `AmpAmp` | → && binds (`2 ≥ 0`) | BP comparison |
+| #   | Layer | Token(s)  | Decision                           | Mechanism            |
+|-----|-------|-----------|------------------------------------|----------------------|
+| L1a | 1     | `"3"`     | → `Integer(3)`                     | Maximal munch        |
+| L1b | 1     | `"+"`     | → `Plus`                           | Single char          |
+| L1c | 1     | `"x"`     | → `Ident("x")`                     | Maximal munch        |
+| L1d | 1     | `"=="`    | → `EqEq` (not `Eq`+`Eq`)           | Maximal munch        |
+| L1e | 1     | `"y"`     | → `Ident("y")`                     | Maximal munch        |
+| L1f | 1     | `"-"`     | → `Minus`                          | Single char          |
+| L1g | 1     | `"1"`     | → `Integer(1)`                     | Maximal munch        |
+| L1h | 1     | `"&&"`    | → `AmpAmp` (not `Amp`+`Amp`)       | Maximal munch        |
+| L1i | 1     | `"true"`  | → `Boolean(true)` (not `Ident`)    | Priority (10 > 1)    |
+| L2a | 2     | `Integer` | → deterministic cross-cat dispatch | Unique to Int        |
+| L3a | 3     | `Plus`    | → + binds (`2 ≥ 0`)                | BP comparison        |
+| L3b | 3     | `EqEq`    | → not Int op → break               | Led chain (no match) |
+| L3c | 3     | `EqEq`    | → not Int op → break               | Led chain (no match) |
+| L4a | 4     | `EqEq`    | → cross-cat operator matches       | Operator peek        |
+| L3d | 3     | `Minus`   | → - binds (`2 ≥ 0`)                | BP comparison        |
+| L3e | 3     | `AmpAmp`  | → not Int op → break               | Led chain (no match) |
+| L3f | 3     | `AmpAmp`  | → not Int op → break               | Led chain (no match) |
+| L3g | 3     | `AmpAmp`  | → && binds (`2 ≥ 0`)               | BP comparison        |
 
 ---
 
@@ -503,100 +503,100 @@ own-category parse also fails, **then** Layer 5 takes over.
                             └──────┬──────┘
                                    │
                     ┌──────────────▼──────────────┐
-                    │  LAYER 1: Lexical            │
-                    │  ┌───────────────────────┐   │
-                    │  │ Run DFA on input      │   │
-                    │  └───────────┬───────────┘   │
-                    │              │                │
-                    │  ┌───────────▼───────────┐   │
-                    │  │ Dead state? Backtrack  │   │
-                    │  │ to last_accept         │   │
-                    │  │ (MAXIMAL MUNCH)        │   │
-                    │  └───────────┬───────────┘   │
-                    │              │                │
-                    │  ┌───────────▼───────────┐   │
-                    │  │ Multiple accepts at    │   │
-                    │  │ same length? Use       │   │
-                    │  │ PRIORITY tiebreaker    │   │
-                    │  └───────────┬───────────┘   │
-                    │              │                │
-                    │       Emit Token             │
-                    └──────────────┬──────────────┘
+                    │  LAYER 1: Lexical           │
+                    │  ┌───────────────────────┐  │
+                    │  │ Run DFA on input      │  │
+                    │  └───────────┬───────────┘  │
+                    │              │              │
+                    │  ┌───────────▼───────────┐  │
+                    │  │ Dead state? Backtrack │  │
+                    │  │ to last_accept        │  │
+                    │  │ (MAXIMAL MUNCH)       │  │
+                    │  └───────────┬───────────┘  │
+                    │              │              │
+                    │  ┌───────────▼───────────┐  │
+                    │  │ Multiple accepts at   │  │
+                    │  │ same length? Use      │  │
+                    │  │ PRIORITY tiebreaker   │  │
+                    │  └───────────┬───────────┘  │
+                    │              │              │
+                    │       Emit Token            │
+                    └──────────────┊──────────────┘
                                    │
                     ┌──────────────▼──────────────┐
-                    │  LAYER 2: Prediction         │
-                    │  ┌───────────────────────┐   │
-                    │  │ Look up dispatch table │   │
-                    │  │ for current category   │   │
-                    │  └───────────┬───────────┘   │
-                    │              │                │
-                    │    ┌─────────┼──────────┐    │
-                    │    ▼         ▼          ▼    │
-                    │  Direct   Lookahead  Cross   │
-                    │  match    (peek +1)  Category│
-                    │    │         │          │    │
-                    │    ▼         ▼          │    │
-                    │  Call     Dispatch      │    │
-                    │  parse_fn to matched    │    │
-                    │            rule or      │    │
-                    │            variable     │    │
-                    │            fallback     │    │
-                    └──────────┬──────────────┘
-                               │          │
-                    ┌──────────▼────┐     │
-                    │ LAYER 3:      │     │
-                    │ Precedence    │     │
-                    │ ┌───────────┐ │     │
-                    │ │ Pratt     │ │     │
-                    │ │ prefix    │ │     │
-                    │ │ handler   │ │     │
-                    │ └─────┬─────┘ │     │
-                    │       │       │     │
-                    │ ┌─────▼─────┐ │     │
-                    │ │ Infix     │ │     │
-                    │ │ loop:     │ │     │
-                    │ │ l_bp <    │ │     │
-                    │ │ min_bp?   │ │     │
-                    │ │           │ │     │
-                    │ │ YES→break │ │     │
-                    │ │ NO →bind  │ │     │
-                    │ └─────┬─────┘ │     │
-                    │       │       │     │
-                    │  Expression   │     │
-                    │  tree         │     │
-                    └───────┬───────┘     │
-                            │             │
-                    ┌───────▼─────────────▼──────┐
+                    │  LAYER 2: Prediction        │
+                    │  ┌──────────────────────┐   │
+                    │  │ Look up dispatch     │   │
+                    │  │ table for category   │   │
+                    │  └──────────┬───────────┘   │
+                    │             │               │
+                    │    ┌────────┼─────────┐     │
+                    │    ▼        ▼         ▼     │
+                    │  Direct  Lookahead  Cross   │
+                    │  match   (peek +1)  Cat.    │
+                    │    │        │         │     │
+                    │    ▼        ▼         │     │
+                    │  Call    Dispatch     │     │
+                    │  parse_fn to matched  │     │
+                    │           rule or     │     │
+                    │           variable    │     │
+                    │           fallback    │     │
+                    └──────────────┬────────┊─────┘
+                                   │        │
+                    ┌──────────────▼────┐   │
+                    │ LAYER 3:          │   │
+                    │ Precedence        │   │
+                    │ ┌───────────┐     │   │
+                    │ │ Pratt     │     │   │
+                    │ │ prefix    │     │   │
+                    │ │ handler   │     │   │
+                    │ └─────┬─────┘     │   │
+                    │       │           │   │
+                    │ ┌─────▼─────┐     │   │
+                    │ │ Infix     │     │   │
+                    │ │ loop:     │     │   │ (bypass)
+                    │ │ l_bp <    │     │   │
+                    │ │ min_bp?   │     │   │
+                    │ │           │     │   │
+                    │ │ YES→break │     │   │
+                    │ │ NO →bind  │     │   │
+                    │ └─────┬─────┘     │   │
+                    │       │           │   │
+                    │  Expression       │   │
+                    │  tree │           │   │
+                    └───────┊───────────┘   │
+                            │               │
+                    ┌───────▼───────────────▼─────┐
                     │  LAYER 4: Cross-Category    │
                     │  ┌────────────────────────┐ │
                     │  │ Token unique to source?│ │
                     │  │ YES → deterministic    │ │
                     │  │ NO  → save/restore     │ │
                     │  └──────────┬─────────────┘ │
-                    │             │                │
+                    │             │               │
                     │  ┌──────────▼─────────────┐ │
                     │  │ Operator peek matches? │ │
                     │  │ YES → cross-cat node   │ │
                     │  │ NO  → restore, own-cat │ │
                     │  └──────────┬─────────────┘ │
+                    └─────────────┊───────────────┘
+                                  │
+                    ┌─────────────▼───────────────┐
+                    │  Parse succeeded?           │
+                    │  YES → return AST node      │
+                    │  NO  ↓                      │
                     └─────────────┬───────────────┘
                                   │
                     ┌─────────────▼───────────────┐
-                    │  Parse succeeded?            │
-                    │  YES → return AST node       │
-                    │  NO  ↓                       │
-                    └─────────────┬───────────────┘
-                                  │
-                    ┌─────────────▼───────────────┐
-                    │  LAYER 5: Error Recovery     │
-                    │  ┌────────────────────────┐  │
-                    │  │ is_sync_Cat(token)?    │  │
-                    │  │ YES → resume here      │  │
-                    │  │ NO  → skip, try next   │  │
-                    │  └──────────┬─────────────┘  │
-                    │             │                 │
-                    │  Error node + resumed parse   │
-                    └─────────────┬───────────────┘
+                    │  LAYER 5: Error Recovery    │
+                    │  ┌────────────────────────┐ │
+                    │  │ is_sync_Cat(token)?    │ │
+                    │  │ YES → resume here      │ │
+                    │  │ NO  → skip, try next   │ │
+                    │  └──────────┬─────────────┘ │
+                    │             │               │
+                    │  Error node + resumed parse │
+                    └─────────────┊───────────────┘
                                   │
                             ┌─────▼─────┐
                             │    AST    │
@@ -611,16 +611,16 @@ own-category parse also fails, **then** Layer 5 takes over.
 
 Every class of parsing ambiguity is handled by exactly one layer:
 
-| Ambiguity | Layer | Guarantee |
-|-----------|-------|-----------|
-| Token boundaries | 1 | Maximal munch always produces longest valid token |
-| Token identity | 1 | Priority always resolves same-length conflicts |
-| Rule selection | 2 | Dispatch table covers all FIRST set tokens |
-| Operator precedence | 3 | BP comparison is total ordering on operators |
-| Operator associativity | 3 | BP pair asymmetry determines left/right |
-| Category ownership | 4 | Three-way partition + backtracking is exhaustive |
-| Error recovery | 5 | Sync predicate guarantees eventual sync (at Eof worst case) |
-| Multi-category ambiguity | 6 | Groundness + substitution + declaration-order evaluation resolves all multi-parse cases |
+| Ambiguity                | Layer | Guarantee                                                                               |
+|--------------------------|-------|-----------------------------------------------------------------------------------------|
+| Token boundaries         | 1     | Maximal munch always produces longest valid token                                       |
+| Token identity           | 1     | Priority always resolves same-length conflicts                                          |
+| Rule selection           | 2     | Dispatch table covers all FIRST set tokens                                              |
+| Operator precedence      | 3     | BP comparison is total ordering on operators                                            |
+| Operator associativity   | 3     | BP pair asymmetry determines left/right                                                 |
+| Category ownership       | 4     | Three-way partition + backtracking is exhaustive                                        |
+| Error recovery           | 5     | Sync predicate guarantees eventual sync (at Eof worst case)                             |
+| Multi-category ambiguity | 6     | Groundness + substitution + declaration-order evaluation resolves all multi-parse cases |
 
 ### 7.2 Composability
 
@@ -631,14 +631,14 @@ The layers compose without interference because each layer:
 
 ### 7.3 Performance Characteristics
 
-| Layer | Happy-Path Cost | Failure Cost |
-|-------|-----------------|--------------|
-| 1. Lexical | O(n) in input length | N/A (always succeeds for valid chars) |
-| 2. Prediction | O(1) per parse decision | O(1) (dispatch lookup) |
-| 3. Precedence | O(1) per operator | O(1) (comparison always resolves) |
-| 4. Cross-Category | O(1) for unique tokens | O(k) for ambiguous tokens |
-| 5. Error Recovery | O(0) (not activated) | O(skip) tokens skipped |
-| 6. Semantic | O(cats) * O(parse) for NFA-style | O(cats) * O(Ascent) for fallback |
+| Layer             | Happy-Path Cost                  | Failure Cost                          |
+|-------------------|----------------------------------|---------------------------------------|
+| 1. Lexical        | O(n) in input length             | N/A (always succeeds for valid chars) |
+| 2. Prediction     | O(1) per parse decision          | O(1) (dispatch lookup)                |
+| 3. Precedence     | O(1) per operator                | O(1) (comparison always resolves)     |
+| 4. Cross-Category | O(1) for unique tokens           | O(k) for ambiguous tokens             |
+| 5. Error Recovery | O(0) (not activated)             | O(skip) tokens skipped                |
+| 6. Semantic       | O(cats) * O(parse) for NFA-style | O(cats) * O(Ascent) for fallback      |
 
 **Total:** O(n) for lexing + O(tokens) for parsing, with O(1) per syntactic
 disambiguation decision. Layer 6 adds O(categories) overhead for multi-category
@@ -682,15 +682,15 @@ no probe is emitted and all parsers run unconditionally. See
 To illustrate how the same token passes through different layers in different
 contexts, consider `Ident("x")`:
 
-| Context | Layer | Decision |
-|---------|-------|----------|
-| In source text `"x + 1"` | Layer 1 | Maximal munch: `"x"` → `Ident("x")` |
-| Parsing `Bool`, first token | Layer 2 | Ambiguous (in FIRST(Int) ∩ FIRST(Bool)) |
-| Cross-category attempt | Layer 4 | Save, parse as `IVar("x")`, peek for `==` |
-| Peek fails (next is `&&`) | Layer 4 | Restore, fall through to `parse_Bool_own` |
-| In `parse_Bool_own` prefix | Layer 3 | Dispatch to `BVar` (variable rule) |
-| After error in expression | Layer 5 | `Ident` is NOT a sync token → skip past |
-| NFA-style multi-category parse | Layer 6 | `Ident("x")` → both `IntVar("x")` and `FloatVar("x")` → `Ambiguous` |
+| Context                          | Layer   | Decision                                                                   |
+|----------------------------------|---------|----------------------------------------------------------------------------|
+| In source text `"x + 1"`         | Layer 1 | Maximal munch: `"x"` → `Ident("x")`                                        |
+| Parsing `Bool`, first token      | Layer 2 | Ambiguous (in FIRST(Int) ∩ FIRST(Bool))                                    |
+| Cross-category attempt           | Layer 4 | Save, parse as `IVar("x")`, peek for `==`                                  |
+| Peek fails (next is `&&`)        | Layer 4 | Restore, fall through to `parse_Bool_own`                                  |
+| In `parse_Bool_own` prefix       | Layer 3 | Dispatch to `BVar` (variable rule)                                         |
+| After error in expression        | Layer 5 | `Ident` is NOT a sync token → skip past                                    |
+| NFA-style multi-category parse   | Layer 6 | `Ident("x")` → both `IntVar("x")` and `FloatVar("x")` → `Ambiguous`        |
 | With env `{x=1.0}`, substitution | Layer 6 | Float progresses (`FloatVar` → `FloatLit(1.0)`), Int does not → Float wins |
 
 The same token `Ident("x")` is handled by up to five different layers depending

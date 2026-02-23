@@ -75,13 +75,20 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
         }
     }
 
-    // --- Step 2: Initial partition — group by accept token kind ---
-    // Use the TokenKind's discriminant for grouping instead of format!("{:?}") Strings.
-    // We use BTreeMap<Option<TokenKind>, Vec<StateId>> since TokenKind derives Ord.
-    let mut accept_groups: BTreeMap<Option<&super::TokenKind>, Vec<StateId>> = BTreeMap::new();
+    // --- Step 2: Initial partition — group by (accept token kind, weight) ---
+    // States with different accept tokens or different weights cannot be merged.
+    // Weight is included in the partition key to preserve WFST weight semantics:
+    // two states accepting the same token but with different tropical weights
+    // represent different priority levels and must remain distinct.
+    //
+    // We use BTreeMap with a composite key. For weight, we use the bit
+    // representation of f64 for total ordering.
+    let mut accept_groups: BTreeMap<(Option<&super::TokenKind>, u64), Vec<StateId>> =
+        BTreeMap::new();
     for (i, state) in dfa.states.iter().enumerate() {
+        let weight_bits = state.weight.value().to_bits();
         accept_groups
-            .entry(state.accept.as_ref())
+            .entry((state.accept.as_ref(), weight_bits))
             .or_default()
             .push(i as StateId);
     }
@@ -251,6 +258,7 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
     partition_to_new_state[start_partition] = 0;
     let representative = partitions[start_partition][0];
     new_dfa.states[0].accept = dfa.states[representative as usize].accept.clone();
+    new_dfa.states[0].weight = dfa.states[representative as usize].weight;
 
     // Assign remaining states
     for &part_idx in &non_empty {
@@ -261,6 +269,7 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
         let new_state = new_dfa.add_state(DfaState {
             transitions: vec![DEAD_STATE; num_classes],
             accept: dfa.states[rep as usize].accept.clone(),
+            weight: dfa.states[rep as usize].weight,
         });
         partition_to_new_state[part_idx] = new_state;
     }
@@ -352,6 +361,7 @@ pub fn canonicalize_state_order(dfa: &mut Dfa) {
         new_states.push(DfaState {
             transitions: new_transitions,
             accept: old_state.accept.clone(),
+            weight: old_state.weight,
         });
     }
 

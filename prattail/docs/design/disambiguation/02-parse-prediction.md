@@ -134,14 +134,14 @@ The dispatch table maps each first token to a `DispatchAction` (`prediction.rs`,
 
 ### 3.1 The DispatchAction Enum
 
-| Action | When Used | Description |
-|--------|-----------|-------------|
-| `Direct` | Unambiguous single rule | Call parse function immediately |
-| `Lookahead` | Multiple rules share first token | Inspect second token to disambiguate |
+| Action          | When Used                          | Description                               |
+|-----------------|------------------------------------|-------------------------------------------|
+| `Direct`        | Unambiguous single rule            | Call parse function immediately           |
+| `Lookahead`     | Multiple rules share first token   | Inspect second token to disambiguate      |
 | `CrossCategory` | Rule references different category | Parse source category, check for operator |
-| `Cast` | Type embedding rule | Parse source category, wrap result |
-| `Grouping` | Parenthesized expression | Match open, parse inner, match close |
-| `Variable` | Default fallback | Accept any Ident as variable |
+| `Cast`          | Type embedding rule                | Parse source category, wrap result        |
+| `Grouping`      | Parenthesized expression           | Match open, parse inner, match close      |
+| `Variable`      | Default fallback                   | Accept any Ident as variable              |
 
 ### 3.2 The Construction Algorithm
 
@@ -191,7 +191,7 @@ Both `POutput` (name `!` `(` ... `)`) and `PVar` (name) start with `Ident`:
 
 ```
 Input: x ! ( 42 )     →  POutput (x sends 42)
-Input: x               →  PVar    (variable x)
+Input: x              →  PVar    (variable x)
 
 First token: Ident in both cases.
 ```
@@ -296,12 +296,12 @@ category's FIRST set.
 
 ### 6.1 The Mapping
 
-| Native Type | Token Added to FIRST Set | Token Variant |
-|-------------|--------------------------|---------------|
-| `i64` / `i32` | `Integer` | `Token::Integer(i64)` |
-| `f64` / `f32` | `Float` | `Token::Float(f64)` |
-| `bool` | `Boolean` | `Token::Boolean(bool)` |
-| `String` | `StringLit` | `Token::StringLit(&str)` |
+| Native Type   | Token Added to FIRST Set | Token Variant            |
+|---------------|--------------------------|--------------------------|
+| `i64` / `i32` | `Integer`                | `Token::Integer(i64)`    |
+| `f64` / `f32` | `Float`                  | `Token::Float(f64)`      |
+| `bool`        | `Boolean`                | `Token::Boolean(bool)`   |
+| `String`      | `StringLit`              | `Token::StringLit(&str)` |
 
 ### 6.2 Disambiguation Effect
 
@@ -397,14 +397,14 @@ classes to later layers:
                                                      1 peek)
 ```
 
-| Mechanism | Ambiguity Resolved | Implementation |
-|-----------|-------------------|----------------|
-| FIRST sets | Which tokens can begin each rule | `compute_first_sets()`, fixed-point |
-| Dispatch tables | Which rule to try for a given token | `build_dispatch_tables()` |
-| 2-token lookahead | Multiple rules sharing first token | `LookaheadAlternative` |
-| Variable fallback | Ident could be variable or structural | `default_action = Variable` |
-| Native augmentation | Literal tokens unique to categories | `native_type` → token mapping |
-| Grammar warnings | Compile-time ambiguity detection | `detect_grammar_warnings()` |
+| Mechanism           | Ambiguity Resolved                    | Implementation                      |
+|---------------------|---------------------------------------|-------------------------------------|
+| FIRST sets          | Which tokens can begin each rule      | `compute_first_sets()`, fixed-point |
+| Dispatch tables     | Which rule to try for a given token   | `build_dispatch_tables()`           |
+| 2-token lookahead   | Multiple rules sharing first token    | `LookaheadAlternative`              |
+| Variable fallback   | Ident could be variable or structural | `default_action = Variable`         |
+| Native augmentation | Literal tokens unique to categories   | `native_type` → token mapping       |
+| Grammar warnings    | Compile-time ambiguity detection      | `detect_grammar_warnings()`         |
 
 **Layer 2 output → Layer 3 input:** A selected parse rule and control flow
 entering the Pratt prefix handler or recursive-descent function for that rule.

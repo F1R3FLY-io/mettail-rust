@@ -49,9 +49,9 @@ For a cross-category rule where category B has a rule that parses category A the
 an operator (e.g., `Eq(Int, "==", Int) → Bool`):
 
 ```
-  ┌─────────────────────────────────────────────────────────┐
-  │                    All Tokens                           │
-  │                                                         │
+  ┌────────────────────────────────────────────────────────┐
+  │                    All Tokens                          │
+  │                                                        │
   │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
   │  │ Unique to A  │  │  Ambiguous   │  │ Unique to B  │  │
   │  │              │  │ (A ∩ B)      │  │              │  │
@@ -59,10 +59,10 @@ an operator (e.g., `Eq(Int, "==", Int) → Bool`):
   │  │  Minus       │  │              │  │  Bang        │  │
   │  │              │  │              │  │              │  │
   │  └──────────────┘  └──────────────┘  └──────────────┘  │
-  │                                                         │
-  │  Deterministic     Save/Restore      Deterministic      │
+  │                                                        │
+  │  Deterministic     Save/Restore      Deterministic     │
   │  → parse as A      → try A, then B   → parse as B      │
-  └─────────────────────────────────────────────────────────┘
+  └────────────────────────────────────────────────────────┘
 ```
 
 ### 2.2 The CrossCategoryOverlap Structure
@@ -206,12 +206,12 @@ token to check for the cross-category operator (e.g., `==`). This **one-token
 peek** is the key disambiguation step:
 
 ```
-  ┌────────────────────────────────────────────────────────┐
-  │  Parse source category expression                      │
-  │  Peek next token:                                      │
-  │    Expected operator ("==") → cross-category succeeds  │
+  ┌─────────────────────────────────────────────────────────┐
+  │  Parse source category expression                       │
+  │  Peek next token:                                       │
+  │    Expected operator ("==") → cross-category succeeds   │
   │    Anything else            → restore, try own category │
-  └────────────────────────────────────────────────────────┘
+  └─────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -437,14 +437,14 @@ full interaction model.
                                                          └── Fallback: own cat
 ```
 
-| Mechanism | Ambiguity Resolved | Implementation |
-|-----------|-------------------|----------------|
-| Three-way partition | Which category owns a token | `analyze_cross_category_overlaps()` |
-| Deterministic dispatch | Unique tokens: no backtracking | Direct parse call in wrapper |
-| Save/restore | Ambiguous tokens: bounded backtrack | `saved = *pos` / `*pos = saved` |
-| Operator peek | Cross-category operator present? | One-token peek after source parse |
-| Cast in prefix | Type embedding + infix continuation | Pratt prefix handler (not wrapper) |
-| `_own` split | Separate own-category from dispatch | `parse_Cat` + `parse_Cat_own` |
+| Mechanism              | Ambiguity Resolved                  | Implementation                      |
+|------------------------|-------------------------------------|-------------------------------------|
+| Three-way partition    | Which category owns a token         | `analyze_cross_category_overlaps()` |
+| Deterministic dispatch | Unique tokens: no backtracking      | Direct parse call in wrapper        |
+| Save/restore           | Ambiguous tokens: bounded backtrack | `saved = *pos` / `*pos = saved`     |
+| Operator peek          | Cross-category operator present?    | One-token peek after source parse   |
+| Cast in prefix         | Type embedding + infix continuation | Pratt prefix handler (not wrapper)  |
+| `_own` split           | Separate own-category from dispatch | `parse_Cat` + `parse_Cat_own`       |
 
 **Layer 4 output → Layer 5 input:** A fully typed AST node, or a parse failure
 that Layer 5 will attempt to recover from. When multiple categories each produce

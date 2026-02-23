@@ -56,25 +56,25 @@ language! {
 
 ```
 language! {
-    name: Calculator,          <-- Language name (used for generated module naming)
+    name: Calculator,          ←── Language name (used for generated module naming)
 
     types {
-        ![i32] as Int          <-- Category "Int" backed by native Rust type i32
+        ![i32] as Int          ←── Category "Int" backed by native Rust type i32
                                    The "!" means it is a native/HOL type
                                    "Int" is the category name in the grammar
     },
 
     terms {
-        Add . a:Int, b:Int     <-- Rule "Add" with parameters a and b, both Int
-        |- a "+" b             <-- Syntax pattern: a then "+" then b
-        : Int;                 <-- Result category: Int
+        Add . a:Int, b:Int     ←── Rule "Add" with parameters a and b, both Int
+        |- a "+" b             ←── Syntax pattern: a then "+" then b
+        : Int;                 ←── Result category: Int
 
-        Mul . a:Int, b:Int     <-- Higher precedence than Add (declared second)
+        Mul . a:Int, b:Int     ←── Higher precedence than Add (declared second)
         |- a "*" b : Int;
     },
 
-    equations { },             <-- Equational axioms (for normalization)
-    rewrites { },              <-- Rewrite rules (for operational semantics)
+    equations { },             ←── Equational axioms (for normalization)
+    rewrites { },              ←── Rewrite rules (for operational semantics)
 }
 ```
 
@@ -257,9 +257,9 @@ When `Bool::parse("3 == 4")` is called:
 1. The lexer produces `[Integer(3), EqEq, Integer(4), Eof]`
 2. The dispatch code sees `Integer(3)` -- this token is unique to Int's FIRST set
 3. It takes the deterministic cross-category path:
-   - Parse `Int` expression -> `NumLit(3)`
-   - Expect `==` -> consume
-   - Parse `Int` expression -> `NumLit(4)`
+   - Parse `Int` expression → `NumLit(3)`
+   - Expect `==` → consume
+   - Parse `Int` expression → `NumLit(4)`
    - Return `Bool::Eq(NumLit(3), NumLit(4))`
 
 When `Bool::parse("x == y")` is called:
@@ -269,7 +269,7 @@ When `Bool::parse("x == y")` is called:
    - Save position, try parsing as `Int`
    - `Int::parse` succeeds with `IVar(x)`
    - See `EqEq` -- this confirms the cross-category path
-   - Parse right side as `Int` -> `IVar(y)`
+   - Parse right side as `Int` → `IVar(y)`
    - Return `Bool::Eq(IVar(x), IVar(y))`
 
 ---

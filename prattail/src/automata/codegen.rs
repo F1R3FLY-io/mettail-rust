@@ -267,6 +267,22 @@ fn write_accept_arms(buf: &mut String, dfa: &Dfa) {
     buf.push_str("_ => None }");
 }
 
+/// Write the accept_weight match arms to a string buffer.
+///
+/// Returns the tropical weight (as raw f64) for each accepting DFA state.
+/// Non-accepting states return `f64::INFINITY` (tropical zero / unreachable).
+/// Used by `lex_weighted()` to emit `(Token, Range, f64)` triples.
+#[cfg(feature = "wfst")]
+fn write_accept_weight_arms(buf: &mut String, dfa: &Dfa) {
+    buf.push_str("match state {");
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        if state.accept.is_some() {
+            write!(buf, "{}u32 => {:.1}_f64,", state_idx, state.weight.value()).unwrap();
+        }
+    }
+    buf.push_str("_ => f64::INFINITY }");
+}
+
 /// Write the DFA transition match arms to a string buffer.
 fn write_transition_arms(buf: &mut String, dfa: &Dfa) {
     buf.push_str("match state {");
@@ -404,6 +420,76 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
     write_accept_arms(buf, dfa);
     buf.push('}');
+
+    // WFST weight emission: accept_weight() + lex_weighted()
+    #[cfg(feature = "wfst")]
+    {
+        buf.push_str("/// Get the tropical weight for an accepting DFA state.\n\
+                       /// Lower weight = higher priority. Non-accepting returns infinity.\n\
+                       fn accept_weight(state: u32) -> f64 {");
+        write_accept_weight_arms(buf, dfa);
+        buf.push('}');
+        write_lex_weighted_function_direct_coded(buf);
+    }
+}
+
+/// Write the `lex_weighted()` function for direct-coded lexers (inline DFA transitions).
+///
+/// Direct-coded lexers don't use `dfa_next()` — they inline the transition logic.
+/// This function generates the weighted lex variant for the direct-coded path.
+#[cfg(feature = "wfst")]
+fn write_lex_weighted_function_direct_coded(buf: &mut String) {
+    buf.push_str(
+        "/// Lex with weight emission: each token carries its tropical weight \
+         /// (lower = higher priority). Requires the `wfst` feature.\n\
+         pub fn lex_weighted<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
+         lex_weighted_with_file_id(input, None) \
+         }\n\
+         /// Lex with weight emission and explicit file ID.\n\
+         pub fn lex_weighted_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
+         let bytes = input.as_bytes(); \
+         let mut pos: usize = 0; \
+         let mut line: usize = 0; \
+         let mut col: usize = 0; \
+         let mut tokens: Vec<(Token<'a>, Range, f64)> = Vec::with_capacity(input.len() / 2); \
+         while pos < bytes.len() { \
+         while pos < bytes.len() && is_whitespace(bytes[pos]) { \
+         if bytes[pos] == b'\\n' { line += 1; col = 0; } else { col += 1; } \
+         pos += 1; } \
+         if pos >= bytes.len() { break; } \
+         let start = pos; \
+         let start_line = line; \
+         let start_col = col; \
+         let mut state: u32 = 0; \
+         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
+         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
+         while pos < bytes.len() { \
+         let class = CHAR_CLASS[bytes[pos] as usize]; \
+         let next = dfa_next(state, class); \
+         if next == u32::MAX { break; } \
+         state = next; \
+         if bytes[pos] == b'\\n' { line += 1; col = 0; } \
+         else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
+         pos += 1; \
+         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
+         } \
+         match last_accept { \
+         Some((accept_state, end, end_line, end_col)) => { \
+         pos = end; line = end_line; col = end_col; \
+         let text = &input[start..end]; \
+         if let Some(token) = accept_token(accept_state, text) { \
+         let weight = accept_weight(accept_state); \
+         tokens.push((token, Range { \
+         start: Position { byte_offset: start, line: start_line, column: start_col }, \
+         end: Position { byte_offset: end, line: end_line, column: end_col }, \
+         file_id }, weight)); } } \
+         None => { return Err(format!(\"{}:{}: unexpected character '{}'\", \
+         line + 1, col + 1, bytes[start] as char)); } \
+         } } \
+         let eof_pos = Position { byte_offset: pos, line, column: col }; \
+         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }, 0.0_f64)); \
+         Ok(tokens) }",
+    );
 }
 
 /// Write a complete table-driven lexer to a string buffer (flat transition table).
@@ -856,6 +942,17 @@ fn write_comb_driven_lexer(
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
     write_accept_arms(buf, dfa);
     buf.push('}');
+
+    // WFST weight emission: accept_weight() + lex_weighted()
+    #[cfg(feature = "wfst")]
+    {
+        buf.push_str("/// Get the tropical weight for an accepting DFA state.\n\
+                       /// Lower weight = higher priority. Non-accepting returns infinity.\n\
+                       fn accept_weight(state: u32) -> f64 {");
+        write_accept_weight_arms(buf, dfa);
+        buf.push('}');
+        write_lex_weighted_function_with_dfa_next(buf);
+    }
 }
 
 /// Write a complete bitmap-compressed lexer to a string buffer.
@@ -897,6 +994,17 @@ fn write_bitmap_driven_lexer(
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
     write_accept_arms(buf, dfa);
     buf.push('}');
+
+    // WFST weight emission: accept_weight() + lex_weighted()
+    #[cfg(feature = "wfst")]
+    {
+        buf.push_str("/// Get the tropical weight for an accepting DFA state.\n\
+                       /// Lower weight = higher priority. Non-accepting returns infinity.\n\
+                       fn accept_weight(state: u32) -> f64 {");
+        write_accept_weight_arms(buf, dfa);
+        buf.push('}');
+        write_lex_weighted_function_with_dfa_next(buf);
+    }
 }
 
 /// Write the lex() function body that uses a `dfa_next(state, class)` function.
@@ -949,6 +1057,67 @@ fn write_lex_function_with_dfa_next(buf: &mut String) {
          } } \
          let eof_pos = Position { byte_offset: pos, line, column: col }; \
          tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id })); \
+         Ok(tokens) }",
+    );
+}
+
+/// Write the `lex_weighted()` function body that uses `dfa_next(state, class)` and `accept_weight(state)`.
+///
+/// Returns `Vec<(Token<'a>, Range, f64)>` where the `f64` is the tropical weight
+/// (lower = higher priority). Feature-gated: only emitted when `wfst` feature is enabled.
+///
+/// Shared between comb-driven and bitmap-driven lexers.
+#[cfg(feature = "wfst")]
+fn write_lex_weighted_function_with_dfa_next(buf: &mut String) {
+    buf.push_str(
+        "/// Lex with weight emission: each token carries its tropical weight \
+         /// (lower = higher priority). Requires the `wfst` feature.\n\
+         pub fn lex_weighted<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
+         lex_weighted_with_file_id(input, None) \
+         }\n\
+         /// Lex with weight emission and explicit file ID.\n\
+         pub fn lex_weighted_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
+         let bytes = input.as_bytes(); \
+         let mut pos: usize = 0; \
+         let mut line: usize = 0; \
+         let mut col: usize = 0; \
+         let mut tokens: Vec<(Token<'a>, Range, f64)> = Vec::with_capacity(input.len() / 2); \
+         while pos < bytes.len() { \
+         while pos < bytes.len() && is_whitespace(bytes[pos]) { \
+         if bytes[pos] == b'\\n' { line += 1; col = 0; } else { col += 1; } \
+         pos += 1; } \
+         if pos >= bytes.len() { break; } \
+         let start = pos; \
+         let start_line = line; \
+         let start_col = col; \
+         let mut state: u32 = 0; \
+         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
+         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
+         while pos < bytes.len() { \
+         let class = CHAR_CLASS[bytes[pos] as usize]; \
+         let next = dfa_next(state, class); \
+         if next == u32::MAX { break; } \
+         state = next; \
+         if bytes[pos] == b'\\n' { line += 1; col = 0; } \
+         else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
+         pos += 1; \
+         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
+         } \
+         match last_accept { \
+         Some((accept_state, end, end_line, end_col)) => { \
+         pos = end; line = end_line; col = end_col; \
+         let text = &input[start..end]; \
+         if let Some(token) = accept_token(accept_state, text) { \
+         let weight = accept_weight(accept_state); \
+         tokens.push((token, Range { \
+         start: Position { byte_offset: start, line: start_line, column: start_col }, \
+         end: Position { byte_offset: end, line: end_line, column: end_col }, \
+         file_id }, weight)); } } \
+         None => { return Err(format!(\"{}:{}: unexpected character '{}'\", \
+         line + 1, col + 1, bytes[start] as char)); } \
+         } } \
+         let eof_pos = Position { byte_offset: pos, line, column: col }; \
+         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }, 0.0_f64)); \
          Ok(tokens) }",
     );
 }

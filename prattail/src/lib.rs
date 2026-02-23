@@ -47,6 +47,29 @@ pub mod prediction;
 pub mod recursive;
 pub mod trampoline;
 
+// ── WFST modules (feature = "wfst") ────────────────────────────────────────
+#[cfg(feature = "wfst")]
+pub mod token_id;
+#[cfg(feature = "wfst")]
+pub mod wfst;
+#[cfg(feature = "wfst")]
+pub mod lattice;
+#[cfg(feature = "wfst")]
+pub mod recovery;
+#[cfg(feature = "wfst")]
+pub mod compose;
+
+// ── Log semiring modules (feature = "wfst-log", implies "wfst") ────────────
+#[cfg(feature = "wfst-log")]
+pub mod forward_backward;
+#[cfg(feature = "wfst-log")]
+pub mod log_push;
+#[cfg(feature = "wfst-log")]
+pub mod training;
+
+#[cfg(feature = "grammar-gen")]
+pub mod grammar_gen;
+
 #[cfg(test)]
 mod tests;
 
@@ -54,6 +77,129 @@ use proc_macro2::TokenStream;
 
 use binding_power::Associativity;
 use recursive::CollectionKind;
+
+/// Configuration for beam-width pruning in WFST prediction/recovery.
+///
+/// Controls how aggressively the parser prunes low-probability alternatives
+/// during WFST-based prediction and recovery.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BeamWidthConfig {
+    /// Beam pruning disabled (default). Actions are not pruned by weight.
+    /// Set via `beam_width: none` or `beam_width: disabled` in the DSL.
+    Disabled,
+
+    /// Explicit beam width. Actions with weight > best + width are pruned.
+    /// Set via `beam_width: 1.5` (or any float literal) in the DSL.
+    /// Requires the `wfst` feature.
+    Explicit(f64),
+
+    /// Auto-select beam width from the trained model's `recommended_beam_width`.
+    /// Set via `beam_width: auto` in the DSL.
+    /// Requires the `wfst-log` feature and `log_semiring_model_path` to be set.
+    /// If the trained model has no recommended beam width, falls back to `Disabled`.
+    Auto,
+}
+
+impl Default for BeamWidthConfig {
+    fn default() -> Self {
+        BeamWidthConfig::Disabled
+    }
+}
+
+impl BeamWidthConfig {
+    /// Convert to an `Option<f64>` for use in WFST construction.
+    ///
+    /// - `Disabled` → `None`
+    /// - `Explicit(w)` → `Some(w)`
+    /// - `Auto` → `None` (resolved later by pipeline from trained model)
+    pub fn to_option(&self) -> Option<f64> {
+        match self {
+            BeamWidthConfig::Disabled => None,
+            BeamWidthConfig::Explicit(w) => Some(*w),
+            BeamWidthConfig::Auto => None,
+        }
+    }
+
+    /// Whether this config is `Auto`.
+    pub fn is_auto(&self) -> bool {
+        matches!(self, BeamWidthConfig::Auto)
+    }
+
+    /// Whether beam pruning is enabled (explicit or auto).
+    pub fn is_enabled(&self) -> bool {
+        !matches!(self, BeamWidthConfig::Disabled)
+    }
+}
+
+/// Dispatch strategy for cross-category and prefix handler ordering.
+///
+/// Controls whether the parser uses FIRST-set declaration-order dispatch (static)
+/// or WFST-weighted dispatch (weighted). The `auto` mode selects based on grammar
+/// complexity metrics.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum DispatchStrategy {
+    /// FIRST-set ordering with linear recovery (default).
+    /// No WFST overhead — optimal for small/medium grammars.
+    #[default]
+    Static,
+
+    /// WFST-weighted dispatch and recovery.
+    /// Beneficial for grammars with ≥30 rules or ≥3 ambiguous cross-category overlaps.
+    /// Requires the `wfst` feature; falls back to `Static` without it.
+    Weighted,
+
+    /// Auto-select based on grammar complexity metrics:
+    /// - `total_rules >= 30 AND cross_category_count > 0` → Weighted
+    /// - `ambiguous_overlap_count >= 3` → Weighted
+    /// - Otherwise → Static
+    Auto,
+}
+
+impl DispatchStrategy {
+    /// Resolve an `Auto` strategy into a concrete `Static` or `Weighted` decision
+    /// based on grammar metrics.
+    ///
+    /// When the `wfst` feature is disabled, always returns `Static` (with a warning
+    /// if the user explicitly requested `Weighted`).
+    ///
+    /// # Arguments
+    /// - `total_rules`: Total number of grammar rules
+    /// - `cross_category_count`: Number of cross-category rules
+    /// - `ambiguous_overlap_count`: Number of cross-category pairs with ambiguous FIRST-set overlaps
+    #[allow(unused_variables)]
+    pub fn resolve(
+        &self,
+        total_rules: usize,
+        cross_category_count: usize,
+        ambiguous_overlap_count: usize,
+    ) -> DispatchStrategy {
+        #[cfg(not(feature = "wfst"))]
+        {
+            if *self == DispatchStrategy::Weighted {
+                eprintln!(
+                    "warning: dispatch: weighted requires --features wfst; \
+                     falling back to static dispatch"
+                );
+            }
+            return DispatchStrategy::Static;
+        }
+
+        #[cfg(feature = "wfst")]
+        match self {
+            DispatchStrategy::Static => DispatchStrategy::Static,
+            DispatchStrategy::Weighted => DispatchStrategy::Weighted,
+            DispatchStrategy::Auto => {
+                if (total_rules >= 30 && cross_category_count > 0)
+                    || ambiguous_overlap_count >= 3
+                {
+                    DispatchStrategy::Weighted
+                } else {
+                    DispatchStrategy::Static
+                }
+            }
+        }
+    }
+}
 
 /// Language definition input for the parser generator.
 ///
@@ -68,6 +214,15 @@ pub struct LanguageSpec {
     pub types: Vec<CategorySpec>,
     /// All grammar rules.
     pub rules: Vec<RuleSpec>,
+    /// Beam width configuration for WFST prediction pruning.
+    /// Default: `BeamWidthConfig::Disabled`.
+    pub beam_width: BeamWidthConfig,
+    /// Optional path to a log-semiring trained model JSON file (requires `wfst-log` feature).
+    /// When set, the pipeline loads learned weights and recommended beam width.
+    pub log_semiring_model_path: Option<String>,
+    /// Dispatch strategy: static (FIRST-set ordering), weighted (WFST), or auto.
+    /// Default: `DispatchStrategy::Static`.
+    pub dispatch_strategy: DispatchStrategy,
 }
 
 /// A category (type) in the language.
@@ -203,6 +358,22 @@ impl LanguageSpec {
     /// derived automatically via [`classify::classify_rule()`]. The bridge
     /// only needs to provide structural data and DSL annotations.
     pub fn new(name: String, types: Vec<CategorySpec>, inputs: Vec<RuleSpecInput>) -> Self {
+        Self::with_options(name, types, inputs, BeamWidthConfig::Disabled, None, DispatchStrategy::Static)
+    }
+
+    /// Construct a `LanguageSpec` with optional configuration.
+    ///
+    /// All classification flags (is_infix, is_postfix, is_cast, etc.) are
+    /// derived automatically via [`classify::classify_rule()`]. The bridge
+    /// only needs to provide structural data and DSL annotations.
+    pub fn with_options(
+        name: String,
+        types: Vec<CategorySpec>,
+        inputs: Vec<RuleSpecInput>,
+        beam_width: BeamWidthConfig,
+        log_semiring_model_path: Option<String>,
+        dispatch_strategy: DispatchStrategy,
+    ) -> Self {
         let cat_names: Vec<String> = types.iter().map(|t| t.name.clone()).collect();
         let rules = inputs
             .into_iter()
@@ -234,7 +405,7 @@ impl LanguageSpec {
                 }
             })
             .collect();
-        LanguageSpec { name, types, rules }
+        LanguageSpec { name, types, rules, beam_width, log_semiring_model_path, dispatch_strategy }
     }
 }
 

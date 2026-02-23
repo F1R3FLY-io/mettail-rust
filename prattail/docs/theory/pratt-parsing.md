@@ -13,11 +13,11 @@ Consider the expression `1 + 2 * 3 - 4`. A correct parser must produce:
 
 ```
            Sub
-          /   \
+          ╱   ╲
         Add    4
-       /   \
+       ╱   ╲
       1    Mul
-          /   \
+          ╱   ╲
          2     3
 ```
 
@@ -396,9 +396,9 @@ Dijkstra's shunting-yard algorithm uses two explicit stacks:
 ```
   Shunting-Yard                    Pratt Loop
   ─────────────                    ──────────
-  Operator stack   <────────>      Call stack (recursive calls)
-  Operand stack    <────────>      Return values (lhs, rhs)
-  Compare top of   <────────>     left_bp < min_bp?
+  Operator stack   ←────────→      Call stack (recursive calls)
+  Operand stack    ←────────→      Return values (lhs, rhs)
+  Compare top of   ←────────→     left_bp < min_bp?
    op stack with
    new operator
 ```
@@ -497,11 +497,11 @@ parse_expr(min_bp=0)                                          [A]
 
 ```
               Sub
-             /   \
+             ╱   ╲
           Add    Div
-         /   \   / \
+         ╱   ╲   ╱ ╲
         1   Mul 4   2
-           / \
+           ╱ ╲
           2   3
 ```
 
@@ -511,17 +511,17 @@ At the deepest point (call [C]), the call stack looks like:
 
 ```
   ┌──────────────────────────────────────┐
-  │ parse_expr(min_bp=5)  [C]           │  <-- top
+  │ parse_expr(min_bp=5)  [C]            │  <-- top
   │   lhs = 3                            │
-  │   peek '-', left_bp=2 < 5, break    │
+  │   peek '-', left_bp=2 < 5, break     │
   ├──────────────────────────────────────┤
-  │ parse_expr(min_bp=3)  [B]           │
-  │   lhs = 2, consumed '*'             │
-  │   waiting for rhs from [C]          │
+  │ parse_expr(min_bp=3)  [B]            │
+  │   lhs = 2, consumed '*'              │
+  │   waiting for rhs from [C]           │
   ├──────────────────────────────────────┤
-  │ parse_expr(min_bp=0)  [A]           │
-  │   lhs = 1, consumed '+'             │
-  │   waiting for rhs from [B]          │
+  │ parse_expr(min_bp=0)  [A]            │
+  │   lhs = 1, consumed '+'              │
+  │   waiting for rhs from [B]           │
   └──────────────────────────────────────┘
 ```
 
@@ -639,8 +639,8 @@ Some operators take operands from one category but produce results in another.
 For example:
 
 ```
-  Eq : Int "==" Int -> Bool      // Equality comparison
-  Lt : Int "<"  Int -> Bool      // Less-than comparison
+  Eq : Int "==" Int → Bool      // Equality comparison
+  Lt : Int "<"  Int → Bool      // Less-than comparison
 ```
 
 These are handled by the cross-category dispatch system, not the Pratt loop
@@ -667,36 +667,42 @@ When PraTTaIL processes grammar rules, it classifies each as:
   │ KEYWORD ... Cat ...         Structural        RD function   │
   │ ID                          Variable          nud fallback  │
   │ INT / FLOAT / BOOL / STR   Literal            nud match arm │
-  │ collection with separator   Collection         RD function   │
-  │ Cat OP Cat -> OtherCat     Cross-category    Dispatch      │
+  │ collection with separator   Collection         RD function  │
+  │ Cat OP Cat → OtherCat      Cross-category    Dispatch       │
   └─────────────────────────────────────────────────────────────┘
 ```
 
 ### 10.2 The Generation Pipeline
 
 ```
-  Grammar rules
-       │
-       ▼
-  ┌──────────────────┐
-  │ Classify rules   │──── Infix rules ────> analyze_binding_powers()
-  │ by shape         │                            │
-  └──────────────────┘                            ▼
-       │                                  BindingPowerTable
-       │                                       │
-       ├── Prefix rules ──> PrefixHandler ─────┐
-       │                    (match arms)       │
-       ├── Structural ────> generate_rd_handler()
-       │                    (RD functions)      │
-       │                                       ▼
-       │                              generate_pratt_parser()
-       │                                       │
-       ▼                                       ▼
-  FIRST set analysis                    Per-category:
-  Dispatch tables                         parse_Cat()
-  Overlap analysis                        parse_Cat_prefix()
-                                          infix_bp()
-                                          make_infix()
+   Grammar rules
+         │
+         │
+  ┌──────▼───────────┐
+  │ Classify rules   │──── Infix rules ────────▶ analyze_binding_powers()
+  │ by shape         │                                     │
+  └──────┬───────────┘                                     ▼
+         │                                         BindingPowerTable
+         │                                                 │
+         ├── Structural / prefix / ──▶ write_rd_handler()  │
+         │   literal / var / lambda    (standalone fns +   │
+         │   dollar / grouping          PrefixHandler      │
+         │                              match arms)        │
+         │                                  │              │
+         │                                  │              │
+  ┌──────▼─────────────┐         ┌──────────▼──────────────▼────┐
+  │ FIRST / FOLLOW set │────────▶│ write_trampolined_parser()   │
+  │ computation        │         │ (one per category)           │
+  └──────┬─────────────┘         └──────────────┬───────────────┘
+         │                                      │
+         │                                      ▼
+  ┌──────▼─────────────┐              Per-category output:
+  │ Overlap analysis + │                parse_Cat()
+  │ write_category_    │                parse_Cat_own()
+  │ dispatch()         │                infix_bp_Cat()
+  └────────────────────┘                make_infix_Cat()
+                                        postfix_bp_Cat()  (if needed)
+                                        handle_mixfix_Cat() (if needed)
 ```
 
 ### 10.3 Generated Code Structure (Simplified)
@@ -797,7 +803,7 @@ Suppose operators `A` and `B` have binding powers such that `A.left_bp < B.left_
 When parsing `x A y B z`:
 
 1. The outer call parses `x`, then sees `A` and recurses with `A.right_bp`.
-2. The inner call parses `y`, then sees `B`. Since `B.left_bp >= A.right_bp`
+2. The inner call parses `y`, then sees `B`. Since `B.left_bp` ≥ `A.right_bp`
    (because `B` has higher precedence), it consumes `B` and recurses again.
 3. The innermost call parses `z` and returns.
 4. The result is `x A (y B z)`, which is correct: `B` binds tighter.
@@ -821,7 +827,7 @@ For a right-associative operator with `left_bp > right_bp`:
 
 ```
   ┌─────────────────────────┬──────────────────────────────────────┐
-  │ Approach                │ How precedence is encoded             │
+  │ Approach                │ How precedence is encoded            │
   ├─────────────────────────┼──────────────────────────────────────┤
   │ Grammar stratification  │ One nonterminal per precedence level │
   │ (textbook RD)           │ (Expr, Term, Factor, ...)            │

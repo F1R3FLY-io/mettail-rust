@@ -34,10 +34,10 @@ for every `language! { ... }` invocation that gets compiled.
 
 ## Output Location
 
-| `PRATTAIL_DUMP_EBNF` value | Output path |
-|---|---|
-| `1` | `target/prattail/<Name>.ebnf` |
-| `<directory>` | `<directory>/<Name>.ebnf` |
+| `PRATTAIL_DUMP_EBNF` value | Output path                   |
+|----------------------------|-------------------------------|
+| `1`                        | `target/prattail/<Name>.ebnf` |
+| `<directory>`              | `<directory>/<Name>.ebnf`     |
 
 The directory is created automatically if it doesn't exist. Progress is reported to stderr:
 

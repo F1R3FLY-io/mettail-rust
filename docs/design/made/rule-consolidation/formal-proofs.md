@@ -77,12 +77,12 @@ This computes the union of extractions across all constructor kinds, exactly mod
 
 ### 1.2 Preconditions
 
-| ID | Precondition | Justification | Rocq Hypothesis |
-|----|-------------|---------------|-----------------|
-| P1 | classify is total and deterministic | Rust pattern matching on enums | Built into the type: `classify : T → option K` is a function |
-| P2 | all_kinds enumerates every K that classify can return | Finite enum, code generator iterates `language.terms` | `all_kinds_complete` |
-| P3 | eqb_K reflects propositional equality | Rust `enum` derives `PartialEq` | `eqb_K_spec` |
-| P4 | all_kinds has no duplicates | Distinct constructors | `all_kinds_nodup` |
+| ID | Precondition                                          | Justification                                         | Rocq Hypothesis                                              |
+|----|-------------------------------------------------------|-------------------------------------------------------|--------------------------------------------------------------|
+| P1 | classify is total and deterministic                   | Rust pattern matching on enums                        | Built into the type: `classify : T → option K` is a function |
+| P2 | all_kinds enumerates every K that classify can return | Finite enum, code generator iterates `language.terms` | `all_kinds_complete`                                         |
+| P3 | eqb_K reflects propositional equality                 | Rust `enum` derives `PartialEq`                       | `eqb_K_spec`                                                 |
+| P4 | all_kinds has no duplicates                           | Distinct constructors                                 | `all_kinds_nodup`                                            |
 
 These hold for any Rust enum type. P4 is required by `flat_map_single_hit` (from `Prelude.v`), which is the key workhorse lemma: given a list with no duplicates where exactly one element produces a non-nil result, `flat_map` over that list is permutation-equivalent to just that one element's contribution.
 
@@ -336,10 +336,10 @@ Definition vi_per_kind (t : T) (k : K) : list (V * nat) :=
 
 ### 5.2 Preconditions
 
-| ID | Precondition | Justification | Rocq Hypothesis |
-|----|-------------|---------------|-----------------|
-| V1 | vi_of is injective | Sequential assignment in codegen | `vi_of_injective` |
-| V2 | Rebuilding with the original value recovers the original term | Round-trip property of pattern matching | `rebuild_identity` |
+| ID | Precondition                                                        | Justification                            | Rocq Hypothesis    |
+|----|---------------------------------------------------------------------|------------------------------------------|--------------------|
+| V1 | vi_of is injective                                                  | Sequential assignment in codegen         | `vi_of_injective`  |
+| V2 | Rebuilding with the original value recovers the original term       | Round-trip property of pattern matching  | `rebuild_identity` |
 | V3 | Rebuild preserves constructor and replaces exactly the target field | Constructor-preserving field replacement | `rebuild_replaces` |
 
 Additionally, the vi_extract function is specified by two hypotheses:
@@ -426,14 +426,14 @@ These three properties hold for any Rust `enum` type, since:
 
 ### Summary Table
 
-| Area | Name | Core Theorem | Instantiation | What's Preserved |
-|------|------|-------------|---------------|------------------|
-| 1 | Subterm Extraction | R1 | `area1_subterm_extraction` | Set of subterms added to target category |
-| 2 | Auto-Variant Congruence | R1 | `area2_auto_variant_lam_congruence` | Set of lam fields fed to rw_cat |
-| 3 | Equation Congruence | R3 | `area3_equation_congruence` | Set of paired fields checked for equality |
-| 4 | Explicit Rewrite Congruence | V4 | `area4_explicit_congruence_extraction` | Set of (field, vi) pairs for rebuild |
-| 5 | Fold Triggers | R2 | `area5_fold_triggers` | Set of terms triggering fold evaluation |
-| 6 | Fold Identities | R2 | `area6_fold_identities` | Set of terms receiving identity folds |
+| Area | Name                        | Core Theorem | Instantiation                          | What's Preserved                          |
+|------|-----------------------------|--------------|----------------------------------------|-------------------------------------------|
+| 1    | Subterm Extraction          | R1           | `area1_subterm_extraction`             | Set of subterms added to target category  |
+| 2    | Auto-Variant Congruence     | R1           | `area2_auto_variant_lam_congruence`    | Set of lam fields fed to rw_cat           |
+| 3    | Equation Congruence         | R3           | `area3_equation_congruence`            | Set of paired fields checked for equality |
+| 4    | Explicit Rewrite Congruence | V4           | `area4_explicit_congruence_extraction` | Set of (field, vi) pairs for rebuild      |
+| 5    | Fold Triggers               | R2           | `area5_fold_triggers`                  | Set of terms triggering fold evaluation   |
+| 6    | Fold Identities             | R2           | `area6_fold_identities`                | Set of terms receiving identity folds     |
 
 ### Area 1: Subterm Extraction
 
@@ -617,10 +617,10 @@ This argument does not require a separate Rocq proof — it follows directly fro
 
 ## 8. Verification Artifacts
 
-| Artifact | Location | Status |
-|----------|----------|--------|
-| Rocq proofs (5 files) | `formal/rocq/rule_consolidation/theories/` | All compile, zero `Admitted` |
-| proptest suite (9 tests) | `languages/tests/consolidation_tests.rs` | All pass |
-| Full test suite (306+ tests) | `cargo test --workspace` | All pass |
+| Artifact                     | Location                                   | Status                       |
+|------------------------------|--------------------------------------------|------------------------------|
+| Rocq proofs (5 files)        | `formal/rocq/rule_consolidation/theories/` | All compile, zero `Admitted` |
+| proptest suite (9 tests)     | `languages/tests/consolidation_tests.rs`   | All pass                     |
+| Full test suite (306+ tests) | `cargo test --workspace`                   | All pass                     |
 
 For the complete theorem catalog, build instructions, and hypothesis audit, see [rocq-artifacts.md](rocq-artifacts.md).

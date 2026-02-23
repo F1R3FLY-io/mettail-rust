@@ -35,13 +35,13 @@ parsers from HOL-style language definitions.
 
 ## Documentation by Category
 
-| Directory | Contents |
-|---|---|
-| [architecture/](architecture/) | Crate structure, data flow, generated code anatomy |
-| [benchmarks/](benchmarks/) | Parse performance comparison, optimization ledger |
-| [design/](design/) | Pipeline, engines, generators, disambiguation |
-| [theory/](theory/) | Formal foundations: automata, prediction, Pratt parsing |
-| [usage/](usage/) | Quick start, grammar features, EBNF dump, troubleshooting |
+| Directory                      | Contents                                                  |
+|--------------------------------|-----------------------------------------------------------|
+| [architecture/](architecture/) | Crate structure, data flow, generated code anatomy        |
+| [benchmarks/](benchmarks/)     | Parse performance comparison, optimization ledger         |
+| [design/](design/)             | Pipeline, engines, generators, disambiguation             |
+| [theory/](theory/)             | Formal foundations: automata, prediction, Pratt parsing   |
+| [usage/](usage/)               | Quick start, grammar features, EBNF dump, troubleshooting |
 
 ---
 

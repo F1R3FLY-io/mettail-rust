@@ -20,28 +20,28 @@ the `.lalrpop` intermediate step and all 4 categories of LALRPOP workarounds.
 BEFORE (LALRPOP pipeline):
 
   language! { ... }
-       |
-       v
+       │
+       ▼
   macros/gen/syntax/parser/lalrpop.rs    (generates .lalrpop files)
-       |
-       v
+       │
+       ▼
   languages/src/generated/*.lalrpop      (intermediate grammar files)
-       |
-       v
+       │
+       ▼
   LALRPOP compiler (build.rs)            (generates Rust LR(1) parsers)
-       |
-       v
+       │
+       ▼
   ~20,000 lines of generated parser code
 
 
 AFTER (PraTTaIL pipeline):
 
   language! { ... }
-       |
-       v
-  macros/gen/syntax/parser/ -> PraTTaIL  (direct code generation)
-       |
-       v
+       │
+       ▼
+  macros/gen/syntax/parser/ → PraTTaIL   (direct code generation)
+       │
+       ▼
   ~1,500-2,000 lines of generated parser code
 ```
 
@@ -49,22 +49,22 @@ AFTER (PraTTaIL pipeline):
 
 ## Feature Comparison
 
-| Feature | LALRPOP | PraTTaIL |
-|---|---|---|
-| **Parser type** | LR(1) / LALR(1) | Pratt + Recursive Descent |
-| **Generated code size** | ~20,000 lines | ~1,500-2,000 lines |
-| **Build dependency** | `lalrpop` crate (build-dep) + `lalrpop-util` (runtime) | None (proc-macro2 + quote only) |
-| **Intermediate files** | `.lalrpop` files in `src/generated/` | None |
-| **Build step** | `build.rs` compiles `.lalrpop` | Direct proc-macro expansion |
-| **Multi-type variables** | Requires type prefixes (`bool:x`) | Requires type prefixes (same) |
-| **Operator precedence** | Tiered productions (3 levels per category) | Binding power pairs (unlimited levels) |
-| **Cross-category rules** | Atom-tier placement with manual wiring | FIRST set dispatch with automatic backtracking |
-| **Lambda parsing** | Primary-category-only with type inference | Primary-category-only with type inference (same) |
-| **Keyword handling** | `match {}` blocks | DFA priority system |
-| **Lexer** | LALRPOP built-in regex lexer | Automata-optimized (NFA->DFA->minimize) |
-| **Error messages** | LALRPOP default | Custom with position information |
-| **Unary minus** | Disabled (shift-reduce conflict) | Can be supported (prefix handler) |
-| **Parse complexity** | O(n) | O(n) |
+| Feature                  | LALRPOP                                                | PraTTaIL                                         |
+|--------------------------|--------------------------------------------------------|--------------------------------------------------|
+| **Parser type**          | LR(1) / LALR(1)                                        | Pratt + Recursive Descent                        |
+| **Generated code size**  | ~20,000 lines                                          | ~1,500-2,000 lines                               |
+| **Build dependency**     | `lalrpop` crate (build-dep) + `lalrpop-util` (runtime) | None (proc-macro2 + quote only)                  |
+| **Intermediate files**   | `.lalrpop` files in `src/generated/`                   | None                                             |
+| **Build step**           | `build.rs` compiles `.lalrpop`                         | Direct proc-macro expansion                      |
+| **Multi-type variables** | Requires type prefixes (`bool:x`)                      | Requires type prefixes (same)                    |
+| **Operator precedence**  | Tiered productions (3 levels per category)             | Binding power pairs (unlimited levels)           |
+| **Cross-category rules** | Atom-tier placement with manual wiring                 | FIRST set dispatch with automatic backtracking   |
+| **Lambda parsing**       | Primary-category-only with type inference              | Primary-category-only with type inference (same) |
+| **Keyword handling**     | `match {}` blocks                                      | DFA priority system                              |
+| **Lexer**                | LALRPOP built-in regex lexer                           | Automata-optimized (NFA->DFA->minimize)          |
+| **Error messages**       | LALRPOP default                                        | Custom with position information                 |
+| **Unary minus**          | Disabled (shift-reduce conflict)                       | Can be supported (prefix handler)                |
+| **Parse complexity**     | O(n)                                                   | O(n)                                             |
 
 ---
 
@@ -228,10 +228,10 @@ Remove from `[workspace.dependencies]`:
 The `.lalrpop` files in `languages/src/generated/` are no longer needed:
 
 ```
-languages/src/generated/rhocalc.lalrpop      <- remove
-languages/src/generated/calculator.lalrpop   <- remove
-languages/src/generated/lambda.lalrpop       <- remove
-languages/src/generated/ambient.lalrpop      <- remove
+languages/src/generated/rhocalc.lalrpop      ← remove
+languages/src/generated/calculator.lalrpop   ← remove
+languages/src/generated/lambda.lalrpop       ← remove
+languages/src/generated/ambient.lalrpop      ← remove
 ```
 
 Keep the non-LALRPOP generated files (Datalog, expanded Rust, etc.) if they are

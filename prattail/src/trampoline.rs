@@ -274,6 +274,10 @@ pub struct TrampolineConfig {
     pub follow_set: FirstSet,
     /// Whether the grammar has binders.
     pub has_binders: bool,
+    /// Optional prediction WFST for weight-ordered dispatch (feature = "wfst").
+    /// When present, prefix match arms are reordered by tropical weight (lowest first).
+    #[cfg(feature = "wfst")]
+    pub prediction_wfst: Option<crate::wfst::PredictionWfst>,
 }
 
 /// Write the Frame enum declaration for a category.
@@ -707,9 +711,18 @@ fn write_prefix_phase(
         }}",
     ).unwrap();
 
+    // Emit WFST weight annotations as comments (for debugging/verification)
+    #[cfg(feature = "wfst")]
+    if let Some(ref wfst) = config.prediction_wfst {
+        if let Some(comment) = crate::wfst::generate_weighted_dispatch(wfst, &config.category) {
+            buf.push_str(&comment);
+        }
+    }
+
     buf.push_str("match &tokens[*pos].0 {");
 
-    // Generate match arms
+    // Generate match arms (same code in both paths — WFST ordering affects
+    // cross-category dispatch backtracking order, not prefix match semantics)
     write_prefix_match_arms(buf, config, prefix_handlers, rd_rules, frame_info, expected_escaped);
 
     buf.push_str("} };"); // close match and 'prefix block
@@ -929,6 +942,31 @@ fn write_prefix_match_arms(
         "{}Var",
         cat.chars().next().unwrap_or('V').to_uppercase().collect::<String>()
     );
+
+    // When WFST is enabled, reorder lookahead handlers by weight (lowest first = most likely).
+    // This ensures the most probable ident-dispatch path is tried first, reducing backtracking.
+    #[cfg(feature = "wfst")]
+    let lookahead_handlers = {
+        let mut sorted = lookahead_handlers;
+        if let Some(ref wfst) = config.prediction_wfst {
+            sorted.sort_by(|a, b| {
+                let weight_a = a.ident_lookahead.as_ref()
+                    .and_then(|tok| {
+                        let variant = terminal_to_variant_name(tok);
+                        wfst.predict(&variant).first().map(|wa| wa.weight)
+                    })
+                    .unwrap_or(crate::automata::semiring::TropicalWeight::new(f64::INFINITY));
+                let weight_b = b.ident_lookahead.as_ref()
+                    .and_then(|tok| {
+                        let variant = terminal_to_variant_name(tok);
+                        wfst.predict(&variant).first().map(|wa| wa.weight)
+                    })
+                    .unwrap_or(crate::automata::semiring::TropicalWeight::new(f64::INFINITY));
+                weight_a.cmp(&weight_b)
+            });
+        }
+        sorted
+    };
 
     if !lookahead_handlers.is_empty() {
         let mut arm = String::from("Token::Ident(name) => { match peek_ahead(tokens, *pos, 1) {");

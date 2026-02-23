@@ -215,15 +215,15 @@ than its own `right_bp` (4).
 ### 4.3 The Asymmetry Principle
 
 ```
-  Left-Associative               Right-Associative
+  Left-Associative                  Right-Associative
 
-  left_bp < right_bp             left_bp > right_bp
-  (2, 3)                         (5, 4)
+  left_bp < right_bp                left_bp > right_bp
+  (2, 3)                            (5, 4)
 
-  Same op:  2 < 3 = YES → stop  Same op:  5 < 4 = NO → continue
-  Result:   (a + b) + c         Result:   a ^ (b ^ c)
+  Same op:  2 < 3 = YES → stop      Same op:  5 < 4 = NO → continue
+  Result:   (a + b) + c             Result:   a ^ (b ^ c)
 
-  ┌────────────────────────┐    ┌────────────────────────┐
+  ┌────────────────────────────┐    ┌────────────────────────────┐
   │  ←── left_bp  right_bp ──→ │    │  ←── right_bp  left_bp ──→ │
   │       (2)       (3)        │    │       (4)       (5)        │
   │                            │    │                            │
@@ -465,12 +465,12 @@ frame-based continuation passing.
 
 ### 9.1 Key Changes from Recursive to Trampolined
 
-| Aspect | Recursive | Trampolined |
-|--------|-----------|-------------|
-| Min BP | Function parameter `min_bp` | Explicit variable `cur_bp` |
-| Operator token | Stack variable `op_token` | `op_pos: usize` (index into token array) |
+| Aspect         | Recursive                      | Trampolined                                                 |
+|----------------|--------------------------------|-------------------------------------------------------------|
+| Min BP         | Function parameter `min_bp`    | Explicit variable `cur_bp`                                  |
+| Operator token | Stack variable `op_token`      | `op_pos: usize` (index into token array)                    |
 | Recursive call | `parse_Cat(tokens, pos, r_bp)` | `stack.push(InfixRHS{...}); cur_bp = r_bp; continue 'drive` |
-| Return | Function return | `break 'prefix` then unwind loop |
+| Return         | Function return                | `break 'prefix` then unwind loop                            |
 
 ### 9.2 The InfixRHS Frame
 
@@ -502,14 +502,14 @@ associativity, and tier decisions are preserved identically.
   (operator classification)  (auto-assigned)     (THE decision)    (unambiguous)
 ```
 
-| Mechanism | Ambiguity Resolved | Implementation |
-|-----------|-------------------|----------------|
-| BP magnitude | `+` vs `*` precedence | Declaration-order assignment |
-| BP pair asymmetry | Left vs right associativity | `(lo, hi)` vs `(hi, lo)` |
-| Three-tier hierarchy | Prefix vs infix vs postfix | Automatic: infix < prefix < postfix |
-| Led chain ordering | Which led type to check first | Postfix → mixfix → infix |
-| Nud vs led context | Same token as prefix/infix | Positional: start-of-expr vs after-expr |
-| Mixfix delimiters | N-ary operator boundaries | Delimiter matching + `min_bp=0` reset |
+| Mechanism            | Ambiguity Resolved            | Implementation                          |
+|----------------------|-------------------------------|-----------------------------------------|
+| BP magnitude         | `+` vs `*` precedence         | Declaration-order assignment            |
+| BP pair asymmetry    | Left vs right associativity   | `(lo, hi)` vs `(hi, lo)`                |
+| Three-tier hierarchy | Prefix vs infix vs postfix    | Automatic: infix < prefix < postfix     |
+| Led chain ordering   | Which led type to check first | Postfix → mixfix → infix                |
+| Nud vs led context   | Same token as prefix/infix    | Positional: start-of-expr vs after-expr |
+| Mixfix delimiters    | N-ary operator boundaries     | Delimiter matching + `min_bp=0` reset   |
 
 **Layer 3 output → Layer 4 input:** A complete expression tree within a single
 type category. If the expression involves a cross-category operator (e.g., `==`

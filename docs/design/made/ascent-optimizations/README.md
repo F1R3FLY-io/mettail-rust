@@ -82,13 +82,13 @@ Each abstract theorem is instantiated for two concrete languages (`ConcreteInsta
 
 ## File Index
 
-| File | Description |
-|------|-------------|
-| [tls-pool-equivalence.md](tls-pool-equivalence.md) | Opt 2: TLS Vec Pool Iteration Equivalence |
-| [dead-rule-pruning.md](dead-rule-pruning.md) | Opt 3: Reachability-Based Dead Rule Pruning |
-| [ordvar-scope-ordering.md](ordvar-scope-ordering.md) | Opt 4: OrdVar Total Order and Scope Total Preorder |
-| [scc-splitting.md](scc-splitting.md) | Opt 5: Core/Full Fixpoint Equivalence via SCC Splitting |
-| [rocq-artifacts.md](rocq-artifacts.md) | Build instructions, theorem catalog, hypothesis audit |
+| File                                                 | Description                                             |
+|------------------------------------------------------|---------------------------------------------------------|
+| [tls-pool-equivalence.md](tls-pool-equivalence.md)   | Opt 2: TLS Vec Pool Iteration Equivalence               |
+| [dead-rule-pruning.md](dead-rule-pruning.md)         | Opt 3: Reachability-Based Dead Rule Pruning             |
+| [ordvar-scope-ordering.md](ordvar-scope-ordering.md) | Opt 4: OrdVar Total Order and Scope Total Preorder      |
+| [scc-splitting.md](scc-splitting.md)                 | Opt 5: Core/Full Fixpoint Equivalence via SCC Splitting |
+| [rocq-artifacts.md](rocq-artifacts.md)               | Build instructions, theorem catalog, hypothesis audit   |
 
 ## See Also
 

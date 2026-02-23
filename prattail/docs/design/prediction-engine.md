@@ -32,7 +32,7 @@ drive five critical decisions:
 
 2. **Cross-category routing.** When `parse_Bool` sees a token that could
    start either a `Bool` expression or an `Int` expression (for the `Eq`
-   rule `Int "==" Int -> Bool`), the overlap analysis determines whether
+   rule `Int "==" Int → Bool`), the overlap analysis determines whether
    deterministic dispatch or save/restore backtracking is needed.
 
 3. **Error reporting.** FIRST sets provide the "expected" set in error
@@ -57,11 +57,11 @@ For a grammar category C, `FIRST(C)` is the set of token variant names that
 can appear as the first token of any expression in C. This includes:
 
 - **Terminal tokens** from rules that begin with a terminal
-  (e.g., `PZero` starts with `"{}"`  ->  `EmptyBraces` in `FIRST(Proc)`).
+  (e.g., `PZero` starts with `"{}"`  →  `EmptyBraces` in `FIRST(Proc)`).
 
 - **Identifier token** from variable rules and rules that begin with a
   nonterminal parameter
-  (e.g., `IVar` starts with `Ident`  ->  `Ident` in `FIRST(Int)`).
+  (e.g., `IVar` starts with `Ident`  →  `Ident` in `FIRST(Int)`).
 
 - **Transitive tokens** from rules that begin with a reference to another
   category
@@ -85,9 +85,9 @@ ITERATE:
       if R is an infix rule: skip (infix rules are handled by Pratt loop)
       for each first_item in R.first_items:
         match first_item:
-          Terminal(t)     -> add terminal_to_variant_name(t) to FIRST(R.category)
-          NonTerminal(C') -> add all tokens from FIRST(C') to FIRST(R.category)
-          Ident           -> add "Ident" to FIRST(R.category)
+          Terminal(t)     → add terminal_to_variant_name(t) to FIRST(R.category)
+          NonTerminal(C') → add all tokens from FIRST(C') to FIRST(R.category)
+          Ident           → add "Ident" to FIRST(R.category)
     if all FIRST set sizes unchanged from snapshot: break
 
 BOUND: At most |categories| + 1 iterations (each iteration must add at
@@ -114,7 +114,7 @@ Iteration 1:
                = {Ident, KwInteger}  (but Ident already present)
 
 Iteration 2:
-  No changes -> terminate.
+  No changes → terminate.
 ```
 
 For mutually recursive categories (e.g., `Proc` contains `Name` references
@@ -134,9 +134,9 @@ Iteration 1:
 
 Iteration 2:
   FIRST(Name) += FIRST(Proc)?     (only if Name has a rule starting with Proc)
-  No new tokens from Proc -> FIRST(Name) unchanged.
+  No new tokens from Proc → FIRST(Name) unchanged.
   FIRST(Proc) += FIRST(Name)      (still {At, Ident}, no new tokens)
-  No changes -> terminate.
+  No changes → terminate.
 ```
 
 ### Convergence Guarantee
@@ -302,7 +302,7 @@ Iteration 1:
       FOLLOW(Int) += FOLLOW(Bool) = {} (no new tokens)
 
 Iteration 2:
-  No changes -> terminate.
+  No changes → terminate.
 
 Final: FOLLOW(Int) = {Eof, Plus, Star, EqEq}
        FOLLOW(Bool) = {Eof}
@@ -321,11 +321,11 @@ actions:
 DispatchTable {
   category: "Proc",
   entries: {
-    "EmptyBraces" -> Direct { rule_label: "PZero", parse_fn: "parse_pzero" },
-    "Star"        -> Direct { rule_label: "PDrop", parse_fn: "parse_pdrop" },
-    "LBrace"      -> Direct { rule_label: "PPar",  parse_fn: "parse_ppar"  },
-    "Ident"       -> Lookahead { ... } or Variable { ... },
-    "KwError"     -> Direct { rule_label: "Err",   parse_fn: "parse_err"   },
+    "EmptyBraces" → Direct { rule_label: "PZero", parse_fn: "parse_pzero" },
+    "Star"        → Direct { rule_label: "PDrop", parse_fn: "parse_pdrop" },
+    "LBrace"      → Direct { rule_label: "PPar",  parse_fn: "parse_ppar"  },
+    "Ident"       → Lookahead { ... } or Variable { ... },
+    "KwError"     → Direct { rule_label: "Err",   parse_fn: "parse_err"   },
     ...
   },
   default_action: Some(Variable { category: "Proc" }),
@@ -370,17 +370,17 @@ BUILD_DISPATCH(category C, rules, first_sets):
 ### Dispatch Actions
 
 ```
-+-------------------+---------------------------------------------------+
-| Action            | Description                                       |
-+-------------------+---------------------------------------------------+
-| Direct            | Unambiguous: call parse_<rule>() directly          |
-| Lookahead         | Ambiguous first token: peek at next token(s) to   |
-|                   |   disambiguate, with optional variable fallback    |
-| CrossCategory     | Try parsing source category, then expect operator  |
-| Cast              | Parse source category and wrap in constructor      |
-| Grouping          | Parenthesized expression: consume "(", recurse, ")" |
-| Variable          | Fall through to variable handler for this category |
-+-------------------+---------------------------------------------------+
+┌───────────────────┬─────────────────────────────────────────────────────┐
+│ Action            │ Description                                         │
+├───────────────────┼─────────────────────────────────────────────────────┤
+│ Direct            │ Unambiguous: call parse_<rule>() directly           │
+│ Lookahead         │ Ambiguous first token: peek at next token(s) to     │
+│                   │   disambiguate, with optional variable fallback     │
+│ CrossCategory     │ Try parsing source category, then expect operator   │
+│ Cast              │ Parse source category and wrap in constructor       │
+│ Grouping          │ Parenthesized expression: consume "(", recurse, ")" │
+│ Variable          │ Fall through to variable handler for this category  │
+└───────────────────┴─────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -425,7 +425,7 @@ ANALYZE_OVERLAPS(categories, first_sets):
 
 ### How Overlap Drives Dispatch
 
-For a cross-category rule `Eq: Int "==" Int -> Bool`, the dispatch
+For a cross-category rule `Eq: Int "==" Int → Bool`, the dispatch
 wrapper for `parse_Bool` uses the overlap to generate three code paths:
 
 ```
@@ -569,7 +569,7 @@ GENERATE_SYNC(category C, FOLLOW(C), grammar_terminals):
   // Always include Eof
   sync_tokens += { Eof }
 
-  // Generate: fn is_sync_<C>(token) -> bool { matches!(token, ...) }
+  // Generate: fn is_sync_<C>(token) → bool { matches!(token, ...) }
 ```
 
 ### Critical Design Constraint
@@ -631,8 +631,8 @@ For most grammars, memoization is **not needed** because:
 Memoization would be generated if:
 
 1. **A category appears as a sub-expression in multiple cross-category rules
-   with different operators.** For example, if both `Eq: Int "==" Int -> Bool`
-   and `Lt: Int "<" Int -> Bool` exist, and the token is ambiguous, the
+   with different operators.** For example, if both `Eq: Int "==" Int → Bool`
+   and `Lt: Int "<" Int → Bool` exist, and the token is ambiguous, the
    parser might parse `Int` twice (once for the `==` attempt, once for the
    `<` attempt). A memo table for `parse_Int` at each position would prevent
    re-parsing.
@@ -684,16 +684,16 @@ tokens at position +0, +1, +2, etc. to determine which rule to invoke.
 Decision automaton for Proc prefix dispatch on Ident:
 
   position 0: Token::Ident(_)
-                |
-                +-- position 1: Token::Bang      -> POutput rule (n "!" ...)
-                |
-                +-- position 1: Token::Question   -> PInputs (via Name)
-                |
-                +-- position 1: infix operator    -> PVar (variable)
-                |
-                +-- position 1: Token::Eof        -> PVar (variable)
-                |
-                +-- position 1: other             -> PVar (variable, fallback)
+                │
+                ├── position 1: Token::Bang       → POutput rule (n "!" ...)
+                │
+                ├── position 1: Token::Question   → PInputs (via Name)
+                │
+                ├── position 1: infix operator    → PVar (variable)
+                │
+                ├── position 1: Token::Eof        → PVar (variable)
+                │
+                └── position 1: other             → PVar (variable, fallback)
 ```
 
 ### Generated Code
@@ -780,15 +780,15 @@ FIRST(Str)  = {}
 **Iteration 1:** Process non-infix rules.
 ```
 FIRST(Int)  += {Ident}          (from IVar)
-FIRST(Int)  += {Integer}        (from NumLit, native i32 -> Integer token)
+FIRST(Int)  += {Integer}        (from NumLit, native i32 → Integer token)
 FIRST(Int)  += {Pipe}           (from Len: "|" s "|")
 
 FIRST(Bool) += {Ident}          (from BVar)
 FIRST(Bool) += {KwTrue, KwFalse} (from BoolLit, native bool)
 FIRST(Bool) += {KwNot}          (from Not: "not" a)
-FIRST(Bool) += FIRST(Int)       (from Eq: a:Int "==" b:Int -> Bool)
+FIRST(Bool) += FIRST(Int)       (from Eq: a:Int "==" b:Int → Bool)
              = {Ident, Integer, Pipe}  (Ident already present)
-FIRST(Bool) += FIRST(Str)       (from EqStr: a:Str "==" b:Str -> Bool)
+FIRST(Bool) += FIRST(Str)       (from EqStr: a:Str "==" b:Str → Bool)
              = {}                (Str is still empty)
 
 FIRST(Str)  += {Ident}          (from SVar)
@@ -838,26 +838,26 @@ Overlap(Bool, Int):
 
 **Int dispatch table:**
 ```
-  Integer  -> Direct: NumLit
-  Ident    -> Lookahead: {IVar (fallback: variable)}
-  Pipe     -> Direct: Len
-  LParen   -> Grouping
+  Integer  → Direct: NumLit
+  Ident    → Lookahead: {IVar (fallback: variable)}
+  Pipe     → Direct: Len
+  LParen   → Grouping
 ```
 
 **Bool dispatch table (without cross-category):**
 ```
-  KwTrue   -> Direct: BoolLit
-  KwFalse  -> Direct: BoolLit
-  KwNot    -> Direct: Not
-  Ident    -> Lookahead: {BVar (fallback: variable)}
-  LParen   -> Grouping
+  KwTrue   → Direct: BoolLit
+  KwFalse  → Direct: BoolLit
+  KwNot    → Direct: Not
+  Ident    → Lookahead: {BVar (fallback: variable)}
+  LParen   → Grouping
 ```
 
 **Str dispatch table:**
 ```
-  StringLit -> Direct: StringLit
-  Ident     -> Lookahead: {SVar (fallback: variable)}
-  LParen    -> Grouping
+  StringLit → Direct: StringLit
+  Ident     → Lookahead: {SVar (fallback: variable)}
+  LParen    → Grouping
 ```
 
 ### Step 4: Cross-Category Dispatch for Bool
@@ -868,7 +868,7 @@ The `parse_Bool` wrapper becomes:
 
 ```
 match current_token:
-  // Tokens unique to Bool -> parse_Bool_own
+  // Tokens unique to Bool → parse_Bool_own
   Token::KwTrue | Token::KwFalse | Token::KwNot => {
     parse_Bool_own(tokens, pos)
   }
@@ -878,14 +878,14 @@ match current_token:
   // But it's unique_to_Int relative to Bool's *own* rules.
   // The dispatch checks source FIRST vs target FIRST.
   Token::Integer(_) => {
-    // Deterministic: must be Eq path (Int "==" Int -> Bool)
+    // Deterministic: must be Eq path (Int "==" Int → Bool)
     let left = parse_Int(tokens, pos, 0)?;
     expect_token(tokens, pos, Token::EqEq, "==")?;
     let right = parse_Int(tokens, pos, 0)?;
     Ok(Bool::Eq(Box::new(left), Box::new(right)))
   }
 
-  // Pipe unique to Int -> Eq path
+  // Pipe unique to Int → Eq path
   Token::Pipe => {
     let left = parse_Int(tokens, pos, 0)?;
     expect_token(tokens, pos, Token::EqEq, "==")?;
@@ -893,7 +893,7 @@ match current_token:
     Ok(Bool::Eq(Box::new(left), Box::new(right)))
   }
 
-  // StringLit unique to Str -> EqStr path
+  // StringLit unique to Str → EqStr path
   Token::StringLit(_) => {
     let left = parse_Str(tokens, pos, 0)?;
     expect_token(tokens, pos, Token::EqEq, "==")?;
@@ -937,14 +937,14 @@ Input tokens: [Integer(3), EqEq, Integer(4), Eof]
 
 1. parse_Bool(tokens, pos=0, min_bp=0)
 2. Cross-category dispatch sees Integer(3):
-   - Integer is unique to Int -> deterministic Eq path
+   - Integer is unique to Int → deterministic Eq path
 3. parse_Int(tokens, pos=0, min_bp=0)
-   - parse_Int_prefix sees Integer(3) -> NumLit(3), pos=1
+   - parse_Int_prefix sees Integer(3) → NumLit(3), pos=1
    - Pratt loop: peek = EqEq, infix_bp(EqEq) = None (not an Int infix)
    - Return NumLit(3), pos=1
 4. expect_token EqEq: found at pos=1, pos=2
 5. parse_Int(tokens, pos=2, min_bp=0)
-   - parse_Int_prefix sees Integer(4) -> NumLit(4), pos=3
+   - parse_Int_prefix sees Integer(4) → NumLit(4), pos=3
    - Pratt loop: peek = Eof, break
    - Return NumLit(4), pos=3
 6. Construct Bool::Eq(Box::new(NumLit(3)), Box::new(NumLit(4)))
@@ -957,16 +957,16 @@ Input tokens: [Ident("x"), EqEq, Ident("y"), Eof]
 
 1. parse_Bool(tokens, pos=0, min_bp=0)
 2. Cross-category dispatch sees Ident("x"):
-   - Ident is ambiguous -> save/restore
+   - Ident is ambiguous → save/restore
 3. saved = 0
 4. Try parse_Int(tokens, pos=0, min_bp=0):
-   - parse_Int_prefix sees Ident("x") -> IVar("x"), pos=1
+   - parse_Int_prefix sees Ident("x") → IVar("x"), pos=1
    - Pratt loop: peek = EqEq, infix_bp(EqEq) = None (not Int infix), break
    - Return IVar("x"), pos=1
-5. Peek at pos=1: Token::EqEq -> match!
+5. Peek at pos=1: Token::EqEq → match!
 6. *pos = 2 (consume ==)
 7. parse_Int(tokens, pos=2, min_bp=0):
-   - Ident("y") -> IVar("y"), pos=3
+   - Ident("y") → IVar("y"), pos=3
    - Return IVar("y"), pos=3
 8. Construct Bool::Eq(Box::new(IVar("x")), Box::new(IVar("y")))
 ```
@@ -978,21 +978,21 @@ Input tokens: [Ident("b"), AmpAmp, KwTrue, Eof]
 
 1. parse_Bool(tokens, pos=0, min_bp=0)
 2. Cross-category dispatch sees Ident("b"):
-   - Ident is ambiguous -> save/restore
+   - Ident is ambiguous → save/restore
 3. saved = 0
 4. Try parse_Int(tokens, pos=0, min_bp=0):
-   - Ident("b") -> IVar("b"), pos=1
+   - Ident("b") → IVar("b"), pos=1
    - Pratt loop: peek = AmpAmp, infix_bp(AmpAmp) = None for Int, break
    - Return IVar("b"), pos=1
-5. Peek at pos=1: Token::AmpAmp (not EqEq) -> no match
+5. Peek at pos=1: Token::AmpAmp (not EqEq) → no match
 6. Backtrack: *pos = 0
 7. parse_Bool_own(tokens, pos=0):
-   - parse_Bool_prefix sees Ident("b") -> BVar("b"), pos=1
+   - parse_Bool_prefix sees Ident("b") → BVar("b"), pos=1
    - Pratt loop: peek = AmpAmp, infix_bp(AmpAmp) = Some((2,3))
      - 2 >= 0 (min_bp), so continue
      - Consume AmpAmp, pos=2
      - parse_Bool(tokens, pos=2, min_bp=3):
-       - KwTrue -> BoolLit(true), pos=3
+       - KwTrue → BoolLit(true), pos=3
        - Pratt loop: Eof, break
      - make_infix(AmpAmp, BVar("b"), BoolLit(true))
        = Comp(BVar("b"), BoolLit(true))

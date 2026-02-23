@@ -1,18 +1,37 @@
 use proc_macro2::TokenStream;
 use syn::{
+    ext::IdentExt,
     parse::{Parse, ParseStream},
     Ident, Result as SynResult, Token, Type,
 };
 
 use super::grammar::{parse_terms, GrammarRule};
 use super::pattern::{Pattern, PatternTerm};
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 
+/// A value in the `options { ... }` block of the `language!` macro.
+#[derive(Debug, Clone)]
+pub enum AttributeValue {
+    /// Floating-point value (e.g., `beam_width: 1.5`).
+    Float(f64),
+    /// Integer value.
+    Int(i64),
+    /// Boolean value.
+    Bool(bool),
+    /// String value (e.g., `log_semiring_model_path: "path/to/model.json"`).
+    Str(String),
+    /// Keyword identifier (e.g., `beam_width: none`, `beam_width: auto`).
+    Keyword(String),
+}
+
 /// Top-level theory definition
-/// theory! { name: Foo, params: ..., types { ... }, terms { ... }, equations { ... }, rewrites { ... }, logic { ... } }
+/// theory! { name: Foo, params: ..., options { ... }, types { ... }, terms { ... }, equations { ... }, rewrites { ... }, logic { ... } }
 pub struct LanguageDef {
     pub name: Ident,
+    /// Configuration options parsed from `options { ... }` block. Empty if block omitted.
+    pub options: HashMap<String, AttributeValue>,
     pub types: Vec<LangType>,
     pub terms: Vec<GrammarRule>,
     pub equations: Vec<Equation>,
@@ -206,6 +225,18 @@ impl Parse for LanguageDef {
         let name = input.parse::<Ident>()?;
         let _ = input.parse::<Token![,]>()?;
 
+        // Parse: options { ... } (optional)
+        let options = if input.peek(Ident) {
+            let lookahead = input.fork().parse::<Ident>()?;
+            if lookahead == "options" {
+                parse_options(input)?
+            } else {
+                HashMap::new()
+            }
+        } else {
+            HashMap::new()
+        };
+
         // Parse: types { ... }
         let types = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
@@ -268,6 +299,7 @@ impl Parse for LanguageDef {
 
         Ok(LanguageDef {
             name,
+            options,
             types,
             terms,
             equations,
@@ -317,6 +349,135 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
     }
 
     Ok(types)
+}
+
+fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue>> {
+    let options_ident = input.parse::<Ident>()?;
+    if options_ident != "options" {
+        return Err(syn::Error::new(options_ident.span(), "expected 'options'"));
+    }
+
+    let content;
+    syn::braced!(content in input);
+
+    let mut options = HashMap::new();
+    while !content.is_empty() {
+        let key_ident = content.parse::<Ident>()?;
+        let key = key_ident.to_string();
+        let _ = content.parse::<Token![:]>()?;
+
+        // Parse value: float, integer, boolean, string literal, or keyword identifier
+        let value = if content.peek(syn::LitFloat) {
+            let lit = content.parse::<syn::LitFloat>()?;
+            let f: f64 = lit.base10_parse().map_err(|e| {
+                syn::Error::new(lit.span(), format!("invalid float value: {}", e))
+            })?;
+            AttributeValue::Float(f)
+        } else if content.peek(syn::LitInt) {
+            let lit = content.parse::<syn::LitInt>()?;
+            let i: i64 = lit.base10_parse().map_err(|e| {
+                syn::Error::new(lit.span(), format!("invalid integer value: {}", e))
+            })?;
+            AttributeValue::Int(i)
+        } else if content.peek(syn::LitBool) {
+            let lit = content.parse::<syn::LitBool>()?;
+            AttributeValue::Bool(lit.value)
+        } else if content.peek(syn::LitStr) {
+            let lit = content.parse::<syn::LitStr>()?;
+            AttributeValue::Str(lit.value())
+        } else if content.peek(Ident::peek_any) {
+            let ident = content.call(Ident::parse_any)?;
+            AttributeValue::Keyword(ident.to_string())
+        } else {
+            return Err(syn::Error::new(
+                content.span(),
+                "expected a float, integer, boolean, string literal, or keyword (none, disabled, auto)",
+            ));
+        };
+
+        // Validate known keys
+        match key.as_str() {
+            "beam_width" => {
+                match &value {
+                    AttributeValue::Float(_) => {} // explicit beam width
+                    AttributeValue::Keyword(kw) => match kw.as_str() {
+                        "none" | "disabled" => {} // beam pruning disabled
+                        "auto" => {} // auto-select from trained model
+                        _ => {
+                            return Err(syn::Error::new(
+                                key_ident.span(),
+                                format!(
+                                    "beam_width: invalid keyword '{}'. \
+                                     Use a float (e.g., 1.5), 'none', 'disabled', or 'auto'",
+                                    kw
+                                ),
+                            ));
+                        }
+                    },
+                    _ => {
+                        return Err(syn::Error::new(
+                            key_ident.span(),
+                            "beam_width must be a float (e.g., 1.5), 'none', 'disabled', or 'auto'",
+                        ));
+                    }
+                }
+            }
+            "log_semiring_model_path" => {
+                if !matches!(&value, AttributeValue::Str(_)) {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "log_semiring_model_path must be a string path (e.g., log_semiring_model_path: \"model.json\")",
+                    ));
+                }
+            }
+            "dispatch" => {
+                match &value {
+                    AttributeValue::Keyword(kw) => match kw.as_str() {
+                        "static" | "weighted" | "auto" => {}
+                        _ => {
+                            return Err(syn::Error::new(
+                                key_ident.span(),
+                                format!(
+                                    "dispatch: invalid keyword '{}'. \
+                                     Use 'static', 'weighted', or 'auto'",
+                                    kw
+                                ),
+                            ));
+                        }
+                    },
+                    _ => {
+                        return Err(syn::Error::new(
+                            key_ident.span(),
+                            "dispatch must be a keyword: 'static', 'weighted', or 'auto'",
+                        ));
+                    }
+                }
+            }
+            unknown => {
+                return Err(syn::Error::new(
+                    key_ident.span(),
+                    format!(
+                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch",
+                        unknown
+                    ),
+                ));
+            }
+        }
+
+        options.insert(key, value);
+
+        // Optional trailing comma
+        if content.peek(Token![,]) {
+            let _ = content.parse::<Token![,]>()?;
+        }
+    }
+
+    // Optional comma after closing brace
+    if input.peek(Token![,]) {
+        let _ = input.parse::<Token![,]>()?;
+    }
+
+    Ok(options)
 }
 
 fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {

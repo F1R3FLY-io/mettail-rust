@@ -27,21 +27,21 @@ pattern operations.
 ### What the RD Generator Handles
 
 ```
-+--------------------+------------------------------------------+-------------------+
-| Construct          | Example rule                             | Key feature       |
-+--------------------+------------------------------------------+-------------------+
-| Delimited prefix   | PDrop . n:Name |- "*" "(" n ")" : Proc  | Terminal sequence |
-| Binder             | PNew . ^x.p:[Name -> Proc]               | Scope::new()     |
-|                    |   |- "new" "(" x "," p ")" : Proc        |                   |
-| Multi-binder       | PInputs . ns:Vec(Name), ^[xs].p          | Vec of binders   |
-| Collection         | PPar . ps:HashBag(Proc)                  | HashBag/Set/Vec  |
-|                    |   |- "{" ps.*sep("|") "}" : Proc          |                   |
-| Zip+Map+Sep        | PInputs . ... |- *zip(ns,xs).*map(...)   | Parallel lists   |
-| Optional           | #opt(...)                                 | Save/restore     |
-| Cross-category     | NQuote . p:Proc |- "@" "(" p ")" : Name  | Different result |
-| Unit (no params)   | PZero . |- "{}" : Proc                   | No captures      |
-| Keyword terminal   | Err . |- "error" : Proc                  | Fixed keyword    |
-+--------------------+------------------------------------------+-------------------+
+┌────────────────────┬──────────────────────────────────────────┬───────────────────┐
+│ Construct          │ Example rule                             │ Key feature       │
+├────────────────────┼──────────────────────────────────────────┼───────────────────┤
+│ Delimited prefix   │ PDrop . n:Name |- "*" "(" n ")" : Proc  │ Terminal sequence │
+│ Binder             │ PNew . ^x.p:[Name → Proc]               │ Scope::new()      │
+│                    │   |- "new" "(" x "," p ")" : Proc       │                   │
+│ Multi-binder       │ PInputs . ns:Vec(Name), ^[xs].p         │ Vec of binders    │
+│ Collection         │ PPar . ps:HashBag(Proc)                  │ HashBag/Set/Vec   │
+│                    │   |- "{" ps.*sep("|") "}" : Proc        │                   │
+│ Zip+Map+Sep        │ PInputs . ... |- *zip(ns,xs).*map(...)  │ Parallel lists    │
+│ Optional           │ #opt(...)                                │ Save/restore      │
+│ Cross-category     │ NQuote . p:Proc |- "@" "(" p ")" : Name │ Different result  │
+│ Unit (no params)   │ PZero . |- "{}" : Proc                  │ No captures       │
+│ Keyword terminal   │ Err . |- "error" : Proc                 │ Fixed keyword     │
+└────────────────────┴──────────────────────────────────────────┴───────────────────┘
 ```
 
 ### What the RD Generator Does NOT Handle
@@ -56,7 +56,7 @@ pattern operations.
 
 Each `RDSyntaxItem` variant produces a specific parsing action:
 
-### Terminal -> expect_token
+### Terminal → expect_token
 
 ```rust
 RDSyntaxItem::Terminal(t) => {
@@ -68,7 +68,7 @@ RDSyntaxItem::Terminal(t) => {
 
 This consumes one token and returns an error if the token does not match.
 
-### NonTerminal -> parse_Category
+### NonTerminal → parse_Category
 
 ```rust
 RDSyntaxItem::NonTerminal { category, param_name } => {
@@ -130,7 +130,7 @@ The high binding power (12 in this example) means `parse_Int` will only
 capture an atom (literal, variable, or parenthesized expression) before
 returning, leaving any subsequent infix operators for the outer Pratt loop.
 
-### IdentCapture -> expect_ident
+### IdentCapture → expect_ident
 
 ```rust
 RDSyntaxItem::IdentCapture { param_name } => {
@@ -142,7 +142,7 @@ RDSyntaxItem::IdentCapture { param_name } => {
 
 This consumes an `Ident` token and returns the identifier string.
 
-### Binder -> expect_ident (with scope semantics)
+### Binder → expect_ident (with scope semantics)
 
 ```rust
 RDSyntaxItem::Binder { param_name, binder_category } => {
@@ -156,7 +156,7 @@ RDSyntaxItem::Binder { param_name, binder_category } => {
 Binders are parsed as identifiers, but their semantic handling differs:
 they are wrapped in `moniker::Binder` during constructor generation.
 
-### Collection -> loop with separator
+### Collection → loop with separator
 
 ```rust
 RDSyntaxItem::Collection { param_name, element_category, separator, kind } => {
@@ -184,7 +184,7 @@ A rule with `has_binder: true` has one binder and one body. The constructor
 wraps them in a `moniker::Scope`:
 
 ```
-Rule: PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc
+Rule: PNew . ^x.p:[Name → Proc] |- "new" "(" x "," p ")" : Proc
 
 Syntax items:
   Terminal("new"), Terminal("("), Binder("x", "Name"),
@@ -216,7 +216,7 @@ binder variable is bound in the body. Moniker handles alpha-equivalence:
 A rule with `has_multi_binder: true` has a list of binders:
 
 ```
-Rule: MLam . ^[xs].body:[Name* -> Proc] |- "^" "[" xs.*sep(",") "]" "." "{" body "}" : Proc
+Rule: MLam . ^[xs].body:[Name* → Proc] |- "^" "[" xs.*sep(",") "]" "." "{" body "}" : Proc
 
 Generated constructor:
   let binders: Vec<moniker::Binder<FreeVar<String>>> = xs
@@ -239,18 +239,18 @@ and multi-input rules (`PInputs`).
 ### Collection Kinds
 
 ```
-+----------+--------------------------+------------------+----------------+
-| Kind     | Rust type                | Insert method    | Semantics      |
-+----------+--------------------------+------------------+----------------+
-| HashBag  | hashbag::HashBag<T>      | .insert(elem)    | Multiset       |
-|          |                          |                  | (duplicates OK)|
-+----------+--------------------------+------------------+----------------+
-| HashSet  | std::collections::       | .insert(elem)    | Set            |
-|          |   HashSet<T>             |                  | (no duplicates)|
-+----------+--------------------------+------------------+----------------+
-| Vec      | Vec<T>                   | .push(elem)      | Ordered list   |
-|          |                          |                  | (duplicates OK)|
-+----------+--------------------------+------------------+----------------+
+┌──────────┬──────────────────────────┬──────────────────┬────────────────┐
+│ Kind     │ Rust type                │ Insert method    │ Semantics      │
+├──────────┼──────────────────────────┼──────────────────┼────────────────┤
+│ HashBag  │ hashbag::HashBag<T>      │ .insert(elem)    │ Multiset       │
+│          │                          │                  │ (duplicates OK)│
+├──────────┼──────────────────────────┼──────────────────┼────────────────┤
+│ HashSet  │ std::collections::       │ .insert(elem)    │ Set            │
+│          │   HashSet<T>             │                  │ (no duplicates)│
+├──────────┼──────────────────────────┼──────────────────┼────────────────┤
+│ Vec      │ Vec<T>                   │ .push(elem)      │ Ordered list   │
+│          │                          │                  │ (duplicates OK)│
+└──────────┴──────────────────────────┴──────────────────┴────────────────┘
 ```
 
 ### Generated Collection Parsing
@@ -476,10 +476,10 @@ function types (`InferredType::Arrow` / `MultiArrow`).
 Application syntax is dispatched by the `$` prefix in the prefix handler:
 
 ```
-$int(lam, arg)           -> single application, Int argument
-$bool(lam, arg)          -> single application, Bool argument
-$$int(lam, arg1, arg2)   -> multi application, Int arguments
-$$bool(lam, arg1, arg2)  -> multi application, Bool arguments
+$int(lam, arg)           → single application, Int argument
+$bool(lam, arg)          → single application, Bool argument
+$$int(lam, arg1, arg2)   → multi application, Int arguments
+$$bool(lam, arg1, arg2)  → multi application, Bool arguments
 ```
 
 Each variant is parsed by consuming the prefix token, then parsing the
@@ -529,14 +529,14 @@ functions:
 
 **Token variant naming:**
 
-| Dollar syntax | Token variant | Notes |
-|---|---|---|
-| `$proc` | `Token::DollarProc` | Followed by `(` parsed separately |
-| `$name` | `Token::DollarName` | Followed by `(` parsed separately |
-| `$int` | `Token::DollarInt` | Followed by `(` parsed separately |
-| `$$proc(` | `Token::DdollarProcLp` | Opening paren is part of the token |
-| `$$name(` | `Token::DdollarNameLp` | Opening paren is part of the token |
-| `$$int(` | `Token::DdollarIntLp` | Opening paren is part of the token |
+| Dollar syntax | Token variant          | Notes                              |
+|---------------|------------------------|------------------------------------|
+| `$proc`       | `Token::DollarProc`    | Followed by `(` parsed separately  |
+| `$name`       | `Token::DollarName`    | Followed by `(` parsed separately  |
+| `$int`        | `Token::DollarInt`     | Followed by `(` parsed separately  |
+| `$$proc(`     | `Token::DdollarProcLp` | Opening paren is part of the token |
+| `$$name(`     | `Token::DdollarNameLp` | Opening paren is part of the token |
+| `$$int(`      | `Token::DdollarIntLp`  | Opening paren is part of the token |
 
 Note that `$$cat(` is a **single token** — the opening parenthesis is
 consumed as part of the token, not parsed separately. This avoids
@@ -554,17 +554,17 @@ and returns an `Option<InferredType>` indicating how the binder variable
 is used:
 
 ```
-^x.{x + 1}          -> infer_var_type("x") = Some(Base(VarCategory::Int))
-                     -> match selects LamInt(Scope::new(...))
+^x.{x + 1}          → infer_var_type("x") = Some(Base(VarCategory::Int))
+                    → match selects LamInt(Scope::new(...))
 
-^x.{x && true}      -> infer_var_type("x") = Some(Base(VarCategory::Bool))
-                     -> match selects LamBool(Scope::new(...))
+^x.{x && true}      → infer_var_type("x") = Some(Base(VarCategory::Bool))
+                    → match selects LamBool(Scope::new(...))
 
-^loc.{loc!(init)}    -> infer_var_type("loc") = Some(Base(VarCategory::Name))
-                     -> match selects LamName(Scope::new(...))
+^loc.{loc!(init)}   → infer_var_type("loc") = Some(Base(VarCategory::Name))
+                    → match selects LamName(Scope::new(...))
 
-^f.{f}               -> infer_var_type("f") = Some(Base(VarCategory::Proc))
-                     -> match selects LamProc(Scope::new(...))
+^f.{f}              → infer_var_type("f") = Some(Base(VarCategory::Proc))
+                    → match selects LamProc(Scope::new(...))
 ```
 
 **Why this matters for beta-reduction:** The normalizer's
@@ -674,7 +674,7 @@ function ensures that the same variable name always produces the same
 The most complex rule in RhoCalc is `PInputs`:
 
 ```
-PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
+PInputs . ns:Vec(Name), ^[xs].p:[Name* → Proc]
 |- "(" *zip(ns,xs).*map(|n,x| n "?" x).*sep(",") ")" "." "{" p "}" : Proc
 ```
 
@@ -760,26 +760,26 @@ Input tokens: [LParen, Ident("n"), Question, Ident("x"), Comma,
 1. consume LParen, pos=1
 
 2. Loop iteration 1:
-   parse_Name(pos=1): Ident("n") -> Name::NVar("n"), pos=2
+   parse_Name(pos=1): Ident("n") → Name::NVar("n"), pos=2
    consume Question, pos=3
    expect_ident(pos=3): "x", pos=4
    ns = [NVar("n")], xs = ["x"]
-   peek = Comma -> consume, pos=5
+   peek = Comma → consume, pos=5
 
 3. Loop iteration 2:
-   parse_Name(pos=5): Ident("m") -> Name::NVar("m"), pos=6
+   parse_Name(pos=5): Ident("m") → Name::NVar("m"), pos=6
    consume Question, pos=7
    expect_ident(pos=7): "y", pos=8
    ns = [NVar("n"), NVar("m")], xs = ["x", "y"]
-   peek = RParen -> break
+   peek = RParen → break
 
 4. consume RParen, pos=9
 5. consume Dot, pos=10
 6. consume LBrace, pos=11
 
 7. parse_Proc(pos=11):
-   parse_Proc_prefix: Ident("x") -> PVar("x"), pos=12
-   Pratt loop: peek = Pipe -> NOT an infix operator for Proc (wait,
+   parse_Proc_prefix: Ident("x") → PVar("x"), pos=12
+   Pratt loop: peek = Pipe → NOT an infix operator for Proc (wait,
      actually "|" is not the "+" operator, so infix_bp returns None)
    Actually, "|" is a separator, not an infix operator. The Pratt loop
    breaks, returning PVar("x").
@@ -798,16 +798,16 @@ Input tokens: [LParen, Ident("n"), Question, Ident("x"), Comma,
 
    Steps 1-6 unchanged, pos=11.
    7. parse_Proc(pos=11):
-      parse_Proc_prefix: LBrace -> parse_ppar():
+      parse_Proc_prefix: LBrace → parse_ppar():
         consume LBrace, pos=12
-        Loop: parse_Proc(pos=12) -> PVar("x"), pos=13
-              peek = Pipe -> consume separator, pos=14
-              parse_Proc(pos=14) -> PVar("y"), pos=15
-              peek = RBrace -> break
+        Loop: parse_Proc(pos=12) → PVar("x"), pos=13
+              peek = Pipe → consume separator, pos=14
+              parse_Proc(pos=14) → PVar("y"), pos=15
+              peek = RBrace → break
         ps = HashBag{PVar("x"), PVar("y")}
         consume RBrace, pos=16
         return PPar(HashBag{PVar("x"), PVar("y")})
-      Pratt loop: peek = RBrace -> not infix -> break
+      Pratt loop: peek = RBrace → not infix → break
       return PPar(...)
 
 8. consume RBrace, pos=17

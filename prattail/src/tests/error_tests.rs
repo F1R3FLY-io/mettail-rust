@@ -7,7 +7,7 @@
 
 use crate::{
     generate_parser,
-    CategorySpec, LanguageSpec, RuleSpec, SyntaxItemSpec,
+    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec,
 };
 
 /// Build a simple calculator spec for error tests.
@@ -51,6 +51,9 @@ fn calculator_spec() -> LanguageSpec {
                 &category_names,
             ),
         ],
+        beam_width: BeamWidthConfig::Disabled,
+        log_semiring_model_path: None,
+        dispatch_strategy: DispatchStrategy::Static,
     }
 }
 

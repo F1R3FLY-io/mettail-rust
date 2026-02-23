@@ -90,16 +90,16 @@ Bool::parse("x == y")
 ```
 
 1. Parser sees `Ident("x")` -- ambiguous between `Int` and `Bool`
-2. Saves position, tries `parse_Int` -> succeeds with `IVar(x)`
-3. Checks for `==` operator -> found, confirms cross-category path
+2. Saves position, tries `parse_Int` → succeeds with `IVar(x)`
+3. Checks for `==` operator → found, confirms cross-category path
 4. Parses right side as `Int`
 5. Returns `Bool::Eq(IVar(x), IVar(y))`
 
 But if the input were just `x`:
 1. Parser sees `Ident("x")` -- ambiguous
-2. Saves position, tries `parse_Int` -> succeeds with `IVar(x)`
-3. Checks for `==` -> NOT found
-4. Backtracks, tries `parse_Bool_own` -> returns `BVar(x)`
+2. Saves position, tries `parse_Int` → succeeds with `IVar(x)`
+3. Checks for `==` → NOT found
+4. Backtracks, tries `parse_Bool_own` → returns `BVar(x)`
 
 ### Solutions
 
@@ -446,10 +446,10 @@ $proc(^x.{*(x)}, {})     → *(x)
 ```
 What category does x occupy in the body?
   │
-  ├─ x used as Name (e.g., *(x), x!(q), @(x))  →  $name(^x.{...}, arg)
-  ├─ x used as Proc (e.g., x | y, x itself)     →  $proc(^x.{...}, arg)
-  ├─ x used as Int  (e.g., x + 1)               →  $int(^x.{...}, arg)
-  └─ x used as Bool (e.g., x && true)            →  $bool(^x.{...}, arg)
+  ├── x used as Name (e.g., *(x), x!(q), @(x))  →  $name(^x.{...}, arg)
+  ├── x used as Proc (e.g., x | y, x itself)     →  $proc(^x.{...}, arg)
+  ├── x used as Int  (e.g., x + 1)               →  $int(^x.{...}, arg)
+  └── x used as Bool (e.g., x && true)            →  $bool(^x.{...}, arg)
 ```
 
 ### Diagnostic
@@ -460,22 +460,22 @@ To diagnose a non-reducing dollar application:
 1. **Identify the binder's domain.** Check what category position `x` occupies
    in the body by examining the grammar rules:
 
-   | Rule | Position | Category |
-   |---|---|---|
-   | `PDrop . n:Name \|- "*" "(" n ")" : Proc` | `n` | **Name** |
-   | `POutput . n:Name, q:Proc \|- n "!" "(" q ")" : Proc` | `n` = **Name**, `q` = **Proc** |
-   | `PPar . ps:HashBag(Proc) \|- "{" ps.*sep("\|") "}" : Proc` | `ps` elements = **Proc** |
-   | `Add . a:Int, b:Int \|- a "+" b : Int` | `a`, `b` = **Int** |
+   | Rule                                                       | Position      | Category           |
+   |------------------------------------------------------------|---------------|--------------------|
+   | `PDrop . n:Name \|- "*" "(" n ")" : Proc`                  | `n`           | **Name**           |
+   | `POutput . n:Name, q:Proc \|- n "!" "(" q ")" : Proc`      | `n`, `q`      | **Name**, **Proc** |
+   | `PPar . ps:HashBag(Proc) \|- "{" ps.*sep("\|") "}" : Proc` | `ps` elements | **Proc**           |
+   | `Add . a:Int, b:Int \|- a "+" b : Int`                     | `a`, `b`      | **Int**            |
 
 2. **Match the dollar prefix.** The dollar prefix must create an `Apply{Domain}`
    that matches the `Lam{Domain}` variant produced by inference:
 
-   | Inferred Domain | Lambda Variant | Required Dollar Prefix | Application Variant |
-   |---|---|---|---|
-   | `VarCategory::Name` | `LamName` | `$name` | `ApplyName` |
-   | `VarCategory::Proc` | `LamProc` | `$proc` | `ApplyProc` |
-   | `VarCategory::Int` | `LamInt` | `$int` | `ApplyInt` |
-   | `VarCategory::Bool` | `LamBool` | `$bool` | `ApplyBool` |
+   | Inferred Domain     | Lambda Variant | Required Dollar Prefix | Application Variant |
+   |---------------------|----------------|------------------------|---------------------|
+   | `VarCategory::Name` | `LamName`      | `$name`                | `ApplyName`         |
+   | `VarCategory::Proc` | `LamProc`      | `$proc`                | `ApplyProc`         |
+   | `VarCategory::Int`  | `LamInt`       | `$int`                 | `ApplyInt`          |
+   | `VarCategory::Bool` | `LamBool`      | `$bool`                | `ApplyBool`         |
 
 3. **If the prefix mismatches the inferred domain**, the normalizer receives
    (e.g.) `ApplyProc(LamName(scope), arg)` and returns the term un-reduced.

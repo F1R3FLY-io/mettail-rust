@@ -7,7 +7,10 @@ pub mod codegen;
 pub mod minimize;
 pub mod nfa;
 pub mod partition;
+pub mod semiring;
 pub mod subset;
+
+use semiring::{Semiring, TropicalWeight};
 
 /// Identifier for an automaton state.
 pub type StateId = u32;
@@ -110,6 +113,12 @@ pub struct NfaState {
     pub epsilon: Vec<StateId>,
     /// If this is an accepting state, which token kind it produces.
     pub accept: Option<TokenKind>,
+    /// Tropical weight for this accepting state.
+    ///
+    /// Derived from `TokenKind::priority()` via `TropicalWeight::from_priority()`.
+    /// Lower weight = higher priority. Non-accepting states have `TropicalWeight::zero()`
+    /// (infinity / unreachable).
+    pub weight: TropicalWeight,
 }
 
 impl NfaState {
@@ -119,15 +128,18 @@ impl NfaState {
             transitions: Vec::new(),
             epsilon: Vec::new(),
             accept: None,
+            weight: TropicalWeight::zero(),
         }
     }
 
-    /// Create a new accepting NFA state.
+    /// Create a new accepting NFA state with weight derived from the token kind's priority.
     pub fn accepting(kind: TokenKind) -> Self {
+        let weight = TropicalWeight::from_priority(kind.priority());
         NfaState {
             transitions: Vec::new(),
             epsilon: Vec::new(),
             accept: Some(kind),
+            weight,
         }
     }
 }
@@ -191,6 +203,12 @@ pub struct DfaState {
     pub transitions: Vec<StateId>,
     /// If this is an accepting state, which token kind it produces.
     pub accept: Option<TokenKind>,
+    /// Tropical weight for this accepting state.
+    ///
+    /// Inherits from the highest-priority NFA accept state during subset
+    /// construction. Lower weight = higher priority.
+    /// Non-accepting states have `TropicalWeight::zero()` (infinity).
+    pub weight: TropicalWeight,
 }
 
 impl DfaState {
@@ -199,6 +217,7 @@ impl DfaState {
         DfaState {
             transitions: vec![DEAD_STATE; num_classes],
             accept: None,
+            weight: TropicalWeight::zero(),
         }
     }
 }

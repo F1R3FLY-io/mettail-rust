@@ -17,10 +17,10 @@ concrete syntax tree (CST). Two broad phases are involved:
 ```
   Source text           Tokens              AST / CST
  ┌───────────┐      ┌──────────┐      ┌──────────────┐
- │ "3 + 4*5" │─────>│ INT PLUS │─────>│     Add      │
- │           │ Lex  │ INT STAR │ Parse│    / \       │
+ │ "3 + 4*5" │─────→│ INT PLUS │─────→│     Add      │
+ │           │ Lex  │ INT STAR │ Parse│    ╱ ╲       │
  │           │      │ INT      │      │   3  Mul     │
- └───────────┘      └──────────┘      │      / \     │
+ └───────────┘      └──────────┘      │      ╱ ╲     │
                                       │     4   5    │
                                       └──────────────┘
 ```
@@ -47,9 +47,9 @@ A context-free grammar `G = (V, T, P, S)` consists of:
 
 - `V`: a finite set of nonterminal symbols
 - `T`: a finite set of terminal symbols
-- `P`: a finite set of production rules `A -> alpha`, where `A in V` and
-  `alpha` is a string over `V union T`
-- `S in V`: the start symbol
+- `P`: a finite set of production rules `A → α`, where `A` ∈ `V` and
+  `α` is a string over `V` ∪ `T`
+- `S` ∈ `V`: the start symbol
 
 CFGs generate **context-free languages** (CFL), recognized by pushdown
 automata. Most programming language syntaxes are specified as CFGs (or
@@ -66,8 +66,8 @@ with an _ordered_ choice `/`. Given `A <- e1 / e2`, the PEG parser tries `e1`
 first; only if `e1` fails does it try `e2`.
 
 ```
-  CFG:  Expr -> Expr "+" Term | Term        (ambiguous in isolation)
-  PEG:  Expr <- Expr "+" Term / Term        (ordered: try "+" first)
+  CFG:  Expr → Expr "+" Term | Term         (ambiguous in isolation)
+  PEG:  Expr ← Expr "+" Term / Term         (ordered: try "+" first)
 ```
 
 **Advantages of PEG:**
@@ -157,9 +157,9 @@ produce **L**eftmost derivation, with `k` lookahead tokens.
 
 **LL(1)** is the most common restriction: one token of lookahead. LL(1) grammars
 must satisfy:
-1. For any nonterminal `A` with alternatives `A -> alpha | beta`,
-   `FIRST(alpha)` and `FIRST(beta)` must be disjoint.
-2. If `epsilon in FIRST(alpha)`, then `FIRST(beta)` and `FOLLOW(A)` must
+1. For any nonterminal `A` with alternatives `A → α | β`,
+   `FIRST(α)` and `FIRST(β)` must be disjoint.
+2. If `ε ∈ FIRST(α)`, then `FIRST(β)` and `FOLLOW(A)` must
    be disjoint.
 
 **Strengths:**
@@ -179,9 +179,9 @@ Instead of a fixed `k`, the parser uses a decision automaton (essentially a
 small DFA) at each decision point to look ahead as far as needed.
 
 ```
-  LL(1):   peek 1 token  -->  decision
-  LL(k):   peek k tokens -->  decision
-  LL(*):   run DFA on token stream --> decision
+  LL(1):   peek 1 token  ──→  decision
+  LL(k):   peek k tokens ──→  decision
+  LL(*):   run DFA on token stream ──→ decision
   ALL(*):  run DFA, using full parser as subroutine on ambiguity
 ```
 
@@ -209,18 +209,18 @@ LL(k) parsers.
   Stack                 Input         Action
   ─────────────────────────────────────────────
   $                     3 + 4 * 5 $   Shift
-  $ 3                     + 4 * 5 $   Reduce: F -> int
-  $ F                     + 4 * 5 $   Reduce: T -> F
-  $ T                     + 4 * 5 $   Reduce: E -> T
+  $ 3                     + 4 * 5 $   Reduce: F → int
+  $ F                     + 4 * 5 $   Reduce: T → F
+  $ T                     + 4 * 5 $   Reduce: E → T
   $ E                     + 4 * 5 $   Shift
   $ E +                     4 * 5 $   Shift
-  $ E + 4                     * 5 $   Reduce: F -> int
-  $ E + F                     * 5 $   Reduce: T -> F
+  $ E + 4                     * 5 $   Reduce: F → int
+  $ E + F                     * 5 $   Reduce: T → F
   $ E + T                     * 5 $   Shift (prec: * > +)
   $ E + T *                     5 $   Shift
-  $ E + T * 5                     $   Reduce: F -> int
-  $ E + T * F                     $   Reduce: T -> T * F
-  $ E + T                         $   Reduce: E -> E + T
+  $ E + T * 5                     $   Reduce: F → int
+  $ E + T * F                     $   Reduce: T → T * F
+  $ E + T                         $   Reduce: E → E + T
   $ E                             $   Accept
 ```
 
@@ -231,10 +231,10 @@ The major LR variants are:
   │ Variant   │ Description                                      │
   ├───────────┼──────────────────────────────────────────────────┤
   │ LR(0)     │ No lookahead; very restricted                    │
-  │ SLR(1)    │ Uses FOLLOW sets for lookahead; simple tables     │
+  │ SLR(1)    │ Uses FOLLOW sets for lookahead; simple tables    │
   │ LALR(1)   │ Merges LR(1) states with same core; practical    │
-  │ LR(1)     │ Full 1-token lookahead; largest tables            │
-  │ GLR       │ Handles all CFGs; forks on conflicts              │
+  │ LR(1)     │ Full 1-token lookahead; largest tables           │
+  │ GLR       │ Handles all CFGs; forks on conflicts             │
   └───────────┴──────────────────────────────────────────────────┘
 ```
 
@@ -302,7 +302,7 @@ assigned to each operator that controls how tightly it binds to its operands.
 
 ```
   ┌───────────────────────────────────────────────────────────┐
-  │              Pratt Parsing = RD + Binding Power            │
+  │              Pratt Parsing = RD + Binding Power           │
   │                                                           │
   │  From Recursive Descent:                                  │
   │    - Top-down structure                                   │
@@ -362,38 +362,38 @@ PraTTaIL is a **parser generator** that combines:
 
 ```
   language! { ... }
-         |
-         v
+         │
+         ▼
    ┌─────────────────────────────────────────────────────────┐
    │                 PraTTaIL Pipeline                       │
    │                                                         │
    │  Phase 1: Lexer generation                              │
    │  ┌─────────────────────────────────────────────────┐    │
-   │  │ Terminals -> NFA (Thompson's)                   │    │
-   │  │          -> Equiv Classes (alphabet partition)  │    │
-   │  │          -> DFA (subset construction)           │    │
-   │  │          -> Minimized DFA (Hopcroft)            │    │
-   │  │          -> Rust code (match arms or table)     │    │
+   │  │ Terminals → NFA (Thompson's)                    │    │
+   │  │          → Equiv Classes (alphabet partition)   │    │
+   │  │          → DFA (subset construction)            │    │
+   │  │          → Minimized DFA (Hopcroft)             │    │
+   │  │          → Rust code (match arms or table)      │    │
    │  └─────────────────────────────────────────────────┘    │
    │                                                         │
    │  Phase 2: Binding power analysis                        │
    │  ┌─────────────────────────────────────────────────┐    │
-   │  │ Infix rules -> BP pairs (left_bp, right_bp)     │    │
-   │  │             -> BP lookup table per category     │    │
-   │  │             -> AST constructor dispatch         │    │
+   │  │ Infix rules → BP pairs (left_bp, right_bp)      │    │
+   │  │             → BP lookup table per category      │    │
+   │  │             → AST constructor dispatch          │    │
    │  └─────────────────────────────────────────────────┘    │
    │                                                         │
    │  Phase 3: Prediction engine                             │
    │  ┌─────────────────────────────────────────────────┐    │
-   │  │ Rules -> FIRST sets (fixed-point iteration)     │    │
-   │  │       -> Dispatch tables per category           │    │
-   │  │       -> Cross-category overlap analysis        │    │
+   │  │ Rules → FIRST sets (fixed-point iteration)      │    │
+   │  │       → Dispatch tables per category            │    │
+   │  │       → Cross-category overlap analysis         │    │
    │  └─────────────────────────────────────────────────┘    │
    │                                                         │
    │  Phase 4: RD handler generation                         │
    │  ┌─────────────────────────────────────────────────┐    │
-   │  │ Structural rules -> parse functions             │    │
-   │  │                  -> match arms for dispatch     │    │
+   │  │ Structural rules → parse functions              │    │
+   │  │                  → match arms for dispatch      │    │
    │  └─────────────────────────────────────────────────┘    │
    │                                                         │
    │  Phase 5: Pratt parser generation                       │
@@ -401,15 +401,15 @@ PraTTaIL is a **parser generator** that combines:
    │  │ Per category:                                   │    │
    │  │   parse_<Cat>(tokens, pos, min_bp)  -- loop     │    │
    │  │   parse_<Cat>_prefix(tokens, pos)   -- nud      │    │
-   │  │   infix_bp(token) -> (left, right)  -- led bp   │    │
-   │  │   make_infix(op, lhs, rhs) -> Cat   -- builder  │    │
+   │  │   infix_bp(token) → (left, right)   -- led bp   │    │
+   │  │   make_infix(op, lhs, rhs) → Cat    -- builder  │    │
    │  └─────────────────────────────────────────────────┘    │
    │                                                         │
    │  Phase 6: Cross-category dispatch                       │
    │  Phase 7: Assembly                                      │
    └─────────────────────────────────────────────────────────┘
-         |
-         v
+         │
+         ▼
     TokenStream (Rust source code)
 ```
 
@@ -478,7 +478,7 @@ Rust. Four fundamental issues arose:
    (parallel composition) that are syntactically identical to other uses. LALR(1)
    produces shift-reduce conflicts requiring grammar refactoring.
 
-2. **Cross-category expressions.** Expressions like `Int "==" Int -> Bool`
+2. **Cross-category expressions.** Expressions like `Int "==" Int → Bool`
    mix categories. LALR(1) requires duplicated or factored productions that
    inflate the grammar.
 
@@ -556,22 +556,23 @@ code quality (how readable/debuggable is the generated or written parser).
 
 ```
   Code Quality (readability, debuggability, error messages)
-       ^
-       |
-  High |  Hand-written RD          PraTTaIL
-       |     (GCC, rustc)        (Pratt + RD + automata)
-       |
-       |                 ANTLR
-       |                (ALL(*))
-       |
-  Med  |   tree-sitter           LALRPOP
-       |   (GLR-ish)             (LALR(1))
-       |
-       |        pest                yacc / bison
-       |        (PEG)               (LALR(1))
-  Low  |
-       |
-       +──────────────────────────────────────────> Generality
+
+       ▲
+       │
+  High │     Hand-written RD                     PraTTaIL
+       │       (GCC, rustc)           (Pratt + RD + automata)
+       │
+       │                ANTLR
+       │               (ALL(*))
+       │
+  Med  │                        LALRPOP     tree-sitter
+       │                        (LR(1))     (GLR-ish)
+       │
+       │        pest       yacc / bison
+       │        (PEG)      (LALR(1))
+  Low  │
+       │
+       └──────────────────────────────────────────────────→ Generality
                  LL(1)    LALR(1)    LR(1)   GLR/Earley
 ```
 
@@ -584,18 +585,18 @@ good error messages.
 
 ## 12. Summary
 
-| Concern | PraTTaIL's Approach |
-|---|---|
-| Lexing | Automata pipeline: NFA -> DFA -> minimize -> codegen |
-| Expression parsing | Pratt loop with binding power pairs |
-| Structural syntax | Generated recursive descent handlers |
-| Parse dispatch | FIRST set prediction + dispatch tables |
-| Cross-category | Overlap analysis + backtrack-when-needed |
-| Precedence | Automatic from rule declaration order |
-| Associativity | Left/right via BP pair asymmetry |
-| Error reporting | Point-of-mismatch detection |
-| Output | Typed Rust AST (no generic CST) |
-| Complexity | O(n) time, O(n) space |
+| Concern            | PraTTaIL's Approach                                  |
+|--------------------|------------------------------------------------------|
+| Lexing             | Automata pipeline: NFA → DFA → minimize → codegen |
+| Expression parsing | Pratt loop with binding power pairs                  |
+| Structural syntax  | Generated recursive descent handlers                 |
+| Parse dispatch     | FIRST set prediction + dispatch tables               |
+| Cross-category     | Overlap analysis + backtrack-when-needed             |
+| Precedence         | Automatic from rule declaration order                |
+| Associativity      | Left/right via BP pair asymmetry                     |
+| Error reporting    | Point-of-mismatch detection                          |
+| Output             | Typed Rust AST (no generic CST)                      |
+| Complexity         | O(n) time, O(n) space                                |
 
 The key insight is that no single parsing technique optimally addresses all
 concerns. By composing Pratt parsing (for expressions), recursive descent

@@ -34,7 +34,7 @@ This language has:
 - Two categories (`Int`, `Bool`), with `Int` as primary
 - Two same-category infix operators (`+`, `*`) on `Int`
 - One prefix operator (`not`) on `Bool`
-- One cross-category rule (`==`: `Int` x `Int` -> `Bool`)
+- One cross-category rule (`==`: `Int` x `Int` → `Bool`)
 - Native types triggering integer literals and boolean literals
 
 ---
@@ -99,15 +99,17 @@ sites.
 
 **Naming convention** (`terminal_to_variant_name` in `automata/codegen.rs`):
 
-| Terminal | Variant | Rule |
-|---|---|---|
-| `+` | `Plus` | Single-char operator lookup table |
-| `*` | `Star` | Single-char operator lookup table |
-| `==` | `EqEq` | Multi-char operator lookup table |
-| `not` | `KwNot` | Alphanumeric -> `Kw` + capitalized |
-| `error` | `KwError` | Alphanumeric -> `Kw` + capitalized |
-| `(` | `LParen` | Delimiter lookup table |
-| `{}` | `EmptyBraces` | Special multi-char lookup table |
+┌──────────┬───────────────┬────────────────────────────────────┐
+│ Terminal │ Variant       │ Rule                               │
+├──────────┼───────────────┼────────────────────────────────────┤
+│ `+`      │ `Plus`        │ Single-char operator lookup table  │
+│ `*`      │ `Star`        │ Single-char operator lookup table  │
+│ `==`     │ `EqEq`        │ Multi-char operator lookup table   │
+│ `not`    │ `KwNot`       │ Alphanumeric → `Kw` + capitalized  │
+│ `error`  │ `KwError`     │ Alphanumeric → `Kw` + capitalized  │
+│ `(`      │ `LParen`      │ Delimiter lookup table             │
+│ `{}`     │ `EmptyBraces` │ Special multi-char lookup table    │
+└──────────┴───────────────┴────────────────────────────────────┘
 
 ---
 
@@ -778,36 +780,38 @@ impl Bool {
 
 ## Generated Code Size Estimate
 
-| Component | Approximate Lines |
-|---|---|
-| Token<'a> enum | ~25 |
-| Span, Position, Range structs | ~15 |
-| ParseError enum | ~25 |
-| CHAR_CLASS table | ~20 |
-| Whitespace helper | ~3 |
-| lex<'a>() function | ~45 |
-| dfa_next() | ~40 |
-| accept_token<'a>() | ~15 |
-| Parser helpers (expect, peek) | ~35 |
-| Recovery helpers (sync, rec) | ~40 |
-| infix_bp() (Int) | ~8 |
-| make_infix() (Int) | ~8 |
-| postfix_bp() (if present) | ~8 |
-| make_postfix() (if present) | ~8 |
-| mixfix_bp() (if present) | ~8 |
-| handle_mixfix() (if present) | ~15 |
-| parse_Int() | ~30 |
-| parse_Int_prefix() | ~30 |
-| parse_Int_recovering() | ~35 |
-| is_sync_Int() | ~8 |
-| parse_Bool() with dispatch | ~35 |
-| parse_Bool_own() | ~10 |
-| parse_Bool_prefix() | ~30 |
-| parse_Bool_recovering() | ~35 |
-| is_sync_Bool() | ~8 |
-| parse_not() | ~8 |
-| Parse entry points (4 x 2 categories) | ~80 |
-| **Total (TypedCalc)** | **~700** |
+┌───────────────────────────────────────┬───────────────────┐
+│ Component                             │ Approximate Lines │
+├───────────────────────────────────────┼───────────────────┤
+│ Token<'a> enum                        │ ~25               │
+│ Span, Position, Range structs         │ ~15               │
+│ ParseError enum                       │ ~25               │
+│ CHAR_CLASS table                      │ ~20               │
+│ Whitespace helper                     │ ~3                │
+│ lex<'a>() function                    │ ~45               │
+│ dfa_next()                            │ ~40               │
+│ accept_token<'a>()                    │ ~15               │
+│ Parser helpers (expect, peek)         │ ~35               │
+│ Recovery helpers (sync, rec)          │ ~40               │
+│ infix_bp() (Int)                      │ ~8                │
+│ make_infix() (Int)                    │ ~8                │
+│ postfix_bp() (if present)             │ ~8                │
+│ make_postfix() (if present)           │ ~8                │
+│ mixfix_bp() (if present)              │ ~8                │
+│ handle_mixfix() (if present)          │ ~15               │
+│ parse_Int()                           │ ~30               │
+│ parse_Int_prefix()                    │ ~30               │
+│ parse_Int_recovering()                │ ~35               │
+│ is_sync_Int()                         │ ~8                │
+│ parse_Bool() with dispatch            │ ~35               │
+│ parse_Bool_own()                      │ ~10               │
+│ parse_Bool_prefix()                   │ ~30               │
+│ parse_Bool_recovering()               │ ~35               │
+│ is_sync_Bool()                        │ ~8                │
+│ parse_not()                           │ ~8                │
+│ Parse entry points (4 x 2 categories) │ ~80               │
+│ **Total (TypedCalc)**                 │ **~700**          │
+└───────────────────────────────────────┴───────────────────┘
 
 The generated code is built entirely as a `String` buffer using `write!` formatting,
 then parsed once via `str::parse::<TokenStream>()`. This string-based codegen approach
@@ -977,11 +981,13 @@ fn parse_ppar<'a>(tokens: &[(Token<'a>, Span)], pos: &mut usize) -> Result<Proc,
 
 The collection init and insert method are selected by `CollectionKind`:
 
-| Kind | Init Expression | Insert Method |
-|---|---|---|
-| `HashBag` | `mettail_runtime::HashBag::new()` | `.insert(elem)` |
-| `HashSet` | `std::collections::HashSet::new()` | `.insert(elem)` |
-| `Vec` | `Vec::new()` | `.push(elem)` |
+┌───────────┬────────────────────────────────────┬─────────────────┐
+│ Kind      │ Init Expression                    │ Insert Method   │
+├───────────┼────────────────────────────────────┼─────────────────┤
+│ `HashBag` │ `mettail_runtime::HashBag::new()`  │ `.insert(elem)` │
+│ `HashSet` │ `std::collections::HashSet::new()` │ `.insert(elem)` │
+│ `Vec`     │ `Vec::new()`                       │ `.push(elem)`   │
+└───────────┴────────────────────────────────────┴─────────────────┘
 
 The loop structure is identical for all collection kinds — only the
 initialization and insertion expressions change.
@@ -996,7 +1002,7 @@ initialization and insertion expressions change.
 
 ```
 lex("3 + x * 2 == 5")
-  -> [(Integer(3), 0..1),
+  → [(Integer(3), 0..1),
       (Plus, 2..3),
       (Ident("x"), 4..5),        // &str borrowed from input, no String alloc
       (Star, 6..7),
@@ -1010,30 +1016,30 @@ lex("3 + x * 2 == 5")
 
 ```
 Bool::parse("3 + x * 2 == 5")
-  1. lex -> tokens (zero-copy)
+  1. lex → tokens (zero-copy)
   2. parse_Bool(tokens, pos=0, min_bp=0)
-  3. See Integer(3) -> unique to Int -> cross-category path
+  3. See Integer(3) → unique to Int → cross-category path
   4. parse_Int(tokens, pos=0, min_bp=0)
-     a. prefix: Integer(3) -> NumLit(3), pos=1
+     a. prefix: Integer(3) → NumLit(3), pos=1
      b. infix loop: Plus, l_bp=2 >= 0, consume +, pos=2
      c. parse_Int(tokens, pos=2, min_bp=3)
-        i.  prefix: Ident("x") -> IVar(x), pos=3   // "x".to_string() here
+        i.  prefix: Ident("x") → IVar(x), pos=3   // "x".to_string() here
         ii. infix: Star, l_bp=4 >= 3, consume *, pos=4
         iii. parse_Int(tokens, pos=4, min_bp=5)
-             prefix: Integer(2) -> NumLit(2), pos=5
-             infix: EqEq -> not an Int infix op -> break
+             prefix: Integer(2) → NumLit(2), pos=5
+             infix: EqEq → not an Int infix op → break
              return NumLit(2)
-        iv. make_infix(Star, IVar(x), NumLit(2)) -> Mul(x, 2)
-        v.  infix: EqEq -> not an Int infix op -> break
+        iv. make_infix(Star, IVar(x), NumLit(2)) → Mul(x, 2)
+        v.  infix: EqEq → not an Int infix op → break
         vi. return Mul(x, 2)
-     d. make_infix(Plus, NumLit(3), Mul(x, 2)) -> Add(3, Mul(x, 2))
-     e. infix: EqEq -> not an Int infix op -> break
+     d. make_infix(Plus, NumLit(3), Mul(x, 2)) → Add(3, Mul(x, 2))
+     e. infix: EqEq → not an Int infix op → break
      f. return Add(3, Mul(x, 2))
   5. left = Add(3, Mul(x, 2))
-  6. See EqEq -> expect "==" -> pos=6
+  6. See EqEq → expect "==" → pos=6
   7. parse_Int(tokens, pos=6, min_bp=0)
-     prefix: Integer(5) -> NumLit(5), pos=7
-     no infix -> return NumLit(5)
+     prefix: Integer(5) → NumLit(5), pos=7
+     no infix → return NumLit(5)
   8. right = NumLit(5)
   9. return Bool::Eq(Box::new(Add(3, Mul(x, 2))), Box::new(NumLit(5)))
 ```
@@ -1046,17 +1052,17 @@ Bool::parse("3 + x * 2 == 5")
 
 ```
 Int::parse_recovering("3 + + 5")
-  1. lex -> tokens: [Integer(3), Plus, Plus, Integer(5), Eof]
+  1. lex → tokens: [Integer(3), Plus, Plus, Integer(5), Eof]
   2. parse_Int_recovering(tokens, pos=0, min_bp=0, errors=[])
-  3. prefix: Integer(3) -> NumLit(3), pos=1
+  3. prefix: Integer(3) → NumLit(3), pos=1
   4. infix: Plus, l_bp=2 >= 0, consume +, pos=2
   5. parse_Int_recovering(tokens, pos=2, min_bp=3, errors)
-     a. prefix: Plus at pos=2 -> error! "expected Int expression"
+     a. prefix: Plus at pos=2 → error! "expected Int expression"
      b. errors.push(UnexpectedToken { expected: "Int expression", found: "Plus", ... })
      c. sync_to(tokens, pos, is_sync_Int)
-        Plus is in FOLLOW(Int) (it's an infix op) -> sync stops at pos=2
+        Plus is in FOLLOW(Int) (it's an infix op) → sync stops at pos=2
      d. return None
-  6. rhs = None -> break infix loop
+  6. rhs = None → break infix loop
   7. return Some(NumLit(3)), errors = [UnexpectedToken(...)]
 
 Result: (Some(NumLit(3)), [UnexpectedToken { expected: "Int expression", found: "Plus", ... }])

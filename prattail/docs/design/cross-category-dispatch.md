@@ -57,9 +57,9 @@ which token is at the current position:
 
 ```
 parse_Bool sees:
-  "true"    -> definitely a Bool expression (BoolLit)
-  "42"      -> definitely NOT a Bool; must be Int (for Eq rule)
-  "x"       -> ambiguous! Could be Bool variable OR Int variable (for Eq)
+  "true"    → definitely a Bool expression (BoolLit)
+  "42"      → definitely NOT a Bool; must be Int (for Eq rule)
+  "x"       → ambiguous! Could be Bool variable OR Int variable (for Eq)
 ```
 
 ---
@@ -86,7 +86,7 @@ the parser deterministically routes to the source parser:
 ```
 parse_Proc sees Token::Integer(42):
   Integer is in FIRST(Int) but not in FIRST(Proc) natively
-  -> Deterministic cast path:
+  → Deterministic cast path:
      let val = parse_Int(tokens, pos, 0)?;
      Ok(Proc::CastInt(Box::new(val)))
 ```
@@ -142,7 +142,7 @@ Cross-category rules are mediated by an operator token. The parser:
 4. Constructs the cross-category result.
 
 ```
-parse_Bool for Eq rule (Int "==" Int -> Bool):
+parse_Bool for Eq rule (Int "==" Int → Bool):
 
   left  = parse_Int(tokens, pos, 0)?;
   expect_token(tokens, pos, Token::EqEq, "==")?;
@@ -208,19 +208,19 @@ For each pair of categories (source, target), the overlap analysis
 produces three disjoint token sets:
 
 ```
-+---------------------+----------------------------------------------+
-| Set                 | Dispatch behavior                            |
-+---------------------+----------------------------------------------+
-| unique_to_source    | Deterministic: cross-category path.          |
-|                     | No backtracking needed.                      |
-+---------------------+----------------------------------------------+
-| unique_to_target    | Deterministic: own-category path.            |
-|                     | No backtracking needed.                      |
-+---------------------+----------------------------------------------+
-| ambiguous_tokens    | Non-deterministic: save position, try        |
-| (intersection)      | cross-category first, backtrack if operator  |
-|                     | not found, then try own-category.            |
-+---------------------+----------------------------------------------+
+┌─────────────────────┬──────────────────────────────────────────────┐
+│ Set                 │ Dispatch behavior                            │
+├─────────────────────┼──────────────────────────────────────────────┤
+│ unique_to_source    │ Deterministic: cross-category path.          │
+│                     │ No backtracking needed.                      │
+├─────────────────────┼──────────────────────────────────────────────┤
+│ unique_to_target    │ Deterministic: own-category path.            │
+│                     │ No backtracking needed.                      │
+├─────────────────────┼──────────────────────────────────────────────┤
+│ ambiguous_tokens    │ Non-deterministic: save position, try        │
+│ (intersection)      │ cross-category first, backtrack if operator  │
+│                     │ not found, then try own-category.            │
+└─────────────────────┴──────────────────────────────────────────────┘
 ```
 
 ### Deterministic vs Save/Restore
@@ -232,9 +232,9 @@ grammar:
 FIRST(Int)  = {Ident, Integer, Pipe, LParen}
 FIRST(Bool) = {Ident, KwTrue, KwFalse, KwNot}
 
-unique_to_Int:  {Integer, Pipe}         -> 2 tokens, deterministic
-unique_to_Bool: {KwTrue, KwFalse, KwNot} -> 3 tokens, deterministic
-ambiguous:      {Ident, LParen}          -> 2 tokens, save/restore
+unique_to_Int:  {Integer, Pipe}         → 2 tokens, deterministic
+unique_to_Bool: {KwTrue, KwFalse, KwNot} → 3 tokens, deterministic
+ambiguous:      {Ident, LParen}          → 2 tokens, save/restore
 ```
 
 Only 2 out of 7 distinct tokens require backtracking. The generated code
@@ -263,26 +263,26 @@ a two-function structure:
 
 ```
 parse_Bool(tokens, pos, min_bp)           -- dispatch wrapper
-    |
-    +-- Token analysis (FIRST set overlap)
-    |   |
-    |   +-- unique_to_source  -> cross-category path
-    |   +-- unique_to_target  -> parse_Bool_own()
-    |   +-- ambiguous         -> save/restore, then parse_Bool_own()
-    |   +-- default           -> parse_Bool_own()
-    |
-    v
+    │
+    ├── Token analysis (FIRST set overlap)
+    │   │
+    │   ├── unique_to_source  → cross-category path
+    │   ├── unique_to_target  → parse_Bool_own()
+    │   ├── ambiguous         → save/restore, then parse_Bool_own()
+    │   └── default           → parse_Bool_own()
+    │
+    ▼
 
 parse_Bool_own(tokens, pos)               -- original Pratt parser
-    |
-    +-- parse_Bool_prefix(tokens, pos)
-    |       |
-    |       +-- KwTrue/KwFalse -> BoolLit
-    |       +-- KwNot          -> Not
-    |       +-- Ident          -> BVar
-    |       +-- LParen         -> grouping
-    |
-    +-- Pratt infix loop (&&, ==, ...)
+    │
+    ├── parse_Bool_prefix(tokens, pos)
+    │       │
+    │       ├── KwTrue/KwFalse → BoolLit
+    │       ├── KwNot          → Not
+    │       ├── Ident          → BVar
+    │       └── LParen         → grouping
+    │
+    └── Pratt infix loop (&&, ==, ...)
 ```
 
 ### Function Renaming
@@ -336,7 +336,7 @@ The `generate_category_dispatch` function follows this algorithm:
 ```
 INPUT:
   category:             "Bool"
-  cross_category_rules: [Eq(Int=="Int->Bool), EqStr(Str=="Str->Bool)]
+  cross_category_rules: [Eq(Int=="Int→Bool), EqStr(Str=="Str→Bool)]
   cast_rules:           []
   overlaps:             {(Int,Bool): overlap1, (Str,Bool): overlap2}
   first_sets:           {Int: {...}, Bool: {...}, Str: {...}}
@@ -349,7 +349,7 @@ ALGORITHM:
     source_first = first_sets[cross_rule.source_category]
     target_first = first_sets[category]
 
-    // Step 1a: Tokens unique to source -> deterministic cross path
+    // Step 1a: Tokens unique to source → deterministic cross path
     unique_tokens = source_first MINUS target_first
     For each token in unique_tokens:
       Generate arm:
@@ -360,7 +360,7 @@ ALGORITHM:
           Ok(CATEGORY::LABEL(Box::new(left), Box::new(right)))
         }
 
-    // Step 1b: Ambiguous tokens -> save/restore
+    // Step 1b: Ambiguous tokens → save/restore
     overlap = overlaps[(source, category)]
     For each token in overlap.ambiguous_tokens:
       Generate arm:
@@ -413,9 +413,9 @@ ALGORITHM:
 types: Int (i32), Bool (bool), Str (str)
 
 Bool rules:
-  Eq      . a:Int,  b:Int  |- a "==" b : Bool   (cross: Int -> Bool)
+  Eq      . a:Int,  b:Int  |- a "==" b : Bool   (cross: Int → Bool)
   EqBool  . a:Bool, b:Bool |- a "==" b : Bool   (same-cat infix)
-  EqStr   . a:Str,  b:Str  |- a "==" b : Bool   (cross: Str -> Bool)
+  EqStr   . a:Str,  b:Str  |- a "==" b : Bool   (cross: Str → Bool)
   Comp    . a:Bool, b:Bool |- a "&&" b : Bool   (same-cat infix)
   Not     . a:Bool         |- "not" a  : Bool   (prefix)
   BoolLit : Bool   (literal: true/false)
@@ -569,11 +569,11 @@ Tokens: [Integer(3), EqEq, Integer(4), Eof]
 parse_Bool(pos=0):
   match Integer(3):
     saved = 0
-    parse_Int(pos=0): Integer(3) -> NumLit(3), pos=1
-      Pratt loop: EqEq is not Int infix -> break
-    peek(pos=1) = EqEq -> match!
+    parse_Int(pos=0): Integer(3) → NumLit(3), pos=1
+      Pratt loop: EqEq is not Int infix → break
+    peek(pos=1) = EqEq → match!
     pos=2
-    parse_Int(pos=2): Integer(4) -> NumLit(4), pos=3
+    parse_Int(pos=2): Integer(4) → NumLit(4), pos=3
     return Bool::Eq(Box(NumLit(3)), Box(NumLit(4)))
 ```
 
@@ -584,20 +584,20 @@ Tokens: [Boolean(true), AmpAmp, Boolean(false), Eof]
 
 parse_Bool(pos=0):
   match Boolean(true):
-    default arm -> parse_Bool_own(pos=0)
-      parse_Bool_prefix: Boolean(true) -> BoolLit(true), pos=1
+    default arm → parse_Bool_own(pos=0)
+      parse_Bool_prefix: Boolean(true) → BoolLit(true), pos=1
       Pratt loop: AmpAmp, infix_bp = Some((2,3))
-        2 >= 0 -> continue
+        2 >= 0 → continue
         consume AmpAmp, pos=2
         parse_Bool(pos=2, min_bp=3):
           match Boolean(false):
-            default -> parse_Bool_own:
+            default → parse_Bool_own:
               BoolLit(false), pos=3
-              Pratt loop: Eof -> break
+              Pratt loop: Eof → break
         rhs = BoolLit(false)
         make_infix(AmpAmp, BoolLit(true), BoolLit(false))
           = Comp(BoolLit(true), BoolLit(false))
-      Pratt loop: Eof -> break
+      Pratt loop: Eof → break
     return Comp(BoolLit(true), BoolLit(false))
 ```
 
@@ -611,7 +611,7 @@ parse_Bool(pos=0):
     saved = 0
     Try Int path:
       parse_Int(pos=0): IVar("x"), pos=1
-      peek(pos=1) = EqEq -> match!
+      peek(pos=1) = EqEq → match!
       pos=2
       parse_Int(pos=2): IVar("y"), pos=3
       return Bool::Eq(Box(IVar("x")), Box(IVar("y")))
@@ -629,37 +629,37 @@ parse_Bool(pos=0):
     saved = 0
     Try Int path:
       parse_Int(pos=0): IVar("b"), pos=1
-      peek(pos=1) = AmpAmp (not EqEq) -> no match
+      peek(pos=1) = AmpAmp (not EqEq) → no match
     pos = 0 (backtrack)
     Try Str path:
       parse_Str(pos=0): SVar("b"), pos=1
-      peek(pos=1) = AmpAmp (not EqEq) -> no match
+      peek(pos=1) = AmpAmp (not EqEq) → no match
     pos = 0 (backtrack)
     parse_Bool_own(pos=0):
-      parse_Bool_prefix: Ident("b") -> BVar("b"), pos=1
+      parse_Bool_prefix: Ident("b") → BVar("b"), pos=1
       Pratt loop: AmpAmp, infix_bp = Some((2,3))
-        2 >= 0 -> continue
+        2 >= 0 → continue
         consume AmpAmp, pos=2
         parse_Bool(pos=2, min_bp=3):
           match LParen:
             (same ambiguous logic, but eventually reaches own-category)
             parse_Bool_own(pos=2):
-              LParen -> consume, pos=3
+              LParen → consume, pos=3
               parse_Bool(pos=3, min_bp=0):
                 match Ident("x"):
                   Try Int path:
                     parse_Int: IVar("x"), pos=4
-                    peek = EqEq -> match!
+                    peek = EqEq → match!
                     consume EqEq, pos=5
                     parse_Int: IVar("y"), pos=6
                     return Bool::Eq(IVar("x"), IVar("y"))
               expect RParen, pos=7
               return Eq(IVar("x"), IVar("y"))
-            Pratt loop: Eof -> break (min_bp=3)
+            Pratt loop: Eof → break (min_bp=3)
           return Eq(IVar("x"), IVar("y"))
         make_infix(AmpAmp, BVar("b"), Eq(IVar("x"), IVar("y")))
           = Comp(BVar("b"), Eq(IVar("x"), IVar("y")))
-      Pratt loop: Eof -> break
+      Pratt loop: Eof → break
     return Comp(BVar("b"), Eq(IVar("x"), IVar("y")))
 ```
 

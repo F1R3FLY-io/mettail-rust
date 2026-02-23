@@ -86,54 +86,54 @@ The automata approach solves all three problems:
   TerminalPatterns          BuiltinNeeds
   ["+", "*", "{}",          {ident: true,
    "error", "==",            integer: true,
-   "(", ")", ...]             boolean: false, ...}
-        |                        |
-        +----------+-------------+
-                   |
-                   v
-            +-------------+
-            | build_nfa() |      Aho-Corasick trie + Thompson's
-            +------+------+      O(sum of terminal lengths)
-                   |
-                   v
+   "(", ")", ...]            boolean: false, ...}
+        │                        │
+        └──────────┬─────────────┘
+                   │
+                   │
+            ┌──────▼──────┐
+            │ build_nfa() │      Aho-Corasick trie + Thompson's
+            └──────┬──────┘      O(sum of terminal lengths)
+                   │
+                   │
                NFA (states, transitions, epsilon edges)
-                   |
-                   v
-   +-------------------------------+
-   | compute_equivalence_classes() |  Alphabet partitioning
-   +---------------+---------------+  O(256 * |states| * |transitions|)
-                   |
-                   v
+                   │
+                   │
+   ┌───────────────▼───────────────┐
+   │ compute_equivalence_classes() │  Alphabet partitioning
+   └───────────────┬───────────────┘  O(256 * |states| * |transitions|)
+                   │
+                   │
             AlphabetPartition
             (byte_to_class[256], num_classes, representatives)
-                   |
-                   v
-      +------------------------+
-      | subset_construction()  |     NFA -> DFA (powerset)
-      +------------+-----------+     O(2^|NFA states| * num_classes) worst case
-                   |                 O(|DFA states| * num_classes) typical
-                   v
+                   │
+                   │
+      ┌────────────▼───────────┐
+      │ subset_construction()  │     NFA → DFA (powerset)
+      └────────────┬───────────┘     O(2^|NFA states| * num_classes) worst case
+                   │                 O(|DFA states| * num_classes) typical
+                   │
                DFA (states, transitions per equiv class)
-                   |
-                   v
-        +------------------+
-        | minimize_dfa()   |         Hopcroft's algorithm
-        +--------+---------+         O(n log n) on |DFA states|
-                 |
-                 v
-          Minimized DFA
-                 |
-                 v
-   +---------------------------+
-   | generate_lexer_string()   |     String-based code generation
-   +-------------+-------------+     O(|states| * num_classes)
-                 |
-                 v
-           String buffer
-    (Token<'a> enum, Position, Range,
-     ParseError, lex<'a>() function,
-     CHAR_CLASS table, dfa_next/TRANSITIONS,
-     accept_token<'a> match)
+                   │
+                   │
+          ┌────────▼─────────┐
+          │ minimize_dfa()   │         Hopcroft's algorithm
+          └────────┬─────────┘         O(n log n) on |DFA states|
+                   │
+                   │
+            Minimized DFA
+                   │
+                   │
+     ┌─────────────▼─────────────┐
+     │ generate_lexer_string()   │     String-based code generation
+     └─────────────┬─────────────┘     O(|states| * num_classes)
+                   │
+                   ▼
+             String buffer
+      (Token<'a> enum, Position, Range,
+       ParseError, lex<'a>() function,
+       CHAR_CLASS table, dfa_next/TRANSITIONS,
+       accept_token<'a> match)
 ```
 
 ---
@@ -169,37 +169,37 @@ Each terminal pattern becomes a linear chain of states:
 ```
 Fixed terminal "==" (2 characters):
 
-  start --['=']--> s1 --['=']--> accept(Fixed("=="))
+  start ─['=']→ s1 ─['=']→ accept(Fixed("=="))
 
 
 Fixed terminal "=" (1 character):
 
-  start --['=']--> accept(Fixed("="))
+  start ─['=']→ accept(Fixed("="))
 
 
 Identifier pattern [a-zA-Z_][a-zA-Z0-9_]*:
 
-  start --[a-z]--> accept(Ident)
-        --[A-Z]-->    |
-        --['_']-->    |
-                      +--[a-z]--> (self-loop)
-                      +--[A-Z]--> (self-loop)
-                      +--[0-9]--> (self-loop)
-                      +--['_']--> (self-loop)
+  start ─[a-z]→ accept(Ident)
+        ─[A-Z]→    │
+        ─['_']→    │
+                   ├─[a-z]→ (self-loop)
+                   ├─[A-Z]→ (self-loop)
+                   ├─[0-9]→ (self-loop)
+                   └─['_']→ (self-loop)
 
 
 Integer pattern [0-9]+:
 
-  start --[0-9]--> accept(Integer)
-                      |
-                      +--[0-9]--> (self-loop)
+  start ─[0-9]→ accept(Integer)
+                    │
+                    └─[0-9]→ (self-loop)
 
 
 Float pattern [0-9]+\.[0-9]+:
 
-  start --[0-9]--> s1 --['.']--> s2 --[0-9]--> accept(Float)
-                   |                             |
-                   +--[0-9]--> (self-loop)       +--[0-9]--> (self-loop)
+  start ─[0-9]→ s1 ─['.']→ s2 ─[0-9]→ accept(Float)
+                 │                       │
+                 └─[0-9]→ (self-loop)    └─[0-9]→ (self-loop)
 ```
 
 ### Alternation via Epsilon Transitions
@@ -208,19 +208,19 @@ All fragments are combined by adding epsilon transitions from the global
 start state to each fragment's start state:
 
 ```
-                 eps   +-- start_"==" --['=']--> s1 --['=']--> accept(EqEq)
-                +----->|
-                |      +-- start_"="  --['=']--> accept(Eq)
-                |
-  global_start--+--eps--> start_"+"   --['+']--> accept(Plus)
-                |
-                +--eps--> start_ident --[a-zA-Z_]--> accept(Ident)
-                |                                       |
-                |                                       +--[a-zA-Z0-9_]->(loop)
-                |
-                +--eps--> start_int   --[0-9]--> accept(Integer)
-                                                    |
-                                                    +--[0-9]--> (self-loop)
+                 eps   ┌── start_"==" ─['=']→ s1 ─['=']→ accept(EqEq)
+                ┌─────►│
+                │      └── start_"="  ─['=']→ accept(Eq)
+                │
+  global_start──┼──eps→ start_"+"   ─['+']→ accept(Plus)
+                │
+                ├──eps→ start_ident ─[a-zA-Z_]→ accept(Ident)
+                │                                   │
+                │                                   └─[a-zA-Z0-9_]→(loop)
+                │
+                └──eps→ start_int   ─[0-9]→ accept(Integer)
+                                                │
+                                                └─[0-9]→ (self-loop)
 ```
 
 ### Accept Priority
@@ -254,10 +254,10 @@ The original Thompson's construction created separate NFA fragments for each
 fixed terminal, joined by epsilon transitions from the global start state:
 
 ```
-global_start --eps--> start_"==" --['=']--> s1 --['=']--> accept(EqEq)
-             --eps--> start_"="  --['=']--> accept(Eq)
-             --eps--> start_"+"  --['+']--> accept(Plus)
-             --eps--> start_"*"  --['*']--> accept(Star)
+global_start ──eps→ start_"==" ─['=']→ s1 ─['=']→ accept(EqEq)
+             ──eps→ start_"="  ─['=']→ accept(Eq)
+             ──eps→ start_"+"  ─['+']→ accept(Plus)
+             ──eps→ start_"*"  ─['*']→ accept(Star)
              ... (N epsilon transitions for N terminals)
 ```
 
@@ -297,14 +297,14 @@ build_keyword_trie(nfa, terminals):
 The trie root is then connected to the global start with a **single** epsilon:
 
 ```
-global_start --eps--> trie_root --['=']--> s1 (accept: Eq)
-                                    |
-                                    +--['=']--> s2 (accept: EqEq)
-                      trie_root --['+']--> s3 (accept: Plus)
-                      trie_root --['*']--> s4 (accept: Star)
-                      trie_root --['n']--> s5
-                                    +--['o']--> s6
-                                        +--['t']--> s7 (accept: KwNot)
+global_start ──eps→ trie_root ─['=']→ s1 (accept: Eq)
+                                  │
+                                  └─['=']→ s2 (accept: EqEq)
+                    trie_root ─['+']→ s3 (accept: Plus)
+                    trie_root ─['*']→ s4 (accept: Star)
+                    trie_root ─['n']→ s5
+                                  └─['o']→ s6
+                                       └─['t']→ s7 (accept: KwNot)
 ```
 
 ### Prefix-of-Prefix Handling
@@ -313,9 +313,9 @@ When one terminal is a prefix of another (e.g., `=` and `==`), the shared
 state is both accepting AND has transitions to longer matches:
 
 ```
-trie_root --['=']--> s1 (accept: Eq)    <-- accepts "=" if no more input
-                      |
-                      +--['=']--> s2 (accept: EqEq)  <-- accepts "==" if '=' follows
+trie_root ─['=']→ s1 (accept: Eq)    ◀── accepts "=" if no more input
+                   │
+                   └─['=']→ s2 (accept: EqEq)  ◀── accepts "==" if '=' follows
 ```
 
 The maximal munch rule in the lexer ensures that `==` is preferred over `=`
@@ -341,11 +341,11 @@ Priority table:
 
 The trie significantly reduces NFA state count by sharing prefix states:
 
-| Grammar | Terminals | Old NFA States | Trie NFA States | Reduction |
-|---------|-----------|---------------|-----------------|-----------|
-| Calculator | ~15 | ~37 | ~22 | **~42%** |
-| RhoCalc | ~18 | ~50 | ~35 | **~30%** |
-| Ambient | ~14 | ~35 | ~21 | **~40%** |
+| Grammar    | Terminals | Old NFA States | Trie NFA States | Reduction |
+|------------|-----------|----------------|-----------------|-----------|
+| Calculator | ~15       | ~37            | ~22             | **~42%**  |
+| RhoCalc    | ~18       | ~50            | ~35             | **~30%**  |
+| Ambient    | ~14       | ~35            | ~21             | **~40%**  |
 
 Fewer NFA states mean fewer epsilon closures during subset construction,
 which reduces DFA build time.
@@ -436,7 +436,7 @@ freeze_suffixes(nfa, registry, path, trie_root, keep_count):
     if let Some(&canonical) = registry.get(&sig):
       // Redirect parent edge to existing canonical state (suffix sharing)
       parent = if i > 0: path[i-1].state else: trie_root
-      redirect parent's transition on path[i].byte -> canonical
+      redirect parent's transition on path[i].byte → canonical
     else:
       // Register this state as the canonical representative
       registry.insert(sig, path[i].state)
@@ -489,31 +489,33 @@ transitions in every NFA state. The algorithm:
 ```
 Example (RhoCalc with +, *, !, ?, @, ., identifiers, integers):
 
-  Byte        | NFA behavior                          | Class
-  ------------|---------------------------------------|------
-  'a'-'d',    | start ident; continue ident           |   0
-  'f'-'z'     |                                       |
-  'e'         | start ident; continue ident;          |   1
-              |   also prefix of "error"              |
-  'A'-'Z'     | start ident; continue ident           |   2
-  '0'-'9'     | continue ident; start/continue int    |   3
-  '_'         | start ident; continue ident           |   4
-  '+'         | terminal "+"                          |   5
-  '*'         | terminal "*"                          |   6
-  '!'         | terminal "!"                          |   7
-  '?'         | terminal "?"                          |   8
-  '@'         | terminal "@"                          |   9
-  '.'         | terminal "."                          |  10
-  ','         | terminal ","                          |  11
-  '|'         | terminal "|"                          |  12
-  '('         | terminal "("                          |  13
-  ')'         | terminal ")"                          |  14
-  '{'         | terminal "{"; prefix of "{}"          |  15
-  '}'         | terminal "}"                          |  16
-  '='         | prefix of "=="                        |  17
-  ' ',\t,\n,\r| whitespace (no transitions)          |  18
-  everything  | no transitions (dead)                 |  19
-  else        |                                       |
+  ┌─────────────┬───────────────────────────────────────┬───────┐
+  │ Byte        │ NFA behavior                          │ Class │
+  ├─────────────┼───────────────────────────────────────┼───────┤
+  │ 'a'-'d',    │ start ident; continue ident           │   0   │
+  │ 'f'-'z'     │                                       │       │
+  │ 'e'         │ start ident; continue ident;          │   1   │
+  │             │   also prefix of "error"              │       │
+  │ 'A'-'Z'     │ start ident; continue ident           │   2   │
+  │ '0'-'9'     │ continue ident; start/continue int    │   3   │
+  │ '_'         │ start ident; continue ident           │   4   │
+  │ '+'         │ terminal "+"                          │   5   │
+  │ '*'         │ terminal "*"                          │   6   │
+  │ '!'         │ terminal "!"                          │   7   │
+  │ '?'         │ terminal "?"                          │   8   │
+  │ '@'         │ terminal "@"                          │   9   │
+  │ '.'         │ terminal "."                          │  10   │
+  │ ','         │ terminal ","                          │  11   │
+  │ '\|'        │ terminal "\|"                         │  12   │
+  │ '('         │ terminal "("                          │  13   │
+  │ ')'         │ terminal ")"                          │  14   │
+  │ '{'         │ terminal "{"; prefix of "{}"          │  15   │
+  │ '}'         │ terminal "}"                          │  16   │
+  │ '='         │ prefix of "=="                        │  17   │
+  │ ' ',\t,\n,\r│ whitespace (no transitions)           │  18   │
+  │ everything  │ no transitions (dead)                 │  19   │
+  │ else        │                                       │       │
+  └─────────────┴───────────────────────────────────────┴───────┘
 ```
 
 This compresses 256 columns to ~20 columns: a **~13x compression ratio**.
@@ -636,11 +638,13 @@ effectively O(n log n).
 For the RhoCalc terminal set (~18 terminals + identifiers + integers):
 
 ```
-Pipeline stage        | States
-----------------------|--------
-NFA                   |   ~50
-DFA (after subset)    |   ~15
-Minimized DFA         |   ~10
+┌──────────────────────┬────────┐
+│ Pipeline stage       │ States │
+├──────────────────────┼────────┤
+│ NFA                  │   ~50  │
+│ DFA (after subset)   │   ~15  │
+│ Minimized DFA        │   ~10  │
+└──────────────────────┴────────┘
 ```
 
 The minimized DFA typically has 30-50% fewer states than the un-minimized
@@ -997,11 +1001,11 @@ the smallest footprint wins.
 
 Each compression strategy counts different arrays:
 
-| Strategy | Arrays Counted | Description |
-|---|---|---|
-| **CombCompressed** | `TARGETS` + `OFFSETS` + `ROW_CHECK` | Comb-packed transitions, per-state offsets, row check for collision detection |
-| **BitmapCompressed** | `BITMAPS` + `OFFSETS` + `TARGETS` | u32 bitmaps (1 per state, `num_classes ≤ 32`), offsets into dense target array, packed targets |
-| **DirectCoded** | (no table) | Selected when `minimized_states ≤ 30`; transitions become inline `match` arms in generated code |
+| Strategy             | Arrays Counted                      | Description                                                                                     |
+|----------------------|-------------------------------------|-------------------------------------------------------------------------------------------------|
+| **CombCompressed**   | `TARGETS` + `OFFSETS` + `ROW_CHECK` | Comb-packed transitions, per-state offsets, row check for collision detection                   |
+| **BitmapCompressed** | `BITMAPS` + `OFFSETS` + `TARGETS`   | u32 bitmaps (1 per state, `num_classes ≤ 32`), offsets into dense target array, packed targets  |
+| **DirectCoded**      | (no table)                          | Selected when `minimized_states ≤ 30`; transitions become inline `match` arms in generated code |
 
 `LexerStats` reports the selected strategy:
 
@@ -1037,44 +1041,44 @@ Built-in patterns: identifiers ([a-zA-Z_][a-zA-Z0-9_]*), integers ([0-9]+)
 
 ```
 Global start (state 0)
-  |
-  +--eps--> s1 --['+']--> s2 (accept: Fixed("+"))
-  |
-  +--eps--> s3 --['*']--> s4 (accept: Fixed("*"))
-  |
-  +--eps--> s5 --['!']--> s6 (accept: Fixed("!"))
-  |
-  +--eps--> s7 --['?']--> s8 (accept: Fixed("?"))
-  |
-  +--eps--> s9 --['@']--> s10 (accept: Fixed("@"))
-  |
-  +--eps--> s11 --['.']--> s12 (accept: Fixed("."))
-  |
-  +--eps--> s13 --[',']--> s14 (accept: Fixed(","))
-  |
-  +--eps--> s15 --['|']--> s16 (accept: Fixed("|"))
-  |
-  +--eps--> s17 --['(']--> s18 (accept: Fixed("("))
-  |
-  +--eps--> s19 --[')']--> s20 (accept: Fixed(")"))
-  |
-  +--eps--> s21 --['{']--> s22 (accept: Fixed("{"))
-  |                               |
-  |                               +--['}']--> s23 (accept: Fixed("{}"))
-  |
-  +--eps--> s24 --['}']--> s25 (accept: Fixed("}"))
-  |
-  +--eps--> s26 --['[']--> s27 (accept: Fixed("["))
-  |
-  +--eps--> s28 --[']']--> s29 (accept: Fixed("]"))
-  |
-  +--eps--> s30 --['e']--> s31 --['r']--> s32 --['r']--> s33
-  |                                          --['o']--> s34 --['r']--> s35
-  |                                                            (accept: Fixed("error"))
-  |
-  +--eps--> s36 --[a-zA-Z_]--> s37 (accept: Ident, self-loops on [a-zA-Z0-9_])
-  |
-  +--eps--> s38 --[0-9]--> s39 (accept: Integer, self-loop on [0-9])
+  │
+  ├──eps→ s1 ─['+']→ s2 (accept: Fixed("+"))
+  │
+  ├──eps→ s3 ─['*']→ s4 (accept: Fixed("*"))
+  │
+  ├──eps→ s5 ─['!']→ s6 (accept: Fixed("!"))
+  │
+  ├──eps→ s7 ─['?']→ s8 (accept: Fixed("?"))
+  │
+  ├──eps→ s9 ─['@']→ s10 (accept: Fixed("@"))
+  │
+  ├──eps→ s11 ─['.']→ s12 (accept: Fixed("."))
+  │
+  ├──eps→ s13 ─[',']→ s14 (accept: Fixed(","))
+  │
+  ├──eps→ s15 ─['|']→ s16 (accept: Fixed("|"))
+  │
+  ├──eps→ s17 ─['(']→ s18 (accept: Fixed("("))
+  │
+  ├──eps→ s19 ─[')']→ s20 (accept: Fixed(")"))
+  │
+  ├──eps→ s21 ─['{']→ s22 (accept: Fixed("{"))
+  │                         │
+  │                         └─['}']→ s23 (accept: Fixed("{}"))
+  │
+  ├──eps→ s24 ─['}']→ s25 (accept: Fixed("}"))
+  │
+  ├──eps→ s26 ─['[']→ s27 (accept: Fixed("["))
+  │
+  ├──eps→ s28 ─[']']→ s29 (accept: Fixed("]"))
+  │
+  ├──eps→ s30 ─['e']→ s31 ─['r']→ s32 ─['r']→ s33
+  │                                    ─['o']→ s34 ─['r']→ s35
+  │                                                   (accept: Fixed("error"))
+  │
+  ├──eps→ s36 ─[a-zA-Z_]→ s37 (accept: Ident, self-loops on [a-zA-Z0-9_])
+  │
+  └──eps→ s38 ─[0-9]→ s39 (accept: Integer, self-loop on [0-9])
 ```
 
 Total NFA states: ~40-50 (depends on exact fragment construction).
@@ -1084,35 +1088,37 @@ Total NFA states: ~40-50 (depends on exact fragment construction).
 `compute_equivalence_classes()` builds byte signatures:
 
 ```
-Class | Representative | Characters              | NFA behavior
-------|----------------|-------------------------|----------------------------
-  0   | 'a'            | a-d, f-z (excl. 'e')    | start+continue ident
-  1   | 'e'            | e                        | start+continue ident;
-      |                |                          |   also start "error"
-  2   | 'A'            | A-Z                      | start+continue ident
-  3   | '0'            | 0-9                      | continue ident; start+
-      |                |                          |   continue integer
-  4   | '_'            | _                        | start+continue ident
-  5   | '+'            | +                        | terminal "+"
-  6   | '*'            | *                        | terminal "*"
-  7   | '!'            | !                        | terminal "!"
-  8   | '?'            | ?                        | terminal "?"
-  9   | '@'            | @                        | terminal "@"
- 10   | '.'            | .                        | terminal "."
- 11   | ','            | ,                        | terminal ","
- 12   | '|'            | |                        | terminal "|"
- 13   | '('            | (                        | terminal "("
- 14   | ')'            | )                        | terminal ")"
- 15   | '{'            | {                        | terminal "{"; prefix "{}"
- 16   | '}'            | }                        | terminal "}"
- 17   | '['            | [                        | terminal "["
- 18   | ']'            | ]                        | terminal "]"
- 19   | 'r'            | r                        | start+continue ident;
-      |                |                          |   continue "error"
- 20   | 'o'            | o                        | start+continue ident;
-      |                |                          |   continue "error"
- 21   | ' '            | space, tab, newline, CR  | whitespace (no transitions)
- 22   | 0x00           | all other bytes          | dead (no transitions)
+┌───────┬────────────────┬─────────────────────────┬────────────────────────────┐
+│ Class │ Representative │ Characters              │ NFA behavior               │
+├───────┼────────────────┼─────────────────────────┼────────────────────────────┤
+│   0   │ 'a'            │ a-d, f-z (excl. 'e')    │ start+continue ident       │
+│   1   │ 'e'            │ e                       │ start+continue ident;      │
+│       │                │                         │   also start "error"       │
+│   2   │ 'A'            │ A-Z                     │ start+continue ident       │
+│   3   │ '0'            │ 0-9                     │ continue ident; start+     │
+│       │                │                         │   continue integer         │
+│   4   │ '_'            │ _                       │ start+continue ident       │
+│   5   │ '+'            │ +                       │ terminal "+"               │
+│   6   │ '*'            │ *                       │ terminal "*"               │
+│   7   │ '!'            │ !                       │ terminal "!"               │
+│   8   │ '?'            │ ?                       │ terminal "?"               │
+│   9   │ '@'            │ @                       │ terminal "@"               │
+│  10   │ '.'            │ .                       │ terminal "."               │
+│  11   │ ','            │ ,                       │ terminal ","               │
+│  12   │ '\|'           │ \|                      │ terminal "\|"              │
+│  13   │ '('            │ (                       │ terminal "("               │
+│  14   │ ')'            │ )                       │ terminal ")"               │
+│  15   │ '{'            │ {                       │ terminal "{"; prefix "{}"  │
+│  16   │ '}'            │ }                       │ terminal "}"               │
+│  17   │ '['            │ [                       │ terminal "["               │
+│  18   │ ']'            │ ]                       │ terminal "]"               │
+│  19   │ 'r'            │ r                       │ start+continue ident;      │
+│       │                │                         │   continue "error"         │
+│  20   │ 'o'            │ o                       │ start+continue ident;      │
+│       │                │                         │   continue "error"         │
+│  21   │ ' '            │ space, tab, newline, CR │ whitespace (no transitions)│
+│  22   │ 0x00           │ all other bytes         │ dead (no transitions)      │
+└───────┴────────────────┴─────────────────────────┴────────────────────────────┘
 ```
 
 Result: **~22 equivalence classes** (compressed from 256 byte values).
@@ -1123,31 +1129,33 @@ The powerset algorithm processes the epsilon closure of the start state
 and follows transitions by equivalence class:
 
 ```
-DFA State | NFA State Set           | Accept
-----------|-------------------------|----------
-    D0    | {0, s1,s3,s5,...,s36,s38} | None (start)
-    D1    | {s37}                   | Ident
-    D2    | {s39}                   | Integer
-    D3    | {s2}                    | Fixed("+")
-    D4    | {s4}                    | Fixed("*")
-    D5    | {s6}                    | Fixed("!")
-    D6    | {s8}                    | Fixed("?")
-    D7    | {s10}                   | Fixed("@")
-    D8    | {s12}                   | Fixed(".")
-    D9    | {s14}                   | Fixed(",")
-   D10    | {s16}                   | Fixed("|")
-   D11    | {s18}                   | Fixed("(")
-   D12    | {s20}                   | Fixed(")")
-   D13    | {s22}                   | Fixed("{")
-   D14    | {s23}                   | Fixed("{}")
-   D15    | {s25}                   | Fixed("}")
-   D16    | {s27}                   | Fixed("[")
-   D17    | {s29}                   | Fixed("]")
-   D18    | {s31, s37}              | Ident  ('e' then continue)
-   D19    | {s32, s37}              | Ident  ('er' then continue)
-   D20    | {s33, s37}              | Ident  ('err' then continue)
-   D21    | {s34, s37}              | Ident  ('erro' then continue)
-   D22    | {s35, s37}              | Fixed("error")  (priority > Ident)
+┌───────────┬───────────────────────────┬───────────────────────────────────┐
+│ DFA State │ NFA State Set             │ Accept                            │
+├───────────┼───────────────────────────┼───────────────────────────────────┤
+│     D0    │ {0, s1,s3,s5,...,s36,s38} │ None (start)                      │
+│     D1    │ {s37}                     │ Ident                             │
+│     D2    │ {s39}                     │ Integer                           │
+│     D3    │ {s2}                      │ Fixed("+")                        │
+│     D4    │ {s4}                      │ Fixed("*")                        │
+│     D5    │ {s6}                      │ Fixed("!")                        │
+│     D6    │ {s8}                      │ Fixed("?")                        │
+│     D7    │ {s10}                     │ Fixed("@")                        │
+│     D8    │ {s12}                     │ Fixed(".")                        │
+│     D9    │ {s14}                     │ Fixed(",")                        │
+│    D10    │ {s16}                     │ Fixed("\|")                       │
+│    D11    │ {s18}                     │ Fixed("(")                        │
+│    D12    │ {s20}                     │ Fixed(")")                        │
+│    D13    │ {s22}                     │ Fixed("{")                        │
+│    D14    │ {s23}                     │ Fixed("{}")                       │
+│    D15    │ {s25}                     │ Fixed("}")                        │
+│    D16    │ {s27}                     │ Fixed("[")                        │
+│    D17    │ {s29}                     │ Fixed("]")                        │
+│    D18    │ {s31, s37}                │ Ident  ('e' then continue)        │
+│    D19    │ {s32, s37}                │ Ident  ('er' then continue)       │
+│    D20    │ {s33, s37}                │ Ident  ('err' then continue)      │
+│    D21    │ {s34, s37}                │ Ident  ('erro' then continue)     │
+│    D22    │ {s35, s37}                │ Fixed("error")  (priority > Ident)│
+└───────────┴───────────────────────────┴───────────────────────────────────┘
 ```
 
 Note: state D22 has both `Fixed("error")` (priority 10) and `Ident`
@@ -1157,18 +1165,18 @@ Note: state D22 has both `Fixed("error")` (priority 10) and `Ident`
 Transition table (selected entries):
 
 ```
-D0  --(class 0: a-d,f-z)--> D1 (ident)
-D0  --(class 1: e)---------> D18 (ident, also "error" prefix)
-D0  --(class 3: 0-9)-------> D2 (integer)
-D0  --(class 5: +)---------> D3 (accept "+")
-D0  --(class 15: {)--------> D13 (accept "{")
-D13 --(class 16: })--------> D14 (accept "{}")
-D1  --(class 0,1,2,3,4)---> D1 (ident self-loop)
-D18 --(class 19: r)--------> D19 (ident, "er" prefix)
-D19 --(class 19: r)--------> D20 (ident, "err" prefix)
-D20 --(class 20: o)--------> D21 (ident, "erro" prefix)
-D21 --(class 19: r)--------> D22 (accept "error")
-D22 --(class 0,1,2,3,4)---> D1 (ident: "errors" is an ident, not keyword)
+D0  ──(class 0: a-d,f-z)──▶ D1 (ident)
+D0  ──(class 1: e)─────────▶ D18 (ident, also "error" prefix)
+D0  ──(class 3: 0-9)───────▶ D2 (integer)
+D0  ──(class 5: +)─────────▶ D3 (accept "+")
+D0  ──(class 15: {)────────▶ D13 (accept "{")
+D13 ──(class 16: })────────▶ D14 (accept "{}")
+D1  ──(class 0,1,2,3,4)───▶ D1 (ident self-loop)
+D18 ──(class 19: r)────────▶ D19 (ident, "er" prefix)
+D19 ──(class 19: r)────────▶ D20 (ident, "err" prefix)
+D20 ──(class 20: o)────────▶ D21 (ident, "erro" prefix)
+D21 ──(class 19: r)────────▶ D22 (accept "error")
+D22 ──(class 0,1,2,3,4)───▶ D1 (ident: "errors" is an ident, not keyword)
 ```
 
 Total DFA states: ~22 (before minimization).
@@ -1236,16 +1244,16 @@ fn accept_token(state: u32, text: &str) -> Option<Token> {
 ### Summary Statistics for RhoCalc
 
 ```
-+----------------------------+---------+
-| Metric                     | Value   |
-+----------------------------+---------+
-| Fixed terminals            |    16   |
-| Built-in patterns          |     2   |
-| NFA states                 |   ~50   |
-| Equivalence classes        |   ~22   |
-| DFA states (pre-minimize)  |   ~22   |
-| DFA states (post-minimize) |   ~18   |
-| Compression ratio          |   ~14x  |
-| Code generation strategy   | direct  |
-+----------------------------+---------+
+┌────────────────────────────┬─────────┐
+│ Metric                     │ Value   │
+├────────────────────────────┼─────────┤
+│ Fixed terminals            │    16   │
+│ Built-in patterns          │     2   │
+│ NFA states                 │   ~50   │
+│ Equivalence classes        │   ~22   │
+│ DFA states (pre-minimize)  │   ~22   │
+│ DFA states (post-minimize) │   ~18   │
+│ Compression ratio          │   ~14x  │
+│ Code generation strategy   │ direct  │
+└────────────────────────────┴─────────┘
 ```

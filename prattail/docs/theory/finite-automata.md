@@ -2,10 +2,10 @@
 
 This document covers the automata theory underlying PraTTaIL's lexer
 generation pipeline. Starting from the definition of regular languages, we
-develop NFAs, Thompson's construction, epsilon-closure, subset construction,
+develop NFAs, Thompson's construction, ε-closure, subset construction,
 DFA minimization (Hopcroft's algorithm), alphabet equivalence classes, maximal
 munch tokenization, priority handling, and finally code generation. Each
-concept is illustrated with worked examples and ASCII diagrams.
+concept is illustrated with worked examples and diagrams.
 
 ---
 
@@ -20,16 +20,15 @@ languages are the simplest class in the Chomsky hierarchy:
 ```
   ┌──────────────────────────────────────────────────────┐
   │ Type 0: Recursively enumerable (Turing machines)     │
-  │  ┌──────────────────────────────────────────────┐    │
-  │  │ Type 1: Context-sensitive                     │    │
-  │  │  ┌──────────────────────────────────────┐    │    │
-  │  │  │ Type 2: Context-free (pushdown aut.) │    │    │
-  │  │  │  ┌──────────────────────────────┐    │    │    │
-  │  │  │  │ Type 3: Regular (finite aut.)│    │    │    │
-  │  │  │  │                              │    │    │    │
-  │  │  │  └──────────────────────────────┘    │    │    │
-  │  │  └──────────────────────────────────────┘    │    │
-  │  └──────────────────────────────────────────────┘    │
+  │   ┌──────────────────────────────────────────────┐   │
+  │   │ Type 1: Context-sensitive                    │   │
+  │   │   ┌──────────────────────────────────────┐   │   │
+  │   │   │ Type 2: Context-free (pushdown aut.) │   │   │
+  │   │   │  ┌───────────────────────────────┐   │   │   │
+  │   │   │  │ Type 3: Regular (finite aut.) │   │   │   │
+  │   │   │  └───────────────────────────────┘   │   │   │
+  │   │   └──────────────────────────────────────┘   │   │
+  │   └──────────────────────────────────────────────┘   │
   └──────────────────────────────────────────────────────┘
 ```
 
@@ -53,12 +52,12 @@ lexers: they are fast, predictable, and provably correct.
 ### 1.3 Regular Language Closure Properties
 
 Regular languages are closed under:
-- **Union:** If L1 and L2 are regular, so is L1 | L2
-- **Concatenation:** L1 . L2
+- **Union:** If L1 and L2 are regular, so is L1 ∪ L2
+- **Concatenation:** L1 · L2
 - **Kleene star:** L1*
-- **Intersection:** L1 & L2
-- **Complement:** not L1
-- **Difference:** L1 - L2
+- **Intersection:** L1 ∩ L2
+- **Complement:** ¬L1
+- **Difference:** L1 ∖ L2
 
 These closure properties are exploited throughout the lexer pipeline.
 
@@ -81,27 +80,27 @@ An NFA is a 5-tuple `(Q, Sigma, delta, q0, F)` where:
 automaton may transition to _multiple_ states simultaneously. This is a
 theoretical convenience; it does not mean the implementation is nondeterministic.
 
-### 2.2 Epsilon Transitions
+### 2.2 ε Transitions
 
-An **epsilon transition** (written `--epsilon-->`) allows the automaton to
+An **ε transition** (written `──ε──→`) allows the automaton to
 change state without consuming any input character. These are central to
 Thompson's construction.
 
 ```
   Example: NFA for "a|b" (either 'a' or 'b'):
 
-       ┌──── epsilon ────> (s1) ──'a'──> ((s2))
+       ┌──── ε ────→ (s1) ──'a'──→ ((s2))
   (s0) ┤
-       └──── epsilon ────> (s3) ──'b'──> ((s4))
+       └──── ε ────→ (s3) ──'b'──→ ((s4))
 
   States: s0 (start), s1, s2 (accept), s3, s4 (accept)
-  From s0, the NFA nondeterministically follows both epsilon edges.
+  From s0, the NFA nondeterministically follows both ε edges.
 ```
 
 ### 2.3 Acceptance
 
 An NFA **accepts** a string `w` if there exists _any_ sequence of transitions
-(including epsilon moves) from the start state that consumes all of `w` and
+(including ε moves) from the start state that consumes all of `w` and
 ends in an accepting state.
 
 ---
@@ -118,13 +117,13 @@ are combined using three operations.
 For a character `c`:
 
 ```
-  (start) ──'c'──> ((accept))
+  (start) ──'c'──→ ((accept))
 ```
 
 In PraTTaIL, this is `build_string_fragment` for single-character terminals:
 
 ```
-  Terminal "+":   (s0) ──'+'──> ((s1: accept=Fixed("+")))
+  Terminal "+":   (s0) ──'+'──→ ((s1: accept=Fixed("+")))
 ```
 
 ### 3.2 Concatenation
@@ -132,16 +131,16 @@ In PraTTaIL, this is `build_string_fragment` for single-character terminals:
 For `AB` (match A then B):
 
 ```
-  (A.start) ──...──> (A.accept) ──epsilon──> (B.start) ──...──> ((B.accept))
+  (A.start) ──...──→ (A.accept) ──ε──→ (B.start) ──...──→ ((B.accept))
 ```
 
 In PraTTaIL, multi-character terminals use concatenation. For `"=="`:
 
 ```
-  (s0) ──'='──> (s1) ──'='──> ((s2: accept=Fixed("==")))
+  (s0) ──'='──→ (s1) ──'='──→ ((s2: accept=Fixed("==")))
 ```
 
-Here the intermediate state `s1` replaces the epsilon transition with a
+Here the intermediate state `s1` replaces the ε transition with a
 direct chain (an optimization for string literals).
 
 ### 3.3 Alternation (Union)
@@ -149,20 +148,20 @@ direct chain (an optimization for string literals).
 For `A|B` (match A or B):
 
 ```
-              ┌── epsilon ──> (A.start) ──...──> (A.accept) ── epsilon ──┐
-  (new start) ┤                                                          ├> ((new accept))
-              └── epsilon ──> (B.start) ──...──> (B.accept) ── epsilon ──┘
+              ┌── ε ──→ (A.start) ──...──→ (A.accept) ── ε ──┐
+  (new start) ┤                                               ├→ ((new accept))
+              └── ε ──→ (B.start) ──...──→ (B.accept) ── ε ──┘
 ```
 
-In PraTTaIL, the global NFA start state uses epsilon transitions to reach
+In PraTTaIL, the global NFA start state uses ε transitions to reach
 each terminal pattern's fragment start:
 
 ```
-            ┌── epsilon ──> (+  fragment)
-            ├── epsilon ──> (*  fragment)
-  (start) ──┤── epsilon ──> (== fragment)
-            ├── epsilon ──> (ident fragment)
-            └── epsilon ──> (integer fragment)
+            ┌── ε ──→ (+  fragment)
+            ├── ε ──→ (*  fragment)
+  (start) ──┤── ε ──→ (== fragment)
+            ├── ε ──→ (ident fragment)
+            └── ε ──→ (integer fragment)
 ```
 
 This is implemented in `build_nfa()`:
@@ -178,19 +177,19 @@ for frag in &fragments {
 For `A*` (zero or more repetitions of A):
 
 ```
-               ┌───────────── epsilon ────────────────┐
-               │                                       │
-               ▼                                       │
-  (new start) ──epsilon──> (A.start) ──...──> (A.accept) ──epsilon──> ((new accept))
-       │                                                                    ▲
-       └──────────────────── epsilon ───────────────────────────────────────┘
+               ┌─────────────── ε ─────────────────┐
+               │                                   │
+               ▼                                   │
+  (new start) ──ε──→ (A.start) ──...──→ (A.accept) ──ε──→ ((new accept))
+       │                                                          ▲
+       └────────────────────── ε ────────────────────────────────┘
 ```
 
 In PraTTaIL, Kleene star is used implicitly in built-in patterns. For
 example, the identifier pattern `[a-zA-Z_][a-zA-Z0-9_]*` uses a self-loop:
 
 ```
-  (start) ──[a-zA-Z_]──> (accept) ──[a-zA-Z0-9_]──> (accept)
+  (start) ──[a-zA-Z_]──→ (accept) ──[a-zA-Z0-9_]──→ (accept)
                                           │               ▲
                                           └───────────────┘
                                            (self-loop = Kleene star)
@@ -211,47 +210,47 @@ Build the NFA for a grammar with terminals `+`, `*`, and identifiers:
     6: accept for ident (accept=Ident)
 
   Transitions:
-    0 ──epsilon──> 1
-    0 ──epsilon──> 3
-    0 ──epsilon──> 5
-    1 ──'+'──> 2
-    3 ──'*'──> 4
-    5 ──[a-zA-Z_]──> 6
-    6 ──[a-zA-Z0-9_]──> 6    (self-loop)
+    0 ──ε──→ 1
+    0 ──ε──→ 3
+    0 ──ε──→ 5
+    1 ──'+'──→ 2
+    3 ──'*'──→ 4
+    5 ──[a-zA-Z_]──→ 6
+    6 ──[a-zA-Z0-9_]──→ 6    (self-loop)
 
   Diagram:
-                 ┌── eps ──> (1) ──'+'──> ((2: Fixed("+")))
+                 ┌── ε ──→ (1) ──'+'──→ ((2: Fixed("+")))
                  │
-  (0: start) ────┼── eps ──> (3) ──'*'──> ((4: Fixed("*")))
+  (0: start) ────┼── ε ──→ (3) ──'*'──→ ((4: Fixed("*")))
                  │
-                 └── eps ──> (5) ──[a-zA-Z_]──> ((6: Ident))
-                                                      │   ▲
-                                                      └───┘
-                                                   [a-zA-Z0-9_]
+                 └── ε ──→ (5) ──[a-zA-Z_]──→ ((6: Ident))
+                                                    │   ▲
+                                                    └───┘
+                                                 [a-zA-Z0-9_]
 ```
 
 ---
 
-## 4. Epsilon-Closure
+## 4. ε-Closure
 
 ### 4.1 Definition
 
-The **epsilon-closure** of a set of states `S` is the set of all states
-reachable from any state in `S` by following zero or more epsilon transitions:
+The **ε-closure** of a set of states `S` is the set of all states
+reachable from any state in `S` by following zero or more ε transitions:
 
 ```
-  epsilon_closure(S) = S union { t : s -->epsilon--> ... -->epsilon--> t, s in S }
+  ε_closure(S) = S ∪ { t : s ──ε──→ ... ──ε──→ t, s ∈ S }
 ```
 
 ### 4.2 Algorithm
 
 ```
-  function epsilon_closure(nfa, states):
+  function ε_closure(nfa, states):
       closure = set(states)
       stack = list(states)
       while stack is not empty:
           state = stack.pop()
-          for target in nfa.states[state].epsilon:
+          for target in nfa.states[state].ε:
               if target not in closure:
                   closure.add(target)
                   stack.push(target)
@@ -268,22 +267,22 @@ reachable from any state in `S` by following zero or more epsilon transitions:
 Using the NFA from section 3.5:
 
 ```
-  epsilon_closure({0}) = {0, 1, 3, 5}
+  ε_closure({0}) = {0, 1, 3, 5}
 
   Trace:
     Start: {0}
-    Process 0: epsilon targets = {1, 3, 5}
-    Process 1: epsilon targets = {} (no epsilon edges)
-    Process 3: epsilon targets = {} (no epsilon edges)
-    Process 5: epsilon targets = {} (no epsilon edges)
+    Process 0: ε targets = {1, 3, 5}
+    Process 1: ε targets = {} (no ε edges)
+    Process 3: ε targets = {} (no ε edges)
+    Process 5: ε targets = {} (no ε edges)
     Result: {0, 1, 3, 5}
 ```
 
 ### 4.4 Significance
 
-Epsilon-closure is the bridge between NFAs and DFAs. Every DFA state
+ε-closure is the bridge between NFAs and DFAs. Every DFA state
 corresponds to a set of NFA states, and computing transitions through the
-DFA requires taking the epsilon-closure after each character transition.
+DFA requires taking the ε-closure after each character transition.
 
 ---
 
@@ -306,7 +305,7 @@ equals the set of states reachable from `s` on `b2`.
 Formally:
 
 ```
-  b1 ~ b2  iff  for all s in Q:  delta(s, b1) = delta(s, b2)
+  b1 ~ b2  ⟺  ∀ s ∈ Q:  δ(s, b1) = δ(s, b2)
 ```
 
 ### 5.3 Algorithm
@@ -401,7 +400,7 @@ NFA states.
 
 ```
   function subset_construction(nfa, partition):
-      dfa_start = epsilon_closure({nfa.start})
+      dfa_start = ε_closure({nfa.start})
       state_map = { dfa_start: 0 }
       worklist = [dfa_start]
       dfa = new DFA with state 0
@@ -421,8 +420,8 @@ NFA states.
 
               if target is empty: continue  // dead state
 
-              // Take epsilon-closure
-              target = epsilon_closure(target)
+              // Take ε-closure
+              target = ε_closure(target)
 
               // Look up or create DFA state
               if target not in state_map:
@@ -442,20 +441,20 @@ Using the NFA from section 3.5 with equivalence classes from section 5.4:
 
 ```
   Step 1: DFA start state
-    D0 = epsilon_closure({0}) = {0, 1, 3, 5}
+    D0 = ε_closure({0}) = {0, 1, 3, 5}
     accept = None (no accepting states in the set)
 
   Step 2: Process D0
     Class 1 ('+'): move({0,1,3,5}, '+') = {2}
-      epsilon_closure({2}) = {2}
+      ε_closure({2}) = {2}
       D1 = {2}, accept = Fixed("+")
 
     Class 2 ('*'): move({0,1,3,5}, '*') = {4}
-      epsilon_closure({4}) = {4}
+      ε_closure({4}) = {4}
       D2 = {4}, accept = Fixed("*")
 
     Class 3 ([a-zA-Z_]): move({0,1,3,5}, 'a') = {6}
-      epsilon_closure({6}) = {6}
+      ε_closure({6}) = {6}
       D3 = {6}, accept = Ident
 
     Class 4 ([0-9]): move({0,1,3,5}, '0') = {}
@@ -464,28 +463,28 @@ Using the NFA from section 3.5 with equivalence classes from section 5.4:
       (With integer support: move would reach the integer accept state)
 
   Step 3: Process D1 = {2}
-    No transitions from state 2 -> all dead. Done.
+    No transitions from state 2 → all dead. Done.
 
   Step 4: Process D2 = {4}
-    No transitions from state 4 -> all dead. Done.
+    No transitions from state 4 → all dead. Done.
 
   Step 5: Process D3 = {6}
     Class 3 ([a-zA-Z_]): move({6}, 'a') = {6}
-      D3 already exists -> self-loop
+      D3 already exists → self-loop
 
     Class 4 ([0-9]): move({6}, '0') = {6}
-      D3 already exists -> self-loop
+      D3 already exists → self-loop
 
   Resulting DFA:
-  ┌──────┬────────────┬──────────┬──────────┬──────────┐
+  ┌──────┬────────────┬───────────┬──────────┬──────────┐
   │State │ Class 1(+) │ Class 2(*)│ Class 3  │ Class 4  │
-  │      │            │          │ (letter) │ (digit)  │
-  ├──────┼────────────┼──────────┼──────────┼──────────┤
-  │ D0   │    D1      │    D2    │    D3    │   dead   │
-  │ D1*  │   dead     │   dead   │   dead   │   dead   │
-  │ D2*  │   dead     │   dead   │   dead   │   dead   │
-  │ D3*  │   dead     │   dead   │    D3    │    D3    │
-  └──────┴────────────┴──────────┴──────────┴──────────┘
+  │      │            │           │ (letter) │ (digit)  │
+  ├──────┼────────────┼───────────┼──────────┼──────────┤
+  │ D0   │    D1      │    D2     │    D3    │   dead   │
+  │ D1*  │   dead     │   dead    │   dead   │   dead   │
+  │ D2*  │   dead     │   dead    │   dead   │   dead   │
+  │ D3*  │   dead     │   dead    │    D3    │    D3    │
+  └──────┴────────────┴───────────┴──────────┴──────────┘
   * = accepting state
 
   D1 accepts Fixed("+")
@@ -577,8 +576,8 @@ Consider a DFA for `{=, ==}`:
     D2 (accept: Fixed("=="))    -- after two '='
 
   Transitions:
-    D0 ──'='──> D1
-    D1 ──'='──> D2
+    D0 ──'='──→ D1
+    D1 ──'='──→ D2
 
   Initial partition:
     P0 = {D0}         (non-accepting)
@@ -586,11 +585,11 @@ Consider a DFA for `{=, ==}`:
     P2 = {D2}         (accept Fixed("=="))
 
   Refinement:
-    All partitions are singletons -> no further splitting possible.
+    All partitions are singletons → no further splitting possible.
     The DFA is already minimal.
 
   Minimized DFA (unchanged):
-    D0 ──'='──> D1 ──'='──> D2
+    D0 ──'='──→ D1 ──'='──→ D2
 
     D0: start, non-accepting
     D1: accept Fixed("=")
@@ -603,11 +602,11 @@ Now consider a case where minimization helps -- a grammar with
 ```
   Before minimization (naive construction):
     D0 (start)
-    D1a ──'p'──> D2a ──'r'──> D3a ──'o'──> D4a ──'c'──> D5a(accept:Dollar)
-    D1b ──'n'──> D2b ──'a'──> D3b ──'m'──> D4b ──'e'──> D5b(accept:Dollar)
-    D1c ──'i'──> D2c ──'n'──> D3c ──'t'──> D4c(accept:Dollar)
+    D1a ──'p'──→ D2a ──'r'──→ D3a ──'o'──→ D4a ──'c'──→ D5a(accept:Dollar)
+    D1b ──'n'──→ D2b ──'a'──→ D3b ──'m'──→ D4b ──'e'──→ D5b(accept:Dollar)
+    D1c ──'i'──→ D2c ──'n'──→ D3c ──'t'──→ D4c(accept:Dollar)
 
-    All share: D0 ──'$'──> D_dollar
+    All share: D0 ──'$'──→ D_dollar
 
   After minimization:
     The shared '$' prefix collapses into a single state.
@@ -617,7 +616,7 @@ Now consider a case where minimization helps -- a grammar with
 
 ### 7.5 Complexity
 
-Hopcroft's algorithm runs in **O(n * k * log n)** time, where `n` is the
+Hopcroft's algorithm runs in **O(n × k × log n)** time, where `n` is the
 number of DFA states and `k` is the alphabet size (number of equivalence
 classes). Since `k` is typically 6-18 for PraTTaIL grammars, this is
 effectively O(n log n).
@@ -677,7 +676,7 @@ keyword:
   ... continues through 'error_handler'
   After 'error_handler': DFA in accept state for Ident
                   Record last_accept = (Ident, pos=13)
-  Next byte: EOF or whitespace -> dead state
+  Next byte: EOF or whitespace → dead state
 
   Result: Ident("error_handler")   (maximal munch chose the longest match)
 ```
@@ -886,52 +885,52 @@ pub fn lex(input: &str) -> Result<Vec<(Token, Span)>, String> {
 Putting it all together, PraTTaIL's lexer generation pipeline is:
 
 ```
-  Grammar rules
-       │
-       ▼
-  ┌────────────────────────────────────┐
+              Grammar rules
+                    │
+                    │
+  ┌─────────────────▼──────────────────┐
   │ 1. Extract terminal patterns       │  extract_terminals()
   │    from grammar rules              │
   │    + determine builtin needs       │
-  └─────────────┬──────────────────────┘
-                │
-                ▼
-  ┌────────────────────────────────────┐
+  └─────────────────┬──────────────────┘
+                    │
+                    │
+  ┌─────────────────▼──────────────────┐
   │ 2. Build NFA via Thompson's        │  build_nfa()
-  │    construction:                    │
+  │    construction:                   │
   │    - One fragment per terminal     │
   │    - Fragments for builtins        │
-  │    - Alternation via epsilon edges │
-  └─────────────┬──────────────────────┘
-                │
-                ▼
-  ┌────────────────────────────────────┐
+  │    - Alternation via ε edges       │
+  └─────────────────┬──────────────────┘
+                    │
+                    │
+  ┌─────────────────▼──────────────────┐
   │ 3. Compute alphabet equivalence    │  compute_equivalence_classes()
-  │    classes:                         │
+  │    classes:                        │
   │    - Byte signatures per state     │
   │    - Group by identical signature  │
   │    - Typically 6-18 classes        │
-  └─────────────┬──────────────────────┘
-                │
-                ▼
-  ┌────────────────────────────────────┐
-  │ 4. Subset construction (NFA->DFA)  │  subset_construction()
-  │    - Epsilon-closure of start      │
+  └─────────────────┬──────────────────┘
+                    │
+                    │
+  ┌─────────────────▼──────────────────┐
+  │ 4. Subset construction (NFA→DFA)   │  subset_construction()
+  │    - ε-closure of start            │
   │    - Worklist algorithm            │
   │    - Priority-based accept resolve │
-  └─────────────┬──────────────────────┘
-                │
-                ▼
-  ┌────────────────────────────────────┐
+  └─────────────────┬──────────────────┘
+                    │
+                    │
+  ┌─────────────────▼──────────────────┐
   │ 5. Hopcroft's DFA minimization     │  minimize_dfa()
   │    - Partition by accept token     │
   │    - Refine by transition behavior │
   │    - Merge equivalent states       │
-  └─────────────┬──────────────────────┘
-                │
-                ▼
-  ┌────────────────────────────────────┐
-  │ 6. Code generation                  │  generate_lexer_code()
+  └─────────────────┬──────────────────┘
+                    │
+                    │
+  ┌─────────────────▼──────────────────┐
+  │ 6. Code generation                 │  generate_lexer_code()
   │    - Token enum definition         │
   │    - Equivalence class table       │
   │    - DFA transition function       │
@@ -939,11 +938,11 @@ Putting it all together, PraTTaIL's lexer generation pipeline is:
   │    - Accept token function         │
   │    - Lex function with maximal     │
   │      munch                         │
-  └────────────────────────────────────┘
-                │
-                ▼
-          TokenStream
-       (Rust source code)
+  └─────────────────┬──────────────────┘
+                    │
+                    ▼
+              TokenStream
+           (Rust source code)
 ```
 
 ---
@@ -953,17 +952,17 @@ Putting it all together, PraTTaIL's lexer generation pipeline is:
 ### 12.1 Build Time (Parser Generator)
 
 ```
-  ┌─────────────────────────┬──────────────────────────────────┐
+  ┌─────────────────────────┬───────────────────────────────────┐
   │ Phase                   │ Time Complexity                   │
-  ├─────────────────────────┼──────────────────────────────────┤
-  │ Thompson's construction │ O(|R|) where |R| = sum of        │
+  ├─────────────────────────┼───────────────────────────────────┤
+  │ Thompson's construction │ O(|R|) where |R| = sum of         │
   │                         │        terminal lengths           │
-  │ Equivalence classes     │ O(256 * |NFA|) = O(|NFA|)        │
-  │ Subset construction     │ O(2^|NFA|) worst case            │
-  │                         │ O(|DFA| * k) practical           │
-  │ Hopcroft minimization   │ O(|DFA| * k * log|DFA|)          │
-  │ Code generation         │ O(|minDFA| * k)                  │
-  └─────────────────────────┴──────────────────────────────────┘
+  │ Equivalence classes     │ O(256 * |NFA|) = O(|NFA|)         │
+  │ Subset construction     │ O(2^|NFA|) worst case             │
+  │                         │ O(|DFA| * k) practical            │
+  │ Hopcroft minimization   │ O(|DFA| * k * log|DFA|)           │
+  │ Code generation         │ O(|minDFA| * k)                   │
+  └─────────────────────────┴───────────────────────────────────┘
   k = number of equivalence classes (typically 6-18)
 ```
 
@@ -975,15 +974,15 @@ typically fewer than 30 states even for grammars with 20+ terminals.
 ### 12.2 Run Time (Generated Lexer)
 
 ```
-  ┌─────────────────────────┬──────────────────────────────────┐
+  ┌─────────────────────────┬───────────────────────────────────┐
   │ Operation               │ Time Complexity                   │
-  ├─────────────────────────┼──────────────────────────────────┤
+  ├─────────────────────────┼───────────────────────────────────┤
   │ Classify one byte       │ O(1) -- array lookup              │
   │ DFA transition          │ O(1) -- match arm or table lookup │
   │ Lex one token           │ O(|token|) -- scan its bytes      │
   │ Lex entire input        │ O(n) where n = input length       │
   │ Space (auxiliary)       │ O(1) -- just DFA state + position │
-  └─────────────────────────┴──────────────────────────────────┘
+  └─────────────────────────┴───────────────────────────────────┘
 ```
 
 The generated lexer processes each byte exactly once (modulo maximal munch
@@ -994,16 +993,16 @@ pattern). The overall complexity is O(n) in the length of the input.
 
 ## 13. Summary of Key Algorithms
 
-| Algorithm | Input | Output | Purpose |
-|---|---|---|---|
-| Thompson's construction | Terminal patterns | NFA | Build recognizer |
-| Epsilon-closure | Set of NFA states | Larger set | Bridge NFA to DFA |
-| Equivalence classes | NFA | Byte-to-class map | Compress alphabet |
-| Subset construction | NFA + classes | DFA | Determinize |
-| Hopcroft minimization | DFA | Minimal DFA | Merge equivalent states |
-| Code generation | Minimal DFA + classes | Rust code | Produce lexer |
-| Maximal munch | Token stream | Longest match | Resolve ambiguity |
-| Priority | Multiple accepts | Single token | Keyword vs. ident |
+| Algorithm               | Input                 | Output            | Purpose                 |
+|-------------------------|-----------------------|-------------------|-------------------------|
+| Thompson's construction | Terminal patterns     | NFA               | Build recognizer        |
+| ε-closure               | Set of NFA states     | Larger set        | Bridge NFA to DFA       |
+| Equivalence classes     | NFA                   | Byte-to-class map | Compress alphabet       |
+| Subset construction     | NFA + classes         | DFA               | Determinize             |
+| Hopcroft minimization   | DFA                   | Minimal DFA       | Merge equivalent states |
+| Code generation         | Minimal DFA + classes | Rust code         | Produce lexer           |
+| Maximal munch           | Token stream          | Longest match     | Resolve ambiguity       |
+| Priority                | Multiple accepts      | Single token      | Keyword vs. ident       |
 
 Each algorithm is a standard result in automata theory, applied here in
 a specific pipeline configuration tailored to the needs of parser generator

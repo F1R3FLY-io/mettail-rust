@@ -22,6 +22,10 @@ mettail-repl = { path = "repl" }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 
+[features]
+wfst = ["mettail-repl/wfst"]
+wfst-log = ["mettail-repl/wfst-log"]
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"

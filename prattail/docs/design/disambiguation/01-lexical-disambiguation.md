@@ -103,7 +103,7 @@ state or registers the state as the new canonical representative.
 ```
              ┌───[=]───→ S1 (accept: Eq)
              │             │
-   S0 ──────┤             └──[=]──→ S2 (accept: EqEq)
+   S0 ───────┤             └──[=]──→ S2 (accept: EqEq)
    (start)   │
              └───[!]───→ S3
                            │
@@ -174,13 +174,13 @@ Input:     =   =   =
 State:     S0 → S1 → S2 → DEAD
 
 Pass 1:
-  pos=0: S0 --[=]--> S1 (accepting: Eq)       last_accept = (S1, pos=1)
-  pos=1: S1 --[=]--> S2 (accepting: EqEq)     last_accept = (S2, pos=2)
-  pos=2: S2 --[=]--> DEAD                     backtrack to pos=2
+  pos=0: S0 ──[=]──→ S1 (accepting: Eq)       last_accept = (S1, pos=1)
+  pos=1: S1 ──[=]──→ S2 (accepting: EqEq)     last_accept = (S2, pos=2)
+  pos=2: S2 ──[=]──→ DEAD                     backtrack to pos=2
   Emit: EqEq (positions 0..2)
 
 Pass 2:
-  pos=2: S0 --[=]--> S1 (accepting: Eq)       last_accept = (S1, pos=3)
+  pos=2: S0 ──[=]──→ S1 (accepting: Eq)       last_accept = (S1, pos=3)
   pos=3: end of input
   Emit: Eq (positions 2..3)
 
@@ -203,7 +203,7 @@ Pass 1:
   pos=0..4: Walk "error" through keyword trie
             State S_error (accepting: keyword "error")
             last_accept = (S_error, pos=5)
-  pos=5:    S_error --[_]--> identifier continuation state
+  pos=5:    S_error ──[_]──→ identifier continuation state
             Still valid! Identifier pattern [a-zA-Z0-9_]* continues
   pos=5..13: Continue through identifier pattern
              Each position updates last_accept (accepting: Ident)
@@ -227,17 +227,17 @@ prefix -- **token priority** breaks the tie. Higher priority tokens win.
 
 PraTTaIL assigns priority values to each `TokenKind` (`mod.rs`, lines 55-71):
 
-| TokenKind | Priority | Rationale |
-|-----------|----------|-----------|
-| `Eof` | 0 | Sentinel, never competes |
-| `Ident` | 1 | Lowest: loses to everything |
-| `Integer` | 2 | Numeric literals |
-| `Float` | 3 | Float > Integer (longer match usually, but priority ensures correctness) |
-| `StringLit` | 2 | String literals |
-| `Dollar` | 5 | Dollar syntax |
-| `DoubleDollar` | 6 | Double-dollar beats single-dollar |
-| `True` / `False` | 10 | Keywords: beat identifiers |
-| `Fixed(...)` | 10 | Operators/keywords: beat identifiers |
+| TokenKind        | Priority | Rationale                                                                |
+|------------------|----------|--------------------------------------------------------------------------|
+| `Eof`            | 0        | Sentinel, never competes                                                 |
+| `Ident`          | 1        | Lowest: loses to everything                                              |
+| `Integer`        | 2        | Numeric literals                                                         |
+| `Float`          | 3        | Float > Integer (longer match usually, but priority ensures correctness) |
+| `StringLit`      | 2        | String literals                                                          |
+| `Dollar`         | 5        | Dollar syntax                                                            |
+| `DoubleDollar`   | 6        | Double-dollar beats single-dollar                                        |
+| `True` / `False` | 10       | Keywords: beat identifiers                                               |
+| `Fixed(...)`     | 10       | Operators/keywords: beat identifiers                                     |
 
 ### 4.2 The `set_or_upgrade_accept()` Function
 
@@ -481,12 +481,12 @@ operates on this token stream.
                 sharing)       wins)              tiebreaker)
 ```
 
-| Mechanism | Ambiguity Resolved | Implementation |
-|-----------|-------------------|----------------|
-| DAFSA prefix sharing | Structural: how operators relate | `build_keyword_trie()`, `freeze_suffixes()` |
-| Maximal munch | Token boundaries: where tokens end | `last_accept` tracking in DFA loop |
-| Token priority | Token identity: keyword vs identifier | `set_or_upgrade_accept()`, `priority()` method |
-| Equivalence classes | (Preserves above, compresses DFA) | `partition.rs`, `byte_to_class[]` |
+| Mechanism            | Ambiguity Resolved                    | Implementation                                 |
+|----------------------|---------------------------------------|------------------------------------------------|
+| DAFSA prefix sharing | Structural: how operators relate      | `build_keyword_trie()`, `freeze_suffixes()`    |
+| Maximal munch        | Token boundaries: where tokens end    | `last_accept` tracking in DFA loop             |
+| Token priority       | Token identity: keyword vs identifier | `set_or_upgrade_accept()`, `priority()` method |
+| Equivalence classes  | (Preserves above, compresses DFA)     | `partition.rs`, `byte_to_class[]`              |
 
 **Layer 1 output → Layer 2 input:** An unambiguous sequence of `Token<'a>` values,
 each with a known `TokenKind`, source position, and (for data-carrying variants)

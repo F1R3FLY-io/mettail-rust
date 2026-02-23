@@ -619,3 +619,171 @@ fn test_follow_sets_zipmapsep() {
         "FOLLOW(Proc) should contain RParen (closing delimiter after ZipMapSep)"
     );
 }
+
+// ── Incremental FIRST/FOLLOW tests (wfst feature) ──
+
+#[cfg(feature = "wfst")]
+#[test]
+fn test_incremental_first_sets_extends_existing() {
+    use crate::prediction::incremental_first_sets;
+
+    // Existing grammar A has Int with terminal "0"
+    let existing_rules = vec![
+        RuleInfo {
+            label: "NumLit".to_string(),
+            category: "Int".to_string(),
+            first_items: vec![FirstItem::Terminal("0".to_string())],
+            is_infix: false,
+            is_var: false,
+            is_literal: true,
+            is_cross_category: false,
+            is_cast: false,
+        },
+    ];
+    let existing_categories = vec!["Int".to_string()];
+    let existing_first = compute_first_sets(&existing_rules, &existing_categories);
+
+    // New grammar B adds Bool with terminal "true"
+    let new_rules = vec![
+        RuleInfo {
+            label: "True".to_string(),
+            category: "Bool".to_string(),
+            first_items: vec![FirstItem::Terminal("true".to_string())],
+            is_infix: false,
+            is_var: false,
+            is_literal: false,
+            is_cross_category: false,
+            is_cast: false,
+        },
+    ];
+    let new_categories = vec!["Bool".to_string()];
+
+    let merged = incremental_first_sets(&existing_first, &new_rules, &new_categories);
+
+    // Should have both Int and Bool
+    assert!(merged.contains_key("Int"), "Int should still exist");
+    assert!(merged.contains_key("Bool"), "Bool should be added");
+
+    let int_first = merged.get("Int").expect("Int");
+    assert!(!int_first.is_empty(), "Int FIRST set preserved");
+
+    let bool_first = merged.get("Bool").expect("Bool");
+    assert!(bool_first.contains("KwTrue"), "Bool FIRST should contain KwTrue");
+}
+
+#[cfg(feature = "wfst")]
+#[test]
+fn test_incremental_first_sets_matches_full_recomputation() {
+    use crate::prediction::incremental_first_sets;
+
+    // Grammar A: Int with "0" and Ident
+    let rules_a = vec![
+        RuleInfo {
+            label: "NumLit".to_string(),
+            category: "Int".to_string(),
+            first_items: vec![FirstItem::Terminal("0".to_string())],
+            is_infix: false,
+            is_var: false,
+            is_literal: true,
+            is_cross_category: false,
+            is_cast: false,
+        },
+        RuleInfo {
+            label: "IVar".to_string(),
+            category: "Int".to_string(),
+            first_items: vec![FirstItem::Ident],
+            is_infix: false,
+            is_var: true,
+            is_literal: false,
+            is_cross_category: false,
+            is_cast: false,
+        },
+    ];
+    let cats_a = vec!["Int".to_string()];
+    let first_a = compute_first_sets(&rules_a, &cats_a);
+
+    // Grammar B: Bool with "true"
+    let rules_b = vec![
+        RuleInfo {
+            label: "True".to_string(),
+            category: "Bool".to_string(),
+            first_items: vec![FirstItem::Terminal("true".to_string())],
+            is_infix: false,
+            is_var: false,
+            is_literal: false,
+            is_cross_category: false,
+            is_cast: false,
+        },
+    ];
+    let cats_b = vec!["Bool".to_string()];
+
+    // Incremental
+    let incremental = incremental_first_sets(&first_a, &rules_b, &cats_b);
+
+    // Full recomputation
+    let all_rules: Vec<RuleInfo> = rules_a.iter().chain(rules_b.iter()).cloned().collect();
+    let all_cats = vec!["Int".to_string(), "Bool".to_string()];
+    let full = compute_first_sets(&all_rules, &all_cats);
+
+    // Both should produce the same FIRST sets
+    for cat in &all_cats {
+        let inc = incremental.get(cat).expect("incremental has category");
+        let ful = full.get(cat).expect("full has category");
+        assert_eq!(inc.tokens, ful.tokens,
+            "FIRST({}) mismatch: incremental={:?} vs full={:?}", cat, inc.tokens, ful.tokens);
+    }
+}
+
+#[cfg(feature = "wfst")]
+#[test]
+fn test_incremental_follow_sets_extends_existing() {
+    use crate::prediction::{incremental_follow_sets, FollowSetInput};
+
+    // Existing FOLLOW(Int) = {Eof, Plus}
+    let mut existing_follow = std::collections::BTreeMap::new();
+    let mut int_follow = FirstSet::new();
+    int_follow.insert("Eof");
+    int_follow.insert("Plus");
+    existing_follow.insert("Int".to_string(), int_follow);
+
+    // New rule: Group = "(" Int ")" — adds RParen to FOLLOW(Int)
+    let new_inputs = vec![
+        FollowSetInput {
+            category: "Int".to_string(),
+            syntax: vec![
+                SyntaxItemSpec::Terminal("(".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                SyntaxItemSpec::Terminal(")".to_string()),
+            ],
+        },
+    ];
+
+    let first_sets = std::collections::BTreeMap::new();
+    let merged = incremental_follow_sets(&existing_follow, &new_inputs, &[], &first_sets);
+
+    let int_follow = merged.get("Int").expect("Int FOLLOW");
+    assert!(int_follow.contains("Eof"), "Eof preserved");
+    assert!(int_follow.contains("Plus"), "Plus preserved");
+    assert!(int_follow.contains("RParen"), "RParen added from new rule");
+}
+
+#[cfg(feature = "wfst")]
+#[test]
+fn test_merge_terminal_sets() {
+    use crate::prediction::merge_terminal_sets;
+
+    let a: std::collections::BTreeSet<String> = ["+", "-", "0"].iter().map(|s| s.to_string()).collect();
+    let b: std::collections::BTreeSet<String> = ["-", "*", "1"].iter().map(|s| s.to_string()).collect();
+
+    let merged = merge_terminal_sets(&a, &b);
+
+    assert_eq!(merged.len(), 5);
+    assert!(merged.contains("+"));
+    assert!(merged.contains("-"));
+    assert!(merged.contains("*"));
+    assert!(merged.contains("0"));
+    assert!(merged.contains("1"));
+}

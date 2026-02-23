@@ -963,7 +963,7 @@ mod tests {
     use super::*;
     use crate::binding_power::Associativity;
     use crate::pipeline::ParserBundle;
-    use crate::{CategorySpec, LanguageSpec, RuleSpec, SyntaxItemSpec};
+    use crate::{BeamWidthConfig, CategorySpec, LanguageSpec, RuleSpec, SyntaxItemSpec};
 
     /// Helper: build a default RuleSpec with the given fields.
     fn make_rule(
@@ -1178,6 +1178,9 @@ mod tests {
                     r
                 },
             ],
+            beam_width: BeamWidthConfig::Disabled,
+            log_semiring_model_path: None,
+            dispatch_strategy: crate::DispatchStrategy::Static,
         }
     }
 
@@ -1369,6 +1372,8 @@ mod tests {
             cross_rules,
             cast_rules,
             has_binders,
+            beam_width: crate::BeamWidthConfig::Disabled,
+            dispatch_strategy: crate::DispatchStrategy::Static,
         }
     }
 
@@ -1621,6 +1626,9 @@ mod tests {
                     r
                 },
             ],
+            beam_width: BeamWidthConfig::Disabled,
+            log_semiring_model_path: None,
+            dispatch_strategy: crate::DispatchStrategy::Static,
         };
 
         let bundle = build_bundle(&spec);
@@ -1701,6 +1709,9 @@ mod tests {
                     r
                 },
             ],
+            beam_width: BeamWidthConfig::Disabled,
+            log_semiring_model_path: None,
+            dispatch_strategy: crate::DispatchStrategy::Static,
         };
 
         let bundle = build_bundle(&spec);
@@ -1768,6 +1779,9 @@ mod tests {
                     ],
                 ),
             ],
+            beam_width: BeamWidthConfig::Disabled,
+            log_semiring_model_path: None,
+            dispatch_strategy: crate::DispatchStrategy::Static,
         };
 
         let bundle = build_bundle(&spec);

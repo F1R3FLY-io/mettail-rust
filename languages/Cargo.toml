@@ -7,6 +7,11 @@ edition = "2021"
 # Examples are in workspace examples/ directory
 # Tests use separate test binaries
 
+[features]
+## Propagate WFST features through macros to mettail-prattail.
+wfst = ["mettail-macros/wfst"]
+wfst-log = ["mettail-macros/wfst-log"]
+
 [dependencies]
 mettail-macros = { path = "../macros" }
 mettail-runtime = { path = "../runtime" }

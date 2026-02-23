@@ -11,14 +11,14 @@
 
 use crate::ast::{
     grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam},
-    language::LanguageDef,
+    language::{AttributeValue, LanguageDef},
     types::{CollectionType, TypeExpr},
 };
 use crate::gen::native::native_type_to_string;
 use mettail_prattail::{
     binding_power::Associativity,
     recursive::CollectionKind,
-    CategorySpec, LanguageSpec, RuleSpecInput, SyntaxItemSpec,
+    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpecInput, SyntaxItemSpec,
 };
 
 /// Convert a `LanguageDef` to a PraTTaIL `LanguageSpec`.
@@ -45,7 +45,42 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         .map(|rule| convert_rule(rule, &cat_names))
         .collect();
 
-    LanguageSpec::new(language.name.to_string(), categories, inputs)
+    // Extract beam_width from options (defaults to Disabled if not specified)
+    let beam_width = match language.options.get("beam_width") {
+        Some(AttributeValue::Float(f)) => BeamWidthConfig::Explicit(*f),
+        Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
+            "none" | "disabled" => BeamWidthConfig::Disabled,
+            "auto" => BeamWidthConfig::Auto,
+            _ => unreachable!("beam_width keyword validated at parse time"),
+        },
+        None => BeamWidthConfig::Disabled,
+        _ => unreachable!("beam_width type validated at parse time"),
+    };
+
+    let log_semiring_model_path = language.options.get("log_semiring_model_path").map(|v| match v {
+        AttributeValue::Str(s) => s.clone(),
+        _ => unreachable!("log_semiring_model_path type validated at parse time"),
+    });
+
+    let dispatch_strategy = match language.options.get("dispatch") {
+        Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
+            "static" => DispatchStrategy::Static,
+            "weighted" => DispatchStrategy::Weighted,
+            "auto" => DispatchStrategy::Auto,
+            _ => unreachable!("dispatch keyword validated at parse time"),
+        },
+        None => DispatchStrategy::Static,
+        _ => unreachable!("dispatch type validated at parse time"),
+    };
+
+    LanguageSpec::with_options(
+        language.name.to_string(),
+        categories,
+        inputs,
+        beam_width,
+        log_semiring_model_path,
+        dispatch_strategy,
+    )
 }
 
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.

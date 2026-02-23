@@ -142,8 +142,8 @@ in declaration order.
         ▼              ▼              ▼              ▼
   Ok(IntAdd(      Ok(FloatAdd(    Err(no "+"    Ok(StrConcat(
    IVar,IVar))    FVar,FVar))    for Bool)      SVar,SVar))
-        │              │                           │
-        └──────────────┼───────────────────────────┘
+        │              │                             │
+        └──────────────┼─────────────────────────────┘
                        ▼
               from_alternatives([
                 Int(IntAdd(...)),       ← declaration order
@@ -209,11 +209,11 @@ token is an identifier, it skips all native-type categories (those with
 native parsers would only succeed via their variable fallback, producing
 alternatives that are always less informative than non-native parsers.
 
-| First Token | Category Type | Action |
-|-------------|---------------|--------|
-| `Token::Ident` | Non-native (Proc, Name) | Try parser |
-| `Token::Ident` | Native (Float, Int, Bool, Str) | **Skip** |
-| Any other token | Any | Try parser |
+| First Token     | Category Type                  | Action     |
+|-----------------|--------------------------------|------------|
+| `Token::Ident`  | Non-native (Proc, Name)        | Try parser |
+| `Token::Ident`  | Native (Float, Int, Bool, Str) | **Skip**   |
+| Any other token | Any                            | Try parser |
 
 Here is the effect on `"p"` in rhocalc:
 
@@ -343,14 +343,14 @@ traversal: no arithmetic, no evaluation, no side effects.
 
 The check is recursive over the term structure:
 
-| Variant Kind | Ground? | Reasoning |
-|-------------|---------|-----------|
-| **Var** (`IntVar`, `FloatVar`, ...) | Always `false` | Variables are not concrete |
-| **Literal** (`NumLit(42)`, `FloatLit(0.5)`) | Always `true` | Literals are fully determined |
-| **Nullary** (`BTrue`, `BFalse`) | Always `true` | No fields to check |
-| **Regular** (`IntAdd(l, r)`) | `l.is_ground() && r.is_ground()` | Recurse on all fields |
-| **Collection** (`Vec`, `HashBag`) | `.iter().all(\|x\| x.is_ground())` | All elements must be ground |
-| **Binder** (scoped terms) | Pre-scope fields `&&` body `.is_ground()` | Recurse into scope body |
+| Variant Kind                                | Ground?                                   | Reasoning                     |
+|---------------------------------------------|-------------------------------------------|-------------------------------|
+| **Var** (`IntVar`, `FloatVar`, ...)         | Always `false`                            | Variables are not concrete    |
+| **Literal** (`NumLit(42)`, `FloatLit(0.5)`) | Always `true`                             | Literals are fully determined |
+| **Nullary** (`BTrue`, `BFalse`)             | Always `true`                             | No fields to check            |
+| **Regular** (`IntAdd(l, r)`)                | `l.is_ground() && r.is_ground()`          | Recurse on all fields         |
+| **Collection** (`Vec`, `HashBag`)           | `.iter().all(\|x\| x.is_ground())`        | All elements must be ground   |
+| **Binder** (scoped terms)                   | Pre-scope fields `&&` body `.is_ground()` | Recurse into scope body       |
 
 Two examples illustrate deep vs. shallow checking:
 
@@ -421,22 +421,22 @@ expression never reaches Stage C.
 
 ```
   ┌─────────────────────────────────────────────────────────────┐
-  │  Stage A: PARSE-TIME (from_alternatives)                     │
-  │  Ground-filter: exactly 1 ground alternative → select it     │
-  │  Cost: O(alternatives) × O(is_ground per term)               │
+  │  Stage A: PARSE-TIME (from_alternatives)                    │
+  │  Ground-filter: exactly 1 ground alternative → select it    │
+  │  Cost: O(alternatives) × O(is_ground per term)              │
   └──────────────────────────┬──────────────────────────────────┘
                              │ still Ambiguous?
   ┌──────────────────────────▼──────────────────────────────────┐
-  │  Stage B: SUBSTITUTION-TIME (substitute_env)                 │
-  │  Substitute each alternative, keep progressed, dedup,        │
-  │  re-run from_alternatives                                    │
-  │  Cost: O(alternatives) × O(substitution per term)            │
+  │  Stage B: SUBSTITUTION-TIME (substitute_env)                │
+  │  Substitute each alternative, keep progressed, dedup,       │
+  │  re-run from_alternatives                                   │
+  │  Cost: O(alternatives) × O(substitution per term)           │
   └──────────────────────────┬──────────────────────────────────┘
                              │ still Ambiguous?
   ┌──────────────────────────▼──────────────────────────────────┐
-  │  Stage C: EVALUATION-TIME (run_ascent_typed)                 │
-  │  Declaration-order resolution: evaluate first alternative    │
-  │  Cost: O(1) × O(Ascent fixpoint per term)                    │
+  │  Stage C: EVALUATION-TIME (run_ascent_typed)                │
+  │  Declaration-order resolution: evaluate first alternative   │
+  │  Cost: O(1) × O(Ascent fixpoint per term)                   │
   └──────────────────────────┬──────────────────────────────────┘
                              │
                         Resolved term
@@ -584,54 +584,54 @@ Every step uses order-preserving `Vec` operations — `iter().map().collect()`,
 `HashSet`, sorting, or shuffling ever touches the alternatives vector.
 
 ```
-                    ┌─────────────────────────────────────┐
-                    │  Grammar: types { Int, Float, ... } │
-                    │  language.types = Vec in decl order  │
-                    └──────────────┬──────────────────────┘
+                    ┌─────────────────────────────────────────┐
+                    │  Grammar: types { Int, Float, ... }     │
+                    │  language.types = Vec in decl order     │
+                    └──────────────┬──────────────────────────┘
                                    │ .iter().map().collect()
-                    ┌──────────────▼──────────────────────┐
-                    │  parse_order = [Int, Float, Bool, …] │
-                    └──────────────┬──────────────────────┘
+                    ┌──────────────▼──────────────────────────┐
+                    │  parse_order = [Int, Float, Bool, …]    │
+                    └──────────────┬──────────────────────────┘
                                    │ .map() → sequential code blocks
-                    ┌──────────────▼──────────────────────┐
-                    │  parse_preserving_vars:              │
-                    │  successes.push() in parse_order     │
-                    │  (Vec::push preserves insertion order)│
-                    └──────────────┬──────────────────────┘
+                    ┌──────────────▼──────────────────────────┐
+                    │  parse_preserving_vars:                 │
+                    │  successes.push() in parse_order        │
+                    │  (Vec::push preserves insertion order)  │
+                    └──────────────┬──────────────────────────┘
                                    │ from_alternatives(successes)
-                    ┌──────────────▼──────────────────────┐
-                    │  Stage A: from_alternatives          │
-                    │  flat_map + collect → Vec in order   │
-                    │  Ambiguous(flat) stores ordered Vec  │
-                    └──────────────┬──────────────────────┘
+                    ┌──────────────▼──────────────────────────┐
+                    │  Stage A: from_alternatives             │
+                    │  flat_map + collect → Vec in order      │
+                    │  Ambiguous(flat) stores ordered Vec     │
+                    └──────────────┬──────────────────────────┘
                                    │ substitute_env(Ambiguous(alts))
-                    ┌──────────────▼──────────────────────┐
-                    │  Stage B: substitute_env             │
-                    │  alts.iter().map() → results (order) │
-                    │  (0..n).filter() → ascending indices │
-                    │  results[i] → subset in orig order   │
-                    │  dedup by Display → insertion order   │
-                    └──────────────┬──────────────────────┘
+                    ┌──────────────▼──────────────────────────┐
+                    │  Stage B: substitute_env                │
+                    │  alts.iter().map() → results (order)    │
+                    │  (0..n).filter() → ascending indices    │
+                    │  results[i] → subset in orig order      │
+                    │  dedup by Display → insertion order     │
+                    └──────────────┬──────────────────────────┘
                                    │ run_ascent_typed(Ambiguous(alts))
-                    ┌──────────────▼──────────────────────┐
-                    │  Stage C: run_ascent_typed           │
-                    │  alts.first() = alts[0]              │
-                    │  = first-declared surviving category │
-                    └──────────────────────────────────────┘
+                    ┌──────────────▼──────────────────────────┐
+                    │  Stage C: run_ascent_typed              │
+                    │  alts.first() = alts[0]                 │
+                    │  = first-declared surviving category    │
+                    └─────────────────────────────────────────┘
 ```
 
 ### 6.2 Step-by-Step Verification
 
-| Step | Code Location | Order Mechanism |
-|------|---------------|-----------------|
-| Grammar source | `types { ![i32] as Int, ![f64] as Float, ![bool] as Bool, ![String] as Str }` | Textual declaration order → `Vec` |
-| `parse_order` | `language.rs`, line 1006 | `language.types.iter().map(\|t\| t.name.clone()).collect()` — `Vec` iteration preserves order |
-| `parse_tries` | `language.rs`, lines 1020–1041 | `parse_order.iter().map()` — generates code blocks in declaration order |
-| `successes` | Generated `parse_preserving_vars` | Sequential `successes.push()` in the order `parse_tries` are emitted — `Vec::push` preserves insertion order |
-| Stage A | `from_alternatives`, line 261 | `flat_map` + `collect()` into `Vec` — processes elements left-to-right, collects in input order |
-| Stage B | `substitute_env`, lines 309–316 | `(0..results.len()).filter()` produces ascending indices; `results[i].clone()` preserves relative order within the subset |
-| Stage B dedup | `substitute_env`, lines 320–323 | `HashSet::insert` returns `false` for duplicates — first occurrence (by insertion order) is kept |
-| Stage C | `run_ascent_typed`, line 1169 | `alts.first()` = `alts[0]` = first-declared surviving category |
+| Step           | Code Location                                                                 | Order Mechanism                                                                                                           |
+|----------------|-------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------|
+| Grammar source | `types { ![i32] as Int, ![f64] as Float, ![bool] as Bool, ![String] as Str }` | Textual declaration order → `Vec`                                                                                         |
+| `parse_order`  | `language.rs`, line 1006                                                      | `language.types.iter().map(\|t\| t.name.clone()).collect()` — `Vec` iteration preserves order                             |
+| `parse_tries`  | `language.rs`, lines 1020–1041                                                | `parse_order.iter().map()` — generates code blocks in declaration order                                                   |
+| `successes`    | Generated `parse_preserving_vars`                                             | Sequential `successes.push()` in the order `parse_tries` are emitted — `Vec::push` preserves insertion order              |
+| Stage A        | `from_alternatives`, line 261                                                 | `flat_map` + `collect()` into `Vec` — processes elements left-to-right, collects in input order                           |
+| Stage B        | `substitute_env`, lines 309–316                                               | `(0..results.len()).filter()` produces ascending indices; `results[i].clone()` preserves relative order within the subset |
+| Stage B dedup  | `substitute_env`, lines 320–323                                               | `HashSet::insert` returns `false` for duplicates — first occurrence (by insertion order) is kept                          |
+| Stage C        | `run_ascent_typed`, line 1169                                                 | `alts.first()` = `alts[0]` = first-declared surviving category                                                            |
 
 ### 6.3 The Invariant Statement
 
@@ -731,15 +731,15 @@ run_ascent_typed(Float(FloatAdd(FloatLit(1.0), FloatLit(2.0)))):
 
 **Decision summary:**
 
-| # | Layer | Decision | Mechanism |
-|---|-------|----------|-----------|
-| 1 | 1 | `"a"` → `Ident("a")`, `"+"` → `Plus`, `"b"` → `Ident("b")` | Maximal munch |
-| 2 | 2 | `Ident` → variable prefix handler (per category) | Dispatch table |
-| 3 | 3 | `Plus` binds in Int, Float, Str; not in Bool | BP comparison |
-| 4 | 6A | 3 non-ground alternatives → `Ambiguous` | Ground-filter (0 ground) |
-| 5 | 6B | Float progressed (vars → lits), Int and Str did not | Substitution progress |
-| 6 | 6B | Singleton after filter → Float wins | `from_alternatives` unwrap |
-| 7 | Ascent | `FloatAdd(1.0, 2.0)` → `FloatLit(3.0)` | Rewrite rule |
+| # | Layer  | Decision                                                   | Mechanism                  |
+|---|--------|------------------------------------------------------------|----------------------------|
+| 1 | 1      | `"a"` → `Ident("a")`, `"+"` → `Plus`, `"b"` → `Ident("b")` | Maximal munch              |
+| 2 | 2      | `Ident` → variable prefix handler (per category)           | Dispatch table             |
+| 3 | 3      | `Plus` binds in Int, Float, Str; not in Bool               | BP comparison              |
+| 4 | 6A     | 3 non-ground alternatives → `Ambiguous`                    | Ground-filter (0 ground)   |
+| 5 | 6B     | Float progressed (vars → lits), Int and Str did not        | Substitution progress      |
+| 6 | 6B     | Singleton after filter → Float wins                        | `from_alternatives` unwrap |
+| 7 | Ascent | `FloatAdd(1.0, 2.0)` → `FloatLit(3.0)`                     | Rewrite rule               |
 
 ### 7.2 `"42"` — Resolved by Layer 2 (No Layer 6 Needed)
 
@@ -791,12 +791,12 @@ run_ascent_typed(Int(NumLit(42))):
 
 **Decision summary:**
 
-| # | Layer | Decision | Mechanism |
-|---|-------|----------|-----------|
-| 1 | 1 | `"42"` → `Integer(42)` | Maximal munch |
-| 2 | 2 | `Integer` → native literal in Int only | FIRST set (`i32` → `Token::Integer`; `f64` → `Token::Float` only) |
-| 3 | — | 1 success → unambiguous (no Layer 6 needed) | Single-parse resolution |
-| 4 | Ascent | `NumLit(42)` → `NumLit(42)` (already normal) | Identity rewrite |
+| # | Layer  | Decision                                     | Mechanism                                                         |
+|---|--------|----------------------------------------------|-------------------------------------------------------------------|
+| 1 | 1      | `"42"` → `Integer(42)`                       | Maximal munch                                                     |
+| 2 | 2      | `Integer` → native literal in Int only       | FIRST set (`i32` → `Token::Integer`; `f64` → `Token::Float` only) |
+| 3 | —      | 1 success → unambiguous (no Layer 6 needed)  | Single-parse resolution                                           |
+| 4 | Ascent | `NumLit(42)` → `NumLit(42)` (already normal) | Identity rewrite                                                  |
 
 ### 7.3 `"a + b"` with No Environment — Resolved by Stage C
 
@@ -873,15 +873,15 @@ Layer 6 handles the **multi-parse-path** cases that Layer 4 cannot:
 
 ### 8.4 When Each Layer Resolves
 
-| Scenario | Resolving Layer | Example |
-|----------|----------------|---------|
-| Token boundary ambiguity | Layer 1 | `==` vs `=`+`=` |
-| Single-category token | Layer 2 | `Boolean(true)` → Bool only |
-| Operator precedence | Layer 3 | `1+2*3` → `1+(2*3)` |
-| Cross-category with operator peek | Layer 4 | `x == y` → Int comparison in Bool |
-| Multi-category with one ground | Layer 6A | `"0.5"` → Float only |
-| Multi-category with env bindings | Layer 6B | `"a + b"` with `a=1.0` → Float |
-| Multi-category, no env | Layer 6C | `"a + b"` (no env) → first-declared wins |
+| Scenario                          | Resolving Layer | Example                                  |
+|-----------------------------------|-----------------|------------------------------------------|
+| Token boundary ambiguity          | Layer 1         | `==` vs `=`+`=`                          |
+| Single-category token             | Layer 2         | `Boolean(true)` → Bool only              |
+| Operator precedence               | Layer 3         | `1+2*3` → `1+(2*3)`                      |
+| Cross-category with operator peek | Layer 4         | `x == y` → Int comparison in Bool        |
+| Multi-category with one ground    | Layer 6A        | `"0.5"` → Float only                     |
+| Multi-category with env bindings  | Layer 6B        | `"a + b"` with `a=1.0` → Float           |
+| Multi-category, no env            | Layer 6C        | `"a + b"` (no env) → first-declared wins |
 
 ---
 
@@ -948,19 +948,19 @@ alternatives (typically 2–4).
 
 ## 10. Key Source Files
 
-| File | Lines | Purpose |
-|------|-------|---------|
-| `macros/src/gen/term_ops/ground.rs` | 1–185 | `is_ground()` method generation for all categories |
-| `macros/src/gen/term_ops/ground.rs` | 31–59 | `generate_is_ground_methods()`: per-category impl blocks |
-| `macros/src/gen/term_ops/ground.rs` | 62–93 | `generate_is_ground_arm()`: variant-specific ground checks |
-| `macros/src/gen/term_ops/ground.rs` | 98–107 | `collection_all_ground()`: HashBag/Vec/HashSet iteration |
-| `macros/src/gen/term_ops/ground.rs` | 155–184 | `generate_binder_arm()`: scope body checking |
-| `macros/src/gen/runtime/language.rs` | 240–244 | `Ambiguous` variant definition |
-| `macros/src/gen/runtime/language.rs` | 248–255 | `is_accepting()` delegation to `is_ground()` |
-| `macros/src/gen/runtime/language.rs` | 261–279 | `from_alternatives()`: flatten, singleton, ground-filter |
-| `macros/src/gen/runtime/language.rs` | 281–340 | `substitute_env()` for Ambiguous terms |
+| File                                 | Lines     | Purpose                                                    |
+|--------------------------------------|-----------|------------------------------------------------------------|
+| `macros/src/gen/term_ops/ground.rs`  | 1–185     | `is_ground()` method generation for all categories         |
+| `macros/src/gen/term_ops/ground.rs`  | 31–59     | `generate_is_ground_methods()`: per-category impl blocks   |
+| `macros/src/gen/term_ops/ground.rs`  | 62–93     | `generate_is_ground_arm()`: variant-specific ground checks |
+| `macros/src/gen/term_ops/ground.rs`  | 98–107    | `collection_all_ground()`: HashBag/Vec/HashSet iteration   |
+| `macros/src/gen/term_ops/ground.rs`  | 155–184   | `generate_binder_arm()`: scope body checking               |
+| `macros/src/gen/runtime/language.rs` | 240–244   | `Ambiguous` variant definition                             |
+| `macros/src/gen/runtime/language.rs` | 248–255   | `is_accepting()` delegation to `is_ground()`               |
+| `macros/src/gen/runtime/language.rs` | 261–279   | `from_alternatives()`: flatten, singleton, ground-filter   |
+| `macros/src/gen/runtime/language.rs` | 281–340   | `substitute_env()` for Ambiguous terms                     |
 | `macros/src/gen/runtime/language.rs` | 1003–1052 | NFA-style multi-category parse with lexer-guided filtering |
-| `macros/src/gen/runtime/language.rs` | 1006 | Parse ordering (declaration order) |
-| `macros/src/gen/runtime/language.rs` | 1039–1084 | Lexer probe + native-category guards |
-| `macros/src/gen/runtime/language.rs` | 1155–1170 | `run_ascent_typed()` declaration-order resolution |
-| `macros/src/gen/runtime/language.rs` | 1717–1725 | Primary-category type inference for Ambiguous terms |
+| `macros/src/gen/runtime/language.rs` | 1006      | Parse ordering (declaration order)                         |
+| `macros/src/gen/runtime/language.rs` | 1039–1084 | Lexer probe + native-category guards                       |
+| `macros/src/gen/runtime/language.rs` | 1155–1170 | `run_ascent_typed()` declaration-order resolution          |
+| `macros/src/gen/runtime/language.rs` | 1717–1725 | Primary-category type inference for Ambiguous terms        |

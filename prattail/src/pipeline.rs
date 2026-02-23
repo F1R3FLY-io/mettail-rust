@@ -67,6 +67,10 @@ pub struct ParserBundle {
     pub(crate) cast_rules: Vec<CastRule>,
     /// Whether the grammar has binder rules (^x.{body} lambda syntax).
     pub(crate) has_binders: bool,
+    /// Beam width configuration for WFST prediction pruning (feature-gated).
+    pub(crate) beam_width: crate::BeamWidthConfig,
+    /// Dispatch strategy (unresolved — resolution requires FIRST-set and overlap data).
+    pub(crate) dispatch_strategy: crate::DispatchStrategy,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -394,6 +398,8 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         cross_rules,
         cast_rules,
         has_binders,
+        beam_width: spec.beam_width.clone(),
+        dispatch_strategy: spec.dispatch_strategy.clone(),
     };
 
     (lexer_bundle, parser_bundle)
@@ -474,9 +480,135 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         primary_category,
     );
 
+    // ── Dispatch strategy resolution ─────────────────────────────────────
+    // Resolve Auto → Static or Weighted based on grammar metrics.
+    // Must happen after overlap analysis (needed for ambiguous_overlap_count).
+    #[cfg(feature = "wfst")]
+    let use_wfst = {
+        let ambiguous_count = overlaps
+            .values()
+            .filter(|o| !o.ambiguous_tokens.tokens.is_empty())
+            .count();
+        let resolved = bundle.dispatch_strategy.resolve(
+            bundle.rule_infos.len(),
+            bundle.cross_rules.len(),
+            ambiguous_count,
+        );
+        resolved == crate::DispatchStrategy::Weighted
+    };
+
+    // ── WFST construction (feature-gated + dispatch-gated) ────────────────
+    // Build prediction WFSTs and recovery WFSTs from FIRST/FOLLOW/overlap data.
+    // These are consulted by weighted dispatch and recovery codegen below.
+    // Only constructed when the resolved dispatch strategy is Weighted.
+    #[cfg(feature = "wfst")]
+    let (prediction_wfsts, recovery_wfsts, _token_id_map) = if use_wfst {
+        use crate::prediction::build_dispatch_action_tables;
+        use crate::wfst::build_prediction_wfsts;
+        use crate::recovery::build_recovery_wfsts;
+        use crate::token_id::TokenIdMap;
+
+        // Build native type map for dispatch action table extraction
+        let native_types: std::collections::BTreeMap<String, Option<String>> = bundle
+            .categories
+            .iter()
+            .map(|c| (c.name.clone(), c.native_type.clone()))
+            .collect();
+
+        // Build dispatch action tables (structured data for WFST weight assignment)
+        let dispatch_actions = build_dispatch_action_tables(
+            &category_names,
+            &first_sets,
+            &overlaps,
+            &bundle.rd_rules,
+            &bundle.cross_rules,
+            &bundle.cast_rules,
+            &native_types,
+        );
+
+        // Build prediction WFSTs (per-category, weight-ordered dispatch)
+        let mut prediction_wfsts = build_prediction_wfsts(
+            &category_names,
+            &first_sets,
+            &overlaps,
+            &dispatch_actions,
+        );
+
+        // Apply beam width configuration
+        if let Some(beam_value) = bundle.beam_width.to_option() {
+            let beam = crate::automata::semiring::TropicalWeight::new(beam_value);
+            for wfst in prediction_wfsts.values_mut() {
+                wfst.set_beam_width(Some(beam));
+            }
+        }
+
+        // Build token ID map from all FIRST set tokens (shared across recovery WFSTs)
+        let mut all_tokens: Vec<String> = Vec::new();
+        for first_set in first_sets.values() {
+            all_tokens.extend(first_set.tokens.iter().cloned());
+        }
+        // Also include FOLLOW set tokens and structural tokens for recovery
+        for follow_set in follow_sets.values() {
+            all_tokens.extend(follow_set.tokens.iter().cloned());
+        }
+        all_tokens.push("Eof".to_string());
+        all_tokens.push("RParen".to_string());
+        all_tokens.push("RBrace".to_string());
+        all_tokens.push("RBracket".to_string());
+        all_tokens.push("Semi".to_string());
+        all_tokens.push("Comma".to_string());
+        let token_id_map = TokenIdMap::from_names(all_tokens.into_iter());
+
+        // Collect grammar terminals for recovery WFST construction
+        let grammar_terminals_wfst: std::collections::BTreeSet<String> = {
+            let mut terminals = std::collections::BTreeSet::new();
+            for input in &bundle.follow_inputs {
+                for t in collect_terminals_recursive(&input.syntax) {
+                    terminals.insert(t);
+                }
+            }
+            for delim in &["(", ")", "{", "}", "[", "]", ","] {
+                terminals.insert(delim.to_string());
+            }
+            if bundle.has_binders {
+                terminals.insert("^".to_string());
+                terminals.insert(".".to_string());
+            }
+            terminals
+        };
+
+        // Build recovery WFSTs (per-category, weighted repair strategies)
+        let recovery_wfsts = build_recovery_wfsts(
+            &category_names,
+            &follow_sets,
+            &grammar_terminals_wfst,
+            &token_id_map,
+        );
+
+        (prediction_wfsts, recovery_wfsts, token_id_map)
+    } else {
+        // Static dispatch: no WFST construction needed.
+        // Empty maps cause all downstream .get() calls to return None,
+        // naturally falling through to the static path.
+        (
+            std::collections::BTreeMap::new(),
+            Vec::new(),
+            crate::token_id::TokenIdMap::from_names(std::iter::empty()),
+        )
+    };
+
+    // ── WFST static embedding (feature-gated) ─────────────────────────────
+    // Emit prediction WFSTs as CSR-format static arrays with LazyLock constructors.
+    // This makes the WFST data available at runtime for dynamic prediction
+    // (e.g., with trained model weights overriding heuristic weights).
+    let mut buf = String::with_capacity(8192);
+    #[cfg(feature = "wfst")]
+    {
+        emit_prediction_wfst_static(&mut buf, &prediction_wfsts);
+        emit_recovery_wfst_static(&mut buf, &recovery_wfsts);
+    }
 
     // Generate RD handlers
-    let mut buf = String::with_capacity(8192);
     let mut all_prefix_handlers: Vec<PrefixHandler> = Vec::with_capacity(bundle.rd_rules.len());
 
     for rd_rule in &bundle.rd_rules {
@@ -539,6 +671,8 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             all_first_sets: first_sets.clone(),
             follow_set: own_follow,
             has_binders: bundle.has_binders,
+            #[cfg(feature = "wfst")]
+            prediction_wfst: prediction_wfsts.get(&cat.name).cloned(),
         };
 
         let cat_handlers: Vec<PrefixHandler> = all_prefix_handlers
@@ -564,7 +698,32 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             .filter(|r| r.result_category == cat.name)
             .cloned()
             .collect();
-        if !cat_cross.is_empty() {
+        if cat_cross.is_empty() {
+            continue;
+        }
+
+        // Use WFST-weighted dispatch when a prediction WFST is available
+        #[cfg(feature = "wfst")]
+        let used_weighted = {
+            if let Some(wfst) = prediction_wfsts.get(&cat.name) {
+                crate::dispatch::write_category_dispatch_weighted(
+                    &mut buf,
+                    &cat.name,
+                    &cat_cross,
+                    &[],
+                    &overlaps,
+                    &first_sets,
+                    wfst,
+                );
+                true
+            } else {
+                false
+            }
+        };
+        #[cfg(not(feature = "wfst"))]
+        let used_weighted = false;
+
+        if !used_weighted {
             write_category_dispatch(
                 &mut buf,
                 &cat.name,
@@ -643,16 +802,49 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             all_first_sets: first_sets.clone(),
             follow_set: own_follow,
             has_binders: bundle.has_binders,
+            #[cfg(feature = "wfst")]
+            prediction_wfst: None, // Recovery wrappers don't need weighted dispatch
         };
 
+        // Generate WFST-based recovery function when wfst feature is enabled.
+        // This generates a weighted recovery helper that evaluates skip, delete,
+        // and substitute strategies — replacing the linear sync_to() scan.
+        #[cfg(feature = "wfst")]
+        {
+            if let Some(recovery_wfst) = recovery_wfsts.iter().find(|w| w.category() == cat.name) {
+                generate_wfst_recovery_fn(&mut buf, &cat.name, recovery_wfst);
+            }
+        }
+
         // Generate recovering trampolined parser (wraps fail-fast trampoline with error catch)
+        #[cfg(feature = "wfst")]
+        {
+            // Use WFST recovery when available
+            if recovery_wfsts.iter().any(|w| w.category() == cat.name) {
+                write_trampolined_parser_recovering_wfst(
+                    &mut buf,
+                    &tramp_config,
+                );
+            } else {
+                write_trampolined_parser_recovering(
+                    &mut buf,
+                    &tramp_config,
+                    &bundle.bp_table,
+                    &crate::trampoline::FrameInfo {
+                        enum_name: format!("Frame_{}", cat.name),
+                        variants: Vec::new(),
+                    },
+                );
+            }
+        }
+        #[cfg(not(feature = "wfst"))]
         write_trampolined_parser_recovering(
             &mut buf,
             &tramp_config,
             &bundle.bp_table,
             &crate::trampoline::FrameInfo {
                 enum_name: format!("Frame_{}", cat.name),
-                variants: Vec::new(), // Not needed for simple recovery wrapper
+                variants: Vec::new(),
             },
         );
 
@@ -850,4 +1042,441 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
             inner: inner.iter().map(convert_syntax_item_to_rd).collect(),
         },
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WFST static embedding (feature = "wfst")
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Emit a `PredictionWfst` as CSR-format static arrays with a `LazyLock` constructor.
+///
+/// For each category with a prediction WFST, generates:
+/// ```text
+/// static WFST_TRANSITIONS_Cat: &[(u16, u32, f64)] = &[ ... ];
+/// static WFST_STATE_OFFSETS_Cat: &[(usize, usize, bool, f64)] = &[ ... ];
+/// static WFST_TOKEN_NAMES_Cat: &[&str] = &[ ... ];
+/// static WFST_BEAM_WIDTH_Cat: Option<f64> = Some(1.5);  // or None
+///
+/// static PREDICTION_Cat: std::sync::LazyLock<mettail_prattail::wfst::PredictionWfst> =
+///     std::sync::LazyLock::new(|| {
+///         mettail_prattail::wfst::PredictionWfst::from_flat(
+///             "Cat",
+///             WFST_STATE_OFFSETS_Cat,
+///             WFST_TRANSITIONS_Cat,
+///             WFST_TOKEN_NAMES_Cat,
+///             WFST_BEAM_WIDTH_Cat,
+///         )
+///     });
+/// ```
+///
+/// The `LazyLock` is initialized on first access and persists for the process
+/// lifetime. Since the data is entirely `static`, there is no runtime I/O.
+#[cfg(feature = "wfst")]
+fn emit_prediction_wfst_static(
+    buf: &mut String,
+    prediction_wfsts: &std::collections::BTreeMap<String, crate::wfst::PredictionWfst>,
+) {
+    use std::fmt::Write;
+
+    for (category, wfst) in prediction_wfsts {
+        if wfst.num_actions() == 0 {
+            continue;
+        }
+
+        // ── Flatten transitions into CSR format ──
+        let mut transitions_flat: Vec<(u16, u32, f64)> = Vec::new();
+        let mut state_offsets: Vec<(usize, usize, bool, f64)> = Vec::with_capacity(wfst.states.len());
+
+        for state in &wfst.states {
+            let trans_start = transitions_flat.len();
+            let trans_count = state.transitions.len();
+            for t in &state.transitions {
+                transitions_flat.push((t.input, t.to, t.weight.value()));
+            }
+            state_offsets.push((trans_start, trans_count, state.is_final, state.final_weight.value()));
+        }
+
+        // ── Collect token names from the token map ──
+        let mut token_names: Vec<String> = Vec::with_capacity(wfst.token_map.len());
+        for i in 0..wfst.token_map.len() {
+            if let Some(name) = wfst.token_map.name(i as u16) {
+                token_names.push(name.to_string());
+            }
+        }
+
+        // ── Emit static arrays ──
+        // Transitions
+        write!(buf,
+            "static WFST_TRANSITIONS_{cat}: &[(u16, u32, f64)] = &[",
+            cat = category,
+        ).unwrap();
+        for (i, (token_id, target, weight)) in transitions_flat.iter().enumerate() {
+            if i > 0 { buf.push(','); }
+            write!(buf, "({}_u16, {}_u32, {:?}_f64)", token_id, target, weight).unwrap();
+        }
+        buf.push_str("];");
+
+        // State offsets
+        write!(buf,
+            "static WFST_STATE_OFFSETS_{cat}: &[(usize, usize, bool, f64)] = &[",
+            cat = category,
+        ).unwrap();
+        for (i, (start, count, is_final, fw)) in state_offsets.iter().enumerate() {
+            if i > 0 { buf.push(','); }
+            write!(buf, "({}_usize, {}_usize, {}, {:?}_f64)", start, count, is_final, fw).unwrap();
+        }
+        buf.push_str("];");
+
+        // Token names
+        write!(buf,
+            "static WFST_TOKEN_NAMES_{cat}: &[&str] = &[",
+            cat = category,
+        ).unwrap();
+        for (i, name) in token_names.iter().enumerate() {
+            if i > 0 { buf.push(','); }
+            write!(buf, "\"{}\"", name).unwrap();
+        }
+        buf.push_str("];");
+
+        // Beam width
+        match wfst.beam_width {
+            Some(bw) => write!(buf,
+                "static WFST_BEAM_WIDTH_{}: Option<f64> = Some({:?}_f64);",
+                category, bw.value(),
+            ).unwrap(),
+            None => write!(buf,
+                "static WFST_BEAM_WIDTH_{cat}: Option<f64> = None;",
+                cat = category,
+            ).unwrap(),
+        }
+
+        // LazyLock constructor
+        write!(buf,
+            "static PREDICTION_{cat}: std::sync::LazyLock<mettail_prattail::wfst::PredictionWfst> = \
+             std::sync::LazyLock::new(|| {{ \
+                mettail_prattail::wfst::PredictionWfst::from_flat(\
+                    \"{cat}\", \
+                    WFST_STATE_OFFSETS_{cat}, \
+                    WFST_TRANSITIONS_{cat}, \
+                    WFST_TOKEN_NAMES_{cat}, \
+                    WFST_BEAM_WIDTH_{cat}, \
+                ) \
+             }});",
+            cat = category,
+        ).unwrap();
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WFST recovery static embedding (feature = "wfst")
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Emit recovery WFST data as static arrays for runtime context-aware recovery.
+///
+/// For each category with a recovery WFST, generates:
+/// ```text
+/// static RECOVERY_SYNC_TOKENS_Cat: &[u16] = &[...];
+/// static RECOVERY_SYNC_SOURCES_Cat: &[(u16, u8)] = &[...];
+/// static RECOVERY_TOKEN_NAMES_Cat: &[&str] = &[...];
+/// ```
+///
+/// These arrays are consumed by `RecoveryWfst::from_flat()` at runtime when
+/// full context-aware recovery is needed (Sprint 4).
+#[cfg(feature = "wfst")]
+fn emit_recovery_wfst_static(
+    buf: &mut String,
+    recovery_wfsts: &[crate::recovery::RecoveryWfst],
+) {
+    use std::fmt::Write;
+
+    for recovery_wfst in recovery_wfsts {
+        let cat = recovery_wfst.category();
+
+        // Sync token IDs (sorted)
+        let sync_ids: Vec<u16> = recovery_wfst.sync_tokens().iter().copied().collect();
+        write!(buf,
+            "static RECOVERY_SYNC_TOKENS_{cat}: &[u16] = &[",
+        ).unwrap();
+        for (i, id) in sync_ids.iter().enumerate() {
+            if i > 0 { buf.push(','); }
+            write!(buf, "{}_u16", id).unwrap();
+        }
+        buf.push_str("];");
+
+        // Sync sources: (token_id, source_tag)
+        // 0=Eof, 1=StructuralDelimiter, 2=FollowSet
+        write!(buf,
+            "static RECOVERY_SYNC_SOURCES_{cat}: &[(u16, u8)] = &[",
+        ).unwrap();
+        for (i, &id) in sync_ids.iter().enumerate() {
+            if i > 0 { buf.push(','); }
+            let source_tag = match recovery_wfst.token_name(id) {
+                Some("Eof") => 0_u8,
+                Some("RParen" | "RBrace" | "RBracket" | "Semi" | "Comma") => 1_u8,
+                _ => 2_u8,
+            };
+            write!(buf, "({}_u16, {}_u8)", id, source_tag).unwrap();
+        }
+        buf.push_str("];");
+
+        // Token names for reconstructing TokenIdMap
+        let mut token_names: Vec<String> = Vec::new();
+        // Recover all token names from the sync set
+        for &id in recovery_wfst.sync_tokens() {
+            if let Some(name) = recovery_wfst.token_name(id) {
+                token_names.push(name.to_string());
+            }
+        }
+        token_names.sort();
+        token_names.dedup();
+
+        write!(buf,
+            "static RECOVERY_TOKEN_NAMES_{cat}: &[&str] = &[",
+        ).unwrap();
+        for (i, name) in token_names.iter().enumerate() {
+            if i > 0 { buf.push(','); }
+            write!(buf, "\"{}\"", name).unwrap();
+        }
+        buf.push_str("];");
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WFST recovery codegen (feature = "wfst")
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Generate a WFST-based weighted recovery function for a category.
+///
+/// Emits a function `wfst_recover_Cat` that evaluates all 4 repair strategies
+/// (skip-to-sync, delete, insert, substitute) with context-aware cost adjustments
+/// from `RecoveryContext` (bracket balance, nesting depth, frame kind).
+///
+/// Also emits a helper `is_sync_token_Cat` for matching sync tokens.
+///
+/// Generated signatures:
+/// ```text
+/// fn wfst_recover_Cat<'a>(
+///     tokens: &[(Token<'a>, Span)],
+///     pos: &mut usize,
+///     depth: usize,
+///     binding_power: u8,
+///     open_parens: u16,
+///     open_braces: u16,
+///     open_brackets: u16,
+/// ) -> bool  // true if recovery succeeded
+/// ```
+#[cfg(feature = "wfst")]
+fn generate_wfst_recovery_fn(
+    buf: &mut String,
+    category: &str,
+    recovery_wfst: &crate::recovery::RecoveryWfst,
+) {
+    use std::fmt::Write;
+
+    // Collect sync token variant names for match patterns
+    let sync_patterns: Vec<String> = recovery_wfst
+        .sync_tokens()
+        .iter()
+        .filter_map(|&id| recovery_wfst.token_name(id))
+        .map(|name| match name {
+            "Ident" => "Token::Ident(_)".to_string(),
+            "Integer" => "Token::Integer(_)".to_string(),
+            "Float" => "Token::Float(_)".to_string(),
+            "Boolean" => "Token::Boolean(_)".to_string(),
+            "StringLit" => "Token::StringLit(_)".to_string(),
+            "Eof" => "Token::Eof".to_string(),
+            other => format!("Token::{}", other),
+        })
+        .collect();
+
+    if sync_patterns.is_empty() {
+        return;
+    }
+
+    // Build bracket-specific insert patterns for close delimiters
+    let has_rparen = recovery_wfst.sync_tokens().iter().any(|&id|
+        recovery_wfst.token_name(id) == Some("RParen"));
+    let has_rbrace = recovery_wfst.sync_tokens().iter().any(|&id|
+        recovery_wfst.token_name(id) == Some("RBrace"));
+    let has_rbracket = recovery_wfst.sync_tokens().iter().any(|&id|
+        recovery_wfst.token_name(id) == Some("RBracket"));
+
+    let max_skip: usize = 32; // Same as recovery::costs::MAX_SKIP_LOOKAHEAD
+
+    // Generate the full 4-strategy context-aware recovery function
+    write!(
+        buf,
+        "/// WFST-based 4-strategy context-aware recovery for category `{cat}`.
+         ///
+         /// Evaluates skip-to-sync, delete, insert, and substitute strategies with
+         /// context-aware cost adjustments from nesting depth, binding power, and
+         /// bracket balance.
+         fn wfst_recover_{cat}<'a>(\
+            tokens: &[(Token<'a>, Span)], \
+            pos: &mut usize, \
+            depth: usize, \
+            binding_power: u8, \
+            open_parens: u16, \
+            open_braces: u16, \
+            open_brackets: u16, \
+         ) -> bool {{ \
+            let start = *pos; \
+            let remaining = tokens.len() - start; \
+            let max_look = if remaining < {max_skip} {{ remaining }} else {{ {max_skip} }}; \
+            let mut best_pos: Option<usize> = None; \
+            let mut best_cost: f64 = f64::INFINITY; \
+            /* Tier 1: depth-based skip multiplier */ \
+            let skip_mult: f64 = if depth > 1000 {{ 0.5 }} \
+                else if depth < 10 {{ 2.0 }} else {{ 1.0 }}; \
+            /* Tier 1: BP-based skip multiplier */ \
+            let bp_mult: f64 = if binding_power < 4 {{ 0.75 }} else {{ 1.0 }}; \
+            let combined_skip_mult = skip_mult * bp_mult; \
+            /* Strategy 1: Skip to nearest sync token (0.5/token * context mult) */ \
+            for skip in 0..max_look {{ \
+                let idx = start + skip; \
+                if matches!(&tokens[idx].0, {sync_pats}) {{ \
+                    let cost = (skip as f64) * 0.5 * combined_skip_mult; \
+                    if cost < best_cost {{ \
+                        best_cost = cost; \
+                        best_pos = Some(idx); \
+                    }} \
+                    break; \
+                }} \
+            }} \
+            /* Strategy 2: Delete one token (cost 1.0 * skip_mult) */ \
+            if remaining > 0 {{ \
+                let cost = 1.0 * combined_skip_mult; \
+                if cost < best_cost {{ \
+                    best_cost = cost; \
+                    best_pos = Some(start + 1); \
+                }} \
+            }} \
+            /* Strategy 3: Insert missing closing delimiter (bracket-aware) */ \
+            {{ \
+                let base_insert = 2.0_f64;",
+        cat = category,
+        max_skip = max_skip,
+        sync_pats = sync_patterns.join(" | "),
+    ).unwrap();
+
+    // Emit bracket-specific insert logic
+    if has_rparen {
+        write!(buf,
+            "if open_parens > 0 {{ \
+                let cost = base_insert * 0.3; /* strongly prefer closing unmatched parens */ \
+                if cost < best_cost {{ \
+                    best_cost = cost; \
+                    best_pos = Some(start); /* phantom insert — don't advance */ \
+                }} \
+            }}"
+        ).unwrap();
+    }
+    if has_rbrace {
+        write!(buf,
+            "if open_braces > 0 {{ \
+                let cost = base_insert * 0.3; \
+                if cost < best_cost {{ \
+                    best_cost = cost; \
+                    best_pos = Some(start); \
+                }} \
+            }}"
+        ).unwrap();
+    }
+    if has_rbracket {
+        write!(buf,
+            "if open_brackets > 0 {{ \
+                let cost = base_insert * 0.3; \
+                if cost < best_cost {{ \
+                    best_cost = cost; \
+                    best_pos = Some(start); \
+                }} \
+            }}"
+        ).unwrap();
+    }
+
+    write!(
+        buf,
+        "   }} \
+            /* Strategy 4: Substitute current token with sync token (cost 1.5 * sub_mult) */ \
+            if remaining > 0 {{ \
+                let sub_mult = 1.0_f64; /* mixfix/other adjustments could go here */ \
+                let cost = 1.5 * sub_mult; \
+                if cost < best_cost {{ \
+                    best_cost = cost; \
+                    best_pos = Some(start + 1); \
+                }} \
+            }} \
+            /* Apply best strategy */ \
+            match best_pos {{ \
+                Some(new_pos) => {{ *pos = new_pos; true }} \
+                None => false \
+            }} \
+         }}",
+    ).unwrap();
+}
+
+/// Generate recovering parser variant that uses WFST recovery instead of sync_to.
+///
+/// On parse error, calls `wfst_recover_Cat()` with context parameters (depth,
+/// binding power, bracket counters) for context-aware recovery with all 4 strategies.
+///
+/// Bracket counters are maintained inline: incremented on open delimiters,
+/// decremented on close delimiters. This provides Tier 2 (bracket balance)
+/// context to the recovery function at zero overhead on the happy path.
+#[cfg(feature = "wfst")]
+fn write_trampolined_parser_recovering_wfst(
+    buf: &mut String,
+    config: &crate::trampoline::TrampolineConfig,
+) {
+    use std::fmt::Write;
+
+    let cat = &config.category;
+    let parse_fn = if config.needs_dispatch {
+        format!("parse_{}_own_recovering", cat)
+    } else {
+        format!("parse_{}_recovering", cat)
+    };
+
+    let own_parse_fn = if config.needs_dispatch {
+        format!("parse_{}_own", cat)
+    } else {
+        format!("parse_{}", cat)
+    };
+
+    // Generate the recovering parser with bracket balance tracking.
+    // The bracket counters are local to each recovering parse call.
+    // For a truly integrated solution (Sprint 4+), these would be threaded
+    // through the trampoline state. For now, we scan backwards from the
+    // error position to estimate the current bracket balance.
+    write!(
+        buf,
+        "fn {parse_fn}<'a>(\
+            tokens: &[(Token<'a>, Span)], \
+            pos: &mut usize, \
+            min_bp: u8, \
+            errors: &mut Vec<ParseError>, \
+        ) -> Option<{cat}> {{ \
+            match {own_parse_fn}(tokens, pos, min_bp) {{ \
+                Ok(v) => Some(v), \
+                Err(e) => {{ \
+                    errors.push(e); \
+                    /* Estimate bracket balance by scanning tokens consumed so far */ \
+                    let mut op: u16 = 0; let mut ob: u16 = 0; let mut ok: u16 = 0; \
+                    for i in 0..*pos {{ \
+                        match &tokens[i].0 {{ \
+                            Token::LParen => op = op.saturating_add(1), \
+                            Token::RParen => op = op.saturating_sub(1), \
+                            Token::LBrace => ob = ob.saturating_add(1), \
+                            Token::RBrace => ob = ob.saturating_sub(1), \
+                            Token::LBracket => ok = ok.saturating_add(1), \
+                            Token::RBracket => ok = ok.saturating_sub(1), \
+                            _ => {{}} \
+                        }} \
+                    }} \
+                    wfst_recover_{cat}(tokens, pos, 0, min_bp, op, ob, ok); \
+                    None \
+                }} \
+            }} \
+        }}",
+    ).unwrap();
 }

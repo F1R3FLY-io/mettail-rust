@@ -86,13 +86,13 @@ rw_cat(lhs.clone(), match (lhs, vi) {
 
 ## Results
 
-| Language   | Before | After | Reduction |
-|-----------|--------|-------|-----------|
-| Calculator | 138    | 61    | 56%       |
-| Rho Calc   | 116    | 52    | 55%       |
-| Ambient    | 84     | 35    | 58%       |
-| Lambda     | 9      | 9     | 0%        |
-| **Total**  | **347**| **157** | **55%** |
+| Language   | Before  | After   | Reduction |
+|------------|---------|---------|-----------|
+| Calculator | 138     | 61      | 56%       |
+| Rho Calc   | 116     | 52      | 55%       |
+| Ambient    | 84      | 35      | 58%       |
+| Lambda     | 9       | 9       | 0%        |
+| **Total**  | **347** | **157** | **55%**   |
 
 Lambda has only 1 category (Term) so there was nothing to consolidate.
 
@@ -100,21 +100,22 @@ Lambda has only 1 category (Term) so there was nothing to consolidate.
 
 ### New files
 
-| File | Purpose |
-|------|---------|
-| `macros/src/logic/common.rs` | Shared helpers: `RelationNames`, `literal_label_for()`, `builtin_op_token/expr()`, `fold_*` utilities |
-| `macros/src/logic/helpers.rs` | Area 1 (subterm extraction) and Area 2 (auto-variant congruence) consolidation |
+| File                          | Purpose                                                                                               |
+|-------------------------------|-------------------------------------------------------------------------------------------------------|
+| `macros/src/logic/common.rs`  | Shared helpers: `RelationNames`, `literal_label_for()`, `builtin_op_token/expr()`, `fold_*` utilities |
+| `macros/src/logic/helpers.rs` | Area 1 (subterm extraction) and Area 2 (auto-variant congruence) consolidation                        |
+|                               |                                                                                                       |
 
 ### Modified files
 
-| File | Changes |
-|------|---------|
-| `macros/src/logic/mod.rs` | Areas 5-6 (fold triggers/identities), semantic rule unification, pretty-printing fixes |
-| `macros/src/logic/categories.rs` | Delegates to consolidated helpers instead of per-constructor generation |
-| `macros/src/logic/equations.rs` | Area 3: groups constructors by field-type signature for consolidated congruence |
-| `macros/src/logic/congruence.rs` | Area 4: groups simple congruences by (source_cat, field_cat) pair |
-| `macros/src/logic/relations.rs` | Cleaned up to use `RelationNames` from common |
-| `macros/src/logic/rules.rs` | Unified clause assembly for equations and rewrites |
+| File                             | Changes                                                                                |
+|----------------------------------|----------------------------------------------------------------------------------------|
+| `macros/src/logic/mod.rs`        | Areas 5-6 (fold triggers/identities), semantic rule unification, pretty-printing fixes |
+| `macros/src/logic/categories.rs` | Delegates to consolidated helpers instead of per-constructor generation                |
+| `macros/src/logic/equations.rs`  | Area 3: groups constructors by field-type signature for consolidated congruence        |
+| `macros/src/logic/congruence.rs` | Area 4: groups simple congruences by (source_cat, field_cat) pair                      |
+| `macros/src/logic/relations.rs`  | Cleaned up to use `RelationNames` from common                                          |
+| `macros/src/logic/rules.rs`      | Unified clause assembly for equations and rewrites                                     |
 
 ### See Also
 

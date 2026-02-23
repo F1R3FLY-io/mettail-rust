@@ -132,6 +132,42 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let cat = &t.name;
             let parse_fn = format_ident!("parse_{}", cat);
             let parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
+
+            // When WFST is enabled, parse_structured_weighted() calls lex_weighted()
+            // and stores the weight vector alongside the token/range pairs.
+            // The parser itself still receives &[(Token, Range)] — weights are
+            // consumed by the lattice/prediction layers in later sprints.
+            #[cfg(feature = "wfst")]
+            let wfst_methods = quote! {
+                /// Parse with weight emission: calls `lex_weighted()` to get
+                /// per-token tropical weights, then parses normally.
+                ///
+                /// Returns `(result, weights)` where `weights[i]` is the tropical
+                /// weight (lower = higher priority) for `tokens[i]`.
+                ///
+                /// Requires the `wfst` feature.
+                pub fn parse_structured_weighted(input: &str) -> Result<(#cat, Vec<f64>), ParseError> {
+                    let weighted_tokens = lex_weighted(input)?;
+                    let weights: Vec<f64> = weighted_tokens.iter().map(|(_, _, w)| *w).collect();
+                    let tokens: Vec<(Token<'_>, Range)> = weighted_tokens
+                        .into_iter()
+                        .map(|(t, r, _)| (t, r))
+                        .collect();
+                    let mut pos = 0usize;
+                    let result = #parse_fn(&tokens, &mut pos, 0)?;
+                    if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
+                        return Err(ParseError::TrailingTokens {
+                            found: format!("{:?}", tokens[pos].0),
+                            range: tokens[pos].1,
+                        });
+                    }
+                    Ok((result, weights))
+                }
+            };
+
+            #[cfg(not(feature = "wfst"))]
+            let wfst_methods = quote! {};
+
             quote! {
                 impl #cat {
                     /// Parse a string as this category.
@@ -202,6 +238,8 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         }
                         (result, errors)
                     }
+
+                    #wfst_methods
                 }
             }
         })

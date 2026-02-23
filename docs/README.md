@@ -23,6 +23,7 @@ Focused guides on specific features:
 - **`guides/collections.md`** - Collection types and pattern matching
 - **`guides/bindings.md`** - Variable binding and substitution
 - **`guides/repl.md`** - Interactive REPL usage (→ `REPL-GUIDE.md`)
+- **`guides/wfst_features.md`** - WFST features: weighted dispatch, beam pruning, training
 
 ---
 
@@ -34,6 +35,7 @@ Detailed technical designs:
 - **`design/made/ascent_generation.md`** - How Datalog rules are generated
 - **`design/made/data_structures.md`** - Collections and binding design
 - **`design/made/repl.md`** - Term explorer REPL design
+- **`design/made/wfst_integration.md`** - WFST integration: feature gates, dispatch strategy, benchmarks
 
 ### Exploring (In Progress / Future)
 - **`design/exploring/theory_composition.md`** - Module system design
@@ -80,6 +82,7 @@ Internal documentation about the documentation itself:
 2. **Theory**: `guides/theory_syntax.md` - See formal language
 3. **Design**: `design/made/ascent_generation.md` - Execution model
 4. **Performance**: `design/exploring/performance.md` - Optimization strategies
+4.5. **WFSTs**: `guides/wfst_features.md` → `../../prattail/docs/experimental/wfst/` - Weighted parsing
 5. **Future**: `main_goals.md` → Theory Translation section
 
 ---
@@ -117,5 +120,5 @@ Internal documentation about the documentation itself:
 
 ---
 
-**Last Updated**: December 2025
+**Last Updated**: February 2026
 

@@ -14,10 +14,10 @@ This document describes four optimizations applied to the Ascent code generation
 ```
 language! { ... }
     │
-    ├──── PraTTaIL Pipeline ────────────> Parser (TokenStream)
+    ├──── PraTTaIL Pipeline ─────────────→ Parser (TokenStream)
     │     (prattail/src/)
     │
-    └──── Ascent Code Gen ──────────────> Ascent Program (TokenStream)
+    └──── Ascent Code Gen ───────────────→ Ascent Program (TokenStream)
           (macros/src/logic/, macros/src/gen/runtime/)
               │
               ├── Opt 2: TLS Vec Pool (common.rs)
@@ -30,22 +30,22 @@ language! { ... }
 
 ### 2.1 Logic Modules (`macros/src/logic/`)
 
-| Module | Responsibility |
-|--------|---------------|
-| `mod.rs` | Top-level Ascent source assembly (`AscentSourceOutput`) |
-| `common.rs` | Shared helpers, reachability, core categories, TLS pool |
-| `helpers.rs` | Consolidated deconstruction and congruence rules |
-| `categories.rs` | Category exploration and dead rule pruning |
-| `congruence.rs` | Equation congruence rules |
-| `equations.rs` | User-defined equation rules |
-| `rules.rs` | User-defined rewrite rules |
+| Module          | Responsibility                                          |
+|-----------------|---------------------------------------------------------|
+| `mod.rs`        | Top-level Ascent source assembly (`AscentSourceOutput`) |
+| `common.rs`     | Shared helpers, reachability, core categories, TLS pool |
+| `helpers.rs`    | Consolidated deconstruction and congruence rules        |
+| `categories.rs` | Category exploration and dead rule pruning              |
+| `congruence.rs` | Equation congruence rules                               |
+| `equations.rs`  | User-defined equation rules                             |
+| `rules.rs`      | User-defined rewrite rules                              |
 
 ### 2.2 Runtime Modules
 
-| Module | Responsibility |
-|--------|---------------|
+| Module                               | Responsibility                                          |
+|--------------------------------------|---------------------------------------------------------|
 | `macros/src/gen/runtime/language.rs` | Language struct, Ascent struct generation, SCC dispatch |
-| `runtime/src/binding.rs` | OrdVar wrapper, Scope wrapper (Hash + Ord) |
+| `runtime/src/binding.rs`             | OrdVar wrapper, Scope wrapper (Hash + Ord)              |
 
 ## 3. Opt 2: TLS Vec Pool Iteration Equivalence
 
@@ -111,34 +111,60 @@ language! { ... }
 ## 7. Data Flow Diagram
 
 ```
-LanguageSpec
-    │
-    ├──── types ──────────────────────┐
-    │                                 │
-    │     compute_category_reachability()     ← Opt 3: builds graph
-    │              │                  │
-    │              ├── reachable set ──┤
-    │              │                  │
-    │     compute_core_categories()          ← Opt 5: SCC analysis
-    │              │                  │
-    │              └── core_cats ─────┤
-    │                                 │
-    ├──── terms ──────────────────────┤
-    │                                 │
-    │     generate_category_rules()          ← Opt 3: prune dead rules
-    │     generate_tls_pool_iter()           ← Opt 2: zero-alloc iteration
-    │              │                  │
-    │              └── rules ─────────┤
-    │                                 │
-    ├──── runtime ────────────────────┤
-    │                                 │
-    │     OrdVar, Scope wrappers             ← Opt 4: ordering
-    │     run_ascent_typed dispatcher        ← Opt 5: core/full routing
-    │              │                  │
-    │              └── ascent code ───┘
-    │
-    └──── TokenStream (parser + ascent)
+                    LanguageSpec
+                         │
+                         ▼
+          ┌──────────────────────────────┐
+          │  compute_category_           │
+          │    reachability()            │
+          │  Build category graph from   │
+          │  constructor field types     │──── Opt 3
+          │                              │
+          │  Output: reachable_set       │
+          └──────────────┬───────────────┘
+                         │
+                         ▼
+          ┌──────────────────────────────┐
+          │  compute_core_categories()   │
+          │  SCC analysis on reachable   │
+          │  graph to find core cats     │──── Opt 5
+          │                              │
+          │  Output: core_cats           │
+          └──────────────┬───────────────┘
+                         │
+                         ▼
+          ┌──────────────────────────────┐
+          │  generate_category_rules()   │
+          │  Skip rules for unreachable  │──── Opt 3
+          │  (src, tgt) pairs            │
+          │                              │
+          │  generate_tls_pool_iter()    │
+          │  Zero-alloc subterm extract  │──── Opt 2
+          │  via Cell<Vec<T>> pool       │
+          │                              │
+          │  Output: ascent rules        │
+          └──────────────┬───────────────┘
+                         │
+                         ▼
+          ┌──────────────────────────────┐
+          │  OrdVar, Scope wrappers      │──── Opt 4
+          │  Hash-based Ord for BTree    │
+          │                              │
+          │  run_ascent_typed dispatcher │
+          │  Route core inputs to Core   │──── Opt 5
+          │  struct, others to Full      │
+          │                              │
+          │  Output: runtime support     │
+          └──────────────┬───────────────┘
+                         │
+                         ▼
+               TokenStream (ascent)
 ```
+
+Each box is a processing stage. The pipeline flows top-to-bottom: analysis
+(reachability, then SCC), then code generation (rules with pruning and pooling),
+then runtime assembly (ordering wrappers and dispatch routing). Every stage
+consumes the `LanguageSpec` plus outputs from stages above it.
 
 ## 8. References
 

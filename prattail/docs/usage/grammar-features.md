@@ -80,12 +80,12 @@ The **first** category declared is the **primary** category. This affects:
 
 ### Supported Native Types
 
-| Rust Type | Lexer Token | Literal Pattern |
-|---|---|---|
-| `i32`, `i64`, `u32`, `u64`, `isize`, `usize` | `Integer(i64)` | `[0-9]+` |
-| `f32`, `f64` | `Float(f64)` | `[0-9]+\.[0-9]+` |
-| `bool` | `Boolean(bool)` | `true` / `false` keywords |
-| `str`, `String` | `StringLit(String)` | `"[^"]*"` |
+| Rust Type                                    | Lexer Token         | Literal Pattern           |
+|----------------------------------------------|---------------------|---------------------------|
+| `i32`, `i64`, `u32`, `u64`, `isize`, `usize` | `Integer(i64)`      | `[0-9]+`                  |
+| `f32`, `f64`                                 | `Float(f64)`        | `[0-9]+\.[0-9]+`          |
+| `bool`                                       | `Boolean(bool)`     | `true` / `false` keywords |
+| `str`, `String`                              | `StringLit(String)` | `"[^"]*"`                 |
 
 ---
 
@@ -103,7 +103,7 @@ Label . params |- syntax_pattern : ResultCategory [optional_annotations];
 ```
 Add . a:Int, b:Int |- a "+" b : Int ![a + b] step;
 ^^^   ^^^^^^^^^^^^    ^^^^^^^^   ^^^  ^^^^^^^  ^^^^
- |         |              |       |      |       |
+ │         │              │       │      │       │
 Label   Parameters    Syntax   Result  HOL    Eval
                       Pattern  Cat.    code   mode
 ```
@@ -179,14 +179,14 @@ category. This ensures they bind tighter than any infix operator.
 
 **Behavioral examples**:
 
-| Expression | Parse tree | Evaluation |
-|---|---|---|
-| `-3` | `Neg(NumLit(3))` | `-3` |
-| `-3 + 5` | `Add(Neg(NumLit(3)), NumLit(5))` | `2` |
-| `-3 * 5` | `Mul(Neg(NumLit(3)), NumLit(5))` | `-15` |
-| `--3` | `Neg(Neg(NumLit(3)))` | `3` |
-| `3 - -5` | `Sub(NumLit(3), Neg(NumLit(5)))` | `8` |
-| `not true && false` | `Comp(Not(BoolLit(true)), BoolLit(false))` | `false` |
+| Expression          | Parse tree                                 | Evaluation |
+|---------------------|--------------------------------------------|------------|
+| `-3`                | `Neg(NumLit(3))`                           | `-3`       |
+| `-3 + 5`            | `Add(Neg(NumLit(3)), NumLit(5))`           | `2`        |
+| `-3 * 5`            | `Mul(Neg(NumLit(3)), NumLit(5))`           | `-15`      |
+| `--3`               | `Neg(Neg(NumLit(3)))`                      | `3`        |
+| `3 - -5`            | `Sub(NumLit(3), Neg(NumLit(5)))`           | `8`        |
+| `not true && false` | `Comp(Not(BoolLit(true)), BoolLit(false))` | `false`    |
 
 **Shared tokens**: When a token is used for both a unary prefix and an infix operator
 (e.g., `-` for both `Neg` and `Sub`), Pratt parsing naturally resolves the ambiguity:
@@ -347,11 +347,11 @@ Collections parse repeated elements into aggregate data structures.
 
 ### Supported Collection Types
 
-| Type | Rust Type | Insert Method | Properties |
-|---|---|---|---|
-| `HashBag(Cat)` | `hashbag::HashBag<Cat>` | `.insert()` | Multiset (allows duplicates) |
-| `HashSet(Cat)` | `HashSet<Cat>` | `.insert()` | Set (no duplicates) |
-| `Vec(Cat)` | `Vec<Cat>` | `.push()` | Ordered sequence |
+| Type           | Rust Type               | Insert Method | Properties                   |
+|----------------|-------------------------|---------------|------------------------------|
+| `HashBag(Cat)` | `hashbag::HashBag<Cat>` | `.insert()`   | Multiset (allows duplicates) |
+| `HashSet(Cat)` | `HashSet<Cat>`          | `.insert()`   | Set (no duplicates)          |
+| `Vec(Cat)`     | `Vec<Cat>`              | `.push()`     | Ordered sequence             |
 
 ### Usage
 
@@ -476,8 +476,8 @@ FIRST(Int)  = {Integer, Ident}
 FIRST(Bool) = {KwTrue, KwFalse, KwNot, Ident}
 
 For "Eq . a:Int, b:Int |- a '==' b : Bool":
-  Token "Integer" is unique to Int -> deterministic cross-category path
-  Token "Ident" is in both -> needs backtracking
+  Token "Integer" is unique to Int → deterministic cross-category path
+  Token "Ident" is in both → needs backtracking
 ```
 
 For unambiguous tokens, the generated code directly parses the source category:
@@ -669,12 +669,12 @@ dollar application variant for beta-reduction to succeed. `ApplyName`
 checks for `LamName`; `ApplyProc` checks for `LamProc`. A mismatch
 causes the normalizer to return the un-reduced term.
 
-| Expression | Inferred Type | Lambda Variant | Result |
-|---|---|---|---|
-| `$proc(^x.{x}, {})` | `VarCategory::Proc` | `LamProc` | `{}` |
-| `$name(^loc.{loc!(init)}, n)` | `VarCategory::Name` | `LamName` | `n!(init)` |
-| `$int(^x.{x + 1}, 5)` | `VarCategory::Int` | `LamInt` | `6` |
-| `$proc(^x.{*(x)}, {})` | `VarCategory::Name` | `LamName` | `*(x)` (no reduction — `ApplyProc` expects `LamProc` but finds `LamName`) |
+| Expression                    | Inferred Type       | Lambda Variant | Result                                                                    |
+|-------------------------------|---------------------|----------------|---------------------------------------------------------------------------|
+| `$proc(^x.{x}, {})`           | `VarCategory::Proc` | `LamProc`      | `{}`                                                                      |
+| `$name(^loc.{loc!(init)}, n)` | `VarCategory::Name` | `LamName`      | `n!(init)`                                                                |
+| `$int(^x.{x + 1}, 5)`         | `VarCategory::Int`  | `LamInt`       | `6`                                                                       |
+| `$proc(^x.{*(x)}, {})`        | `VarCategory::Name` | `LamName`      | `*(x)` (no reduction — `ApplyProc` expects `LamProc` but finds `LamName`) |
 
 Note: In the last case, `x` appears in `*(x)` which uses `x` as a
 `Name` (the drop operator `*` takes a Name argument). The inference
@@ -804,26 +804,26 @@ The `S` and `T` variables are bound by the premise.
 
 ## Complete Grammar Feature Summary
 
-| Feature | Syntax | Module |
-|---|---|---|
-| Type declaration | `types { Cat }` or `types { ![T] as Cat }` | lib.rs |
-| Infix operator | `a OP b : Cat` | binding_power.rs + pratt.rs |
-| Unary prefix op | `OP a : Cat` (same-category, tight binding) | recursive.rs (prefix_bp) |
-| Structural prefix | `OP "(" a ")" : Cat` | recursive.rs |
-| Unit constructor | `|- "token" : Cat` | recursive.rs |
-| Structural rule | `|- term1 "op" term2 : Cat` | recursive.rs |
-| Single binder | `^x.p:[Type -> Type]` | recursive.rs |
-| Multi-binder | `^[xs].p:[Type* -> Type]` | recursive.rs |
-| HashBag collection | `ps:HashBag(Cat)` | recursive.rs |
-| HashSet collection | `ps:HashSet(Cat)` | recursive.rs |
-| Vec collection | `ns:Vec(Cat)` | recursive.rs |
-| Separator list | `*sep("delim")` | recursive.rs |
-| Zip+Map+Sep | `*zip(a,b).*map(\|x,y\| ...) .*sep(",")` | recursive.rs |
-| Optional | `#opt(...)` | recursive.rs |
-| Cross-category | `a:CatA, b:CatA \|- a OP b : CatB` | dispatch.rs |
-| Cast | `k:CatA \|- k : CatB` | dispatch.rs |
-| Lambda | `^x.{body}` (auto-generated) | pratt.rs + recursive.rs |
-| Application | `$type(lam, arg)` (auto-generated) | pratt.rs |
-| HOL native | `![rust_expr] mode` | recursive.rs |
-| Equation | `\|- lhs = rhs` | (macro crate) |
-| Rewrite | `\| premise \|- lhs ~> rhs` | (macro crate) |
+| Feature            | Syntax                                      | Module                      |
+|--------------------|---------------------------------------------|-----------------------------|
+| Type declaration   | `types { Cat }` or `types { ![T] as Cat }`  | lib.rs                      |
+| Infix operator     | `a OP b : Cat`                              | binding_power.rs + pratt.rs |
+| Unary prefix op    | `OP a : Cat` (same-category, tight binding) | recursive.rs (prefix_bp)    |
+| Structural prefix  | `OP "(" a ")" : Cat`                        | recursive.rs                |
+| Unit constructor   | `|- "token" : Cat`                          | recursive.rs                |
+| Structural rule    | `|- term1 "op" term2 : Cat`                 | recursive.rs                |
+| Single binder      | `^x.p:[Type -> Type]`                       | recursive.rs                |
+| Multi-binder       | `^[xs].p:[Type* -> Type]`                   | recursive.rs                |
+| HashBag collection | `ps:HashBag(Cat)`                           | recursive.rs                |
+| HashSet collection | `ps:HashSet(Cat)`                           | recursive.rs                |
+| Vec collection     | `ns:Vec(Cat)`                               | recursive.rs                |
+| Separator list     | `*sep("delim")`                             | recursive.rs                |
+| Zip+Map+Sep        | `*zip(a,b).*map(\|x,y\| ...) .*sep(",")`    | recursive.rs                |
+| Optional           | `#opt(...)`                                 | recursive.rs                |
+| Cross-category     | `a:CatA, b:CatA \|- a OP b : CatB`          | dispatch.rs                 |
+| Cast               | `k:CatA \|- k : CatB`                       | dispatch.rs                 |
+| Lambda             | `^x.{body}` (auto-generated)                | pratt.rs + recursive.rs     |
+| Application        | `$type(lam, arg)` (auto-generated)          | pratt.rs                    |
+| HOL native         | `![rust_expr] mode`                         | recursive.rs                |
+| Equation           | `\|- lhs = rhs`                             | (macro crate)               |
+| Rewrite            | `\| premise \|- lhs ~> rhs`                 | (macro crate)               |

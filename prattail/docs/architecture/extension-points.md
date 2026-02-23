@@ -145,12 +145,12 @@ implements `Ord`, or add appropriate trait bounds to the generated code.
 
 **Current native types** (detected in `lexer.rs` via `extract_terminals()`):
 
-| Rust Type | TokenKind | Builtin Pattern |
-|---|---|---|
-| `i32`, `i64`, `u32`, `u64`, `isize`, `usize` | `Integer` | `[0-9]+` |
-| `f32`, `f64` | `Float` | `[0-9]+\.[0-9]+` |
-| `bool` | `True`/`False` | `true`/`false` keywords |
-| `str`, `String` | `StringLit` | `"[^"]*"` |
+| Rust Type                                    | TokenKind      | Builtin Pattern         |
+|----------------------------------------------|----------------|-------------------------|
+| `i32`, `i64`, `u32`, `u64`, `isize`, `usize` | `Integer`      | `[0-9]+`                |
+| `f32`, `f64`                                 | `Float`        | `[0-9]+\.[0-9]+`        |
+| `bool`                                       | `True`/`False` | `true`/`false` keywords |
+| `str`, `String`                              | `StringLit`    | `"[^"]*"`               |
 
 ### Steps to Add a New Native Type (e.g., `char`)
 
@@ -439,11 +439,11 @@ This would go in either `dispatch.rs` (for cross-category contexts) or `pratt.rs
 
 ## Summary of Files to Modify per Extension
 
-| Extension | lib.rs | automata/ | lexer.rs | binding_power.rs | prediction.rs | pratt.rs | recursive.rs | dispatch.rs |
-|---|---|---|---|---|---|---|---|---|
-| New PatternOp | SyntaxItemSpec | -- | -- | -- | -- | -- | RDSyntaxItem + codegen | -- |
-| New CollectionType | -- | -- | -- | -- | -- | -- | CollectionKind + codegen | -- |
-| New Native Type | -- | mod.rs + nfa.rs + codegen.rs | extract_terminals | -- | generate_first_set_check | -- | -- | -- |
-| Precedence Annotations | RuleSpec | -- | -- | analyze_binding_powers | -- | -- | -- | -- |
-| New Lexer Pattern | -- | nfa.rs + mod.rs + codegen.rs | BuiltinNeeds + extract | -- | generate_first_set_check | -- | -- | -- |
-| New Dispatch Strategy | -- | -- | -- | -- | DispatchAction | generate_prefix_handler | -- | generate_category_dispatch |
+| Extension              | lib.rs         | automata/                    | lexer.rs               | binding_power.rs       | prediction.rs            | pratt.rs                | recursive.rs             | dispatch.rs                |
+|------------------------|----------------|------------------------------|------------------------|------------------------|--------------------------|-------------------------|--------------------------|----------------------------|
+| New PatternOp          | SyntaxItemSpec | --                           | --                     | --                     | --                       | --                      | RDSyntaxItem + codegen   | --                         |
+| New CollectionType     | --             | --                           | --                     | --                     | --                       | --                      | CollectionKind + codegen | --                         |
+| New Native Type        | --             | mod.rs + nfa.rs + codegen.rs | extract_terminals      | --                     | generate_first_set_check | --                      | --                       | --                         |
+| Precedence Annotations | RuleSpec       | --                           | --                     | analyze_binding_powers | --                       | --                      | --                       | --                         |
+| New Lexer Pattern      | --             | nfa.rs + mod.rs + codegen.rs | BuiltinNeeds + extract | --                     | generate_first_set_check | --                      | --                       | --                         |
+| New Dispatch Strategy  | --             | --                           | --                     | --                     | DispatchAction           | generate_prefix_handler | --                       | generate_category_dispatch |

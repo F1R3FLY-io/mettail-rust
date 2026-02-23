@@ -87,10 +87,10 @@ because the category is determined by the caller, not by the token.
 Parsing:   b && true
 
   parse_Bool calls parse_Bool_prefix
-    sees Ident("b") --> BVar("b")  (unambiguous: we are in Bool context)
+    sees Ident("b") ──▶ BVar("b")  (unambiguous: we are in Bool context)
   Pratt loop sees Token::AmpAmp (&&)
     calls parse_Bool for right operand
-      sees Token::Boolean(true) --> BoolLit(true)
+      sees Token::Boolean(true) ──▶ BoolLit(true)
   Result: Comp(BVar("b"), BoolLit(true))
 ```
 
@@ -108,7 +108,7 @@ Unlike Yacc/Bison, LALRPOP has no `%left`/`%right` declarations.
 non-terminals forming a precedence hierarchy:
 
 ```
-Cat (entry) --> CatInfix (left-recursive infix) --> CatAtom (atoms)
+Cat (entry) ──▶ CatInfix (left-recursive infix) ──▶ CatAtom (atoms)
 ```
 
 `CatInfix` uses left-recursion: `<left:CatInfix> "+" <right:CatAtom>`, forcing
@@ -215,19 +215,19 @@ not by grammar structure.
 The LALRPOP pipeline suffers from multiplicative code growth:
 
 ```
-+------------------+---------------------+----------------------------------+
-| Component        | Per-grammar cost    | 5 grammars (Lambda, Ambient,     |
-|                  |                     |  RhoCalc, Calculator, Space)     |
-+------------------+---------------------+----------------------------------+
-| .lalrpop file    | ~70-140 lines       | ~430 lines total                 |
-| LALRPOP output   | ~2,000-5,000 lines  | ~10,000-25,000 lines             |
-| lalrpop.rs gen   | 2,139 lines (shared)| 2,139 lines                      |
-| Tiered prods     | ~30 lines/category  | ~150 lines (across 5 grammars)   |
-| Lambda/App code  | ~50 lines/category  | ~250 lines                       |
-| match{} blocks   | ~10 lines/grammar   | ~50 lines                        |
-+------------------+---------------------+----------------------------------+
-| Total LALRPOP    |                     | ~15,000-20,000+ lines generated  |
-+------------------+---------------------+----------------------------------+
+┌──────────────────┬─────────────────────┬──────────────────────────────────┐
+│ Component        │ Per-grammar cost    │ 5 grammars (Lambda, Ambient,     │
+│                  │                     │  RhoCalc, Calculator, Space)     │
+├──────────────────┼─────────────────────┼──────────────────────────────────┤
+│ .lalrpop file    │ ~70-140 lines       │ ~430 lines total                 │
+│ LALRPOP output   │ ~2,000-5,000 lines  │ ~10,000-25,000 lines             │
+│ lalrpop.rs gen   │ 2,139 lines (shared)│ 2,139 lines                      │
+│ Tiered prods     │ ~30 lines/category  │ ~150 lines (across 5 grammars)   │
+│ Lambda/App code  │ ~50 lines/category  │ ~250 lines                       │
+│ match{} blocks   │ ~10 lines/grammar   │ ~50 lines                        │
+├──────────────────┼─────────────────────┼──────────────────────────────────┤
+│ Total LALRPOP    │                     │ ~15,000-20,000+ lines generated  │
+└──────────────────┴─────────────────────┴──────────────────────────────────┘
 ```
 
 The LALRPOP-generated Rust files contain enormous state machine tables,
@@ -250,23 +250,23 @@ The LALRPOP pipeline requires two distinct compilation phases:
 ```
 Phase 1: Proc-macro expansion
   language! { ... }
-       |
-       v
+       │
+       ▼
   Generate .lalrpop file to disk (lalrpop.rs, ~2,139 lines)
-       |
-       v
+       │
+       ▼
   .lalrpop file written to languages/src/generated/
 
 Phase 2: LALRPOP compilation (build.rs)
   build.rs detects .lalrpop files
-       |
-       v
+       │
+       ▼
   LALRPOP compiler runs (external dependency)
-       |
-       v
+       │
+       ▼
   Generates Rust parser code (.rs files)
-       |
-       v
+       │
+       ▼
   Rust compiler compiles the generated code
 ```
 
@@ -294,7 +294,7 @@ This two-phase build has several consequences:
 expands directly to Rust code in a single proc-macro pass:
 
 ```
-language! { ... }  --(proc-macro)-->  TokenStream (Rust source code)
+language! { ... }  ─(proc-macro)─→  TokenStream (Rust source code)
 ```
 
 No intermediate files, no external toolchain, no build.rs integration.
@@ -365,15 +365,15 @@ Several alternative parser generators were considered and rejected:
 ### pest (PEG Parser)
 
 ```
-+---------------------------+------------------------------------------+
-| Advantage                 | Disadvantage for MeTTaIL                 |
-+---------------------------+------------------------------------------+
-| Elegant PEG syntax        | Produces untyped parse trees (Pairs)     |
-| No separate build phase   | Requires manual AST construction         |
-| Well-maintained           | PEG ordered choice hides ambiguity       |
-| Good error messages       | No binding power / precedence support    |
-|                           | O(n) but with high constant factor       |
-+---------------------------+------------------------------------------+
+┌───────────────────────────┬──────────────────────────────────────────┐
+│ Advantage                 │ Disadvantage for MeTTaIL                 │
+├───────────────────────────┼──────────────────────────────────────────┤
+│ Elegant PEG syntax        │ Produces untyped parse trees (Pairs)     │
+│ No separate build phase   │ Requires manual AST construction         │
+│ Well-maintained           │ PEG ordered choice hides ambiguity       │
+│ Good error messages       │ No binding power / precedence support    │
+│                           │ O(n) but with high constant factor       │
+└───────────────────────────┴──────────────────────────────────────────┘
 ```
 
 pest produces `Pairs<Rule>` trees that must be manually walked to construct
@@ -385,15 +385,15 @@ the first matching alternative, which can hide ambiguity bugs.
 ### tree-sitter
 
 ```
-+---------------------------+------------------------------------------+
-| Advantage                 | Disadvantage for MeTTaIL                 |
-+---------------------------+------------------------------------------+
-| Incremental parsing       | C-based (FFI overhead, no proc-macro)    |
-| Error recovery            | Grammar defined in JavaScript            |
-| Battle-tested             | Produces untyped CST, not typed AST      |
-| LSP-friendly              | External build toolchain (node.js)       |
-|                           | Designed for editors, not interpreters   |
-+---------------------------+------------------------------------------+
+┌───────────────────────────┬──────────────────────────────────────────┐
+│ Advantage                 │ Disadvantage for MeTTaIL                 │
+├───────────────────────────┼──────────────────────────────────────────┤
+│ Incremental parsing       │ C-based (FFI overhead, no proc-macro)    │
+│ Error recovery            │ Grammar defined in JavaScript            │
+│ Battle-tested             │ Produces untyped CST, not typed AST      │
+│ LSP-friendly              │ External build toolchain (node.js)       │
+│                           │ Designed for editors, not interpreters   │
+└───────────────────────────┴──────────────────────────────────────────┘
 ```
 
 tree-sitter is designed for editor integration (syntax highlighting, code
@@ -405,14 +405,14 @@ toolchain, reintroducing the two-phase build problem.
 ### nom (Parser Combinator)
 
 ```
-+---------------------------+------------------------------------------+
-| Advantage                 | Disadvantage for MeTTaIL                 |
-+---------------------------+------------------------------------------+
-| Pure Rust, no codegen     | Manual parser, not generated             |
-| Composable                | No precedence handling                   |
-| Zero-copy capable         | Code duplication across grammars         |
-| Good for binary formats   | Not designed for PL grammars             |
-+---------------------------+------------------------------------------+
+┌───────────────────────────┬──────────────────────────────────────────┐
+│ Advantage                 │ Disadvantage for MeTTaIL                 │
+├───────────────────────────┼──────────────────────────────────────────┤
+│ Pure Rust, no codegen     │ Manual parser, not generated             │
+│ Composable                │ No precedence handling                   │
+│ Zero-copy capable         │ Code duplication across grammars         │
+│ Good for binary formats   │ Not designed for PL grammars             │
+└───────────────────────────┴──────────────────────────────────────────┘
 ```
 
 nom is excellent for hand-written parsers but provides no generation
@@ -443,22 +443,22 @@ generate exactly the code MeTTaIL needs, with no wasted abstraction layers.
 ## 7. Summary
 
 ```
-+----------------------------+--------------------+---------------------+
-| Dimension                  | LALRPOP Pipeline   | PraTTaIL            |
-+----------------------------+--------------------+---------------------+
-| Parsing algorithm          | LR(1) bottom-up    | Pratt + RD top-down |
-| Variable disambiguation    | Type prefixes      | Context propagation |
-| Precedence/associativity   | Tiered productions | Binding power pairs |
-| Lambda ambiguity           | Primary-only rules | Caller-context      |
-| Var+terminal partitioning  | Top-level placement| Lookahead in prefix |
-| Generated code per grammar | ~3,000-5,000 lines | ~1,500-2,000 lines  |
-| Total for 5 grammars       | ~15,000-20,000+    | ~7,500-10,000       |
-| Build phases               | 2 (macro + LALRPOP)| 1 (proc-macro only) |
-| External dependencies      | lalrpop crate      | None                |
-| Lexer strategy             | Regex (LALRPOP)    | DFA (automata)      |
-| Time complexity            | O(n)               | O(n)                |
-| Space complexity           | O(n) + tables      | O(n) + compact DFA  |
-+----------------------------+--------------------+---------------------+
+┌────────────────────────────┬────────────────────┬─────────────────────┐
+│ Dimension                  │ LALRPOP Pipeline   │ PraTTaIL            │
+├────────────────────────────┼────────────────────┼─────────────────────┤
+│ Parsing algorithm          │ LR(1) bottom-up    │ Pratt + RD top-down │
+│ Variable disambiguation    │ Type prefixes      │ Context propagation │
+│ Precedence/associativity   │ Tiered productions │ Binding power pairs │
+│ Lambda ambiguity           │ Primary-only rules │ Caller-context      │
+│ Var+terminal partitioning  │ Top-level placement│ Lookahead in prefix │
+│ Generated code per grammar │ ~3,000-5,000 lines │ ~1,500-2,000 lines  │
+│ Total for 5 grammars       │ ~15,000-20,000+    │ ~7,500-10,000       │
+│ Build phases               │ 2 (macro + LALRPOP)│ 1 (proc-macro only) │
+│ External dependencies      │ lalrpop crate      │ None                │
+│ Lexer strategy             │ Regex (LALRPOP)    │ DFA (automata)      │
+│ Time complexity            │ O(n)               │ O(n)                │
+│ Space complexity           │ O(n) + tables      │ O(n) + compact DFA  │
+└────────────────────────────┴────────────────────┴─────────────────────┘
 ```
 
 PraTTaIL exists because the LALRPOP pipeline's workarounds are fundamental
