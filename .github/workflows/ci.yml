@@ -19,6 +19,7 @@ jobs:
         rust: [stable, nightly]
     env:
       RUSTUP_TOOLCHAIN: ${{ matrix.rust }}
+      RUST_MIN_STACK: 8388608  # 8MB — match main thread; cranelift needs more than 2MB default
     steps:
       - uses: actions/checkout@v4
 
