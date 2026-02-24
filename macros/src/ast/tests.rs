@@ -536,50 +536,6 @@ mod tests {
     }
 
     // =========================================================================
-    // Grammar Generation Tests
-    // =========================================================================
-
-    #[test]
-    fn test_lalrpop_generation_with_new_syntax() {
-        use crate::gen::syntax::parser::generate_lalrpop_grammar;
-
-        // All syntax literals must be quoted strings
-        let input = quote! {
-            name: TestGrammar,
-            types { Proc Name }
-            terms {
-                PZero . Proc ::= "0" ;
-                PInput . n:Name, ^x.p:[Name -> Proc] |- "for" "(" x "<-" n ")" "{" p "}" : Proc ;
-            }
-        };
-
-        let result = parse2::<LanguageDef>(input);
-        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
-
-        let language = result.unwrap();
-        let grammar = generate_lalrpop_grammar(&language);
-
-        println!("Generated Grammar:\n{}", grammar);
-
-        // Verify the grammar contains the expected elements
-        assert!(grammar.contains("\"for\""), "Grammar should contain 'for' literal");
-        assert!(grammar.contains("\"<-\""), "Grammar should contain '<-' literal");
-        assert!(
-            grammar.contains("<n:Name>") || grammar.contains("<n: Name>"),
-            "Grammar should capture 'n' as Name"
-        );
-        assert!(
-            grammar.contains("<x:Ident>") || grammar.contains("<x: Ident>"),
-            "Grammar should capture binder 'x' as Ident"
-        );
-        assert!(
-            grammar.contains("<p:Proc>") || grammar.contains("<p: Proc>"),
-            "Grammar should capture body 'p' as Proc"
-        );
-        assert!(grammar.contains("Scope"), "Grammar should create Scope for binding");
-    }
-
-    // =========================================================================
     // Pattern Operation Tests (#sep, #zip, #map, #opt)
     // =========================================================================
 

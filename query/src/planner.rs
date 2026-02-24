@@ -11,13 +11,17 @@ pub struct Plan {
 
 #[derive(Debug, Clone)]
 pub enum Step {
-    Scan { relation: String },
+    Scan {
+        relation: String,
+    },
     Join {
         relation: String,
         left_indices: Vec<usize>,
         right_indices: Vec<usize>,
     },
-    Filter { condition: FilterOp },
+    Filter {
+        condition: FilterOp,
+    },
     Difference {
         relation: String,
         join_indices: Vec<(usize, usize)>,
@@ -53,11 +57,11 @@ impl std::fmt::Display for PlanError {
             PlanError::NoPositiveAtoms => write!(f, "Query must have at least one positive atom"),
             PlanError::UnboundVariable { name } => {
                 write!(f, "Variable '{}' used before being bound", name)
-            }
+            },
             PlanError::InvalidNegation { message } => write!(f, "Invalid negation: {}", message),
             PlanError::InvalidComparison { message } => {
                 write!(f, "Invalid comparison: {}", message)
-            }
+            },
         }
     }
 }
@@ -70,6 +74,12 @@ pub struct Planner {
     bindings: HashMap<String, usize>,
     next_col: usize,
     steps: Vec<Step>,
+}
+
+impl Default for Planner {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Planner {
@@ -110,10 +120,7 @@ impl Planner {
             planner.plan_negation(neg)?;
         }
         let projection = planner.compute_projection(&query.head)?;
-        Ok(Plan {
-            steps: planner.steps,
-            projection,
-        })
+        Ok(Plan { steps: planner.steps, projection })
     }
 
     fn plan_scan(&mut self, atom: &BodyAtom) -> PlanResult<()> {
@@ -127,15 +134,13 @@ impl Planner {
                         self.bindings.insert(var.name.clone(), self.next_col);
                         self.next_col += 1;
                     }
-                }
+                },
                 Term::Constant(_) | Term::Wildcard => {
                     self.next_col += 1;
-                }
+                },
             }
         }
-        self.steps.push(Step::Scan {
-            relation: name.clone(),
-        });
+        self.steps.push(Step::Scan { relation: name.clone() });
         Ok(())
     }
 
@@ -157,10 +162,10 @@ impl Planner {
                         self.bindings.insert(var.name.clone(), self.next_col);
                         self.next_col += 1;
                     }
-                }
+                },
                 Term::Constant(_) | Term::Wildcard => {
                     self.next_col += 1;
-                }
+                },
             }
         }
         let num_join_keys = left_indices.len();
@@ -171,8 +176,8 @@ impl Planner {
         }
         let mut next_non_key = num_join_keys;
         for old_pos in 0..old_num_cols {
-            if !old_to_new.contains_key(&old_pos) {
-                old_to_new.insert(old_pos, next_non_key);
+            if let std::collections::hash_map::Entry::Vacant(e) = old_to_new.entry(old_pos) {
+                e.insert(next_non_key);
                 next_non_key += 1;
             }
         }
@@ -197,24 +202,21 @@ impl Planner {
                 return Err(PlanError::InvalidComparison {
                     message: "Predicate calls in if not yet supported".into(),
                 });
-            }
+            },
         };
-        self.steps.push(Step::Filter {
-            condition: filter_op,
-        });
+        self.steps.push(Step::Filter { condition: filter_op });
         Ok(())
     }
 
     fn term_to_ref(&self, term: &Term) -> PlanResult<TermRef> {
         match term {
             Term::Variable(var) => {
-                let col = *self.bindings.get(&var.name).ok_or_else(|| {
-                    PlanError::UnboundVariable {
-                        name: var.name.clone(),
-                    }
-                })?;
+                let col = *self
+                    .bindings
+                    .get(&var.name)
+                    .ok_or_else(|| PlanError::UnboundVariable { name: var.name.clone() })?;
                 Ok(TermRef::Col(col))
-            }
+            },
             Term::Constant(s) => Ok(TermRef::Const(s.clone())),
             Term::Wildcard => Err(PlanError::InvalidComparison {
                 message: "Wildcard in comparison not supported".into(),
@@ -222,12 +224,7 @@ impl Planner {
         }
     }
 
-    fn plan_comparison(
-        &self,
-        left: &Term,
-        op: CompareOp,
-        right: &Term,
-    ) -> PlanResult<FilterOp> {
+    fn plan_comparison(&self, left: &Term, op: CompareOp, right: &Term) -> PlanResult<FilterOp> {
         if matches!((left, right), (Term::Constant(_), Term::Constant(_))) {
             return Err(PlanError::InvalidComparison {
                 message: "Constant-constant comparison not supported".into(),
@@ -257,10 +254,8 @@ impl Planner {
                 }
             }
         }
-        self.steps.push(Step::Difference {
-            relation: name.clone(),
-            join_indices,
-        });
+        self.steps
+            .push(Step::Difference { relation: name.clone(), join_indices });
         Ok(())
     }
 
@@ -268,16 +263,15 @@ impl Planner {
         let mut projection = Vec::new();
         for term in &head.terms {
             let col = match term {
-                Term::Variable(var) => *self.bindings.get(&var.name).ok_or_else(|| {
-                    PlanError::UnboundVariable {
-                        name: var.name.clone(),
-                    }
-                })?,
+                Term::Variable(var) => *self
+                    .bindings
+                    .get(&var.name)
+                    .ok_or_else(|| PlanError::UnboundVariable { name: var.name.clone() })?,
                 Term::Constant(_) | Term::Wildcard => {
                     return Err(PlanError::UnboundVariable {
                         name: "head must list variables only".into(),
                     });
-                }
+                },
             };
             projection.push(col);
         }

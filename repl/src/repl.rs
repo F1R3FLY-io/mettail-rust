@@ -21,7 +21,7 @@ fn pre_substitute_env(input: &str, language: &dyn Language, env: &dyn Any) -> St
     }
     // Sort by name length descending so "foobar" is replaced before "foo"
     let mut bindings: Vec<_> = bindings.into_iter().map(|(n, d, _)| (n, d)).collect();
-    bindings.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    bindings.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
 
     let mut result = input.to_string();
     for (name, display) in bindings {
@@ -108,7 +108,10 @@ impl Repl {
                     }
 
                     if let Err(e) = self.handle_command(line) {
-                        eprintln!("{} {}", "Error:".red().bold(), e);
+                        let error_str = format!("{}", e);
+                        let display =
+                            crate::pretty::format_parse_error_with_context(line, &error_str);
+                        eprintln!("{} {}", "Error:".red().bold(), display);
                     }
                 },
                 Err(ReadlineError::Interrupted) => {
@@ -525,21 +528,10 @@ impl Repl {
 
         let language = self.registry.get(language_name)?;
 
-        // Pre-substitute env-bound identifiers so RHS like `x && (3 == 3)` parses when x is Bool
-        let parse_input = if let Some(env) = self.state.environment() {
-            if !language.is_env_empty(env) {
-                pre_substitute_env(term_str, language, env)
-            } else {
-                term_str.to_string()
-            }
-        } else {
-            term_str.to_string()
-        };
-
         // Parse the term WITHOUT clearing var cache
         // This allows shared variables across env definitions (e.g., same `n` in multiple terms)
         let term = language
-            .parse_term_for_env(&parse_input)
+            .parse_term_for_env(term_str)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         // Ensure environment exists
@@ -759,18 +751,8 @@ impl Repl {
 
             // Try to parse as assignment
             if let Some((name, term_str)) = Self::parse_assignment(line) {
-                // Pre-substitute so RHS can reference names defined earlier in this file
-                let parse_input = if let Some(env) = self.state.environment() {
-                    if !language.is_env_empty(env) {
-                        pre_substitute_env(&term_str, language, env)
-                    } else {
-                        term_str.to_string()
-                    }
-                } else {
-                    term_str.to_string()
-                };
                 // Parse the term (using parse_term_for_env to share variable IDs)
-                match language.parse_term_for_env(&parse_input) {
+                match language.parse_term_for_env(&term_str) {
                     Ok(term) => {
                         if let Some(env) = self.state.environment_mut() {
                             if let Err(e) = language.add_to_env(env, &name, term.as_ref()) {
@@ -944,18 +926,8 @@ impl Repl {
         println!();
         print!("Parsing... ");
 
-        let parse_input = if let Some(env) = self.state.environment() {
-            if !language.is_env_empty(env) {
-                pre_substitute_env(term_str, language, env)
-            } else {
-                term_str.to_string()
-            }
-        } else {
-            term_str.to_string()
-        };
-
         let term = language
-            .parse_term_for_env(&parse_input)
+            .parse_term_for_env(term_str)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
         println!("{}", "✓".green());
 
@@ -980,6 +952,9 @@ impl Repl {
             term
         };
 
+        // Normalize (beta-reduce Apply/MApply of Lam/MLam) before evaluation
+        let term = language.normalize_term(term.as_ref());
+
         // Direct eval only for exec: step must always run Ascent and show the initial term
         if !step_mode {
             if let Some(result_term) = language.try_direct_eval(term.as_ref()) {
@@ -990,7 +965,8 @@ impl Repl {
                 let formatted = format_term_pretty(&format!("{}", result_term));
                 println!("{}", formatted.cyan());
                 println!();
-                self.state.set_term_with_id(result_term, results, result_id)?;
+                self.state
+                    .set_term_with_id(result_term, results, result_id)?;
                 return Ok(());
             }
         }
@@ -1022,7 +998,11 @@ impl Repl {
             println!();
             self.state.set_term_with_id(term, results, initial_id)?;
             if available > 0 {
-                println!("  Use {} to apply a rewrite ({} available).", "apply 0".cyan(), available);
+                println!(
+                    "  Use {} to apply a rewrite ({} available).",
+                    "apply 0".cyan(),
+                    available
+                );
             } else {
                 println!("  No rewrites from this term (already a normal form).");
             }
@@ -1217,12 +1197,16 @@ impl Repl {
                 println!();
                 println!("{} ({} tuples):", "terms(Term)".bold(), results.all_terms.len());
                 for term_info in &results.all_terms {
-                    let nf_marker = if term_info.is_normal_form { " [NF]".dimmed() } else { "".into() };
+                    let nf_marker = if term_info.is_normal_form {
+                        " [NF]".dimmed()
+                    } else {
+                        "".into()
+                    };
                     println!("  {}{}", term_info.display.green(), nf_marker);
                 }
                 println!();
                 return Ok(());
-            }
+            },
             "rewrites" => {
                 println!();
                 println!("{} ({} tuples):", "rewrites(Term, Term)".bold(), results.rewrites.len());
@@ -1230,17 +1214,24 @@ impl Repl {
                     let from = results.all_terms.iter().find(|t| t.term_id == rw.from_id);
                     let to = results.all_terms.iter().find(|t| t.term_id == rw.to_id);
                     if let (Some(from), Some(to)) = (from, to) {
-                        println!("  {} {} {}", from.display.green(), "→".yellow(), to.display.green());
+                        println!(
+                            "  {} {} {}",
+                            from.display.green(),
+                            "→".yellow(),
+                            to.display.green()
+                        );
                     }
                 }
                 println!();
                 return Ok(());
-            }
+            },
             "equivalences" => {
                 println!();
                 println!("{} ({} classes):", "equivalences".bold(), results.equivalences.len());
                 for equiv in &results.equivalences {
-                    let terms: Vec<_> = equiv.term_ids.iter()
+                    let terms: Vec<_> = equiv
+                        .term_ids
+                        .iter()
                         .filter_map(|id| results.all_terms.iter().find(|t| t.term_id == *id))
                         .map(|t| t.display.as_str())
                         .collect();
@@ -1248,8 +1239,8 @@ impl Repl {
                 }
                 println!();
                 return Ok(());
-            }
-            _ => {}
+            },
+            _ => {},
         }
 
         // Check custom relations
@@ -1402,8 +1393,7 @@ impl Repl {
         self.state.ensure_environment(|| language.create_env());
 
         // Substitute env bindings (save t, etc.). We do *not* add "current_term" to env here.
-        let mut substituted =
-            pre_substitute_env(line, language, self.state.environment().unwrap());
+        let mut substituted = pre_substitute_env(line, language, self.state.environment().unwrap());
 
         // Substitute "current_term" with a Rust string literal so the Ascent (syn) parser sees one argument.
         // The term's display can contain { } | . etc. which are valid Rust tokens; only a string literal is safe.

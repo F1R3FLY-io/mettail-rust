@@ -4,20 +4,75 @@
 export const categoryInfo = {
 	Bool: {
 		constructors: [
-			"Eq",
+			"EqInt",
+			"EqFloat",
 			"EqBool",
 			"EqStr",
+			"GtInt",
+			"GtFloat",
+			"GtBool",
+			"GtStr",
+			"LtInt",
+			"LtFloat",
+			"LtBool",
+			"LtStr",
+			"LtEqInt",
+			"LtEqFloat",
+			"LtEqBool",
+			"LtEqStr",
+			"GtEqInt",
+			"GtEqFloat",
+			"GtEqBool",
+			"GtEqStr",
+			"NeInt",
+			"NeFloat",
+			"NeBool",
+			"NeStr",
 			"Not",
-			"Comp"
+			"And",
+			"Or",
+			"Xor",
+			"IntToBool",
+			"FloatToBool",
+			"StrToBool",
+			"BoolId"
 		],
 		colour: "7a51e0",
 	},
+	Float: {
+		constructors: [
+			"AddFloat",
+			"SubFloat",
+			"MulFloat",
+			"DivFloat",
+			"PowFloat",
+			"SinFloat",
+			"CosFloat",
+			"ExpFloat",
+			"LnFloat",
+			"IntToFloat",
+			"BoolToFloat",
+			"StrToFloat",
+			"FloatId"
+		],
+		colour: "e05196",
+	},
 	Int: {
 		constructors: [
-			"Pow",
+			"Tern",
 			"Len",
-			"Add",
-			"Sub",
+			"AddInt",
+			"SubInt",
+			"MulInt",
+			"DivInt",
+			"ModInt",
+			"PowInt",
+			"Neg",
+			"Fact",
+			"FloatToInt",
+			"BoolToInt",
+			"StrToInt",
+			"IntId",
 			"CustomOp"
 		],
 		colour: "51b0e0",
@@ -25,7 +80,11 @@ export const categoryInfo = {
 	Str: {
 		constructors: [
 			"Concat",
-			"AddStr"
+			"AddStr",
+			"BoolToStr",
+			"IntToStr",
+			"FloatToStr",
+			"StrId"
 		],
 		colour: "51e05f",
 	}

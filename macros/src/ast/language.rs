@@ -1,20 +1,43 @@
 use proc_macro2::TokenStream;
-use syn::{Ident, Type, Token, parse::{Parse, ParseStream}, Result as SynResult};
+use syn::{
+    ext::IdentExt,
+    parse::{Parse, ParseStream},
+    Ident, Result as SynResult, Token, Type,
+};
 
 use super::grammar::{parse_terms, GrammarRule};
 use super::pattern::{Pattern, PatternTerm};
+use std::collections::HashMap;
 use std::fmt;
 use std::fmt::Display;
 
+/// A value in the `options { ... }` block of the `language!` macro.
+#[derive(Debug, Clone)]
+pub enum AttributeValue {
+    /// Floating-point value (e.g., `beam_width: 1.5`).
+    Float(f64),
+    /// Integer value.
+    #[expect(dead_code)] // Parsed from DSL, not yet consumed
+    Int(i64),
+    /// Boolean value.
+    #[expect(dead_code)] // Parsed from DSL, not yet consumed
+    Bool(bool),
+    /// String value (e.g., `log_semiring_model_path: "path/to/model.json"`).
+    Str(String),
+    /// Keyword identifier (e.g., `beam_width: none`, `beam_width: auto`).
+    Keyword(String),
+}
+
 /// Top-level theory definition
-/// theory! { name: Foo, params: ..., types { ... }, terms { ... }, equations { ... }, rewrites { ... }, semantics { ... }, logic { ... } }
+/// theory! { name: Foo, params: ..., options { ... }, types { ... }, terms { ... }, equations { ... }, rewrites { ... }, logic { ... } }
 pub struct LanguageDef {
     pub name: Ident,
+    /// Configuration options parsed from `options { ... }` block. Empty if block omitted.
+    pub options: HashMap<String, AttributeValue>,
     pub types: Vec<LangType>,
     pub terms: Vec<GrammarRule>,
     pub equations: Vec<Equation>,
     pub rewrites: Vec<RewriteRule>,
-    pub semantics: Vec<SemanticRule>,
     /// Custom Ascent logic: additional relations and rules
     pub logic: Option<LogicBlock>,
 }
@@ -152,36 +175,6 @@ impl RewriteRule {
     }
 }
 
-/// Semantic rule for operator evaluation
-/// semantics { Add: +, Sub: -, ... }
-#[derive(Debug, Clone)]
-pub struct SemanticRule {
-    pub constructor: Ident,
-    pub operation: SemanticOperation,
-}
-
-/// Semantic operation type
-#[derive(Debug, Clone)]
-pub enum SemanticOperation {
-    /// Built-in operations: Add, Sub, Mul, Div, etc.
-    Builtin(BuiltinOp),
-}
-
-/// Built-in operator types
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BuiltinOp {
-    Add,    // +
-    Sub,    // -
-    Mul,    // *
-    Div,    // /
-    Rem,    // %
-    BitAnd, // &
-    BitOr,  // |
-    BitXor, // ^
-    Shl,    // <<
-    Shr,    // >>
-}
-
 /// Export: category name, optionally with native Rust type
 /// types { Elem; Name; ![i32] as Int; }
 pub struct LangType {
@@ -234,6 +227,18 @@ impl Parse for LanguageDef {
         let name = input.parse::<Ident>()?;
         let _ = input.parse::<Token![,]>()?;
 
+        // Parse: options { ... } (optional)
+        let options = if input.peek(Ident) {
+            let lookahead = input.fork().parse::<Ident>()?;
+            if lookahead == "options" {
+                parse_options(input)?
+            } else {
+                HashMap::new()
+            }
+        } else {
+            HashMap::new()
+        };
+
         // Parse: types { ... }
         let types = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
@@ -282,18 +287,6 @@ impl Parse for LanguageDef {
             Vec::new()
         };
 
-        // Parse: semantics { ... }
-        let semantics = if input.peek(Ident) {
-            let lookahead = input.fork().parse::<Ident>()?;
-            if lookahead == "semantics" {
-                parse_semantics(input)?
-            } else {
-                Vec::new()
-            }
-        } else {
-            Vec::new()
-        };
-
         // Parse: logic { ... }
         let logic = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
@@ -308,11 +301,11 @@ impl Parse for LanguageDef {
 
         Ok(LanguageDef {
             name,
+            options,
             types,
             terms,
             equations,
             rewrites,
-            semantics,
             logic,
         })
     }
@@ -358,6 +351,133 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
     }
 
     Ok(types)
+}
+
+fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue>> {
+    let options_ident = input.parse::<Ident>()?;
+    if options_ident != "options" {
+        return Err(syn::Error::new(options_ident.span(), "expected 'options'"));
+    }
+
+    let content;
+    syn::braced!(content in input);
+
+    let mut options = HashMap::new();
+    while !content.is_empty() {
+        let key_ident = content.parse::<Ident>()?;
+        let key = key_ident.to_string();
+        let _ = content.parse::<Token![:]>()?;
+
+        // Parse value: float, integer, boolean, string literal, or keyword identifier
+        let value = if content.peek(syn::LitFloat) {
+            let lit = content.parse::<syn::LitFloat>()?;
+            let f: f64 = lit
+                .base10_parse()
+                .map_err(|e| syn::Error::new(lit.span(), format!("invalid float value: {}", e)))?;
+            AttributeValue::Float(f)
+        } else if content.peek(syn::LitInt) {
+            let lit = content.parse::<syn::LitInt>()?;
+            let i: i64 = lit.base10_parse().map_err(|e| {
+                syn::Error::new(lit.span(), format!("invalid integer value: {}", e))
+            })?;
+            AttributeValue::Int(i)
+        } else if content.peek(syn::LitBool) {
+            let lit = content.parse::<syn::LitBool>()?;
+            AttributeValue::Bool(lit.value)
+        } else if content.peek(syn::LitStr) {
+            let lit = content.parse::<syn::LitStr>()?;
+            AttributeValue::Str(lit.value())
+        } else if content.peek(Ident::peek_any) {
+            let ident = content.call(Ident::parse_any)?;
+            AttributeValue::Keyword(ident.to_string())
+        } else {
+            return Err(syn::Error::new(
+                content.span(),
+                "expected a float, integer, boolean, string literal, or keyword (none, disabled, auto)",
+            ));
+        };
+
+        // Validate known keys
+        match key.as_str() {
+            "beam_width" => {
+                match &value {
+                    AttributeValue::Float(_) => {}, // explicit beam width
+                    AttributeValue::Keyword(kw) => match kw.as_str() {
+                        "none" | "disabled" => {}, // beam pruning disabled
+                        "auto" => {},              // auto-select from trained model
+                        _ => {
+                            return Err(syn::Error::new(
+                                key_ident.span(),
+                                format!(
+                                    "beam_width: invalid keyword '{}'. \
+                                     Use a float (e.g., 1.5), 'none', 'disabled', or 'auto'",
+                                    kw
+                                ),
+                            ));
+                        },
+                    },
+                    _ => {
+                        return Err(syn::Error::new(
+                            key_ident.span(),
+                            "beam_width must be a float (e.g., 1.5), 'none', 'disabled', or 'auto'",
+                        ));
+                    },
+                }
+            },
+            "log_semiring_model_path" => {
+                if !matches!(&value, AttributeValue::Str(_)) {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "log_semiring_model_path must be a string path (e.g., log_semiring_model_path: \"model.json\")",
+                    ));
+                }
+            },
+            "dispatch" => match &value {
+                AttributeValue::Keyword(kw) => match kw.as_str() {
+                    "static" | "weighted" | "auto" => {},
+                    _ => {
+                        return Err(syn::Error::new(
+                            key_ident.span(),
+                            format!(
+                                "dispatch: invalid keyword '{}'. \
+                                     Use 'static', 'weighted', or 'auto'",
+                                kw
+                            ),
+                        ));
+                    },
+                },
+                _ => {
+                    return Err(syn::Error::new(
+                        key_ident.span(),
+                        "dispatch must be a keyword: 'static', 'weighted', or 'auto'",
+                    ));
+                },
+            },
+            unknown => {
+                return Err(syn::Error::new(
+                    key_ident.span(),
+                    format!(
+                        "unknown option '{}'. Valid options are: beam_width, log_semiring_model_path, dispatch",
+                        unknown
+                    ),
+                ));
+            },
+        }
+
+        options.insert(key, value);
+
+        // Optional trailing comma
+        if content.peek(Token![,]) {
+            let _ = content.parse::<Token![,]>()?;
+        }
+    }
+
+    // Optional comma after closing brace
+    if input.peek(Token![,]) {
+        let _ = input.parse::<Token![,]>()?;
+    }
+
+    Ok(options)
 }
 
 fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
@@ -899,85 +1019,9 @@ fn parse_rewrite_rule(input: ParseStream) -> SynResult<RewriteRule> {
     })
 }
 
-fn parse_semantics(input: ParseStream) -> SynResult<Vec<SemanticRule>> {
-    let semantics_ident = input.parse::<Ident>()?;
-    if semantics_ident != "semantics" {
-        return Err(syn::Error::new(semantics_ident.span(), "expected 'semantics'"));
-    }
-
-    let content;
-    syn::braced!(content in input);
-
-    let mut rules = Vec::new();
-    while !content.is_empty() {
-        // Parse: Constructor: Operator
-        let constructor = content.parse::<Ident>()?;
-        let _ = content.parse::<Token![:]>()?;
-
-        // Parse operator symbol
-        let op = if content.peek(Token![+]) {
-            let _ = content.parse::<Token![+]>()?;
-            BuiltinOp::Add
-        } else if content.peek(Token![-]) {
-            let _ = content.parse::<Token![-]>()?;
-            BuiltinOp::Sub
-        } else if content.peek(Token![*]) {
-            let _ = content.parse::<Token![*]>()?;
-            BuiltinOp::Mul
-        } else if content.peek(Token![/]) {
-            let _ = content.parse::<Token![/]>()?;
-            BuiltinOp::Div
-        } else if content.peek(Token![%]) {
-            let _ = content.parse::<Token![%]>()?;
-            BuiltinOp::Rem
-        } else if content.peek(Token![&]) {
-            let _ = content.parse::<Token![&]>()?;
-            BuiltinOp::BitAnd
-        } else if content.peek(Token![|]) {
-            let _ = content.parse::<Token![|]>()?;
-            BuiltinOp::BitOr
-        } else if content.peek(Token![^]) {
-            let _ = content.parse::<Token![^]>()?;
-            BuiltinOp::BitXor
-        } else if content.peek(Token![<]) && content.peek2(Token![<]) {
-            let _ = content.parse::<Token![<]>()?;
-            let _ = content.parse::<Token![<]>()?;
-            BuiltinOp::Shl
-        } else if content.peek(Token![>]) && content.peek2(Token![>]) {
-            let _ = content.parse::<Token![>]>()?;
-            let _ = content.parse::<Token![>]>()?;
-            BuiltinOp::Shr
-        } else {
-            return Err(syn::Error::new(
-                content.span(),
-                "expected operator symbol (+, -, *, /, %, &, |, ^, <<, >>)",
-            ));
-        };
-
-        rules.push(SemanticRule {
-            constructor,
-            operation: SemanticOperation::Builtin(op),
-        });
-
-        // Optional comma or semicolon
-        if content.peek(Token![,]) {
-            let _ = content.parse::<Token![,]>()?;
-        } else if content.peek(Token![;]) {
-            let _ = content.parse::<Token![;]>()?;
-        }
-    }
-
-    // Optional comma after closing brace
-    if input.peek(Token![,]) {
-        let _ = input.parse::<Token![,]>()?;
-    }
-
-    Ok(rules)
-}
-
 /// Parse logic block: custom Ascent relations and rules
 /// Syntax: logic { <ascent-syntax> }
-/// 
+///
 /// Extracts relation declarations for code generation while keeping
 /// the full content as verbatim TokenStream for Ascent.
 fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
@@ -1000,20 +1044,17 @@ fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
         let _ = input.parse::<Token![,]>()?;
     }
 
-    Ok(LogicBlock {
-        relations,
-        content: tokens,
-    })
+    Ok(LogicBlock { relations, content: tokens })
 }
 
 /// Extract relation declarations from a token stream
 /// Looks for patterns like: relation name(Type1, Type2, ...);
 fn extract_relation_decls(tokens: &TokenStream) -> Vec<RelationDecl> {
     use proc_macro2::TokenTree;
-    
+
     let mut relations = Vec::new();
     let token_vec: Vec<TokenTree> = tokens.clone().into_iter().collect();
-    
+
     let mut i = 0;
     while i < token_vec.len() {
         // Look for "relation" keyword
@@ -1026,10 +1067,7 @@ fn extract_relation_decls(tokens: &TokenStream) -> Vec<RelationDecl> {
                         if group.delimiter() == proc_macro2::Delimiter::Parenthesis {
                             // Parse the types from the group
                             let param_types = parse_relation_params(group.stream());
-                            relations.push(RelationDecl {
-                                name: name.clone(),
-                                param_types,
-                            });
+                            relations.push(RelationDecl { name: name.clone(), param_types });
                         }
                     }
                 }
@@ -1037,22 +1075,22 @@ fn extract_relation_decls(tokens: &TokenStream) -> Vec<RelationDecl> {
         }
         i += 1;
     }
-    
+
     relations
 }
 
 /// Parse relation parameter types from a token stream like "Proc, Proc"
 fn parse_relation_params(tokens: TokenStream) -> Vec<Ident> {
     use proc_macro2::TokenTree;
-    
+
     let mut params = Vec::new();
-    
+
     for token in tokens {
         if let TokenTree::Ident(ident) = token {
             params.push(ident);
         }
         // Skip punctuation (commas)
     }
-    
+
     params
 }

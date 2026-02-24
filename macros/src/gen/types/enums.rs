@@ -41,9 +41,14 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
         if let Some(native_type) = &lang_type.native_type {
             if !has_literal_rule {
                 let literal_label = generate_literal_label(native_type);
-                // str is unsized; use String for the variant payload
-                let payload_type = if native_type_to_string(native_type) == "str" {
+                let type_str = native_type_to_string(native_type);
+                // str is unsized; use String. f32/f64 use canonical wrapper for Eq/Hash/Ord.
+                let payload_type = if type_str == "str" {
                     quote! { std::string::String }
+                } else if type_str == "f64" {
+                    quote! { mettail_runtime::CanonicalFloat64 }
+                } else if type_str == "f32" {
+                    quote! { mettail_runtime::CanonicalFloat32 }
                 } else {
                     quote! { #native_type }
                 };
@@ -104,16 +109,8 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             });
         }
 
-        // f64/f32 don't implement Eq, Ord, Hash; omit those derives for float categories
-        let has_float = lang_type.native_type.as_ref().map_or(false, |t| {
-            let s = native_type_to_string(t);
-            s == "f32" || s == "f64"
-        });
-        let derives = if has_float {
-            quote! { #[derive(Debug, Clone, PartialEq, PartialOrd, mettail_runtime::BoundTerm)] }
-        } else {
-            quote! { #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, mettail_runtime::BoundTerm)] }
-        };
+        // All category enums use full derives; float categories use canonical wrapper payload (Eq/Hash/Ord).
+        let derives = quote! { #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, mettail_runtime::BoundTerm)] };
         quote! {
             #derives
             pub enum #cat_name {
@@ -143,16 +140,21 @@ fn literal_payload_type(nt: &str, category: &syn::Ident, language: &LanguageDef)
             } else {
                 quote! { i32 }
             }
-        }
+        },
         "Boolean" => quote! { bool },
         "StringLiteral" => quote! { std::string::String },
         "FloatLiteral" => {
             if let Some(native_type) = native_type_for_category() {
-                quote! { #native_type }
+                let s = native_type_to_string(native_type);
+                if s == "f32" {
+                    quote! { mettail_runtime::CanonicalFloat32 }
+                } else {
+                    quote! { mettail_runtime::CanonicalFloat64 }
+                }
             } else {
-                quote! { f64 }
+                quote! { mettail_runtime::CanonicalFloat64 }
             }
-        }
+        },
         _ => quote! { std::string::String }, // fallback for str/other
     }
 }
@@ -162,7 +164,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
 
     // Check if this rule uses new syntax (term_context)
     if let Some(ref term_context) = rule.term_context {
-        return generate_variant_from_term_context(label, term_context);
+        return generate_variant_from_term_context(label, term_context, language, &rule.category);
     }
 
     // Check if this rule has bindings (old syntax)
@@ -203,7 +205,9 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
     } else if fields.len() == 1 {
         #[allow(clippy::cmp_owned)]
         match &fields[0] {
-            FieldType::NonTerminal(ident) if crate::gen::is_literal_nonterminal(&ident.to_string()) => {
+            FieldType::NonTerminal(ident)
+                if crate::gen::is_literal_nonterminal(&ident.to_string()) =>
+            {
                 // Literal rule: payload type from nonterminal name (Integer, Boolean, StringLiteral, FloatLiteral)
                 let nt = ident.to_string();
                 let payload_type = literal_payload_type(&nt, &rule.category, language);
@@ -257,6 +261,8 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
 fn generate_variant_from_term_context(
     label: &syn::Ident,
     term_context: &[TermParam],
+    language: &LanguageDef,
+    category: &syn::Ident,
 ) -> TokenStream {
     let mut fields: Vec<TokenStream> = Vec::new();
 
@@ -264,7 +270,7 @@ fn generate_variant_from_term_context(
         match param {
             TermParam::Simple { ty, .. } => {
                 // Simple parameter: generate appropriate field type
-                let field_type = type_expr_to_field_type(ty);
+                let field_type = type_expr_to_field_type(ty, Some((language, category)));
                 fields.push(field_type);
             },
             TermParam::Abstraction { ty, .. } => {
@@ -369,8 +375,12 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
     }
 }
 
-/// Convert TypeExpr to a Rust field type (for enum variant fields)
-fn type_expr_to_field_type(ty: &TypeExpr) -> TokenStream {
+/// Convert TypeExpr to a Rust field type (for enum variant fields).
+/// When language and category are provided, FloatLiteral uses the category's canonical float type (f32/f64).
+fn type_expr_to_field_type(
+    ty: &TypeExpr,
+    language_category: Option<(&LanguageDef, &syn::Ident)>,
+) -> TokenStream {
     match ty {
         TypeExpr::Base(ident) => {
             let name = ident.to_string();
@@ -383,7 +393,23 @@ fn type_expr_to_field_type(ty: &TypeExpr) -> TokenStream {
             } else if name == "StringLiteral" {
                 quote! { std::string::String }
             } else if name == "FloatLiteral" {
-                quote! { f64 }
+                let canonical = language_category
+                    .and_then(|(lang, cat)| {
+                        lang.types
+                            .iter()
+                            .find(|t| t.name == *cat)
+                            .and_then(|t| t.native_type.as_ref())
+                    })
+                    .map(|native_type| {
+                        let s = native_type_to_string(native_type);
+                        if s == "f32" {
+                            quote! { mettail_runtime::CanonicalFloat32 }
+                        } else {
+                            quote! { mettail_runtime::CanonicalFloat64 }
+                        }
+                    })
+                    .unwrap_or_else(|| quote! { mettail_runtime::CanonicalFloat64 });
+                canonical
             } else {
                 quote! { Box<#ident> }
             }

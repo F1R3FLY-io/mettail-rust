@@ -25,7 +25,7 @@
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::ast::types::{CollectionType, TypeExpr};
-use crate::gen::native::{has_native_type, native_type_to_string};
+use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -38,7 +38,7 @@ use syn::Ident;
 /// Represents a variant of an AST enum for substitution purposes.
 /// Abstracts over both old (BNFC) and new (judgement) syntax.
 #[derive(Debug, Clone)]
-enum VariantKind {
+pub(crate) enum VariantKind {
     /// Variable variant: PVar(OrdVar)
     Var { label: Ident },
 
@@ -77,13 +77,13 @@ enum VariantKind {
 
 /// Information about a field in a constructor
 #[derive(Debug, Clone)]
-struct FieldInfo {
+pub(crate) struct FieldInfo {
     /// The category of this field (e.g., Proc, Name)
-    category: Ident,
+    pub(crate) category: Ident,
     /// Whether this is a collection field
-    is_collection: bool,
+    pub(crate) is_collection: bool,
     /// Collection type if is_collection is true
-    coll_type: Option<CollectionType>,
+    pub(crate) coll_type: Option<CollectionType>,
 }
 
 // =============================================================================
@@ -674,8 +674,6 @@ fn generate_subst_by_name_arm(
 
 /// Generate substitution impl for a single category
 fn generate_category_substitution(category: &Ident, language: &LanguageDef) -> TokenStream {
-    
-
     // Collect all variants for this category
     let variants = collect_category_variants(category, language);
 
@@ -688,7 +686,10 @@ fn generate_category_substitution(category: &Ident, language: &LanguageDef) -> T
 // =============================================================================
 
 /// Collect all variants for a category from grammar rules and auto-generated variants
-fn collect_category_variants(category: &Ident, language: &LanguageDef) -> Vec<VariantKind> {
+pub(crate) fn collect_category_variants(
+    category: &Ident,
+    language: &LanguageDef,
+) -> Vec<VariantKind> {
     let mut variants = Vec::new();
 
     // From grammar rules
@@ -785,7 +786,7 @@ fn collect_category_variants(category: &Ident, language: &LanguageDef) -> Vec<Va
 }
 
 /// Convert a grammar rule to a VariantKind
-fn rule_to_variant_kind(rule: &GrammarRule, _language: &LanguageDef) -> VariantKind {
+pub(crate) fn rule_to_variant_kind(rule: &GrammarRule, _language: &LanguageDef) -> VariantKind {
     let label = rule.label.clone();
 
     // Check for Var rule first
@@ -808,7 +809,7 @@ fn rule_to_variant_kind(rule: &GrammarRule, _language: &LanguageDef) -> VariantK
 }
 
 /// Create VariantKind from new-style term_context
-fn variant_kind_from_term_context(label: &Ident, ctx: &[TermParam]) -> VariantKind {
+pub(crate) fn variant_kind_from_term_context(label: &Ident, ctx: &[TermParam]) -> VariantKind {
     // Check for multi-abstraction
     let multi_abs = ctx.iter().find_map(|p| {
         if let TermParam::MultiAbstraction { ty, .. } = p {
@@ -909,7 +910,7 @@ fn variant_kind_from_term_context(label: &Ident, ctx: &[TermParam]) -> VariantKi
 }
 
 /// Create VariantKind from old-style items + bindings
-fn variant_kind_from_items(
+pub(crate) fn variant_kind_from_items(
     label: &Ident,
     items: &[GrammarItem],
     bindings: &[(usize, Vec<usize>)],

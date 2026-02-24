@@ -1,0 +1,58 @@
+[package]
+name = "mettail-prattail"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "PraTTaIL: Pratt + Recursive Descent parser generator with automata-optimized lexing for MeTTaIL"
+
+[features]
+## WFST-based prediction, lattice, recovery, and composition modules.
+## Core automata (NFA, DFA, TropicalWeight) are always available.
+wfst = []
+## Log semiring (LogWeight), forward-backward, N-best, log-pushing, training.
+## Implies `wfst`.
+wfst-log = ["wfst", "dep:serde", "dep:serde_json"]
+## Grammar-aware expression generator (proptest-based) for benchmarks and tests.
+grammar-gen = ["dep:proptest"]
+
+[dependencies]
+proc-macro2 = { workspace = true }
+quote = { workspace = true }
+syn = { workspace = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
+proptest = { version = "1", optional = true }
+
+[dev-dependencies]
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "bench_end_to_end"
+harness = false
+
+[[bench]]
+name = "bench_lexer"
+harness = false
+
+[[bench]]
+name = "bench_analysis"
+harness = false
+
+[[bench]]
+name = "bench_codegen"
+harness = false
+
+[[bench]]
+name = "bench_lexer_codegen"
+harness = false
+
+[[bench]]
+name = "bench_wfst"
+harness = false
+required-features = ["wfst"]
+
+[[bench]]
+name = "bench_dispatch"
+harness = false
+required-features = ["grammar-gen"]

@@ -403,54 +403,55 @@ fn generate_nary_case(
     arg_cats: &[Ident],
     language: &LanguageDef,
 ) -> TokenStream {
-    // For now, use a simplified approach: all args at depth-1
-    // This is less comprehensive but simpler
     let n = arg_cats.len();
 
-    let field_names: Vec<TokenStream> = arg_cats
-        .iter()
-        .enumerate()
-        .map(|(i, cat)| {
-            if !is_lang_type(cat, language) {
-                return quote! {};
-            }
-            let field = category_to_field_name(cat);
-            let di = syn::Ident::new(&format!("d{}", i), proc_macro2::Span::call_site());
-            let argi = syn::Ident::new(&format!("args{}", i), proc_macro2::Span::call_site());
-            quote! {
-                if let Some(#argi) = self.#field.get(&#di)
-            }
-        })
-        .collect();
+    // Bail if any arg is not a language type
+    for cat in arg_cats {
+        if !is_lang_type(cat, language) {
+            return quote! {};
+        }
+    }
 
-    let arg_iters: Vec<TokenStream> = (0..n)
-        .map(|i| {
-            let argi = syn::Ident::new(&format!("args{}", i), proc_macro2::Span::call_site());
-            let argi_single = syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site());
-            quote! {
-                for #argi_single in #argi
-            }
-        })
-        .collect();
-
+    // Build constructor arguments
     let constructor_args: Vec<TokenStream> = (0..n)
         .map(|i| {
             let argi = syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site());
-            quote! {
-                Box::new(#argi.clone())
-            }
+            quote! { Box::new(#argi.clone()) }
         })
         .collect();
 
-    // Simplified: just use depth-1 for all args
+    // Build nested code from inside out: innermost is the push
+    let mut inner = quote! {
+        terms.push(#cat_name::#label(#(#constructor_args),*));
+    };
+
+    // Wrap with for loops (innermost arg last, building outward)
+    for i in (0..n).rev() {
+        let args_i = syn::Ident::new(&format!("args{}", i), proc_macro2::Span::call_site());
+        let arg_i = syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site());
+        inner = quote! {
+            for #arg_i in #args_i {
+                #inner
+            }
+        };
+    }
+
+    // Wrap with if-let guards (innermost arg last, building outward)
+    for i in (0..n).rev() {
+        let field = category_to_field_name(&arg_cats[i]);
+        let args_i = syn::Ident::new(&format!("args{}", i), proc_macro2::Span::call_site());
+        inner = quote! {
+            if let Some(#args_i) = self.#field.get(&d) {
+                #inner
+            }
+        };
+    }
+
+    // Simplified: all args at depth-1
     quote! {
         if depth > 0 {
             let d = depth - 1;
-            #(#field_names)* {
-                #(#arg_iters)* {
-                    terms.push(#cat_name::#label(#(#constructor_args),*));
-                }
-            }
+            #inner
         }
     }
 }
@@ -636,46 +637,58 @@ fn generate_binder_with_multiple_args(
         return quote! {};
     }
 
+    // Bail if any arg is not a language type
+    for (_, cat) in other_args {
+        if !is_lang_type(cat, language) {
+            return quote! {};
+        }
+    }
+
     let body_field = category_to_field_name(body_cat);
+    let n = other_args.len();
 
-    // Generate nested loops for other args
-    let arg_fields: Vec<TokenStream> = other_args
-        .iter()
-        .enumerate()
-        .map(|(i, (_, cat))| {
-            if !is_lang_type(cat, language) {
-                return quote! {};
-            }
-            let field = category_to_field_name(cat);
-            let argi = syn::Ident::new(&format!("args{}", i), proc_macro2::Span::call_site());
-            quote! {
-                if let Some(#argi) = self.#field.get(&d)
-            }
+    // Build constructor arguments
+    let constructor_args: Vec<TokenStream> = (0..n)
+        .map(|i| {
+            let arg_i = syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site());
+            quote! { Box::new(#arg_i.clone()) }
         })
         .collect();
 
-    let arg_loops: Vec<TokenStream> = other_args
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let argi = syn::Ident::new(&format!("args{}", i), proc_macro2::Span::call_site());
-            let arg_single = syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site());
-            quote! {
-                for #arg_single in #argi
-            }
-        })
-        .collect();
+    // Build nested code from inside out: innermost is the body loop + push
+    let mut inner = quote! {
+        for body in &bodies_with_binder {
+            let binder_var = mettail_runtime::get_or_create_var(&binder_name);
+            let binder = mettail_runtime::Binder(binder_var);
+            let scope = mettail_runtime::Scope::new(binder, Box::new(body.clone()));
+            terms.push(#cat_name::#label(
+                #(#constructor_args,)*
+                scope
+            ));
+        }
+    };
 
-    let constructor_args: Vec<TokenStream> = other_args
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let arg_single = syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site());
-            quote! {
-                Box::new(#arg_single.clone())
+    // Wrap with for loops (innermost arg last, building outward)
+    for i in (0..n).rev() {
+        let args_i = syn::Ident::new(&format!("args{}", i), proc_macro2::Span::call_site());
+        let arg_i = syn::Ident::new(&format!("arg{}", i), proc_macro2::Span::call_site());
+        inner = quote! {
+            for #arg_i in #args_i {
+                #inner
             }
-        })
-        .collect();
+        };
+    }
+
+    // Wrap with if-let guards (innermost arg last, building outward)
+    for i in (0..n).rev() {
+        let field = category_to_field_name(&other_args[i].1);
+        let args_i = syn::Ident::new(&format!("args{}", i), proc_macro2::Span::call_site());
+        inner = quote! {
+            if let Some(#args_i) = self.#field.get(&d) {
+                #inner
+            }
+        };
+    }
 
     quote! {
         if depth > 0 {
@@ -702,19 +715,7 @@ fn generate_binder_with_multiple_args(
                 }
             }
 
-            #(#arg_fields)* {
-                #(#arg_loops)* {
-                    for body in &bodies_with_binder {
-                        let binder_var = mettail_runtime::get_or_create_var(&binder_name);
-                        let binder = mettail_runtime::Binder(binder_var);
-                        let scope = mettail_runtime::Scope::new(binder, Box::new(body.clone()));
-                        terms.push(#cat_name::#label(
-                            #(#constructor_args,)*
-                            scope
-                        ));
-                    }
-                }
-            }
+            #inner
         }
     }
 }

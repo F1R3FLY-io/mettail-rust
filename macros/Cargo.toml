@@ -12,6 +12,11 @@ readme = "../README.md"
 [lib]
 proc-macro = true
 
+[features]
+## Propagate WFST features to mettail-prattail.
+wfst = ["mettail-prattail/wfst"]
+wfst-log = ["mettail-prattail/wfst-log"]
+
 [dependencies]
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
@@ -21,6 +26,8 @@ ascent = { workspace = true }
 ascent-byods-rels = { workspace = true }
 moniker = { workspace = true }
 indexmap = { workspace = true }
+mettail-prattail = { path = "../prattail" }
 
 [dev-dependencies]
 trybuild = "1.0"
+proptest = "1"

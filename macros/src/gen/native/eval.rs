@@ -1,12 +1,13 @@
 use proc_macro2::TokenStream;
 use quote::quote;
-use std::collections::HashMap;
 
 /// Generate eval() method for native types
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
-use crate::ast::language::{BuiltinOp, LanguageDef, SemanticOperation};
+use crate::ast::language::LanguageDef;
 use crate::gen::native::native_type_to_string;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal};
+use crate::gen::{
+    generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
+};
 
 /// Extract parameter names from term_context in the same order as generated variant fields.
 /// Used for rust_code eval arms: param names match constructor field names.
@@ -47,8 +48,6 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             .iter()
             .filter(|r| r.category == *category)
             .collect();
-
-        
 
         // Literal label for try_fold_to_literal (resolve once)
         let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
@@ -104,7 +103,6 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
         for rule in &rules {
             let label = &rule.label;
-            let label_str = label.to_string();
 
             // Literal rule: copy or clone depending on nonterminal (StringLiteral => clone)
             if is_literal_rule(rule) {
@@ -142,76 +140,28 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     .map(|name| quote! { let #name = #name.as_ref().try_eval()?; })
                     .collect();
                 let rust_code = &rust_code_block.code;
-                let match_arm = match param_count {
-                    0 => quote! {
+                let match_arm = if param_count == 0 {
+                    quote! {
                         #category::#label => (#rust_code),
-                    },
-                    1 => {
-                        let p0 = &param_names[0];
-                        quote! {
-                            #category::#label(#p0) => {
-                                #(#param_bindings)*
-                                (#rust_code)
-                            },
-                        }
-                    },
-                    2 => {
-                        let p0 = &param_names[0];
-                        let p1 = &param_names[1];
-                        quote! {
-                            #category::#label(#p0, #p1) => {
-                                #(#param_bindings)*
-                                (#rust_code)
-                            },
-                        }
-                    },
-                    3 => {
-                        let p0 = &param_names[0];
-                        let p1 = &param_names[1];
-                        let p2 = &param_names[2];
-                        quote! {
-                            #category::#label(#p0, #p1, #p2) => {
-                                #(#param_bindings)*
-                                (#rust_code)
-                            },
-                        }
-                    },
-                    _ => continue, // 4+ params: skip or extend later
+                    }
+                } else {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#param_bindings)*
+                            (#rust_code)
+                        },
+                    }
                 };
                 match_arms.push(match_arm);
-                let try_arm = match param_count {
-                    0 => quote! { #category::#label => Some((#rust_code)), },
-                    1 => {
-                        let p0 = &param_names[0];
-                        quote! {
-                            #category::#label(#p0) => {
-                                #(#try_param_bindings)*
-                                Some((#rust_code))
-                            },
-                        }
-                    },
-                    2 => {
-                        let p0 = &param_names[0];
-                        let p1 = &param_names[1];
-                        quote! {
-                            #category::#label(#p0, #p1) => {
-                                #(#try_param_bindings)*
-                                Some((#rust_code))
-                            },
-                        }
-                    },
-                    3 => {
-                        let p0 = &param_names[0];
-                        let p1 = &param_names[1];
-                        let p2 = &param_names[2];
-                        quote! {
-                            #category::#label(#p0, #p1, #p2) => {
-                                #(#try_param_bindings)*
-                                Some((#rust_code))
-                            },
-                        }
-                    },
-                    _ => continue,
+                let try_arm = if param_count == 0 {
+                    quote! { #category::#label => Some((#rust_code)), }
+                } else {
+                    quote! {
+                        #category::#label(#(#param_names),*) => {
+                            #(#try_param_bindings)*
+                            Some((#rust_code))
+                        },
+                    }
                 };
                 try_eval_arms.push(try_arm);
             }
@@ -244,8 +194,13 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         }
 
         if !match_arms.is_empty() {
-            let return_type = if native_type_to_string(native_type) == "str" {
+            let type_str = native_type_to_string(native_type);
+            let return_type = if type_str == "str" || type_str == "String" {
                 quote! { std::string::String }
+            } else if type_str == "f32" {
+                quote! { mettail_runtime::CanonicalFloat32 }
+            } else if type_str == "f64" {
+                quote! { mettail_runtime::CanonicalFloat64 }
             } else {
                 quote! { #native_type }
             };

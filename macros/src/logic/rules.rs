@@ -7,6 +7,7 @@
 //! 1. The relation they write to (`eq_cat` vs `rw_cat`)
 //! 2. Whether they're bidirectional (equations) or directional (rewrites)
 
+use super::common::{in_cat_filter, CategoryFilter};
 use crate::ast::language::{Condition, FreshnessCondition, FreshnessTarget, LanguageDef};
 use crate::ast::pattern::{AscentClauses, Pattern, VariableBinding};
 use proc_macro2::TokenStream;
@@ -119,85 +120,34 @@ pub fn generate_rule_clause_with_category(
     //   rw_proc(s1, t) <-- rw_proc(s0, t), eq_proc(s0, s1)
     let source_var = format_ident!("s_orig");
 
-    // Wrap RHS expression with .normalize() for immediate beta-reduction
-    if use_equation_matching {
+    // Build rule head and first body clause based on matching mode
+    let (head, first_clause) = if use_equation_matching {
         // Rewrite rules: match via equation relation
-        if condition_clauses.is_empty() && eq_checks.is_empty() {
-            quote! {
-                #relation_name(#source_var.clone(), #rhs_var) <--
-                    #eq_rel(#source_var, #lhs_var),
-                    #(#clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else if eq_checks.is_empty() {
-            quote! {
-                #relation_name(#source_var.clone(), #rhs_var) <--
-                    #eq_rel(#source_var, #lhs_var),
-                    #(#clauses,)*
-                    #(#condition_clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else if condition_clauses.is_empty() {
-            quote! {
-                #relation_name(#source_var.clone(), #rhs_var) <--
-                    #eq_rel(#source_var, #lhs_var),
-                    #(#clauses,)*
-                    #(#eq_checks,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else {
-            quote! {
-                #relation_name(#source_var.clone(), #rhs_var) <--
-                    #eq_rel(#source_var, #lhs_var),
-                    #(#clauses,)*
-                    #(#eq_checks,)*
-                    #(#condition_clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        }
+        (
+            quote! { #relation_name(#source_var.clone(), #rhs_var) },
+            quote! { #eq_rel(#source_var, #lhs_var) },
+        )
     } else {
         // Equation rules: match directly on category relation
         // Also add the produced term to proc, enabling:
         // 1. Deconstruction of equation-produced terms
         // 2. Reflexivity for equation-produced terms (so rewrites can match via eq_proc)
-        if condition_clauses.is_empty() && eq_checks.is_empty() {
-            quote! {
-                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
-                #cat_lower(#rhs_var.clone()) <--
-                    #cat_lower(#lhs_var),
-                    #(#clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else if eq_checks.is_empty() {
-            quote! {
-                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
-                #cat_lower(#rhs_var.clone()) <--
-                    #cat_lower(#lhs_var),
-                    #(#clauses,)*
-                    #(#condition_clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else if condition_clauses.is_empty() {
-            quote! {
-                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
-                #cat_lower(#rhs_var.clone()) <--
-                    #cat_lower(#lhs_var),
-                    #(#clauses,)*
-                    #(#eq_checks,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        } else {
-            quote! {
-                #relation_name(#lhs_var.clone(), #rhs_var.clone()),
-                #cat_lower(#rhs_var.clone()) <--
-                    #cat_lower(#lhs_var),
-                    #(#clauses,)*
-                    #(#eq_checks,)*
-                    #(#condition_clauses,)*
-                    let #rhs_var = (#rhs_expr).normalize();
-            }
-        }
-    }
+        (
+            quote! { #relation_name(#lhs_var.clone(), #rhs_var.clone()), #cat_lower(#rhs_var.clone()) },
+            quote! { #cat_lower(#lhs_var) },
+        )
+    };
+
+    // Assemble body clauses in order: first_clause, LHS pattern, eq_checks, conditions, RHS binding
+    let mut body =
+        Vec::with_capacity(1 + clauses.len() + eq_checks.len() + condition_clauses.len() + 1);
+    body.push(first_clause);
+    body.extend(clauses.iter().cloned());
+    body.extend(eq_checks.iter().cloned());
+    body.extend(condition_clauses.iter().cloned());
+    body.push(quote! { let #rhs_var = (#rhs_expr).normalize() });
+
+    quote! { #head <-- #(#body),*; }
 }
 
 /// Generate condition clauses from freshness and env conditions.
@@ -333,7 +283,12 @@ fn premise_to_condition(premise: &crate::ast::language::Premise) -> Option<Condi
 /// Generate all equation rules for a theory.
 /// Equation rules use direct category matching (not equation matching)
 /// because they define the base equations that feed into the eq_* relations.
-pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
+///
+/// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+pub fn generate_equation_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     for eq in &language.equations {
@@ -344,6 +299,11 @@ pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
             .or_else(|| eq.right.category(language));
 
         if let Some(category) = category {
+            // Skip categories not in the filter
+            if !in_cat_filter(category, cat_filter) {
+                continue;
+            }
+
             let eq_rel = format_ident!("eq_{}", category.to_string().to_lowercase());
 
             // Convert premises to Conditions (filter out any congruence - invalid for equations)
@@ -394,7 +354,12 @@ pub fn generate_equation_rules(language: &LanguageDef) -> Vec<TokenStream> {
 /// instead of `cat(s)`, allowing rewrites to apply to equation-equivalent terms
 /// without needing expensive closure rules like:
 ///   rw_proc(s1, t) <-- rw_proc(s0, t), eq_proc(s0, s1)
-pub fn generate_base_rewrites(language: &LanguageDef) -> Vec<TokenStream> {
+///
+/// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+pub fn generate_base_rewrites(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     for rw in &language.rewrites {
@@ -405,6 +370,11 @@ pub fn generate_base_rewrites(language: &LanguageDef) -> Vec<TokenStream> {
 
         // Determine category from LHS
         if let Some(category) = rw.left.category(language) {
+            // Skip categories not in the filter
+            if !in_cat_filter(category, cat_filter) {
+                continue;
+            }
+
             let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
 
             // Convert premises to Conditions

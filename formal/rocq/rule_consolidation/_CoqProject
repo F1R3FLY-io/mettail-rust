@@ -1,0 +1,33 @@
+# Rocq project file for rule consolidation formal verification
+#
+# Verifies semantic equivalence of Ascent rule consolidation:
+# N per-constructor rules → 1 consolidated rule with inline match.
+#
+# Six consolidation areas proven equivalent:
+#   1. Subterm Extraction      (for-match)
+#   2. Auto-Variant Congruence (for-match + variant-index)
+#   3. Equation Congruence     (pair-match)
+#   4. Explicit Congruence     (variant-index rebuild)
+#   5. Fold Triggers           (if-match boolean)
+#   6. Fold Identities         (if-match boolean)
+#
+# Build:
+#   coq_makefile -f _CoqProject -o CoqMakefile && make -f CoqMakefile
+#
+# With resource limits (recommended):
+#   coq_makefile -f _CoqProject -o CoqMakefile && \
+#   systemd-run --user --scope -p MemoryMax=16G -p CPUQuota=400% make -f CoqMakefile
+#
+# Prerequisites:
+#   - Rocq 9.0+ (tested with 9.1.0)
+#   - Standard library (included with Rocq)
+
+# Compiler flags
+-Q theories RuleConsolidation
+
+# Source files (dependency order)
+theories/Prelude.v
+theories/DisjointPatterns.v
+theories/RuleConsolidation.v
+theories/VariantIndexRebuild.v
+theories/AreaProofs.v

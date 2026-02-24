@@ -18,7 +18,7 @@ fn main() {
     let src_dir: Option<PathBuf> = env::var("ASCENT_MACRO_SRC")
         .ok()
         .filter(|s| Path::new(s).join("ascent_syntax.rs").exists())
-        .map(|s| PathBuf::from(s))
+        .map(PathBuf::from)
         .or_else(|| {
             let p = Path::new("../../ascent/ascent_macro/src");
             if p.join("ascent_syntax.rs").exists() {
@@ -53,7 +53,10 @@ fn patch_ascent_syntax(src_dir: &Path, out_dir: &Path) {
     patched = patched.replace("#![deny(warnings)]", "#![allow(warnings)]");
 
     // Remove the extern crate proc_macro line (we'll provide our own stub)
-    patched = patched.replace("extern crate proc_macro;", "// extern crate proc_macro; // Removed - using stub");
+    patched = patched.replace(
+        "extern crate proc_macro;",
+        "// extern crate proc_macro; // Removed - using stub",
+    );
 
     // Add quote macro imports at the top of the file (after allow warnings)
     // The original lib.rs has #[macro_use] extern crate quote; which makes macros globally available
@@ -67,10 +70,13 @@ fn patch_ascent_syntax(src_dir: &Path, out_dir: &Path) {
     patched = patched.replace("pub(crate) struct Signatures", "pub struct Signatures");
     patched = patched.replace("pub(crate) struct AscentProgram", "pub struct AscentProgram");
     patched = patched.replace("pub(crate) struct RelationIdentity", "pub struct RelationIdentity");
-    patched = patched.replace("pub(crate) struct DsAttributeContents", "pub struct DsAttributeContents");
-    patched = patched.replace("pub(crate) struct IncludeSourceMacroCall", "pub struct IncludeSourceMacroCall");
+    patched =
+        patched.replace("pub(crate) struct DsAttributeContents", "pub struct DsAttributeContents");
+    patched = patched
+        .replace("pub(crate) struct IncludeSourceMacroCall", "pub struct IncludeSourceMacroCall");
     patched = patched.replace("pub(crate) fn parse_ascent_program", "pub fn parse_ascent_program");
-    patched = patched.replace("pub(crate) fn desugar_ascent_program", "pub fn desugar_ascent_program");
+    patched =
+        patched.replace("pub(crate) fn desugar_ascent_program", "pub fn desugar_ascent_program");
     patched = patched.replace("pub(crate) fn rule_node_summary", "pub fn rule_node_summary");
 
     // Fix imports - replace crate:: with super:: for our vendored modules
@@ -79,10 +85,8 @@ fn patch_ascent_syntax(src_dir: &Path, out_dir: &Path) {
     // Fix utils import inside the nested kw module FIRST (needs super::super:: since it's nested)
     // The kw module is inside ascent_syntax.rs, so it needs to go up two levels
     // This must come BEFORE the general utils replacement
-    patched = patched.replace(
-        "   use crate::utils::join_spans;",
-        "   use super::super::utils::join_spans;"
-    );
+    patched = patched
+        .replace("   use crate::utils::join_spans;", "   use super::super::utils::join_spans;");
     // Fix utils import at module level (general replacement)
     patched = patched.replace("use crate::utils::", "use super::utils::");
 
@@ -119,8 +123,8 @@ impl syn::parse::Parse for BodyClauseArg {
 }
 
 fn patch_syn_utils(src_dir: &Path, out_dir: &Path) {
-    let content = fs::read_to_string(src_dir.join("syn_utils.rs"))
-        .expect("Failed to read syn_utils.rs");
+    let content =
+        fs::read_to_string(src_dir.join("syn_utils.rs")).expect("Failed to read syn_utils.rs");
 
     let mut patched = content;
 
@@ -153,13 +157,11 @@ use quote::quote;
         patched = format!("{}\n{}", proc_macro_stub, patched);
     }
 
-    fs::write(out_dir.join("syn_utils.rs"), patched)
-        .expect("Failed to write patched syn_utils.rs");
+    fs::write(out_dir.join("syn_utils.rs"), patched).expect("Failed to write patched syn_utils.rs");
 }
 
 fn patch_utils(src_dir: &Path, out_dir: &Path) {
-    let content = fs::read_to_string(src_dir.join("utils.rs"))
-        .expect("Failed to read utils.rs");
+    let content = fs::read_to_string(src_dir.join("utils.rs")).expect("Failed to read utils.rs");
 
     let mut patched = content;
 
@@ -175,8 +177,7 @@ fn patch_utils(src_dir: &Path, out_dir: &Path) {
     // Fix imports
     patched = patched.replace("use crate::syn_utils::", "use super::syn_utils::");
 
-    fs::write(out_dir.join("utils.rs"), patched)
-        .expect("Failed to write patched utils.rs");
+    fs::write(out_dir.join("utils.rs"), patched).expect("Failed to write patched utils.rs");
 }
 
 fn create_mod_file(out_dir: &Path) {
@@ -213,7 +214,5 @@ impl AscentMacroKind {
 }
 "#;
 
-    fs::write(out_dir.join("mod.rs"), mod_content)
-        .expect("Failed to write mod.rs");
+    fs::write(out_dir.join("mod.rs"), mod_content).expect("Failed to write mod.rs");
 }
-

@@ -8,7 +8,7 @@
 
 ## Problem Statement
 
-The current semantics system supports only binary arithmetic operators (`+`, `-`, `*`, `/`, `%`, `&`, `|`, `^`, `<<`, `>>`) for `i32`/`i64` types. We need to extend support for:
+Operations are defined per constructor via HOL `![RustCode]` in the `terms` section. We need to extend support for:
 
 - String operations: concatenation, length, substring, case conversion, comparison
 - Float operations: arithmetic, trigonometric functions, comparison
@@ -18,9 +18,7 @@ The current semantics system supports only binary arithmetic operators (`+`, `-`
 - Custom methods: user-defined or standard library methods
 
 **Current Implementation:**
-- `macros/src/ast/types.rs`: `SemanticRule` with `BuiltinOp` enum (10 operators)
-- `macros/src/codegen/ast_gen.rs`: Hardcoded operator token generation in `eval()`
-- `macros/src/ascent/mod.rs`: Constant folding rule generation
+- Grammar rules in `terms` use optional `rust_code` blocks; `eval` and rewrite/fold rules are generated from these (e.g. `macros/src/gen/native/eval.rs`, `macros/src/logic/mod.rs`).
 
 **Constraints:**
 - Type safety must be preserved at compile time

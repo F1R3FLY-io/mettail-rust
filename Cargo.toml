@@ -1,5 +1,9 @@
 [workspace]
-members = ["macros", "runtime", "languages", "repl", "ascent_syntax_export", "query",
+members = ["macros", "runtime", "languages", "repl", "prattail", "ascent_syntax_export", "query",
+    # "ascent/ascent",
+    # "ascent/ascent_base",
+    # "ascent/ascent_macro",
+    # "ascent/byods/ascent-byods-rels",
 ]
 resolver = "2"
 
@@ -18,6 +22,10 @@ mettail-repl = { path = "repl" }
 anyhow = "1.0"
 clap = { version = "4.5", features = ["derive"] }
 
+[features]
+wfst = ["mettail-repl/wfst"]
+wfst-log = ["mettail-repl/wfst-log"]
+
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
@@ -31,8 +39,6 @@ proc-macro2 = "1.0"
 quote = "1.0"
 syn = { version = "2.0", features = ["full", "extra-traits"] }
 proc-macro-error = "1.0"
-lalrpop = "0.20"
-lalrpop-util = "0.20"
 regex = "1.0"
 rand = "0.8"
 
@@ -41,5 +47,19 @@ ascent-byods-rels = { version = "0.8" }
 moniker = { version = "0.5", features = ["moniker-derive"] }
 indexmap = "2.0"
 
+# ascent_macro = { path = "ascent/ascent_macro" }
+# ascent_base = { path = "ascent/ascent_base" }
+
 ascent_syntax_export = { path = "ascent_syntax_export" }
 query = { path = "query" }
+
+[profile.dev]
+codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)
+debug = "line-tables-only"    # Saves debuginfo generation time
+
+[profile.release]
+codegen-backend = "llvm"      # Full LLVM optimization for runtime performance
+opt-level = 3
+
+[profile.bench]
+inherits = "release"          # Benchmarks use LLVM for accurate measurements

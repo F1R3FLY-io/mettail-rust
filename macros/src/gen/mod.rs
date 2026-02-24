@@ -10,7 +10,7 @@
 //! ## Module Structure
 //!
 //! - `types/` - AST enum generation
-//! - `syntax/` - Parsing and printing (Display, LALRPOP, var inference)
+//! - `syntax/` - Parsing and printing (Display, PraTTaIL, var inference)
 //! - `term_ops/` - Term manipulation (substitution, normalization)
 //! - `native/` - Native type support (eval)
 //! - `runtime/` - Runtime integration (Language trait, metadata, environments)
@@ -37,7 +37,7 @@ use syn::Ident;
 pub use blockly::{generate_blockly_definitions, write_blockly_blocks, write_blockly_categories};
 pub use runtime::language::generate_language_impl;
 pub use runtime::metadata::generate_metadata;
-pub use syntax::parser::{generate_lalrpop_grammar, write_grammar_file};
+pub use syntax::parser::prattail_bridge::generate_prattail_parser;
 
 /// Generate all AST-related code for a language definition
 ///
@@ -55,6 +55,7 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
     use syntax::display::generate_display;
     use syntax::var_inference::generate_var_category_inference;
     use term_gen::{generate_random_generation, generate_term_generation};
+    use term_ops::ground::generate_is_ground_methods;
     use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
     use term_ops::subst::{generate_env_substitution, generate_substitution};
     use types::enums::generate_ast_enums;
@@ -69,17 +70,20 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
     let generation_impl = generate_term_generation(language);
     let random_gen_impl = generate_random_generation(language);
     let eval_impl = generate_eval_method(language);
+    let is_ground_impl = generate_is_ground_methods(language);
     let var_inference_impl = generate_var_category_inference(language);
 
-    // Generate LALRPOP module reference and per-category parse impls (parse must come after parser module)
-    let language_name = &language.name;
-    let language_name_lower = language_name.to_string().to_lowercase();
-    let language_mod = syn::Ident::new(&language_name_lower, proc_macro2::Span::call_site());
-    let category_parse_impls = generate_category_parse_impls(language, &language_name_lower);
+    // Parser code: PraTTaIL (inline)
+    let parser_code = {
+        let prattail_parser = generate_prattail_parser(language);
+        let category_parse_impls = generate_prattail_category_parse_impls(language);
+        quote! {
+            #prattail_parser
+            #category_parse_impls
+        }
+    };
 
     quote! {
-        use lalrpop_util::lalrpop_mod;
-
         #ast_enums
 
         #flatten_helpers
@@ -100,43 +104,142 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
 
         #eval_impl
 
+        #is_ground_impl
+
         #var_inference_impl
 
-        #[cfg(not(test))]
-        #[allow(unused_imports)]
-        lalrpop_util::lalrpop_mod!(pub #language_mod);
-
-        #[cfg(test)]
-        #[allow(unused_imports)]
-        lalrpop_util::lalrpop_mod!(#language_mod);
-
-        #category_parse_impls
+        #parser_code
     }
 }
 
-/// Generate `impl Cat { pub fn parse(input: &str) -> Result<Cat, String> { ... } }` for each
-/// language type so that logic-block rules can seed relations by parsing strings (e.g.
-/// `proc(p) <-- let Ok(p) = Proc::parse("^x.{*(x)}");`).
-fn generate_category_parse_impls(language: &LanguageDef, parser_mod: &str) -> TokenStream {
+/// Generate `impl Cat` parse methods for each language type using PraTTaIL's inline
+/// parse functions.
+///
+/// Generated methods:
+/// - `parse(input) -> Result<Cat, String>` — convenience wrapper, flattens error to string
+/// - `parse_structured(input) -> Result<Cat, ParseError>` — returns structured error
+/// - `parse_with_source(input, source) -> Result<Cat, String>` — includes source context in errors
+///
+/// PraTTaIL generates `parse_Cat(tokens, pos, min_bp)` functions and a `lex()` function
+/// directly in the enclosing scope, so no module qualification is needed.
+fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream {
     use quote::{format_ident, quote};
-
-    let parser_mod_ident = syn::Ident::new(parser_mod, proc_macro2::Span::call_site());
 
     let impls: Vec<TokenStream> = language
         .types
         .iter()
         .map(|t| {
             let cat = &t.name;
-            let parser_name = format_ident!("{}Parser", cat);
+            let parse_fn = format_ident!("parse_{}", cat);
+            let parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
+
+            // When WFST is enabled, parse_structured_weighted() calls lex_weighted()
+            // and stores the weight vector alongside the token/range pairs.
+            // The parser itself still receives &[(Token, Range)] — weights are
+            // consumed by the lattice/prediction layers in later sprints.
+            #[cfg(feature = "wfst")]
+            let wfst_methods = quote! {
+                /// Parse with weight emission: calls `lex_weighted()` to get
+                /// per-token tropical weights, then parses normally.
+                ///
+                /// Returns `(result, weights)` where `weights[i]` is the tropical
+                /// weight (lower = higher priority) for `tokens[i]`.
+                ///
+                /// Requires the `wfst` feature.
+                pub fn parse_structured_weighted(input: &str) -> Result<(#cat, Vec<f64>), ParseError> {
+                    let weighted_tokens = lex_weighted(input)?;
+                    let weights: Vec<f64> = weighted_tokens.iter().map(|(_, _, w)| *w).collect();
+                    let tokens: Vec<(Token<'_>, Range)> = weighted_tokens
+                        .into_iter()
+                        .map(|(t, r, _)| (t, r))
+                        .collect();
+                    let mut pos = 0usize;
+                    let result = #parse_fn(&tokens, &mut pos, 0)?;
+                    if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
+                        return Err(ParseError::TrailingTokens {
+                            found: format!("{:?}", tokens[pos].0),
+                            range: tokens[pos].1,
+                        });
+                    }
+                    Ok((result, weights))
+                }
+            };
+
+            #[cfg(not(feature = "wfst"))]
+            let wfst_methods = quote! {};
+
             quote! {
                 impl #cat {
-                    /// Parse a string as this category. For use in logic-block seeding, e.g.
-                    /// `proc(p) <-- let Ok(p) = Proc::parse("...");`
+                    /// Parse a string as this category.
+                    ///
+                    /// Returns `Err(String)` with a human-readable error message including
+                    /// line:column position on parse failure.
                     pub fn parse(input: &str) -> Result<#cat, std::string::String> {
-                        #parser_mod_ident::#parser_name::new()
-                            .parse(input)
-                            .map_err(|e| format!("{:?}", e))
+                        Self::parse_structured(input).map_err(|e| e.to_string())
                     }
+
+                    /// Parse a string as this category, returning a structured `ParseError`.
+                    ///
+                    /// The `ParseError` carries the exact source position (`Range` with
+                    /// `Position { byte_offset, line, column }`) and a descriptive message.
+                    /// Use this for programmatic error handling (IDE integration, error recovery).
+                    ///
+                    /// Zero-copy: the lexer produces `Token<'a>` borrowing from `input`,
+                    /// so no String allocations occur during lexing.
+                    pub fn parse_structured(input: &str) -> Result<#cat, ParseError> {
+                        let tokens = lex(input)?;
+                        let mut pos = 0usize;
+                        let result = #parse_fn(&tokens, &mut pos, 0)?;
+                        // Verify all tokens consumed (except EOF)
+                        if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
+                            return Err(ParseError::TrailingTokens {
+                                found: format!("{:?}", tokens[pos].0),
+                                range: tokens[pos].1,
+                            });
+                        }
+                        Ok(result)
+                    }
+
+                    /// Parse a string with source-context error messages.
+                    ///
+                    /// On error, includes a source snippet with caret pointing to the
+                    /// error location (rustc-style). The source is used for display only;
+                    /// parsing operates on `input`.
+                    pub fn parse_with_source(input: &str) -> Result<#cat, std::string::String> {
+                        Self::parse_structured(input).map_err(|e| {
+                            let range = e.range();
+                            format!("{}\n{}", e, format_error_context(input, &range))
+                        })
+                    }
+
+                    /// Parse with error recovery, collecting multiple errors.
+                    ///
+                    /// Unlike `parse()` which stops at the first error, this continues
+                    /// parsing after errors using panic-mode recovery with FOLLOW-set-based
+                    /// synchronization points.
+                    ///
+                    /// Returns `(Option<ast>, errors)` where:
+                    /// - `Some(ast)` with empty errors: successful parse
+                    /// - `Some(ast)` with errors: partial result with recovered errors
+                    /// - `None` with errors: unrecoverable (e.g., lex error or prefix failure)
+                    pub fn parse_recovering(input: &str) -> (Option<#cat>, Vec<ParseError>) {
+                        let tokens = match lex(input) {
+                            Ok(t) => t,
+                            Err(e) => return (None, vec![ParseError::from(e)]),
+                        };
+                        let mut pos = 0usize;
+                        let mut errors = Vec::new();
+                        let result = #parse_fn_recovering(&tokens, &mut pos, 0, &mut errors);
+                        if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
+                            errors.push(ParseError::TrailingTokens {
+                                found: format!("{:?}", tokens[pos].0),
+                                range: tokens[pos].1,
+                            });
+                        }
+                        (result, errors)
+                    }
+
+                    #wfst_methods
                 }
             }
         })
@@ -184,21 +287,9 @@ pub fn literal_rule_nonterminal(rule: &GrammarRule) -> Option<String> {
             } else {
                 None
             }
-        }
+        },
         _ => None,
     }
-}
-
-/// True when the rule is the Integer literal rule (for signed-numeric behavior like unary minus).
-#[allow(clippy::cmp_owned)]
-pub fn is_integer_literal_rule(rule: &GrammarRule) -> bool {
-    literal_rule_nonterminal(rule).as_deref() == Some("Integer")
-}
-
-/// True when the rule is the FloatLiteral literal rule (for signed-numeric behavior like unary minus).
-#[allow(clippy::cmp_owned)]
-pub fn is_float_literal_rule(rule: &GrammarRule) -> bool {
-    literal_rule_nonterminal(rule).as_deref() == Some("FloatLiteral")
 }
 
 /// Generate the Var variant label for a category

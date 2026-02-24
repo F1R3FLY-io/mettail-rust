@@ -1,6 +1,57 @@
-/// Pretty-printing utilities for terms
+//! Pretty-printing utilities for terms and error display.
+//!
+//! Provides indented multi-line formatting for complex terms
+//! and source-context error rendering with caret pointing.
+
+/// Format a parse error with source context snippet and caret.
 ///
-/// Provides indented multi-line formatting for complex terms.
+/// Takes the original input text and the error message (which should contain
+/// `line:column:` prefix). Extracts line/column from the error, renders the
+/// relevant source line with a caret pointing to the error location.
+pub fn format_parse_error_with_context(input: &str, error_msg: &str) -> String {
+    // Try to extract line:column from the error message (format: "line:col: ...")
+    let (line_1idx, col_1idx) = match parse_line_col(error_msg) {
+        Some((l, c)) => (l, c),
+        None => return error_msg.to_string(), // fallback to raw message
+    };
+
+    // Convert 1-indexed to 0-indexed
+    let line_0idx = line_1idx.saturating_sub(1);
+    let col_0idx = col_1idx.saturating_sub(1);
+
+    // Find the source line
+    let lines: Vec<&str> = input.lines().collect();
+    if line_0idx >= lines.len() {
+        return error_msg.to_string();
+    }
+
+    let source_line = lines[line_0idx];
+    let caret_pos = col_0idx.min(source_line.len());
+
+    // Build the display
+    let mut result = String::new();
+    result.push_str(error_msg);
+    result.push('\n');
+    // Line number gutter
+    let line_num = format!("{:>4} | ", line_1idx);
+    result.push_str(&line_num);
+    result.push_str(source_line);
+    result.push('\n');
+    // Caret line
+    let gutter_width = line_num.len();
+    result.push_str(&" ".repeat(gutter_width + caret_pos));
+    result.push('^');
+    result
+}
+
+/// Parse "line:col: ..." from an error message. Returns (line, col) both 1-indexed.
+fn parse_line_col(msg: &str) -> Option<(usize, usize)> {
+    let mut parts = msg.splitn(3, ':');
+    let line: usize = parts.next()?.trim().parse().ok()?;
+    let col: usize = parts.next()?.trim().parse().ok()?;
+    Some((line, col))
+}
+
 fn indent_str(level: usize) -> String {
     "    ".repeat(level)
 }

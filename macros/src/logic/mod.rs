@@ -17,18 +17,17 @@
 //! 3. **Equation Rules**: Add reflexivity, congruence, and user-defined equalities
 //! 4. **Rewrite Rules**: Base rewrites + congruence rules (propagate through constructors)
 
-use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
+use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::types::{EvalMode, TypeExpr};
-use crate::gen::{generate_literal_label, is_literal_rule};
-use crate::{
-    ast::language::{BuiltinOp, LanguageDef, SemanticOperation},
-    logic::rules::generate_base_rewrites,
-};
+use crate::{ast::language::LanguageDef, logic::rules::generate_base_rewrites};
+use common::{in_cat_filter, CategoryFilter};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
 mod categories;
+pub mod common;
 mod equations;
+pub mod helpers;
 mod relations;
 mod writer;
 
@@ -38,37 +37,78 @@ pub mod rules;
 // Re-export key functions
 pub use categories::generate_category_rules;
 pub use equations::generate_equation_rules;
-pub use relations::{generate_relations, list_all_relations_for_extraction, RelationForExtraction};
+pub use relations::{generate_relations, list_all_relations_for_extraction};
 
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
 
+/// Output from Ascent source generation
+pub struct AscentSourceOutput {
+    /// Full output including helper functions and ascent_source! wrapper (for debug dump & backward compat)
+    pub full_output: TokenStream,
+    /// Raw Ascent content (relations + rules) without ascent_source! wrapper, suitable for direct
+    /// inclusion in an `ascent! { struct Foo; #raw_content }` invocation.
+    pub raw_content: TokenStream,
+    /// Core Ascent content for the "core" struct (fewer rules, same relations).
+    /// Only `Some` for multi-category languages where core != full.
+    /// Used for SCC splitting: the core struct has fewer rules in its fixpoint loop.
+    pub core_raw_content: Option<TokenStream>,
+}
+
 /// Main entry point: Generate complete Ascent source for a theory
-pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
+pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
     let theory_name = language.name.to_string().to_lowercase();
     let source_name = format_ident!("{}_source", theory_name);
 
+    let helper_fns = helpers::generate_helper_functions(language);
     let relations = generate_relations(language);
-    let category_rules = generate_category_rules(language);
-    let equation_rules = generate_equation_rules(language);
-    let rewrite_rules = generate_rewrite_rules(language);
-    let custom_logic = language.logic.as_ref()
+    let category_rules = generate_category_rules(language, None);
+    let equation_rules = generate_equation_rules(language, None);
+    let rewrite_rules = generate_rewrite_rules(language, None);
+    let custom_logic = language
+        .logic
+        .as_ref()
         .map(|l| l.content.clone())
         .unwrap_or_default();
 
-    let result = quote! {
+    let raw_content = quote! {
+        #relations
+
+        #category_rules
+
+        #equation_rules
+
+        #rewrite_rules
+
+        #custom_logic
+    };
+
+    // Generate core content if this is a multi-category language with non-trivial core
+    let core_raw_content = common::compute_core_categories(language).map(|core_cats| {
+        let core_category_rules = generate_category_rules(language, Some(&core_cats));
+        let core_equation_rules = generate_equation_rules(language, Some(&core_cats));
+        let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats));
+
+        quote! {
+            #relations
+
+            #core_category_rules
+
+            #core_equation_rules
+
+            #core_rewrite_rules
+
+            #custom_logic
+        }
+    });
+
+    let full_output = quote! {
+        #helper_fns
+
         ::ascent::ascent_source! {
             #source_name:
 
-            #relations
-
-            #category_rules
-
-            #equation_rules
-
-            #rewrite_rules
-
-            #custom_logic
+            #raw_content
         }
     };
 
@@ -88,7 +128,11 @@ pub fn generate_ascent_source(language: &LanguageDef) -> TokenStream {
         eprintln!("Warning: Failed to write Ascent Datalog file: {}", e);
     }
 
-    result
+    AscentSourceOutput {
+        full_output,
+        raw_content,
+        core_raw_content,
+    }
 }
 
 /// Format Ascent source for display and file output
@@ -110,23 +154,28 @@ fn format_ascent_source(
     output.push_str("ascent_source! {\n");
     output.push_str(&format!("    {}:\n\n", source_name));
 
+    let relations_str = relations.to_string();
+    let category_str = category_rules.to_string();
+    let equation_str = equation_rules.to_string();
+    let rewrite_str = rewrite_rules.to_string();
+
     output.push_str("    // Relations\n");
-    for line in relations.to_string().split(';') {
+    for line in split_at_top_level(&relations_str, ';') {
         output.push_str(&print_rule(line));
     }
 
     output.push_str("\n    // Category rules\n");
-    for line in category_rules.to_string().split(';') {
+    for line in split_at_top_level(&category_str, ';') {
         output.push_str(&print_rule(line));
     }
 
     output.push_str("\n    // Equation rules\n");
-    for line in equation_rules.to_string().split(';') {
+    for line in split_at_top_level(&equation_str, ';') {
         output.push_str(&print_rule(line));
     }
 
     output.push_str("\n    // Rewrite rules\n");
-    for line in rewrite_rules.to_string().split(';') {
+    for line in split_at_top_level(&rewrite_str, ';') {
         output.push_str(&print_rule(line));
     }
 
@@ -134,12 +183,15 @@ fn format_ascent_source(
     let custom_str = custom_logic.to_string();
     if !custom_str.trim().is_empty() {
         output.push_str("\n    // Custom logic\n");
-        for line in custom_str.split(';') {
+        for line in split_at_top_level(&custom_str, ';') {
             output.push_str(&print_rule(line));
         }
     }
 
     output.push_str("}\n");
+
+    // Apply cosmetic spacing fixes from TokenStream::to_string()
+    cleanup_token_spacing(&mut output);
 
     output
 }
@@ -148,7 +200,6 @@ fn format_ascent_source(
 ///
 /// - **Base rewrites**: Rules without premises (S => T)
 /// - **Explicit congruences**: Rules with premises (if S => T then LHS => RHS)
-/// - **Semantic evaluation**: Rules for built-in operators (Add, Sub, etc.)
 ///
 /// Note: Beta-reduction is NOT generated as rewrite rules. Instead, it happens
 /// immediately via `normalize()` when terms are created. This makes beta-reduction
@@ -156,20 +207,26 @@ fn format_ascent_source(
 ///
 /// Note: Rewrite congruences are NOT auto-generated. Users explicitly control
 /// where rewrites propagate by writing `if S => T then ...` rules.
-pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
+///
+/// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+pub fn generate_rewrite_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> TokenStream {
     let mut rules = Vec::new();
 
     // Generate base rewrite clauses (no premise)
-    let base_rewrite_clauses = generate_base_rewrites(language);
+    let base_rewrite_clauses = generate_base_rewrites(language, cat_filter);
     rules.extend(base_rewrite_clauses);
 
+    // Generate small-step rules for HOL rust_code (step mode)
+    let hol_step_rules = generate_hol_step_rules(language, cat_filter);
+    rules.extend(hol_step_rules);
+
     // Generate big-step fold rules (one rewrite per fold-mode constructor)
-    let fold_rules = generate_fold_big_step_rules(language);
+    let fold_rules = generate_fold_big_step_rules(language, cat_filter);
     rules.extend(fold_rules);
 
     // Generate explicit congruence rules (with premise: if S => T then ...)
     // These are user-declared rules that control where rewrites propagate
-    let congruence_rules = generate_all_explicit_congruences(language);
+    let congruence_rules = generate_all_explicit_congruences(language, cat_filter);
     rules.extend(congruence_rules);
 
     quote! {
@@ -177,49 +234,237 @@ pub fn generate_rewrite_rules(language: &LanguageDef) -> TokenStream {
     }
 }
 
-/// Simple param names from term_context (order matches constructor fields).
-/// Used so fold rules bind lv, rv to the names expected by rust_code (e.g. a, b).
-fn fold_param_names(rule: &GrammarRule) -> Vec<Ident> {
-    rule.term_context
-        .as_ref()
-        .map(|ctx| {
-            ctx.iter()
-                .filter_map(|p| match p {
-                    TermParam::Simple { name, .. } => Some(name.clone()),
-                    _ => None,
-                })
-                .collect()
-        })
-        .unwrap_or_default()
+/// Generate small-step rewrite rules for terms that have HOL rust_code (step mode).
+/// e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
+fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> Vec<TokenStream> {
+    let mut rules = Vec::new();
+
+    // Unified single-pass iteration over language.terms with arity dispatch.
+    // Collected into separate vecs to preserve output ordering (binary, unary, N-ary).
+    let mut binary_rust_rules = Vec::new();
+    let mut unary_rust_rules = Vec::new();
+    let mut nary_rust_rules = Vec::new();
+
+    for rule in &language.terms {
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        // Skip fold-mode: they use big-step rules instead
+        if rule.eval_mode == Some(EvalMode::Fold) {
+            continue;
+        }
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .count();
+        if non_terminal_count == 0 {
+            continue;
+        }
+        let category = &rule.category;
+        // Skip categories not in the filter
+        if !in_cat_filter(category, cat_filter) {
+            continue;
+        }
+        if common::native_type_for(language, category).is_none() {
+            continue;
+        }
+
+        let rn = common::relation_names(category);
+        let rw_rel = &rn.rw_rel;
+        let cat_rel = &rn.cat_lower;
+        let label = &rule.label;
+        let result_lit_label = common::literal_label_for(language, category)
+            .expect("native category must have literal label");
+        let rust_code = &rule.rust_code.as_ref().unwrap().code;
+
+        match non_terminal_count {
+            2 => {
+                // Binary step rule (e.g. Add (NumLit a) (NumLit b) => NumLit(a + b))
+                // Use argument types from term_context when present, so cross-category
+                // rules (e.g. Eq . a:Int, b:Int |- ... : Bool) use correct literal patterns.
+                let arg_labels = if let Some(ref term_ctx) = rule.term_context {
+                    let simple: Vec<_> = term_ctx
+                        .iter()
+                        .filter_map(|p| match p {
+                            TermParam::Simple { ty, .. } => Some(ty),
+                            _ => None,
+                        })
+                        .collect();
+                    if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
+                        (simple.first(), simple.get(1))
+                    {
+                        let left_lit = common::literal_label_for(language, left_ty);
+                        let right_lit = common::literal_label_for(language, right_ty);
+                        match (left_lit, right_lit) {
+                            (Some(ll), Some(rl)) => {
+                                Some((left_ty.clone(), ll, right_ty.clone(), rl))
+                            },
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let (left_cat, left_lit_label, right_cat, right_lit_label) = match arg_labels {
+                    Some((lc, ll, rc, rl)) => (lc, ll, rc, rl),
+                    None => (
+                        category.clone(),
+                        result_lit_label.clone(),
+                        category.clone(),
+                        result_lit_label.clone(),
+                    ),
+                };
+
+                binary_rust_rules.push(quote! {
+                    #rw_rel(s.clone(), t) <--
+                        #cat_rel(s),
+                        if let #category::#label(left, right) = s,
+                        if let #left_cat::#left_lit_label(a_ref) = left.as_ref(),
+                        if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
+                        let a = a_ref.clone(),
+                        let b = b_ref.clone(),
+                        let t = #category::#result_lit_label((#rust_code));
+                });
+            },
+            1 => {
+                // Unary step rule (e.g. Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step)
+                let Some(ref term_context) = rule.term_context else {
+                    continue;
+                };
+                let [TermParam::Simple { name: param_name, ty: ref param_ty }] =
+                    term_context.as_slice()
+                else {
+                    continue;
+                };
+                let TypeExpr::Base(arg_category) = param_ty else {
+                    continue;
+                };
+                let Some(arg_lit_label) = common::literal_label_for(language, arg_category) else {
+                    continue;
+                };
+                // Use a different name for the term so the param (e.g. s) can be bound
+                // for rust_code without shadowing
+                let term_var = format_ident!("orig");
+                unary_rust_rules.push(quote! {
+                    #rw_rel(#term_var.clone(), t) <--
+                        #cat_rel(#term_var),
+                        if let #category::#label(inner) = #term_var,
+                        if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
+                        let #param_name = s_ref.clone(),
+                        let t = #category::#result_lit_label((#rust_code));
+                });
+            },
+            _ => {
+                // N-ary step rule (3+ arguments)
+                let Some(ref term_context) = rule.term_context else {
+                    continue;
+                };
+                let simple_params: Vec<_> = term_context
+                    .iter()
+                    .filter_map(|p| match p {
+                        TermParam::Simple { name, ty } => {
+                            if let TypeExpr::Base(base_ty) = ty {
+                                Some((name.clone(), base_ty.clone()))
+                            } else {
+                                None
+                            }
+                        },
+                        _ => None,
+                    })
+                    .collect();
+                if simple_params.len() != non_terminal_count {
+                    continue;
+                }
+
+                let mut arg_infos = Vec::with_capacity(simple_params.len());
+                let mut all_resolved = true;
+                for (param_name, arg_cat) in &simple_params {
+                    if let Some(lit_label) = common::literal_label_for(language, arg_cat) {
+                        arg_infos.push((param_name.clone(), arg_cat.clone(), lit_label));
+                    } else {
+                        all_resolved = false;
+                        break;
+                    }
+                }
+                if !all_resolved {
+                    continue;
+                }
+
+                let field_names: Vec<Ident> = (0..arg_infos.len())
+                    .map(|i| format_ident!("f{}", i))
+                    .collect();
+                let ref_names: Vec<Ident> = (0..arg_infos.len())
+                    .map(|i| format_ident!("r{}", i))
+                    .collect();
+
+                let destructure_fields: Vec<TokenStream> = arg_infos
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, arg_cat, lit_label))| {
+                        let fi = &field_names[i];
+                        let ri = &ref_names[i];
+                        quote! {
+                            if let #arg_cat::#lit_label(#ri) = #fi.as_ref(),
+                        }
+                    })
+                    .collect();
+
+                let let_bindings: Vec<TokenStream> = arg_infos
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (param_name, _, _))| {
+                        let ri = &ref_names[i];
+                        quote! {
+                            let #param_name = #ri.clone(),
+                        }
+                    })
+                    .collect();
+
+                // Use __src/__dst to avoid name collisions with user-defined param names
+                nary_rust_rules.push(quote! {
+                    #rw_rel(__src.clone(), __dst) <--
+                        #cat_rel(__src),
+                        if let #category::#label(#(#field_names),*) = __src,
+                        #(#destructure_fields)*
+                        #(#let_bindings)*
+                        let __dst = #category::#result_lit_label((#rust_code));
+                });
+            },
+        }
+    }
+
+    rules.extend(binary_rust_rules);
+    rules.extend(unary_rust_rules);
+    rules.extend(nary_rust_rules);
+
+    rules
 }
 
-/// Number of constructor fields (for identity fold pattern).
-fn fold_field_count(rule: &GrammarRule) -> usize {
-    if let Some(ref ctx) = rule.term_context {
-        return ctx.len();
-    }
-    rule.items
-        .iter()
-        .filter(|i| matches!(i, GrammarItem::NonTerminal(_) | GrammarItem::Collection { .. }))
-        .count()
-}
+// fold_param_names, fold_params_all_same_category, fold_field_count
+// moved to common module
+use common::{fold_field_count, fold_param_names, fold_params_all_same_category};
 
 /// Generate big-step fold rules for constructors with eval_mode Fold.
 /// fold_<cat>(t, v) computes the value term v of t; one rw_<cat>(s, t) step for whole expression.
 /// Supports both native categories (fold to literal) and non-native (e.g. Proc with CastInt/Add).
-fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
+fn generate_fold_big_step_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
-
-    let native_type_for = |category: &Ident| {
-        language
-            .types
-            .iter()
-            .find(|t| t.name == *category)
-            .and_then(|t| t.native_type.as_ref())
-    };
 
     for lang_type in &language.types {
         let category = &lang_type.name;
+
+        // Skip categories not in the filter
+        if !in_cat_filter(category, cat_filter) {
+            continue;
+        }
+
         let has_fold = language
             .terms
             .iter()
@@ -228,21 +473,17 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
             continue;
         }
 
-        let cat_rel = format_ident!("{}", category.to_string().to_lowercase());
-        let fold_rel = format_ident!("fold_{}", category.to_string().to_lowercase());
-        let rw_rel = format_ident!("rw_{}", category.to_string().to_lowercase());
+        let rn = common::relation_names(category);
+        let cat_rel = &rn.cat_lower;
+        let fold_rel = &rn.fold_rel;
+        let rw_rel = &rn.rw_rel;
 
-        let is_native = native_type_for(category).is_some();
+        let is_native = common::native_type_for(language, category).is_some();
 
         if is_native {
             // Native category (e.g. Int): fold to literal variant
-            let native_type = native_type_for(category).unwrap();
-            let num_lit = language
-                .terms
-                .iter()
-                .find(|r| r.category == *category && is_literal_rule(r))
-                .map(|r| r.label.clone())
-                .unwrap_or_else(|| generate_literal_label(native_type));
+            let num_lit = common::literal_label_for(language, category)
+                .expect("native category must have a literal label");
 
             rules.push(quote! {
                 #fold_rel(t.clone(), t.clone()) <--
@@ -254,81 +495,89 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                 if rule.category != *category {
                     continue;
                 }
-                let non_terminal_count = rule
-                    .items
-                    .iter()
-                    .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
-                    .count();
-                if non_terminal_count != 2 {
+                let param_names = fold_param_names(rule);
+                let param_count = param_names.len();
+
+                // Support unary (1 param) and binary (2 params) fold rules
+                // where all parameters are of the same category as the result.
+                // This filters out cross-category rules like Len(Str)->Int.
+                if param_count == 0 || param_count > 2 {
+                    continue;
+                }
+                let all_same_category = fold_params_all_same_category(rule, category);
+                if !all_same_category {
                     continue;
                 }
                 let label = &rule.label;
 
-                let res_expr = if let Some(sem) = language
-                    .semantics
-                    .iter()
-                    .find(|s| s.constructor == rule.label)
-                {
-                    let op_token = match &sem.operation {
-                        SemanticOperation::Builtin(builtin_op) => match builtin_op {
-                            BuiltinOp::Add => quote! { a + b },
-                            BuiltinOp::Sub => quote! { a - b },
-                            BuiltinOp::Mul => quote! { a * b },
-                            BuiltinOp::Div => quote! { a / b },
-                            BuiltinOp::Rem => quote! { a % b },
-                            _ => continue,
-                        },
-                    };
-                    quote! { #category::#num_lit(#op_token) }
-                } else if let Some(ref rust_block) = rule.rust_code {
+                let res_expr = if let Some(ref rust_block) = rule.rust_code {
                     let rust_code = &rust_block.code;
                     quote! { #category::#num_lit((#rust_code)) }
                 } else {
                     continue;
                 };
 
-                rules.push(quote! {
-                    #fold_rel(s.clone(), res) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        #fold_rel(left.as_ref().clone(), lv),
-                        #fold_rel(right.as_ref().clone(), rv),
-                        if let #category::#num_lit(a_ref) = &lv,
-                        if let #category::#num_lit(b_ref) = &rv,
-                        let a = a_ref.clone(),
-                        let b = b_ref.clone(),
-                        let res = #res_expr;
-                });
+                if param_count == 1 {
+                    // Unary fold rule (e.g., Neg)
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(inner) = s,
+                            #fold_rel(inner.as_ref().clone(), iv),
+                            if let #category::#num_lit(a_ref) = &iv,
+                            let a = a_ref.clone(),
+                            let res = #res_expr;
+                    });
+                } else {
+                    // Binary fold rule (e.g., Add, Sub)
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, right) = s,
+                            #fold_rel(left.as_ref().clone(), lv),
+                            #fold_rel(right.as_ref().clone(), rv),
+                            if let #category::#num_lit(a_ref) = &lv,
+                            if let #category::#num_lit(b_ref) = &rv,
+                            let a = a_ref.clone(),
+                            let b = b_ref.clone(),
+                            let res = #res_expr;
+                    });
+                }
             }
         } else {
             // Non-native category (e.g. Proc): identity for non-fold constructors, rust_code for fold
-            // Identity: fold_C(t, t) for every constructor that does not have eval_mode Fold
-            for rule in &language.terms {
-                if rule.category != *category || rule.eval_mode == Some(EvalMode::Fold) {
-                    continue;
-                }
-                let label = &rule.label;
-                let n = fold_field_count(rule);
-                let identity_rule = if n == 0 {
-                    // Unit variant: if let Proc::PZero = t (no parentheses)
-                    quote! {
-                        #fold_rel(t.clone(), t.clone()) <--
-                            #cat_rel(t),
-                            if let #category::#label = t;
+
+            // Area 6: Consolidated identity rule — one rule per non-native category
+            // Replaces N per-constructor identity rules with one inline match
+            let identity_arms: Vec<TokenStream> = language
+                .terms
+                .iter()
+                .filter(|r| r.category == *category && r.eval_mode != Some(EvalMode::Fold))
+                .map(|rule| {
+                    let label = &rule.label;
+                    let n = fold_field_count(rule);
+                    if n == 0 {
+                        quote! { #category::#label => true, }
+                    } else {
+                        let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
+                        quote! { #category::#label(#(#pat),*) => true, }
                     }
-                } else {
-                    let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
-                    quote! {
-                        #fold_rel(t.clone(), t.clone()) <--
-                            #cat_rel(t),
-                            if let #category::#label(#(#pat),*) = t;
-                    }
-                };
-                rules.push(identity_rule);
+                })
+                .collect();
+
+            if !identity_arms.is_empty() {
+                rules.push(quote! {
+                    #fold_rel(t.clone(), t.clone()) <--
+                        #cat_rel(t),
+                        if (match t {
+                            #(#identity_arms)*
+                            _ => false,
+                        });
+                });
             }
 
-            // fold_C(s, res) for each binary constructor with rust_code and eval_mode Fold
-                        // If the category has an Err variant, only emit when res is not Err (so we don't
+            // fold_C(s, res) for each constructor with rust_code and eval_mode Fold (unary or binary)
+            // If the category has an Err variant, only emit when res is not Err (so we don't
             // rewrite e.g. Add(2, *(3)) to error when the right arg hasn't been evaluated yet).
             let err_label = format_ident!("Err");
             let category_has_err = language
@@ -343,12 +592,7 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                     continue;
                 }
                 let param_names = fold_param_names(rule);
-                if param_names.len() != 2 {
-                    continue;
-                }
                 let label = &rule.label;
-                let p0 = &param_names[0];
-                let p1 = &param_names[1];
                 let rust_code = &rule.rust_code.as_ref().unwrap().code;
 
                 // Only emit fold when result is not Err (e.g. Add only rewrites when both args are ints).
@@ -361,30 +605,61 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
                     quote! {}
                 };
 
-                rules.push(quote! {
-                    #fold_rel(s.clone(), res) <--
-                        #cat_rel(s),
-                        if let #category::#label(left, right) = s,
-                        #fold_rel(left.as_ref().clone(), lv),
-                        #fold_rel(right.as_ref().clone(), rv),
-                        let #p0 = lv,
-                        let #p1 = rv,
-                        let res = (#rust_code)
-                        #filter_err;
-                });
+                if param_names.len() == 2 {
+                    let p0 = &param_names[0];
+                    let p1 = &param_names[1];
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, right) = s,
+                            #fold_rel(left.as_ref().clone(), lv),
+                            #fold_rel(right.as_ref().clone(), rv),
+                            let #p0 = lv,
+                            let #p1 = rv,
+                            let res = (#rust_code)
+                            #filter_err;
+                    });
+                } else if param_names.len() == 1 {
+                    let p0 = &param_names[0];
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(inner) = s,
+                            #fold_rel(inner.as_ref().clone(), lv),
+                            let #p0 = lv,
+                            let res = (#rust_code)
+                            #filter_err;
+                    });
+                }
             }
         }
 
-        // rw_<cat>(s, t) for fold-mode constructors only (one big step)
-        for rule in &language.terms {
-            if rule.category != *category || rule.eval_mode != Some(EvalMode::Fold) {
-                continue;
-            }
-            let label = &rule.label;
+        // Area 5: Consolidated fold trigger — one rule per category
+        // Replaces N per-constructor trigger rules with one inline match
+        let trigger_arms: Vec<TokenStream> = language
+            .terms
+            .iter()
+            .filter(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold))
+            .map(|rule| {
+                let label = &rule.label;
+                let n = fold_field_count(rule);
+                if n == 0 {
+                    quote! { #category::#label => true, }
+                } else {
+                    let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();
+                    quote! { #category::#label(#(#pat),*) => true, }
+                }
+            })
+            .collect();
+
+        if !trigger_arms.is_empty() {
             rules.push(quote! {
                 #rw_rel(s.clone(), t.clone()) <--
                     #cat_rel(s),
-                    if let #category::#label(_, _) = s,
+                    if (match s {
+                        #(#trigger_arms)*
+                        _ => false,
+                    }),
                     #fold_rel(s, t);
             });
         }
@@ -393,16 +668,22 @@ fn generate_fold_big_step_rules(language: &LanguageDef) -> Vec<TokenStream> {
     rules
 }
 
-pub fn split_commas_outside_parens(s: &str) -> Vec<&str> {
+/// Split a string at occurrences of `delimiter` that are at the top level
+/// (not nested inside any bracket pair: `()`, `{}`, `[]`).
+///
+/// This is the generalized replacement for `split_commas_outside_parens` and
+/// also handles `;`-splitting for rule boundaries (which previously broke on
+/// block expressions containing internal semicolons).
+fn split_at_top_level(s: &str, delimiter: char) -> Vec<&str> {
     let mut result = Vec::new();
-    let mut depth = 0;
+    let mut depth = 0i32;
     let mut start = 0;
 
     for (i, ch) in s.char_indices() {
         match ch {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            ',' if depth == 0 => {
+            '(' | '{' | '[' => depth += 1,
+            ')' | '}' | ']' => depth = (depth - 1).max(0),
+            c if c == delimiter && depth == 0 => {
                 result.push(&s[start..i]);
                 start = i + 1;
             },
@@ -410,12 +691,15 @@ pub fn split_commas_outside_parens(s: &str) -> Vec<&str> {
         }
     }
 
-    // Add the last segment
     if start <= s.len() {
         result.push(&s[start..]);
     }
 
     result
+}
+
+pub fn split_commas_outside_parens(s: &str) -> Vec<&str> {
+    split_at_top_level(s, ',')
 }
 
 /// Normalize whitespace in a string by replacing all consecutive whitespace
@@ -443,15 +727,558 @@ pub fn print_rule(line: &str) -> String {
     if !body.trim().is_empty() {
         let mut result = String::new();
         for clause in head_rest {
-            result.push_str(&format!("{},\n", clause.trim()));
+            result.push_str(&format_long_clause(clause.trim(), ""));
+            result.push_str(",\n");
         }
-        result.push_str(&format!("{} <--\n", head_last.trim()));
+        result.push_str(&format_long_clause(head_last.trim(), ""));
+        result.push_str(" <--\n");
         for clause in rest {
-            result.push_str(&format!("    {},\n", clause.trim()));
+            result.push_str("    ");
+            result.push_str(&format_long_clause(clause.trim(), "    "));
+            result.push_str(",\n");
         }
-        result.push_str(&format!("    {};\n\n", last.trim()));
-        result.to_string()
+        result.push_str("    ");
+        result.push_str(&format_long_clause(last.trim(), "    "));
+        result.push_str(";\n\n");
+        result
     } else {
         format!("{};\n\n", normalized.trim())
+    }
+}
+
+/// Format a match arm that contains a multi-statement block expression.
+///
+/// Transforms:
+///   `Int::MApply(lam, args) => { let mut v = ...; v.push(...); v }`
+/// Into:
+///   ```text
+///   Int::MApply(lam, args) => {
+///       let mut v = ...;
+///       v.push(...);
+///       v
+///   }
+///   ```
+///
+/// If the arm does not contain `=> {` or the block body has no semicolons
+/// (single expression), the arm is returned as-is.
+fn format_block_arm(arm: &str, arm_indent: &str) -> String {
+    // Find `=> {` pattern — the block expression start
+    let Some(arrow_pos) = arm.find("=> {") else {
+        return arm.to_string();
+    };
+
+    let block_start = arrow_pos + 3; // position of `{`
+    let after_brace = &arm[block_start + 1..];
+
+    // Find matching closing `}`
+    let mut depth = 1i32;
+    let mut close_pos = None;
+    for (i, ch) in after_brace.char_indices() {
+        match ch {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    close_pos = Some(i);
+                    break;
+                }
+            },
+            _ => {},
+        }
+    }
+
+    let Some(close_pos) = close_pos else {
+        return arm.to_string();
+    };
+
+    let block_body = after_brace[..close_pos].trim();
+    let after_close = after_brace[close_pos + 1..].trim(); // e.g., empty or trailing ","
+
+    // Only expand if block contains semicolons (multi-statement)
+    if !block_body.contains(';') {
+        return arm.to_string();
+    }
+
+    let stmts = split_at_top_level(block_body, ';');
+    let stmt_indent = format!("{}    ", arm_indent);
+    let pattern = &arm[..arrow_pos + 2]; // "Pat =>"
+
+    let mut result = String::new();
+    result.push_str(pattern);
+    result.push_str(" {\n");
+
+    // Detect trailing semicolon: if the last segment (after trim) is empty,
+    // the original block body ended with `;` (e.g., `{ a; b; }` splits to
+    // ["a", " b", ""]). We must preserve this so the reformatted block has
+    // the same Rust semantics (returns `()` rather than the last expression).
+    let has_trailing_semi = stmts.last().is_some_and(|s| s.trim().is_empty());
+    let non_empty: Vec<&str> = stmts
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+    for (i, stmt) in non_empty.iter().enumerate() {
+        result.push_str(&stmt_indent);
+        result.push_str(stmt);
+        if i < non_empty.len() - 1 || has_trailing_semi {
+            // Statement or trailing-semicolon position — add semicolon back
+            result.push(';');
+        }
+        // Trailing expression (last, no trailing semi) — no semicolon
+        result.push('\n');
+    }
+    result.push_str(arm_indent);
+    result.push('}');
+    if !after_close.is_empty() {
+        result.push_str(after_close);
+    }
+
+    result
+}
+
+/// Format a clause that may contain long match expressions.
+///
+/// If the clause is short (< 100 chars) or contains no match, returns it as-is.
+/// Otherwise, splits match arms onto separate indented lines for readability.
+///
+/// `base_indent` is the indentation level of the clause itself (e.g., "    " for body clauses).
+fn format_long_clause(clause: &str, base_indent: &str) -> String {
+    if clause.len() < 100 || !clause.contains("match ") {
+        return clause.to_string();
+    }
+
+    // Find each match expression and format it
+    let mut result = String::with_capacity(clause.len() * 2);
+    let mut remaining = clause;
+
+    while let Some(match_start) = remaining.find("match ") {
+        // Emit everything before the match
+        result.push_str(&remaining[..match_start]);
+
+        // Find the opening `{` of the match body
+        let after_match = &remaining[match_start..];
+        let Some(brace_offset) = after_match.find('{') else {
+            // No brace found — just emit the rest
+            result.push_str(after_match);
+            remaining = "";
+            break;
+        };
+
+        let match_header = &after_match[..brace_offset + 1]; // "match <expr> {"
+        let after_brace = &after_match[brace_offset + 1..];
+
+        // Find the matching closing `}`
+        let mut depth = 1i32;
+        let mut close_pos = None;
+        for (i, ch) in after_brace.char_indices() {
+            match ch {
+                '{' => depth += 1,
+                '}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        close_pos = Some(i);
+                        break;
+                    }
+                },
+                _ => {},
+            }
+        }
+
+        let Some(close_pos) = close_pos else {
+            // Unbalanced — just emit the rest
+            result.push_str(after_match);
+            remaining = "";
+            break;
+        };
+
+        let match_body = after_brace[..close_pos].trim();
+        let after_close = &after_brace[close_pos + 1..]; // e.g., ").into_iter()"
+
+        // Split arms at top-level commas within the match body
+        let arms = split_at_top_level(match_body, ',');
+
+        // Only format if there are multiple arms
+        if arms.len() <= 1 || match_body.len() < 60 {
+            result.push_str(match_header);
+            result.push(' ');
+            result.push_str(match_body);
+            result.push_str(" }");
+        } else {
+            let arm_indent = format!("{}    ", base_indent);
+            result.push_str(match_header);
+            result.push('\n');
+            for (i, arm) in arms.iter().enumerate() {
+                let arm = arm.trim();
+                if arm.is_empty() {
+                    continue;
+                }
+                let formatted = format_block_arm(arm, &arm_indent);
+                result.push_str(&arm_indent);
+                result.push_str(&formatted);
+                if i < arms.len() - 1 {
+                    result.push(',');
+                }
+                result.push('\n');
+            }
+            result.push_str(base_indent);
+            result.push('}');
+        }
+
+        remaining = after_close;
+    }
+
+    // Emit anything after the last match
+    result.push_str(remaining);
+    result
+}
+
+/// Apply cosmetic spacing fixes to the final output.
+///
+/// TokenStream::to_string() inserts spaces in paths (`Int :: Tern`),
+/// macro invocations (`vec! [`, `unreachable! ()`), etc.
+fn cleanup_token_spacing(output: &mut String) {
+    // Path separators: "Int :: Tern" → "Int::Tern"
+    // Must handle both `Foo :: Bar` (type path) and `crate :: eqrel`
+    while let Some(pos) = output.find(" :: ") {
+        output.replace_range(pos..pos + 4, "::");
+    }
+    // Macro invocations with brackets: "vec! [" → "vec!["
+    while let Some(pos) = output.find("! [") {
+        // Verify the char before is alphanumeric (macro name)
+        if pos > 0 && output.as_bytes()[pos - 1].is_ascii_alphanumeric() {
+            output.replace_range(pos..pos + 3, "![");
+        } else {
+            // Not a macro — skip by inserting a sentinel and continue
+            // Actually, just break to avoid infinite loop — this pattern is rare
+            break;
+        }
+    }
+    // Macro invocations with parens: "unreachable! ()" → "unreachable!()"
+    while let Some(pos) = output.find("! (") {
+        if pos > 0 && output.as_bytes()[pos - 1].is_ascii_alphanumeric() {
+            output.replace_range(pos..pos + 3, "!(");
+        } else {
+            break;
+        }
+    }
+    // Dereference spacing: "(* *" → "(**" (from `(**x0).clone()`)
+    while let Some(pos) = output.find("(* *") {
+        output.replace_range(pos..pos + 4, "(**");
+    }
+    // Product type turbofish: ":: < i32 > ()" → "::<i32>()"
+    // More generally, fix spacing in turbofish expressions
+    while let Some(pos) = output.find(":: < ") {
+        // Find the closing " >"
+        if let Some(gt_pos) = output[pos + 5..].find(" >") {
+            let end = pos + 5 + gt_pos + 2;
+            let inner = output[pos + 5..pos + 5 + gt_pos].to_string();
+            let replacement = format!("::<{}>", inner);
+            output.replace_range(pos..end, &replacement);
+        } else {
+            break;
+        }
+    }
+    // Reference spacing: "& *" → "&*", "& mut " stays
+    // Be careful not to touch "& mut"
+    // Pattern: "& * *" → "&**", "& * " → "&*"  (from `&**x`)
+    while let Some(pos) = output.find("& * *") {
+        output.replace_range(pos..pos + 5, "&**");
+    }
+    while let Some(pos) = output.find("& *") {
+        // Check it's not already handled (no more "& * *" exists)
+        output.replace_range(pos..pos + 3, "&*");
+    }
+    // Remaining "& " before identifiers in ref patterns (from `& s_f0_binder`)
+    // Only fix when followed by a non-mut, non-space character — too risky to do generically
+    // so we'll leave those for now
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Property-based tests for pretty-printer string transformations
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// Extract the non-whitespace characters from a string (preserving order).
+    fn non_ws(s: &str) -> Vec<char> {
+        s.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// Count occurrences of `needle` at the top level of `s` (depth 0).
+    fn count_top_level(s: &str, needle: char) -> usize {
+        let mut depth = 0i32;
+        let mut count = 0;
+        for ch in s.chars() {
+            match ch {
+                '(' | '{' | '[' => depth += 1,
+                ')' | '}' | ']' => depth = (depth - 1).max(0),
+                c if c == needle && depth == 0 => count += 1,
+                _ => {},
+            }
+        }
+        count
+    }
+
+    // ── Generators ───────────────────────────────────────────────────────────
+
+    /// Strategy for well-bracketed strings suitable for split_at_top_level testing.
+    ///
+    /// Produces strings where every `(`, `{`, `[` has a matching `)`, `}`, `]`
+    /// and brackets are properly nested. May contain `;` at any level.
+    fn arb_well_bracketed(max_depth: u32) -> impl Strategy<Value = String> {
+        let leaf = prop_oneof!["[a-zA-Z0-9_ ]{0,10}", "[a-zA-Z0-9_ ]*;[a-zA-Z0-9_ ]*",];
+        leaf.prop_recursive(max_depth, 256, 4, |inner| {
+            prop_oneof![
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("{}({})", a, b)),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("{}{{{}}}", a, b)),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("{}[{}]", a, b)),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| format!("{}{}", a, b)),
+            ]
+        })
+    }
+
+    /// Strategy for match arms suitable for format_block_arm testing.
+    ///
+    /// Produces strings of the form `Pattern => { stmts }` where stmts are
+    /// semicolon-separated well-bracketed expressions.
+    fn arb_match_arm() -> impl Strategy<Value = String> {
+        let stmt = "[a-zA-Z_][a-zA-Z0-9_]{0,15}";
+        // 1-5 statements
+        prop::collection::vec(stmt, 1..=5).prop_map(|stmts| {
+            let body = stmts.join("; ");
+            format!("Pat => {{ {} }}", body)
+        })
+    }
+
+    /// Strategy for match arms that end with a trailing semicolon.
+    fn arb_match_arm_trailing_semi() -> impl Strategy<Value = String> {
+        let stmt = "[a-zA-Z_][a-zA-Z0-9_]{0,15}";
+        prop::collection::vec(stmt, 1..=5).prop_map(|stmts| {
+            let body = stmts.join("; ");
+            format!("Pat => {{ {}; }}", body)
+        })
+    }
+
+    // ── Property: P1 — Split-join roundtrip ──────────────────────────────────
+
+    proptest! {
+        /// Joining the segments of split_at_top_level with the delimiter
+        /// reconstructs the original string exactly.
+        #[test]
+        fn prop_split_join_roundtrip(
+            s in arb_well_bracketed(3),
+            delim in prop_oneof![Just(';'), Just(',')],
+        ) {
+            let parts = split_at_top_level(&s, delim);
+            let rejoined: String = parts.join(&delim.to_string());
+            prop_assert_eq!(rejoined, s,
+                "split_at_top_level roundtrip failed for delimiter {:?}", delim);
+        }
+
+        /// Also test with completely arbitrary strings (not just well-bracketed).
+        #[test]
+        fn prop_split_join_roundtrip_arbitrary(
+            s in "[ -~]{0,200}",
+            delim in prop_oneof![Just(';'), Just(',')],
+        ) {
+            let parts = split_at_top_level(&s, delim);
+            let rejoined: String = parts.join(&delim.to_string());
+            prop_assert_eq!(rejoined, s);
+        }
+    }
+
+    // ── Property: P2 — Segment count ─────────────────────────────────────────
+
+    proptest! {
+        /// The number of segments equals the number of top-level delimiters plus one.
+        #[test]
+        fn prop_segment_count(
+            s in arb_well_bracketed(3),
+            delim in prop_oneof![Just(';'), Just(',')],
+        ) {
+            let parts = split_at_top_level(&s, delim);
+            let expected = count_top_level(&s, delim) + 1;
+            prop_assert_eq!(parts.len(), expected,
+                "segment count mismatch for {:?} with delimiter {:?}", s, delim);
+        }
+    }
+
+    // ── Property: P3 — No top-level delimiters in segments ───────────────────
+
+    proptest! {
+        /// Each segment of split_at_top_level contains zero top-level occurrences
+        /// of the delimiter.
+        #[test]
+        fn prop_no_top_level_delims_in_segments(
+            s in arb_well_bracketed(3),
+            delim in prop_oneof![Just(';'), Just(',')],
+        ) {
+            let parts = split_at_top_level(&s, delim);
+            for (i, part) in parts.iter().enumerate() {
+                let inner_count = count_top_level(part, delim);
+                prop_assert_eq!(inner_count, 0,
+                    "segment {} ({:?}) contains top-level {:?}", i, part, delim);
+            }
+        }
+    }
+
+    // ── Property: P4 — Token preservation (non-whitespace chars) ─────────────
+
+    proptest! {
+        /// format_block_arm preserves all non-whitespace characters in order.
+        #[test]
+        fn prop_token_preservation(arm in arb_match_arm()) {
+            let formatted = format_block_arm(&arm, "    ");
+            prop_assert_eq!(non_ws(&formatted), non_ws(&arm),
+                "non-whitespace token sequence changed");
+        }
+
+        /// Token preservation also holds for arms with trailing semicolons.
+        #[test]
+        fn prop_token_preservation_trailing_semi(arm in arb_match_arm_trailing_semi()) {
+            let formatted = format_block_arm(&arm, "    ");
+            prop_assert_eq!(non_ws(&formatted), non_ws(&arm),
+                "non-whitespace token sequence changed (trailing semi)");
+        }
+    }
+
+    // ── Property: P5 — Idempotency ──────────────────────────────────────────
+
+    proptest! {
+        /// Applying format_block_arm twice yields the same result as once.
+        #[test]
+        fn prop_idempotency(arm in arb_match_arm()) {
+            let once = format_block_arm(&arm, "    ");
+            let twice = format_block_arm(&once, "    ");
+            prop_assert_eq!(twice, once, "format_block_arm is not idempotent");
+        }
+
+        /// Idempotency also holds for arms with trailing semicolons.
+        #[test]
+        fn prop_idempotency_trailing_semi(arm in arb_match_arm_trailing_semi()) {
+            let once = format_block_arm(&arm, "    ");
+            let twice = format_block_arm(&once, "    ");
+            prop_assert_eq!(twice, once,
+                "format_block_arm is not idempotent (trailing semi)");
+        }
+    }
+
+    // ── Property: P6 — Semicolon count preservation ─────────────────────────
+
+    proptest! {
+        /// format_block_arm preserves the total number of semicolons.
+        #[test]
+        fn prop_semicolon_count_preservation(arm in arb_match_arm()) {
+            let formatted = format_block_arm(&arm, "    ");
+            let orig_count = arm.chars().filter(|&c| c == ';').count();
+            let fmt_count = formatted.chars().filter(|&c| c == ';').count();
+            prop_assert_eq!(fmt_count, orig_count,
+                "semicolon count changed: {} → {}", orig_count, fmt_count);
+        }
+
+        /// Semicolon count also preserved for trailing-semicolon arms.
+        #[test]
+        fn prop_semicolon_count_trailing_semi(arm in arb_match_arm_trailing_semi()) {
+            let formatted = format_block_arm(&arm, "    ");
+            let orig_count = arm.chars().filter(|&c| c == ';').count();
+            let fmt_count = formatted.chars().filter(|&c| c == ';').count();
+            prop_assert_eq!(fmt_count, orig_count,
+                "semicolon count changed (trailing semi): {} → {}", orig_count, fmt_count);
+        }
+    }
+
+    // ── Property: P7 — Trailing semicolons specifically preserved ────────────
+
+    proptest! {
+        /// Arms with trailing semicolons retain the trailing semicolon after formatting.
+        #[test]
+        fn prop_trailing_semi_preserved(arm in arb_match_arm_trailing_semi()) {
+            let formatted = format_block_arm(&arm, "    ");
+            // The formatted block should end with `;\n}\n` or `;\n}`
+            // (i.e., the last statement line before `}` ends with `;`)
+            let trimmed = formatted.trim_end();
+            // Find the closing brace
+            if let Some(close_pos) = trimmed.rfind('}') {
+                let before_close = trimmed[..close_pos].trim_end();
+                prop_assert!(before_close.ends_with(';'),
+                    "trailing semicolon lost in formatted output: {:?}", formatted);
+            }
+        }
+    }
+
+    // ── Deterministic unit tests ─────────────────────────────────────────────
+
+    #[test]
+    fn test_split_at_top_level_basic() {
+        assert_eq!(split_at_top_level("a; b; c", ';'), vec!["a", " b", " c"]);
+    }
+
+    #[test]
+    fn test_split_at_top_level_nested() {
+        // Semicolons inside brackets are not split points
+        assert_eq!(split_at_top_level("f(a; b); c", ';'), vec!["f(a; b)", " c"]);
+    }
+
+    #[test]
+    fn test_split_at_top_level_empty_trailing() {
+        // Trailing semicolon produces empty trailing segment
+        assert_eq!(split_at_top_level("a; b;", ';'), vec!["a", " b", ""]);
+    }
+
+    #[test]
+    fn test_format_block_arm_no_expansion() {
+        // No `=> {` pattern — returned as-is
+        let arm = "Pat => expr";
+        assert_eq!(format_block_arm(arm, ""), arm);
+    }
+
+    #[test]
+    fn test_format_block_arm_single_expr() {
+        // Single expression (no `;`) — returned as-is
+        let arm = "Pat => { expr }";
+        assert_eq!(format_block_arm(arm, ""), arm);
+    }
+
+    #[test]
+    fn test_format_block_arm_multi_stmt() {
+        let arm = "Pat => { a; b; c }";
+        let formatted = format_block_arm(arm, "");
+        assert_eq!(formatted, "Pat => {\n    a;\n    b;\n    c\n}");
+    }
+
+    #[test]
+    fn test_format_block_arm_trailing_semi() {
+        let arm = "Pat => { a; b; }";
+        let formatted = format_block_arm(arm, "");
+        // Trailing semicolon must be preserved
+        assert_eq!(formatted, "Pat => {\n    a;\n    b;\n}");
+    }
+
+    #[test]
+    fn test_format_block_arm_trailing_semi_token_preservation() {
+        let arm = "Pat => { a; b; }";
+        let formatted = format_block_arm(arm, "");
+        assert_eq!(non_ws(&formatted), non_ws(arm));
+    }
+
+    #[test]
+    fn test_format_block_arm_idempotent() {
+        let arm = "Pat => { a; b; c }";
+        let once = format_block_arm(arm, "    ");
+        let twice = format_block_arm(&once, "    ");
+        assert_eq!(twice, once);
+    }
+
+    #[test]
+    fn test_format_block_arm_idempotent_trailing_semi() {
+        let arm = "Pat => { a; b; }";
+        let once = format_block_arm(arm, "    ");
+        let twice = format_block_arm(&once, "    ");
+        assert_eq!(twice, once);
     }
 }

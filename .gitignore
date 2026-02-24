@@ -45,6 +45,11 @@ examples/src/*_gen.rs
 *.profraw
 *.profdata
 
+# Profiling output
+prattail/docs/benchmarks/*.txt
+perf*.data
+perf*.data.*
+
 # Backup files
 *.bak
 *.tmp
@@ -68,3 +73,21 @@ target/tests/trybuild/
 # Implementation plans and developer notes
 *.plan.md
 
+.claude/projects/*
+
+prattail/target/*
+
+# Rocq/Coq build artifacts
+**/*.vo
+**/*.vos
+**/*.vok
+**/*.glob
+**/*.aux
+**/CoqMakefile
+**/CoqMakefile.conf
+**/.CoqMakefile.d
+
+*.mm_profdata
+
+*.sw?
+.#*

@@ -1,9 +1,6 @@
-//! Parser generation (LALRPOP integration)
+//! Parser generation (PraTTaIL integration)
 //!
-//! Generates LALRPOP grammar files and writes them to the filesystem.
+//! Generates parser code from language definitions.
+//! - `prattail_bridge` module: generates inline Pratt+RD parser code via PraTTaIL
 
-mod lalrpop;
-mod writer;
-
-pub use lalrpop::*;
-pub use writer::*;
+pub mod prattail_bridge;

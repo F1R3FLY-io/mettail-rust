@@ -4,11 +4,7 @@ use super::Row;
 
 /// Rows from left whose key (left_cols) is not in right's key (right_cols).
 /// join_indices: (left_col_idx, right_col_idx) for each key column.
-pub fn difference(
-    left: Vec<Row>,
-    right: Vec<Row>,
-    join_indices: Vec<(usize, usize)>,
-) -> Vec<Row> {
+pub fn difference(left: Vec<Row>, right: Vec<Row>, join_indices: Vec<(usize, usize)>) -> Vec<Row> {
     if left.is_empty() {
         return Vec::new();
     }

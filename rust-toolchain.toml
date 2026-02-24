@@ -1,0 +1,7 @@
+# Use nightly toolchain for cranelift codegen backend (-Zcodegen-backend=cranelift).
+# This replaces LLVM code generation with a much faster alternative for dev builds.
+# See .cargo/config.toml for the full configuration.
+
+[toolchain]
+channel = "nightly"
+components = ["rustc-codegen-cranelift-preview"]

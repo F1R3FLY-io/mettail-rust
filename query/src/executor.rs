@@ -14,7 +14,7 @@ impl std::fmt::Display for ExecuteError {
         match self {
             ExecuteError::RelationNotFound { name } => {
                 write!(f, "Relation '{}' not found", name)
-            }
+            },
         }
     }
 }
@@ -23,10 +23,7 @@ impl std::error::Error for ExecuteError {}
 
 pub type ExecuteResult<T> = Result<T, ExecuteError>;
 
-pub fn execute(
-    plan: &Plan,
-    data: &AscentResultsDataSource<'_>,
-) -> ExecuteResult<Vec<Vec<String>>> {
+pub fn execute(plan: &Plan, data: &AscentResultsDataSource<'_>) -> ExecuteResult<Vec<Vec<String>>> {
     let mut current: Vec<Vec<String>> = Vec::new();
 
     for step in &plan.steps {
@@ -45,28 +42,16 @@ fn execute_step(
         Step::Scan { relation } => {
             let rows = data.get_relation(relation);
             Ok(rows)
-        }
-        Step::Join {
-            relation,
-            left_indices,
-            right_indices,
-        } => {
+        },
+        Step::Join { relation, left_indices, right_indices } => {
             let right = data.get_relation(relation);
-            Ok(equijoin(
-                current,
-                right,
-                left_indices.clone(),
-                right_indices.clone(),
-            ))
-        }
+            Ok(equijoin(current, right, left_indices.clone(), right_indices.clone()))
+        },
         Step::Filter { condition } => Ok(execute_filter(current, condition)),
-        Step::Difference {
-            relation,
-            join_indices,
-        } => {
+        Step::Difference { relation, join_indices } => {
             let right = data.get_relation(relation);
             Ok(difference(current, right, join_indices.clone()))
-        }
+        },
     }
 }
 

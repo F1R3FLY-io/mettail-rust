@@ -2,11 +2,7 @@
 //!
 //! Run with: `cargo run -p ascent_syntax_export --example parse_demo`
 
-use ascent_syntax_export::{
-    extract_relations,
-    extract_rule_heads,
-    parse_ascent_program_text,
-};
+use ascent_syntax_export::{extract_relations, extract_rule_heads, parse_ascent_program_text};
 
 const SAMPLE_PROGRAM: &str = r#"
 relation edge(i32, i32);
@@ -34,10 +30,10 @@ fn main() {
             for (i, head) in heads.iter().enumerate() {
                 println!("  {}  head: {}", i + 1, head);
             }
-        }
+        },
         Err(e) => {
             eprintln!("Parse error: {}", e);
             std::process::exit(1);
-        }
+        },
     }
 }

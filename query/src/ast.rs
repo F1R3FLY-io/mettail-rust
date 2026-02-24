@@ -29,11 +29,7 @@ pub enum BodyAtom {
 /// Boolean expression in an `if` clause.
 #[derive(Debug, Clone)]
 pub enum IfExpr {
-    Compare {
-        left: Term,
-        op: CompareOp,
-        right: Term,
-    },
+    Compare { left: Term, op: CompareOp, right: Term },
     Call { function: String, args: Vec<Term> },
 }
 
@@ -147,9 +143,9 @@ impl Query {
                             vars.insert(var);
                         }
                     }
-                }
-                BodyAtom::Negation(_) => {}
-                BodyAtom::If(_) => {}
+                },
+                BodyAtom::Negation(_) => {},
+                BodyAtom::If(_) => {},
             }
         }
         for atom in &self.body {
@@ -225,7 +221,7 @@ impl IfExpr {
                     v.push(x);
                 }
                 v
-            }
+            },
             IfExpr::Call { args, .. } => args
                 .iter()
                 .filter_map(|t| match t {

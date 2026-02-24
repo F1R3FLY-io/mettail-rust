@@ -5,10 +5,37 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
-	// Eq: ... ...
+	// Tern: ... ... ...
 	{
-		type: "bool_eq",
-		tooltip: "Eq: ... ...",
+		type: "int_tern",
+		tooltip: "Tern: ... ... ...",
+		message0: "%1 %2 %3",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG3",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Eq Int: ... ...
+	{
+		type: "bool_eq_int",
+		tooltip: "Eq Int: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -20,6 +47,28 @@ const definitions = [
 				type: "input_value",
 				name: "ARG2",
 				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Eq Float: ... ...
+	{
+		type: "bool_eq_float",
+		tooltip: "Eq Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
 			},
 		],
 		inputsInline: true,
@@ -71,6 +120,446 @@ const definitions = [
 		colour: "7a51e0",
 	},
 
+	// Gt Int: ... ...
+	{
+		type: "bool_gt_int",
+		tooltip: "Gt Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Gt Float: ... ...
+	{
+		type: "bool_gt_float",
+		tooltip: "Gt Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Gt Bool: ... ...
+	{
+		type: "bool_gt_bool",
+		tooltip: "Gt Bool: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Gt Str: ... ...
+	{
+		type: "bool_gt_str",
+		tooltip: "Gt Str: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Int: ... ...
+	{
+		type: "bool_lt_int",
+		tooltip: "Lt Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Float: ... ...
+	{
+		type: "bool_lt_float",
+		tooltip: "Lt Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Bool: ... ...
+	{
+		type: "bool_lt_bool",
+		tooltip: "Lt Bool: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Str: ... ...
+	{
+		type: "bool_lt_str",
+		tooltip: "Lt Str: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Eq Int: ... ...
+	{
+		type: "bool_lt_eq_int",
+		tooltip: "Lt Eq Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Eq Float: ... ...
+	{
+		type: "bool_lt_eq_float",
+		tooltip: "Lt Eq Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Eq Bool: ... ...
+	{
+		type: "bool_lt_eq_bool",
+		tooltip: "Lt Eq Bool: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Lt Eq Str: ... ...
+	{
+		type: "bool_lt_eq_str",
+		tooltip: "Lt Eq Str: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Gt Eq Int: ... ...
+	{
+		type: "bool_gt_eq_int",
+		tooltip: "Gt Eq Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Gt Eq Float: ... ...
+	{
+		type: "bool_gt_eq_float",
+		tooltip: "Gt Eq Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Gt Eq Bool: ... ...
+	{
+		type: "bool_gt_eq_bool",
+		tooltip: "Gt Eq Bool: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Gt Eq Str: ... ...
+	{
+		type: "bool_gt_eq_str",
+		tooltip: "Gt Eq Str: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Ne Int: ... ...
+	{
+		type: "bool_ne_int",
+		tooltip: "Ne Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Ne Float: ... ...
+	{
+		type: "bool_ne_float",
+		tooltip: "Ne Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Ne Bool: ... ...
+	{
+		type: "bool_ne_bool",
+		tooltip: "Ne Bool: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Ne Str: ... ...
+	{
+		type: "bool_ne_str",
+		tooltip: "Ne Str: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
 	// Not: ...
 	{
 		type: "bool_not",
@@ -88,32 +577,54 @@ const definitions = [
 		colour: "7a51e0",
 	},
 
-	// Pow: ... ...
+	// And: ... ...
 	{
-		type: "int_pow",
-		tooltip: "Pow: ... ...",
+		type: "bool_and",
+		tooltip: "And: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
 				type: "input_value",
 				name: "ARG1",
-				check: "Int",
+				check: "Bool",
 			},
 			{
 				type: "input_value",
 				name: "ARG2",
-				check: "Int",
+				check: "Bool",
 			},
 		],
 		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
+		output: "Bool",
+		colour: "7a51e0",
 	},
 
-	// Comp: ... ...
+	// Or: ... ...
 	{
-		type: "bool_comp",
-		tooltip: "Comp: ... ...",
+		type: "bool_or",
+		tooltip: "Or: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Xor: ... ...
+	{
+		type: "bool_xor",
+		tooltip: "Xor: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -193,10 +704,10 @@ const definitions = [
 		colour: "51e05f",
 	},
 
-	// Add: ... ...
+	// Add Int: ... ...
 	{
-		type: "int_add",
-		tooltip: "Add: ... ...",
+		type: "int_add_int",
+		tooltip: "Add Int: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -215,10 +726,10 @@ const definitions = [
 		colour: "51b0e0",
 	},
 
-	// Sub: ... ...
+	// Sub Int: ... ...
 	{
-		type: "int_sub",
-		tooltip: "Sub: ... ...",
+		type: "int_sub_int",
+		tooltip: "Sub Int: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
@@ -235,6 +746,578 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
+	},
+
+	// Mul Int: ... ...
+	{
+		type: "int_mul_int",
+		tooltip: "Mul Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Div Int: ... ...
+	{
+		type: "int_div_int",
+		tooltip: "Div Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Mod Int: ... ...
+	{
+		type: "int_mod_int",
+		tooltip: "Mod Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Pow Int: ... ...
+	{
+		type: "int_pow_int",
+		tooltip: "Pow Int: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Neg: ...
+	{
+		type: "int_neg",
+		tooltip: "Neg: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Fact: ...
+	{
+		type: "int_fact",
+		tooltip: "Fact: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Add Float: ... ...
+	{
+		type: "float_add_float",
+		tooltip: "Add Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Sub Float: ... ...
+	{
+		type: "float_sub_float",
+		tooltip: "Sub Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Mul Float: ... ...
+	{
+		type: "float_mul_float",
+		tooltip: "Mul Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Div Float: ... ...
+	{
+		type: "float_div_float",
+		tooltip: "Div Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Pow Float: ... ...
+	{
+		type: "float_pow_float",
+		tooltip: "Pow Float: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Sin Float: ...
+	{
+		type: "float_sin_float",
+		tooltip: "Sin Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Cos Float: ...
+	{
+		type: "float_cos_float",
+		tooltip: "Cos Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Exp Float: ...
+	{
+		type: "float_exp_float",
+		tooltip: "Exp Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Ln Float: ...
+	{
+		type: "float_ln_float",
+		tooltip: "Ln Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Int To Float: ...
+	{
+		type: "float_int_to_float",
+		tooltip: "Int To Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Bool To Float: ...
+	{
+		type: "float_bool_to_float",
+		tooltip: "Bool To Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Str To Float: ...
+	{
+		type: "float_str_to_float",
+		tooltip: "Str To Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Float To Int: ...
+	{
+		type: "int_float_to_int",
+		tooltip: "Float To Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Bool To Int: ...
+	{
+		type: "int_bool_to_int",
+		tooltip: "Bool To Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Str To Int: ...
+	{
+		type: "int_str_to_int",
+		tooltip: "Str To Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Bool To Str: ...
+	{
+		type: "str_bool_to_str",
+		tooltip: "Bool To Str: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Str",
+		colour: "51e05f",
+	},
+
+	// Int To Str: ...
+	{
+		type: "str_int_to_str",
+		tooltip: "Int To Str: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Str",
+		colour: "51e05f",
+	},
+
+	// Float To Str: ...
+	{
+		type: "str_float_to_str",
+		tooltip: "Float To Str: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Str",
+		colour: "51e05f",
+	},
+
+	// Int To Bool: ...
+	{
+		type: "bool_int_to_bool",
+		tooltip: "Int To Bool: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Float To Bool: ...
+	{
+		type: "bool_float_to_bool",
+		tooltip: "Float To Bool: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Str To Bool: ...
+	{
+		type: "bool_str_to_bool",
+		tooltip: "Str To Bool: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Int Id: ...
+	{
+		type: "int_int_id",
+		tooltip: "Int Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Float Id: ...
+	{
+		type: "float_float_id",
+		tooltip: "Float Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Bool Id: ...
+	{
+		type: "bool_bool_id",
+		tooltip: "Bool Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Str Id: ...
+	{
+		type: "str_str_id",
+		tooltip: "Str Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Str",
+		colour: "51e05f",
 	},
 
 	// Custom Op: ... ...

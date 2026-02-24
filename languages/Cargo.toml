@@ -7,35 +7,57 @@ edition = "2021"
 # Examples are in workspace examples/ directory
 # Tests use separate test binaries
 
-
+[features]
+## Propagate WFST features through macros to mettail-prattail.
+wfst = ["mettail-macros/wfst"]
+wfst-log = ["mettail-macros/wfst-log"]
 
 [dependencies]
 mettail-macros = { path = "../macros" }
 mettail-runtime = { path = "../runtime" }
 moniker = { workspace = true }
-lalrpop-util = { workspace = true, features = ["lexer"] }
 rand = { workspace = true }
 indexmap = { workspace = true }
 
 ascent = { workspace = true }
 ascent-byods-rels = { workspace = true }
 
-[build-dependencies]
-lalrpop = { workspace = true }
-mettail-lang-gen = { path = "lang-gen" }
-
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
-
-# TODO: Re-enable after Pattern refactor complete
-[[bin]]
-name = "ambient_tests"
-path = "tests/ambient_tests.rs"
-
-[[bin]]
-name = "rhocalc_tests"
-path = "tests/rhocalc_tests.rs"
+proptest = "1"
 
 [[bench]]
 name = "rhocalc_bench"
+harness = false
+
+[[bench]]
+name = "parse_bench"
+harness = false
+
+[[bench]]
+name = "bench_infix"
+harness = false
+
+[[bench]]
+name = "bench_prefix"
+harness = false
+
+[[bench]]
+name = "bench_nesting"
+harness = false
+
+[[bench]]
+name = "bench_collections"
+harness = false
+
+[[bench]]
+name = "bench_binders"
+harness = false
+
+[[bench]]
+name = "bench_cross_category"
+harness = false
+
+[[bench]]
+name = "bench_scaling"
 harness = false
