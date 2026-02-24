@@ -29,8 +29,8 @@ jobs:
       - name: Install lld linker (macOS)
         if: runner.os == 'macOS'
         run: |
-          brew install llvm
-          echo "$(brew --prefix llvm)/bin" >> $GITHUB_PATH
+          brew install lld
+          echo "$(brew --prefix lld)/bin" >> $GITHUB_PATH
 
       - name: Install Rust (nightly)
         if: matrix.rust == 'nightly'
