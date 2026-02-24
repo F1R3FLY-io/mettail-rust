@@ -30,3 +30,22 @@ pub use language::*;
 // Matchings enumeration for zip+map correlated search (used by generated rewrite clauses)
 mod matchings;
 pub use matchings::*;
+
+/// Wrapper that provides `Display` for slices/Vecs of `Display` items.
+///
+/// Renders as a comma-separated list, e.g. `a, b, c`.
+/// Used by generated extraction code so `Vec<T>` columns get pretty-printed
+/// via `T`'s `Display` impl rather than falling back to `Debug`.
+pub struct DisplaySlice<'a, T>(pub &'a [T]);
+
+impl<T: std::fmt::Display> std::fmt::Display for DisplaySlice<'_, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, item) in self.0.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", item)?;
+        }
+        Ok(())
+    }
+}

@@ -27,6 +27,7 @@ ascent-byods-rels = { workspace = true }
 moniker = { workspace = true }
 indexmap = { workspace = true }
 mettail-prattail = { path = "../prattail" }
+ascent_syntax_export = { workspace = true }
 
 [dev-dependencies]
 trybuild = "1.0"

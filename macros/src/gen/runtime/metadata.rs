@@ -766,7 +766,7 @@ fn generate_logic_relation_defs(language: &LanguageDef) -> TokenStream {
         .iter()
         .map(|rel| {
             let name = rel.name.to_string();
-            let param_types: Vec<String> = rel.param_types.iter().map(|t| t.to_string()).collect();
+            let param_types = &rel.param_types;
 
             quote! {
                 mettail_runtime::LogicRelationDef {

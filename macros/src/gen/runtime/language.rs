@@ -2092,9 +2092,14 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
         let arity = rel.param_types.len();
         let tuple_vars: Vec<syn::Ident> = (0..arity).map(|i| format_ident!("e{}", i)).collect();
 
-        let format_exprs: Vec<TokenStream> = tuple_vars
-            .iter()
-            .map(|v| quote! { format!("{}", #v) })
+        let format_exprs: Vec<TokenStream> = rel.param_types.iter().zip(tuple_vars.iter())
+            .map(|(ty, v)| {
+                if ty.starts_with("Vec") || ty.starts_with("HashSet") {
+                    quote! { format!("{}", mettail_runtime::DisplaySlice(#v.as_slice())) }
+                } else {
+                    quote! { format!("{}", #v) }
+                }
+            })
             .collect();
 
         // For arity 1, use (e0,) so Rust treats it as a tuple pattern; (e0) would bind the whole &(Proc,).
