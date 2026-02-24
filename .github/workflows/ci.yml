@@ -43,8 +43,8 @@ jobs:
         if: matrix.rust == 'stable'
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Remove nightly-only config (stable)
-        if: matrix.rust == 'stable'
+      - name: Remove nightly-only config (stable + Windows)
+        if: matrix.rust == 'stable' || runner.os == 'Windows'
         shell: bash
         run: |
           sed -i.bak '/codegen-backend/d' Cargo.toml
