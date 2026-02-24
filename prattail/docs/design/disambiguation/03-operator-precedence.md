@@ -224,7 +224,7 @@ than its own `right_bp` (4).
   Result:   (a + b) + c             Result:   a ^ (b ^ c)
 
   ┌────────────────────────────┐    ┌────────────────────────────┐
-  │  ←── left_bp  right_bp ──→ │    │  ←── right_bp  left_bp ──→ │
+  │  ◀── left_bp  right_bp ──► │    │  ◀── right_bp  left_bp ──► │
   │       (2)       (3)        │    │       (4)       (5)        │
   │                            │    │                            │
   │  Operand is "pushed right" │    │  Operand is "pushed left"  │
@@ -257,7 +257,7 @@ between prefix, infix, and postfix operators.
   Let M = max infix BP (highest-precedence infix operator's right BP)
 
   BP Number Line:
-  ────────────────────────────────────────────────────────→ higher BP
+  ────────────────────────────────────────────────────────► higher BP
   0        2      ...      M      M+2         M+4   ...
   ↑        ↑               ↑       ↑            ↑
   entry    infix range     max   prefix BP    postfix range

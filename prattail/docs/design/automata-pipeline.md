@@ -209,7 +209,7 @@ start state to each fragment's start state:
 
 ```
                  eps   ┌── start_"==" ─['=']→ s1 ─['=']→ accept(EqEq)
-                ┌─────►│
+                ┌──────┤
                 │      └── start_"="  ─['=']→ accept(Eq)
                 │
   global_start──┼──eps→ start_"+"   ─['+']→ accept(Plus)

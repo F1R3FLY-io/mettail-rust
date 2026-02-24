@@ -88,3 +88,6 @@ prattail/target/*
 **/.CoqMakefile.d
 
 *.mm_profdata
+
+*.sw?
+.#*

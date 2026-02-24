@@ -101,13 +101,13 @@ state or registers the state as the new canonical representative.
 ### 2.3 Worked Example: `{=, ==, !=}`
 
 ```
-             ┌───[=]───→ S1 (accept: Eq)
+             ┌───[=]───► S1 (accept: Eq)
              │             │
-   S0 ───────┤             └──[=]──→ S2 (accept: EqEq)
+   S0 ───────┤             └──[=]──► S2 (accept: EqEq)
    (start)   │
-             └───[!]───→ S3
+             └───[!]───► S3
                            │
-                           └──[=]──→ S4 (accept: BangEq)
+                           └──[=]──► S4 (accept: BangEq)
 ```
 
 **Prefix sharing:** `=` and `==` share the path from S0 to S1. The `=` in `!=`
@@ -174,13 +174,13 @@ Input:     =   =   =
 State:     S0 → S1 → S2 → DEAD
 
 Pass 1:
-  pos=0: S0 ──[=]──→ S1 (accepting: Eq)       last_accept = (S1, pos=1)
-  pos=1: S1 ──[=]──→ S2 (accepting: EqEq)     last_accept = (S2, pos=2)
-  pos=2: S2 ──[=]──→ DEAD                     backtrack to pos=2
+  pos=0: S0 ──[=]──► S1 (accepting: Eq)       last_accept = (S1, pos=1)
+  pos=1: S1 ──[=]──► S2 (accepting: EqEq)     last_accept = (S2, pos=2)
+  pos=2: S2 ──[=]──► DEAD                     backtrack to pos=2
   Emit: EqEq (positions 0..2)
 
 Pass 2:
-  pos=2: S0 ──[=]──→ S1 (accepting: Eq)       last_accept = (S1, pos=3)
+  pos=2: S0 ──[=]──► S1 (accepting: Eq)       last_accept = (S1, pos=3)
   pos=3: end of input
   Emit: Eq (positions 2..3)
 
@@ -203,7 +203,7 @@ Pass 1:
   pos=0..4: Walk "error" through keyword trie
             State S_error (accepting: keyword "error")
             last_accept = (S_error, pos=5)
-  pos=5:    S_error ──[_]──→ identifier continuation state
+  pos=5:    S_error ──[_]──► identifier continuation state
             Still valid! Identifier pattern [a-zA-Z0-9_]* continues
   pos=5..13: Continue through identifier pattern
              Each position updates last_accept (accepting: Ident)
