@@ -1132,6 +1132,7 @@ mod tests {
                 name: t.name.clone(),
                 native_type: t.native_type.clone(),
                 is_primary: i == 0,
+                has_var: t.has_var,
             })
             .collect();
 

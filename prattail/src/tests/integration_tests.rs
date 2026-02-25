@@ -115,11 +115,13 @@ fn test_generate_parser_two_categories() {
             name: "Int".to_string(),
             native_type: Some("i32".to_string()),
             is_primary: true,
+            has_var: true,
         },
         CategorySpec {
             name: "Bool".to_string(),
             native_type: Some("bool".to_string()),
             is_primary: false,
+            has_var: true,
         },
     ];
     let cat_names = category_names(&types);
