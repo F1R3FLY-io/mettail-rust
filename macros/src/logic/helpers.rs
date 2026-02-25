@@ -19,7 +19,7 @@
 
 use super::common::{
     collect_nonterminal_fields, count_nonterminals, generate_tls_pool_iter, has_collection_field,
-    is_multi_binder, relation_names, PoolArm,
+    relation_names, PoolArm,
 };
 use crate::ast::grammar::{GrammarItem, GrammarRule};
 use crate::ast::language::LanguageDef;
@@ -115,11 +115,11 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
 
     // 1. User-defined constructors
     for rule in language.terms.iter().filter(|r| r.category == *src) {
-        // Skip collection-only and multi-binder constructors (they have special rules)
+        // Skip collection constructors (they have special rules).
+        // Multi-binder + collection constructors (e.g. PInputs) are handled by
+        // generate_special_deconstruction_rules. Multi-binder-only constructors
+        // (e.g. PNew) are handled here via generate_binding_constructor_pool_arm.
         if has_collection_field(rule) {
-            continue;
-        }
-        if is_multi_binder(rule) {
             continue;
         }
 

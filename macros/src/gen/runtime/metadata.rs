@@ -396,28 +396,35 @@ fn generate_equation_defs(language: &LanguageDef) -> TokenStream {
     }
 }
 
+fn premise_to_display_string(p: &Premise) -> String {
+    match p {
+        Premise::Freshness(fc) => {
+            let target = match &fc.term {
+                FreshnessTarget::Var(v) => v.to_string(),
+                FreshnessTarget::CollectionRest(v) => format!("...{}", v),
+            };
+            format!("{} # {}", fc.var, target)
+        },
+        Premise::RelationQuery { relation, args } => {
+            let args_str: Vec<_> = args.iter().map(|a| a.to_string()).collect();
+            format!("{}({})", relation, args_str.join(", "))
+        },
+        Premise::Congruence { source, target } => {
+            format!("{} ~> {}", source, target)
+        },
+        Premise::ForAll { collection, param, body } => {
+            format!("{}.*map(|{}| {})", collection, param, premise_to_display_string(body))
+        },
+    }
+}
+
 /// Generate a single EquationDef
 fn generate_equation_def(eq: &Equation, language: &LanguageDef) -> TokenStream {
     // Convert conditions to strings
     let conditions: Vec<String> = eq
         .premises
         .iter()
-        .map(|c| match c {
-            Premise::Freshness(fc) => {
-                let target = match &fc.term {
-                    FreshnessTarget::Var(v) => v.to_string(),
-                    FreshnessTarget::CollectionRest(v) => format!("...{}", v),
-                };
-                format!("{} # {}", fc.var, target)
-            },
-            Premise::RelationQuery { relation, args } => {
-                let args_str: Vec<_> = args.iter().map(|a| a.to_string()).collect();
-                format!("{}({})", relation, args_str.join(", "))
-            },
-            Premise::Congruence { source, target } => {
-                format!("{} ~> {}", source, target)
-            },
-        })
+        .map(premise_to_display_string)
         .collect();
 
     let conditions_tokens: Vec<TokenStream> = conditions
@@ -466,18 +473,7 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
     let conditions: Vec<String> = rw
         .premises
         .iter()
-        .map(|c| match c {
-            Premise::Freshness(fc) => format!("{} # {}", fc.var, fc.term),
-            Premise::RelationQuery { relation, args } => format!(
-                "{}({})",
-                relation,
-                args.iter()
-                    .map(|a| a.to_string())
-                    .collect::<Vec<String>>()
-                    .join(", ")
-            ),
-            Premise::Congruence { source, target } => format!("{} ~> {}", source, target),
-        })
+        .map(premise_to_display_string)
         .collect();
 
     let conditions_tokens: Vec<TokenStream> = conditions

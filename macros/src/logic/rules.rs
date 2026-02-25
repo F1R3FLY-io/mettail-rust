@@ -180,6 +180,11 @@ fn generate_condition_clauses(
                     clauses.push(clause);
                 }
             },
+            Condition::ForAll { collection, param, body } => {
+                if let Some(clause) = generate_forall_clause(collection, param, body, lhs_clauses) {
+                    clauses.push(clause);
+                }
+            },
             Condition::EnvQuery { relation, args } => {
                 if args.len() < 2 {
                     panic!("EnvQuery condition requires at least 2 arguments (variable name and value)");
@@ -233,6 +238,47 @@ fn generate_condition_clauses(
     (clauses, env_bindings)
 }
 
+/// Generate a ForAll condition clause: for all `param` in `collection`, `body` holds.
+fn generate_forall_clause(
+    collection: &syn::Ident,
+    param: &syn::Ident,
+    body: &Condition,
+    lhs_clauses: &AscentClauses,
+) -> Option<TokenStream> {
+    let coll_name = collection.to_string();
+    let coll_binding = &lhs_clauses.bindings.get(&coll_name)?.expression;
+
+    match body {
+        Condition::Freshness(freshness) => {
+            match &freshness.term {
+                FreshnessTarget::Var(term_var) => {
+                    let term_name = term_var.to_string();
+                    let term_binding = &lhs_clauses.bindings.get(&term_name)?.expression;
+                    Some(quote! {
+                        if #coll_binding.iter().all(|#param|
+                            !mettail_runtime::BoundTerm::free_vars(&#term_binding).contains(&#param.0)
+                        )
+                    })
+                },
+                FreshnessTarget::CollectionRest(rest_var) => {
+                    let rest_name = rest_var.to_string();
+                    let rest_binding = &lhs_clauses.bindings.get(&rest_name)?.expression;
+                    Some(quote! {
+                        if #coll_binding.iter().all(|#param|
+                            #rest_binding.clone().iter().all(|(elem, _)|
+                                !mettail_runtime::BoundTerm::free_vars(elem).contains(&#param.0)
+                            )
+                        )
+                    })
+                },
+            }
+        },
+        _ => {
+            panic!("ForAll body currently only supports Freshness conditions");
+        },
+    }
+}
+
 /// Generate a freshness condition clause.
 fn generate_freshness_clause(
     freshness: &FreshnessCondition,
@@ -277,6 +323,13 @@ fn premise_to_condition(premise: &crate::ast::language::Premise) -> Option<Condi
             })
         },
         crate::ast::language::Premise::Congruence { .. } => None, // Handled separately
+        crate::ast::language::Premise::ForAll { collection, param, body } => {
+            Some(Condition::ForAll {
+                collection: collection.clone(),
+                param: param.clone(),
+                body: Box::new(premise_to_condition(body)?),
+            })
+        },
     }
 }
 

@@ -35,7 +35,8 @@ language! {
         NQuote . p:Proc
         |- "@" "(" p ")" : Name ;
 
-        PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc;
+        PNew . ^[xs].p:[Name* -> Proc] 
+        |- "new" "(" xs.*sep(",") ")" "in" "{" p "}" : Proc;
 
         // customize error handling 
         // (e.g. filter results by =/= Err)
@@ -295,6 +296,9 @@ language! {
 
     equations {
         QuoteDrop . |- (NQuote (PDrop N)) = N ;
+
+        Extrude . xs.*map(|x| x # ...rest)
+            |- (PPar {(PNew ^[xs].p), ...rest}) = (PNew ^[xs].(PPar {p, ...rest})) ;
     },
 
     rewrites {
@@ -307,6 +311,8 @@ language! {
         Exec . |- (PDrop (NQuote P)) ~> P;
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
+
+        NewCong . | S ~> T |- (PNew ^[xs].S) ~> (PNew ^[xs].T);
 
         // TODO: shorthand to make these in the term declarations
         AddCongL . | S ~> T |- (Add S X) ~> (Add T X);

@@ -198,6 +198,10 @@ pub fn split_rd_handler(rule: &RDRuleInfo) -> Vec<HandlerSegment> {
                     element_category: element_category.clone(),
                 });
             },
+            RDSyntaxItem::BinderCollection { param_name, .. } => {
+                current_inline.push(item.clone());
+                accumulated_captures.push(SegmentCapture::Binder { name: param_name.clone() });
+            },
             RDSyntaxItem::ZipMapSep { .. } | RDSyntaxItem::Optional { .. } => {
                 // These complex items are kept as inline for now
                 // The trampoline will handle them as-is (they have bounded depth)
@@ -1141,6 +1145,27 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
             RDSyntaxItem::NonTerminal { category, param_name } => {
                 // Cross-category nonterminal: direct function call (bounded depth)
                 write!(buf, "let {} = parse_{}(tokens, pos, 0)?;", param_name, category).unwrap();
+            },
+            RDSyntaxItem::BinderCollection { param_name, separator } => {
+                let sep_variant = terminal_to_variant_name(separator);
+                write!(
+                    buf,
+                    "let mut {param_name} = Vec::new(); \
+                    loop {{ \
+                        match expect_ident(tokens, pos) {{ \
+                            Ok(name) => {{ \
+                                {param_name}.push(name); \
+                                if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                    *pos += 1; \
+                                }} else {{ \
+                                    break; \
+                                }} \
+                            }} \
+                            Err(_) => break, \
+                        }} \
+                    }}",
+                )
+                .unwrap();
             },
             _ => {
                 // Collection, ZipMapSep, Optional — kept as inline but not yet handled

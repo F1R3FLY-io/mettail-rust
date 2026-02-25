@@ -499,4 +499,12 @@ rw_proc(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_proc(field_val, t);
 
+rw_proc(a.clone(), c.clone()) <--
+    eq_proc(a, b),
+    rw_proc(b.clone(), c);
+
+rw_name(a.clone(), c.clone()) <--
+    eq_name(a, b),
+    rw_name(b.clone(), c);
+
 }

@@ -636,6 +636,9 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
             let body: Vec<String> = body_items.iter().map(format_syntax_item).collect();
             format!("{{ {} / \"{}\" }}", body.join(" "), separator)
         },
+        SyntaxItemSpec::BinderCollection { param_name, separator } => {
+            format!("{{ ^{} / \"{}\" }}", param_name, separator)
+        },
         SyntaxItemSpec::Optional { inner } => {
             let items: Vec<String> = inner.iter().map(format_syntax_item).collect();
             format!("[ {} ]", items.join(" "))
@@ -1389,6 +1392,12 @@ mod tests {
                 right_category: right_category.clone(),
                 body_items: body_items.iter().map(convert_syntax_item).collect(),
                 separator: separator.clone(),
+            },
+            SyntaxItemSpec::BinderCollection { param_name, separator } => {
+                RDSyntaxItem::BinderCollection {
+                    param_name: param_name.clone(),
+                    separator: separator.clone(),
+                }
             },
             SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
                 inner: inner.iter().map(convert_syntax_item).collect(),

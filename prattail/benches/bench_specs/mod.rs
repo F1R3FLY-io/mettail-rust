@@ -560,6 +560,12 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
             body_items: body_items.iter().map(convert_syntax_item_to_rd).collect(),
             separator: separator.clone(),
         },
+        SyntaxItemSpec::BinderCollection { param_name, separator } => {
+            RDSyntaxItem::BinderCollection {
+                param_name: param_name.clone(),
+                separator: separator.clone(),
+            }
+        },
         SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
             inner: inner.iter().map(convert_syntax_item_to_rd).collect(),
         },
@@ -686,6 +692,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
                     },
                     SyntaxItemSpec::IdentCapture { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Binder { .. } => FirstItem::Ident,
+                    SyntaxItemSpec::BinderCollection { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Collection { .. } => FirstItem::Ident,
                     SyntaxItemSpec::ZipMapSep { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Optional { .. } => FirstItem::Ident,

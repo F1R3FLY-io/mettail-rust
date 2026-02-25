@@ -182,38 +182,34 @@ fn validate_pattern_term(pt: &PatternTerm, language: &LanguageDef) -> Result<(),
     }
 }
 
-/// Validate freshness conditions in an equation
-///
-/// Checks that:
-/// 1. Variables in freshness conditions actually appear in the equation
-/// 2. The freshness constraint is semantically meaningful
-///
-/// Freshness condition `x # Q` means "x does not appear free in Q"
-fn validate_equation_freshness(eq: &Equation) -> Result<(), ValidationError> {
-    // Collect all variables that appear in the equation
-    let mut equation_vars = HashSet::new();
-    collect_pattern_vars(&eq.left, &mut equation_vars);
-    collect_pattern_vars(&eq.right, &mut equation_vars);
-
-    // Validate each freshness condition
-    for cond in &eq.premises {
-        if let Premise::Freshness(freshness) = cond {
+/// Validate a single premise against the known pattern variables.
+/// `bound_vars` contains lambda-bound parameters (e.g. from ForAll) that
+/// are in scope but don't need to appear in the pattern.
+fn validate_premise(
+    premise: &Premise,
+    pattern_vars: &HashSet<String>,
+    bound_vars: &HashSet<String>,
+) -> Result<(), ValidationError> {
+    match premise {
+        Premise::Freshness(freshness) => {
             let var_name = freshness.var.to_string();
             let (term_name, term_span) = match &freshness.term {
                 FreshnessTarget::Var(id) => (id.to_string(), id.span()),
                 FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
             };
 
-            // Check that the variable appears in the equation
-            if !equation_vars.contains(&var_name) {
+            let all_vars_in_scope = |name: &str| {
+                pattern_vars.contains(name) || bound_vars.contains(name)
+            };
+
+            if !all_vars_in_scope(&var_name) {
                 return Err(ValidationError::FreshnessVariableNotInEquation {
                     var: var_name,
                     span: freshness.var.span(),
                 });
             }
 
-            // Check that the term variable appears in the equation
-            if !equation_vars.contains(&term_name) {
+            if !all_vars_in_scope(&term_name) {
                 return Err(ValidationError::FreshnessTermNotInEquation {
                     var: var_name,
                     term: term_name,
@@ -221,63 +217,53 @@ fn validate_equation_freshness(eq: &Equation) -> Result<(), ValidationError> {
                 });
             }
 
-            // Check that x does not appear free in term
-            // For now, we do a simple check: if term is a variable, x != term
-            // More sophisticated checking will be added with scoping
             if var_name == term_name {
                 return Err(ValidationError::FreshnessSelfReference {
                     var: var_name,
                     span: freshness.var.span(),
                 });
             }
-        }
+        },
+        Premise::ForAll { collection, param, body } => {
+            let coll_name = collection.to_string();
+            if !pattern_vars.contains(&coll_name) {
+                return Err(ValidationError::FreshnessVariableNotInEquation {
+                    var: coll_name,
+                    span: collection.span(),
+                });
+            }
+            let mut inner_bound = bound_vars.clone();
+            inner_bound.insert(param.to_string());
+            validate_premise(body, pattern_vars, &inner_bound)?;
+        },
+        Premise::Congruence { .. } | Premise::RelationQuery { .. } => {},
+    }
+    Ok(())
+}
+
+/// Validate freshness conditions in an equation
+fn validate_equation_freshness(eq: &Equation) -> Result<(), ValidationError> {
+    let mut equation_vars = HashSet::new();
+    collect_pattern_vars(&eq.left, &mut equation_vars);
+    collect_pattern_vars(&eq.right, &mut equation_vars);
+
+    let empty_bound = HashSet::new();
+    for cond in &eq.premises {
+        validate_premise(cond, &equation_vars, &empty_bound)?;
     }
 
     Ok(())
 }
 
 /// Validate freshness conditions in a rewrite rule
-/// Same logic as equations
 fn validate_rewrite_freshness(rw: &RewriteRule) -> Result<(), ValidationError> {
-    // Collect all variables that appear in the rewrite
     let mut rewrite_vars = HashSet::new();
     collect_pattern_vars(&rw.left, &mut rewrite_vars);
     collect_pattern_vars(&rw.right, &mut rewrite_vars);
 
-    // Validate each condition
+    let empty_bound = HashSet::new();
     for cond in &rw.premises {
-        if let Premise::Freshness(freshness) = cond {
-            let var_name = freshness.var.to_string();
-            let (term_name, term_span) = match &freshness.term {
-                FreshnessTarget::Var(id) => (id.to_string(), id.span()),
-                FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
-            };
-
-            // Check that the variable appears in the rewrite
-            if !rewrite_vars.contains(&var_name) {
-                return Err(ValidationError::FreshnessVariableNotInEquation {
-                    var: var_name,
-                    span: freshness.var.span(),
-                });
-            }
-
-            // Check that the term variable appears in the rewrite
-            if !rewrite_vars.contains(&term_name) {
-                return Err(ValidationError::FreshnessTermNotInEquation {
-                    var: var_name,
-                    term: term_name,
-                    span: term_span,
-                });
-            }
-
-            // Check that x != term (can't be fresh in itself)
-            if var_name == term_name {
-                return Err(ValidationError::FreshnessSelfReference {
-                    var: var_name,
-                    span: freshness.var.span(),
-                });
-            }
-        }
+        validate_premise(cond, &rewrite_vars, &empty_bound)?;
     }
 
     Ok(())

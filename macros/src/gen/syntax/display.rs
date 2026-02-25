@@ -429,17 +429,33 @@ fn generate_pattern_op_display(
             if let Some(chain_source) = source {
                 return generate_chained_sep_display_code(chain_source, separator);
             }
-            let coll_ident =
-                syn::Ident::new(&collection.to_string(), proc_macro2::Span::call_site());
+            let coll_name = collection.to_string();
             let sep_with_spaces = format!(" {} ", separator);
-            quote! {
-                {
-                    let mut first = true;
-                    for (item, count) in #coll_ident.iter() {
-                        for _ in 0..count {
+
+            // If this collection is the abstraction binder, iterate binder_names
+            if _abstraction_binder.as_ref().map(|s| s.as_str()) == Some(&coll_name) {
+                quote! {
+                    {
+                        let mut first = true;
+                        for name in &binder_names {
                             if !first { write!(f, #sep_with_spaces)?; }
                             first = false;
-                            write!(f, "{}", item)?;
+                            write!(f, "{}", name)?;
+                        }
+                    }
+                }
+            } else {
+                let coll_ident =
+                    syn::Ident::new(&coll_name, proc_macro2::Span::call_site());
+                quote! {
+                    {
+                        let mut first = true;
+                        for (item, count) in #coll_ident.iter() {
+                            for _ in 0..count {
+                                if !first { write!(f, #sep_with_spaces)?; }
+                                first = false;
+                                write!(f, "{}", item)?;
+                            }
                         }
                     }
                 }

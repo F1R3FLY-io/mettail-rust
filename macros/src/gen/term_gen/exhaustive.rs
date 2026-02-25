@@ -12,7 +12,7 @@
 )]
 
 use crate::ast::{
-    grammar::{GrammarItem, GrammarRule},
+    grammar::{GrammarItem, GrammarRule, TermParam},
     language::LanguageDef,
 };
 use crate::gen::term_gen::is_lang_type;
@@ -505,9 +505,13 @@ fn generate_binder_constructor_case(
         .cloned()
         .collect();
 
+    let is_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
+        ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+    });
+
     if other_args.is_empty() {
         // Simple case: only body (e.g., Lambda x. body)
-        generate_simple_binder_case(cat_name, label, body_cat, language)
+        generate_simple_binder_case(cat_name, label, body_cat, language, is_multi_binder)
     } else if other_args.len() == 1 {
         // One non-body arg (e.g., PInput channel x. body)
         generate_binder_with_one_arg(cat_name, label, &other_args[0].1, body_cat, language)
@@ -522,6 +526,7 @@ fn generate_simple_binder_case(
     label: &Ident,
     body_cat: &Ident,
     language: &LanguageDef,
+    is_multi_binder: bool,
 ) -> TokenStream {
     if !is_lang_type(body_cat, language) {
         return quote! {};
@@ -529,15 +534,22 @@ fn generate_simple_binder_case(
 
     let body_field = category_to_field_name(body_cat);
 
+    let scope_construction = if is_multi_binder {
+        quote! {
+            let scope = mettail_runtime::Scope::new(vec![binder], Box::new(body));
+        }
+    } else {
+        quote! {
+            let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+        }
+    };
+
     quote! {
-        // Generate bodies WITH unique binder variables
-        // Count how many vars are binder vars (vars beyond the initial pool)
         let current_binding_depth = self.vars.len() - self.initial_var_count;
         let binder_name = format!("x{}", current_binding_depth);
         let mut extended_vars = self.vars.clone();
         extended_vars.push(binder_name.clone());
 
-        // Create temporary context for generating bodies that can use the binder
         let mut temp_ctx = GenerationContext::new_with_extended_vars(
             extended_vars,
             self.initial_var_count,
@@ -546,7 +558,6 @@ fn generate_simple_binder_case(
         );
         temp_ctx = temp_ctx.generate_all();
 
-        // Get all bodies from temp context (up to depth-1)
         let mut bodies_with_binder = Vec::new();
         for d in 0..depth {
             if let Some(ts) = temp_ctx.#body_field.get(&d) {
@@ -554,12 +565,10 @@ fn generate_simple_binder_case(
             }
         }
 
-        // Create scopes with bodies that may reference the binder
         for body in bodies_with_binder {
             let binder_var = mettail_runtime::get_or_create_var(&binder_name);
             let binder = mettail_runtime::Binder(binder_var);
-            // Scope::new will automatically close free occurrences of binder_var in body
-            let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+            #scope_construction
             terms.push(#cat_name::#label(scope));
         }
     }

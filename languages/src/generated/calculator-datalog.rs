@@ -2622,4 +2622,20 @@ rw_str(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_STR_SCONG_STR.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_str(field_val, t);
 
+rw_int(a.clone(), c.clone()) <--
+    eq_int(a, b),
+    rw_int(b.clone(), c);
+
+rw_float(a.clone(), c.clone()) <--
+    eq_float(a, b),
+    rw_float(b.clone(), c);
+
+rw_bool(a.clone(), c.clone()) <--
+    eq_bool(a, b),
+    rw_bool(b.clone(), c);
+
+rw_str(a.clone(), c.clone()) <--
+    eq_str(a, b),
+    rw_str(b.clone(), c);
+
 }

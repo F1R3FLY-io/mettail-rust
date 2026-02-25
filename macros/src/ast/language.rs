@@ -84,6 +84,10 @@ pub enum Premise {
     /// Relation query: rel(arg1, arg2, ...)
     /// Currently used for env_var(x, v), extensible to arbitrary relations
     RelationQuery { relation: Ident, args: Vec<Ident> },
+
+    /// Universal quantification over a collection: xs.*map(|x| premise)
+    /// Means "for all x in xs, premise holds"
+    ForAll { collection: Ident, param: Ident, body: Box<Premise> },
 }
 
 /// Equation in unified judgement syntax
@@ -137,6 +141,8 @@ pub enum Condition {
         /// Arguments to the relation (e.g., ["x", "v"])
         args: Vec<Ident>,
     },
+    /// Universal quantification: for all x in collection, body holds
+    ForAll { collection: Ident, param: Ident, body: Box<Condition> },
 }
 
 /// Rewrite rule in unified judgement syntax
@@ -503,10 +509,11 @@ fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
 }
 
 /// Parse a single premise in the propositional context
-/// Grammar: freshness | congruence | relation_query
+/// Grammar: freshness | congruence | relation_query | forall
 ///   freshness  ::= ident "#" (ident | "..." ident)
 ///   congruence ::= ident "~>" ident
 ///   relation   ::= ident "(" (ident ("," ident)*)? ")"
+///   forall     ::= ident "." "*" "map" "(" "|" ident "|" premise ")"
 fn parse_premise(input: ParseStream) -> SynResult<Premise> {
     let first = input.parse::<Ident>()?;
 
@@ -538,10 +545,32 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
             }
         }
         Ok(Premise::RelationQuery { relation: first, args })
+    } else if input.peek(Token![.]) {
+        // ForAll: xs.*map(|x| premise)
+        let _ = input.parse::<Token![.]>()?;
+        let _ = input.parse::<Token![*]>()?;
+        let op = input.parse::<Ident>()?;
+        if op != "map" {
+            return Err(syn::Error::new(
+                op.span(),
+                "expected 'map' in quantified premise (xs.*map(|x| ...))",
+            ));
+        }
+        let content;
+        syn::parenthesized!(content in input);
+        let _ = content.parse::<Token![|]>()?;
+        let param = content.parse::<Ident>()?;
+        let _ = content.parse::<Token![|]>()?;
+        let body = parse_premise(&content)?;
+        Ok(Premise::ForAll {
+            collection: first,
+            param,
+            body: Box::new(body),
+        })
     } else {
         Err(syn::Error::new(
             first.span(),
-            "expected premise: 'x # term', 'S ~> T', or 'rel(args)'",
+            "expected premise: 'x # term', 'S ~> T', 'rel(args)', or 'xs.*map(|x| ...)'",
         ))
     }
 }

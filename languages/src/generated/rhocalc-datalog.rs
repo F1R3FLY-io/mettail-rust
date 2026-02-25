@@ -56,6 +56,9 @@ proc(sub.clone()) <--
         Proc::POutput(_, f1) => {
             buf.push(f1.as_ref().clone());
         },
+        Proc::PNew(scope) => {
+            buf.push(scope.inner().unsafe_body.as_ref().clone());
+        },
         Proc::Add(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
@@ -125,9 +128,6 @@ proc(sub.clone()) <--
         },
         Proc::ToStr(f0) => {
             buf.push(f0.as_ref().clone());
-        },
-        Proc::PNew(scope) => {
-            buf.push(scope.inner().unsafe_body.as_ref().clone());
         },
         Proc::ApplyProc(lam, arg) => {
             buf.push(lam.as_ref().clone());
@@ -1359,6 +1359,32 @@ name(t.clone()) <--
     let s_f0_deref_f0_deref = &** s_f0_deref_f0,
     let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
+    proc(s),
+    if let Proc::PPar(ref s_f0) = s,
+    for (s_f0_e0, _count_0) in s_f0.iter(),
+    if let Proc::PNew(ref s_f0_e0_f0) = s_f0_e0,
+    let s_f0_e0_f0_binder = s_f0_e0_f0.unsafe_pattern().clone(),
+    let s_f0_e0_f0_body_boxed = s_f0_e0_f0.unsafe_body(),
+    let s_f0_e0_f0_body = &** s_f0_e0_f0_body_boxed,
+    let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag },
+    if s_f0_e0_f0_binder.clone().iter().all(| x | s_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime::BoundTerm::free_vars(elem).contains(& x.0))),
+    let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_e0_f0_binder.clone(), Box::new(Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f0_body.clone()).clone()); bag }))))).normalize();
+
+eq_proc(s.clone(), t.clone()),
+proc(t.clone()) <--
+    proc(s),
+    if let Proc::PNew(ref s_f0) = s,
+    let s_f0_binder = s_f0.unsafe_pattern().clone(),
+    let s_f0_body_boxed = s_f0.unsafe_body(),
+    let s_f0_body = &** s_f0_body_boxed,
+    if let Proc::PPar(ref s_f0_body_f0) = s_f0_body,
+    for (s_f0_body_f0_e0, _count_0) in s_f0_body_f0.iter(),
+    let s_f0_body_f0_rest = { let mut bag = s_f0_body_f0.clone(); bag.remove(& s_f0_body_f0_e0); bag },
+    if s_f0_binder.clone().iter().all(| x | s_f0_body_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime::BoundTerm::free_vars(elem).contains(& x.0))),
+    let t = (Proc::PPar({ let mut bag = (s_f0_body_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone(), Box::new((s_f0_body_f0_e0.clone()).clone())))); bag })).normalize();
+
 
     // Rewrite rules
 rw_proc(s_orig.clone(), t) <--
@@ -1391,12 +1417,12 @@ fold_proc(t.clone(), t.clone()) <--
         Proc::PPar(_) => true,
         Proc::POutput(_, _) => true,
         Proc::PInputs(_, _) => true,
+        Proc::PNew(_) => true,
+        Proc::Err => true,
         Proc::CastInt(_) => true,
         Proc::CastFloat(_) => true,
         Proc::CastBool(_) => true,
         Proc::CastStr(_) => true,
-        Proc::PNew(_) => true,
-        Proc::Err => true,
         _ => false,
     });
 
@@ -1690,6 +1716,14 @@ rw_proc(parent.clone(), result) <--
     rw_proc(elem.clone(), elem_rewritten),
     let result = Proc::PPar({ let mut new_bag = bag.clone(); new_bag.remove(elem); Proc::insert_into_ppar(& mut new_bag, elem_rewritten.clone()); new_bag });
 
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc::PNew(ref scope) = lhs,
+    let binder = scope.unsafe_pattern().clone(),
+    let body = scope.unsafe_body(),
+    rw_proc((** body).clone(), body_rewritten),
+    let rhs = Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
+
 rw_proc(lhs.clone(), match (lhs, vi) {
     (Proc::Add(_, x1), 0usize) => Proc::Add(Box::new(t.clone()), x1.clone()),
     (Proc::Add(x0, _), 1usize) => Proc::Add(x0.clone(), Box::new(t.clone())),
@@ -1801,26 +1835,52 @@ rw_proc(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_proc(field_val, t);
 
+rw_proc(a.clone(), c.clone()) <--
+    eq_proc(a, b),
+    rw_proc(b.clone(), c);
+
+rw_name(a.clone(), c.clone()) <--
+    eq_name(a, b),
+    rw_name(b.clone(), c);
+
+rw_int(a.clone(), c.clone()) <--
+    eq_int(a, b),
+    rw_int(b.clone(), c);
+
+rw_float(a.clone(), c.clone()) <--
+    eq_float(a, b),
+    rw_float(b.clone(), c);
+
+rw_bool(a.clone(), c.clone()) <--
+    eq_bool(a, b),
+    rw_bool(b.clone(), c);
+
+rw_str(a.clone(), c.clone()) <--
+    eq_str(a, b),
+    rw_str(b.clone(), c);
+
 
     // Custom logic
-proc(p) <-- if let Ok(p) = Proc::parse("^x.{{ x | serv!(req) }}");
-
-proc(p) <-- if let Ok(p) = Proc::parse("^x.{x}");
-
-proc(res) <-- step_term(p), proc(c), if let Proc::LamProc(_) = c, let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize();
-
-proc(res) <-- step_term(p), proc(c), if let Proc::MLamProc(_) = c, let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize();
-
 relation path(Proc, Proc);
 
 path(p0, p1) <-- rw_proc(p0, p1);
 
 path(p0, p2) <-- path(p0, p1), path(p1, p2);
 
+relation path_vec(Vec<Proc>);
+
+path_vec(xs) <-- proc(x0), rw_proc(x0,x1), let xs = vec![x0.clone(), x1.clone()];
+
+path_vec(zs) <-- path_vec(xs), path_vec(ys), if xs.last() == ys.first(), let zs = [xs.as_slice(), ys.as_slice()].concat();
+
 relation trans(Proc, Proc, Proc);
 
 trans(p,c,q) <-- step_term(p), proc(c), if let Proc::LamProc(_) = c, let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize(), path(res.clone(), q);
 
 trans(p,c,q) <-- step_term(p), proc(c), if let Proc::MLamProc(_) = c, let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize(), path(res.clone(), q);
+
+proc(res) <-- step_term(p), proc(c), if let Proc::LamProc(_) = c, let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())), let res = app.normalize();
+
+proc(res) <-- step_term(p), proc(c), if let Proc::MLamProc(_) = c, let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]), let res = app.normalize();
 
 }

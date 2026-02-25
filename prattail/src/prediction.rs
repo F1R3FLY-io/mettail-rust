@@ -460,6 +460,10 @@ fn first_of_suffix(
                 nullable = false;
                 break; // Identifiers are not nullable
             },
+            crate::SyntaxItemSpec::BinderCollection { .. } => {
+                result.insert("Ident");
+                // Binder collections can be empty (0 elements), so nullable — continue
+            },
             crate::SyntaxItemSpec::Collection { element_category, .. } => {
                 // FIRST of a collection = FIRST of the element category
                 if let Some(cat_first) = first_sets.get(element_category) {

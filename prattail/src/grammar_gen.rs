@@ -20,6 +20,29 @@ use proptest::test_runner::TestRunner;
 use crate::{LanguageSpec, RuleSpec, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Identifier pools for generated expressions
+// ══════════════════════════════════════════════════════════════════════════════
+
+const IDENT_POOL: &[&str] = &["a", "b", "c", "x", "y", "z"];
+const BINDER_POOL: &[&str] = &["x", "y", "z"];
+
+fn arb_ident() -> BoxedStrategy<String> {
+    prop::sample::select(IDENT_POOL)
+        .prop_map(|s| s.to_string())
+        .boxed()
+}
+
+fn arb_binder() -> BoxedStrategy<String> {
+    prop::sample::select(BINDER_POOL)
+        .prop_map(|s| s.to_string())
+        .boxed()
+}
+
+fn fallback_ident() -> String {
+    IDENT_POOL[0].to_string()
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Public API
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -147,8 +170,7 @@ fn arb_expression_inner(
 
     // Build leaf strategy
     let leaf_strategy = if leaf_rules.is_empty() {
-        // Fallback: generate an identifier
-        prop_oneof![Just("a".to_string()), Just("b".to_string()), Just("x".to_string()),].boxed()
+        arb_ident()
     } else {
         let leaf_strats: Vec<BoxedStrategy<String>> = leaf_rules
             .iter()
@@ -190,13 +212,7 @@ fn arb_expression_inner(
 /// Build a strategy for a single leaf rule (no recursive NonTerminals).
 fn rule_to_leaf_strategy(rule: &RuleSpec) -> BoxedStrategy<String> {
     if rule.is_var {
-        return prop_oneof![
-            Just("a".to_string()),
-            Just("b".to_string()),
-            Just("c".to_string()),
-            Just("x".to_string()),
-        ]
-        .boxed();
+        return arb_ident();
     }
     if rule.is_literal {
         // Generate a native literal based on the rule label
@@ -222,14 +238,14 @@ fn rule_to_leaf_strategy(rule: &RuleSpec) -> BoxedStrategy<String> {
         .filter_map(|item| match item {
             SyntaxItemSpec::Terminal(t) => Some(t.clone()),
             SyntaxItemSpec::IdentCapture { .. } | SyntaxItemSpec::Binder { .. } => {
-                Some("x".to_string())
+                Some(fallback_ident())
             },
             _ => None,
         })
         .collect();
 
     if parts.is_empty() {
-        Just("x".to_string()).boxed()
+        Just(fallback_ident()).boxed()
     } else {
         Just(join_with_spacing(&parts)).boxed()
     }
@@ -256,7 +272,7 @@ fn build_recursive_strategy(
         .collect();
 
     if strats.is_empty() {
-        Just("x".to_string()).boxed()
+        Just(fallback_ident()).boxed()
     } else {
         prop::strategy::Union::new(strats).boxed()
     }
@@ -274,13 +290,7 @@ fn rule_to_strategy(
     current_cat: &str,
 ) -> BoxedStrategy<String> {
     if rule.is_var {
-        return prop_oneof![
-            Just("a".to_string()),
-            Just("b".to_string()),
-            Just("c".to_string()),
-            Just("x".to_string()),
-        ]
-        .boxed();
+        return arb_ident();
     }
     if rule.is_literal {
         let label_lower = rule.label.to_lowercase();
@@ -304,7 +314,7 @@ fn rule_to_strategy(
         .collect();
 
     match item_strats.len() {
-        0 => Just("x".to_string()).boxed(),
+        0 => Just(fallback_ident()).boxed(),
         1 => item_strats.into_iter().next().expect("checked len == 1"),
         _ => {
             // Compose multiple strategies into a space-separated string
@@ -332,29 +342,22 @@ fn syntax_item_strategy(
 
         SyntaxItemSpec::NonTerminal { category, .. } => {
             if category == current_cat {
-                // Same category — use the recursive `inner` strategy
                 inner.clone()
             } else if cat_names.contains(category) {
-                // Cross-category — build a leaf-only strategy for the other category
-                // (to avoid unbounded depth across categories)
                 cross_category_leaf_strategy(rules_by_cat, category)
             } else {
-                Just("x".to_string()).boxed()
+                Just(fallback_ident()).boxed()
             }
         },
 
-        SyntaxItemSpec::IdentCapture { .. } => prop_oneof![
-            Just("a".to_string()),
-            Just("b".to_string()),
-            Just("c".to_string()),
-            Just("x".to_string()),
-            Just("y".to_string()),
-            Just("z".to_string()),
-        ]
-        .boxed(),
+        SyntaxItemSpec::IdentCapture { .. } => arb_ident(),
 
-        SyntaxItemSpec::Binder { .. } => {
-            prop_oneof![Just("x".to_string()), Just("y".to_string()), Just("z".to_string()),]
+        SyntaxItemSpec::Binder { .. } => arb_binder(),
+
+        SyntaxItemSpec::BinderCollection { separator, .. } => {
+            let sep = separator.clone();
+            prop::collection::vec(arb_binder(), 1..=3)
+                .prop_map(move |v| v.join(&format!(" {} ", sep)))
                 .boxed()
         },
 
@@ -364,7 +367,7 @@ fn syntax_item_strategy(
             } else if cat_names.contains(element_category) {
                 cross_category_leaf_strategy(rules_by_cat, element_category)
             } else {
-                Just("x".to_string()).boxed()
+                Just(fallback_ident()).boxed()
             };
 
             let sep = separator.clone();
@@ -382,7 +385,7 @@ fn syntax_item_strategy(
 
             let sep = separator.clone();
             if body_strat.is_empty() {
-                Just("x".to_string()).boxed()
+                Just(fallback_ident()).boxed()
             } else {
                 // Generate 1-3 copies of the body pattern
                 let body_vec_strat: BoxedStrategy<String> =
@@ -448,7 +451,7 @@ fn cross_category_leaf_strategy(
     let cat_names_empty: Vec<String> = Vec::new();
     let rules = match rules_by_cat.get(category) {
         Some(rules) => rules,
-        None => return Just("x".to_string()).boxed(),
+        None => return Just(fallback_ident()).boxed(),
     };
 
     let leaf_rules: Vec<&RuleSpecOwned> = rules
@@ -457,9 +460,7 @@ fn cross_category_leaf_strategy(
         .collect();
 
     if leaf_rules.is_empty() {
-        // Fallback: identifier
-        return prop_oneof![Just("a".to_string()), Just("b".to_string()), Just("x".to_string()),]
-            .boxed();
+        return arb_ident();
     }
 
     let strats: Vec<BoxedStrategy<String>> = leaf_rules
@@ -485,8 +486,7 @@ fn is_leaf_rule_owned(rule: &RuleSpecOwned, _cat_names: &[String]) -> bool {
 
 fn rule_to_leaf_strategy_owned(rule: &RuleSpecOwned) -> BoxedStrategy<String> {
     if rule.is_var {
-        return prop_oneof![Just("a".to_string()), Just("b".to_string()), Just("x".to_string()),]
-            .boxed();
+        return arb_ident();
     }
     if rule.is_literal {
         let label_lower = rule.label.to_lowercase();
@@ -508,14 +508,14 @@ fn rule_to_leaf_strategy_owned(rule: &RuleSpecOwned) -> BoxedStrategy<String> {
         .filter_map(|item| match item {
             SyntaxItemSpec::Terminal(t) => Some(t.clone()),
             SyntaxItemSpec::IdentCapture { .. } | SyntaxItemSpec::Binder { .. } => {
-                Some("x".to_string())
+                Some(fallback_ident())
             },
             _ => None,
         })
         .collect();
 
     if parts.is_empty() {
-        Just("x".to_string()).boxed()
+        Just(fallback_ident()).boxed()
     } else {
         Just(join_with_spacing(&parts)).boxed()
     }

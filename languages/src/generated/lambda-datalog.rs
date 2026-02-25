@@ -130,4 +130,8 @@ rw_term(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_TERM_SCONG_TERM.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_term(field_val, t);
 
+rw_term(a.clone(), c.clone()) <--
+    eq_term(a, b),
+    rw_term(b.clone(), c);
+
 }
