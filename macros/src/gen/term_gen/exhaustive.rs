@@ -13,7 +13,7 @@
 
 use crate::ast::{
     grammar::{GrammarItem, GrammarRule},
-    language::LanguageDef,
+    language::{CollectionCategory, LanguageDef},
 };
 use crate::gen::term_gen::is_lang_type;
 use proc_macro2::TokenStream;
@@ -778,59 +778,65 @@ fn generate_pure_collection_case(
     }
 
     let field_name = category_to_field_name(element_cat);
+    let is_list = language
+        .get_type(cat_name)
+        .and_then(|t| t.collection_kind.as_ref())
+        .map(|ck| matches!(ck, CollectionCategory::List(_)))
+        .unwrap_or(false);
+    let is_bag = language
+        .get_type(cat_name)
+        .and_then(|t| t.collection_kind.as_ref())
+        .map(|ck| matches!(ck, CollectionCategory::Bag(_)))
+        .unwrap_or(false);
 
-    quote! {
-        // Generate collections of size 0 to max_collection_width
-        for size in 0..=self.max_collection_width {
-            if size == 0 {
-                // Empty collection
-                let bag = mettail_runtime::HashBag::new();
-                terms.push(#cat_name::#label(bag));
-            } else if size == 1 {
-                // Single element bags
-                for d in 0..depth {
-                    if let Some(elems) = self.#field_name.get(&d) {
-                        for elem in elems {
-                            let mut bag = mettail_runtime::HashBag::new();
-                            bag.insert(elem.clone());
-                            terms.push(#cat_name::#label(bag));
+    if is_list {
+        quote! {
+            for size in 0..=self.max_collection_width {
+                if size == 0 {
+                    terms.push(#cat_name::#label(Vec::new()));
+                } else if size == 1 {
+                    for d in 0..depth {
+                        if let Some(elems) = self.#field_name.get(&d) {
+                            for elem in elems {
+                                let mut vec = Vec::new();
+                                vec.push(elem.clone());
+                                terms.push(#cat_name::#label(vec));
+                            }
                         }
                     }
-                }
-            } else if size == 2 {
-                // Two-element bags (most common case, optimized)
-                for d1 in 0..depth {
-                    for d2 in 0..depth {
-                        if let Some(elems1) = self.#field_name.get(&d1) {
-                            if let Some(elems2) = self.#field_name.get(&d2) {
-                                for elem1 in elems1 {
-                                    for elem2 in elems2 {
-                                        let mut bag = mettail_runtime::HashBag::new();
-                                        bag.insert(elem1.clone());
-                                        bag.insert(elem2.clone());
-                                        terms.push(#cat_name::#label(bag));
+                } else if size == 2 {
+                    for d1 in 0..depth {
+                        for d2 in 0..depth {
+                            if let Some(elems1) = self.#field_name.get(&d1) {
+                                if let Some(elems2) = self.#field_name.get(&d2) {
+                                    for elem1 in elems1 {
+                                        for elem2 in elems2 {
+                                            let mut vec = Vec::new();
+                                            vec.push(elem1.clone());
+                                            vec.push(elem2.clone());
+                                            terms.push(#cat_name::#label(vec));
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
-            } else if size == 3 {
-                // Three-element bags
-                for d1 in 0..depth {
-                    for d2 in 0..depth {
-                        for d3 in 0..depth {
-                            if let Some(elems1) = self.#field_name.get(&d1) {
-                                if let Some(elems2) = self.#field_name.get(&d2) {
-                                    if let Some(elems3) = self.#field_name.get(&d3) {
-                                        for elem1 in elems1 {
-                                            for elem2 in elems2 {
-                                                for elem3 in elems3 {
-                                                    let mut bag = mettail_runtime::HashBag::new();
-                                                    bag.insert(elem1.clone());
-                                                    bag.insert(elem2.clone());
-                                                    bag.insert(elem3.clone());
-                                                    terms.push(#cat_name::#label(bag));
+                } else if size == 3 {
+                    for d1 in 0..depth {
+                        for d2 in 0..depth {
+                            for d3 in 0..depth {
+                                if let Some(elems1) = self.#field_name.get(&d1) {
+                                    if let Some(elems2) = self.#field_name.get(&d2) {
+                                        if let Some(elems3) = self.#field_name.get(&d3) {
+                                            for elem1 in elems1 {
+                                                for elem2 in elems2 {
+                                                    for elem3 in elems3 {
+                                                        let mut vec = Vec::new();
+                                                        vec.push(elem1.clone());
+                                                        vec.push(elem2.clone());
+                                                        vec.push(elem3.clone());
+                                                        terms.push(#cat_name::#label(vec));
+                                                    }
                                                 }
                                             }
                                         }
@@ -840,9 +846,125 @@ fn generate_pure_collection_case(
                         }
                     }
                 }
-            } else {
-                // For size > 3, we skip to avoid explosion
-                // Users should use random generation for larger collections
+            }
+        }
+    } else if is_bag {
+        quote! {
+            for size in 0..=self.max_collection_width {
+                if size == 0 {
+                    terms.push(#cat_name::#label(mettail_runtime::HashBag::new()));
+                } else if size == 1 {
+                    for d in 0..depth {
+                        if let Some(elems) = self.#field_name.get(&d) {
+                            for elem in elems {
+                                let mut bag = mettail_runtime::HashBag::new();
+                                bag.insert(elem.clone());
+                                terms.push(#cat_name::#label(bag));
+                            }
+                        }
+                    }
+                } else if size == 2 {
+                    for d1 in 0..depth {
+                        for d2 in 0..depth {
+                            if let Some(elems1) = self.#field_name.get(&d1) {
+                                if let Some(elems2) = self.#field_name.get(&d2) {
+                                    for elem1 in elems1 {
+                                        for elem2 in elems2 {
+                                            let mut bag = mettail_runtime::HashBag::new();
+                                            bag.insert(elem1.clone());
+                                            bag.insert(elem2.clone());
+                                            terms.push(#cat_name::#label(bag));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if size == 3 {
+                    for d1 in 0..depth {
+                        for d2 in 0..depth {
+                            for d3 in 0..depth {
+                                if let Some(elems1) = self.#field_name.get(&d1) {
+                                    if let Some(elems2) = self.#field_name.get(&d2) {
+                                        if let Some(elems3) = self.#field_name.get(&d3) {
+                                            for elem1 in elems1 {
+                                                for elem2 in elems2 {
+                                                    for elem3 in elems3 {
+                                                        let mut bag = mettail_runtime::HashBag::new();
+                                                        bag.insert(elem1.clone());
+                                                        bag.insert(elem2.clone());
+                                                        bag.insert(elem3.clone());
+                                                        terms.push(#cat_name::#label(bag));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        quote! {
+            for size in 0..=self.max_collection_width {
+                if size == 0 {
+                    let bag = mettail_runtime::HashBag::new();
+                    terms.push(#cat_name::#label(bag));
+                } else if size == 1 {
+                    for d in 0..depth {
+                        if let Some(elems) = self.#field_name.get(&d) {
+                            for elem in elems {
+                                let mut bag = mettail_runtime::HashBag::new();
+                                bag.insert(elem.clone());
+                                terms.push(#cat_name::#label(bag));
+                            }
+                        }
+                    }
+                } else if size == 2 {
+                    for d1 in 0..depth {
+                        for d2 in 0..depth {
+                            if let Some(elems1) = self.#field_name.get(&d1) {
+                                if let Some(elems2) = self.#field_name.get(&d2) {
+                                    for elem1 in elems1 {
+                                        for elem2 in elems2 {
+                                            let mut bag = mettail_runtime::HashBag::new();
+                                            bag.insert(elem1.clone());
+                                            bag.insert(elem2.clone());
+                                            terms.push(#cat_name::#label(bag));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if size == 3 {
+                    for d1 in 0..depth {
+                        for d2 in 0..depth {
+                            for d3 in 0..depth {
+                                if let Some(elems1) = self.#field_name.get(&d1) {
+                                    if let Some(elems2) = self.#field_name.get(&d2) {
+                                        if let Some(elems3) = self.#field_name.get(&d3) {
+                                            for elem1 in elems1 {
+                                                for elem2 in elems2 {
+                                                    for elem3 in elems3 {
+                                                        let mut bag = mettail_runtime::HashBag::new();
+                                                        bag.insert(elem1.clone());
+                                                        bag.insert(elem2.clone());
+                                                        bag.insert(elem3.clone());
+                                                        terms.push(#cat_name::#label(bag));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

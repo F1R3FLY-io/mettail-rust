@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use syn::{
     ext::IdentExt,
     parse::{Parse, ParseStream},
-    Ident, Result as SynResult, Token, Type,
+    GenericArgument, Ident, Result as SynResult, Token, Type,
 };
 
 use super::grammar::{parse_terms, GrammarRule};
@@ -175,15 +175,73 @@ impl RewriteRule {
     }
 }
 
-/// Export: category name, optionally with native Rust type
-/// types { Elem; Name; ![i32] as Int; }
+/// Delimiter parameters for List/Bag literal syntax (open, close, separator).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollectionDelimiters {
+    pub open: String,
+    pub close: String,
+    pub sep: String,
+}
+
+/// Collection category kind (List or Bag) with optional delimiters.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollectionCategory {
+    List(CollectionDelimiters),
+    Bag(CollectionDelimiters),
+}
+
+impl CollectionCategory {
+    /// Default delimiters for List: `[`, `]`, `,`
+    pub fn list_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: "[".to_string(),
+            close: "]".to_string(),
+            sep: ",".to_string(),
+        }
+    }
+    /// Default delimiters for Bag: `{`, `}`, `,`
+    pub fn bag_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: "{".to_string(),
+            close: "}".to_string(),
+            sep: ",".to_string(),
+        }
+    }
+}
+
+/// Export: category name, optionally with native Rust type or collection kind
+/// types { Elem; Name; ![i32] as Int; List; Bag ["{", "}", ","]; }
 pub struct LangType {
     pub name: Ident,
     /// Optional native Rust type (e.g., `i32` for `![i32] as Int`)
     pub native_type: Option<Type>,
+    /// Optional collection category (List or Bag) with delimiters for literal syntax
+    pub collection_kind: Option<CollectionCategory>,
 }
 
 use super::grammar::GrammarItem;
+
+/// Extract the element type Ident from a collection native type (e.g. Vec<Proc> -> Proc, HashBag<Proc> -> Proc).
+fn element_ident_from_native_type(native_type: &Type) -> Option<Ident> {
+    let path = match native_type {
+        Type::Path(t) => &t.path,
+        _ => return None,
+    };
+    let segment = path.segments.last()?;
+    let args = match &segment.arguments {
+        syn::PathArguments::AngleBracketed(a) => &a.args,
+        _ => return None,
+    };
+    let first = args.first()?;
+    match first {
+        GenericArgument::Type(Type::Path(t)) => t
+            .path
+            .get_ident()
+            .cloned()
+            .or_else(|| t.path.segments.last().map(|s| s.ident.clone())),
+        _ => None,
+    }
+}
 
 impl LanguageDef {
     /// Get a grammar rule by constructor name
@@ -212,6 +270,72 @@ impl LanguageDef {
     /// Get the type definition for a category
     pub fn get_type(&self, category: &Ident) -> Option<&LangType> {
         self.types.iter().find(|t| &t.name == category)
+    }
+
+    /// True if this category has any constructor with a field of type List or Bag (e.g. Proc with ProcList/ProcBag).
+    /// Used to force Debug display for types that contain Vec<Proc> or HashBag<Proc>.
+    pub fn type_has_list_or_bag_fields(&self, category: &Ident) -> bool {
+        self.terms
+            .iter()
+            .filter(|r| &r.category == category)
+            .flat_map(|r| &r.items)
+            .any(|i| {
+                if let GrammarItem::NonTerminal(name) = i {
+                    let s = name.to_string();
+                    s == "List" || s == "Bag"
+                } else {
+                    false
+                }
+            })
+    }
+
+    /// Element type for a collection category (e.g. List -> Proc). First tries the type-based path
+    /// for List/Bag (native_type + collection_kind); otherwise a constructor with a Collection grammar item.
+    pub fn collection_element_type_for_category(&self, category: &Ident) -> Option<Ident> {
+        // Type-based first: when category is a collection type (List/Bag) with native_type, extract element from e.g. Vec<Proc>, HashBag<Proc>
+        let cat_str = category.to_string();
+        if cat_str == "List" || cat_str == "Bag" {
+            if let Some(lang_type) = self.types.iter().find(|t| t.name.to_string() == cat_str) {
+                if lang_type.collection_kind.is_some() {
+                    if let Some(native_type) = lang_type.native_type.as_ref() {
+                        if let Some(elem) = element_ident_from_native_type(native_type) {
+                            return Some(elem);
+                        }
+                    }
+                    // Fallback: native_type parse failed (e.g. different Type shape from macro input); assume element type Proc
+                    return Some(quote::format_ident!("Proc"));
+                }
+            }
+        }
+        // Term-based: constructor with Collection grammar item (e.g. Rhocalc PPar with Collection)
+        self.terms
+            .iter()
+            .find(|r| &r.category == category)
+            .and_then(|r| {
+                r.items.iter().find_map(|i| {
+                    if let GrammarItem::Collection { element_type, .. } = i {
+                        Some(element_type.clone())
+                    } else {
+                        None
+                    }
+                })
+            })
+    }
+
+    /// Type name for the List category (e.g. "List") if present. Used when building Vec RHS without constructor context.
+    pub fn list_type_name(&self) -> Option<&Ident> {
+        self.types
+            .iter()
+            .find(|t| matches!(t.collection_kind.as_ref(), Some(CollectionCategory::List(_))))
+            .map(|t| &t.name)
+    }
+
+    /// Type name for the Bag category (e.g. "Bag") if present.
+    pub fn bag_type_name(&self) -> Option<&Ident> {
+        self.types
+            .iter()
+            .find(|t| matches!(t.collection_kind.as_ref(), Some(CollectionCategory::Bag(_))))
+            .map(|t| &t.name)
     }
 }
 
@@ -322,7 +446,7 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
 
     let mut types = Vec::new();
     while !content.is_empty() {
-        // Check for native type syntax: ![Type] as Name
+        // Check for native type syntax: ![Type] as Name or ![Type] as List(Proc) / Bag(Proc)
         if content.peek(Token![!]) {
             let _ = content.parse::<Token![!]>()?;
 
@@ -333,11 +457,41 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
 
             let _ = content.parse::<Token![as]>()?;
             let name = content.parse::<Ident>()?;
-            types.push(LangType { name, native_type: Some(native_type) });
+            let name_str = name.to_string();
+            // Optional (Param) for collection: ![Vec<Proc>] as List(Proc) or ![HashBag<Proc>] as Bag(Proc)
+            let collection_kind = if (name_str == "List" || name_str == "Bag") && content.peek(syn::token::Paren) {
+                let _content;
+                syn::parenthesized!(_content in content);
+                let _ = _content.parse::<Ident>()?; // element type param, e.g. Proc
+                Some(if name_str == "List" {
+                    CollectionCategory::List(CollectionCategory::list_defaults())
+                } else {
+                    CollectionCategory::Bag(CollectionCategory::bag_defaults())
+                })
+            } else {
+                None
+            };
+            types.push(LangType {
+                name,
+                native_type: Some(native_type),
+                collection_kind,
+            });
         } else {
-            // Regular type: just a name
+            // Regular type: name; List/Bag use default delimiters only (no custom delimiters)
             let name = content.parse::<Ident>()?;
-            types.push(LangType { name, native_type: None });
+            let name_str = name.to_string();
+            let collection_kind = if name_str == "List" {
+                Some(CollectionCategory::List(CollectionCategory::list_defaults()))
+            } else if name_str == "Bag" {
+                Some(CollectionCategory::Bag(CollectionCategory::bag_defaults()))
+            } else {
+                None
+            };
+            types.push(LangType {
+                name,
+                native_type: None,
+                collection_kind,
+            });
         }
 
         if content.peek(Token![;]) {

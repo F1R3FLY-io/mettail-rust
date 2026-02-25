@@ -249,6 +249,35 @@ impl<T: Clone + Hash + Eq> HashBag<T> {
             .iter()
             .flat_map(|(k, &count)| std::iter::repeat_n(k, count))
     }
+
+    /// Multiset union: for each element, count is sum of counts in self and other.
+    pub fn union(&self, other: &Self) -> Self {
+        let mut bag = self.clone();
+        for (elem, count) in other.counts.iter() {
+            for _ in 0..*count {
+                bag.insert(elem.clone());
+            }
+        }
+        bag
+    }
+
+    /// Removes one occurrence of `elem`. Returns a new bag; if `elem` was not present, returns a clone of self.
+    pub fn remove_one(&self, elem: &T) -> Self {
+        let mut bag = self.clone();
+        bag.remove(elem);
+        bag
+    }
+
+    /// Multiset difference: for each element, count is max(0, self.count - other.count).
+    pub fn diff(&self, other: &Self) -> Self {
+        let mut bag = self.clone();
+        for (elem, count) in other.counts.iter() {
+            for _ in 0..*count {
+                bag.remove(elem);
+            }
+        }
+        bag
+    }
 }
 
 // PartialEq: compare by element counts (order-independent)

@@ -16,6 +16,7 @@ fn calculator_spec() -> LanguageSpec {
         name: "Int".to_string(),
         native_type: Some("i32".to_string()),
         is_primary: true,
+        has_var: true,
     }];
     let cat_names = category_names(&types);
 
@@ -580,6 +581,7 @@ mod wfst_lexer_weight_tests {
             name: "Int".to_string(),
             native_type: Some("i32".to_string()),
             is_primary: true,
+            has_var: true,
         }];
 
         LanguageSpec::with_options(

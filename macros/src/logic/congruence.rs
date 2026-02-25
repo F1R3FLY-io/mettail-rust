@@ -1,10 +1,11 @@
 //! Unified congruence rule generation.
 //!
-//! This module handles EXPLICIT congruence rules declared in languages:
+//! This module handles:
+//! - **Explicit** congruence rules declared in languages:
 //!   `if S => T then (PPar {S, ...rest}) => (PPar {T, ...rest})`
-//!
-//! Note: Rewrite congruences are NOT auto-generated. Users explicitly control
-//! where rewrites propagate (e.g., rewrites through PPar but not POutput).
+//! - **Auto-generated** congruence rules (Option A): for every constructor and every
+//!   argument position (simple, collection, binding), a congruence rule is generated
+//!   so that rewrites propagate through all positions, including inside List and Bag literals.
 //!
 //! Equality congruences ARE auto-generated (in equations.rs), since
 //! `eq(x,y) => eq(f(x), f(y))` for all constructors is always sound.
@@ -16,11 +17,19 @@ use super::common::{
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{LanguageDef, RewriteRule};
 use crate::ast::pattern::{Pattern, PatternTerm};
-use crate::ast::types::TypeExpr;
+use crate::ast::types::{CollectionType, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
 use syn::Ident;
+
+/// True if this category is List or Bag (collection type); no congruence rules are generated for these.
+fn is_collection_category(language: &LanguageDef, category: &Ident) -> bool {
+    language
+        .get_type(category)
+        .and_then(|t| t.collection_kind.as_ref())
+        .is_some()
+}
 
 /// Entry for a simple congruence rule to be consolidated.
 struct SimpleCongruenceEntry {
@@ -65,9 +74,12 @@ pub fn generate_all_explicit_congruences(
         }
     }
 
-    // Generate consolidated rules for each simple congruence group
+    // Generate consolidated rules for each simple congruence group (skip List/Bag source categories)
     for ((src_str, fld_str), entries) in &simple_groups {
         let source_cat = format_ident!("{}", src_str);
+        if is_collection_category(language, &source_cat) {
+            continue;
+        }
         let field_cat = format_ident!("{}", fld_str);
         if let Some(rule) =
             generate_consolidated_simple_congruence(&source_cat, &field_cat, entries)
@@ -75,6 +87,81 @@ pub fn generate_all_explicit_congruences(
             rules.push(rule);
         }
     }
+
+    rules
+}
+
+/// Generate congruence rules for every constructor's collection and binding positions (Option A).
+///
+/// For each constructor: collection fields get collection congruence, binder fields get
+/// binding congruence. For List/Bag categories (from types with collection_kind), also
+/// generates congruence for the literal variant (ListLit/BagLit).
+///
+/// Simple (non-collection, non-binding) field congruence is left to explicit user rules
+/// to avoid interaction with the consolidated simple-congruence generator.
+pub fn generate_auto_congruence_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> Vec<TokenStream> {
+    let mut rules = Vec::new();
+
+    for rule in &language.terms {
+        let category = &rule.category;
+        if !in_cat_filter(category, cat_filter) {
+            continue;
+        }
+        // No congruence for List/Bag categories (only Proc inside matters)
+        if is_collection_category(language, category) {
+            continue;
+        }
+        let constructor = &rule.label;
+        let n_fields = count_nonterminals(rule);
+        // Only generate single-field collection congruence when constructor has exactly one collection
+        let only_one_collection = n_fields == 1
+            && rule.items.iter().filter(|i| matches!(i, GrammarItem::Collection { .. })).count() == 1;
+        let mut field_idx = 0;
+        for item in &rule.items {
+            match item {
+                GrammarItem::NonTerminal(_) => {
+                    field_idx += 1;
+                },
+                GrammarItem::Collection {
+                    element_type,
+                    coll_type,
+                    ..
+                } => {
+                    if only_one_collection {
+                        if let Some(rule_ts) = generate_collection_congruence(
+                            category,
+                            constructor,
+                            element_type,
+                            false,
+                            coll_type,
+                            language,
+                        ) {
+                            rules.push(rule_ts);
+                        }
+                    }
+                    field_idx += 1;
+                },
+                GrammarItem::Binder { .. } => {
+                    let body_category = get_binder_body_category(rule, field_idx)
+                        .unwrap_or_else(|| rule.category.clone());
+                    if let Some(rule_ts) =
+                        generate_binding_congruence(category, constructor, field_idx, &body_category, language)
+                    {
+                        rules.push(rule_ts);
+                    }
+                    field_idx += 1;
+                },
+                GrammarItem::Terminal(_) => {},
+            }
+        }
+    }
+
+    // No congruence for List/Bag literal constructors (ListLit, BagLit).
+    // We only need rewrites for Proc (e.g. ProcList/ProcBag congruence); rewriting
+    // inside list/bag literals element-by-element is not required.
 
     rules
 }
@@ -98,11 +185,13 @@ fn classify_and_generate_congruence(
             constructor,
             element_category,
             has_rest,
+            coll_type,
         } => generate_collection_congruence(
             &category,
             &constructor,
             &element_category,
             has_rest,
+            &coll_type,
             language,
         ),
         RewriteContext::Binding {
@@ -146,12 +235,13 @@ fn classify_and_generate_congruence(
 /// Context where a rewrite variable appears
 enum RewriteContext {
     /// Variable appears in a collection element position
-    /// e.g., `(PPar {S, ...rest})`
+    /// e.g., `(PPar {S, ...rest})` or `(ListLit [..., S, ...])`
     Collection {
         category: Ident,
         constructor: Ident,
         element_category: Ident,
         has_rest: bool,
+        coll_type: CollectionType,
     },
     /// Variable appears in a binder body position
     /// e.g., `(PNew x S)`
@@ -220,7 +310,11 @@ fn find_rewrite_context_in_term(
                         }
                         field_idx += 1;
                     },
-                    GrammarItem::Collection { element_type, .. } => {
+                    GrammarItem::Collection {
+                        element_type,
+                        coll_type,
+                        ..
+                    } => {
                         if let Some(Pattern::Collection { elements, rest, .. }) =
                             args.get(field_idx)
                         {
@@ -233,6 +327,7 @@ fn find_rewrite_context_in_term(
                                             constructor: constructor.clone(),
                                             element_category: element_type.clone(),
                                             has_rest: rest.is_some(),
+                                            coll_type: coll_type.clone(),
                                         });
                                     }
                                 }
@@ -304,25 +399,14 @@ fn pattern_contains_var(pattern: &Pattern, var: &Ident) -> bool {
 /// Generate collection congruence: if element rewrites, collection rewrites
 ///
 /// Example: `if S => T then (PPar {S, ...rest}) => (PPar {T, ...rest})`
-/// Generates:
-/// ```text
-/// rw_proc(parent, result) <--
-///     proc(parent),
-///     if let Proc::PPar(ref bag) = parent,
-///     for (elem, _count) in bag.iter(),
-///     rw_proc(elem.clone(), elem_rewritten),
-///     let result = Proc::PPar({
-///         let mut new_bag = bag.clone();
-///         new_bag.remove(elem);
-///         Proc::insert_into_ppar(&mut new_bag, elem_rewritten);
-///         new_bag
-///     });
-/// ```
+/// For Vec/List: index-based iteration and replace-at-index rebuild.
+/// For HashBag/HashSet: remove + insert_into_* rebuild.
 fn generate_collection_congruence(
     category: &Ident,
     constructor: &Ident,
     element_category: &Ident,
     _has_rest: bool,
+    coll_type: &CollectionType,
     _language: &LanguageDef,
 ) -> Option<TokenStream> {
     let rn = relation_names(category);
@@ -330,21 +414,64 @@ fn generate_collection_congruence(
     let rw_rel = &rn.rw_rel;
     let elem_rn = relation_names(element_category);
     let elem_rw_rel = &elem_rn.rw_rel;
-    let insert_helper = format_ident!("insert_into_{}", constructor.to_string().to_lowercase());
 
-    Some(quote! {
-        #rw_rel(parent.clone(), result) <--
-            #cat_lower(parent),
-            if let #category::#constructor(ref bag) = parent,
-            for (elem, _count) in bag.iter(),
-            #elem_rw_rel(elem.clone(), elem_rewritten),
-            let result = #category::#constructor({
-                let mut new_bag = bag.clone();
-                new_bag.remove(elem);
-                #category::#insert_helper(&mut new_bag, elem_rewritten.clone());
-                new_bag
-            });
-    })
+    match coll_type {
+        CollectionType::Vec => {
+            // List = Vec: index-based iteration
+            let (match_binding, iter_expr, rebuild) = (
+                quote! { ref list },
+                quote! { list.iter().enumerate() },
+                quote! { {
+                    let mut v = list.clone();
+                    v[idx] = elem_rewritten.clone();
+                    v
+                } },
+            );
+            Some(quote! {
+                #rw_rel(parent.clone(), result) <--
+                    #cat_lower(parent),
+                    if let #category::#constructor(#match_binding) = parent,
+                    for (idx, elem) in #iter_expr,
+                    #elem_rw_rel(elem.clone(), elem_rewritten),
+                    let result = #category::#constructor(#rebuild);
+            })
+        },
+        CollectionType::HashBag | CollectionType::HashSet => {
+            let is_bag_cat = category.to_string() == "Bag";
+            if is_bag_cat {
+                // Bag = HashBag: clone, remove one, insert rewritten
+                Some(quote! {
+                    #rw_rel(parent.clone(), result) <--
+                        #cat_lower(parent),
+                        if let #category::#constructor(ref bag) = parent,
+                        for (elem, _count) in bag.iter(),
+                        #elem_rw_rel(elem.clone(), elem_rewritten),
+                        let result = #category::#constructor({
+                            let mut new_bag = bag.clone();
+                            new_bag.remove(elem);
+                            new_bag.insert(elem_rewritten.clone());
+                            new_bag
+                        });
+                })
+            } else {
+                let insert_helper =
+                    format_ident!("insert_into_{}", constructor.to_string().to_lowercase());
+                Some(quote! {
+                    #rw_rel(parent.clone(), result) <--
+                        #cat_lower(parent),
+                        if let #category::#constructor(ref bag) = parent,
+                        for (elem, _count) in bag.iter(),
+                        #elem_rw_rel(elem.clone(), elem_rewritten),
+                        let result = #category::#constructor({
+                            let mut new_bag = bag.clone();
+                            new_bag.remove(elem);
+                            #category::#insert_helper(&mut new_bag, elem_rewritten.clone());
+                            new_bag
+                        });
+                })
+            }
+        },
+    }
 }
 
 /// Generate binding congruence: if body under binder rewrites, term rewrites

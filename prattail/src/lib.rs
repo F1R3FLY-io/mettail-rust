@@ -229,6 +229,20 @@ pub struct CategorySpec {
     pub native_type: Option<String>,
     /// Whether this is the primary (first-declared) category.
     pub is_primary: bool,
+    /// Whether this category has a variable variant (e.g. IVar, BVar).
+    /// False for collection-only categories (List, Bag) which have no Var variant.
+    pub has_var: bool,
+}
+
+impl Default for CategorySpec {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            native_type: None,
+            is_primary: false,
+            has_var: true,
+        }
+    }
 }
 
 /// A grammar rule specification.

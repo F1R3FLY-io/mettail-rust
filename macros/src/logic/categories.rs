@@ -239,7 +239,12 @@ fn generate_collection_projection_population(
 
         // Check if this constructor has a collection field
         for item in &constructor.items {
-            if let GrammarItem::Collection { element_type, .. } = item {
+            if let GrammarItem::Collection {
+                element_type,
+                coll_type,
+                ..
+            } = item
+            {
                 // Found a collection field - generate projection rule
                 let parent_cat = &constructor.category;
                 let parent_cat_lower = format_ident!("{}", parent_cat.to_string().to_lowercase());
@@ -250,11 +255,22 @@ fn generate_collection_projection_population(
                 let rel_name =
                     format_ident!("{}_contains", constructor_label.to_string().to_lowercase());
 
+                let (binding, iter_clause) = match coll_type {
+                    crate::ast::types::CollectionType::Vec => {
+                        (quote! { ref coll_field }, quote! { for elem in coll_field.iter(); })
+                    },
+                    crate::ast::types::CollectionType::HashBag
+                    | crate::ast::types::CollectionType::HashSet => (
+                        quote! { ref coll_field },
+                        quote! { for (elem, _count) in coll_field.iter(); },
+                    ),
+                };
+
                 rules.push(quote! {
                     #rel_name(parent.clone(), elem.clone()) <--
                         #parent_cat_lower(parent),
-                        if let #parent_cat::#constructor_label(ref bag_field) = parent,
-                        for (elem, _count) in bag_field.iter();
+                        if let #parent_cat::#constructor_label(#binding) = parent,
+                        #iter_clause
                 });
 
                 // Only handle one collection per constructor for now

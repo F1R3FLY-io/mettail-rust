@@ -1333,9 +1333,41 @@ impl Pattern {
         bindings: &HashMap<String, VariableBinding>,
         language: &LanguageDef,
     ) -> TokenStream {
-        let elem_exprs: Vec<_> = elements
+        let use_vec = matches!(coll_type, Some(CollectionType::Vec));
+        // When building List (Vec) or Bag, wrap List/Bag elements in ProcList/ProcBag so push/insert get Proc.
+        let elem_cat_opt = if use_vec {
+            language
+                .list_type_name()
+                .and_then(|name| language.collection_element_type_for_category(name))
+                .or_else(|| language.list_type_name().map(|_| quote::format_ident!("Proc")))
+        } else {
+            language
+                .bag_type_name()
+                .and_then(|name| language.collection_element_type_for_category(name))
+                .or_else(|| language.bag_type_name().map(|_| quote::format_ident!("Proc")))
+        };
+        // When building List (Vec<Proc>) or Bag (HashBag<Proc>), wrap any List/Bag element in ProcList/ProcBag so push/insert get Proc.
+        let elem_cat = elem_cat_opt.unwrap_or_else(|| quote::format_ident!("Proc"));
+        let wrapped_exprs: Vec<_> = elements
             .iter()
-            .map(|e| e.to_ascent_rhs(bindings, language))
+            .map(|e| {
+                let expr = e.to_ascent_rhs(bindings, language);
+                let cat_str = e
+                    .category(language)
+                    .map(|c| c.to_string())
+                    .or_else(|| {
+                        if let Pattern::Term(PatternTerm::Var(v)) = e {
+                            bindings.get(&v.to_string()).map(|b| b.lang_type.to_string())
+                        } else {
+                            None
+                        }
+                    });
+                match cat_str.as_deref() {
+                    Some("List") => quote! { #elem_cat::ProcList(Box::new(#expr)) },
+                    Some("Bag") => quote! { #elem_cat::ProcBag(Box::new(#expr)) },
+                    _ => expr,
+                }
+            })
             .collect();
 
         // Use coll_type if provided, default to HashBag
@@ -1344,9 +1376,6 @@ impl Pattern {
             Some(CollectionType::HashSet) => quote! { std::collections::HashSet },
             Some(CollectionType::HashBag) | None => quote! { mettail_runtime::HashBag },
         };
-
-        // Generate insert/push based on collection type
-        let use_vec = matches!(coll_type, Some(CollectionType::Vec));
 
         if let Some(rest_var) = rest {
             let rest_name = rest_var.to_string();
@@ -1360,7 +1389,7 @@ impl Pattern {
                 quote! {
                     {
                         let mut coll = (#rest_binding).clone();
-                        #(coll.push(#elem_exprs);)*
+                        #(coll.push(#wrapped_exprs);)*
                         coll
                     }
                 }
@@ -1368,7 +1397,7 @@ impl Pattern {
                 quote! {
                     {
                         let mut bag = (#rest_binding).clone();
-                        #(bag.insert(#elem_exprs);)*
+                        #(bag.insert(#wrapped_exprs);)*
                         bag
                     }
                 }
@@ -1377,7 +1406,7 @@ impl Pattern {
             quote! {
                 {
                     let mut coll = Vec::new();
-                    #(coll.push(#elem_exprs);)*
+                    #(coll.push(#wrapped_exprs);)*
                     coll
                 }
             }
@@ -1385,7 +1414,7 @@ impl Pattern {
             quote! {
                 {
                     let mut bag = #coll_type_tok::new();
-                    #(bag.insert(#elem_exprs);)*
+                    #(bag.insert(#wrapped_exprs);)*
                     bag
                 }
             }
@@ -1403,10 +1432,46 @@ fn generate_collection_rhs_with_constructor(
     bindings: &HashMap<String, VariableBinding>,
     language: &LanguageDef,
 ) -> TokenStream {
-    let elem_exprs: Vec<_> = elements
-        .iter()
-        .map(|e| e.to_ascent_rhs(bindings, language))
-        .collect();
+    // When collection element type is Proc, wrap any List/Bag element in ProcList/ProcBag so push/insert get Proc.
+    let elem_cat_opt = language
+        .collection_element_type_for_category(category)
+        .or_else(|| {
+            let cat_str = category.to_string();
+            if cat_str == "List" || cat_str == "Bag" {
+                Some(quote::format_ident!("Proc"))
+            } else {
+                None
+            }
+        });
+    let wrapped_exprs: Vec<_> = match elem_cat_opt {
+        None => elements
+            .iter()
+            .map(|e| e.to_ascent_rhs(bindings, language))
+            .collect(),
+        Some(elem_cat) => {
+            elements
+                .iter()
+                .map(|e| {
+                    let expr = e.to_ascent_rhs(bindings, language);
+                    let cat_str = e
+                        .category(language)
+                        .map(|c| c.to_string())
+                        .or_else(|| {
+                            if let Pattern::Term(PatternTerm::Var(v)) = e {
+                                bindings.get(&v.to_string()).map(|b| b.lang_type.to_string())
+                            } else {
+                                None
+                            }
+                        });
+                    match cat_str.as_deref() {
+                        Some("List") => quote! { #elem_cat::ProcList(Box::new(#expr)) },
+                        Some("Bag") => quote! { #elem_cat::ProcBag(Box::new(#expr)) },
+                        _ => expr,
+                    }
+                })
+                .collect()
+        }
+    };
 
     // Use coll_type if provided, default to HashBag
     let coll_type_tok = match coll_type {
@@ -1435,7 +1500,7 @@ fn generate_collection_rhs_with_constructor(
             quote! {
                 {
                     let mut coll = (#rest_binding).clone();
-                    #(coll.push(#elem_exprs);)*
+                    #(coll.push(#wrapped_exprs);)*
                     coll
                 }
             }
@@ -1444,7 +1509,7 @@ fn generate_collection_rhs_with_constructor(
             quote! {
                 {
                     let mut bag = (#rest_binding).clone();
-                    #(#category::#helper(&mut bag, #elem_exprs);)*
+                    #(#category::#helper(&mut bag, #wrapped_exprs);)*
                     bag
                 }
             }
@@ -1452,7 +1517,7 @@ fn generate_collection_rhs_with_constructor(
             quote! {
                 {
                     let mut bag = (#rest_binding).clone();
-                    #(bag.insert(#elem_exprs);)*
+                    #(bag.insert(#wrapped_exprs);)*
                     bag
                 }
             }
@@ -1461,7 +1526,7 @@ fn generate_collection_rhs_with_constructor(
         quote! {
             {
                 let mut coll = Vec::new();
-                #(coll.push(#elem_exprs);)*
+                #(coll.push(#wrapped_exprs);)*
                 coll
             }
         }
@@ -1470,7 +1535,7 @@ fn generate_collection_rhs_with_constructor(
         quote! {
             {
                 let mut bag = #coll_type_tok::new();
-                #(#category::#helper(&mut bag, #elem_exprs);)*
+                #(#category::#helper(&mut bag, #wrapped_exprs);)*
                 bag
             }
         }
@@ -1478,7 +1543,7 @@ fn generate_collection_rhs_with_constructor(
         quote! {
             {
                 let mut bag = #coll_type_tok::new();
-                #(bag.insert(#elem_exprs);)*
+                #(bag.insert(#wrapped_exprs);)*
                 bag
             }
         }

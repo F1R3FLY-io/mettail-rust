@@ -219,6 +219,7 @@ pub fn minimal_spec() -> LanguageSpec {
             name: "Term".to_string(),
             native_type: None,
             is_primary: true,
+            has_var: true,
         }],
         rules: vec![
             var_rule("TVar", "Term"),
@@ -256,16 +257,19 @@ pub fn small_spec() -> LanguageSpec {
                 name: "Int".to_string(),
                 native_type: Some("i64".to_string()),
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Bool".to_string(),
                 native_type: Some("bool".to_string()),
                 is_primary: false,
+                has_var: true,
             },
             CategorySpec {
                 name: "Str".to_string(),
                 native_type: Some("String".to_string()),
                 is_primary: false,
+                has_var: true,
             },
         ],
         rules: vec![
@@ -301,11 +305,13 @@ pub fn medium_spec() -> LanguageSpec {
                 name: "Proc".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Name".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             },
         ],
         rules: vec![
@@ -344,16 +350,19 @@ pub fn complex_spec() -> LanguageSpec {
                 name: "Proc".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             },
             CategorySpec {
                 name: "Name".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             },
             CategorySpec {
                 name: "Int".to_string(),
                 native_type: Some("i64".to_string()),
                 is_primary: false,
+                has_var: true,
             },
         ],
         rules: vec![
@@ -431,6 +440,7 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
             name: "Expr".to_string(),
             native_type: Some("i64".to_string()),
             is_primary: true,
+            has_var: true,
         }],
         rules,
         beam_width: BeamWidthConfig::Disabled,

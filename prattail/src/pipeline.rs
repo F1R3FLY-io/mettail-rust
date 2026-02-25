@@ -59,6 +59,8 @@ pub(crate) struct CategoryInfo {
     pub(crate) name: String,
     pub(crate) native_type: Option<String>,
     pub(crate) is_primary: bool,
+    /// Whether this category has a variable variant (e.g. IVar). False for List/Bag.
+    pub(crate) has_var: bool,
 }
 
 /// All data needed by the parser pipeline. Send+Sync.
@@ -220,6 +222,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
             name: t.name.clone(),
             native_type: t.native_type.clone(),
             is_primary: i == 0,
+            has_var: t.has_var,
         })
         .collect();
 
@@ -649,6 +652,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         let tramp_config = TrampolineConfig {
             category: cat.name.clone(),
             is_primary: cat.is_primary,
+            has_var: cat.has_var,
             has_infix,
             has_postfix,
             has_mixfix,
@@ -762,6 +766,7 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         let tramp_config = TrampolineConfig {
             category: cat.name.clone(),
             is_primary: cat.is_primary,
+            has_var: cat.has_var,
             has_infix: !bundle.bp_table.operators_for_category(&cat.name).is_empty(),
             has_postfix: !bundle
                 .bp_table

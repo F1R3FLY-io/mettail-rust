@@ -23,7 +23,7 @@
 #![allow(clippy::cmp_owned)]
 
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
-use crate::ast::language::LanguageDef;
+use crate::ast::language::{CollectionCategory, LanguageDef};
 use crate::ast::types::{CollectionType, TypeExpr};
 use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
@@ -51,7 +51,7 @@ pub(crate) enum VariantKind {
     /// Regular constructor with fields: Add(Box<Int>, Box<Int>)
     Regular { label: Ident, fields: Vec<FieldInfo> },
 
-    /// Collection constructor: PPar(HashBag<Proc>)
+    /// Collection constructor: ListLit(Vec<Proc>), BagLit(HashBag<Proc>)
     Collection {
         label: Ident,
         element_cat: Ident,
@@ -136,7 +136,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
 
             // Generate match arms for each variant
             let match_arms: Vec<TokenStream> = variants.iter().map(|variant| {
-                generate_subst_by_name_arm(cat_name, variant, repl_cat_name)
+                generate_subst_by_name_arm(cat_name, variant, repl_cat_name, language)
             }).collect();
 
             quote! {
@@ -296,33 +296,35 @@ fn generate_unify_freevars_arm(
             }
         },
 
-        VariantKind::Collection { label, coll_type, .. } => match coll_type {
-            CollectionType::HashBag => {
-                quote! {
-                    #category::#label(bag) => {
-                        let mut new_bag = mettail_runtime::HashBag::new();
-                        for (elem, count) in bag.iter() {
-                            let u = elem.unify_freevars_impl();
-                            for _ in 0..count { new_bag.insert(u.clone()); }
+        VariantKind::Collection { label, coll_type, .. } => {
+            match coll_type {
+                CollectionType::HashBag => {
+                    quote! {
+                        #category::#label(bag) => {
+                            let mut new_bag = mettail_runtime::HashBag::new();
+                            for (elem, count) in bag.iter() {
+                                let u = elem.unify_freevars_impl();
+                                for _ in 0..count { new_bag.insert(u.clone()); }
+                            }
+                            #category::#label(new_bag)
                         }
-                        #category::#label(new_bag)
                     }
-                }
-            },
-            CollectionType::HashSet => {
-                quote! {
-                    #category::#label(elems) => {
-                        #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect())
+                },
+                CollectionType::HashSet => {
+                    quote! {
+                        #category::#label(elems) => {
+                            #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect())
+                        }
                     }
-                }
-            },
-            CollectionType::Vec => {
-                quote! {
-                    #category::#label(elems) => {
-                        #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect())
+                },
+                CollectionType::Vec => {
+                    quote! {
+                        #category::#label(elems) => {
+                            #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect::<Vec<_>>())
+                        }
                     }
-                }
-            },
+                },
+            }
         },
 
         VariantKind::Binder { label, pre_scope_fields, .. } => {
@@ -412,6 +414,7 @@ fn generate_subst_by_name_arm(
     category: &Ident,
     variant: &VariantKind,
     repl_cat: &Ident,
+    _language: &LanguageDef,
 ) -> TokenStream {
     match variant {
         VariantKind::Var { label } => {
@@ -491,7 +494,6 @@ fn generate_subst_by_name_arm(
 
         VariantKind::Collection { label, coll_type, .. } => {
             let method = format_ident!("subst_by_name_{}", repl_cat.to_string().to_lowercase());
-
             match coll_type {
                 CollectionType::HashBag => {
                     quote! {
@@ -515,7 +517,7 @@ fn generate_subst_by_name_arm(
                 CollectionType::Vec => {
                     quote! {
                         #category::#label(elems) => {
-                            #category::#label(elems.iter().map(|e| e.#method(env_map)).collect())
+                            #category::#label(elems.iter().map(|e| e.#method(env_map)).collect::<Vec<_>>())
                         }
                     }
                 },
@@ -697,30 +699,59 @@ pub(crate) fn collect_category_variants(
         variants.push(rule_to_variant_kind(rule, language));
     }
 
-    // Auto-generated Var variant (if no explicit Var rule)
-    let has_var = variants
-        .iter()
-        .any(|v| matches!(v, VariantKind::Var { .. }));
-    if !has_var {
-        variants.push(VariantKind::Var { label: generate_var_label(category) });
+    let lang_type = language.get_type(category);
+    let is_collection_category = lang_type.and_then(|t| t.collection_kind.as_ref()).is_some();
+
+    // List/Bag: add literal variant (ListLit/BagLit) and skip Var + Lam/Apply
+    if let Some(lang_type) = lang_type {
+        if let Some(ref collection_kind) = lang_type.collection_kind {
+            let elem_cat = language
+                .types
+                .first()
+                .map(|t| t.name.clone())
+                .unwrap_or_else(|| format_ident!("Proc"));
+            let (label, coll_type) = match collection_kind {
+                CollectionCategory::List(_) => (format_ident!("ListLit"), CollectionType::Vec),
+                CollectionCategory::Bag(_) => (format_ident!("BagLit"), CollectionType::HashBag),
+            };
+            variants.push(VariantKind::Collection {
+                label,
+                element_cat: elem_cat,
+                coll_type,
+            });
+        }
     }
 
-    // Auto-generated Literal variant (for native types)
-    if let Some(lang_type) = language.get_type(category) {
-        if let Some(native_type) = &lang_type.native_type {
+    // Auto-generated Var variant (if no explicit Var rule and not a collection category)
+    if !is_collection_category {
+        let has_var = variants
+            .iter()
+            .any(|v| matches!(v, VariantKind::Var { .. }));
+        if !has_var {
+            variants.push(VariantKind::Var { label: generate_var_label(category) });
+        }
+    }
+
+    // Auto-generated Literal variant (for native types).
+    // Skip for collection categories — they already have VariantKind::Collection (ListLit/BagLit) above.
+    if let Some(lang_type) = lang_type {
+        if lang_type.native_type.is_some() && !is_collection_category {
             let has_lit = variants
                 .iter()
                 .any(|v| matches!(v, VariantKind::Literal { .. }));
             if !has_lit {
-                variants.push(VariantKind::Literal {
-                    label: generate_literal_label(native_type),
-                });
+                if let Some(lit_label) = crate::logic::common::literal_label_for(language, category) {
+                    variants.push(VariantKind::Literal {
+                        label: lit_label,
+                    });
+                }
             }
         }
     }
 
-    // Auto-generated lambda/Apply variants for every category (including native, e.g. Int/Bool/Str)
-    for domain_lang_type in &language.types {
+    // Auto-generated lambda/Apply variants for every category (skip for collection categories)
+    if !is_collection_category {
+        for domain_lang_type in &language.types {
         let domain_name = &domain_lang_type.name;
 
         // Single-binder lambda: Lam{Domain}
@@ -780,6 +811,7 @@ pub(crate) fn collect_category_variants(
                 },
             ],
         });
+        }
     }
 
     variants
@@ -1223,9 +1255,11 @@ fn generate_subst_arm(category: &Ident, variant: &VariantKind, repl_cat: &Ident)
             generate_regular_subst_arm(category, label, fields, repl_cat)
         },
 
-        VariantKind::Collection { label, element_cat, coll_type } => {
-            generate_collection_subst_arm(category, label, element_cat, coll_type, repl_cat)
-        },
+        VariantKind::Collection {
+            label,
+            element_cat,
+            coll_type,
+        } => generate_collection_subst_arm(category, label, element_cat, coll_type, repl_cat),
 
         VariantKind::Binder {
             label,
@@ -1366,8 +1400,8 @@ fn generate_collection_subst_arm(
         },
         CollectionType::Vec => {
             quote! {
-                #category::#label(vec) => {
-                    #category::#label(vec.iter().map(|elem| elem.#method(vars, repls)).collect())
+                #category::#label(list) => {
+                    #category::#label(list.iter().map(|elem| elem.#method(vars, repls)).collect::<Vec<_>>())
                 }
             }
         },

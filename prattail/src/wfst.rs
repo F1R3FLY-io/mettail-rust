@@ -1134,6 +1134,7 @@ mod tests {
                 name: "Expr".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             }],
             vec![RuleSpecInput {
                 label: "Lit".to_string(),

@@ -68,7 +68,8 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
             generate_var_inference_arm(rule, &cat_names, language)
         }).collect();
 
-        // Add arm for Var variant - if variable name matches, return this category
+        // Add arm for Var variant - skip for collection categories (List, Bag have no LVar/BVar)
+        if export.collection_kind.is_none() {
         let var_label = generate_var_label(cat_name);
         match_arms.push(quote! {
             #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
@@ -78,6 +79,7 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
                 None
             }
         });
+        }
 
         // Add wildcard arm for other variants (lambdas, etc.)
         match_arms.push(quote! {
@@ -89,7 +91,9 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
             generate_var_type_inference_arm(rule, &cat_names)
         }).collect();
 
-        // Add arm for Var variant - returns base type
+        // Add arm for Var variant - skip for collection categories
+        if export.collection_kind.is_none() {
+        let var_label = generate_var_label(cat_name);
         type_match_arms.push(quote! {
             #cat_name::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(ref fv))) => {
                 if fv.pretty_name.as_deref() == Some(var_name) {
@@ -98,8 +102,11 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
                 None
             }
         });
+        }
 
-        // Generate arms for Apply/Lam variants for all domains (including native, e.g. Int/Bool/Str)
+        // Generate arms for Apply/Lam variants for all domains — skip for collection categories (List, Bag)
+        if export.collection_kind.is_none() {
+        let var_label = generate_var_label(cat_name);
         let domain_cats: Vec<_> = cat_names
             .iter()
             .filter(|c| language.types.iter().any(|t| t.name.to_string() == c.to_string()))
@@ -179,6 +186,7 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
                     None
                 }
             });
+        }
         }
 
         // Add wildcard arm for other variants

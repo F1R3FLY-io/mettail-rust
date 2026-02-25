@@ -611,6 +611,7 @@ mod tests {
                 name: "Expr".to_string(),
                 native_type: Some("i64".to_string()),
                 is_primary: true,
+                has_var: true,
             }],
             rules: vec![
                 RuleSpec::classified("NumLit", "Expr", vec![], &cat_names),

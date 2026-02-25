@@ -482,6 +482,95 @@ mod tests {
         assert!(language.terms[1].term_context.is_some());
     }
 
+    #[test]
+    fn parse_term_context_list_int() {
+        // Rule with two params: List and Int (e.g. DeleteList)
+        let input = quote! {
+            name: TestListInt,
+            types { List Int }
+            terms {
+                DeleteList . a:List, i:Int |- "delete" "(" a "," i ")" : List ;
+            }
+        };
+
+        let result = parse2::<LanguageDef>(input);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+
+        let language = result.unwrap();
+        let rule = &language.terms[0];
+        assert_eq!(rule.label.to_string(), "DeleteList");
+        let ctx = rule.term_context.as_ref().expect("term_context");
+        assert_eq!(ctx.len(), 2);
+
+        match &ctx[0] {
+            TermParam::Simple { name, ty } => {
+                assert_eq!(name.to_string(), "a");
+                assert!(matches!(ty, TypeExpr::Base(id) if id.to_string() == "List"));
+            },
+            _ => panic!("Expected Simple param a:List"),
+        }
+        match &ctx[1] {
+            TermParam::Simple { name, ty } => {
+                assert_eq!(name.to_string(), "i");
+                assert!(matches!(ty, TypeExpr::Base(id) if id.to_string() == "Int"),
+                    "Second param should be Int, got {:?}", ctx[1]);
+            },
+            _ => panic!("Expected Simple param i:Int"),
+        }
+
+        // Also verify items (from convert_term_context_to_items) match
+        assert_eq!(rule.items.len(), 2);
+        if let (GrammarItem::NonTerminal(t0), GrammarItem::NonTerminal(t1)) =
+            (&rule.items[0], &rule.items[1])
+        {
+            assert_eq!(t0.to_string(), "List");
+            assert_eq!(t1.to_string(), "Int");
+        } else {
+            panic!("Expected items [List, Int], got {:?}", rule.items);
+        }
+    }
+
+    #[test]
+    fn parse_two_list_rules_second_has_int_param() {
+        // Two List rules: ConcatList (List, List) then DeleteList (List, Int)
+        let input = quote! {
+            name: TestTwoList,
+            types { List Int }
+            terms {
+                ConcatList . a:List, b:List |- "concat" "(" a "," b ")" : List ;
+                DeleteList . a:List, i:Int |- "delete" "(" a "," i ")" : List ;
+            }
+        };
+
+        let result = parse2::<LanguageDef>(input);
+        assert!(result.is_ok(), "Parse failed: {:?}", result.err());
+
+        let language = result.unwrap();
+        assert_eq!(language.terms.len(), 2);
+
+        let concat = &language.terms[0];
+        assert_eq!(concat.label.to_string(), "ConcatList");
+        let ctx0 = concat.term_context.as_ref().unwrap();
+        assert_eq!(ctx0.len(), 2);
+        assert!(matches!(&ctx0[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id.to_string() == "List"));
+
+        let delete = &language.terms[1];
+        assert_eq!(delete.label.to_string(), "DeleteList");
+        let ctx1 = delete.term_context.as_ref().unwrap();
+        assert_eq!(ctx1.len(), 2);
+        assert!(matches!(&ctx1[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id.to_string() == "Int"),
+            "DeleteList second param should be Int, got {:?}", ctx1[1]);
+        assert_eq!(delete.items.len(), 2);
+        if let (GrammarItem::NonTerminal(t0), GrammarItem::NonTerminal(t1)) =
+            (&delete.items[0], &delete.items[1])
+        {
+            assert_eq!(t0.to_string(), "List");
+            assert_eq!(t1.to_string(), "Int");
+        } else {
+            panic!("DeleteList items should be [List, Int], got {:?}", delete.items);
+        }
+    }
+
     // =========================================================================
     // Syntax Pattern Token Tests
     // =========================================================================

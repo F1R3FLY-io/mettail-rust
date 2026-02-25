@@ -54,7 +54,7 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         });
     }
 
-    // Fold relations
+    // Fold relations (for collection categories, second param is payload type)
     for lang_type in &language.types {
         let cat = &lang_type.name;
         let has_fold = language
@@ -64,9 +64,13 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         if has_fold {
             let fold_rel = format_ident!("fold_{}", cat.to_string().to_lowercase());
             let ty = cat.to_string();
+            let second_ty = match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
+                (Some(_), Some(payload_ty)) => crate::gen::native::native_type_to_string(payload_ty),
+                _ => ty.clone(),
+            };
             out.push(RelationForExtraction {
                 name: fold_rel,
-                param_types: vec![ty.clone(), ty],
+                param_types: vec![ty.clone(), second_ty],
             });
         }
     }
@@ -138,14 +142,20 @@ pub fn generate_relations(language: &LanguageDef) -> TokenStream {
             relation #rw_rel(#cat, #cat);
         });
 
-        // Fold (big-step eval) relation, only if this category has fold-mode constructors
+        // Fold (big-step eval) relation, only if this category has fold-mode constructors.
+        // For collection categories (List, Bag), second param is the payload type (Vec<Proc>, HashBag<Proc>).
+        // For native-only (Int, Float, etc.) we keep (#cat, #cat) so Ascent relation types satisfy Eq+Hash.
         let has_fold = language
             .terms
             .iter()
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
         if has_fold {
+            let fold_second_ty = match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
+                (Some(_), Some(payload_ty)) => quote! { #payload_ty },
+                _ => quote! { #cat },
+            };
             relations.push(quote! {
-                relation #fold_rel(#cat, #cat);
+                relation #fold_rel(#cat, #fold_second_ty);
             });
         }
     }

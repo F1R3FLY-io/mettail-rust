@@ -20,6 +20,7 @@ fn calculator_spec() -> LanguageSpec {
             name: "Int".to_string(),
             native_type: Some("i32".to_string()),
             is_primary: true,
+            has_var: true,
         }],
         rules: vec![
             // NumLit: integer literal
@@ -64,6 +65,7 @@ fn typed_calc_spec() -> LanguageSpec {
         name: "Bool".to_string(),
         native_type: Some("bool".to_string()),
         is_primary: false,
+        has_var: true,
     });
     spec.rules
         .push(RuleSpec::classified("BoolLit", "Bool", vec![], &category_names));

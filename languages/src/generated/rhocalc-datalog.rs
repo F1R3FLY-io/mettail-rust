@@ -53,6 +53,9 @@ relation ppar_contains(Proc, Proc);
 proc(sub.clone()) <--
     proc(t),
     for sub in { std::thread_local! { static POOL_PROC_PROC : std::cell::Cell < Vec < Proc >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_PROC.with(| p | p.take()); buf.clear(); match t {
+        Proc::PDrop(f0) => {
+            buf.push(Proc::PDrop(Box::new(f0.as_ref().clone())));
+        },
         Proc::POutput(_, f1) => {
             buf.push(f1.as_ref().clone());
         },
@@ -71,6 +74,18 @@ proc(sub.clone()) <--
         Proc::Div(f0, f1) => {
             buf.push(f0.as_ref().clone());
             buf.push(f1.as_ref().clone());
+        },
+        Proc::CastInt(f0) => {
+            buf.push(Proc::CastInt(Box::new(f0.as_ref().clone())));
+        },
+        Proc::CastFloat(f0) => {
+            buf.push(Proc::CastFloat(Box::new(f0.as_ref().clone())));
+        },
+        Proc::CastBool(f0) => {
+            buf.push(Proc::CastBool(Box::new(f0.as_ref().clone())));
+        },
+        Proc::CastStr(f0) => {
+            buf.push(Proc::CastStr(Box::new(f0.as_ref().clone())));
         },
         Proc::Eq(f0, f1) => {
             buf.push(f0.as_ref().clone());
@@ -302,6 +317,9 @@ proc(sub.clone()) <--
 name(sub.clone()) <--
     name(t),
     for sub in { std::thread_local! { static POOL_NAME_NAME : std::cell::Cell < Vec < Name >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_NAME_NAME.with(| p | p.take()); buf.clear(); match t {
+        Name::NQuote(f0) => {
+            buf.push(Name::NQuote(Box::new(f0.as_ref().clone())));
+        },
         Name::ApplyProc(lam, _) => {
             buf.push(lam.as_ref().clone());
         },
@@ -753,8 +771,8 @@ proc(c1.clone()) <--
 
 ppar_contains(parent.clone(), elem.clone()) <--
     proc(parent),
-    if let Proc::PPar(ref bag_field) = parent,
-    for (elem, _count) in bag_field.iter();
+    if let Proc::PPar(ref coll_field) = parent,
+    for (elem, _count) in coll_field.iter();
 
 proc(elem.clone()) <--
     ppar_contains(_parent, elem);
@@ -1800,6 +1818,29 @@ rw_proc(lhs.clone(), match (lhs, vi) {
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_proc(field_val, t);
+
+rw_proc(parent.clone(), result) <--
+    proc(parent),
+    if let Proc::PPar(ref bag) = parent,
+    for (elem, _count) in bag.iter(),
+    rw_proc(elem.clone(), elem_rewritten),
+    let result = Proc::PPar({ let mut new_bag = bag.clone(); new_bag.remove(elem); Proc::insert_into_ppar(& mut new_bag, elem_rewritten.clone()); new_bag });
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc::PInputs(ref x0, ref x1) = lhs,
+    let binder = x1.unsafe_pattern().clone(),
+    let body = x1.unsafe_body(),
+    rw_proc((** body).clone(), body_rewritten),
+    let rhs = Proc::PInputs(x0.clone(), mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc::PNew(ref scope) = lhs,
+    let binder = scope.unsafe_pattern().clone(),
+    let body = scope.unsafe_body(),
+    rw_proc((** body).clone(), body_rewritten),
+    let rhs = Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
 
 
     // Custom logic

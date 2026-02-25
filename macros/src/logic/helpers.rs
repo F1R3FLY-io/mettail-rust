@@ -19,10 +19,11 @@
 
 use super::common::{
     collect_nonterminal_fields, count_nonterminals, generate_tls_pool_iter, has_collection_field,
-    is_multi_binder, relation_names, PoolArm,
+    is_multi_binder, relation_names, literal_label_for, PoolArm,
 };
 use crate::ast::grammar::{GrammarItem, GrammarRule};
-use crate::ast::language::LanguageDef;
+use crate::ast::language::{CollectionCategory, LanguageDef};
+use crate::gen::native::native_type_element_ident;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeSet;
@@ -126,13 +127,117 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
         if let Some(arm) = generate_user_constructor_pool_arm(rule, src, tgt) {
             arms.push(arm);
         }
+        // When pool target is same as category (e.g. Proc), include injection variants (ProcList, ProcBag)
+        // by pushing the wrapped value so the pool stays Vec<Proc>.
+        if src == tgt {
+            if let Some(arm) = generate_injection_wrapper_pool_arm(rule, src) {
+                arms.push(arm);
+            }
+        }
     }
 
-    // 2. Auto-generated variants (Apply, MApply, Lam, MLam) for each domain
-    for domain_type in &language.types {
-        let domain = &domain_type.name;
-        let auto = generate_auto_variant_pool_arms(src, tgt, domain);
-        arms.extend(auto);
+    // 2. Auto-generated variants (Apply, MApply, Lam, MLam) for each domain — skip for collection categories
+    if language.get_type(src).and_then(|t| t.collection_kind.as_ref()).is_none() {
+        for domain_type in &language.types {
+            let domain = &domain_type.name;
+            let auto = generate_auto_variant_pool_arms(src, tgt, domain);
+            arms.extend(auto);
+        }
+    }
+
+    // 3. Collection (List/Bag) literal: when src is List or Bag and tgt is element type, push each element
+    for lang_type in &language.types {
+        let Some(ref native_type) = lang_type.native_type else { continue };
+        let Some(ref collection_kind) = lang_type.collection_kind else { continue };
+        if lang_type.name != *src {
+            continue;
+        }
+        let Some(elem_ident) = native_type_element_ident(native_type) else { continue };
+        if elem_ident != *tgt {
+            continue;
+        }
+        let lit_label = literal_label_for(language, &lang_type.name).expect("collection has literal label");
+        match collection_kind {
+            CollectionCategory::List(_) => {
+                arms.push(PoolArm {
+                    pattern: quote! { #src::#lit_label(ref vec) },
+                    pushes: vec![quote! {
+                        for e in vec {
+                            buf.push(e.clone());
+                        }
+                    }],
+                });
+            },
+            CollectionCategory::Bag(_) => {
+                arms.push(PoolArm {
+                    pattern: quote! { #src::#lit_label(ref bag) },
+                    pushes: vec![quote! {
+                        for e in bag.iter_elements() {
+                            buf.push(e.clone());
+                        }
+                    }],
+                });
+            },
+        }
+    }
+
+    // 4. (List, Proc) / (Bag, Proc): when extracting Proc from List/Bag, constructors with List/Bag
+    //    fields must push Proc::ProcList(...) / Proc::ProcBag(...), not raw List/Bag.
+    let proc_ident = format_ident!("Proc");
+    if *tgt == proc_ident {
+        for rule in language.terms.iter().filter(|r| r.category == *src) {
+            if has_collection_field(rule) || is_multi_binder(rule) {
+                continue;
+            }
+            let fields = collect_nonterminal_fields(rule);
+            if fields.is_empty() {
+                continue;
+            }
+            let label = &rule.label;
+            // Indices of fields that are List or Bag (wrap and push as Proc)
+            let wrap_list_indices: Vec<usize> = fields
+                .iter()
+                .enumerate()
+                .filter(|(_, (_, ft))| {
+                    let s = ft.to_string();
+                    s == "List" || s == "Bag"
+                })
+                .map(|(i, _)| i)
+                .collect();
+            if wrap_list_indices.is_empty() {
+                continue;
+            }
+            let total = fields.len();
+            let field_bindings: Vec<TokenStream> = (0..total)
+                .map(|i| {
+                    if wrap_list_indices.contains(&i) {
+                        let name = format_ident!("f{}", i);
+                        quote! { #name }
+                    } else {
+                        quote! { _ }
+                    }
+                })
+                .collect();
+            let pushes: Vec<TokenStream> = wrap_list_indices
+                .iter()
+                .filter_map(|&i| {
+                    let name = format_ident!("f{}", i);
+                    let wrapper_variant = match fields[i].1.to_string().as_str() {
+                        "List" => quote! { ProcList },
+                        "Bag" => quote! { ProcBag },
+                        _ => return None,
+                    };
+                    Some(quote! { buf.push(#proc_ident::#wrapper_variant(Box::new(#name.as_ref().clone()))); })
+                })
+                .collect();
+            if pushes.is_empty() {
+                continue;
+            }
+            arms.push(PoolArm {
+                pattern: quote! { #src::#label(#(#field_bindings),*) },
+                pushes,
+            });
+        }
     }
 
     arms
@@ -149,6 +254,27 @@ fn generate_user_constructor_pool_arm(
     } else {
         generate_regular_constructor_pool_arm(rule, src, tgt)
     }
+}
+
+/// When category has injection variants (e.g. ProcList, ProcBag), push the wrapped term so pool type stays correct.
+fn generate_injection_wrapper_pool_arm(
+    rule: &GrammarRule,
+    src: &Ident,
+) -> Option<PoolArm> {
+    let fields = collect_nonterminal_fields(rule);
+    if fields.len() != 1 {
+        return None;
+    }
+    let (_, field_type) = &fields[0];
+    if **field_type == *src {
+        return None; // same-type field already handled by regular arm
+    }
+    let label = &rule.label;
+    let name = format_ident!("f0");
+    Some(PoolArm {
+        pattern: quote! { #src::#label(#name) },
+        pushes: vec![quote! { buf.push(#src::#label(Box::new(#name.as_ref().clone()))); }],
+    })
 }
 
 /// Generate a PoolArm for a regular (non-binding, non-collection) constructor.
@@ -301,6 +427,12 @@ pub fn generate_consolidated_congruence_rules(
     reachable: &BTreeSet<(String, String)>,
 ) -> Vec<TokenStream> {
     let mut rules = Vec::new();
+
+    // Collection categories (List, Bag) have no Apply/Lam variants
+    if language.get_type(category).and_then(|t| t.collection_kind.as_ref()).is_some() {
+        return rules;
+    }
+
     let rn = relation_names(category);
     let cat_lower = &rn.cat_lower;
     let rw_cat = &rn.rw_rel;

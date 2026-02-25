@@ -133,8 +133,8 @@ proc(c1.clone()) <--
 
 ppar_contains(parent.clone(), elem.clone()) <--
     proc(parent),
-    if let Proc::PPar(ref bag_field) = parent,
-    for (elem, _count) in bag_field.iter();
+    if let Proc::PPar(ref coll_field) = parent,
+    for (elem, _count) in coll_field.iter();
 
 proc(elem.clone()) <--
     ppar_contains(_parent, elem);
@@ -498,5 +498,20 @@ rw_proc(lhs.clone(), match (lhs, vi) {
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_proc(field_val, t);
+
+rw_proc(lhs.clone(), rhs) <--
+    proc(lhs),
+    if let Proc::PNew(ref scope) = lhs,
+    let binder = scope.unsafe_pattern().clone(),
+    let body = scope.unsafe_body(),
+    rw_proc((** body).clone(), body_rewritten),
+    let rhs = Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
+
+rw_proc(parent.clone(), result) <--
+    proc(parent),
+    if let Proc::PPar(ref bag) = parent,
+    for (elem, _count) in bag.iter(),
+    rw_proc(elem.clone(), elem_rewritten),
+    let result = Proc::PPar({ let mut new_bag = bag.clone(); new_bag.remove(elem); Proc::insert_into_ppar(& mut new_bag, elem_rewritten.clone()); new_bag });
 
 }

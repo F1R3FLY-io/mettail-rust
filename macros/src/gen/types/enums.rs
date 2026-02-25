@@ -2,14 +2,60 @@
 
 use crate::ast::{
     grammar::{GrammarItem, GrammarRule, TermParam},
-    language::LanguageDef,
+    language::{CollectionCategory, LanguageDef},
     types::{CollectionType, TypeExpr},
 };
 use crate::gen::native::native_type_to_string;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 use std::collections::HashMap;
+
+/// Generate variant from rule.items when we have term_context, so field types match
+/// collect_nonterminal_fields (used by pool/congruence). Returns None if items contain binders etc.
+fn generate_variant_from_items_for_term_context(
+    rule: &GrammarRule,
+    _language: &LanguageDef,
+) -> Option<TokenStream> {
+    let label = &rule.label;
+    let mut field_types: Vec<TokenStream> = Vec::new();
+    for item in &rule.items {
+        match item {
+            GrammarItem::NonTerminal(ident) => {
+                let name = ident.to_string();
+                let ft = if name == "Var" {
+                    quote! { mettail_runtime::OrdVar }
+                } else {
+                    let field_ident = format_ident!("{}", name);
+                    quote! { Box<#field_ident> }
+                };
+                field_types.push(ft);
+            },
+            GrammarItem::Collection {
+                coll_type,
+                element_type,
+                ..
+            } => {
+                let coll_ts = match coll_type {
+                    CollectionType::HashBag => quote! { mettail_runtime::HashBag<#element_type> },
+                    CollectionType::HashSet => quote! { std::collections::HashSet<#element_type> },
+                    CollectionType::Vec => quote! { Vec<#element_type> },
+                };
+                field_types.push(coll_ts);
+            },
+            _ => return None,
+        }
+    }
+    if field_types.is_empty() {
+        return None;
+    }
+    Some(if field_types.len() == 1 {
+        let f = &field_types[0];
+        quote! { #label(#f) }
+    } else {
+        quote! { #label(#(#field_types),*) }
+    })
+}
 
 /// Generate just the AST enums (without parser)
 pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
@@ -37,9 +83,11 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             generate_variant(rule, language)
         }).collect();
 
-        // Auto-generate literal variant for native types without explicit literal rule
+        // Auto-generate literal variant for native types without explicit literal rule.
+        // Skip for collection categories (List/Bag) — they get ListLit/BagLit below instead.
+        let is_collection_category = lang_type.collection_kind.is_some();
         if let Some(native_type) = &lang_type.native_type {
-            if !has_literal_rule {
+            if !has_literal_rule && !is_collection_category {
                 let literal_label = generate_literal_label(native_type);
                 let type_str = native_type_to_string(native_type);
                 // str is unsized; use String. f32/f64 use canonical wrapper for Eq/Hash/Ord.
@@ -58,16 +106,47 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             }
         }
 
-        // Auto-generate Var variant if no explicit Var rule exists
-        if !has_var_rule {
+        // Auto-generate literal variant for List/Bag (payload from native_type when set, else Vec<elem>/HashBag<elem>)
+        let elem_type = language
+            .types
+            .iter()
+            .find(|t| t.name.to_string() == "Proc")
+            .map(|t| &t.name)
+            .or_else(|| language.types.first().map(|t| &t.name));
+        if let Some(ref collection_kind) = lang_type.collection_kind.as_ref() {
+            let payload_opt: Option<TokenStream> = if let Some(ref native_type) = lang_type.native_type {
+                Some(quote! { #native_type })
+            } else if let Some(elem_type) = elem_type {
+                Some(match collection_kind {
+                    CollectionCategory::List(_) => quote! { Vec<#elem_type> },
+                    CollectionCategory::Bag(_) => quote! { mettail_runtime::HashBag<#elem_type> },
+                })
+            } else {
+                None
+            };
+            if let (Some(payload_type), false) = (payload_opt, has_literal_rule) {
+                let literal_label = match collection_kind {
+                    CollectionCategory::List(_) => quote::format_ident!("ListLit"),
+                    CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
+                };
+                variants.push(quote! {
+                    #literal_label(#payload_type)
+                });
+            }
+        }
+
+        // Auto-generate Var variant if no explicit Var rule exists (skip for List/Bag - value-only categories)
+        let is_collection_category = lang_type.collection_kind.is_some();
+        if !has_var_rule && !is_collection_category {
             let var_label = generate_var_label(cat_name);
             variants.push(quote! {
                 #var_label(mettail_runtime::OrdVar)
             });
         }
 
-        // Auto-generate lambda variants for every domain category (including native, e.g. Int/Bool/Str)
+        // Auto-generate lambda variants for every domain category (skip for List/Bag - value-only categories)
         // This creates Lam{Domain} and MLam{Domain} for each domain type
+        if !is_collection_category {
         for domain_lang_type in &language.types {
             let domain_name = &domain_lang_type.name;
 
@@ -107,6 +186,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             variants.push(quote! {
                 #mapply_variant(Box<#cat_name>, Vec<#domain_name>)
             });
+        }
         }
 
         // All category enums use full derives; float categories use canonical wrapper payload (Eq/Hash/Ord).
@@ -162,8 +242,15 @@ fn literal_payload_type(nt: &str, category: &syn::Ident, language: &LanguageDef)
 fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
     let label = &rule.label;
 
-    // Check if this rule uses new syntax (term_context)
+    // Check if this rule uses new syntax (term_context).
+    // Prefer generating from items (from convert_term_context_to_items) so enum matches
+    // pool/congruence (collect_nonterminal_fields uses items). Use format_ident so types resolve.
     if let Some(ref term_context) = rule.term_context {
+        if !rule.items.is_empty() {
+            if let Some(ts) = generate_variant_from_items_for_term_context(rule, language) {
+                return ts;
+            }
+        }
         return generate_variant_from_term_context(label, term_context, language, &rule.category);
     }
 
@@ -269,8 +356,10 @@ fn generate_variant_from_term_context(
     for param in term_context {
         match param {
             TermParam::Simple { ty, .. } => {
-                // Simple parameter: generate appropriate field type
-                let field_type = type_expr_to_field_type(ty, Some((language, category)));
+                // Use type name string then format_ident so the emitted type resolves correctly
+                // in the macro expansion scope (avoids wrong type when ident span differs).
+                let field_type =
+                    type_expr_to_field_type_with_fresh_ident(ty, Some((language, category)));
                 fields.push(field_type);
             },
             TermParam::Abstraction { ty, .. } => {
@@ -375,9 +464,9 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
     }
 }
 
-/// Convert TypeExpr to a Rust field type (for enum variant fields).
-/// When language and category are provided, FloatLiteral uses the category's canonical float type (f32/f64).
-fn type_expr_to_field_type(
+/// Like type_expr_to_field_type but for Base(ident) uses format_ident from the type name string,
+/// so the emitted type resolves correctly in the macro expansion scope.
+fn type_expr_to_field_type_with_fresh_ident(
     ty: &TypeExpr,
     language_category: Option<(&LanguageDef, &syn::Ident)>,
 ) -> TokenStream {
@@ -411,7 +500,8 @@ fn type_expr_to_field_type(
                     .unwrap_or_else(|| quote! { mettail_runtime::CanonicalFloat64 });
                 canonical
             } else {
-                quote! { Box<#ident> }
+                let field_ident = format_ident!("{}", name);
+                quote! { Box<#field_ident> }
             }
         },
         TypeExpr::Collection { coll_type, element } => {
@@ -423,11 +513,9 @@ fn type_expr_to_field_type(
             }
         },
         TypeExpr::Arrow { .. } => {
-            // Arrow types in simple params shouldn't happen, but handle gracefully
             quote! { Box<dyn std::any::Any> }
         },
         TypeExpr::MultiBinder(inner) => {
-            // MultiBinder in simple context: Vec<T>
             let inner_type = type_expr_to_rust_type(inner);
             quote! { Vec<#inner_type> }
         },

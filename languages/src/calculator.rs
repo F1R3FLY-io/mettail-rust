@@ -9,12 +9,22 @@ use mettail_macros::language;
 language! {
     name: Calculator,
     types {
+        Proc
         ![i32] as Int
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
+        ![Vec<Proc>] as List(Proc)
+        ![mettail_runtime::HashBag<Proc>] as Bag(Proc)
     },
     terms {
+        // Injection into Proc (unified variant) so List/Bag elements are Proc
+        ProcInt . i:Int |- i : Proc ;
+        ProcFloat . f:Float |- f : Proc ;
+        ProcBool . b:Bool |- b : Proc ;
+        ProcStr . s:Str |- s : Proc ;
+        ProcList . l:List |- l : Proc ;
+        ProcBag . b:Bag |- b : Proc ;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -92,6 +102,23 @@ language! {
         StrId . a:Str |- "str" "(" a ")" : Str ![a] step;
         // Custom operation (PraTTaIL test feature)
         CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
+        // List operations (List = Vec<Proc>). Fold/step pass payloads; rust_code returns payload.
+        ConcatList . a:List, b:List |- "concat" "(" a "," b ")" : List ![
+            { let mut o = a.clone(); o.extend(b.iter().cloned()); o }
+        ] fold;
+        LenList . a:List |- "length" "(" a ")" : Int ![
+            a.len() as i32
+        ] fold;
+        ElemList . a:List, i:Int |- "at" "(" a "," i ")" : Proc ![
+            { let idx = match &i { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") }; a.get(idx).cloned().expect("ElemList: index out of bounds") }
+        ] fold;
+        DeleteList . a:List, i:Int |- "delete" "(" a "," i ")" : List ![
+            { let idx = match &i { Int::NumLit(n) => *n as usize, _ => panic!("DeleteList: expected Int literal") }; let mut v = a.clone(); if idx >= v.len() { panic!("DeleteList: index out of bounds"); } v.remove(idx); v }
+        ] fold;
+        // Bag operations (Bag = HashBag<Proc>). Fold passes payloads; rust_code returns payload.
+        UnionBag . a:Bag, b:Bag |- "union" "(" a "," b ")" : Bag ![a.union(&b)] fold;
+        RemoveBag . a:Bag, e:Proc |- "remove" "(" a "," e ")" : Bag ![a.remove_one(&e)] fold;
+        DiffBag . a:Bag, b:Bag |- "diff" "(" a "," b ")" : Bag ![a.diff(&b)] fold;
     },
     equations {
     },
@@ -205,6 +232,13 @@ language! {
         FloatIdCong . | S ~> T |- (FloatId S) ~> (FloatId T);
         BoolIdCong . | S ~> T |- (BoolId S) ~> (BoolId T);
         StrIdCong . | S ~> T |- (StrId S) ~> (StrId T);
+        // Proc (unified variant) congruence
+        ProcIntCong . | S ~> T |- (ProcInt S) ~> (ProcInt T);
+        ProcFloatCong . | S ~> T |- (ProcFloat S) ~> (ProcFloat T);
+        ProcBoolCong . | S ~> T |- (ProcBool S) ~> (ProcBool T);
+        ProcStrCong . | S ~> T |- (ProcStr S) ~> (ProcStr T);
+        ProcListCong . | S ~> T |- (ProcList S) ~> (ProcList T);
+        ProcBagCong . | S ~> T |- (ProcBag S) ~> (ProcBag T);
         // Custom operation
         CustomOpCongL . | S ~> T |- (CustomOp S R) ~> (CustomOp T R);
         CustomOpCongR . | S ~> T |- (CustomOp L S) ~> (CustomOp L T);
@@ -212,5 +246,6 @@ language! {
         TernCongC . | S ~> T |- (Tern S R1 R2) ~> (Tern T R1 R2);
         TernCongT . | S ~> T |- (Tern L S R) ~> (Tern L T R);
         TernCongE . | S ~> T |- (Tern L R S) ~> (Tern L R T);
+        // No List/Bag congruence: only Proc congruence (e.g. ProcList/ProcBag) is needed.
     },
 }

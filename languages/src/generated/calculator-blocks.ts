@@ -5,6 +5,114 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
+	// Proc Int: ...
+	{
+		type: "proc_proc_int",
+		tooltip: "Proc Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Float: ...
+	{
+		type: "proc_proc_float",
+		tooltip: "Proc Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Bool: ...
+	{
+		type: "proc_proc_bool",
+		tooltip: "Proc Bool: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Str: ...
+	{
+		type: "proc_proc_str",
+		tooltip: "Proc Str: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc List: ...
+	{
+		type: "proc_proc_list",
+		tooltip: "Proc List: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Bag: ...
+	{
+		type: "proc_proc_bag",
+		tooltip: "Proc Bag: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",
@@ -1340,6 +1448,156 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
+	},
+
+	// Concat List: ... ...
+	{
+		type: "list_concat_list",
+		tooltip: "Concat List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
+	},
+
+	// Len List: ...
+	{
+		type: "int_len_list",
+		tooltip: "Len List: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Elem List: ... ...
+	{
+		type: "proc_elem_list",
+		tooltip: "Elem List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Delete List: ... ...
+	{
+		type: "list_delete_list",
+		tooltip: "Delete List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
+	},
+
+	// Union Bag: ... ...
+	{
+		type: "bag_union_bag",
+		tooltip: "Union Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bag",
+			},
+		],
+		inputsInline: true,
+		output: "Bag",
+		colour: "e0d451",
+	},
+
+	// Remove Bag: ... ...
+	{
+		type: "bag_remove_bag",
+		tooltip: "Remove Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Bag",
+		colour: "e0d451",
+	},
+
+	// Diff Bag: ... ...
+	{
+		type: "bag_diff_bag",
+		tooltip: "Diff Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bag",
+			},
+		],
+		inputsInline: true,
+		output: "Bag",
+		colour: "e0d451",
 	}
 ];
 

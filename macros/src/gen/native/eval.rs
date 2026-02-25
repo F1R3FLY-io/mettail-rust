@@ -4,29 +4,48 @@ use quote::quote;
 /// Generate eval() method for native types
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
+use crate::ast::types::TypeExpr;
 use crate::gen::native::native_type_to_string;
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
 };
 
-/// Extract parameter names from term_context in the same order as generated variant fields.
-/// Used for rust_code eval arms: param names match constructor field names.
-fn term_context_param_names(term_context: &[TermParam]) -> Vec<syn::Ident> {
-    let mut names = Vec::new();
+/// True if the type is a category with native_type (e.g. Int, Float). False for List, Bag, or non-native.
+fn type_has_native_eval(ty: &TypeExpr, language: &LanguageDef) -> bool {
+    let cat = match ty {
+        TypeExpr::Base(ident) => ident,
+        _ => return false,
+    };
+    language
+        .get_type(cat)
+        .and_then(|t| t.native_type.as_ref())
+        .is_some()
+}
+
+/// Extract parameter names and whether each should use .eval() (true) or .clone() (false).
+/// Collection categories (List, Bag) and non-native types must use .clone() so we don't call .eval() on them.
+fn term_context_params_with_eval(
+    term_context: &[TermParam],
+    language: &LanguageDef,
+) -> Vec<(syn::Ident, bool)> {
+    let mut out = Vec::new();
     for p in term_context {
         match p {
-            TermParam::Simple { name, .. } => names.push(name.clone()),
+            TermParam::Simple { name, ty } => {
+                let use_eval = type_has_native_eval(ty, language);
+                out.push((name.clone(), use_eval));
+            },
             TermParam::Abstraction { binder, body, .. } => {
-                names.push(binder.clone());
-                names.push(body.clone());
+                out.push((binder.clone(), false));
+                out.push((body.clone(), false));
             },
             TermParam::MultiAbstraction { binder, body, .. } => {
-                names.push(binder.clone());
-                names.push(body.clone());
+                out.push((binder.clone(), false));
+                out.push((body.clone(), false));
             },
         }
     }
-    names
+    out
 }
 
 pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
@@ -34,6 +53,36 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
     for lang_type in &language.types {
         let category = &lang_type.name;
+
+        // Collection categories (List/Bag): generate no-op stubs so callers compile
+        if lang_type.collection_kind.is_some() {
+            let native_type = match lang_type.native_type.as_ref() {
+                Some(ty) => ty,
+                None => continue,
+            };
+            let literal_label = crate::logic::common::literal_label_for(language, category)
+                .expect("collection has literal label");
+            impls.push(quote! {
+                impl #category {
+                    pub fn eval(&self) -> #native_type {
+                        match self {
+                            #category::#literal_label(payload) => payload.clone(),
+                            _ => panic!("Cannot evaluate collection expression - apply fold rules first."),
+                        }
+                    }
+                    pub fn try_eval(&self) -> std::option::Option<#native_type> {
+                        match self {
+                            #category::#literal_label(payload) => Some(payload.clone()),
+                            _ => None,
+                        }
+                    }
+                    pub fn try_fold_to_literal(&self) -> std::option::Option<Self> {
+                        self.try_eval().map(|v| #category::#literal_label(v))
+                    }
+                }
+            });
+            continue;
+        }
 
         // Only generate for native types
         let native_type = match lang_type.native_type.as_ref() {
@@ -64,8 +113,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         // Generate match arms for eval()
         let mut match_arms = Vec::new();
 
-        // Add arm for auto-generated literal if no explicit literal rule
-        if !has_literal_rule {
+        // Add arm for auto-generated literal if no explicit literal rule.
+        // Skip for collection categories (List/Bag) — they use ListLit/BagLit, not Lit.
+        let is_collection = lang_type.collection_kind.is_some();
+        if !has_literal_rule && !is_collection {
             let type_str = native_type_to_string(native_type);
             let literal_arm = if type_str == "str" || type_str == "String" {
                 quote! { #category::#literal_label(n) => n.clone(), }
@@ -75,15 +126,18 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             match_arms.push(literal_arm);
         }
 
-        // Add arm for auto-generated Var variant if no explicit Var rule
-        let var_label = generate_var_label(category);
-        let panic_msg = format!(
-            "Cannot evaluate {} - variables must be substituted via rewrites first",
-            var_label
-        );
-        match_arms.push(quote! {
-            #category::#var_label(_) => loop { panic!(#panic_msg) },
-        });
+        // Add arm for auto-generated Var variant if no explicit Var rule (skip for List/Bag - no LVar/BVar)
+        let is_collection = lang_type.collection_kind.is_some();
+        if !is_collection {
+            let var_label = generate_var_label(category);
+            let panic_msg = format!(
+                "Cannot evaluate {} - variables must be substituted via rewrites first",
+                var_label
+            );
+            match_arms.push(quote! {
+                #category::#var_label(_) => loop { panic!(#panic_msg) },
+            });
+        }
 
         // Match arms for try_eval() -> Option<T> (Var and catch-all => None, rest => Some(...))
         let mut try_eval_arms: Vec<TokenStream> = Vec::new();
@@ -97,9 +151,12 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             };
             try_eval_arms.push(try_literal_arm);
         }
-        try_eval_arms.push(quote! {
-            #category::#var_label(_) => None,
-        });
+        if !is_collection {
+            let var_label = generate_var_label(category);
+            try_eval_arms.push(quote! {
+                #category::#var_label(_) => None,
+            });
+        }
 
         for rule in &rules {
             let label = &rule.label;
@@ -125,19 +182,32 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             }
             // HOL syntax: rule with Rust code block - generate eval from rust_code
             else if let Some(ref rust_code_block) = rule.rust_code {
-                let param_names = rule
+                let params = rule
                     .term_context
                     .as_ref()
-                    .map(|ctx| term_context_param_names(ctx))
+                    .map(|ctx| term_context_params_with_eval(ctx, language))
                     .unwrap_or_default();
+                let param_names: Vec<_> = params.iter().map(|(n, _)| n.clone()).collect();
                 let param_count = param_names.len();
-                let param_bindings: Vec<_> = param_names
+                let param_bindings: Vec<_> = params
                     .iter()
-                    .map(|name| quote! { let #name = #name.as_ref().eval(); })
+                    .map(|(name, use_eval)| {
+                        if *use_eval {
+                            quote! { let #name = #name.as_ref().eval(); }
+                        } else {
+                            quote! { let #name = #name.as_ref().clone(); }
+                        }
+                    })
                     .collect();
-                let try_param_bindings: Vec<_> = param_names
+                let try_param_bindings: Vec<_> = params
                     .iter()
-                    .map(|name| quote! { let #name = #name.as_ref().try_eval()?; })
+                    .map(|(name, use_eval)| {
+                        if *use_eval {
+                            quote! { let #name = #name.as_ref().try_eval()?; }
+                        } else {
+                            quote! { let #name = #name.as_ref().clone(); }
+                        }
+                    })
                     .collect();
                 let rust_code = &rust_code_block.code;
                 let match_arm = if param_count == 0 {

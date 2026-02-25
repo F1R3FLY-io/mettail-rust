@@ -130,4 +130,12 @@ rw_term(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_TERM_SCONG_TERM.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_term(field_val, t);
 
+rw_term(lhs.clone(), rhs) <--
+    term(lhs),
+    if let Term::Lam(ref scope) = lhs,
+    let binder = scope.unsafe_pattern().clone(),
+    let body = scope.unsafe_body(),
+    rw_term((** body).clone(), body_rewritten),
+    let rhs = Term::Lam(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
+
 }

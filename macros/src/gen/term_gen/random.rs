@@ -648,14 +648,20 @@ fn generate_random_collection_constructor(
     rule: &GrammarRule,
     language: &LanguageDef,
 ) -> TokenStream {
+    use crate::ast::language::CollectionCategory;
+
     let label = &rule.label;
 
-    // Find the collection field
-    let element_cat = rule
+    // Find the collection field and its type
+    let (element_cat, _coll_type) = rule
         .items
         .iter()
         .find_map(|item| match item {
-            GrammarItem::Collection { element_type, .. } => Some(element_type.clone()),
+            GrammarItem::Collection {
+                element_type,
+                coll_type,
+                ..
+            } => Some((element_type.clone(), coll_type.clone())),
             _ => None,
         })
         .expect("Collection constructor must have a collection field");
@@ -664,26 +670,73 @@ fn generate_random_collection_constructor(
         return quote! { panic!("Non-type collection element category") };
     }
 
-    quote! {
-        {
-            // Choose a random collection size (0 to max_collection_width)
-            let size = rng.gen_range(0..=max_collection_width);
-            let mut bag = mettail_runtime::HashBag::new();
+    let is_list = language
+        .get_type(cat_name)
+        .and_then(|t| t.collection_kind.as_ref())
+        .map(|ck| matches!(ck, CollectionCategory::List(_)))
+        .unwrap_or(false);
+    let is_bag = language
+        .get_type(cat_name)
+        .and_then(|t| t.collection_kind.as_ref())
+        .map(|ck| matches!(ck, CollectionCategory::Bag(_)))
+        .unwrap_or(false);
 
-            for _ in 0..size {
-                // Generate element at random depth < current depth
-                let elem_depth = if depth > 0 { rng.gen_range(0..depth) } else { 0 };
-                let elem = #element_cat::generate_random_at_depth_internal(
-                    vars,
-                    elem_depth,
-                    max_collection_width,
-                    rng,
-                    binding_depth
-                );
-                bag.insert(elem);
+    if is_list {
+        quote! {
+            {
+                let size = rng.gen_range(0..=max_collection_width);
+                let mut vec = Vec::new();
+                for _ in 0..size {
+                    let elem_depth = if depth > 0 { rng.gen_range(0..depth) } else { 0 };
+                    let elem = #element_cat::generate_random_at_depth_internal(
+                        vars,
+                        elem_depth,
+                        max_collection_width,
+                        rng,
+                        binding_depth
+                    );
+                    vec.push(elem);
+                }
+                #cat_name::#label(vec)
             }
-
-            #cat_name::#label(bag)
+        }
+    } else if is_bag {
+        quote! {
+            {
+                let size = rng.gen_range(0..=max_collection_width);
+                let mut bag = mettail_runtime::HashBag::new();
+                for _ in 0..size {
+                    let elem_depth = if depth > 0 { rng.gen_range(0..depth) } else { 0 };
+                    let elem = #element_cat::generate_random_at_depth_internal(
+                        vars,
+                        elem_depth,
+                        max_collection_width,
+                        rng,
+                        binding_depth
+                    );
+                    bag.insert(elem);
+                }
+                #cat_name::#label(bag)
+            }
+        }
+    } else {
+        quote! {
+            {
+                let size = rng.gen_range(0..=max_collection_width);
+                let mut bag = mettail_runtime::HashBag::new();
+                for _ in 0..size {
+                    let elem_depth = if depth > 0 { rng.gen_range(0..depth) } else { 0 };
+                    let elem = #element_cat::generate_random_at_depth_internal(
+                        vars,
+                        elem_depth,
+                        max_collection_width,
+                        rng,
+                        binding_depth
+                    );
+                    bag.insert(elem);
+                }
+                #cat_name::#label(bag)
+            }
         }
     }
 }

@@ -161,12 +161,15 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                 })
                 .collect();
             if !has_literal_rule {
-                let literal_label = generate_literal_label(native_type);
-                match_arms.push(quote! {
-                    #category::#literal_label(_) => self.clone()
-                });
+                if let Some(literal_label) = crate::logic::common::literal_label_for(language, category) {
+                    match_arms.push(quote! {
+                        #category::#literal_label(_) => self.clone()
+                    });
+                }
             }
-            if !has_var_rule {
+            if !has_var_rule
+                && language.get_type(category).and_then(|t| t.collection_kind.as_ref()).is_none()
+            {
                 let var_label = generate_var_label(category);
                 match_arms.push(quote! {
                     #category::#var_label(_) => self.clone()
@@ -227,29 +230,28 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                 });
 
                 // Check if this is a simple collection constructor (no multi-binder)
-                let is_collection = !has_multi_binder
-                    && rule
-                        .items
-                        .iter()
-                        .any(|item| matches!(item, GrammarItem::Collection { .. }));
+                let collection_count = rule
+                    .items
+                    .iter()
+                    .filter(|item| matches!(item, GrammarItem::Collection { .. }))
+                    .count();
+                let is_single_collection = !has_multi_binder && collection_count == 1;
 
-                if is_collection {
-                    // For collection constructors, rebuild using the flattening helper
+                if is_single_collection {
                     let helper_name =
                         format_ident!("insert_into_{}", label.to_string().to_lowercase());
+                    let rebuild = quote! { #category::#label(new_bag) };
 
                     Some(quote! {
                         #category::#label(bag) => {
-                            // Rebuild the bag using the flattening insert helper
                             let mut new_bag = mettail_runtime::HashBag::new();
                             for (elem, count) in bag.iter() {
                                 for _ in 0..count {
-                                    // Recursively normalize the element before inserting
                                     let normalized_elem = elem.normalize();
                                     Self::#helper_name(&mut new_bag, normalized_elem);
                                 }
                             }
-                            #category::#label(new_bag)
+                            #rebuild
                         }
                     })
                 } else if has_multi_binder {
@@ -451,6 +453,11 @@ fn generate_beta_reduction_arms(category: &syn::Ident, language: &LanguageDef) -
     use quote::format_ident;
 
     let mut arms = Vec::new();
+
+    // Collection categories (List, Bag) have no Apply/Lam variants
+    if language.get_type(category).and_then(|t| t.collection_kind.as_ref()).is_some() {
+        return arms;
+    }
 
     // For each domain type, generate beta-reduction arms (including native, e.g. Int/Bool/Str)
     for domain_lang_type in &language.types {
