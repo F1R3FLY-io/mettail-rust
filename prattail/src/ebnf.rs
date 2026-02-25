@@ -201,7 +201,7 @@ fn write_lexical_tokens(buf: &mut String, categories: &[CategoryInfo]) {
             "<integer> = /[0-9]+/{:>pad$}(* {} *) ;",
             "",
             integer_type,
-            pad = 22 - "<integer> = /[0-9]+/".len() + 22
+            pad = 44_usize.saturating_sub("<integer> = /[0-9]+/".len())
         )
         .unwrap();
     }
@@ -211,7 +211,7 @@ fn write_lexical_tokens(buf: &mut String, categories: &[CategoryInfo]) {
             "<float>   = /[0-9]+\\.[0-9]+/{:>pad$}(* {} *) ;",
             "",
             float_type,
-            pad = 22 - "<float>   = /[0-9]+\\.[0-9]+/".len() + 22
+            pad = 44_usize.saturating_sub("<float>   = /[0-9]+\\.[0-9]+/".len())
         )
         .unwrap();
     }
