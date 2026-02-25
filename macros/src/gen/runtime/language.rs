@@ -1157,12 +1157,8 @@ fn generate_language_struct_multi(
             let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
             let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
             let variant = format_ident!("{}", cat);
-            let use_debug_display = t.collection_kind.is_some();
-            let display_fmt = if use_debug_display {
-                quote! { format!("{:?}", t) }
-            } else {
-                quote! { format!("{}", t) }
-            };
+            // List/Bag implement Display (ListLit/BagLit produce [] and {}), use Display for round-trip parsing
+            let display_fmt = quote! { format!("{}", t) };
             quote! {
                 #inner_enum_name::#variant(_) => {
                     let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
@@ -1289,12 +1285,8 @@ fn generate_language_struct_multi(
                 let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
                 let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
                 let variant = format_ident!("{}", cat);
-                let use_debug_display = t.collection_kind.is_some();
-                let display_fmt = if use_debug_display {
-                    quote! { format!("{:?}", t) }
-                } else {
-                    quote! { format!("{}", t) }
-                };
+                // List/Bag implement Display (ListLit/BagLit produce [] and {}), use Display for round-trip parsing
+                let display_fmt = quote! { format!("{}", t) };
                 quote! {
                     #inner_enum_name::#variant(_) => {
                         let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();

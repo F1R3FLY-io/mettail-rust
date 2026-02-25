@@ -402,17 +402,8 @@ fn generate_syntax_pattern_display_arm(
                     let use_deref = param_ty.map(|ty| {
                         if let TypeExpr::Base(ref cat) = ty { cat != category } else { false }
                     }).unwrap_or(false);
-                    let use_debug_list_bag = param_ty.map(|ty| {
-                        if let TypeExpr::Base(ref cat) = ty {
-                            let s = cat.to_string();
-                            s == "List" || s == "Bag"
-                        } else {
-                            false
-                        }
-                    }).unwrap_or(false);
-                    if use_debug_list_bag {
-                        format_parts.push(quote! { write!(f, "{:?}", #field_ident)?; });
-                    } else if use_deref {
+                    // List/Bag implement Display (ListLit/BagLit produce [] and {}), use {} for round-trip
+                    if use_deref {
                         format_parts.push(quote! { write!(f, "{}", #field_ident.as_ref())?; });
                     } else {
                         format_parts.push(quote! { write!(f, "{}", #field_ident)?; });
@@ -723,11 +714,10 @@ fn build_format_string(
                 let escaped = term.replace("{", "{{").replace("}", "}}");
                 format_str.push_str(&escaped);
             },
-            GrammarItem::NonTerminal(ty) => {
-                // Regular fields; use {:?} for List/Bag so we don't require Display on Vec<Proc>/HashBag<Proc>
+            GrammarItem::NonTerminal(_ty) => {
+                // List/Bag implement Display (ListLit/BagLit produce [] and {}), so use {} for round-trip parsing
                 if let Some((name, _)) = field_iter.next() {
-                    let use_debug = ty.to_string() == "List" || ty.to_string() == "Bag";
-                    format_str.push_str(if use_debug { "{:?}" } else { "{}" });
+                    format_str.push_str("{}");
                     let field_ident = syn::Ident::new(name, proc_macro2::Span::call_site());
                     format_args.push(quote! { #field_ident });
                 }
