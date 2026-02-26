@@ -135,9 +135,10 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             }
         }
 
-        // Auto-generate Var variant if no explicit Var rule exists (skip for List/Bag - value-only categories)
+        // Auto-generate Var variant if no explicit Var rule exists.
+        // Include List/Bag so that at(x, 0), concat(x, y), etc. can use env-bound variables.
         let is_collection_category = lang_type.collection_kind.is_some();
-        if !has_var_rule && !is_collection_category {
+        if !has_var_rule {
             let var_label = generate_var_label(cat_name);
             variants.push(quote! {
                 #var_label(mettail_runtime::OrdVar)

@@ -722,14 +722,14 @@ pub(crate) fn collect_category_variants(
         }
     }
 
-    // Auto-generated Var variant (if no explicit Var rule and not a collection category)
-    if !is_collection_category {
-        let has_var = variants
-            .iter()
-            .any(|v| matches!(v, VariantKind::Var { .. }));
-        if !has_var {
-            variants.push(VariantKind::Var { label: generate_var_label(category) });
-        }
+    // Auto-generated Var variant (if no explicit Var rule). Include List/Bag for env substitution (e.g. at(x, 0)).
+    let has_var = variants
+        .iter()
+        .any(|v| matches!(v, VariantKind::Var { .. }));
+    if !has_var {
+        variants.push(VariantKind::Var {
+            label: generate_var_label(category),
+        });
     }
 
     // Auto-generated Literal variant (for native types).

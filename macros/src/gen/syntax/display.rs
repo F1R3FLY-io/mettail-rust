@@ -58,11 +58,9 @@ fn generate_display_impl(
         .map(|rule| generate_display_arm(rule, language))
         .collect();
 
-    // Check if Var variant was auto-generated (skip for collection categories: List, Bag)
+    // Check if Var variant was auto-generated (include List/Bag LVar/BVar for at(x,0), etc.)
     let has_var_rule = rules.iter().any(|rule| is_var_rule(rule));
-    if !has_var_rule
-        && language.get_type(category).and_then(|t| t.collection_kind.as_ref()).is_none()
-    {
+    if !has_var_rule {
         let var_arm = generate_auto_var_display_arm(category);
         match_arms.push(var_arm);
     }

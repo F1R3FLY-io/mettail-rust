@@ -4,8 +4,9 @@
 //! - `{Name}Term` wrapper implementing `mettail_runtime::Term`
 //! - `{Name}Language` struct implementing `mettail_runtime::Language`
 
-use crate::ast::grammar::GrammarItem;
+use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::language::LanguageDef;
+use crate::ast::types::TypeExpr;
 use crate::gen::{generate_literal_label, generate_var_label};
 use crate::logic::list_all_relations_for_extraction;
 use proc_macro2::Span;
@@ -1015,30 +1016,25 @@ fn generate_var_collection_impl(
         }
     }
 
-    // Variable handling for free variables (skip for collection categories - no LVar/BVar)
-    let var_arms: TokenStream = if is_collection_category {
-        quote! {}
-    } else {
-        let var_label = generate_var_label(primary_type);
-        let primary_type_lit = LitStr::new(&primary_type.to_string(), primary_type.span());
-        quote! {
-            #primary_type::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
-                if let Some(name) = &fv.pretty_name {
-                    if !seen.contains(name) {
-                        seen.insert(name.clone());
-                        // Try to infer type from usage in root term
-                        let var_type = root_term.infer_var_type(name)
-                            .map(|t| Self::inferred_to_term_type(&t))
-                            .unwrap_or_else(|| mettail_runtime::TermType::Base(#primary_type_lit.to_string()));
-                        result.push(mettail_runtime::VarTypeInfo {
-                            name: name.clone(),
-                            ty: var_type,
-                        });
-                    }
+    // Variable handling for free variables (including List/Bag LVar/BVar for at(x,0), concat(x,y), etc.)
+    let var_label = generate_var_label(primary_type);
+    let primary_type_lit = LitStr::new(&primary_type.to_string(), primary_type.span());
+    let var_arms: TokenStream = quote! {
+        #primary_type::#var_label(mettail_runtime::OrdVar(mettail_runtime::Var::Free(fv))) => {
+            if let Some(name) = &fv.pretty_name {
+                if !seen.contains(name) {
+                    seen.insert(name.clone());
+                    let var_type = root_term.infer_var_type(name)
+                        .map(|t| Self::inferred_to_term_type(&t))
+                        .unwrap_or_else(|| mettail_runtime::TermType::Base(#primary_type_lit.to_string()));
+                    result.push(mettail_runtime::VarTypeInfo {
+                        name: name.clone(),
+                        ty: var_type,
+                    });
                 }
             }
-            #primary_type::#var_label(_) => {}
         }
+        #primary_type::#var_label(_) => {}
     };
 
     quote! {
@@ -1047,6 +1043,41 @@ fn generate_var_collection_impl(
         #(#constructor_arms)*
         _ => {}
     }
+}
+
+/// For a category (e.g. Proc) that has injection rules (e.g. ProcInt . i:Int |- i : Proc), generate
+/// seed pushes so that when we seed proc(ProcInt(inner)) we also seed int(inner). This allows the
+/// fixpoint to reduce Int and then propagate via ProcIntCong to rw_proc.
+fn injection_seed_pushes_for_category(
+    language: &LanguageDef,
+    cat: &Ident,
+    inner_enum_name: &Ident,
+) -> TokenStream {
+    let mut pushes = Vec::new();
+    for rule in &language.terms {
+        if rule.category != *cat {
+            continue;
+        }
+        let Some(ref ctx) = rule.term_context else { continue };
+        if ctx.len() != 1 {
+            continue;
+        }
+        let param = &ctx[0];
+        let TermParam::Simple { ty, .. } = param else { continue };
+        let TypeExpr::Base(inner_cat) = ty else { continue };
+        if *inner_cat == *cat {
+            continue;
+        }
+        let label = &rule.label;
+        let inner_cat_lower = format_ident!("{}", inner_cat.to_string().to_lowercase());
+        // Injection variants use Box<Inner> (e.g. ProcInt(Box<Int>)); push the unwrapped value.
+        pushes.push(quote! {
+            if let #cat::#label(inner) = &initial {
+                prog.#inner_cat_lower.push((inner.as_ref().clone(),));
+            }
+        });
+    }
+    quote! { #(#pushes)* }
 }
 
 /// Generate the Language struct when the language has multiple types (multi-category parse and run).
@@ -1071,15 +1102,17 @@ fn generate_language_struct_multi(
     // by the user's declared priority (first-declared category = first alternative).
     let parse_order: Vec<syn::Ident> = language.types.iter().map(|t| t.name.clone()).collect();
 
-    // Lexer-guided parse filtering: when the language has at least one non-native category
-    // (e.g. Proc, Name), skip native-only categories (e.g. Float, Int, Bool, Str) when the
-    // first token is an identifier, since identifiers are not native literals.
-    // For all-native languages (e.g. Calculator), no filtering is needed.
+    // Lexer-guided parse filtering: when the language has at least one non-native category,
+    // skip native categories when the first token is an identifier *only* for native
+    // categories that have no variable rule (e.g. collection types). Native categories with
+    // variable rules (Int, Float, Bool, Str with IVar, FVar, etc.) must still be tried so
+    // that e.g. "a + b" gets both Int and Float alternatives for env substitution.
     let has_non_native = language.types.iter().any(|t| t.native_type.is_none());
-    let native_cat_names: std::collections::HashSet<String> = language
+    let native_cats_skip_on_ident: std::collections::HashSet<String> = language
         .types
         .iter()
         .filter(|t| t.native_type.is_some())
+        .filter(|t| t.collection_kind.is_some()) // only skip collection types (no var rule)
         .map(|t| t.name.to_string())
         .collect();
 
@@ -1093,8 +1126,8 @@ fn generate_language_struct_multi(
                     Err(e) => if first_err.is_none() { first_err = Some(e); },
                 }
             };
-            // Guard native categories behind an Ident check when non-native categories exist
-            if has_non_native && native_cat_names.contains(&cat.to_string()) {
+            // Skip native collection categories on Ident; native scalar types (Int, Float, etc.) still tried
+            if has_non_native && native_cats_skip_on_ident.contains(&cat.to_string()) {
                 quote! {
                     if !matches!(first_tok, Some(Token::Ident(_))) {
                         #try_block
@@ -1119,6 +1152,14 @@ fn generate_language_struct_multi(
     };
 
     let primary_type_for_step = language.types.first().map(|t| &t.name);
+    let primary_type = primary_type_for_step.expect("at least one type");
+    // Injection seed: when seeding the primary category (e.g. Proc), also seed injected sub-terms
+    // (e.g. ProcInt(inner) => seed int(inner)) so that reduction can run and congruence can propagate.
+    let injection_seed_pushes = injection_seed_pushes_for_category(
+        language,
+        primary_type,
+        &inner_enum_name,
+    );
     // Seed arms: push the initial term into the appropriate relation on the unified Ascent struct.
     let seed_arms: Vec<TokenStream> = language
         .types
@@ -1136,11 +1177,17 @@ fn generate_language_struct_multi(
                     }
                 })
                 .unwrap_or_default();
+            let injection_pushes = if cat == primary_type {
+                injection_seed_pushes.clone()
+            } else {
+                quote! {}
+            };
             quote! {
                 #inner_enum_name::#variant(inner) => {
                     let initial = inner.clone();
                     prog.#cat_lower.push((initial.clone(),));
                     #seed_step_term
+                    #injection_pushes
                 }
             }
         })
@@ -1243,10 +1290,23 @@ fn generate_language_struct_multi(
     let core_cats = crate::logic::common::compute_core_categories(language);
 
     let run_ascent_body = if core_raw_ascent_content.is_some() {
-        // SCC-split dispatcher: core categories → core struct, others → full struct
+        // SCC-split dispatcher: core categories → core struct, others → full struct.
+        // When the primary category has injection rules (e.g. Proc with ProcInt(Int)), we must use
+        // the full struct for the primary so that injection seeding can populate int/float/... and
+        // reduction can run; the core struct only has core relations and may not have those.
+        let primary_has_injections = !injection_seed_pushes.is_empty();
         let core_cats_ref = core_cats
             .as_ref()
             .expect("core_raw_content implies core_cats");
+        let core_cats_for_dispatch: std::collections::BTreeSet<String> = if primary_has_injections {
+            core_cats_ref
+                .iter()
+                .filter(|c| **c != primary_type.to_string())
+                .cloned()
+                .collect()
+        } else {
+            core_cats_ref.clone()
+        };
 
         // Build seed+extract arms for core struct (same logic, different prog type)
         let core_seed_arms: Vec<TokenStream> = language
@@ -1261,11 +1321,11 @@ fn generate_language_struct_multi(
                     .map(|pt| {
                         if pt == cat {
                             quote! { prog.step_term.push((initial.clone(),)); }
-                        } else {
-                            quote! {}
-                        }
-                    })
-                    .unwrap_or_default();
+                    } else {
+                        quote! {}
+                    }
+                })
+                .unwrap_or_default();
                 quote! {
                     #inner_enum_name::#variant(inner) => {
                         let initial = inner.clone();
@@ -1313,24 +1373,23 @@ fn generate_language_struct_multi(
             })
             .collect();
 
-        // Core category variant patterns (for the match guard)
+        // Core category variant patterns (for the match guard). Use core_cats_for_dispatch so that
+        // when primary has injections we use the full struct for primary (Proc) and only use core
+        // for other core categories.
         let core_variant_patterns: Vec<TokenStream> = language
             .types
             .iter()
-            .filter(|t| core_cats_ref.contains(&t.name.to_string()))
+            .filter(|t| core_cats_for_dispatch.contains(&t.name.to_string()))
             .map(|t| {
                 let variant = format_ident!("{}", t.name);
                 quote! { #inner_enum_name::#variant(_) }
             })
             .collect();
 
-        quote! {
-            match &term.0 {
-                #inner_enum_name::Ambiguous(alts) => {
-                    let first = alts.first().expect("Ambiguous must have 2+ alternatives");
-                    let sub_term = #term_name(first.clone());
-                    Self::run_ascent_typed(&sub_term)
-                }
+        let core_branch = if core_variant_patterns.is_empty() {
+            quote! {}
+        } else {
+            quote! {
                 // Core categories: use the smaller core struct (fewer SCC rules)
                 #(#core_variant_patterns)|* => {
                     let mut prog = #core_prog_name::default();
@@ -1344,7 +1403,18 @@ fn generate_language_struct_multi(
                         _ => unreachable!(),
                     }
                 }
-                // Non-core categories: use the full struct (all rules)
+            }
+        };
+
+        quote! {
+            match &term.0 {
+                #inner_enum_name::Ambiguous(alts) => {
+                    let first = alts.first().expect("Ambiguous must have 2+ alternatives");
+                    let sub_term = #term_name(first.clone());
+                    Self::run_ascent_typed(&sub_term)
+                }
+                #core_branch
+                // Non-core (or primary when it has injections): use the full struct (all rules)
                 _ => {
                     let mut prog = #prog_struct_name::default();
                     match &term.0 {
@@ -1707,13 +1777,15 @@ fn generate_language_trait_impl_multi(
     let name_lit = LitStr::new(name_str, name.span());
 
     let categories: Vec<_> = language.types.iter().map(|t| &t.name).collect();
-    let remove_checks: Vec<TokenStream> = categories
+    // Remove from every category (do not short-circuit: Ambiguous terms add to multiple envs).
+    let remove_statements: Vec<TokenStream> = categories
         .iter()
         .map(|cat| {
             let field = format_ident!("{}", cat.to_string().to_lowercase());
-            quote! { typed_env.#field.remove(name).is_some() }
+            quote! { if typed_env.#field.remove(name).is_some() { removed = true; } }
         })
         .collect();
+    // Deduplicate by name so each binding appears once (Ambiguous terms add to multiple category envs).
     let list_iterations: Vec<TokenStream> = categories
         .iter()
         .map(|cat| {
@@ -1726,8 +1798,10 @@ fn generate_language_trait_impl_multi(
             };
             quote! {
                 for (name, val) in typed_env.#field.iter() {
-                    let comment = typed_env.comments.get(name).cloned();
-                    result.push((name.clone(), #format_fmt, comment));
+                    if seen.insert(name.clone()) {
+                        let comment = typed_env.comments.get(name).cloned();
+                        result.push((name.clone(), #format_fmt, comment));
+                    }
                 }
             }
         })
@@ -1923,7 +1997,8 @@ fn generate_language_trait_impl_multi(
                 #(#remove_before_add)*
                 match &typed_term.0 {
                     #inner_enum_name::Ambiguous(alts) => {
-                        // For ambiguous terms, add to ALL matching category envs
+                        // For ambiguous terms, add to ALL matching category envs so substitution
+                        // finds the binding regardless of which alternative is used.
                         for alt in alts {
                             match alt {
                                 #(#add_to_env_arms),*,
@@ -1940,7 +2015,8 @@ fn generate_language_trait_impl_multi(
                 let typed_env = env
                     .downcast_mut::<#env_name>()
                     .ok_or_else(|| "Invalid environment type".to_string())?;
-                let removed = #(#remove_checks)||*;
+                let mut removed = false;
+                #(#remove_statements)*
                 Ok(removed)
             }
 
@@ -1980,6 +2056,7 @@ fn generate_language_trait_impl_multi(
                     None => return Vec::new(),
                 };
                 let mut result = Vec::new();
+                let mut seen = std::collections::HashSet::new();
                 #(#list_iterations)*
                 result
             }
@@ -2024,10 +2101,17 @@ fn generate_language_trait_impl_multi(
                 };
                 match &typed_term.0 {
                     #inner_enum_name::Ambiguous(alts) => {
-                        if let Some(first) = alts.first() {
-                            let sub = #term_name(first.clone());
-                            self.infer_var_types(&sub)
-                        } else { Vec::new() }
+                        let mut result = Vec::new();
+                        let mut seen = std::collections::HashSet::new();
+                        for alt in alts {
+                            let sub = #term_name(alt.clone());
+                            for v in self.infer_var_types(&sub) {
+                                if seen.insert(v.name.clone()) {
+                                    result.push(v);
+                                }
+                            }
+                        }
+                        result
                     }
                     #(#infer_var_types_arms),*
                 }
@@ -2040,10 +2124,13 @@ fn generate_language_trait_impl_multi(
                 };
                 match &typed_term.0 {
                     #inner_enum_name::Ambiguous(alts) => {
-                        if let Some(first) = alts.first() {
-                            let sub = #term_name(first.clone());
-                            self.infer_var_type(&sub, var_name)
-                        } else { None }
+                        for alt in alts {
+                            let sub = #term_name(alt.clone());
+                            if let Some(ty) = self.infer_var_type(&sub, var_name) {
+                                return Some(ty);
+                            }
+                        }
+                        None
                     }
                     #(#infer_var_type_arms),*
                 }

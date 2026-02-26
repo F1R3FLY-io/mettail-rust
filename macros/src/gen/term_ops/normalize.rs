@@ -167,9 +167,7 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                     });
                 }
             }
-            if !has_var_rule
-                && language.get_type(category).and_then(|t| t.collection_kind.as_ref()).is_none()
-            {
+            if !has_var_rule {
                 let var_label = generate_var_label(category);
                 match_arms.push(quote! {
                     #category::#var_label(_) => self.clone()

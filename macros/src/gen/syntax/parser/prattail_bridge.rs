@@ -45,6 +45,49 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         .map(|rule| convert_rule(rule, &cat_names))
         .collect();
 
+    // Add synthetic variable rules for categories with has_var (no collection_kind) so that
+    // identifiers parse as variables and infix expressions like "a + b" work.
+    // Use the same label convention as AST (generate_var_label: first letter + "Var", e.g. IVar, PVar).
+    for lang_type in &language.types {
+        if lang_type.collection_kind.is_none() {
+            let category = lang_type.name.to_string();
+            let label = crate::gen::generate_var_label(&lang_type.name).to_string();
+            inputs.push(RuleSpecInput {
+                label,
+                category: category.clone(),
+                syntax: vec![SyntaxItemSpec::IdentCapture {
+                    param_name: "v".to_string(),
+                }],
+                associativity: mettail_prattail::binding_power::Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+            });
+        }
+    }
+
+    // Add synthetic variable rules for List/Bag so that identifiers (e.g. x in at(x, 0))
+    // parse as list/bag variables when the name is bound in the environment.
+    for lang_type in &language.types {
+        if lang_type.collection_kind.is_some() {
+            let category = lang_type.name.to_string();
+            let label = crate::gen::generate_var_label(&lang_type.name).to_string();
+            inputs.push(RuleSpecInput {
+                label,
+                category: category.clone(),
+                syntax: vec![SyntaxItemSpec::IdentCapture {
+                    param_name: "v".to_string(),
+                }],
+                associativity: mettail_prattail::binding_power::Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+            });
+        }
+    }
+
     // Add synthetic literal rules for List/Bag categories (parameterised by delimiters)
     let elem_cat = language
         .types

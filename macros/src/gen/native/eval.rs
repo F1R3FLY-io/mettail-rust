@@ -126,18 +126,16 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             match_arms.push(literal_arm);
         }
 
-        // Add arm for auto-generated Var variant if no explicit Var rule (skip for List/Bag - no LVar/BVar)
+        // Add arm for auto-generated Var variant if no explicit Var rule (include List/Bag LVar/BVar)
         let is_collection = lang_type.collection_kind.is_some();
-        if !is_collection {
-            let var_label = generate_var_label(category);
-            let panic_msg = format!(
-                "Cannot evaluate {} - variables must be substituted via rewrites first",
-                var_label
-            );
-            match_arms.push(quote! {
-                #category::#var_label(_) => loop { panic!(#panic_msg) },
-            });
-        }
+        let var_label = generate_var_label(category);
+        let panic_msg = format!(
+            "Cannot evaluate {} - variables must be substituted via rewrites first",
+            var_label
+        );
+        match_arms.push(quote! {
+            #category::#var_label(_) => loop { panic!(#panic_msg) },
+        });
 
         // Match arms for try_eval() -> Option<T> (Var and catch-all => None, rest => Some(...))
         let mut try_eval_arms: Vec<TokenStream> = Vec::new();
@@ -151,12 +149,9 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
             };
             try_eval_arms.push(try_literal_arm);
         }
-        if !is_collection {
-            let var_label = generate_var_label(category);
-            try_eval_arms.push(quote! {
-                #category::#var_label(_) => None,
-            });
-        }
+        try_eval_arms.push(quote! {
+            #category::#var_label(_) => None,
+        });
 
         for rule in &rules {
             let label = &rule.label;

@@ -510,11 +510,11 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
         parse_fn,
     ));
 
-    // Add cast rule prefix arms
+    // Add cast rule prefix arms (use source_first: target's own_first includes these
+    // via the cast rule, so difference would be empty)
     for cast_rule in &config.cast_rules {
         if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
-            let unique_tokens = source_first.difference(&config.own_first_set);
-            for token in &unique_tokens.tokens {
+            for token in &source_first.tokens {
                 let mut arm = String::new();
                 write_token_pattern(&mut arm, token);
                 write!(
