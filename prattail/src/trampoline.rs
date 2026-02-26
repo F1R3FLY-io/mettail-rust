@@ -963,17 +963,39 @@ fn write_prefix_match_arms(
     }
 
     // ── Grouping: parenthesized expression ──
-    write!(
-        buf,
-        "Token::LParen => {{ \
-            *pos += 1; \
-            stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
-            cur_bp = 0; \
-            continue 'drive; \
-        }},",
-        frame_info.enum_name,
-    )
-    .unwrap();
+    //
+    // When `needs_dispatch` is true, this category has a dispatch wrapper
+    // (parse_Cat) that handles cross-category rules. Grouping must call
+    // that wrapper so expressions like `(3 == 3)` can dispatch to a
+    // different source category inside parentheses.
+    //
+    // When `needs_dispatch` is false, we use the continuation-stack
+    // approach (GroupClose frame + continue 'drive) for full stack-safety.
+    if config.needs_dispatch {
+        write!(
+            buf,
+            "Token::LParen => {{ \
+                *pos += 1; \
+                let expr = parse_{}(tokens, pos, 0)?; \
+                expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
+                break 'prefix expr; \
+            }},",
+            cat,
+        )
+        .unwrap();
+    } else {
+        write!(
+            buf,
+            "Token::LParen => {{ \
+                *pos += 1; \
+                stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
+                cur_bp = 0; \
+                continue 'drive; \
+            }},",
+            frame_info.enum_name,
+        )
+        .unwrap();
+    }
 
     // ── Cast rule prefix arms ──
     for cast_rule in &config.cast_rules {

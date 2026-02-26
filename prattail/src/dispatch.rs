@@ -71,7 +71,13 @@ pub fn write_category_dispatch(
 
     let mut dispatch_arms: Vec<String> = Vec::new();
 
-    // Generate unambiguous cross-category dispatch
+    // Collect deterministic cross-category arms grouped by (source_category, token)
+    // to avoid duplicate match arms when multiple rules share the same source
+    // (e.g., EqInt, GtInt, LtInt all dispatch from Int's FIRST tokens).
+    let mut deterministic_by_token: BTreeMap<(String, String), Vec<(String, String, String)>> =
+        BTreeMap::new();
+
+    // Generate cross-category dispatch
     for rule in cross_category_rules {
         let overlap_key = (rule.source_category.clone(), category.to_string());
         let overlap = overlaps.get(&overlap_key);
@@ -81,35 +87,19 @@ pub fn write_category_dispatch(
         if let Some(source_first) = source_first {
             let target_first = first_sets.get(category);
 
-            // Find tokens unique to the source category (unambiguous dispatch)
             if let Some(target_first) = target_first {
                 let unique_to_source = source_first.difference(target_first);
                 let op_variant = terminal_to_variant_name(&rule.operator);
 
+                // Deterministic tokens: group by (source_category, token)
                 for token in &unique_to_source.tokens {
-                    let mut arm = String::new();
-                    write_token_pattern(&mut arm, token);
-                    write!(
-                        arm,
-                        " => {{ \
-                            let left = parse_{}(tokens, pos, 0)?; \
-                            expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
-                            let right = parse_{}(tokens, pos, 0)?; \
-                            Ok({}::{}(Box::new(left), Box::new(right))) \
-                        }}",
-                        rule.source_category,
-                        op_variant,
-                        rule.operator,
-                        rule.source_category,
-                        category,
-                        rule.label,
-                    )
-                    .unwrap();
-                    dispatch_arms.push(arm);
+                    deterministic_by_token
+                        .entry((rule.source_category.clone(), token.clone()))
+                        .or_default()
+                        .push((rule.label.clone(), op_variant.clone(), rule.operator.clone()));
                 }
 
-                // For ambiguous tokens (in both source and target FIRST sets),
-                // generate save/restore backtracking
+                // Ambiguous tokens: save/restore backtracking (unchanged)
                 if let Some(overlap) = overlap {
                     for token in &overlap.ambiguous_tokens.tokens {
                         let mut arm = String::new();
@@ -141,6 +131,61 @@ pub fn write_category_dispatch(
                 }
             }
         }
+    }
+
+    // Emit deterministic arms — one arm per (source_category, token)
+    for ((source_cat, token), rules) in &deterministic_by_token {
+        let mut arm = String::new();
+        write_token_pattern(&mut arm, token);
+
+        if rules.len() == 1 {
+            // Single rule for this token — emit direct parse
+            let (label, op_variant, operator) = &rules[0];
+            write!(
+                arm,
+                " => {{ \
+                    let left = parse_{}(tokens, pos, 0)?; \
+                    expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
+                    let right = parse_{}(tokens, pos, 0)?; \
+                    Ok({}::{}(Box::new(left), Box::new(right))) \
+                }}",
+                source_cat, op_variant, operator, source_cat, category, label,
+            )
+            .unwrap();
+        } else {
+            // Multiple rules share this token — parse left, then match operator
+            write!(arm, " => {{ let left = parse_{}(tokens, pos, 0)?; ", source_cat).unwrap();
+            arm.push_str("if *pos >= tokens.len() { \
+                let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
+                return Err(ParseError::UnexpectedEof { expected: \"operator\", range: eof_range }); \
+            } ");
+            arm.push_str("match &tokens[*pos].0 { ");
+
+            for (label, op_variant, _operator) in rules {
+                write!(
+                    arm,
+                    "Token::{} => {{ \
+                        *pos += 1; \
+                        let right = parse_{}(tokens, pos, 0)?; \
+                        Ok({}::{}(Box::new(left), Box::new(right))) \
+                    }},",
+                    op_variant, source_cat, category, label,
+                )
+                .unwrap();
+            }
+
+            // Fallback for unexpected operator
+            arm.push_str("other => { \
+                let range = tokens[*pos].1; \
+                Err(ParseError::UnexpectedToken { \
+                    expected: \"comparison operator\", \
+                    found: format!(\"{:?}\", other), \
+                    range, \
+                }) \
+            }");
+            arm.push_str(" } }");
+        }
+        dispatch_arms.push(arm);
     }
 
     // Generate cast rule dispatch
@@ -229,7 +274,10 @@ pub fn write_category_dispatch_weighted(
     // then sort by WFST weight
     let mut ambiguous_by_token: BTreeMap<String, Vec<(&CrossCategoryRule, String)>> =
         BTreeMap::new();
-    let mut deterministic_arms: Vec<String> = Vec::new();
+    // Collect deterministic arms grouped by (source_category, token) to avoid
+    // duplicate match arms when multiple rules share the same source category.
+    let mut deterministic_by_token: BTreeMap<(String, String), Vec<(String, String, String)>> =
+        BTreeMap::new();
 
     for rule in cross_category_rules {
         let overlap_key = (rule.source_category.clone(), category.to_string());
@@ -243,27 +291,12 @@ pub fn write_category_dispatch_weighted(
                 let unique_to_source = source_first.difference(target_first);
                 let op_variant = terminal_to_variant_name(&rule.operator);
 
-                // Deterministic: tokens unique to source
+                // Deterministic: group by (source_category, token)
                 for token in &unique_to_source.tokens {
-                    let mut arm = String::new();
-                    write_token_pattern(&mut arm, token);
-                    write!(
-                        arm,
-                        " => {{ \
-                            let left = parse_{}(tokens, pos, 0)?; \
-                            expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
-                            let right = parse_{}(tokens, pos, 0)?; \
-                            Ok({}::{}(Box::new(left), Box::new(right))) \
-                        }}",
-                        rule.source_category,
-                        op_variant,
-                        rule.operator,
-                        rule.source_category,
-                        category,
-                        rule.label,
-                    )
-                    .unwrap();
-                    deterministic_arms.push(arm);
+                    deterministic_by_token
+                        .entry((rule.source_category.clone(), token.clone()))
+                        .or_default()
+                        .push((rule.label.clone(), op_variant.clone(), rule.operator.clone()));
                 }
 
                 // Ambiguous: collect for weight-ordered emission
@@ -279,8 +312,57 @@ pub fn write_category_dispatch_weighted(
         }
     }
 
-    // Emit deterministic arms first (order doesn't matter — each matches a different token)
-    dispatch_arms.extend(deterministic_arms);
+    // Emit deterministic arms — one arm per (source_category, token)
+    for ((source_cat, token), rules) in &deterministic_by_token {
+        let mut arm = String::new();
+        write_token_pattern(&mut arm, token);
+
+        if rules.len() == 1 {
+            let (label, op_variant, operator) = &rules[0];
+            write!(
+                arm,
+                " => {{ \
+                    let left = parse_{}(tokens, pos, 0)?; \
+                    expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
+                    let right = parse_{}(tokens, pos, 0)?; \
+                    Ok({}::{}(Box::new(left), Box::new(right))) \
+                }}",
+                source_cat, op_variant, operator, source_cat, category, label,
+            )
+            .unwrap();
+        } else {
+            write!(arm, " => {{ let left = parse_{}(tokens, pos, 0)?; ", source_cat).unwrap();
+            arm.push_str("if *pos >= tokens.len() { \
+                let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
+                return Err(ParseError::UnexpectedEof { expected: \"operator\", range: eof_range }); \
+            } ");
+            arm.push_str("match &tokens[*pos].0 { ");
+
+            for (label, op_variant, _operator) in rules {
+                write!(
+                    arm,
+                    "Token::{} => {{ \
+                        *pos += 1; \
+                        let right = parse_{}(tokens, pos, 0)?; \
+                        Ok({}::{}(Box::new(left), Box::new(right))) \
+                    }},",
+                    op_variant, source_cat, category, label,
+                )
+                .unwrap();
+            }
+
+            arm.push_str("other => { \
+                let range = tokens[*pos].1; \
+                Err(ParseError::UnexpectedToken { \
+                    expected: \"comparison operator\", \
+                    found: format!(\"{:?}\", other), \
+                    range, \
+                }) \
+            }");
+            arm.push_str(" } }");
+        }
+        dispatch_arms.push(arm);
+    }
 
     // Emit ambiguous arms, sorted by WFST weight within each token group
     for (token, mut rules_and_ops) in ambiguous_by_token {
