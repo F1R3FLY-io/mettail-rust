@@ -10,6 +10,7 @@ use super::common::{
 };
 use crate::ast::grammar::{GrammarItem, GrammarRule};
 use crate::ast::language::LanguageDef;
+use crate::gen::native::is_list_literal_rule;
 use crate::logic::rules as unified_rules;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -106,6 +107,11 @@ fn generate_congruence_rules(
             .iter()
             .any(|item| matches!(item, GrammarItem::Collection { .. }))
         {
+            continue;
+        }
+
+        // List literal: single field is Vec<elem>, not same-category args; skip for congruence
+        if is_list_literal_rule(grammar_rule, language) {
             continue;
         }
 

@@ -8,6 +8,7 @@ use crate::ast::{
     grammar::{GrammarItem, GrammarRule, TermParam},
     types::{CollectionType, TypeExpr},
 };
+use crate::gen::native::{is_list_literal_rule, list_literal_element_cat};
 use crate::gen::{generate_var_label, is_var_rule};
 
 /// Generate variable category inference methods for lambda type checking
@@ -86,7 +87,7 @@ pub fn generate_var_category_inference(language: &LanguageDef) -> TokenStream {
 
         // Generate match arms for full type inference (including function types)
         let mut type_match_arms: Vec<TokenStream> = rules.iter().filter_map(|rule| {
-            generate_var_type_inference_arm(rule, &cat_names)
+            generate_var_type_inference_arm(rule, &cat_names, language)
         }).collect();
 
         // Add arm for Var variant - returns base type
@@ -268,7 +269,7 @@ enum InferFieldKind {
 fn generate_var_inference_arm(
     rule: &GrammarRule,
     all_cats: &[&syn::Ident],
-    _language: &LanguageDef,
+    language: &LanguageDef,
 ) -> Option<TokenStream> {
     let category = &rule.category;
     let label = &rule.label;
@@ -289,6 +290,14 @@ fn generate_var_inference_arm(
                     syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
                 match param {
                     TermParam::Simple { ty, .. } => {
+                        // List literal: single param is Vec<element_cat>, iterate over elements
+                        if ctx.len() == 1 && is_list_literal_rule(rule, language) {
+                            if let Some(elem_cat) = list_literal_element_cat(rule, language) {
+                                if all_cats.iter().any(|c| *c == &elem_cat) {
+                                    return Some((field_name, elem_cat, InferFieldKind::Vec));
+                                }
+                            }
+                        }
                         let field_cat = extract_base_cat(ty);
                         if all_cats
                             .iter()
@@ -475,6 +484,7 @@ fn generate_var_inference_arm(
 fn generate_var_type_inference_arm(
     rule: &GrammarRule,
     all_cats: &[&syn::Ident],
+    language: &LanguageDef,
 ) -> Option<TokenStream> {
     let category = &rule.category;
     let label = &rule.label;
@@ -495,6 +505,13 @@ fn generate_var_type_inference_arm(
                     syn::Ident::new(&format!("f{}", i), proc_macro2::Span::call_site());
                 match param {
                     TermParam::Simple { ty, .. } => {
+                        if ctx.len() == 1 && is_list_literal_rule(rule, language) {
+                            if let Some(elem_cat) = list_literal_element_cat(rule, language) {
+                                if all_cats.iter().any(|c| *c == &elem_cat) {
+                                    return Some((field_name, elem_cat, InferFieldKind::Vec));
+                                }
+                            }
+                        }
                         let field_cat = extract_base_cat(ty);
                         if all_cats
                             .iter()

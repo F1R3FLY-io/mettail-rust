@@ -830,7 +830,7 @@ pub(crate) fn collect_category_variants(
 }
 
 /// Convert a grammar rule to a VariantKind
-pub(crate) fn rule_to_variant_kind(rule: &GrammarRule, _language: &LanguageDef) -> VariantKind {
+pub(crate) fn rule_to_variant_kind(rule: &GrammarRule, language: &LanguageDef) -> VariantKind {
     let label = rule.label.clone();
 
     // Check for Var rule first
@@ -841,6 +841,15 @@ pub(crate) fn rule_to_variant_kind(rule: &GrammarRule, _language: &LanguageDef) 
     // Check for literal rule (Integer, Boolean, StringLiteral, FloatLiteral)
     if is_literal_rule(rule) {
         return VariantKind::Literal { label };
+    }
+
+    // List literal: single param Vec with *sep → variant is ListLit(Vec<Proc>), treat as Collection for subst
+    if let Some(element_cat) = crate::gen::native::list_literal_element_cat(rule, language) {
+        return VariantKind::Collection {
+            label,
+            element_cat,
+            coll_type: CollectionType::Vec,
+        };
     }
 
     // Use term_context if available (new syntax)

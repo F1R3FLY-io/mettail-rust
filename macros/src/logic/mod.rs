@@ -343,20 +343,30 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
                 let TypeExpr::Base(arg_category) = param_ty else {
                     continue;
                 };
-                let Some(arg_lit_label) = common::literal_label_for(language, arg_category) else {
-                    continue;
-                };
-                // Use a different name for the term so the param (e.g. s) can be bound
-                // for rust_code without shadowing
                 let term_var = format_ident!("orig");
-                unary_rust_rules.push(quote! {
-                    #rw_rel(#term_var.clone(), t) <--
-                        #cat_rel(#term_var),
-                        if let #category::#label(inner) = #term_var,
-                        if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
-                        let #param_name = s_ref.clone(),
-                        let t = #category::#result_lit_label((#rust_code));
-                });
+                // List literal (and similar): variant is Cat::Label(Vec<elem>), field is the vec directly
+                if arg_category == category && common::has_vec_native_type(language, category) {
+                    let field_var = format_ident!("{}_ref", param_name);
+                    unary_rust_rules.push(quote! {
+                        #rw_rel(#term_var.clone(), t) <--
+                            #cat_rel(#term_var),
+                            if let #category::#label(ref #field_var) = #term_var,
+                            let #param_name = #field_var.clone(),
+                            let t = #category::#result_lit_label((#rust_code));
+                    });
+                } else {
+                    let Some(arg_lit_label) = common::literal_label_for(language, arg_category) else {
+                        continue;
+                    };
+                    unary_rust_rules.push(quote! {
+                        #rw_rel(#term_var.clone(), t) <--
+                            #cat_rel(#term_var),
+                            if let #category::#label(inner) = #term_var,
+                            if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
+                            let #param_name = s_ref.clone(),
+                            let t = #category::#result_lit_label((#rust_code));
+                    });
+                }
             },
             _ => {
                 // N-ary step rule (3+ arguments)

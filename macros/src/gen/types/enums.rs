@@ -5,7 +5,7 @@ use crate::ast::{
     language::LanguageDef,
     types::{CollectionType, TypeExpr},
 };
-use crate::gen::native::native_type_to_string;
+use crate::gen::native::{list_literal_element_cat, native_type_to_string};
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -164,7 +164,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
 
     // Check if this rule uses new syntax (term_context)
     if let Some(ref term_context) = rule.term_context {
-        return generate_variant_from_term_context(label, term_context, language, &rule.category);
+        return generate_variant_from_term_context(rule, label, term_context, language, &rule.category);
     }
 
     // Check if this rule has bindings (old syntax)
@@ -259,11 +259,17 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
 
 /// Generate variant from new term_context syntax
 fn generate_variant_from_term_context(
+    rule: &GrammarRule,
     label: &syn::Ident,
     term_context: &[TermParam],
     language: &LanguageDef,
     category: &syn::Ident,
 ) -> TokenStream {
+    // List literal: single param with *sep and Vec-backed type → Vec<elem> so parser passes (elements)
+    if let Some(elem_ident) = list_literal_element_cat(rule, language) {
+        return quote! { #label(Vec<#elem_ident>) };
+    }
+
     let mut fields: Vec<TokenStream> = Vec::new();
 
     for param in term_context {

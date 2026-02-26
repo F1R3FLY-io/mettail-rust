@@ -21,6 +21,7 @@ use super::common::{
     collect_nonterminal_fields, count_nonterminals, generate_tls_pool_iter, has_collection_field,
     is_multi_binder, relation_names, PoolArm,
 };
+use crate::gen::native::is_list_literal_rule;
 use crate::ast::grammar::{GrammarItem, GrammarRule};
 use crate::ast::language::LanguageDef;
 use proc_macro2::TokenStream;
@@ -120,6 +121,10 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
             continue;
         }
         if is_multi_binder(rule) {
+            continue;
+        }
+        // List literal (and similar): single field is Vec<elem>, not same-category subterms
+        if is_list_literal_rule(rule, language) && src == tgt {
             continue;
         }
 

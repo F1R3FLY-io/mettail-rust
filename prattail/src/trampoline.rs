@@ -1990,14 +1990,25 @@ fn write_collection_eof_catch(
 
         // Use break 'prefix to exit the prefix block with the finalized collection.
         // The unwind phase will then process any remaining frames from the stack.
-        write!(
-            buf,
-            "cur_bp = saved_bp; \
-            break 'prefix {cat}::{label}(elements);",
-            cat = cat,
-            label = rd_rule.label,
-        )
-        .unwrap();
+        if rd_rule.wrap_collection_in_literal {
+            write!(
+                buf,
+                "cur_bp = saved_bp; \
+                break 'prefix {cat}::{label}(Box::new({cat}::Lit(elements)));",
+                cat = cat,
+                label = rd_rule.label,
+            )
+            .unwrap();
+        } else {
+            write!(
+                buf,
+                "cur_bp = saved_bp; \
+                break 'prefix {cat}::{label}(elements);",
+                cat = cat,
+                label = rd_rule.label,
+            )
+            .unwrap();
+        }
         buf.push_str("},");
     }
 }

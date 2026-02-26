@@ -17,7 +17,7 @@ use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{LanguageDef, RewriteRule};
 use crate::ast::pattern::{Pattern, PatternTerm};
 use crate::ast::types::TypeExpr;
-use crate::gen::native::{is_vec_native_type, vec_element_ident};
+use crate::gen::native::{is_list_literal_rule, is_vec_native_type, vec_element_ident};
 use crate::gen::generate_literal_label;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -143,6 +143,10 @@ fn classify_and_generate_congruence(
         } => {
             // Collect for consolidation instead of generating immediately
             let grammar_rule = language.get_constructor(&constructor)?;
+            // List literal: single field is Vec<elem>, not Box<cat>; skip simple congruence
+            if is_list_literal_rule(grammar_rule, language) {
+                return None;
+            }
             let n = count_nonterminals(grammar_rule);
             let is_boxed = field_is_boxed_in_ast(grammar_rule, field_idx);
 

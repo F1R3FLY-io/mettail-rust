@@ -5,7 +5,9 @@
 //!
 //! This module is designed for expansion as more native type features are added.
 
+use crate::ast::grammar::{GrammarRule, PatternOp, SyntaxExpr, TermParam};
 use crate::ast::language::LanguageDef;
+use crate::ast::types::TypeExpr;
 use syn::Ident;
 
 pub mod eval;
@@ -61,6 +63,62 @@ pub fn is_vec_native_type(native_type: &syn::Type) -> bool {
             .unwrap_or(false),
         _ => false,
     }
+}
+
+/// True if rule is list-literal style: single param of Vec-backed category with *sep(param, ...) in pattern.
+/// Such rules use variant Cat::Label(Vec<elem>) so the parser can pass (elements) directly.
+pub fn is_list_literal_rule(rule: &GrammarRule, language: &LanguageDef) -> bool {
+    let context = match &rule.term_context {
+        Some(c) if c.len() == 1 => c,
+        _ => return false,
+    };
+    let TermParam::Simple { name: param_name, ty: TypeExpr::Base(cat) } = &context[0] else {
+        return false;
+    };
+    if !language
+        .types
+        .iter()
+        .find(|t| t.name == *cat)
+        .and_then(|t| t.native_type.as_ref())
+        .map_or(false, is_vec_native_type)
+    {
+        return false;
+    }
+    // Prefer pattern check: *sep(param, ...) with source None
+    if let Some(pattern) = &rule.syntax_pattern {
+        let param_str = param_name.to_string();
+        if pattern.iter().any(|expr| {
+            if let SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) = expr {
+                collection.to_string() == param_str
+            } else {
+                false
+            }
+        }) {
+            return true;
+        }
+    }
+    // Fallback: single param of Vec-backed category that matches rule category (same-category list literal)
+    if rule.category == *cat {
+        return true;
+    }
+    false
+}
+
+/// For list literal rule, return the element category ident (e.g. Proc for List = Vec<Proc>).
+pub fn list_literal_element_cat(rule: &GrammarRule, language: &LanguageDef) -> Option<Ident> {
+    let context = rule.term_context.as_ref().filter(|c| c.len() == 1)?;
+    let TermParam::Simple { ty: TypeExpr::Base(cat), .. } = &context[0] else {
+        return None;
+    };
+    if !is_list_literal_rule(rule, language) {
+        return None;
+    }
+    language
+        .types
+        .iter()
+        .find(|t| t.name == *cat)
+        .and_then(|t| t.native_type.as_ref())
+        .and_then(vec_element_ident)
 }
 
 /// For Vec<T>, return the Ident of the element type T (e.g. Proc for Vec<Proc>).

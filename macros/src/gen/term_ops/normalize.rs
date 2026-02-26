@@ -2,7 +2,7 @@
 
 use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::language::LanguageDef;
-use crate::gen::native::is_vec_native_type;
+use crate::gen::native::{is_list_literal_rule, is_vec_native_type};
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -145,7 +145,11 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                         .map(|(item, name)| {
                             if let GrammarItem::NonTerminal(field_cat) = item {
                                 if field_cat == category {
-                                    quote! { Box::new(#name.as_ref().normalize()) }
+                                    if is_list_literal_rule(rule, language) {
+                                        quote! { #name.iter().map(|e| e.normalize()).collect() }
+                                    } else {
+                                        quote! { Box::new(#name.as_ref().normalize()) }
+                                    }
                                 } else {
                                     quote! { #name.clone() }
                                 }
@@ -297,12 +301,21 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                         // Single field constructor
                         match fields[0] {
                             GrammarItem::NonTerminal(field_cat) if field_cat == category => {
-                                // Recursive case - normalize the field
-                                Some(quote! {
-                                    #category::#label(f0) => {
-                                        #category::#label(Box::new(f0.as_ref().normalize()))
-                                    }
-                                })
+                                if is_list_literal_rule(rule, language) {
+                                    // List literal: field is Vec<elem>, normalize each element
+                                    Some(quote! {
+                                        #category::#label(ref f0) => {
+                                            #category::#label(f0.iter().map(|e| e.normalize()).collect())
+                                        }
+                                    })
+                                } else {
+                                    // Recursive case - normalize the field
+                                    Some(quote! {
+                                        #category::#label(f0) => {
+                                            #category::#label(Box::new(f0.as_ref().normalize()))
+                                        }
+                                    })
+                                }
                             },
                             GrammarItem::NonTerminal(field_cat)
                                 if field_cat.to_string() == "Var" =>

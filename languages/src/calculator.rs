@@ -84,6 +84,7 @@ language! {
         StrToBool . a:Str |- "bool" "(" a ")" : Bool ![a.parse().unwrap_or(false)] step;
         CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
         // List operations (0-based index; panic if index out of bounds)
+        // List literal [ a, b, c ]; ...rest form would need parser disambiguation (both start with "[")
         ListLit . elements:List |- "[" *sep(elements, ",") "]" : List ![elements] step;
         EmptyList . |- "empty" "(" ")" : List ![vec![]] step;
         AppendList . a:List, b:List |- "append" "(" a "," b ")" : List ![{ let mut o = a.clone(); o.extend(b.iter().cloned()); o }] step;

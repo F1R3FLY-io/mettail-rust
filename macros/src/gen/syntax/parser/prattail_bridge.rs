@@ -86,36 +86,43 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     )
 }
 
-/// Detect list-literal-style rule: single param of Vec-backed category (e.g. List) with *sep(param, ...) in pattern.
-fn is_list_literal_rule(rule: &GrammarRule, language: &LanguageDef) -> bool {
+/// True if any param is a Vec-backed category and appears as the collection in *sep(..., ...) in the pattern.
+/// Such rules need the parser to wrap that collection capture in Cat::Lit(...) when building the term.
+fn should_wrap_collection_in_literal(rule: &GrammarRule, language: &LanguageDef) -> bool {
     let context = match &rule.term_context {
-        Some(c) if c.len() == 1 => c,
+        Some(c) => c,
         _ => return false,
     };
-    let TermParam::Simple { name: param_name, ty: TypeExpr::Base(cat) } = &context[0] else {
-        return false;
-    };
-    if !language
-        .types
-        .iter()
-        .find(|t| t.name == *cat)
-        .and_then(|t| t.native_type.as_ref())
-        .map_or(false, is_vec_native_type)
-    {
-        return false;
-    }
     let pattern = match &rule.syntax_pattern {
         Some(p) => p,
         _ => return false,
     };
-    let param_str = param_name.to_string();
-    pattern.iter().any(|expr| {
-        if let SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) = expr {
-            collection.to_string() == param_str
-        } else {
-            false
+    for param in context {
+        let (param_name, cat) = match param {
+            TermParam::Simple { name, ty: TypeExpr::Base(cat) } => (name, cat),
+            _ => continue,
+        };
+        if !language
+            .types
+            .iter()
+            .find(|t| t.name == *cat)
+            .and_then(|t| t.native_type.as_ref())
+            .map_or(false, is_vec_native_type)
+        {
+            continue;
         }
-    })
+        let param_str = param_name.to_string();
+        if pattern.iter().any(|expr| {
+            if let SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) = expr {
+                collection.to_string() == param_str
+            } else {
+                false
+            }
+        }) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.
@@ -150,7 +157,25 @@ fn convert_rule(rule: &GrammarRule, language: &LanguageDef, cat_names: &[String]
             quote::quote! { #expr }
         }),
         eval_mode: rule.eval_mode.as_ref().map(|e| format!("{:?}", e)),
-        wrap_collection_in_literal: is_list_literal_rule(rule, language),
+        // List literal rules use variant Cat::Label(Vec<elem>); parser must pass elements directly (no wrap).
+        wrap_collection_in_literal: {
+            let is_list_lit_rule = rule.label.to_string() == "ListLit"
+                || rule.term_context.as_ref().and_then(|ctx| {
+                    if ctx.len() != 1 {
+                        return None;
+                    }
+                    let TermParam::Simple { ty: TypeExpr::Base(cat), .. } = &ctx[0] else {
+                        return None;
+                    };
+                    if rule.category.to_string() != cat.to_string() {
+                        return None;
+                    }
+                    language.types.iter().find(|t| t.name == *cat).and_then(|t| {
+                        t.native_type.as_ref().filter(|nt| is_vec_native_type(nt)).map(|_| ())
+                    })
+                }).is_some();
+            !is_list_lit_rule && should_wrap_collection_in_literal(rule, language)
+        },
     }
 }
 

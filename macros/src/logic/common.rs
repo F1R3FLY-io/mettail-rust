@@ -6,6 +6,7 @@
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::ast::types::TypeExpr;
+use crate::gen::native::is_vec_native_type;
 use crate::gen::{generate_literal_label, is_literal_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -39,6 +40,16 @@ pub fn relation_names(category: &Ident) -> RelationNames {
         eq_rel: format_ident!("eq_{}", lower),
         fold_rel: format_ident!("fold_{}", lower),
     }
+}
+
+/// True if the category has a Vec native type (e.g. List = Vec<Proc>).
+pub fn has_vec_native_type(language: &LanguageDef, category: &Ident) -> bool {
+    language
+        .types
+        .iter()
+        .find(|t| t.name == *category)
+        .and_then(|t| t.native_type.as_ref())
+        .map_or(false, is_vec_native_type)
 }
 
 /// Find the literal label for a category (e.g., `NumLit` for `Int`, `BoolLit` for `Bool`).

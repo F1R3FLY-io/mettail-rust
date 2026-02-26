@@ -316,6 +316,11 @@ fn generate_simple_constructor_case(
         return quote! {};
     }
 
+    // List literal: unary same-category Vec; skip (exhaustive gen would need element-wise product)
+    if crate::gen::native::is_list_literal_rule(rule, language) {
+        return quote! {};
+    }
+
     // Generate depth loops based on arity
     match arg_cats.len() {
         1 => generate_unary_case(cat_name, label, &arg_cats[0], language),

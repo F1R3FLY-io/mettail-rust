@@ -352,6 +352,10 @@ fn generate_random_simple_constructor(
 ) -> TokenStream {
     let label = &rule.label;
 
+    if crate::gen::native::is_list_literal_rule(rule, language) {
+        return quote! { #cat_name::#label(vec![]) };
+    }
+
     let arg_cats: Vec<Ident> = rule
         .items
         .iter()

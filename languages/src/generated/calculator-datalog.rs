@@ -1006,9 +1006,6 @@ str(sub.clone()) <--
 list(sub.clone()) <--
     list(t),
     for sub in { std::thread_local! { static POOL_LIST_LIST : std::cell::Cell < Vec < List >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_LIST_LIST.with(| p | p.take()); buf.clear(); match t {
-        List::ListLit(ref f0) => {
-            buf.push(< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* f0)));
-        },
         List::AppendList(ref f0, ref f1) => {
             buf.push(< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* f0)));
             buf.push(< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* f1)));
@@ -2196,98 +2193,87 @@ eq_int(< Int as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), <
 eq_list(< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), < List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* t)),) <--
     list(s),
     list(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_LIST_EQ_CONG_20 : std::cell::Cell < Vec < (List, List) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_LIST_EQ_CONG_20.with(| p | p.take()); buf.clear(); match (s, t) {
-        (List::ListLit(ref sf0), List::ListLit(ref tf0)) => {
-            buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref()))));
-        },
-        _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_LIST_EQ_CONG_20.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    eq_list(s_f0, t_f0);
-
-eq_list(< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), < List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* t)),) <--
-    list(s),
-    list(t),
-    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_LIST_EQ_CONG_21 : std::cell::Cell < Vec < (List, Int, List, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_LIST_EQ_CONG_21.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_LIST_EQ_CONG_20 : std::cell::Cell < Vec < (List, Int, List, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_LIST_EQ_CONG_20.with(| p | p.take()); buf.clear(); match (s, t) {
         (List::DeleteList(ref sf0, ref sf1), List::DeleteList(ref tf0, ref tf1)) => {
             buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < Int as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf1.as_ref())), < List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref())), < Int as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf1.as_ref()))));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_LIST_EQ_CONG_21.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_LIST_EQ_CONG_20.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_list(s_f0, t_f0),
     eq_int(s_f1, t_f1);
 
 eq_list(< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), < List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* t)),) <--
     list(s),
     list(t),
-    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_LIST_EQ_CONG_22 : std::cell::Cell < Vec < (List, List, List, List) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_LIST_EQ_CONG_22.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_LIST_EQ_CONG_21 : std::cell::Cell < Vec < (List, List, List, List) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_LIST_EQ_CONG_21.with(| p | p.take()); buf.clear(); match (s, t) {
         (List::AppendList(ref sf0, ref sf1), List::AppendList(ref tf0, ref tf1)) => {
             buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf1.as_ref())), < List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref())), < List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf1.as_ref()))));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_LIST_EQ_CONG_22.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_LIST_EQ_CONG_21.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_list(s_f0, t_f0),
     eq_list(s_f1, t_f1);
 
 eq_proc(< Proc as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), < Proc as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* t)),) <--
     proc(s),
     proc(t),
-    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_PROC_EQ_CONG_23 : std::cell::Cell < Vec < (List, Int, List, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_23.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_PROC_EQ_CONG_22 : std::cell::Cell < Vec < (List, Int, List, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_22.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::ElemList(ref sf0, ref sf1), Proc::ElemList(ref tf0, ref tf1)) => {
             buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < Int as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf1.as_ref())), < List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref())), < Int as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf1.as_ref()))));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_23.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_22.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_list(s_f0, t_f0),
     eq_int(s_f1, t_f1);
 
 eq_str(< Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* t)),) <--
     str(s),
     str(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_24 : std::cell::Cell < Vec < (Bool, Bool) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_24.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_23 : std::cell::Cell < Vec < (Bool, Bool) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_23.with(| p | p.take()); buf.clear(); match (s, t) {
         (Str::BoolToStr(ref sf0), Str::BoolToStr(ref tf0)) => {
             buf.push((< Bool as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < Bool as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref()))));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_24.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_23.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_bool(s_f0, t_f0);
 
 eq_str(< Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* t)),) <--
     str(s),
     str(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_25 : std::cell::Cell < Vec < (Float, Float) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_25.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_24 : std::cell::Cell < Vec < (Float, Float) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_24.with(| p | p.take()); buf.clear(); match (s, t) {
         (Str::FloatToStr(ref sf0), Str::FloatToStr(ref tf0)) => {
             buf.push((< Float as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < Float as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref()))));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_25.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_24.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_float(s_f0, t_f0);
 
 eq_str(< Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* t)),) <--
     str(s),
     str(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_26 : std::cell::Cell < Vec < (Int, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_26.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_25 : std::cell::Cell < Vec < (Int, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_25.with(| p | p.take()); buf.clear(); match (s, t) {
         (Str::IntToStr(ref sf0), Str::IntToStr(ref tf0)) => {
             buf.push((< Int as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < Int as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref()))));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_26.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_25.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_int(s_f0, t_f0);
 
 eq_str(< Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* t)),) <--
     str(s),
     str(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_27 : std::cell::Cell < Vec < (Str, Str) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_27.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_26 : std::cell::Cell < Vec < (Str, Str) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_26.with(| p | p.take()); buf.clear(); match (s, t) {
         (Str::StrId(ref sf0), Str::StrId(ref tf0)) => {
             buf.push((< Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref()))));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_27.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_26.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_str(s_f0, t_f0);
 
 eq_str(< Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* t)),) <--
     str(s),
     str(t),
-    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_STR_EQ_CONG_28 : std::cell::Cell < Vec < (Str, Str, Str, Str) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_28.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_STR_EQ_CONG_27 : std::cell::Cell < Vec < (Str, Str, Str, Str) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_27.with(| p | p.take()); buf.clear(); match (s, t) {
         (Str::Concat(ref sf0, ref sf1), Str::Concat(ref tf0, ref tf1)) => {
             buf.push((< Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf1.as_ref())), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref())), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf1.as_ref()))));
         },
@@ -2295,7 +2281,7 @@ eq_str(< Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* s)), <
             buf.push((< Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf0.as_ref())), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* sf1.as_ref())), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf0.as_ref())), < Str as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* tf1.as_ref()))));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_28.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_27.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_str(s_f0, t_f0),
     eq_str(s_f1, t_f1);
 
@@ -2761,9 +2747,8 @@ rw_bool(orig.clone(), t) <--
 
 rw_list(orig.clone(), t) <--
     list(orig),
-    if let List::ListLit(inner) = orig,
-    if let List::Lit(s_ref) = inner.as_ref(),
-    let elements = s_ref.clone(),
+    if let List::ListLit(ref elements_ref) = orig,
+    let elements = elements_ref.clone(),
     let t = List::Lit((elements));
 
 rw_int(orig.clone(), t) <--
@@ -3470,23 +3455,19 @@ rw_list(< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* lhs)
     rw_int(field_val, t);
 
 rw_list(< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* lhs)), match (lhs, vi) {
-    (List::ListLit(_), 0usize) => List::ListLit(Box::new(t.clone())),
-    (List::AppendList(_, ref x1), 1usize) => List::AppendList(Box::new(t.clone()), x1.clone()),
-    (List::AppendList(ref x0, _), 2usize) => List::AppendList(x0.clone(), Box::new(t.clone())),
-    (List::DeleteList(_, ref x1), 3usize) => List::DeleteList(Box::new(t.clone()), x1.clone()),
+    (List::AppendList(_, ref x1), 0usize) => List::AppendList(Box::new(t.clone()), x1.clone()),
+    (List::AppendList(ref x0, _), 1usize) => List::AppendList(x0.clone(), Box::new(t.clone())),
+    (List::DeleteList(_, ref x1), 2usize) => List::DeleteList(Box::new(t.clone()), x1.clone()),
     _ => unreachable!(),
 }) <--
     list(lhs),
     for (field_val, vi) in { std::thread_local! { static POOL_LIST_SCONG_LIST : std::cell::Cell < Vec < (List, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_LIST_SCONG_LIST.with(| p | p.take()); buf.clear(); match lhs {
         List::AppendList(ref x0, ref x1) => {
-            buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* x0)), 1usize));
-            buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* x1)), 2usize));
+            buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* x0)), 0usize));
+            buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* x1)), 1usize));
         },
         List::DeleteList(ref x0, _) => {
-            buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* x0)), 3usize));
-        },
-        List::ListLit(ref x0) => {
-            buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* x0)), 0usize));
+            buf.push((< List as std::clone::Clone >::clone(std::borrow::Borrow::borrow(&* x0)), 2usize));
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_LIST_SCONG_LIST.with(| p | p.set(buf)); iter_buf }.into_iter(),
