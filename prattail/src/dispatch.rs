@@ -11,6 +11,10 @@ use std::fmt::Write;
 use crate::automata::codegen::terminal_to_variant_name;
 use crate::prediction::{CrossCategoryOverlap, FirstSet};
 
+/// Deterministic cross-category arms grouped by (source_category, token).
+/// Each entry maps to a list of (label, op_variant, operator) tuples.
+type DeterministicArmMap = BTreeMap<(String, String), Vec<(String, String, String)>>;
+
 /// A cross-category rule that produces a result in one category from
 /// operands in another category.
 #[derive(Debug, Clone)]
@@ -74,8 +78,8 @@ pub fn write_category_dispatch(
     // Collect deterministic cross-category arms grouped by (source_category, token)
     // to avoid duplicate match arms when multiple rules share the same source
     // (e.g., EqInt, GtInt, LtInt all dispatch from Int's FIRST tokens).
-    let mut deterministic_by_token: BTreeMap<(String, String), Vec<(String, String, String)>> =
-        BTreeMap::new();
+    let mut deterministic_by_token: DeterministicArmMap =
+        DeterministicArmMap::new();
 
     // Generate cross-category dispatch
     for rule in cross_category_rules {
@@ -276,8 +280,8 @@ pub fn write_category_dispatch_weighted(
         BTreeMap::new();
     // Collect deterministic arms grouped by (source_category, token) to avoid
     // duplicate match arms when multiple rules share the same source category.
-    let mut deterministic_by_token: BTreeMap<(String, String), Vec<(String, String, String)>> =
-        BTreeMap::new();
+    let mut deterministic_by_token: DeterministicArmMap =
+        DeterministicArmMap::new();
 
     for rule in cross_category_rules {
         let overlap_key = (rule.source_category.clone(), category.to_string());

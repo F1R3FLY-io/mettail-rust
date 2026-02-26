@@ -72,9 +72,14 @@ pub struct ParserBundle {
     pub(crate) cast_rules: Vec<CastRule>,
     /// Whether the grammar has binder rules (^x.{body} lambda syntax).
     pub(crate) has_binders: bool,
-    /// Beam width configuration for WFST prediction pruning (feature-gated).
+    /// Beam width configuration for WFST prediction pruning.
+    /// Only read when feature `wfst` is enabled; kept unconditional to avoid
+    /// `#[cfg]` on every `ParserBundle` construction site.
+    #[cfg_attr(not(feature = "wfst"), allow(dead_code))]
     pub(crate) beam_width: crate::BeamWidthConfig,
     /// Dispatch strategy (unresolved — resolution requires FIRST-set and overlap data).
+    /// Only read when feature `wfst` is enabled.
+    #[cfg_attr(not(feature = "wfst"), allow(dead_code))]
     pub(crate) dispatch_strategy: crate::DispatchStrategy,
 }
 

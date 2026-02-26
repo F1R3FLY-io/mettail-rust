@@ -1035,7 +1035,7 @@ impl PatternTerm {
                                     // Detect collection-variable mode: single binder name
                                     // matching a MultiAbstraction captures the entire Vec<Binder<String>>
                                     let is_collection_var = binders.len() == 1
-                                        && rule.term_context.as_ref().map_or(false, |tc| {
+                                        && rule.term_context.as_ref().is_some_and(|tc| {
                                             tc.iter().any(|p| {
                                                 matches!(
                                                     p,

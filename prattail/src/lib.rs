@@ -178,7 +178,7 @@ impl DispatchStrategy {
                      falling back to static dispatch"
                 );
             }
-            return DispatchStrategy::Static;
+            DispatchStrategy::Static
         }
 
         #[cfg(feature = "wfst")]
