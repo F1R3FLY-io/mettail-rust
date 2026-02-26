@@ -198,9 +198,8 @@ fn validate_premise(
                 FreshnessTarget::CollectionRest(id) => (id.to_string(), id.span()),
             };
 
-            let all_vars_in_scope = |name: &str| {
-                pattern_vars.contains(name) || bound_vars.contains(name)
-            };
+            let all_vars_in_scope =
+                |name: &str| pattern_vars.contains(name) || bound_vars.contains(name);
 
             if !all_vars_in_scope(&var_name) {
                 return Err(ValidationError::FreshnessVariableNotInEquation {

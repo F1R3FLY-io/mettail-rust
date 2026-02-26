@@ -161,10 +161,9 @@ pub fn parse_ascent_program_tokens(tokens: proc_macro2::TokenStream) -> syn::Res
             dummy_path.clone(),
         )? {
             Either::Left(program) => Ok(program),
-            Either::Right(_) => Err(syn::Error::new(
-                input.span(),
-                "include_source! is not supported",
-            )),
+            Either::Right(_) => {
+                Err(syn::Error::new(input.span(), "include_source! is not supported"))
+            },
         },
         tokens,
     )

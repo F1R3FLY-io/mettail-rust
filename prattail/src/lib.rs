@@ -178,7 +178,7 @@ impl DispatchStrategy {
                      falling back to static dispatch"
                 );
             }
-            return DispatchStrategy::Static;
+            DispatchStrategy::Static
         }
 
         #[cfg(feature = "wfst")]
@@ -321,10 +321,7 @@ pub enum SyntaxItemSpec {
     /// A separated list of binder identifiers (e.g., `xs.*sep(",")` where `xs`
     /// is a multi-abstraction binder). Parsed as comma-separated idents, collected
     /// into a `Vec<String>`, then wrapped into `Vec<Binder<String>>` at construction.
-    BinderCollection {
-        param_name: String,
-        separator: String,
-    },
+    BinderCollection { param_name: String, separator: String },
     /// An optional group of syntax items.
     /// Wraps inner items in a save/restore block: if parsing fails,
     /// the position is reverted and parsing continues.

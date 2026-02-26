@@ -256,7 +256,8 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                     // Multi-binder constructor: normalize the scope body
                     // Count non-abstraction fields that precede the scope
                     let ctx = rule.term_context.as_ref().unwrap();
-                    let pre_scope_fields: Vec<_> = ctx.iter()
+                    let pre_scope_fields: Vec<_> = ctx
+                        .iter()
                         .take_while(|p| matches!(p, TermParam::Simple { .. }))
                         .enumerate()
                         .map(|(i, _)| {
@@ -265,10 +266,12 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                         })
                         .collect();
 
-                    let field_patterns: Vec<_> = pre_scope_fields.iter()
+                    let field_patterns: Vec<_> = pre_scope_fields
+                        .iter()
                         .map(|name| quote! { #name })
                         .collect();
-                    let field_clones: Vec<_> = pre_scope_fields.iter()
+                    let field_clones: Vec<_> = pre_scope_fields
+                        .iter()
                         .map(|name| quote! { #name.clone() })
                         .collect();
 

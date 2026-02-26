@@ -506,7 +506,8 @@ fn generate_binder_constructor_case(
         .collect();
 
     let is_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
-        ctx.iter().any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
+        ctx.iter()
+            .any(|p| matches!(p, TermParam::MultiAbstraction { .. }))
     });
 
     if other_args.is_empty() {
