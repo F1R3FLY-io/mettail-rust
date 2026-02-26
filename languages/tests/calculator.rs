@@ -524,3 +524,41 @@ fn test_bare_variable_type_is_int() {
     // type should show primary (Int)
     assert_eq!(format!("{}", term_type), "Int");
 }
+
+// --- List operations (List = Vec<Proc>; empty(), append, length, elem, delete) ---
+// List terms parse and appear in normal forms. Full reduction to values (e.g. length(empty()) => 0)
+// may require List subterms to be seeded in the Ascent program when they appear under Proc::List.
+
+#[test]
+fn test_list_empty_parses() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let term = lang.parse_term("empty()").expect("parse empty()");
+    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    let nfs = results.normal_forms();
+    assert!(!nfs.is_empty(), "empty() should produce at least one normal form");
+    // Normal form may be EmptyList or List::Lit([]) depending on step-rule seeding
+    let displays: Vec<String> = nfs.iter().map(|nf| nf.display.clone()).collect();
+    assert!(
+        displays.iter().any(|d| d.contains("EmptyList") || d == "[]"),
+        "expected EmptyList or [] in {:?}",
+        displays
+    );
+}
+
+#[test]
+fn test_list_length_empty_parses() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let term = lang.parse_term("length(empty())").expect("parse length(empty())");
+    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    let nfs = results.normal_forms();
+    assert!(!nfs.is_empty());
+    // May reduce to "0" when list step rules are fully wired, or show length(EmptyList)
+    let displays: Vec<String> = nfs.iter().map(|nf| nf.display.clone()).collect();
+    assert!(
+        displays.iter().any(|d| d.contains("length") || d == "0"),
+        "expected length(...) or 0 in {:?}",
+        displays
+    );
+}

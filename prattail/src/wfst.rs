@@ -1144,6 +1144,7 @@ mod tests {
                 has_rust_code: false,
                 rust_code: None,
                 eval_mode: None,
+                wrap_collection_in_literal: false,
             }],
             BeamWidthConfig::Explicit(1.5),  // beam_width
             None,                            // log_semiring_model_path

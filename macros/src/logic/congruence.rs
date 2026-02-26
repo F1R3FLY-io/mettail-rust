@@ -17,6 +17,8 @@ use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{LanguageDef, RewriteRule};
 use crate::ast::pattern::{Pattern, PatternTerm};
 use crate::ast::types::TypeExpr;
+use crate::gen::native::{is_vec_native_type, vec_element_ident};
+use crate::gen::generate_literal_label;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -72,6 +74,22 @@ pub fn generate_all_explicit_congruences(
         if let Some(rule) =
             generate_consolidated_simple_congruence(&source_cat, &field_cat, entries)
         {
+            rules.push(rule);
+        }
+    }
+
+    // Auto-generate List (Vec-backed) element congruence: rewrites propagate into list elements by index
+    for lang_type in &language.types {
+        let category = &lang_type.name;
+        if !in_cat_filter(category, cat_filter) {
+            continue;
+        }
+        let Some(ref native_type) = lang_type.native_type else { continue };
+        if !is_vec_native_type(native_type) {
+            continue;
+        }
+        let Some(element_cat) = vec_element_ident(native_type) else { continue };
+        if let Some(rule) = generate_list_native_congruence(category, &element_cat, native_type) {
             rules.push(rule);
         }
     }
@@ -333,7 +351,7 @@ fn generate_collection_congruence(
     let insert_helper = format_ident!("insert_into_{}", constructor.to_string().to_lowercase());
 
     Some(quote! {
-        #rw_rel(parent.clone(), result) <--
+        #rw_rel(<#category as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*parent)), result) <--
             #cat_lower(parent),
             if let #category::#constructor(ref bag) = parent,
             for (elem, _count) in bag.iter(),
@@ -343,6 +361,36 @@ fn generate_collection_congruence(
                 new_bag.remove(elem);
                 #category::#insert_helper(&mut new_bag, elem_rewritten.clone());
                 new_bag
+            });
+    })
+}
+
+/// Generate List (Vec-backed) element congruence: rewrites propagate into list elements by index.
+///
+/// Generates one rule per index: if the element at that index rewrites, the whole list rewrites
+/// with that element replaced. Uses the literal variant (e.g. `List::Lit`) for the list type.
+pub fn generate_list_native_congruence(
+    category: &Ident,
+    element_cat: &Ident,
+    native_type: &syn::Type,
+) -> Option<TokenStream> {
+    let rn = relation_names(category);
+    let cat_lower = &rn.cat_lower;
+    let rw_rel = &rn.rw_rel;
+    let elem_rn = relation_names(element_cat);
+    let elem_rw_rel = &elem_rn.rw_rel;
+    let literal_label = generate_literal_label(native_type);
+
+    Some(quote! {
+        #rw_rel(<#category as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lhs)), result) <--
+            #cat_lower(lhs),
+            if let #category::#literal_label(ref vec) = lhs,
+            for (idx, elem) in vec.iter().enumerate(),
+            #elem_rw_rel(elem.clone(), elem_rewritten),
+            let result = #category::#literal_label({
+                let mut v = vec.clone();
+                v[idx] = elem_rewritten.clone();
+                v
             });
     })
 }
@@ -379,7 +427,7 @@ fn generate_binding_congruence(
         // Simple case: just the scope (like PNew)
         // Use unsafe accessors to preserve binder identity (prevents infinite loops)
         Some(quote! {
-            #rw_rel(lhs.clone(), rhs) <--
+            #rw_rel(<#category as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lhs)), rhs) <--
                 #cat_lower(lhs),
                 if let #category::#constructor(ref scope) = lhs,
                 let binder = scope.unsafe_pattern().clone(),
@@ -406,7 +454,7 @@ fn generate_binding_congruence(
             .collect();
 
         Some(quote! {
-            #rw_rel(lhs.clone(), rhs) <--
+            #rw_rel(<#category as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lhs)), rhs) <--
                 #cat_lower(lhs),
                 if let #category::#constructor(#(ref #vars),*) = lhs,
                 let binder = #scope_var.unsafe_pattern().clone(),
@@ -467,23 +515,23 @@ fn generate_consolidated_simple_congruence(
             .map(|i| {
                 if extracted_indices.contains(&i) {
                     let xi = format_ident!("x{}", i);
-                    quote! { #xi }
+                    quote! { ref #xi }
                 } else {
                     quote! { _ }
                 }
             })
             .collect();
 
-        // Build push operations: one (field_val, vi) per entry
+        // Build push operations: one (field_val, vi) per entry (clone referent for non-Copy)
         let pushes: Vec<TokenStream> = ctor_entries
             .iter()
             .map(|(vi, e)| {
                 let xi = format_ident!("x{}", e.field_idx);
                 let vi_lit = *vi;
                 if e.is_boxed {
-                    quote! { buf.push(((**#xi).clone(), #vi_lit)); }
+                    quote! { buf.push((<#field_cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*#xi)), #vi_lit)); }
                 } else {
-                    quote! { buf.push(((*#xi).clone(), #vi_lit)); }
+                    quote! { buf.push((<#field_cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*#xi)), #vi_lit)); }
                 }
             })
             .collect();
@@ -501,19 +549,19 @@ fn generate_consolidated_simple_congruence(
         let n = entry.n_fields;
         let vi_lit = vi;
 
-        // Pattern: bind all fields except the replaced one
+        // Pattern: bind all fields by ref except the replaced one
         let pattern_fields: Vec<TokenStream> = (0..n)
             .map(|i| {
                 if i == entry.field_idx {
                     quote! { _ }
                 } else {
                     let xi = format_ident!("x{}", i);
-                    quote! { #xi }
+                    quote! { ref #xi }
                 }
             })
             .collect();
 
-        // Reconstruction: clone all fields, replace the rewritten one
+        // Reconstruction: clone all fields (ref bindings so we don't move), replace the rewritten one
         let recon_args: Vec<TokenStream> = (0..n)
             .map(|i| {
                 if i == entry.field_idx {
@@ -546,7 +594,7 @@ fn generate_consolidated_simple_congruence(
     let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &pool_arms);
 
     Some(quote! {
-        #rw_rel(lhs.clone(), match (lhs, vi) {
+        #rw_rel(<#source_cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lhs)), match (lhs, vi) {
             #(#rebuild_arms)*
             _ => unreachable!(),
         }) <--

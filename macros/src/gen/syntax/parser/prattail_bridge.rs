@@ -14,7 +14,7 @@ use crate::ast::{
     language::{AttributeValue, LanguageDef},
     types::{CollectionType, TypeExpr},
 };
-use crate::gen::native::native_type_to_string;
+use crate::gen::native::{is_vec_native_type, native_type_to_string, vec_element_ident};
 use mettail_prattail::{
     binding_power::Associativity, recursive::CollectionKind, BeamWidthConfig, CategorySpec,
     DispatchStrategy, LanguageSpec, RuleSpecInput, SyntaxItemSpec,
@@ -41,7 +41,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     let inputs: Vec<RuleSpecInput> = language
         .terms
         .iter()
-        .map(|rule| convert_rule(rule, &cat_names))
+        .map(|rule| convert_rule(rule, language, &cat_names))
         .collect();
 
     // Extract beam_width from options (defaults to Disabled if not specified)
@@ -86,13 +86,50 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     )
 }
 
+/// Detect list-literal-style rule: single param of Vec-backed category (e.g. List) with *sep(param, ...) in pattern.
+fn is_list_literal_rule(rule: &GrammarRule, language: &LanguageDef) -> bool {
+    let context = match &rule.term_context {
+        Some(c) if c.len() == 1 => c,
+        _ => return false,
+    };
+    let TermParam::Simple { name: param_name, ty: TypeExpr::Base(cat) } = &context[0] else {
+        return false;
+    };
+    if !language
+        .types
+        .iter()
+        .find(|t| t.name == *cat)
+        .and_then(|t| t.native_type.as_ref())
+        .map_or(false, is_vec_native_type)
+    {
+        return false;
+    }
+    let pattern = match &rule.syntax_pattern {
+        Some(p) => p,
+        _ => return false,
+    };
+    let param_str = param_name.to_string();
+    pattern.iter().any(|expr| {
+        if let SyntaxExpr::Op(PatternOp::Sep { collection, source: None, .. }) = expr {
+            collection.to_string() == param_str
+        } else {
+            false
+        }
+    })
+}
+
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.
 ///
 /// Only performs structural mapping — no flag classification.
-fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
+fn convert_rule(rule: &GrammarRule, language: &LanguageDef, cat_names: &[String]) -> RuleSpecInput {
     // Convert syntax items
     let syntax = if let Some(ref pattern) = rule.syntax_pattern {
-        convert_syntax_pattern(pattern, rule.term_context.as_deref().unwrap_or(&[]), cat_names)
+        convert_syntax_pattern(
+            pattern,
+            rule.term_context.as_deref().unwrap_or(&[]),
+            language,
+            cat_names,
+        )
     } else {
         convert_grammar_items(&rule.items, cat_names)
     };
@@ -113,6 +150,7 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
             quote::quote! { #expr }
         }),
         eval_mode: rule.eval_mode.as_ref().map(|e| format!("{:?}", e)),
+        wrap_collection_in_literal: is_list_literal_rule(rule, language),
     }
 }
 
@@ -120,6 +158,7 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
 fn convert_syntax_pattern(
     pattern: &[SyntaxExpr],
     context: &[TermParam],
+    language: &LanguageDef,
     cat_names: &[String],
 ) -> Vec<SyntaxItemSpec> {
     let mut items = Vec::new();
@@ -191,7 +230,7 @@ fn convert_syntax_pattern(
             },
             SyntaxExpr::Op(op) => {
                 // Pattern operations are handled as collections or special items
-                convert_pattern_op(op, context, cat_names, &mut items);
+                convert_pattern_op(op, context, language, cat_names, &mut items);
             },
         }
     }
@@ -261,6 +300,7 @@ fn classify_param_from_context(
 fn convert_pattern_op(
     op: &PatternOp,
     context: &[TermParam],
+    language: &LanguageDef,
     cat_names: &[String],
     items: &mut Vec<SyntaxItemSpec>,
 ) {
@@ -270,9 +310,9 @@ fn convert_pattern_op(
                 // Chained pattern: e.g., *zip(ns,xs).*map(|n,x| n "?" x).*sep(",")
                 convert_chained_sep(source_op, separator, context, cat_names, items);
             } else {
-                // Simple collection sep: e.g., ps.*sep("|")
+                // Simple collection sep: e.g., ps.*sep("|") or list literal *sep(elements, ",")
                 let coll_name = collection.to_string();
-                let (elem_cat, kind) = find_collection_info(&coll_name, context);
+                let (elem_cat, kind) = find_collection_info(&coll_name, context, language);
 
                 items.push(SyntaxItemSpec::Collection {
                     param_name: coll_name,
@@ -307,7 +347,7 @@ fn convert_pattern_op(
                         ));
                     },
                     SyntaxExpr::Op(inner_op) => {
-                        convert_pattern_op(inner_op, context, cat_names, items);
+                        convert_pattern_op(inner_op, context, language, cat_names, items);
                     },
                 }
             }
@@ -326,7 +366,7 @@ fn convert_pattern_op(
                         opt_items.push(item);
                     },
                     SyntaxExpr::Op(inner_op) => {
-                        convert_pattern_op(inner_op, context, cat_names, &mut opt_items);
+                        convert_pattern_op(inner_op, context, language, cat_names, &mut opt_items);
                     },
                 }
             }
@@ -527,11 +567,20 @@ fn extract_base_category(ty: &TypeExpr) -> String {
 }
 
 /// Find collection info (element category and kind) from term context.
-fn find_collection_info(name: &str, context: &[TermParam]) -> (String, CollectionKind) {
+/// When the param type is a base category (e.g. List) with native type Vec<T> or HashBag<T>,
+/// resolve element category from the language definition.
+fn find_collection_info(
+    name: &str,
+    context: &[TermParam],
+    language: &LanguageDef,
+) -> (String, CollectionKind) {
     for param in context {
         if let TermParam::Simple { name: n, ty, .. } = param {
-            if n.to_string() == name {
-                if let TypeExpr::Collection { coll_type, element, .. } = ty {
+            if n.to_string() != name {
+                continue;
+            }
+            match ty {
+                TypeExpr::Collection { coll_type, element, .. } => {
                     let elem_cat = extract_base_category(element);
                     let kind = match coll_type {
                         CollectionType::HashBag => CollectionKind::HashBag,
@@ -539,7 +588,41 @@ fn find_collection_info(name: &str, context: &[TermParam]) -> (String, Collectio
                         CollectionType::Vec => CollectionKind::Vec,
                     };
                     return (elem_cat, kind);
-                }
+                },
+                TypeExpr::Base(cat) => {
+                    // Category with native type Vec<T> or HashBag<T> (e.g. List, Bag)
+                    if let Some(lang_type) = language.types.iter().find(|t| t.name == *cat) {
+                        if let Some(ref native_type) = lang_type.native_type {
+                            if is_vec_native_type(native_type) {
+                                if let Some(elem_ident) = vec_element_ident(native_type) {
+                                    return (elem_ident.to_string(), CollectionKind::Vec);
+                                }
+                            }
+                            // HashBag: native_type_to_string "HashBag" and element from path
+                            let type_str = native_type_to_string(native_type);
+                            if type_str == "HashBag" {
+                                if let Some(elem_ident) = vec_element_ident(native_type) {
+                                    return (elem_ident.to_string(), CollectionKind::HashBag);
+                                }
+                                // HashBag<X> has same path structure as Vec<X> for last segment
+                                if let syn::Type::Path(tp) = native_type {
+                                    if let Some(seg) = tp.path.segments.last() {
+                                        if let syn::PathArguments::AngleBracketed(args) = &seg.arguments {
+                                            if let Some(syn::GenericArgument::Type(inner)) = args.args.first() {
+                                                if let syn::Type::Path(ip) = inner {
+                                                    if let Some(id) = ip.path.get_ident() {
+                                                        return (id.to_string(), CollectionKind::HashBag);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                _ => {},
             }
         }
     }

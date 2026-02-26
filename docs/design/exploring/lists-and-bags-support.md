@@ -15,7 +15,7 @@
 
 ## 2. Representation and semantics
 
-**Runtime:** List = **wrapper type** (newtype around `Vec<Proc>`). Bag = **wrapper type** (newtype around `HashBag<Proc>`). Same pattern as Float ([CanonicalFloat64](https://github.com/F1R3FLY-io/mettail-rust/tree/float-support-ascent)).
+**Runtime (implementation):** List = **Vec&lt;Proc&gt;** with inline ops in term rust blocks (no wrapper; per addendum). Bag = **HashBag&lt;Proc&gt;** (no wrapper). List operations (concat, len, elem_at, delete_at) are language-authored Vec code in term blocks; congruence for List is auto-generated (index-based rewrite propagation).
 
 **Semantics:** List equality: `eq_list(list1, list2)` iff same length and `eq(list1[k], list2[k])` for all k. Bag = multiset equality (element, count). Element bounds: Bag requires `Clone + Eq + Hash`; List elements in relations need `Eq + Hash`.
 

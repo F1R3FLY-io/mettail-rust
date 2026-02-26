@@ -52,11 +52,15 @@ fn generate_reflexivity_rules(
         .iter()
         .filter(|lang_type| in_cat_filter(&lang_type.name, cat_filter))
         .map(|lang_type| {
-            let rn = relation_names(&lang_type.name);
+            let cat = &lang_type.name;
+            let rn = relation_names(cat);
             let cat_lower = &rn.cat_lower;
             let eq_rel = &rn.eq_rel;
             quote! {
-                #eq_rel(t.clone(), t.clone()) <-- #cat_lower(t);
+                #eq_rel(
+                    <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*t)),
+                    <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*t)),
+                ) <-- #cat_lower(t);
             }
         })
         .collect()
@@ -145,7 +149,7 @@ fn generate_congruence_rules(
         let s_fields: Vec<Ident> = (0..arity).map(|i| format_ident!("s_f{}", i)).collect();
         let t_fields: Vec<Ident> = (0..arity).map(|i| format_ident!("t_f{}", i)).collect();
 
-        // Build pool arms for (s, t) extraction
+        // Build pool arms for (s, t) extraction (ref bindings + clone referent for Box<T> fields)
         let pool_arms: Vec<PoolArm> = constructors
             .iter()
             .map(|rule| {
@@ -155,16 +159,23 @@ fn generate_congruence_rules(
                 let t_pat_fields: Vec<Ident> =
                     (0..arity).map(|i| format_ident!("tf{}", i)).collect();
 
-                // Push a tuple of (s_f0, s_f1, ..., t_f0, t_f1, ...)
+                // Push a tuple of (s_f0, s_f1, ..., t_f0, t_f1, ...); clone referent so we get Cat not Box<Cat>
                 let push_fields: Vec<TokenStream> = s_pat_fields
                     .iter()
-                    .chain(t_pat_fields.iter())
-                    .map(|f| quote! { #f.as_ref().clone() })
+                    .zip(field_type_strs.iter())
+                    .chain(t_pat_fields.iter().zip(field_type_strs.iter()))
+                    .map(|(f, ft_str)| {
+                        let ft = format_ident!("{}", ft_str);
+                        quote! { <#ft as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*#f.as_ref())) }
+                    })
                     .collect();
+
+                let s_ref: Vec<TokenStream> = s_pat_fields.iter().map(|f| quote! { ref #f }).collect();
+                let t_ref: Vec<TokenStream> = t_pat_fields.iter().map(|f| quote! { ref #f }).collect();
 
                 PoolArm {
                     pattern: quote! {
-                        (#category::#label(#(#s_pat_fields),*), #category::#label(#(#t_pat_fields),*))
+                        (#category::#label(#(#s_ref),*), #category::#label(#(#t_ref),*))
                     },
                     pushes: vec![quote! { buf.push((#(#push_fields),*)); }],
                 }
@@ -204,8 +215,12 @@ fn generate_congruence_rules(
         let match_expr = quote! { (s, t) };
         let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &pool_arms);
 
+        let cat = &category;
         rules.push(quote! {
-            #eq_rel(s.clone(), t.clone()) <--
+            #eq_rel(
+                <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*s)),
+                <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*t)),
+            ) <--
                 #cat_rel(s),
                 #cat_rel(t),
                 for (#(#for_bindings),*) in #for_iter,

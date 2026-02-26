@@ -1,2 +1,9 @@
 x = 3
 test = x + 2
+x = 3 == 3
+x = 3 > 3
+x = 3 < 3
+x = 3 >= 3
+x = 3 <= 3
+x = true or false
+x = (3 >= 3) or false

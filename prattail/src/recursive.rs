@@ -33,6 +33,8 @@ pub struct RDRuleInfo {
     pub prefix_bp: Option<u8>,
     /// Eval mode for HOL rules.
     pub eval_mode: Option<String>,
+    /// When true, wrap the single collection capture in `Cat::Lit(...)` when building the term (list literal).
+    pub wrap_collection_in_literal: bool,
 }
 
 /// A syntax item in a rule's concrete syntax.

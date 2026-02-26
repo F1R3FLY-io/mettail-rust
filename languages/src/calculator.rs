@@ -9,15 +9,19 @@ use mettail_macros::language;
 language! {
     name: Calculator,
     types {
+        Proc
         ![i32] as Int
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
+        ![Vec<Proc>] as List
     },
     terms {
-        // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
+        IntId . a:Int |- "int" "(" a ")" : Int ![a] step;
+        FloatId . a:Float |- "float" "(" a ")" : Float ![a] step;
+        BoolId . a:Bool |- "bool" "(" a ")" : Bool ![a] step;
+        StrId . a:Str |- "str" "(" a ")" : Str ![a] step;
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
-        // Comparison operations
         EqInt . a:Int, b:Int |- a "==" b : Bool ![a == b] step;
         EqFloat . a:Float, b:Float |- a "==" b : Bool ![a == b] step;
         EqBool . a:Bool, b:Bool |- a "==" b : Bool ![a == b] step;
@@ -42,19 +46,13 @@ language! {
         NeFloat . a:Float, b:Float |- a "!=" b : Bool ![a != b] step;
         NeBool . a:Bool, b:Bool |- a "!=" b : Bool ![a != b] step;
         NeStr . a:Str, b:Str |- a "!=" b : Bool ![a != b] step;
-        // Boolean operations
-        Not . a:Bool |- "not" a : Bool ![{match a {
-            true => false,
-            false => true,
-        }}] step;
+        Not . a:Bool |- "not" a : Bool ![{match a { true => false, false => true, }}] step;
         And . a:Bool, b:Bool |- a "and" b : Bool ![a && b] step;
         Or . a:Bool, b:Bool |- a "or" b : Bool ![a || b] step;
         Xor . a:Bool, b:Bool |- a "xor" b : Bool ![a ^ b] step;
-        // String operations
         Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step;
         Concat . a:Str, b:Str |- a "++" b : Str ![[a, b].concat()] step;
         AddStr . a:Str, b:Str |- a "+" b : Str ![{ let mut x = a.clone(); x.push_str(&b); x }] step;
-        // Int operations
         AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
         SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
         MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;
@@ -63,7 +61,6 @@ language! {
         PowInt . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step right;
         Neg . a:Int |- "-" a : Int ![(-a)] fold;
         Fact . a:Int |- a "!" : Int ![{ (1..=a.max(0)).product::<i32>() }] step;
-        // Float operations
         AddFloat . a:Float, b:Float |- a "+" b : Float ![a + b] fold;
         SubFloat . a:Float, b:Float |- a "-" b : Float ![a - b] fold;
         MulFloat . a:Float, b:Float |- a "*" b : Float ![a * b] fold;
@@ -73,7 +70,6 @@ language! {
         CosFloat . a:Float |- "cos" "(" a ")" : Float ![a.cos()] step;
         ExpFloat . a:Float |- "exp" "(" a ")" : Float ![a.exp()] step;
         LnFloat . a:Float |- "ln" "(" a ")" : Float ![a.ln()] step;
-        // Type casts
         IntToFloat . a:Int |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a as f64)] step;
         BoolToFloat . a:Bool |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(if a { 1.0 } else { 0.0 })] step;
         StrToFloat . a:Str |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.parse().unwrap_or(0.0))] step;
@@ -86,12 +82,14 @@ language! {
         IntToBool . a:Int |- "bool" "(" a ")" : Bool ![a != 0] step;
         FloatToBool . a:Float |- "bool" "(" a ")" : Bool ![a.get() != 0.0] step;
         StrToBool . a:Str |- "bool" "(" a ")" : Bool ![a.parse().unwrap_or(false)] step;
-        IntId . a:Int |- "int" "(" a ")" : Int ![a] step;
-        FloatId . a:Float |- "float" "(" a ")" : Float ![a] step;
-        BoolId . a:Bool |- "bool" "(" a ")" : Bool ![a] step;
-        StrId . a:Str |- "str" "(" a ")" : Str ![a] step;
-        // Custom operation (PraTTaIL test feature)
         CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
+        // List operations (0-based index; panic if index out of bounds)
+        ListLit . elements:List |- "[" *sep(elements, ",") "]" : List ![elements] step;
+        EmptyList . |- "empty" "(" ")" : List ![vec![]] step;
+        AppendList . a:List, b:List |- "append" "(" a "," b ")" : List ![{ let mut o = a.clone(); o.extend(b.iter().cloned()); o }] step;
+        LenList . a:List |- "length" "(" a ")" : Int ![a.len() as i32] step;
+        ElemList . a:List, b:Int |- "elem" "(" a "," b ")" : Proc ![a.get(b as usize).expect("index out of bounds").clone()] step;
+        DeleteList . a:List, b:Int |- "delete" "(" a "," b ")" : List ![{ let mut v = a.clone(); v.remove(b as usize); v }] step;
     },
     equations {
     },
@@ -172,6 +170,7 @@ language! {
         ModIntCongL . | S ~> T |- (ModInt S R) ~> (ModInt T R);
         ModIntCongR . | S ~> T |- (ModInt L S) ~> (ModInt L T);
         PowIntCongL . | S ~> T |- (PowInt S R) ~> (PowInt T R);
+        PowIntCongR . | S ~> T |- (PowInt L S) ~> (PowInt L T);
         FactCong . | S ~> T |- (Fact S) ~> (Fact T);
         // Float operations
         AddFloatCongL . | S ~> T |- (AddFloat S R) ~> (AddFloat T R);
@@ -188,6 +187,15 @@ language! {
         CosFloatCong . | S ~> T |- (CosFloat S) ~> (CosFloat T);
         ExpFloatCong . | S ~> T |- (ExpFloat S) ~> (ExpFloat T);
         LnFloatCong . | S ~> T |- (LnFloat S) ~> (LnFloat T);
+        // List constructor congruence
+        ListLitCong . | S ~> T |- (ListLit S) ~> (ListLit T);
+        AppendListCongL . | S ~> T |- (AppendList S R) ~> (AppendList T R);
+        AppendListCongR . | S ~> T |- (AppendList L S) ~> (AppendList L T);
+        LenListCong . | S ~> T |- (LenList S) ~> (LenList T);
+        ElemListCongL . | S ~> T |- (ElemList S R) ~> (ElemList T R);
+        ElemListCongR . | S ~> T |- (ElemList L S) ~> (ElemList L T);
+        DeleteListCongL . | S ~> T |- (DeleteList S R) ~> (DeleteList T R);
+        DeleteListCongR . | S ~> T |- (DeleteList L S) ~> (DeleteList L T);
         // Type casts
         IntToFloatCong . | S ~> T |- (IntToFloat S) ~> (IntToFloat T);
         BoolToFloatCong . | S ~> T |- (BoolToFloat S) ~> (BoolToFloat T);

@@ -344,6 +344,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
                 separator: rule.separator.clone(),
                 prefix_bp,
                 eval_mode: rule.eval_mode.clone(),
+                wrap_collection_in_literal: rule.wrap_collection_in_literal,
             }
         })
         .collect();

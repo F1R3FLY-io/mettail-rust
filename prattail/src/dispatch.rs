@@ -50,6 +50,7 @@ fn write_token_pattern(buf: &mut String, token: &str) {
     }
 }
 
+
 /// Write the dispatch code for a category that includes cross-category
 /// and cast rules.
 ///
@@ -62,7 +63,7 @@ pub fn write_category_dispatch(
     category: &str,
     cross_category_rules: &[CrossCategoryRule],
     cast_rules: &[CastRule],
-    overlaps: &BTreeMap<(String, String), CrossCategoryOverlap>,
+    _overlaps: &BTreeMap<(String, String), CrossCategoryOverlap>,
     first_sets: &BTreeMap<String, FirstSet>,
 ) {
     if cross_category_rules.is_empty() && cast_rules.is_empty() {
@@ -71,76 +72,109 @@ pub fn write_category_dispatch(
 
     let mut dispatch_arms: Vec<String> = Vec::new();
 
-    // Generate unambiguous cross-category dispatch
+    // Collect ambiguous (token, source_category) -> list of (label, op_variant) so we emit
+    // one arm per token that tries parse_source once and matches on the operator.
+    let mut ambiguous_by_token_src: BTreeMap<(String, String), Vec<(String, String)>> =
+        BTreeMap::new();
+
+    // First pass: collect (token, source) -> [(label, op_variant)] for ambiguous dispatch.
+    // Infix cross-category rules don't contribute to FIRST(Bool), so we add every token in
+    // FIRST(source) so e.g. Integer gets all Int comparison arms (==, >, <, >=, <=, !=).
+    // Skip LParen so "(3 == 3) or true" goes straight to parse_Cat_own and parses as Bool
+    // instead of trying parse_Int on "(3 == 3)" first (which would fail with "expected ), found EqEq").
     for rule in cross_category_rules {
-        let overlap_key = (rule.source_category.clone(), category.to_string());
-        let overlap = overlaps.get(&overlap_key);
-
         let source_first = first_sets.get(&rule.source_category);
-
         if let Some(source_first) = source_first {
-            let target_first = first_sets.get(category);
-
-            // Find tokens unique to the source category (unambiguous dispatch)
-            if let Some(target_first) = target_first {
-                let unique_to_source = source_first.difference(target_first);
-                let op_variant = terminal_to_variant_name(&rule.operator);
-
-                for token in &unique_to_source.tokens {
-                    let mut arm = String::new();
-                    write_token_pattern(&mut arm, token);
-                    write!(
-                        arm,
-                        " => {{ \
-                            let left = parse_{}(tokens, pos, 0)?; \
-                            expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
-                            let right = parse_{}(tokens, pos, 0)?; \
-                            Ok({}::{}(Box::new(left), Box::new(right))) \
-                        }}",
-                        rule.source_category,
-                        op_variant,
-                        rule.operator,
-                        rule.source_category,
-                        category,
-                        rule.label,
-                    )
-                    .unwrap();
-                    dispatch_arms.push(arm);
+            let op_variant = terminal_to_variant_name(&rule.operator);
+            for token in &source_first.tokens {
+                if token == "LParen" {
+                    continue;
                 }
-
-                // For ambiguous tokens (in both source and target FIRST sets),
-                // generate save/restore backtracking
-                if let Some(overlap) = overlap {
-                    for token in &overlap.ambiguous_tokens.tokens {
-                        let mut arm = String::new();
-                        write_token_pattern(&mut arm, token);
-                        write!(
-                            arm,
-                            " => {{ \
-                                let saved = *pos; \
-                                if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
-                                    if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
-                                        *pos += 1; \
-                                        let right = parse_{}(tokens, pos, 0)?; \
-                                        return Ok({}::{}(Box::new(left), Box::new(right))); \
-                                    }} \
-                                }} \
-                                *pos = saved; \
-                                parse_{}_own(tokens, pos, min_bp) \
-                            }}",
-                            rule.source_category,
-                            op_variant,
-                            rule.source_category,
-                            category,
-                            rule.label,
-                            category,
-                        )
-                        .unwrap();
-                        dispatch_arms.push(arm);
-                    }
-                }
+                ambiguous_by_token_src
+                    .entry((token.clone(), rule.source_category.clone()))
+                    .or_default()
+                    .push((rule.label.clone(), op_variant.clone()));
             }
         }
+    }
+
+    // Second pass: deterministic arms only for (token, source) that do NOT have an ambiguous arm.
+    // Otherwise we'd emit e.g. Token::Integer => expect_token(EqEq) (first rule only) and it would
+    // match before the ambiguous arm, so "3 > 3" would fail.
+    // Skip LParen so "(3 == 3) or false" falls through to parse_Cat_own instead of parse_Int.
+    for rule in cross_category_rules {
+        let source_first = first_sets.get(&rule.source_category);
+        let target_first = first_sets.get(category);
+        if let (Some(source_first), Some(target_first)) = (source_first, target_first) {
+            let unique_to_source = source_first.difference(target_first);
+            let op_variant = terminal_to_variant_name(&rule.operator);
+            for token in &unique_to_source.tokens {
+                if token == "LParen" {
+                    continue;
+                }
+                if ambiguous_by_token_src
+                    .contains_key(&(token.clone(), rule.source_category.clone()))
+                {
+                    continue; // already handled by ambiguous arm
+                }
+                let mut arm = String::new();
+                write_token_pattern(&mut arm, token);
+                write!(
+                    arm,
+                    " => {{ \
+                        let left = parse_{}(tokens, pos, 0)?; \
+                        expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
+                        let right = parse_{}(tokens, pos, 0)?; \
+                        Ok({}::{}(Box::new(left), Box::new(right))) \
+                    }}",
+                    rule.source_category,
+                    op_variant,
+                    rule.operator,
+                    rule.source_category,
+                    category,
+                    rule.label,
+                )
+                .unwrap();
+                dispatch_arms.push(arm);
+            }
+        }
+    }
+
+    // Group by token so we emit one arm per token (avoids duplicate Token::LParen etc.).
+    // For each token, try each (source, rules_and_ops) in sequence, then parse_Cat_own.
+    let mut ambiguous_by_token: BTreeMap<String, Vec<(String, Vec<(String, String)>)>> =
+        BTreeMap::new();
+    for ((token, source), rules_and_ops) in ambiguous_by_token_src {
+        ambiguous_by_token
+            .entry(token)
+            .or_default()
+            .push((source, rules_and_ops));
+    }
+
+    for (token, source_and_rules) in ambiguous_by_token {
+        let mut arm = String::new();
+        write_token_pattern(&mut arm, &token);
+        arm.push_str(" => { let saved = *pos; ");
+        for (source, mut rules_and_ops) in source_and_rules {
+            rules_and_ops.sort_by(|(_, a), (_, b)| b.len().cmp(&a.len()));
+            arm.push_str(&format!(
+                "if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
+                 if let Some(t) = peek_token(tokens, *pos) {{ \
+                 match t {{ ",
+                source
+            ));
+            for (label, op_variant) in &rules_and_ops {
+                arm.push_str(&format!(
+                    "t if std::matches!(t, Token::{}) => {{ *pos += 1; \
+                     let right = parse_{}(tokens, pos, 0)?; \
+                     return Ok({}::{}(Box::new(left), Box::new(right))); }} ",
+                    op_variant, source, category, label
+                ));
+            }
+            arm.push_str("_ => {} } } } *pos = saved; ");
+        }
+        arm.push_str(&format!("parse_{}_own(tokens, pos, min_bp) }}", category));
+        dispatch_arms.push(arm);
     }
 
     // Generate cast rule dispatch

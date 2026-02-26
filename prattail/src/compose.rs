@@ -302,6 +302,7 @@ fn merge_rules(
             has_rust_code: rule.has_rust_code,
             rust_code: rule.rust_code.clone(),
             eval_mode: rule.eval_mode.clone(),
+            wrap_collection_in_literal: rule.wrap_collection_in_literal,
         });
     }
 
@@ -324,6 +325,7 @@ fn merge_rules(
             has_rust_code: rule.has_rust_code,
             rust_code: rule.rust_code.clone(),
             eval_mode: rule.eval_mode.clone(),
+            wrap_collection_in_literal: rule.wrap_collection_in_literal,
         });
     }
 

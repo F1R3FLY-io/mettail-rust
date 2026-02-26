@@ -73,7 +73,7 @@ fn generate_is_ground_arm(category: &Ident, variant: &VariantKind) -> TokenStrea
         VariantKind::Regular { label, fields } => generate_regular_arm(category, label, fields),
         VariantKind::Collection { label, coll_type, .. } => {
             let check = collection_all_ground(quote! { coll }, coll_type);
-            quote! { #category::#label(coll) => #check }
+            quote! { #category::#label(ref coll) => #check }
         },
         VariantKind::Binder { label, pre_scope_fields, .. } => {
             generate_binder_arm(category, label, pre_scope_fields)
@@ -115,6 +115,10 @@ fn field_ground_check(field: &FieldInfo, name: &Ident) -> TokenStream {
 /// Collection fields use the appropriate iteration pattern for their type.
 fn generate_regular_arm(category: &Ident, label: &Ident, fields: &[FieldInfo]) -> TokenStream {
     let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let field_patterns: Vec<TokenStream> = field_names
+        .iter()
+        .map(|n| quote! { ref #n })
+        .collect();
 
     let checks: Vec<TokenStream> = fields
         .iter()
@@ -130,7 +134,7 @@ fn generate_regular_arm(category: &Ident, label: &Ident, fields: &[FieldInfo]) -
     };
 
     quote! {
-        #category::#label(#(#field_names),*) => #body
+        #category::#label(#(#field_patterns),*) => #body
     }
 }
 
@@ -146,6 +150,10 @@ fn generate_binder_arm(
     let field_names: Vec<Ident> = (0..pre_scope_fields.len())
         .map(|i| format_ident!("f{}", i))
         .collect();
+    let field_patterns: Vec<TokenStream> = field_names
+        .iter()
+        .map(|n| quote! { ref #n })
+        .collect();
 
     let field_checks: Vec<TokenStream> = pre_scope_fields
         .iter()
@@ -154,9 +162,9 @@ fn generate_binder_arm(
         .collect();
 
     let pattern = if field_names.is_empty() {
-        quote! { #category::#label(scope) }
+        quote! { #category::#label(ref scope) }
     } else {
-        quote! { #category::#label(#(#field_names,)* scope) }
+        quote! { #category::#label(#(#field_patterns,)* ref scope) }
     };
 
     let body_check = quote! { scope.inner().unsafe_body.is_ground() };

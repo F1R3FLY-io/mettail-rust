@@ -275,6 +275,7 @@ fn make_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>, is_infix:
         has_rust_code: false,
         rust_code: None,
         eval_mode: None,
+        wrap_collection_in_literal: false,
     }
 }
 

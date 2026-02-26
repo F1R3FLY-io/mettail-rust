@@ -25,7 +25,9 @@
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
 use crate::ast::types::{CollectionType, TypeExpr};
-use crate::gen::native::native_type_to_string;
+use crate::gen::native::{
+    is_collection_native_type, is_vec_native_type, native_type_to_string, vec_element_ident,
+};
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -116,6 +118,15 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
 
     let impls: Vec<TokenStream> = categories.iter().map(|export| {
         let cat_name = &export.name;
+        let use_debug_fmt = export
+            .native_type
+            .as_ref()
+            .map_or(false, is_collection_native_type);
+        let (prev_fmt, check_fmt) = if use_debug_fmt {
+            (quote! { format!("{:?}", result) }, quote! { format!("{:?}", result) })
+        } else {
+            (quote! { format!("{}", result) }, quote! { format!("{}", result) })
+        };
 
         // Collect all category fields for cross-category substitution
         let all_subst_calls: Vec<TokenStream> = categories.iter().map(|cat| {
@@ -136,7 +147,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
 
             // Generate match arms for each variant
             let match_arms: Vec<TokenStream> = variants.iter().map(|variant| {
-                generate_subst_by_name_arm(cat_name, variant, repl_cat_name)
+                generate_subst_by_name_arm(cat_name, variant, repl_cat_name, language)
             }).collect();
 
             quote! {
@@ -161,9 +172,9 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                 pub fn substitute_env(&self, env: &#env_name) -> Self {
                     let mut result = self.clone();
                     for _ in 0..100 {
-                        let prev_str = format!("{}", result);
+                        let prev_str = #prev_fmt;
                         #(#all_subst_calls)*
-                        if format!("{}", result) == prev_str {
+                        if #check_fmt == prev_str {
                             break;
                         }
                     }
@@ -233,21 +244,28 @@ fn generate_unify_freevars_arm(
         },
 
         VariantKind::Literal { label } => {
-            // String is not Copy; use clone() for str/String to avoid E0507
+            // String is not Copy; use clone() for str/String and Vec/HashBag to avoid E0507.
+            // List (Vec<Proc>): recurse into elements to unify freevars in each Proc.
             let literal_arm = language
                 .types
                 .iter()
                 .find(|t| &t.name == category)
                 .and_then(|t| t.native_type.as_ref())
                 .map(|ty| {
-                    let type_str = native_type_to_string(ty);
-                    if type_str == "str" || type_str == "String" {
-                        quote! { #category::#label(v) => #category::#label(v.clone()) }
+                    if is_vec_native_type(ty) {
+                        quote! { #category::#label(ref v) => #category::#label(v.iter().map(|e| e.unify_freevars_impl()).collect()) }
                     } else {
-                        quote! { #category::#label(v) => #category::#label(*v) }
+                        let type_str = native_type_to_string(ty);
+                        if type_str == "str" || type_str == "String" || type_str == "Vec" {
+                            quote! { #category::#label(ref v) => #category::#label(v.clone()) }
+                        } else if type_str == "HashBag" {
+                            quote! { #category::#label(ref v) => #category::#label(v.clone()) }
+                        } else {
+                            quote! { #category::#label(ref v) => #category::#label(*v) }
+                        }
                     }
                 })
-                .unwrap_or_else(|| quote! { #category::#label(v) => #category::#label(*v) });
+                .unwrap_or_else(|| quote! { #category::#label(ref v) => #category::#label(v.clone()) });
             literal_arm
         },
 
@@ -258,6 +276,10 @@ fn generate_unify_freevars_arm(
         VariantKind::Regular { label, fields } => {
             let field_names: Vec<Ident> =
                 (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+            let field_patterns: Vec<TokenStream> = field_names
+                .iter()
+                .map(|n| quote! { ref #n })
+                .collect();
             let field_unifies: Vec<TokenStream> = fields
                 .iter()
                 .zip(field_names.iter())
@@ -290,7 +312,7 @@ fn generate_unify_freevars_arm(
                 .collect();
 
             quote! {
-                #category::#label(#(#field_names),*) => {
+                #category::#label(#(#field_patterns),*) => {
                     #category::#label(#(#field_unifies),*)
                 }
             }
@@ -299,7 +321,7 @@ fn generate_unify_freevars_arm(
         VariantKind::Collection { label, coll_type, .. } => match coll_type {
             CollectionType::HashBag => {
                 quote! {
-                    #category::#label(bag) => {
+                    #category::#label(ref bag) => {
                         let mut new_bag = mettail_runtime::HashBag::new();
                         for (elem, count) in bag.iter() {
                             let u = elem.unify_freevars_impl();
@@ -311,14 +333,14 @@ fn generate_unify_freevars_arm(
             },
             CollectionType::HashSet => {
                 quote! {
-                    #category::#label(elems) => {
+                    #category::#label(ref elems) => {
                         #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect())
                     }
                 }
             },
             CollectionType::Vec => {
                 quote! {
-                    #category::#label(elems) => {
+                    #category::#label(ref elems) => {
                         #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect())
                     }
                 }
@@ -412,6 +434,7 @@ fn generate_subst_by_name_arm(
     category: &Ident,
     variant: &VariantKind,
     repl_cat: &Ident,
+    language: &LanguageDef,
 ) -> TokenStream {
     match variant {
         VariantKind::Var { label } => {
@@ -437,7 +460,24 @@ fn generate_subst_by_name_arm(
         },
 
         VariantKind::Literal { label } => {
-            quote! { #category::#label(_) => self.clone() }
+            // List (Vec<Proc>): recurse into elements when substituting that category
+            let literal_arm = language
+                .types
+                .iter()
+                .find(|t| &t.name == category)
+                .and_then(|t| t.native_type.as_ref())
+                .filter(|ty| is_vec_native_type(ty))
+                .and_then(|ty| vec_element_ident(ty))
+                .filter(|elem_cat| elem_cat == repl_cat)
+                .map(|elem_cat| {
+                    let method =
+                        format_ident!("subst_by_name_{}", elem_cat.to_string().to_lowercase());
+                    quote! {
+                        #category::#label(ref v) => #category::#label(v.iter().map(|e| e.#method(env_map)).collect())
+                    }
+                })
+                .unwrap_or_else(|| quote! { #category::#label(_) => self.clone() });
+            literal_arm
         },
 
         VariantKind::Nullary { label } => {
@@ -447,6 +487,10 @@ fn generate_subst_by_name_arm(
         VariantKind::Regular { label, fields } => {
             let field_names: Vec<Ident> =
                 (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+            let field_patterns: Vec<TokenStream> = field_names
+                .iter()
+                .map(|n| quote! { ref #n })
+                .collect();
 
             let field_substs: Vec<TokenStream> = fields
                 .iter()
@@ -483,7 +527,7 @@ fn generate_subst_by_name_arm(
                 .collect();
 
             quote! {
-                #category::#label(#(#field_names),*) => {
+                #category::#label(#(#field_patterns),*) => {
                     #category::#label(#(#field_substs),*)
                 }
             }
@@ -495,7 +539,7 @@ fn generate_subst_by_name_arm(
             match coll_type {
                 CollectionType::HashBag => {
                     quote! {
-                        #category::#label(bag) => {
+                        #category::#label(ref bag) => {
                             let mut new_bag = mettail_runtime::HashBag::new();
                             for (elem, count) in bag.iter() {
                                 let s = elem.#method(env_map);
@@ -507,14 +551,14 @@ fn generate_subst_by_name_arm(
                 },
                 CollectionType::HashSet => {
                     quote! {
-                        #category::#label(elems) => {
+                        #category::#label(ref elems) => {
                             #category::#label(elems.iter().map(|e| e.#method(env_map)).collect())
                         }
                     }
                 },
                 CollectionType::Vec => {
                     quote! {
-                        #category::#label(elems) => {
+                        #category::#label(ref elems) => {
                             #category::#label(elems.iter().map(|e| e.#method(env_map)).collect())
                         }
                     }
@@ -1288,6 +1332,10 @@ fn generate_regular_subst_arm(
     repl_cat: &Ident,
 ) -> TokenStream {
     let field_names: Vec<Ident> = (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+    let field_patterns: Vec<TokenStream> = field_names
+        .iter()
+        .map(|n| quote! { ref #n })
+        .collect();
 
     let field_substs: Vec<TokenStream> = fields
         .iter()
@@ -1328,7 +1376,7 @@ fn generate_regular_subst_arm(
         .collect();
 
     quote! {
-        #category::#label(#(#field_names),*) => {
+        #category::#label(#(#field_patterns),*) => {
             #category::#label(#(#field_substs),*)
         }
     }
@@ -1347,7 +1395,7 @@ fn generate_collection_subst_arm(
     match coll_type {
         CollectionType::HashBag => {
             quote! {
-                #category::#label(bag) => {
+                #category::#label(ref bag) => {
                     let mut new_bag = mettail_runtime::HashBag::new();
                     for (elem, count) in bag.iter() {
                         let s = elem.#method(vars, repls);
@@ -1359,14 +1407,14 @@ fn generate_collection_subst_arm(
         },
         CollectionType::HashSet => {
             quote! {
-                #category::#label(set) => {
+                #category::#label(ref set) => {
                     #category::#label(set.iter().map(|elem| elem.#method(vars, repls)).collect())
                 }
             }
         },
         CollectionType::Vec => {
             quote! {
-                #category::#label(vec) => {
+                #category::#label(ref vec) => {
                     #category::#label(vec.iter().map(|elem| elem.#method(vars, repls)).collect())
                 }
             }

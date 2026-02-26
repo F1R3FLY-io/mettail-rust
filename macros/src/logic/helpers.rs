@@ -187,7 +187,7 @@ fn generate_regular_constructor_pool_arm(
         .map(|i| {
             if matching_indices.contains(&i) {
                 let name = format_ident!("f{}", i);
-                quote! { #name }
+                quote! { ref #name }
             } else {
                 quote! { _ }
             }
@@ -198,7 +198,7 @@ fn generate_regular_constructor_pool_arm(
         .iter()
         .map(|&i| {
             let name = format_ident!("f{}", i);
-            quote! { buf.push(#name.as_ref().clone()); }
+            quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*#name))); }
         })
         .collect();
 
@@ -238,8 +238,8 @@ fn generate_binding_constructor_pool_arm(
             return None;
         }
         Some(PoolArm {
-            pattern: quote! { #src::#label(scope) },
-            pushes: vec![quote! { buf.push(scope.inner().unsafe_body.as_ref().clone()); }],
+            pattern: quote! { #src::#label(ref scope) },
+            pushes: vec![quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*scope.inner().unsafe_body))); }],
         })
     } else {
         // Multiple fields: scope + other fields
@@ -253,18 +253,18 @@ fn generate_binding_constructor_pool_arm(
                 continue; // Skip binder
             } else if i == body_idx {
                 let scope_name = format_ident!("scope_f");
-                field_bindings.push(quote! { #scope_name });
+                field_bindings.push(quote! { ref #scope_name });
                 if body_matches {
                     pushes.push(
-                        quote! { buf.push(#scope_name.inner().unsafe_body.as_ref().clone()); },
+                        quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*#scope_name.inner().unsafe_body))); },
                     );
                 }
             } else if let GrammarItem::NonTerminal(cat) = item {
                 let name = format_ident!("f{}", ast_field_idx);
                 let cat_str = cat.to_string();
                 if cat_str != "Var" && cat_str != "Integer" && *cat == *tgt {
-                    field_bindings.push(quote! { #name });
-                    pushes.push(quote! { buf.push(#name.as_ref().clone()); });
+                    field_bindings.push(quote! { ref #name });
+                    pushes.push(quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*#name))); });
                 } else {
                     field_bindings.push(quote! { _ });
                 }
@@ -325,14 +325,14 @@ pub fn generate_consolidated_congruence_rules(
         let apply_variant = format_ident!("Apply{}", domain);
         let mapply_variant = format_ident!("MApply{}", domain);
 
-        // Extract lam from Apply{Dom} and MApply{Dom}
+        // Extract lam from Apply{Dom} and MApply{Dom} (clone referent for non-Copy categories)
         lam_pool_arms.push(PoolArm {
-            pattern: quote! { #category::#apply_variant(lam, _) },
-            pushes: vec![quote! { buf.push(lam.as_ref().clone()); }],
+            pattern: quote! { #category::#apply_variant(ref lam, _) },
+            pushes: vec![quote! { buf.push(<#category as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lam))); }],
         });
         lam_pool_arms.push(PoolArm {
-            pattern: quote! { #category::#mapply_variant(lam, _) },
-            pushes: vec![quote! { buf.push(lam.as_ref().clone()); }],
+            pattern: quote! { #category::#mapply_variant(ref lam, _) },
+            pushes: vec![quote! { buf.push(<#category as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lam))); }],
         });
 
         // Rebuild with new lam
@@ -353,10 +353,13 @@ pub fn generate_consolidated_congruence_rules(
         let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &lam_pool_arms);
 
         rules.push(quote! {
-            #rw_cat(t.clone(), match t {
-                #(#lam_rebuild_arms)*
-                _ => unreachable!(),
-            }) <--
+            #rw_cat(
+                <#category as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*t)),
+                match t {
+                    #(#lam_rebuild_arms)*
+                    _ => unreachable!(),
+                },
+            ) <--
                 #cat_lower(t),
                 for lam in #for_iter,
                 #rw_cat(lam, new_lam);
@@ -375,17 +378,20 @@ pub fn generate_consolidated_congruence_rules(
         let elem_type = quote! { #domain };
         let match_expr = quote! { t };
         let pool_arms = vec![PoolArm {
-            pattern: quote! { #category::#apply_variant(_, arg) },
-            pushes: vec![quote! { buf.push(arg.as_ref().clone()); }],
+            pattern: quote! { #category::#apply_variant(_, ref arg) },
+            pushes: vec![quote! { buf.push(<#domain as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*arg))); }],
         }];
         let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &pool_arms);
 
         rules.push(quote! {
-            #rw_cat(t.clone(), match t {
-                #category::#apply_variant(lam, _) =>
-                    #category::#apply_variant(lam.clone(), Box::new(new_arg.clone())),
-                _ => unreachable!(),
-            }) <--
+            #rw_cat(
+                <#category as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*t)),
+                match t {
+                    #category::#apply_variant(lam, _) =>
+                        #category::#apply_variant(lam.clone(), Box::new(new_arg.clone())),
+                    _ => unreachable!(),
+                },
+            ) <--
                 #cat_lower(t),
                 for arg in #for_iter,
                 #rw_domain(arg, new_arg);
@@ -414,23 +420,23 @@ fn generate_auto_variant_pool_arms(src: &Ident, tgt: &Ident, domain: &Ident) -> 
     if src_is_tgt && domain_is_src {
         // Same-category Apply: both lam and arg are src
         arms.push(PoolArm {
-            pattern: quote! { #src::#apply_variant(lam, arg) },
+            pattern: quote! { #src::#apply_variant(ref lam, ref arg) },
             pushes: vec![
-                quote! { buf.push(lam.as_ref().clone()); },
-                quote! { buf.push(arg.as_ref().clone()); },
+                quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lam))); },
+                quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*arg))); },
             ],
         });
     } else if src_is_tgt {
         // Cross-category Apply: only lam is src
         arms.push(PoolArm {
-            pattern: quote! { #src::#apply_variant(lam, _) },
-            pushes: vec![quote! { buf.push(lam.as_ref().clone()); }],
+            pattern: quote! { #src::#apply_variant(ref lam, _) },
+            pushes: vec![quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lam))); }],
         });
     } else if domain_is_tgt {
         // Cross-category Apply: only arg is domain (== tgt)
         arms.push(PoolArm {
-            pattern: quote! { #src::#apply_variant(_, arg) },
-            pushes: vec![quote! { buf.push(arg.as_ref().clone()); }],
+            pattern: quote! { #src::#apply_variant(_, ref arg) },
+            pushes: vec![quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*arg))); }],
         });
     }
 
@@ -440,22 +446,22 @@ fn generate_auto_variant_pool_arms(src: &Ident, tgt: &Ident, domain: &Ident) -> 
     if src_is_tgt && domain_is_src {
         // Same-category MApply: lam + all args are src
         arms.push(PoolArm {
-            pattern: quote! { #src::#mapply_variant(lam, args) },
+            pattern: quote! { #src::#mapply_variant(ref lam, ref args) },
             pushes: vec![
-                quote! { buf.push(lam.as_ref().clone()); },
+                quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lam))); },
                 quote! { buf.extend(args.iter().cloned()); },
             ],
         });
     } else if src_is_tgt {
         // Cross-category MApply: only lam is src
         arms.push(PoolArm {
-            pattern: quote! { #src::#mapply_variant(lam, _) },
-            pushes: vec![quote! { buf.push(lam.as_ref().clone()); }],
+            pattern: quote! { #src::#mapply_variant(ref lam, _) },
+            pushes: vec![quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*lam))); }],
         });
     } else if domain_is_tgt {
         // Cross-category MApply: only args are domain (== tgt)
         arms.push(PoolArm {
-            pattern: quote! { #src::#mapply_variant(_, args) },
+            pattern: quote! { #src::#mapply_variant(_, ref args) },
             pushes: vec![quote! { buf.extend(args.iter().cloned()); }],
         });
     }
@@ -464,12 +470,12 @@ fn generate_auto_variant_pool_arms(src: &Ident, tgt: &Ident, domain: &Ident) -> 
     //   - body: src → contributes to (src, src) helper only
     if src_is_tgt {
         arms.push(PoolArm {
-            pattern: quote! { #src::#lam_variant(scope) },
-            pushes: vec![quote! { buf.push(scope.inner().unsafe_body.as_ref().clone()); }],
+            pattern: quote! { #src::#lam_variant(ref scope) },
+            pushes: vec![quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*scope.inner().unsafe_body))); }],
         });
         arms.push(PoolArm {
-            pattern: quote! { #src::#mlam_variant(scope) },
-            pushes: vec![quote! { buf.push(scope.inner().unsafe_body.as_ref().clone()); }],
+            pattern: quote! { #src::#mlam_variant(ref scope) },
+            pushes: vec![quote! { buf.push(<#tgt as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*scope.inner().unsafe_body))); }],
         });
     }
 

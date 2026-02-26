@@ -62,6 +62,7 @@ fn base_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>) -> RuleSp
         has_rust_code: false,
         rust_code: None,
         eval_mode: None,
+        wrap_collection_in_literal: false,
     }
 }
 

@@ -4,6 +4,7 @@
 export const categoryInfo = {
 	Bool: {
 		constructors: [
+			"BoolId",
 			"EqInt",
 			"EqFloat",
 			"EqBool",
@@ -34,13 +35,13 @@ export const categoryInfo = {
 			"Xor",
 			"IntToBool",
 			"FloatToBool",
-			"StrToBool",
-			"BoolId"
+			"StrToBool"
 		],
 		colour: "7a51e0",
 	},
 	Float: {
 		constructors: [
+			"FloatId",
 			"AddFloat",
 			"SubFloat",
 			"MulFloat",
@@ -52,13 +53,13 @@ export const categoryInfo = {
 			"LnFloat",
 			"IntToFloat",
 			"BoolToFloat",
-			"StrToFloat",
-			"FloatId"
+			"StrToFloat"
 		],
 		colour: "e05196",
 	},
 	Int: {
 		constructors: [
+			"IntId",
 			"Tern",
 			"Len",
 			"AddInt",
@@ -72,19 +73,34 @@ export const categoryInfo = {
 			"FloatToInt",
 			"BoolToInt",
 			"StrToInt",
-			"IntId",
-			"CustomOp"
+			"CustomOp",
+			"LenList"
 		],
 		colour: "51b0e0",
 	},
+	List: {
+		constructors: [
+			"ListLit",
+			"EmptyList",
+			"AppendList",
+			"DeleteList"
+		],
+		colour: "c1e051",
+	},
+	Proc: {
+		constructors: [
+			"ElemList"
+		],
+		colour: "208bfe",
+	},
 	Str: {
 		constructors: [
+			"StrId",
 			"Concat",
 			"AddStr",
 			"BoolToStr",
 			"IntToStr",
-			"FloatToStr",
-			"StrId"
+			"FloatToStr"
 		],
 		colour: "51e05f",
 	}

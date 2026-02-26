@@ -6,6 +6,7 @@
 
 use crate::ast::grammar::GrammarItem;
 use crate::ast::language::LanguageDef;
+use crate::gen::native::is_collection_native_type;
 use crate::gen::{generate_literal_label, generate_var_label};
 use crate::logic::list_all_relations_for_extraction;
 use proc_macro2::Span;
@@ -141,7 +142,15 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         .iter()
         .map(|t| {
             let cat = &t.name;
-            quote! { #inner_enum_name::#cat(v) => write!(f, "{}", v) }
+            let use_debug = t
+                .native_type
+                .as_ref()
+                .map_or(false, is_collection_native_type);
+            if use_debug {
+                quote! { #inner_enum_name::#cat(v) => write!(f, "{:?}", v) }
+            } else {
+                quote! { #inner_enum_name::#cat(v) => write!(f, "{}", v) }
+            }
         })
         .collect();
     let debug_arms: Vec<TokenStream> = language
@@ -160,7 +169,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
-            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env(env)) }
+            quote! { #inner_enum_name::#variant(ref t) => #inner_enum_name::#variant(t.substitute_env(env)) }
         })
         .collect();
 
@@ -209,7 +218,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         .iter()
         .map(|t| {
             let variant = format_ident!("{}", t.name);
-            quote! { #inner_enum_name::#variant(inner) => inner.is_ground() }
+            quote! { #inner_enum_name::#variant(ref inner) => inner.is_ground() }
         })
         .collect();
 
@@ -220,7 +229,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
         .map(|t| {
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
-            quote! { #inner_enum_name::#variant(t) => #inner_enum_name::#variant(t.substitute_env(env)) }
+            quote! { #inner_enum_name::#variant(ref t) => #inner_enum_name::#variant(t.substitute_env(env)) }
         })
         .collect();
 
@@ -307,7 +316,8 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             pub fn substitute_env(&self, env: &#env_name) -> Self {
                 match self {
                     #inner_enum_name::Ambiguous(alts) => {
-                        let orig_displays: Vec<std::string::String> = alts.iter().map(|a| format!("{}", a)).collect();
+                        // Use Debug for progress/dedup so all category types (including Vec/HashBag) work
+                        let orig_displays: Vec<std::string::String> = alts.iter().map(|a| format!("{:?}", a)).collect();
 
                         // Substitute each alternative (including cross-category resolution)
                         let results: Vec<Self> = alts.iter().map(|alt| {
@@ -326,7 +336,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                             cross_resolved
                         }).collect();
 
-                        let result_displays: Vec<std::string::String> = results.iter().map(|r| format!("{}", r)).collect();
+                        let result_displays: Vec<std::string::String> = results.iter().map(|r| format!("{:?}", r)).collect();
 
                         // Keep only alternatives that made substitution progress
                         let progressed: Vec<usize> = (0..results.len())
@@ -339,10 +349,10 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                             progressed.into_iter().map(|i| results[i].clone()).collect()
                         };
 
-                        // Dedup by Display
+                        // Dedup by Debug
                         let mut seen = std::collections::HashSet::new();
                         let unique: Vec<Self> = kept.into_iter()
-                            .filter(|a| seen.insert(format!("{}", a)))
+                            .filter(|a| seen.insert(format!("{:?}", a)))
                             .collect();
 
                         Self::from_alternatives(unique)
@@ -459,6 +469,17 @@ fn generate_language_struct(
     // Generate custom relation extraction code
     let custom_relation_extraction = generate_custom_relation_extraction(language);
 
+    let use_debug_display = language
+        .types
+        .first()
+        .and_then(|t| t.native_type.as_ref())
+        .map_or(false, crate::gen::native::is_collection_native_type);
+    let display_fmt = if use_debug_display {
+        quote! { format!("{:?}", t) }
+    } else {
+        quote! { format!("{}", t) }
+    };
+
     let parse_preserving_vars_body = quote! {
         #primary_type::parse(input).map(#term_name)
     };
@@ -520,7 +541,7 @@ fn generate_language_struct(
                     let has_rewrites = rewrites.iter().any(|(from, _)| from == t);
                     term_infos.push(mettail_runtime::TermInfo {
                         term_id,
-                        display: format!("{}", t),
+                        display: #display_fmt,
                         is_normal_form: !has_rewrites,
                     });
                 }
@@ -1035,52 +1056,46 @@ fn generate_language_struct_multi(
     // by the user's declared priority (first-declared category = first alternative).
     let parse_order: Vec<syn::Ident> = language.types.iter().map(|t| t.name.clone()).collect();
 
-    // Lexer-guided parse filtering: when the language has at least one non-native category
-    // (e.g. Proc, Name), skip native-only categories (e.g. Float, Int, Bool, Str) when the
-    // first token is an identifier, since identifiers are not native literals.
-    // For all-native languages (e.g. Calculator), no filtering is needed.
-    let has_non_native = language.types.iter().any(|t| t.native_type.is_none());
-    let native_cat_names: std::collections::HashSet<String> = language
-        .types
-        .iter()
-        .filter(|t| t.native_type.is_some())
-        .map(|t| t.name.to_string())
-        .collect();
+    // When input starts with '(', try non-Proc categories first so e.g. "(3 == 3) or false"
+    // is parsed by Bool instead of failing on Proc (which would try to parse inner as Proc).
+    let parse_order_paren_first: Vec<syn::Ident> = {
+        let mut order: Vec<_> = language.types.iter().map(|t| t.name.clone()).collect();
+        if let Some(proc_pos) = order.iter().position(|n| n == "Proc") {
+            let proc = order.remove(proc_pos);
+            order.push(proc);
+        }
+        order
+    };
 
-    let parse_tries: Vec<TokenStream> = parse_order
+    let _parse_tries: Vec<TokenStream> = parse_order
         .iter()
         .map(|cat| {
             let variant = format_ident!("{}", cat);
-            let try_block = quote! {
+            quote! {
                 match #cat::parse(input) {
                     Ok(t) => successes.push(#inner_enum_name::#variant(t)),
                     Err(e) => if first_err.is_none() { first_err = Some(e); },
                 }
-            };
-            // Guard native categories behind an Ident check when non-native categories exist
-            if has_non_native && native_cat_names.contains(&cat.to_string()) {
-                quote! {
-                    if !matches!(first_tok, Some(Token::Ident(_))) {
-                        #try_block
-                    }
-                }
-            } else {
-                try_block
             }
         })
         .collect();
 
-    // Lexer probe: only emitted for languages with non-native categories.
-    // All-native languages (e.g. Calculator) skip this and try all parsers unconditionally.
-    let lexer_probe: TokenStream = if has_non_native {
-        quote! {
-            // Lex once to classify the first token for parse dispatch
-            let probe_tokens = lex(input).map_err(|e| e.to_string())?;
-            let first_tok = probe_tokens.first().map(|(t, _)| t);
-        }
-    } else {
-        quote! {}
-    };
+    let parse_tries_paren_first: Vec<TokenStream> = parse_order_paren_first
+        .iter()
+        .map(|cat| {
+            let variant = format_ident!("{}", cat);
+            quote! {
+                match #cat::parse(input) {
+                    Ok(t) => successes.push(#inner_enum_name::#variant(t)),
+                    Err(e) => if first_err.is_none() { first_err = Some(e); },
+                }
+            }
+        })
+        .collect();
+
+    // No lexer probe: we try all category parsers. Each parse must consume the full input
+    // (TrailingTokens otherwise), so e.g. "x + 2" succeeds as Int in Calculator.
+    let lexer_probe: TokenStream = quote! {};
 
     let primary_type_for_step = language.types.first().map(|t| &t.name);
     // Seed arms: push the initial term into the appropriate relation on the unified Ascent struct.
@@ -1101,8 +1116,8 @@ fn generate_language_struct_multi(
                 })
                 .unwrap_or_default();
             quote! {
-                #inner_enum_name::#variant(inner) => {
-                    let initial = inner.clone();
+                #inner_enum_name::#variant(ref inner) => {
+                    let initial = <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*inner));
                     prog.#cat_lower.push((initial.clone(),));
                     #seed_step_term
                 }
@@ -1121,20 +1136,32 @@ fn generate_language_struct_multi(
             let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
             let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
             let variant = format_ident!("{}", cat);
+            let use_debug_display = t
+                .native_type
+                .as_ref()
+                .map_or(false, is_collection_native_type);
+            let display_fmt = if use_debug_display {
+                quote! { format!("{:?}", t) }
+            } else {
+                quote! { format!("{}", t) }
+            };
             quote! {
                 #inner_enum_name::#variant(_) => {
-                    let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
-                    let rewrites: Vec<(#cat, #cat)> = prog.#rw_rel.iter().map(|(from, to)| (from.clone(), to.clone())).collect();
+                    let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(ref p,)| <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*p))).collect();
+                    let rewrites: Vec<(#cat, #cat)> = prog.#rw_rel.iter().map(|(ref from, ref to)| (
+                        <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*from)),
+                        <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*to)),
+                    )).collect();
                     let term_infos: Vec<mettail_runtime::TermInfo> = all_terms.iter().map(|t| {
                         let wrapped = #inner_enum_name::#variant(t.clone());
                         let term_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut hasher = DefaultHasher::new(); wrapped.hash(&mut hasher); hasher.finish() };
                         let has_rewrites = rewrites.iter().any(|(from, _)| from == t);
-                        mettail_runtime::TermInfo { term_id, display: format!("{}", t), is_normal_form: !has_rewrites }
+                        mettail_runtime::TermInfo { term_id, display: #display_fmt, is_normal_form: !has_rewrites }
                     }).collect();
                     let rewrite_list: Vec<mettail_runtime::Rewrite> = rewrites.iter().map(|(from, to)| {
                         use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher};
-                        let w_from = #inner_enum_name::#variant(from.clone());
-                        let w_to = #inner_enum_name::#variant(to.clone());
+                        let w_from = #inner_enum_name::#variant(<#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*from)));
+                        let w_to = #inner_enum_name::#variant(<#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*to)));
                         let mut h1 = DefaultHasher::new(); let mut h2 = DefaultHasher::new();
                         w_from.hash(&mut h1); w_to.hash(&mut h2);
                         mettail_runtime::Rewrite { from_id: h1.finish(), to_id: h2.finish(), rule_name: Some("rewrite".to_string()) }
@@ -1229,8 +1256,8 @@ fn generate_language_struct_multi(
                     })
                     .unwrap_or_default();
                 quote! {
-                    #inner_enum_name::#variant(inner) => {
-                        let initial = inner.clone();
+                    #inner_enum_name::#variant(ref inner) => {
+                        let initial = <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(inner));
                         prog.#cat_lower.push((initial.clone(),));
                         #seed_step_term
                     }
@@ -1247,20 +1274,32 @@ fn generate_language_struct_multi(
                 let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
                 let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
                 let variant = format_ident!("{}", cat);
+                let use_debug_display = t
+                    .native_type
+                    .as_ref()
+                    .map_or(false, is_collection_native_type);
+                let display_fmt = if use_debug_display {
+                    quote! { format!("{:?}", t) }
+                } else {
+                    quote! { format!("{}", t) }
+                };
                 quote! {
                     #inner_enum_name::#variant(_) => {
-                        let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
-                        let rewrites: Vec<(#cat, #cat)> = prog.#rw_rel.iter().map(|(from, to)| (from.clone(), to.clone())).collect();
+                        let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(ref p,)| <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*p))).collect();
+                        let rewrites: Vec<(#cat, #cat)> = prog.#rw_rel.iter().map(|(ref from, ref to)| (
+                            <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*from)),
+                            <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*to)),
+                        )).collect();
                         let term_infos: Vec<mettail_runtime::TermInfo> = all_terms.iter().map(|t| {
                             let wrapped = #inner_enum_name::#variant(t.clone());
                             let term_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut hasher = DefaultHasher::new(); wrapped.hash(&mut hasher); hasher.finish() };
                             let has_rewrites = rewrites.iter().any(|(from, _)| from == t);
-                            mettail_runtime::TermInfo { term_id, display: format!("{}", t), is_normal_form: !has_rewrites }
+                            mettail_runtime::TermInfo { term_id, display: #display_fmt, is_normal_form: !has_rewrites }
                         }).collect();
                         let rewrite_list: Vec<mettail_runtime::Rewrite> = rewrites.iter().map(|(from, to)| {
                             use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher};
-                            let w_from = #inner_enum_name::#variant(from.clone());
-                            let w_to = #inner_enum_name::#variant(to.clone());
+                            let w_from = #inner_enum_name::#variant(<#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*from)));
+                            let w_to = #inner_enum_name::#variant(<#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*to)));
                             let mut h1 = DefaultHasher::new(); let mut h2 = DefaultHasher::new();
                             w_from.hash(&mut h1); w_to.hash(&mut h2);
                             mettail_runtime::Rewrite { from_id: h1.finish(), to_id: h2.finish(), rule_name: Some("rewrite".to_string()) }
@@ -1374,11 +1413,44 @@ fn generate_language_struct_multi(
             /// Int, Bool, Str) are skipped since identifiers are not native literals. This
             /// reduces 6-way ambiguity to 2-way for bare variables in languages like rhocalc.
             pub fn parse_preserving_vars(input: &str) -> Result<#term_name, std::string::String> {
+                // If the whole input is one parenthesized group, parse the inner expression
+                // so that e.g. "(3 == 3)" is parsed as "3 == 3" and can succeed as Bool
+                // instead of being tried as Proc first and failing.
+                let trimmed = input.trim();
+                if trimmed.starts_with('(') {
+                    let mut depth = 0u32;
+                    let mut close = None::<usize>;
+                    for (i, c) in trimmed.char_indices() {
+                        match c {
+                            '(' => depth = depth.saturating_add(1),
+                            ')' => {
+                                if depth == 1 {
+                                    close = Some(i);
+                                    break;
+                                }
+                                depth = depth.saturating_sub(1);
+                            }
+                            _ => {}
+                        }
+                    }
+                    if let Some(close_idx) = close {
+                        let rest = trimmed[close_idx + 1..].trim();
+                        if rest.is_empty() && depth == 1 {
+                            let inner = trimmed[1..close_idx].trim();
+                            if !inner.is_empty() {
+                                return Self::parse_preserving_vars(inner);
+                            }
+                        }
+                    }
+                }
+
                 #lexer_probe
 
                 let mut successes = Vec::new();
                 let mut first_err = None;
-                #(#parse_tries)*
+                // Try non-Proc categories first (Proc last) so e.g. "true or (3 == 3)" and
+                // "(3 == 3) or false" are parsed by Bool instead of failing on Proc.
+                #(#parse_tries_paren_first)*
                 match successes.len() {
                     0 => Err(first_err.unwrap_or_else(|| "Parse error".to_string())),
                     1 => Ok(#term_name(successes.into_iter().next().expect("checked len == 1"))),
@@ -1461,15 +1533,26 @@ fn generate_language_trait_impl(
         })
         .collect();
 
-    // Generate list_env iterations for all type fields
-    let list_iterations: Vec<TokenStream> = categories
+    // Generate list_env iterations for all type fields (use Debug for collection types)
+    let list_iterations: Vec<TokenStream> = language
+        .types
         .iter()
-        .map(|cat| {
+        .map(|t| {
+            let cat = &t.name;
             let field = format_ident!("{}", cat.to_string().to_lowercase());
+            let use_debug = t
+                .native_type
+                .as_ref()
+                .map_or(false, crate::gen::native::is_collection_native_type);
+            let fmt = if use_debug {
+                quote! { format!("{:?}", val) }
+            } else {
+                quote! { format!("{}", val) }
+            };
             quote! {
                 for (name, val) in typed_env.#field.iter() {
                     let comment = typed_env.comments.get(name).cloned();
-                    result.push((name.clone(), format!("{}", val), comment));
+                    result.push((name.clone(), #fmt, comment));
                 }
             }
         })
@@ -1668,14 +1751,25 @@ fn generate_language_trait_impl_multi(
             quote! { typed_env.#field.remove(name).is_some() }
         })
         .collect();
-    let list_iterations: Vec<TokenStream> = categories
+    let list_iterations: Vec<TokenStream> = language
+        .types
         .iter()
-        .map(|cat| {
+        .map(|t| {
+            let cat = &t.name;
             let field = format_ident!("{}", cat.to_string().to_lowercase());
+            let use_debug = t
+                .native_type
+                .as_ref()
+                .map_or(false, crate::gen::native::is_collection_native_type);
+            let fmt = if use_debug {
+                quote! { format!("{:?}", val) }
+            } else {
+                quote! { format!("{}", val) }
+            };
             quote! {
                 for (name, val) in typed_env.#field.iter() {
                     let comment = typed_env.comments.get(name).cloned();
-                    result.push((name.clone(), format!("{}", val), comment));
+                    result.push((name.clone(), #fmt, comment));
                 }
             }
         })
@@ -1690,7 +1784,7 @@ fn generate_language_trait_impl_multi(
         })
         .collect();
 
-    // add_to_env: match on term.0 and set the right env field
+    // add_to_env: match on term.0 and set the right env field (clone referent for non-Copy categories)
     let add_to_env_arms: Vec<TokenStream> = language
         .types
         .iter()
@@ -1698,7 +1792,7 @@ fn generate_language_trait_impl_multi(
             let cat = &t.name;
             let field = format_ident!("{}", cat.to_string().to_lowercase());
             let variant = format_ident!("{}", cat);
-            quote! { #inner_enum_name::#variant(t) => typed_env.#field.set(name.to_string(), t.clone()) }
+            quote! { #inner_enum_name::#variant(ref t) => typed_env.#field.set(name.to_string(), <#cat as std::clone::Clone>::clone(std::borrow::Borrow::borrow(&*t))) }
         })
         .collect();
 
@@ -1710,7 +1804,7 @@ fn generate_language_trait_impl_multi(
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
             let fn_name = format_ident!("infer_{}_type", cat.to_string().to_lowercase());
-            quote! { #inner_enum_name::#variant(inner) => #language_name::#fn_name(inner) }
+            quote! { #inner_enum_name::#variant(ref inner) => #language_name::#fn_name(inner) }
         })
         .collect();
 
@@ -1728,7 +1822,7 @@ fn generate_language_trait_impl_multi(
             let cat = &t.name;
             let variant = format_ident!("{}", cat);
             quote! {
-                #inner_enum_name::#variant(inner) => #inner_enum_name::#variant(inner.normalize())
+                #inner_enum_name::#variant(ref inner) => #inner_enum_name::#variant(inner.normalize())
             }
         })
         .collect();
@@ -1743,7 +1837,7 @@ fn generate_language_trait_impl_multi(
             let variant = format_ident!("{}", cat);
             let literal_label = generate_literal_label(native_ty);
             Some(quote! {
-                #inner_enum_name::#variant(inner) => inner.try_eval().map(|v| #term_name(#inner_enum_name::#variant(#cat::#literal_label(v))))
+                #inner_enum_name::#variant(ref inner) => inner.try_eval().map(|v| #term_name(#inner_enum_name::#variant(#cat::#literal_label(v))))
             })
         })
         .collect();
@@ -1771,7 +1865,7 @@ fn generate_language_trait_impl_multi(
             let variant = format_ident!("{}", cat);
             let collect_fn = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
             quote! {
-                #inner_enum_name::#variant(inner) => {
+                #inner_enum_name::#variant(ref inner) => {
                     let mut result = Vec::new();
                     let mut seen = std::collections::HashSet::new();
                     #language_name::#collect_fn(inner, inner, &mut result, &mut seen);
@@ -1790,7 +1884,7 @@ fn generate_language_trait_impl_multi(
             let variant = format_ident!("{}", cat);
             let collect_fn = format_ident!("collect_all_{}_vars", cat.to_string().to_lowercase());
             quote! {
-                #inner_enum_name::#variant(inner) => {
+                #inner_enum_name::#variant(ref inner) => {
                     // Try direct method first
                     if let Some(t) = inner.infer_var_type(var_name) {
                         return Some(#language_name::inferred_to_term_type(&t));
@@ -2092,9 +2186,23 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
         let arity = rel.param_types.len();
         let tuple_vars: Vec<syn::Ident> = (0..arity).map(|i| format_ident!("e{}", i)).collect();
 
-        let format_exprs: Vec<TokenStream> = tuple_vars
+        let format_exprs: Vec<TokenStream> = rel
+            .param_types
             .iter()
-            .map(|v| quote! { format!("{}", #v) })
+            .zip(tuple_vars.iter())
+            .map(|(param_ty_str, v)| {
+                let use_debug = language
+                    .types
+                    .iter()
+                    .find(|lt| lt.name.to_string() == *param_ty_str)
+                    .and_then(|lt| lt.native_type.as_ref())
+                    .map_or(false, is_collection_native_type);
+                if use_debug {
+                    quote! { format!("{:?}", #v) }
+                } else {
+                    quote! { format!("{}", #v) }
+                }
+            })
             .collect();
 
         // For arity 1, use (e0,) so Rust treats it as a tuple pattern; (e0) would bind the whole &(Proc,).

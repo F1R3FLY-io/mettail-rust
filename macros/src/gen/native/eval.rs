@@ -64,13 +64,13 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         // Generate match arms for eval()
         let mut match_arms = Vec::new();
 
-        // Add arm for auto-generated literal if no explicit literal rule
+        // Add arm for auto-generated literal if no explicit literal rule (ref n to avoid E0507 for Vec/HashBag)
         if !has_literal_rule {
             let type_str = native_type_to_string(native_type);
-            let literal_arm = if type_str == "str" || type_str == "String" {
-                quote! { #category::#literal_label(n) => n.clone(), }
+            let literal_arm = if type_str == "str" || type_str == "String" || type_str == "Vec" || type_str == "HashBag" {
+                quote! { #category::#literal_label(ref n) => n.clone(), }
             } else {
-                quote! { #category::#literal_label(n) => *n, }
+                quote! { #category::#literal_label(ref n) => *n, }
             };
             match_arms.push(literal_arm);
         }
@@ -90,10 +90,10 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
 
         if !has_literal_rule {
             let type_str = native_type_to_string(native_type);
-            let try_literal_arm = if type_str == "str" || type_str == "String" {
-                quote! { #category::#literal_label(n) => Some(n.clone()), }
+            let try_literal_arm = if type_str == "str" || type_str == "String" || type_str == "Vec" || type_str == "HashBag" {
+                quote! { #category::#literal_label(ref n) => Some(n.clone()), }
             } else {
-                quote! { #category::#literal_label(n) => Some(*n), }
+                quote! { #category::#literal_label(ref n) => Some(*n), }
             };
             try_eval_arms.push(try_literal_arm);
         }
@@ -104,22 +104,22 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         for rule in &rules {
             let label = &rule.label;
 
-            // Literal rule: copy or clone depending on nonterminal (StringLiteral => clone)
+            // Literal rule: ref n to avoid E0507; copy or clone depending on nonterminal (StringLiteral/Vec/HashBag => clone)
             if is_literal_rule(rule) {
                 let use_clone = literal_rule_nonterminal(rule).as_deref() == Some("StringLiteral");
                 if use_clone {
                     match_arms.push(quote! {
-                        #category::#label(n) => n.clone(),
+                        #category::#label(ref n) => n.clone(),
                     });
                     try_eval_arms.push(quote! {
-                        #category::#label(n) => Some(n.clone()),
+                        #category::#label(ref n) => Some(n.clone()),
                     });
                 } else {
                     match_arms.push(quote! {
-                        #category::#label(n) => *n,
+                        #category::#label(ref n) => *n,
                     });
                     try_eval_arms.push(quote! {
-                        #category::#label(n) => Some(*n),
+                        #category::#label(ref n) => Some(*n),
                     });
                 }
             }

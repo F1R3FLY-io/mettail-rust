@@ -923,6 +923,7 @@ mod tests {
             has_rust_code: false,
             rust_code: None,
             eval_mode: None,
+            wrap_collection_in_literal: false,
         }
     }
 

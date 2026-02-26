@@ -282,6 +282,8 @@ pub struct RuleSpec {
     pub rust_code: Option<TokenStream>,
     /// Eval mode.
     pub eval_mode: Option<String>,
+    /// When true, wrap the single collection capture in `Cat::Lit(...)` when building the term.
+    pub wrap_collection_in_literal: bool,
 }
 
 /// A syntax item in a rule.
@@ -346,6 +348,9 @@ pub struct RuleSpecInput {
     pub rust_code: Option<TokenStream>,
     /// Eval mode.
     pub eval_mode: Option<String>,
+    /// When true, the single collection capture should be wrapped as `Box::new(Cat::Lit(elements))`
+    /// (for list literal rules where the parser produces a Vec and the term expects List::Lit).
+    pub wrap_collection_in_literal: bool,
 }
 
 impl LanguageSpec {
@@ -406,6 +411,7 @@ impl LanguageSpec {
                     has_rust_code: input.has_rust_code,
                     rust_code: input.rust_code,
                     eval_mode: input.eval_mode,
+                    wrap_collection_in_literal: input.wrap_collection_in_literal,
                 }
             })
             .collect();
@@ -457,6 +463,7 @@ impl RuleSpec {
             has_rust_code: false,
             rust_code: None,
             eval_mode: None,
+            wrap_collection_in_literal: false,
         }
     }
 }

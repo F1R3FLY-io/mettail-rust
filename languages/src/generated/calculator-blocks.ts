@@ -5,6 +5,74 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
+	// Int Id: ...
+	{
+		type: "int_int_id",
+		tooltip: "Int Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Float Id: ...
+	{
+		type: "float_float_id",
+		tooltip: "Float Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Bool Id: ...
+	{
+		type: "bool_bool_id",
+		tooltip: "Bool Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Str Id: ...
+	{
+		type: "str_str_id",
+		tooltip: "Str Id: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		output: "Str",
+		colour: "51e05f",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",
@@ -1252,74 +1320,6 @@ const definitions = [
 		colour: "7a51e0",
 	},
 
-	// Int Id: ...
-	{
-		type: "int_int_id",
-		tooltip: "Int Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Float Id: ...
-	{
-		type: "float_float_id",
-		tooltip: "Float Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
-			},
-		],
-		inputsInline: true,
-		output: "Float",
-		colour: "e05196",
-	},
-
-	// Bool Id: ...
-	{
-		type: "bool_bool_id",
-		tooltip: "Bool Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
-	// Str Id: ...
-	{
-		type: "str_str_id",
-		tooltip: "Str Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
-			},
-		],
-		inputsInline: true,
-		output: "Str",
-		colour: "51e05f",
-	},
-
 	// Custom Op: ... ...
 	{
 		type: "int_custom_op",
@@ -1340,6 +1340,117 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
+	},
+
+	// List Lit: ...
+	{
+		type: "list_list_lit",
+		tooltip: "List Lit: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
+	},
+
+	// Empty List
+	{
+		type: "list_empty_list",
+		tooltip: "Empty List",
+		message0: "",
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
+	},
+
+	// Append List: ... ...
+	{
+		type: "list_append_list",
+		tooltip: "Append List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
+	},
+
+	// Len List: ...
+	{
+		type: "int_len_list",
+		tooltip: "Len List: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Elem List: ... ...
+	{
+		type: "proc_elem_list",
+		tooltip: "Elem List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Delete List: ... ...
+	{
+		type: "list_delete_list",
+		tooltip: "Delete List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
 	}
 ];
 

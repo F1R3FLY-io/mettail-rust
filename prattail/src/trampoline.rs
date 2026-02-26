@@ -1207,7 +1207,7 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
                 .collect();
             write!(buf, "break 'prefix {cat}::{label}(").unwrap();
             for c in &extra {
-                write_segment_capture_as_arg(buf, c);
+                write_segment_capture_as_arg(buf, c, Some(rule));
                 buf.push(',');
             }
             write!(
@@ -1230,7 +1230,7 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
             if i > 0 {
                 buf.push(',');
             }
-            write_segment_capture_as_arg(buf, c);
+            write_segment_capture_as_arg(buf, c, Some(rule));
         }
         buf.push_str(");");
     }
@@ -1719,7 +1719,11 @@ fn write_unwind_handlers(
             .unwrap();
         }
 
-        write!(buf, "lhs = {}::{}(elements);", cat, rd_rule.label).unwrap();
+        if rd_rule.wrap_collection_in_literal {
+            write!(buf, "lhs = {}::{}(Box::new({}::Lit(elements)));", cat, rd_rule.label, cat).unwrap();
+        } else {
+            write!(buf, "lhs = {}::{}(elements);", cat, rd_rule.label).unwrap();
+        }
         buf.push_str("cur_bp = saved_bp;");
         buf.push_str("},");
     }
@@ -1990,6 +1994,7 @@ fn write_collection_eof_catch(
             buf,
             "cur_bp = saved_bp; \
             break 'prefix {cat}::{label}(elements);",
+            cat = cat,
             label = rd_rule.label,
         )
         .unwrap();
@@ -2042,14 +2047,27 @@ fn write_collection_error_catch_inline(
 
         // Use break 'prefix to exit the prefix block with the finalized collection.
         // (Same approach as write_collection_eof_catch — we're inside the 'prefix block.)
-        write!(
-            buf,
-            "cur_bp = saved_bp; \
-            break 'prefix {cat}::{label}(elements); \
-            }},",
-            label = rd_rule.label,
-        )
-        .unwrap();
+        if rd_rule.wrap_collection_in_literal {
+            write!(
+                buf,
+                "cur_bp = saved_bp; \
+                break 'prefix {cat}::{label}(Box::new({cat}::Lit(elements))); \
+                }},",
+                cat = cat,
+                label = rd_rule.label,
+            )
+            .unwrap();
+        } else {
+            write!(
+                buf,
+                "cur_bp = saved_bp; \
+                break 'prefix {cat}::{label}(elements); \
+                }},",
+                cat = cat,
+                label = rd_rule.label,
+            )
+            .unwrap();
+        }
     }
 }
 
@@ -2118,7 +2136,7 @@ fn write_rd_constructor_from_segments(
 
             write!(buf, "lhs = {cat}::{label}(").unwrap();
             for c in &extra_caps {
-                write_segment_capture_as_arg(buf, c);
+                write_segment_capture_as_arg(buf, c, Some(rule));
                 buf.push(',');
             }
             write!(
@@ -2169,7 +2187,7 @@ fn write_rd_constructor_from_segments(
 
             write!(buf, "lhs = {cat}::{label}(").unwrap();
             for c in &extra_caps {
-                write_segment_capture_as_arg(buf, c);
+                write_segment_capture_as_arg(buf, c, Some(rule));
                 buf.push(',');
             }
             write!(
@@ -2190,14 +2208,15 @@ fn write_rd_constructor_from_segments(
             if i > 0 {
                 buf.push(',');
             }
-            write_segment_capture_as_arg(buf, c);
+            write_segment_capture_as_arg(buf, c, Some(rule));
         }
         buf.push_str(");");
     }
 }
 
 /// Write a segment capture as a constructor argument.
-fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture) {
+/// When `rule` is set and has `wrap_collection_in_literal`, a Collection capture is emitted as `Box::new(Cat::Lit(name))`.
+fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture, rule: Option<&RDRuleInfo>) {
     match capture {
         SegmentCapture::NonTerminal { name, .. } => {
             write!(buf, "Box::new({})", name).unwrap();
@@ -2217,7 +2236,12 @@ fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture) {
             buf.push_str(name);
         },
         SegmentCapture::Collection { name, .. } => {
-            buf.push_str(name);
+            if rule.map_or(false, |r| r.wrap_collection_in_literal) {
+                let cat = &rule.unwrap().category;
+                write!(buf, "Box::new({}::Lit({}))", cat, name).unwrap();
+            } else {
+                buf.push_str(name);
+            }
         },
     }
 }

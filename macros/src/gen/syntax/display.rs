@@ -10,7 +10,7 @@ use crate::ast::{
     language::LanguageDef,
     types::TypeExpr,
 };
-use crate::gen::native::{has_native_type, native_type_to_string};
+use crate::gen::native::{has_native_type, is_collection_native_type, native_type_to_string};
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -32,6 +32,21 @@ pub fn generate_display(language: &LanguageDef) -> TokenStream {
         .iter()
         .map(|lang_type| {
             let cat_name = &lang_type.name;
+
+            // Collection types (Vec/HashBag) have no enum variants; use Debug only
+            if lang_type
+                .native_type
+                .as_ref()
+                .map_or(false, is_collection_native_type)
+            {
+                return quote! {
+                    impl std::fmt::Display for #cat_name {
+                        fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                            write!(f, "{:?}", self)
+                        }
+                    }
+                };
+            }
 
             let rules = rules_by_cat
                 .get(&cat_name.to_string())

@@ -2,6 +2,7 @@
 
 use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::language::LanguageDef;
+use crate::gen::native::is_vec_native_type;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -50,7 +51,7 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
                 elem: #category
             ) {
                 match elem {
-                    #category::#label(inner) => {
+                    #category::#label(ref inner) => {
                         // Flatten: recursively merge inner bag contents
                         for (e, count) in inner.iter() {
                             for _ in 0..count {
@@ -162,9 +163,17 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                 .collect();
             if !has_literal_rule {
                 let literal_label = generate_literal_label(native_type);
-                match_arms.push(quote! {
-                    #category::#literal_label(_) => self.clone()
-                });
+                let literal_arm = if is_vec_native_type(native_type) {
+                    // List (Vec<Proc>): recurse into elements
+                    quote! {
+                        #category::#literal_label(ref v) => #category::#literal_label(v.iter().map(|e| e.normalize()).collect())
+                    }
+                } else {
+                    quote! {
+                        #category::#literal_label(_) => self.clone()
+                    }
+                };
+                match_arms.push(literal_arm);
             }
             if !has_var_rule {
                 let var_label = generate_var_label(category);
@@ -239,7 +248,7 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                         format_ident!("insert_into_{}", label.to_string().to_lowercase());
 
                     Some(quote! {
-                        #category::#label(bag) => {
+                        #category::#label(ref bag) => {
                             // Rebuild the bag using the flattening insert helper
                             let mut new_bag = mettail_runtime::HashBag::new();
                             for (elem, count) in bag.iter() {

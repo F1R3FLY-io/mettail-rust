@@ -595,6 +595,7 @@ mod wfst_lexer_weight_tests {
                     has_rust_code: false,
                     rust_code: None,
                     eval_mode: None,
+                    wrap_collection_in_literal: false,
                 },
                 RuleSpecInput {
                     label: "Add".to_string(),
@@ -615,6 +616,7 @@ mod wfst_lexer_weight_tests {
                     has_rust_code: false,
                     rust_code: None,
                     eval_mode: None,
+                    wrap_collection_in_literal: false,
                 },
             ],
             BeamWidthConfig::Explicit(1.5),
