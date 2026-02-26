@@ -2989,6 +2989,13 @@ rw_int(s.clone(), t.clone()) <--
     }),
     fold_int(s, t);
 
+fold_int(s.clone(), res) <--
+    int(s),
+    if let Int::LenList(inner) = s,
+    fold_list(inner.as_ref().clone(), lv),
+    let a = lv,
+    let res = Int::NumLit((a.len() as i32));
+
 rw_int(s.clone(), t.clone()) <--
     int(s),
     if (match s {

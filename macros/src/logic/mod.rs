@@ -681,6 +681,89 @@ fn generate_fold_big_step_rules(
                 }
             }
 
+            // Cross-category fold rules for native non-collection result (e.g. Int with LenList(List)->Int)
+            if !is_collection {
+                for rule in &language.terms {
+                    if rule.category != *category
+                        || rule.eval_mode != Some(EvalMode::Fold)
+                        || rule.rust_code.is_none()
+                    {
+                        continue;
+                    }
+                    let param_names = fold_param_names(rule);
+                    let param_count = param_names.len();
+                    if param_count == 0 || param_count > 2 {
+                        continue;
+                    }
+                    let all_same_category = fold_params_all_same_category(rule, category);
+                    if all_same_category {
+                        continue;
+                    }
+                    let label = &rule.label;
+                    let rust_code = &rule.rust_code.as_ref().unwrap().code;
+                    let res_expr = quote! { #category::#num_lit((#rust_code)) };
+                    if param_count == 1 {
+                        let p0 = &param_names[0];
+                        let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
+                            if let Some(TermParam::Simple {
+                                ty: TypeExpr::Base(ident),
+                                ..
+                            }) = ctx.first()
+                            {
+                                common::relation_names(ident).fold_rel
+                            } else {
+                                fold_rel.clone()
+                            }
+                        } else {
+                            fold_rel.clone()
+                        };
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(inner) = s,
+                                #inner_fold_rel(inner.as_ref().clone(), lv),
+                                let #p0 = lv,
+                                let res = #res_expr;
+                        });
+                    } else {
+                        let p0 = &param_names[0];
+                        let p1 = &param_names[1];
+                        let (left_fold_rel, right_fold_rel) =
+                            if let Some(ref ctx) = rule.term_context {
+                                let types: Vec<_> = ctx
+                                    .iter()
+                                    .filter_map(|p| match p {
+                                        TermParam::Simple {
+                                            ty: TypeExpr::Base(ident),
+                                            ..
+                                        } => Some(ident.clone()),
+                                        _ => None,
+                                    })
+                                    .collect();
+                                if types.len() == 2 {
+                                    let left_rn = common::relation_names(&types[0]);
+                                    let right_rn = common::relation_names(&types[1]);
+                                    (left_rn.fold_rel, right_rn.fold_rel)
+                                } else {
+                                    (fold_rel.clone(), fold_rel.clone())
+                                }
+                            } else {
+                                (fold_rel.clone(), fold_rel.clone())
+                            };
+                        rules.push(quote! {
+                            #fold_rel(s.clone(), res) <--
+                                #cat_rel(s),
+                                if let #category::#label(left, right) = s,
+                                #left_fold_rel(left.as_ref().clone(), lv),
+                                #right_fold_rel(right.as_ref().clone(), rv),
+                                let #p0 = lv,
+                                let #p1 = rv,
+                                let res = #res_expr;
+                        });
+                    }
+                }
+            }
+
             // Cross-category fold rules for collection categories
             if is_collection {
                 for rule in &language.terms {

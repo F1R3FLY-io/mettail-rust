@@ -1411,7 +1411,23 @@ fn generate_language_struct_multi(
                 #inner_enum_name::Ambiguous(alts) => {
                     let first = alts.first().expect("Ambiguous must have 2+ alternatives");
                     let sub_term = #term_name(first.clone());
-                    Self::run_ascent_typed(&sub_term)
+                    let mut results = Self::run_ascent_typed(&sub_term);
+                    // Bridge: so normal_form_reachable_from(term.term_id()) finds a path (Ambiguous id -> first alt id -> ... -> nf)
+                    let orig_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut h = DefaultHasher::new(); term.0.hash(&mut h); h.finish() };
+                    let first_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut h = DefaultHasher::new(); sub_term.0.hash(&mut h); h.finish() };
+                    if orig_id != first_id {
+                        results.all_terms.push(mettail_runtime::TermInfo {
+                            term_id: orig_id,
+                            display: format!("{}", term),
+                            is_normal_form: false,
+                        });
+                        results.rewrites.push(mettail_runtime::Rewrite {
+                            from_id: orig_id,
+                            to_id: first_id,
+                            rule_name: Some("resolve".to_string()),
+                        });
+                    }
+                    results
                 }
                 #core_branch
                 // Non-core (or primary when it has injections): use the full struct (all rules)
@@ -1436,7 +1452,22 @@ fn generate_language_struct_multi(
                 #inner_enum_name::Ambiguous(alts) => {
                     let first = alts.first().expect("Ambiguous must have 2+ alternatives");
                     let sub_term = #term_name(first.clone());
-                    Self::run_ascent_typed(&sub_term)
+                    let mut results = Self::run_ascent_typed(&sub_term);
+                    let orig_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut h = DefaultHasher::new(); term.0.hash(&mut h); h.finish() };
+                    let first_id = { use std::collections::hash_map::DefaultHasher; use std::hash::{Hash, Hasher}; let mut h = DefaultHasher::new(); sub_term.0.hash(&mut h); h.finish() };
+                    if orig_id != first_id {
+                        results.all_terms.push(mettail_runtime::TermInfo {
+                            term_id: orig_id,
+                            display: format!("{}", term),
+                            is_normal_form: false,
+                        });
+                        results.rewrites.push(mettail_runtime::Rewrite {
+                            from_id: orig_id,
+                            to_id: first_id,
+                            rule_name: Some("resolve".to_string()),
+                        });
+                    }
+                    results
                 }
                 _ => {
                     let mut prog = #prog_struct_name::default();
