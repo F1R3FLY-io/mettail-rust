@@ -10,9 +10,9 @@
 //!
 //! ## Trained Model Serialization
 //!
-//! After training, rule weights and metadata are serialized to JSON via
-//! `TrainedModel`. This model can be loaded at compile time by the
-//! `language!` DSL via the `log_semiring_model_path` option.
+//! After training, rule weights and metadata are serialized to a compact binary
+//! format (postcard) via `TrainedModel`. This model can be loaded at compile
+//! time by the `language!` DSL via the `log_semiring_model_path` option.
 //!
 //! ## Experimental Status
 //!
@@ -302,29 +302,38 @@ pub struct TrainedModelMetadata {
 }
 
 impl TrainedModel {
-    /// Save trained model to JSON file.
+    /// Save trained model to a binary file (postcard format).
     pub fn save(&self, path: &str) -> std::io::Result<()> {
-        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(path, json)
+        let bytes = postcard::to_allocvec(self).map_err(std::io::Error::other)?;
+        std::fs::write(path, bytes)
     }
 
-    /// Load trained model from JSON file.
+    /// Load trained model from a binary file (postcard format).
     pub fn load(path: &str) -> std::io::Result<Self> {
-        let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json).map_err(std::io::Error::other)
+        let bytes = std::fs::read(path)?;
+        postcard::from_bytes(&bytes).map_err(std::io::Error::other)
     }
 
-    /// Deserialize from an embedded JSON string (e.g., from `include_str!`).
+    /// Serialize to a compact binary format for embedding in generated code.
+    ///
+    /// Uses `postcard` (no SIMD float paths) to avoid Cranelift aarch64
+    /// NEON intrinsic issues that `serde_json` triggers on macOS nightly.
+    pub fn to_embedded(&self) -> Result<Vec<u8>, String> {
+        postcard::to_allocvec(self)
+            .map_err(|e| format!("failed to serialize trained model for embedding: {}", e))
+    }
+
+    /// Deserialize from an embedded binary blob (e.g., from `include_bytes!`).
     ///
     /// Used in generated code when `log_semiring_model_path` is set:
     /// ```text
     /// static TRAINED_MODEL: LazyLock<TrainedModel> = LazyLock::new(|| {
-    ///     TrainedModel::from_embedded(include_str!("path/to/model.json"))
-    ///         .expect("embedded model should be valid JSON")
+    ///     TrainedModel::from_embedded(include_bytes!("path/to/model.bin"))
+    ///         .expect("embedded model should be valid")
     /// });
     /// ```
-    pub fn from_embedded(json_str: &str) -> Result<Self, String> {
-        serde_json::from_str(json_str)
+    pub fn from_embedded(data: &[u8]) -> Result<Self, String> {
+        postcard::from_bytes(data)
             .map_err(|e| format!("failed to deserialize embedded trained model: {}", e))
     }
 }
@@ -426,9 +435,9 @@ mod tests {
             },
         };
 
-        // Serialize to JSON and deserialize
-        let json = serde_json::to_string_pretty(&model).expect("serialize");
-        let loaded: TrainedModel = serde_json::from_str(&json).expect("deserialize");
+        // Serialize to postcard binary and deserialize
+        let bytes = model.to_embedded().expect("serialize");
+        let loaded = TrainedModel::from_embedded(&bytes).expect("deserialize");
 
         assert_eq!(loaded.rule_weights, model.rule_weights);
         assert_eq!(loaded.recommended_beam_width, model.recommended_beam_width);
@@ -451,8 +460,8 @@ mod tests {
             },
         };
 
-        let json = serde_json::to_string(&model).expect("serialize");
-        let loaded: TrainedModel = serde_json::from_str(&json).expect("deserialize");
+        let bytes = model.to_embedded().expect("serialize");
+        let loaded = TrainedModel::from_embedded(&bytes).expect("deserialize");
 
         assert_eq!(loaded.recommended_beam_width, Some(1.5));
     }
@@ -471,7 +480,7 @@ mod tests {
             },
         };
 
-        let path = std::env::temp_dir().join("prattail_test_model.json");
+        let path = std::env::temp_dir().join("prattail_test_model.bin");
         let path = path.to_str().expect("temp dir path is valid UTF-8");
         model.save(path).expect("save model");
         let loaded = TrainedModel::load(path).expect("load model");
@@ -485,30 +494,31 @@ mod tests {
     }
 
     #[test]
-    fn test_from_embedded_valid_json() {
-        let json = r#"{
-            "rule_weights": {"Add": 0.5, "Lit": 0.3},
-            "recommended_beam_width": 2.0,
-            "metadata": {
-                "epochs": 10,
-                "final_loss": 0.05,
-                "converged": true,
-                "num_examples": 100,
-                "learning_rate": 0.01
-            }
-        }"#;
+    fn test_from_embedded_valid_data() {
+        let model = TrainedModel {
+            rule_weights: BTreeMap::from([("Add".to_string(), 0.5), ("Lit".to_string(), 0.3)]),
+            recommended_beam_width: Some(2.0),
+            metadata: TrainedModelMetadata {
+                epochs: 10,
+                final_loss: 0.05,
+                converged: true,
+                num_examples: 100,
+                learning_rate: 0.01,
+            },
+        };
 
-        let model = TrainedModel::from_embedded(json).expect("should parse valid JSON");
-        assert_eq!(model.rule_weights.get("Add"), Some(&0.5));
-        assert_eq!(model.rule_weights.get("Lit"), Some(&0.3));
-        assert_eq!(model.recommended_beam_width, Some(2.0));
-        assert_eq!(model.metadata.epochs, 10);
-        assert!(model.metadata.converged);
+        let bytes = model.to_embedded().expect("serialize");
+        let loaded = TrainedModel::from_embedded(&bytes).expect("should parse valid data");
+        assert_eq!(loaded.rule_weights.get("Add"), Some(&0.5));
+        assert_eq!(loaded.rule_weights.get("Lit"), Some(&0.3));
+        assert_eq!(loaded.recommended_beam_width, Some(2.0));
+        assert_eq!(loaded.metadata.epochs, 10);
+        assert!(loaded.metadata.converged);
     }
 
     #[test]
-    fn test_from_embedded_invalid_json() {
-        let result = TrainedModel::from_embedded("not valid json");
+    fn test_from_embedded_invalid_data() {
+        let result = TrainedModel::from_embedded(&[0xFF, 0xFE, 0xFD]);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("failed to deserialize"));
     }
@@ -527,8 +537,8 @@ mod tests {
             },
         };
 
-        let json = serde_json::to_string(&model).expect("serialize");
-        let loaded = TrainedModel::from_embedded(&json).expect("from_embedded");
+        let bytes = model.to_embedded().expect("serialize");
+        let loaded = TrainedModel::from_embedded(&bytes).expect("from_embedded");
 
         assert_eq!(loaded.rule_weights, model.rule_weights);
         assert_eq!(loaded.recommended_beam_width, model.recommended_beam_width);
