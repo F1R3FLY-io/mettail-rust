@@ -102,7 +102,8 @@ pub fn write_category_dispatch(
                         .push((rule.label.clone(), op_variant.clone(), rule.operator.clone()));
                 }
 
-                // Ambiguous tokens: save/restore backtracking (unchanged)
+                // Ambiguous tokens: NFA try-all (try cross-category and own-category,
+                // collect all successes, take first by declaration order)
                 if let Some(overlap) = overlap {
                     for token in &overlap.ambiguous_tokens.tokens {
                         let mut arm = String::new();
@@ -110,23 +111,35 @@ pub fn write_category_dispatch(
                         write!(
                             arm,
                             " => {{ \
-                                let saved = *pos; \
-                                if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
-                                    if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
-                                        *pos += 1; \
-                                        let right = parse_{}(tokens, pos, 0)?; \
-                                        return Ok({}::{}(Box::new(left), Box::new(right))); \
-                                    }} \
+                                let nfa_saved = *pos; \
+                                let mut nfa_results: Vec<{category}> = Vec::new(); \
+                                let mut nfa_positions: Vec<usize> = Vec::new(); \
+                                let mut nfa_first_err: Option<ParseError> = None; \
+                                *pos = nfa_saved; \
+                                match (|| -> Result<{category}, ParseError> {{ \
+                                    let left = parse_{source}(tokens, pos, 0)?; \
+                                    expect_token(tokens, pos, |t| matches!(t, Token::{op}), \"{op_str}\")?; \
+                                    let right = parse_{source}(tokens, pos, 0)?; \
+                                    Ok({category}::{label}(Box::new(left), Box::new(right))) \
+                                }})() {{ \
+                                    Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); }}, \
+                                    Err(e) => {{ if nfa_first_err.is_none() {{ nfa_first_err = Some(e); }} }}, \
                                 }} \
-                                *pos = saved; \
-                                parse_{}_own(tokens, pos, min_bp) \
+                                *pos = nfa_saved; \
+                                match parse_{category}_own(tokens, pos, min_bp) {{ \
+                                    Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); }}, \
+                                    Err(e) => {{ if nfa_first_err.is_none() {{ nfa_first_err = Some(e); }} }}, \
+                                }} \
+                                match nfa_results.len() {{ \
+                                    0 => Err(nfa_first_err.expect(\"at least one parse attempted\")), \
+                                    _ => {{ *pos = nfa_positions[0]; Ok(nfa_results.into_iter().next().expect(\"nfa_results non-empty\")) }}, \
+                                }} \
                             }}",
-                            rule.source_category,
-                            op_variant,
-                            rule.source_category,
-                            category,
-                            rule.label,
-                            category,
+                            category = category,
+                            source = rule.source_category,
+                            op = op_variant,
+                            op_str = rule.operator,
+                            label = rule.label,
                         )
                         .unwrap();
                         dispatch_arms.push(arm);
@@ -387,30 +400,43 @@ pub fn write_category_dispatch_weighted(
             weight_a.cmp(&weight_b)
         });
 
-        // Emit: first rule gets no save/restore overhead (most likely)
+        // NFA try-all: try each cross-category rule (weight-ordered) and own-category,
+        // collect all successes, take first (lowest weight = highest priority)
         if let Some((first_rule, first_op)) = rules_and_ops.first() {
             let mut arm = String::new();
             write_token_pattern(&mut arm, &token);
             write!(
                 arm,
                 " => {{ \
-                    let saved = *pos; \
-                    if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
-                        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
-                            *pos += 1; \
-                            let right = parse_{}(tokens, pos, 0)?; \
-                            return Ok({}::{}(Box::new(left), Box::new(right))); \
-                        }} \
+                    let nfa_saved = *pos; \
+                    let mut nfa_results: Vec<{category}> = Vec::new(); \
+                    let mut nfa_positions: Vec<usize> = Vec::new(); \
+                    let mut nfa_first_err: Option<ParseError> = None; \
+                    *pos = nfa_saved; \
+                    match (|| -> Result<{category}, ParseError> {{ \
+                        let left = parse_{source}(tokens, pos, 0)?; \
+                        expect_token(tokens, pos, |t| matches!(t, Token::{op}), \"{op_str}\")?; \
+                        let right = parse_{source}(tokens, pos, 0)?; \
+                        Ok({category}::{label}(Box::new(left), Box::new(right))) \
+                    }})() {{ \
+                        Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); }}, \
+                        Err(e) => {{ if nfa_first_err.is_none() {{ nfa_first_err = Some(e); }} }}, \
                     }} \
-                    *pos = saved; \
-                    parse_{}_own(tokens, pos, min_bp) \
+                    *pos = nfa_saved; \
+                    match parse_{category}_own(tokens, pos, min_bp) {{ \
+                        Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); }}, \
+                        Err(e) => {{ if nfa_first_err.is_none() {{ nfa_first_err = Some(e); }} }}, \
+                    }} \
+                    match nfa_results.len() {{ \
+                        0 => Err(nfa_first_err.expect(\"at least one parse attempted\")), \
+                        _ => {{ *pos = nfa_positions[0]; Ok(nfa_results.into_iter().next().expect(\"nfa_results non-empty\")) }}, \
+                    }} \
                 }}",
-                first_rule.source_category,
-                first_op,
-                first_rule.source_category,
-                category,
-                first_rule.label,
-                category,
+                category = category,
+                source = first_rule.source_category,
+                op = first_op,
+                op_str = first_rule.operator,
+                label = first_rule.label,
             )
             .unwrap();
             dispatch_arms.push(arm);

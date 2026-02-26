@@ -644,3 +644,35 @@ fn test_bare_variable_type_is_int() {
     // type should show primary (Int)
     assert_eq!(format!("{}", term_type), "Int");
 }
+
+// --- Nested cast expressions (NFA disambiguation) ---
+
+#[test]
+fn test_float_of_int() {
+    calc_normal_form("float(10)", "10.0");
+}
+
+#[test]
+fn test_nested_float_float_int() {
+    calc_normal_form("float(float(10))", "10.0");
+}
+
+#[test]
+fn test_triple_nested_float() {
+    calc_normal_form("float(float(float(10)))", "10.0");
+}
+
+#[test]
+fn test_nested_int_int() {
+    calc_normal_form("int(int(5))", "5");
+}
+
+#[test]
+fn test_nested_int_float() {
+    calc_normal_form("int(float(42))", "42");
+}
+
+#[test]
+fn test_nested_float_int_arithmetic() {
+    calc_normal_form("sin(3.14) + 3.0 * float(float(10))", "30.001592652916486");
+}
