@@ -504,8 +504,8 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
                 )
                 .unwrap();
                 arm.push_str("_ => { *pos = nfa_positions[0]; Ok(nfa_results.into_iter().next().expect(\"nfa_results non-empty\")) },");
-                arm.push_str("}"); // close match
-                arm.push_str("}"); // close arm body
+                arm.push('}'); // close match
+                arm.push('}'); // close arm body
                 match_arms.push(arm);
             }
         }

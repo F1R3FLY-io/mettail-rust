@@ -1228,12 +1228,8 @@ fn write_nfa_merged_prefix_arm(
         write!(buf, "Token::{} => {{", variant).unwrap();
         write_inline_items(buf, &segments[0].inline_items, true);
         if let Some(ref nt) = segments[0].nonterminal {
-            write!(
-                buf,
-                "stack.push({}::{} {{",
-                frame_info.enum_name, segments[0].frame_variant
-            )
-            .unwrap();
+            write!(buf, "stack.push({}::{} {{", frame_info.enum_name, segments[0].frame_variant)
+                .unwrap();
             write!(buf, "saved_bp: cur_bp,").unwrap();
             for capture in &segments[0].accumulated_captures {
                 match capture {
@@ -1285,12 +1281,7 @@ fn write_nfa_merged_prefix_arm(
                 continue;
             }
             // Fully inlineable: wrap in a closure to use ? operator
-            write!(
-                buf,
-                "match (|| -> Result<{}, ParseError> {{",
-                cat,
-            )
-            .unwrap();
+            write!(buf, "match (|| -> Result<{}, ParseError> {{", cat,).unwrap();
             write_inline_items(buf, &segments[0].inline_items, true);
 
             // Build the constructor expression
@@ -1299,7 +1290,7 @@ fn write_nfa_merged_prefix_arm(
             buf.push_str("})() {");
             buf.push_str("Ok(v) => { nfa_results.push(v); nfa_positions.push(*pos); },");
             buf.push_str("Err(e) => { if nfa_first_err.is_none() { nfa_first_err = Some(e); } },");
-            buf.push_str("}");
+            buf.push('}');
         }
     }
 
@@ -1362,7 +1353,7 @@ fn write_nfa_merged_prefix_arm(
 
     // One or more successes — take the first (declaration order = priority)
     buf.push_str("_ => { *pos = nfa_positions[0]; break 'prefix nfa_results.into_iter().next().expect(\"nfa_results non-empty\"); },");
-    buf.push_str("}"); // close match nfa_results.len()
+    buf.push('}'); // close match nfa_results.len()
 
     buf.push_str("},"); // close Token::Variant arm
 }
@@ -1439,7 +1430,7 @@ fn write_nfa_inline_constructor(buf: &mut String, rule: &RDRuleInfo, segments: &
     } else if all_captures.is_empty() {
         write!(buf, "Ok({cat}::{label})").unwrap();
     } else {
-        write!(buf, "Ok({cat}::{label}(", ).unwrap();
+        write!(buf, "Ok({cat}::{label}(",).unwrap();
         for (i, c) in all_captures.iter().enumerate() {
             if i > 0 {
                 buf.push(',');
