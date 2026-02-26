@@ -801,37 +801,17 @@ fn write_prefix_match_arms(
     // ── Terminal-first RD handlers (non-collection, non-unary-prefix) ──
     // These are split into segments and inlined, OR dispatched to standalone functions
     // for complex rules (ZipMapSep, multi-binder).
-    for rd_rule in rd_rules {
-        if rd_rule.category != *cat {
-            continue;
-        }
-        if is_simple_collection(rd_rule) || rd_rule.prefix_bp.is_some() {
-            continue;
-        }
+    //
+    // NFA disambiguation: group rules by dispatch token. When multiple rules
+    // share the same token (e.g., FloatId and IntToFloat both start with "float"),
+    // emit a single merged arm that tries all alternatives NFA-style.
+    let rd_by_token = group_rd_by_dispatch_token(rd_rules, cat);
 
-        let starts_with_nonterminal = matches!(
-            rd_rule.items.first(),
-            Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
-        );
+    for (variant, rules) in &rd_by_token {
+        if rules.len() == 1 {
+            // Singleton: emit the original single-rule arm
+            let rd_rule = rules[0];
 
-        if starts_with_nonterminal {
-            // Handled by ident lookahead below
-            continue;
-        }
-
-        // Determine the dispatch token
-        let first_terminal = rd_rule.items.iter().find_map(|item| {
-            if let RDSyntaxItem::Terminal(t) = item {
-                Some(t.clone())
-            } else {
-                None
-            }
-        });
-
-        if let Some(ref terminal) = first_terminal {
-            let variant = terminal_to_variant_name(terminal);
-
-            // Complex rules (ZipMapSep, multi-binder) dispatch to their standalone parse function
             if should_use_standalone_fn(rd_rule) {
                 let fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
                 write!(
@@ -883,6 +863,41 @@ fn write_prefix_match_arms(
             }
 
             buf.push_str("},");
+        } else {
+            // Multiple rules share this dispatch token — NFA-style merged arm.
+            // Only rules that are fully inlined (all NTs cross-category) can be
+            // merged. Rules requiring frame-pushing are emitted separately with
+            // a diagnostic comment.
+            let mut inlineable: Vec<&RDRuleInfo> = Vec::new();
+            let mut frame_pushing: Vec<&RDRuleInfo> = Vec::new();
+
+            for rd_rule in rules {
+                if should_use_standalone_fn(rd_rule) {
+                    // Standalone fns can be called in NFA style (save/restore pos)
+                    inlineable.push(rd_rule);
+                } else {
+                    let segments = split_rd_handler(rd_rule);
+                    if segments.is_empty() {
+                        continue;
+                    }
+                    // Check if first segment has a same-category nonterminal (frame-pushing)
+                    if segments[0].nonterminal.is_some() {
+                        frame_pushing.push(rd_rule);
+                    } else {
+                        inlineable.push(rd_rule);
+                    }
+                }
+            }
+
+            write_nfa_merged_prefix_arm(
+                buf,
+                variant,
+                &inlineable,
+                &frame_pushing,
+                cat,
+                config,
+                frame_info,
+            );
         }
     }
 
@@ -1131,6 +1146,308 @@ fn write_prefix_match_arms(
         }},",
     )
     .unwrap();
+}
+
+/// Group terminal-first RD rules by their dispatch token variant.
+///
+/// Returns a `BTreeMap<variant_name, Vec<&RDRuleInfo>>` for rules in `cat` that:
+/// - Are not simple collections
+/// - Have no `prefix_bp` (not unary prefix)
+/// - Start with a terminal (not a nonterminal/ident capture)
+///
+/// Uses `BTreeMap` for deterministic arm ordering.
+fn group_rd_by_dispatch_token<'a>(
+    rd_rules: &'a [RDRuleInfo],
+    cat: &str,
+) -> std::collections::BTreeMap<String, Vec<&'a RDRuleInfo>> {
+    let mut groups: std::collections::BTreeMap<String, Vec<&'a RDRuleInfo>> =
+        std::collections::BTreeMap::new();
+
+    for rd_rule in rd_rules {
+        if rd_rule.category != *cat {
+            continue;
+        }
+        if is_simple_collection(rd_rule) || rd_rule.prefix_bp.is_some() {
+            continue;
+        }
+
+        let starts_with_nonterminal = matches!(
+            rd_rule.items.first(),
+            Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
+        );
+
+        if starts_with_nonterminal {
+            continue;
+        }
+
+        let first_terminal = rd_rule.items.iter().find_map(|item| {
+            if let RDSyntaxItem::Terminal(t) = item {
+                Some(t.clone())
+            } else {
+                None
+            }
+        });
+
+        if let Some(terminal) = first_terminal {
+            let variant = terminal_to_variant_name(&terminal);
+            groups.entry(variant).or_default().push(rd_rule);
+        }
+    }
+
+    groups
+}
+
+/// Write an NFA-style merged prefix arm for multiple rules sharing the same dispatch token.
+///
+/// For each alternative, saves `*pos`, tries the rule's parse path, and if successful,
+/// collects the result. After all alternatives are tried, picks the first success
+/// (declaration order = priority) or returns the first error.
+///
+/// `inlineable` rules have no same-category nonterminals and can be tried with save/restore.
+/// `frame_pushing` rules have same-category nonterminals — these cannot be merged into
+/// save/restore NFA because they require pushing frames. They are emitted with a diagnostic.
+fn write_nfa_merged_prefix_arm(
+    buf: &mut String,
+    variant: &str,
+    inlineable: &[&RDRuleInfo],
+    frame_pushing: &[&RDRuleInfo],
+    cat: &str,
+    _config: &TrampolineConfig,
+    frame_info: &FrameInfo,
+) {
+    // If only frame-pushing rules remain and none are inlineable, emit them separately.
+    // This is a diagnostic edge case — in practice, duplicate-token rules are either
+    // all inlineable (cast rules like FloatId/IntToFloat) or all frame-pushing.
+    if inlineable.is_empty() && frame_pushing.len() == 1 {
+        // Single frame-pushing rule — emit normally
+        let rd_rule = frame_pushing[0];
+        let segments = split_rd_handler(rd_rule);
+        if segments.is_empty() {
+            return;
+        }
+        write!(buf, "Token::{} => {{", variant).unwrap();
+        write_inline_items(buf, &segments[0].inline_items, true);
+        if let Some(ref nt) = segments[0].nonterminal {
+            write!(
+                buf,
+                "stack.push({}::{} {{",
+                frame_info.enum_name, segments[0].frame_variant
+            )
+            .unwrap();
+            write!(buf, "saved_bp: cur_bp,").unwrap();
+            for capture in &segments[0].accumulated_captures {
+                match capture {
+                    SegmentCapture::Ident { name }
+                    | SegmentCapture::Binder { name }
+                    | SegmentCapture::NonTerminal { name, .. } => {
+                        write!(buf, "{},", name).unwrap();
+                    },
+                    _ => {},
+                }
+            }
+            buf.push_str("});");
+            write!(buf, "cur_bp = {};", nt.bp).unwrap();
+            buf.push_str("continue 'drive;");
+        } else {
+            write_rd_constructor_inline(buf, rd_rule, &segments);
+        }
+        buf.push_str("},");
+        return;
+    }
+
+    write!(buf, "Token::{} => {{", variant).unwrap();
+
+    // NFA try-all: save position, try each alternative, collect successes
+    buf.push_str("let nfa_saved = *pos;");
+    write!(buf, "let mut nfa_results: Vec<{}> = Vec::new();", cat).unwrap();
+    buf.push_str("let mut nfa_positions: Vec<usize> = Vec::new();");
+    buf.push_str("let mut nfa_first_err: Option<ParseError> = None;");
+
+    // Try each inlineable alternative
+    for rd_rule in inlineable {
+        buf.push_str("*pos = nfa_saved;");
+
+        if should_use_standalone_fn(rd_rule) {
+            // Standalone function: call it directly with save/restore
+            let fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
+            write!(
+                buf,
+                "match {}(tokens, pos) {{ \
+                    Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); }}, \
+                    Err(e) => {{ if nfa_first_err.is_none() {{ nfa_first_err = Some(e); }} }}, \
+                }}",
+                fn_name,
+            )
+            .unwrap();
+        } else {
+            let segments = split_rd_handler(rd_rule);
+            if segments.is_empty() {
+                continue;
+            }
+            // Fully inlineable: wrap in a closure to use ? operator
+            write!(
+                buf,
+                "match (|| -> Result<{}, ParseError> {{",
+                cat,
+            )
+            .unwrap();
+            write_inline_items(buf, &segments[0].inline_items, true);
+
+            // Build the constructor expression
+            write_nfa_inline_constructor(buf, rd_rule, &segments);
+
+            buf.push_str("})() {");
+            buf.push_str("Ok(v) => { nfa_results.push(v); nfa_positions.push(*pos); },");
+            buf.push_str("Err(e) => { if nfa_first_err.is_none() { nfa_first_err = Some(e); } },");
+            buf.push_str("}");
+        }
+    }
+
+    // If there are frame-pushing rules that can't be NFA-merged, try them last
+    // by falling through to the first one if no inlineable succeeded.
+    // In practice, this case is rare — most duplicate-token situations are all-inlineable.
+    // Note: frame-pushing rules that can't be NFA-merged are tried in the 0 => branch
+
+    // Result selection
+    buf.push_str("match nfa_results.len() {");
+
+    // No successes — either fall through to frame-pushing or return error
+    if !frame_pushing.is_empty() {
+        // Fall through to first frame-pushing rule
+        let rd_rule = frame_pushing[0];
+        let segments = split_rd_handler(rd_rule);
+        buf.push_str("0 => {");
+        buf.push_str("*pos = nfa_saved;");
+        if !segments.is_empty() {
+            write_inline_items(buf, &segments[0].inline_items, true);
+            if let Some(ref nt) = segments[0].nonterminal {
+                write!(
+                    buf,
+                    "stack.push({}::{} {{",
+                    frame_info.enum_name, segments[0].frame_variant
+                )
+                .unwrap();
+                write!(buf, "saved_bp: cur_bp,").unwrap();
+                for capture in &segments[0].accumulated_captures {
+                    match capture {
+                        SegmentCapture::Ident { name }
+                        | SegmentCapture::Binder { name }
+                        | SegmentCapture::NonTerminal { name, .. } => {
+                            write!(buf, "{},", name).unwrap();
+                        },
+                        _ => {},
+                    }
+                }
+                buf.push_str("});");
+                write!(buf, "cur_bp = {};", nt.bp).unwrap();
+                buf.push_str("continue 'drive;");
+            } else {
+                write_rd_constructor_inline(buf, rd_rule, &segments);
+            }
+        }
+        buf.push_str("},");
+    } else {
+        write!(
+            buf,
+            "0 => {{ return Err(nfa_first_err.unwrap_or_else(|| \
+                ParseError::UnexpectedToken {{ \
+                    expected: \"{cat} expression\", \
+                    found: format!(\"{{:?}}\", &tokens[nfa_saved].0), \
+                    range: tokens[nfa_saved].1, \
+                }} \
+            )); }},",
+        )
+        .unwrap();
+    }
+
+    // One or more successes — take the first (declaration order = priority)
+    buf.push_str("_ => { *pos = nfa_positions[0]; break 'prefix nfa_results.into_iter().next().expect(\"nfa_results non-empty\"); },");
+    buf.push_str("}"); // close match nfa_results.len()
+
+    buf.push_str("},"); // close Token::Variant arm
+}
+
+/// Write the constructor for an NFA-inlineable rule (returns Ok(Cat::Label(...))).
+///
+/// Similar to `write_rd_constructor_inline` but produces `Ok(Cat::Label(...))` instead
+/// of `break 'prefix Cat::Label(...)` so it can be used inside a closure.
+fn write_nfa_inline_constructor(buf: &mut String, rule: &RDRuleInfo, segments: &[HandlerSegment]) {
+    let cat = &rule.category;
+    let label = &rule.label;
+
+    // Collect all captures from the final segment
+    let all_captures: Vec<&SegmentCapture> = if let Some(last) = segments.last() {
+        let mut seen = std::collections::HashSet::new();
+        last.accumulated_captures
+            .iter()
+            .filter(|c| {
+                let name = match c {
+                    SegmentCapture::NonTerminal { name, .. }
+                    | SegmentCapture::Ident { name }
+                    | SegmentCapture::Binder { name }
+                    | SegmentCapture::Collection { name, .. } => name.clone(),
+                };
+                seen.insert(name)
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+
+    if rule.has_binder {
+        let binder_cap = all_captures
+            .iter()
+            .find(|c| matches!(c, SegmentCapture::Binder { .. }));
+        let body_cap = all_captures
+            .iter()
+            .rev()
+            .find(|c| matches!(c, SegmentCapture::NonTerminal { .. }));
+        if let (
+            Some(SegmentCapture::Binder { name: binder_name }),
+            Some(SegmentCapture::NonTerminal { name: body_name, .. }),
+        ) = (binder_cap, body_cap)
+        {
+            let extra: Vec<&&SegmentCapture> = all_captures
+                .iter()
+                .filter(|c| {
+                    let n = match c {
+                        SegmentCapture::NonTerminal { name, .. }
+                        | SegmentCapture::Ident { name }
+                        | SegmentCapture::Binder { name }
+                        | SegmentCapture::Collection { name, .. } => name,
+                    };
+                    n != binder_name && n != body_name
+                })
+                .collect();
+            write!(buf, "Ok({cat}::{label}(").unwrap();
+            for c in &extra {
+                write_segment_capture_as_arg(buf, c);
+                buf.push(',');
+            }
+            write!(
+                buf,
+                "mettail_runtime::Scope::new(\
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var({})), \
+                Box::new({}),\
+            )))",
+                binder_name, body_name
+            )
+            .unwrap();
+        } else {
+            write!(buf, "Ok({cat}::{label})").unwrap();
+        }
+    } else if all_captures.is_empty() {
+        write!(buf, "Ok({cat}::{label})").unwrap();
+    } else {
+        write!(buf, "Ok({cat}::{label}(", ).unwrap();
+        for (i, c) in all_captures.iter().enumerate() {
+            if i > 0 {
+                buf.push(',');
+            }
+            write_segment_capture_as_arg(buf, c);
+        }
+        buf.push_str("))");
+    }
 }
 
 /// Write inline items (terminals, ident captures, cross-category NTs) consuming from the token stream.
