@@ -12,7 +12,7 @@ description = "PraTTaIL: Pratt + Recursive Descent parser generator with automat
 wfst = []
 ## Log semiring (LogWeight), forward-backward, N-best, log-pushing, training.
 ## Implies `wfst`.
-wfst-log = ["wfst", "dep:serde", "dep:serde_json", "dep:postcard"]
+wfst-log = ["wfst", "dep:serde", "dep:postcard"]
 ## Grammar-aware expression generator (proptest-based) for benchmarks and tests.
 grammar-gen = ["dep:proptest"]
 
@@ -21,7 +21,6 @@ proc-macro2 = { workspace = true }
 quote = { workspace = true }
 syn = { workspace = true }
 serde = { version = "1", features = ["derive"], optional = true }
-serde_json = { version = "1", optional = true }
 postcard = { version = "1", features = ["alloc"], optional = true }
 proptest = { version = "1", optional = true }
 

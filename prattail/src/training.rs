@@ -10,9 +10,9 @@
 //!
 //! ## Trained Model Serialization
 //!
-//! After training, rule weights and metadata are serialized to JSON via
-//! `TrainedModel`. This model can be loaded at compile time by the
-//! `language!` DSL via the `log_semiring_model_path` option.
+//! After training, rule weights and metadata are serialized to a compact binary
+//! format (postcard) via `TrainedModel`. This model can be loaded at compile
+//! time by the `language!` DSL via the `log_semiring_model_path` option.
 //!
 //! ## Experimental Status
 //!
@@ -302,16 +302,16 @@ pub struct TrainedModelMetadata {
 }
 
 impl TrainedModel {
-    /// Save trained model to JSON file.
+    /// Save trained model to a binary file (postcard format).
     pub fn save(&self, path: &str) -> std::io::Result<()> {
-        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        std::fs::write(path, json)
+        let bytes = postcard::to_allocvec(self).map_err(std::io::Error::other)?;
+        std::fs::write(path, bytes)
     }
 
-    /// Load trained model from JSON file.
+    /// Load trained model from a binary file (postcard format).
     pub fn load(path: &str) -> std::io::Result<Self> {
-        let json = std::fs::read_to_string(path)?;
-        serde_json::from_str(&json).map_err(std::io::Error::other)
+        let bytes = std::fs::read(path)?;
+        postcard::from_bytes(&bytes).map_err(std::io::Error::other)
     }
 
     /// Serialize to a compact binary format for embedding in generated code.
@@ -480,7 +480,7 @@ mod tests {
             },
         };
 
-        let path = std::env::temp_dir().join("prattail_test_model.json");
+        let path = std::env::temp_dir().join("prattail_test_model.bin");
         let path = path.to_str().expect("temp dir path is valid UTF-8");
         model.save(path).expect("save model");
         let loaded = TrainedModel::load(path).expect("load model");
