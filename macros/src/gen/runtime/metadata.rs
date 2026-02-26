@@ -421,11 +421,7 @@ fn premise_to_display_string(p: &Premise) -> String {
 /// Generate a single EquationDef
 fn generate_equation_def(eq: &Equation, language: &LanguageDef) -> TokenStream {
     // Convert conditions to strings
-    let conditions: Vec<String> = eq
-        .premises
-        .iter()
-        .map(premise_to_display_string)
-        .collect();
+    let conditions: Vec<String> = eq.premises.iter().map(premise_to_display_string).collect();
 
     let conditions_tokens: Vec<TokenStream> = conditions
         .iter()
@@ -470,11 +466,7 @@ fn generate_rewrite_def(rw: &RewriteRule, _index: usize, language: &LanguageDef)
     let name = quote! { None };
 
     // Convert conditions to strings
-    let conditions: Vec<String> = rw
-        .premises
-        .iter()
-        .map(premise_to_display_string)
-        .collect();
+    let conditions: Vec<String> = rw.premises.iter().map(premise_to_display_string).collect();
 
     let conditions_tokens: Vec<TokenStream> = conditions
         .iter()

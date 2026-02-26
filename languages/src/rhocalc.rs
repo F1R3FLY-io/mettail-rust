@@ -35,10 +35,10 @@ language! {
         NQuote . p:Proc
         |- "@" "(" p ")" : Name ;
 
-        PNew . ^[xs].p:[Name* -> Proc] 
+        PNew . ^[xs].p:[Name* -> Proc]
         |- "new" "(" xs.*sep(",") ")" "in" "{" p "}" : Proc;
 
-        // customize error handling 
+        // customize error handling
         // (e.g. filter results by =/= Err)
         Err . |- "error" : Proc;
 
@@ -291,7 +291,7 @@ language! {
             }}
         ] fold;
 
-        
+
     },
 
     equations {
@@ -368,12 +368,12 @@ language! {
 
         // or we can store every step!
         relation path_vec(Vec<Proc>);
-        path_vec(xs) <-- 
-            proc(x0), rw_proc(x0,x1), 
+        path_vec(xs) <--
+            proc(x0), rw_proc(x0,x1),
             let xs = vec![x0.clone(), x1.clone()];
         path_vec(zs) <--
-            path_vec(xs), path_vec(ys), 
-            if xs.last() == ys.first(), 
+            path_vec(xs), path_vec(ys),
+            if xs.last() == ys.first(),
             let zs = [xs.as_slice(), ys.as_slice()].concat();
 
         // paths where term size (display length) strictly decreases at every step

@@ -78,8 +78,7 @@ pub fn write_category_dispatch(
     // Collect deterministic cross-category arms grouped by (source_category, token)
     // to avoid duplicate match arms when multiple rules share the same source
     // (e.g., EqInt, GtInt, LtInt all dispatch from Int's FIRST tokens).
-    let mut deterministic_by_token: DeterministicArmMap =
-        DeterministicArmMap::new();
+    let mut deterministic_by_token: DeterministicArmMap = DeterministicArmMap::new();
 
     // Generate cross-category dispatch
     for rule in cross_category_rules {
@@ -179,14 +178,16 @@ pub fn write_category_dispatch(
             }
 
             // Fallback for unexpected operator
-            arm.push_str("other => { \
+            arm.push_str(
+                "other => { \
                 let range = tokens[*pos].1; \
                 Err(ParseError::UnexpectedToken { \
                     expected: \"comparison operator\", \
                     found: format!(\"{:?}\", other), \
                     range, \
                 }) \
-            }");
+            }",
+            );
             arm.push_str(" } }");
         }
         dispatch_arms.push(arm);
@@ -280,8 +281,7 @@ pub fn write_category_dispatch_weighted(
         BTreeMap::new();
     // Collect deterministic arms grouped by (source_category, token) to avoid
     // duplicate match arms when multiple rules share the same source category.
-    let mut deterministic_by_token: DeterministicArmMap =
-        DeterministicArmMap::new();
+    let mut deterministic_by_token: DeterministicArmMap = DeterministicArmMap::new();
 
     for rule in cross_category_rules {
         let overlap_key = (rule.source_category.clone(), category.to_string());
@@ -355,14 +355,16 @@ pub fn write_category_dispatch_weighted(
                 .unwrap();
             }
 
-            arm.push_str("other => { \
+            arm.push_str(
+                "other => { \
                 let range = tokens[*pos].1; \
                 Err(ParseError::UnexpectedToken { \
                     expected: \"comparison operator\", \
                     found: format!(\"{:?}\", other), \
                     range, \
                 }) \
-            }");
+            }",
+            );
             arm.push_str(" } }");
         }
         dispatch_arms.push(arm);

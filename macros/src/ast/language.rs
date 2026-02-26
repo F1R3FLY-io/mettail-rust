@@ -87,7 +87,11 @@ pub enum Premise {
 
     /// Universal quantification over a collection: xs.*map(|x| premise)
     /// Means "for all x in xs, premise holds"
-    ForAll { collection: Ident, param: Ident, body: Box<Premise> },
+    ForAll {
+        collection: Ident,
+        param: Ident,
+        body: Box<Premise>,
+    },
 }
 
 /// Equation in unified judgement syntax
@@ -142,7 +146,11 @@ pub enum Condition {
         args: Vec<Ident>,
     },
     /// Universal quantification: for all x in collection, body holds
-    ForAll { collection: Ident, param: Ident, body: Box<Condition> },
+    ForAll {
+        collection: Ident,
+        param: Ident,
+        body: Box<Condition>,
+    },
 }
 
 /// Rewrite rule in unified judgement syntax
@@ -1067,12 +1075,18 @@ fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
 
     // Parse as an Ascent program to extract relation declarations with proper type handling
     let program = ascent_syntax_export::parse_ascent_program_tokens(tokens.clone())?;
-    let relations = program.relations.into_iter().map(|rel| {
-        let param_types = rel.field_types.iter()
-            .map(|ty| quote::quote!(#ty).to_string())
-            .collect();
-        RelationDecl { name: rel.name, param_types }
-    }).collect();
+    let relations = program
+        .relations
+        .into_iter()
+        .map(|rel| {
+            let param_types = rel
+                .field_types
+                .iter()
+                .map(|ty| quote::quote!(#ty).to_string())
+                .collect();
+            RelationDecl { name: rel.name, param_types }
+        })
+        .collect();
 
     // Optional comma after closing brace
     if input.peek(Token![,]) {

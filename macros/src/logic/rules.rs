@@ -249,29 +249,27 @@ fn generate_forall_clause(
     let coll_binding = &lhs_clauses.bindings.get(&coll_name)?.expression;
 
     match body {
-        Condition::Freshness(freshness) => {
-            match &freshness.term {
-                FreshnessTarget::Var(term_var) => {
-                    let term_name = term_var.to_string();
-                    let term_binding = &lhs_clauses.bindings.get(&term_name)?.expression;
-                    Some(quote! {
-                        if #coll_binding.iter().all(|#param|
-                            !mettail_runtime::BoundTerm::free_vars(&#term_binding).contains(&#param.0)
+        Condition::Freshness(freshness) => match &freshness.term {
+            FreshnessTarget::Var(term_var) => {
+                let term_name = term_var.to_string();
+                let term_binding = &lhs_clauses.bindings.get(&term_name)?.expression;
+                Some(quote! {
+                    if #coll_binding.iter().all(|#param|
+                        !mettail_runtime::BoundTerm::free_vars(&#term_binding).contains(&#param.0)
+                    )
+                })
+            },
+            FreshnessTarget::CollectionRest(rest_var) => {
+                let rest_name = rest_var.to_string();
+                let rest_binding = &lhs_clauses.bindings.get(&rest_name)?.expression;
+                Some(quote! {
+                    if #coll_binding.iter().all(|#param|
+                        #rest_binding.clone().iter().all(|(elem, _)|
+                            !mettail_runtime::BoundTerm::free_vars(elem).contains(&#param.0)
                         )
-                    })
-                },
-                FreshnessTarget::CollectionRest(rest_var) => {
-                    let rest_name = rest_var.to_string();
-                    let rest_binding = &lhs_clauses.bindings.get(&rest_name)?.expression;
-                    Some(quote! {
-                        if #coll_binding.iter().all(|#param|
-                            #rest_binding.clone().iter().all(|(elem, _)|
-                                !mettail_runtime::BoundTerm::free_vars(elem).contains(&#param.0)
-                            )
-                        )
-                    })
-                },
-            }
+                    )
+                })
+            },
         },
         _ => {
             panic!("ForAll body currently only supports Freshness conditions");

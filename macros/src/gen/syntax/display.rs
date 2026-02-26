@@ -445,8 +445,7 @@ fn generate_pattern_op_display(
                     }
                 }
             } else {
-                let coll_ident =
-                    syn::Ident::new(&coll_name, proc_macro2::Span::call_site());
+                let coll_ident = syn::Ident::new(&coll_name, proc_macro2::Span::call_site());
                 quote! {
                     {
                         let mut first = true;

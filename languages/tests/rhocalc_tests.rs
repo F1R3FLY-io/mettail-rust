@@ -26,12 +26,19 @@ fn fresh() {
 fn run(input: &str) -> mettail_runtime::AscentResults {
     fresh();
     let lang = RhoCalcLanguage;
-    let term = lang.parse_term(input).unwrap_or_else(|e| panic!("parse `{}`: {}", input, e));
-    lang.run_ascent(term.as_ref()).unwrap_or_else(|e| panic!("run_ascent `{}`: {}", input, e))
+    let term = lang
+        .parse_term(input)
+        .unwrap_or_else(|e| panic!("parse `{}`: {}", input, e));
+    lang.run_ascent(term.as_ref())
+        .unwrap_or_else(|e| panic!("run_ascent `{}`: {}", input, e))
 }
 
 fn normal_form_displays(results: &mettail_runtime::AscentResults) -> Vec<String> {
-    results.normal_forms().iter().map(|nf| nf.display.clone()).collect()
+    results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect()
 }
 
 /// Assert that running `input` produces at least one normal form matching `expected`.
@@ -45,9 +52,9 @@ fn assert_reduces_to(input: &str, expected: &str) {
     let expected_proc = parse(expected);
     let expected_display = expected_proc.to_string();
 
-    let found = nfs.iter().any(|nf| {
-        nf == &expected_display || multiset_eq(nf, &expected_display)
-    });
+    let found = nfs
+        .iter()
+        .any(|nf| nf == &expected_display || multiset_eq(nf, &expected_display));
 
     assert!(
         found,
@@ -62,7 +69,9 @@ fn assert_min_rewrites(input: &str, min: usize) {
     assert!(
         results.rewrites.len() >= min,
         "`{}`: expected >= {} rewrites, got {}",
-        input, min, results.rewrites.len()
+        input,
+        min,
+        results.rewrites.len()
     );
 }
 
@@ -72,7 +81,8 @@ fn assert_no_rewrites(input: &str) {
     assert!(
         results.rewrites.is_empty(),
         "`{}`: expected no rewrites, got {}",
-        input, results.rewrites.len()
+        input,
+        results.rewrites.len()
     );
 }
 
@@ -119,43 +129,28 @@ mod comm {
 
     #[test]
     fn single_channel() {
-        assert_reduces_to(
-            "{(c?x).{*(x)} | c!(p)}",
-            "p",
-        );
+        assert_reduces_to("{(c?x).{*(x)} | c!(p)}", "p");
     }
 
     #[test]
     fn comm_with_body_using_channel() {
-        assert_reduces_to(
-            "{(c?x).{x!(0)} | c!(p)}",
-            "p!(0)",
-        );
+        assert_reduces_to("{(c?x).{x!(0)} | c!(p)}", "p!(0)");
     }
 
     #[test]
     fn comm_substitutes_quoted_value() {
         // Comm: (c?x).{*(x)} | c!(0) → *(@ (0)) → 0
-        assert_reduces_to(
-            "{(c?x).{*(x)} | c!(0)}",
-            "0",
-        );
+        assert_reduces_to("{(c?x).{*(x)} | c!(0)}", "0");
     }
 
     #[test]
     fn multi_input_two_channels() {
-        assert_reduces_to(
-            "{(c1?x, c2?y).{*(x)} | c1!(p) | c2!(q)}",
-            "p",
-        );
+        assert_reduces_to("{(c1?x, c2?y).{*(x)} | c1!(p) | c2!(q)}", "p");
     }
 
     #[test]
     fn multi_input_uses_both_vars() {
-        assert_reduces_to(
-            "{(c1?x, c2?y).{{*(x) | *(y)}} | c1!(p) | c2!(q)}",
-            "p",
-        );
+        assert_reduces_to("{(c1?x, c2?y).{{*(x) | *(y)}} | c1!(p) | c2!(q)}", "p");
     }
 
     #[test]
@@ -168,19 +163,13 @@ mod comm {
 
     #[test]
     fn join_pattern_same_channel() {
-        assert_reduces_to(
-            "{(c?x, c?y).{{*(x) | *(y)}} | c!(a) | c!(b)}",
-            "{a | b}",
-        );
+        assert_reduces_to("{(c?x, c?y).{{*(x) | *(y)}} | c!(a) | c!(b)}", "{a | b}");
     }
 
     #[test]
     fn comm_with_remaining_parallel() {
         // {(c?x).{*(x)} | c!(p) | q} → {p | q}
-        assert_reduces_to(
-            "{(c?x).{*(x)} | c!(p) | q}",
-            "{p | q}",
-        );
+        assert_reduces_to("{(c?x).{*(x)} | c!(p) | q}", "{p | q}");
     }
 }
 
@@ -209,27 +198,19 @@ mod new_and_extrusion {
     #[test]
     fn new_congruence_propagates_body_rewrite() {
         // new(x) in { {(a?z).{*(z)} | a!(0)} } → new(x) in { {*(@(0))} } → ...
-        assert_min_rewrites(
-            "new(x) in { {(a?z).{*(z)} | a!(0)} }",
-            1,
-        );
+        assert_min_rewrites("new(x) in { {(a?z).{*(z)} | a!(0)} }", 1);
     }
 
     #[test]
     fn new_congruence_reaches_normal_form() {
-        assert_reduces_to(
-            "new(x) in { {(a?z).{*(z)} | a!(0)} }",
-            "new(x) in { 0 }",
-        );
+        assert_reduces_to("new(x) in { {(a?z).{*(z)} | a!(0)} }", "new(x) in { 0 }");
     }
 
     #[test]
     fn extrusion_forward() {
         // {new(x) in {p} | a!(0)} = new(x) in {{p | a!(0)}}
         // The initial PPar should connect to a rewrite (via equation + congruence).
-        assert_initial_rewrites(
-            "{new(x) in { (a?z).{*(z)} } | a!(0)}",
-        );
+        assert_initial_rewrites("{new(x) in { (a?z).{*(z)} } | a!(0)}");
     }
 
     #[test]
@@ -237,10 +218,7 @@ mod new_and_extrusion {
         // {new(x) in {(a?z).{*(z)}} | a!(0)}
         //  =extrude= new(x) in {{(a?z).{*(z)} | a!(0)}}
         //  →comm→ new(x) in {{*(@(0))}} →exec→ new(x) in {0}
-        assert_reduces_to(
-            "{new(x) in { (a?z).{*(z)} } | a!(0)}",
-            "new(x) in { 0 }",
-        );
+        assert_reduces_to("{new(x) in { (a?z).{*(z)} } | a!(0)}", "new(x) in { 0 }");
     }
 
     #[test]
@@ -250,10 +228,7 @@ mod new_and_extrusion {
         let results = run("{new(a) in { (a?z).{*(z)} } | a!(0)}");
         let nfs = normal_form_displays(&results);
         // Should be a normal form as-is (no extrusion possible)
-        assert!(
-            !nfs.is_empty(),
-            "blocked extrusion should still have normal forms"
-        );
+        assert!(!nfs.is_empty(), "blocked extrusion should still have normal forms");
     }
 }
 
@@ -284,10 +259,7 @@ mod congruence {
     #[test]
     fn new_cong() {
         // NewCong: new(x) in { *(@(0)) } → new(x) in { 0 }
-        assert_reduces_to(
-            "new(x) in { *(@(0)) }",
-            "new(x) in { 0 }",
-        );
+        assert_reduces_to("new(x) in { *(@(0)) }", "new(x) in { 0 }");
     }
 
     #[test]
@@ -343,13 +315,21 @@ mod native_ops {
         use super::*;
 
         #[test]
-        fn int_add() { assert_reduces_to("{1 + 2}", "3"); }
+        fn int_add() {
+            assert_reduces_to("{1 + 2}", "3");
+        }
         #[test]
-        fn int_sub() { assert_reduces_to("{5 - 3}", "2"); }
+        fn int_sub() {
+            assert_reduces_to("{5 - 3}", "2");
+        }
         #[test]
-        fn int_mul() { assert_reduces_to("{3 * 4}", "12"); }
+        fn int_mul() {
+            assert_reduces_to("{3 * 4}", "12");
+        }
         #[test]
-        fn int_div() { assert_reduces_to("{10 / 2}", "5"); }
+        fn int_div() {
+            assert_reduces_to("{10 / 2}", "5");
+        }
 
         #[test]
         fn float_add() {
@@ -357,7 +337,8 @@ mod native_ops {
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf.contains("4")),
-                "1.5 + 2.5 should produce 4, got: {:?}", nfs
+                "1.5 + 2.5 should produce 4, got: {:?}",
+                nfs
             );
         }
 
@@ -373,7 +354,8 @@ mod native_ops {
             let nfs = normal_form_displays(&results);
             assert!(
                 nfs.iter().any(|nf| nf.contains("-2")),
-                "3 - 5 should produce -2, got: {:?}", nfs
+                "3 - 5 should produce -2, got: {:?}",
+                nfs
             );
         }
     }
@@ -382,36 +364,62 @@ mod native_ops {
         use super::*;
 
         #[test]
-        fn eq_true() { assert_reduces_to("{1 == 1}", "true"); }
+        fn eq_true() {
+            assert_reduces_to("{1 == 1}", "true");
+        }
         #[test]
-        fn eq_false() { assert_reduces_to("{1 == 2}", "false"); }
+        fn eq_false() {
+            assert_reduces_to("{1 == 2}", "false");
+        }
         #[test]
-        fn ne() { assert_reduces_to("{1 != 2}", "true"); }
+        fn ne() {
+            assert_reduces_to("{1 != 2}", "true");
+        }
         #[test]
-        fn gt() { assert_reduces_to("{3 > 2}", "true"); }
+        fn gt() {
+            assert_reduces_to("{3 > 2}", "true");
+        }
         #[test]
-        fn lt() { assert_reduces_to("{2 < 3}", "true"); }
+        fn lt() {
+            assert_reduces_to("{2 < 3}", "true");
+        }
         #[test]
-        fn gte() { assert_reduces_to("{3 >= 3}", "true"); }
+        fn gte() {
+            assert_reduces_to("{3 >= 3}", "true");
+        }
         #[test]
-        fn lte() { assert_reduces_to("{2 <= 3}", "true"); }
+        fn lte() {
+            assert_reduces_to("{2 <= 3}", "true");
+        }
     }
 
     mod boolean {
         use super::*;
 
         #[test]
-        fn not_true() { assert_reduces_to("{not true}", "false"); }
+        fn not_true() {
+            assert_reduces_to("{not true}", "false");
+        }
         #[test]
-        fn not_false() { assert_reduces_to("{not false}", "true"); }
+        fn not_false() {
+            assert_reduces_to("{not false}", "true");
+        }
         #[test]
-        fn and_tt() { assert_reduces_to("{true and true}", "true"); }
+        fn and_tt() {
+            assert_reduces_to("{true and true}", "true");
+        }
         #[test]
-        fn and_tf() { assert_reduces_to("{true and false}", "false"); }
+        fn and_tf() {
+            assert_reduces_to("{true and false}", "false");
+        }
         #[test]
-        fn or_ff() { assert_reduces_to("{false or false}", "false"); }
+        fn or_ff() {
+            assert_reduces_to("{false or false}", "false");
+        }
         #[test]
-        fn or_tf() { assert_reduces_to("{true or false}", "true"); }
+        fn or_tf() {
+            assert_reduces_to("{true or false}", "true");
+        }
     }
 
     mod string {
@@ -432,13 +440,21 @@ mod native_ops {
         use super::*;
 
         #[test]
-        fn int_to_float() { assert_reduces_to("{float(3)}", "3"); }
+        fn int_to_float() {
+            assert_reduces_to("{float(3)}", "3");
+        }
         #[test]
-        fn bool_to_int_true() { assert_reduces_to("{int(true)}", "1"); }
+        fn bool_to_int_true() {
+            assert_reduces_to("{int(true)}", "1");
+        }
         #[test]
-        fn bool_to_int_false() { assert_reduces_to("{int(false)}", "0"); }
+        fn bool_to_int_false() {
+            assert_reduces_to("{int(false)}", "0");
+        }
         #[test]
-        fn int_to_str() { assert_reduces_to(r#"{str(42)}"#, r#""42""#); }
+        fn int_to_str() {
+            assert_reduces_to(r#"{str(42)}"#, r#""42""#);
+        }
     }
 }
 
@@ -450,23 +466,41 @@ mod parsing {
     use super::*;
 
     #[test]
-    fn zero() { let _ = run("0"); }
+    fn zero() {
+        let _ = run("0");
+    }
     #[test]
-    fn empty_par() { let _ = run("{}"); }
+    fn empty_par() {
+        let _ = run("{}");
+    }
     #[test]
-    fn quote() { let _ = run("@(0)"); }
+    fn quote() {
+        let _ = run("@(0)");
+    }
     #[test]
-    fn drop() { let _ = run("*(@(0))"); }
+    fn drop() {
+        let _ = run("*(@(0))");
+    }
     #[test]
-    fn send() { let _ = run("x!(0)"); }
+    fn send() {
+        let _ = run("x!(0)");
+    }
     #[test]
-    fn receive() { let _ = run("(x?y).{y!(0)}"); }
+    fn receive() {
+        let _ = run("(x?y).{y!(0)}");
+    }
     #[test]
-    fn multi_input() { let _ = run("{(c1?x, c2?y).{*(x)} | c1!(p) | c2!(q)}"); }
+    fn multi_input() {
+        let _ = run("{(c1?x, c2?y).{*(x)} | c1!(p) | c2!(q)}");
+    }
     #[test]
-    fn new_single() { let _ = run("new(x) in { x!(0) }"); }
+    fn new_single() {
+        let _ = run("new(x) in { x!(0) }");
+    }
     #[test]
-    fn new_multi() { let _ = run("new(x, y) in { {x!(0) | y!(1)} }"); }
+    fn new_multi() {
+        let _ = run("new(x, y) in { {x!(0) | y!(1)} }");
+    }
 
     #[test]
     fn bare_variable_infers_as_proc() {
@@ -505,7 +539,9 @@ mod beta {
     fn normalize_via_language_trait() {
         fresh();
         let lang = RhoCalcLanguage;
-        let term = lang.parse_term("$name(^loc.{loc!(init)}, n)").expect("parse");
+        let term = lang
+            .parse_term("$name(^loc.{loc!(init)}, n)")
+            .expect("parse");
         let normalized = lang.normalize_term(term.as_ref());
         assert_eq!(format!("{}", normalized), "n!(init)");
     }

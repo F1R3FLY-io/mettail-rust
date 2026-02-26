@@ -73,10 +73,7 @@ pub enum RDSyntaxItem {
         separator: String,
     },
     /// A separated list of binder identifiers.
-    BinderCollection {
-        param_name: String,
-        separator: String,
-    },
+    BinderCollection { param_name: String, separator: String },
     /// An optional group.
     Optional { inner: Vec<RDSyntaxItem> },
 }
@@ -417,10 +414,7 @@ fn write_parse_items(
                     },
                 });
             },
-            RDSyntaxItem::BinderCollection {
-                param_name,
-                separator,
-            } => {
+            RDSyntaxItem::BinderCollection { param_name, separator } => {
                 let sep_variant = terminal_to_variant_name(separator);
                 write!(
                     buf,

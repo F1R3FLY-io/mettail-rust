@@ -2200,7 +2200,10 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
         let arity = rel.param_types.len();
         let tuple_vars: Vec<syn::Ident> = (0..arity).map(|i| format_ident!("e{}", i)).collect();
 
-        let format_exprs: Vec<TokenStream> = rel.param_types.iter().zip(tuple_vars.iter())
+        let format_exprs: Vec<TokenStream> = rel
+            .param_types
+            .iter()
+            .zip(tuple_vars.iter())
             .map(|(ty, v)| {
                 if ty.starts_with("Vec") || ty.starts_with("HashSet") {
                     quote! { format!("{}", mettail_runtime::DisplaySlice(#v.as_slice())) }
