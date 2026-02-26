@@ -139,7 +139,8 @@ fn has_nonterminal(item: &SyntaxItemSpec, cat_names: &[String]) -> bool {
         SyntaxItemSpec::Optional { inner } => inner.iter().any(|i| has_nonterminal(i, cat_names)),
         SyntaxItemSpec::Terminal(_)
         | SyntaxItemSpec::IdentCapture { .. }
-        | SyntaxItemSpec::Binder { .. } => false,
+        | SyntaxItemSpec::Binder { .. }
+        | SyntaxItemSpec::BinderCollection { .. } => false,
     }
 }
 
@@ -597,7 +598,6 @@ impl RuleSpecOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::binding_power::Associativity;
     use crate::{
         BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec,
     };
