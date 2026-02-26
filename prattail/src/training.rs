@@ -471,7 +471,8 @@ mod tests {
             },
         };
 
-        let path = "/tmp/prattail_test_model.json";
+        let path = std::env::temp_dir().join("prattail_test_model.json");
+        let path = path.to_str().expect("temp dir path is valid UTF-8");
         model.save(path).expect("save model");
         let loaded = TrainedModel::load(path).expect("load model");
 
