@@ -25,6 +25,8 @@ use mettail_prattail::{
 /// Performs structural mapping of syntax items, then delegates all
 /// flag classification to `LanguageSpec::new()`.
 pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
+    // has_var: true for scalar types (IVar, FVar, ...) and for List/Bag (LVar, BVar) so that
+    // length(x), at(x, 0), concat(x, y), etc. accept identifier expressions.
     let categories: Vec<CategorySpec> = language
         .types
         .iter()
@@ -33,7 +35,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             name: t.name.to_string(),
             native_type: t.native_type.as_ref().map(native_type_to_string),
             is_primary: idx == 0,
-            has_var: t.collection_kind.is_none(),
+            has_var: true,
         })
         .collect();
 
