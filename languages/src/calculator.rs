@@ -100,6 +100,44 @@ language! {
         FloatId . a:Float |- "float" "(" a ")" : Float ![a] step;
         BoolId . a:Bool |- "bool" "(" a ")" : Bool ![a] step;
         StrId . a:Str |- "str" "(" a ")" : Str ![a] step;
+        // Proc → concrete type projections (runtime type extraction)
+        // These are fold rules: fold_proc reduces ElemList → injection variant before rust_code runs
+        ProcToInt . a:Proc |- "int" "(" a ")" : Int ![{
+            match a {
+                Proc::ProcInt(i) => i.as_ref().eval(),
+                Proc::ProcFloat(f) => f.as_ref().eval().get() as i32,
+                Proc::ProcBool(b) => if b.as_ref().eval() { 1 } else { 0 },
+                Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(0),
+                other => panic!("int(): cannot convert Proc variant to Int: {:?}", other),
+            }
+        }] fold;
+        ProcToFloat . a:Proc |- "float" "(" a ")" : Float ![{
+            match a {
+                Proc::ProcFloat(f) => f.as_ref().eval(),
+                Proc::ProcInt(i) => mettail_runtime::CanonicalFloat64::from(i.as_ref().eval() as f64),
+                Proc::ProcBool(b) => mettail_runtime::CanonicalFloat64::from(if b.as_ref().eval() { 1.0 } else { 0.0 }),
+                Proc::ProcStr(s) => mettail_runtime::CanonicalFloat64::from(s.as_ref().eval().parse::<f64>().unwrap_or(0.0)),
+                other => panic!("float(): cannot convert Proc variant to Float: {:?}", other),
+            }
+        }] fold;
+        ProcToBool . a:Proc |- "bool" "(" a ")" : Bool ![{
+            match a {
+                Proc::ProcBool(b) => b.as_ref().eval(),
+                Proc::ProcInt(i) => i.as_ref().eval() != 0,
+                Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
+                Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
+                other => panic!("bool(): cannot convert Proc variant to Bool: {:?}", other),
+            }
+        }] fold;
+        ProcToStr . a:Proc |- "str" "(" a ")" : Str ![{
+            match a {
+                Proc::ProcStr(s) => s.as_ref().eval(),
+                Proc::ProcInt(i) => i.as_ref().eval().to_string(),
+                Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
+                Proc::ProcBool(b) => b.as_ref().eval().to_string(),
+                other => panic!("str(): cannot convert Proc variant to Str: {:?}", other),
+            }
+        }] fold;
         // Custom operation (PraTTaIL test feature)
         CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
         // List operations (List = Vec<Proc>). Fold/step pass payloads; rust_code returns payload.
@@ -232,6 +270,11 @@ language! {
         FloatIdCong . | S ~> T |- (FloatId S) ~> (FloatId T);
         BoolIdCong . | S ~> T |- (BoolId S) ~> (BoolId T);
         StrIdCong . | S ~> T |- (StrId S) ~> (StrId T);
+        // Proc → concrete type projection congruence
+        ProcToIntCong . | S ~> T |- (ProcToInt S) ~> (ProcToInt T);
+        ProcToFloatCong . | S ~> T |- (ProcToFloat S) ~> (ProcToFloat T);
+        ProcToBoolCong . | S ~> T |- (ProcToBool S) ~> (ProcToBool T);
+        ProcToStrCong . | S ~> T |- (ProcToStr S) ~> (ProcToStr T);
         // Proc (unified variant) congruence
         ProcIntCong . | S ~> T |- (ProcInt S) ~> (ProcInt T);
         ProcFloatCong . | S ~> T |- (ProcFloat S) ~> (ProcFloat T);
