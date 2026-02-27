@@ -375,7 +375,7 @@ pub fn canonicalize_state_order(dfa: &mut Dfa) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automata::nfa::{build_nfa, BuiltinNeeds};
+    use crate::automata::nfa::{build_nfa_default, BuiltinNeeds};
     use crate::automata::partition::compute_equivalence_classes;
     use crate::automata::subset::subset_construction;
     use crate::automata::TerminalPattern;
@@ -403,7 +403,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         let min_dfa = minimize_dfa(&dfa);
@@ -450,7 +450,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         let min_dfa = minimize_dfa(&dfa);
@@ -500,7 +500,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         let min_dfa = minimize_dfa(&dfa);

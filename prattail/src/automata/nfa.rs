@@ -10,9 +10,10 @@
 use std::collections::HashMap;
 
 use super::{
-    semiring::TropicalWeight, CharClass, Nfa, NfaFragment, NfaState, StateId, TerminalPattern,
-    TokenKind,
+    regex, semiring::TropicalWeight, CharClass, Nfa, NfaFragment, NfaState, StateId,
+    TerminalPattern, TokenKind,
 };
+use crate::LiteralPatterns;
 
 /// Build a complete NFA from a set of terminal patterns plus built-in
 /// character-class patterns (identifiers, integers, floats, strings).
@@ -21,9 +22,13 @@ use super::{
 /// (e.g., `=`/`==`, `true`/`try`/`type`) share NFA states, reducing the total
 /// state count compared to per-terminal Thompson chains.
 ///
-/// Character-class patterns (identifiers, integers, floats, strings) remain
-/// independent Thompson fragments since they use ranges, not single bytes.
-pub fn build_nfa(terminals: &[TerminalPattern], needs: &BuiltinNeeds) -> Nfa {
+/// Character-class patterns are compiled from configurable regex patterns
+/// (from `LiteralPatterns`) via the Thompson NFA construction pipeline.
+pub fn build_nfa(
+    terminals: &[TerminalPattern],
+    needs: &BuiltinNeeds,
+    patterns: &LiteralPatterns,
+) -> Nfa {
     let mut nfa = Nfa::new();
     let global_start = nfa.start;
 
@@ -33,19 +38,27 @@ pub fn build_nfa(terminals: &[TerminalPattern], needs: &BuiltinNeeds) -> Nfa {
         nfa.add_epsilon(global_start, trie_root);
     }
 
-    // Build built-in character class patterns (Thompson fragments)
+    // Build built-in character class patterns from configurable regex patterns
     let mut fragments: Vec<NfaFragment> = Vec::new();
     if needs.ident {
-        fragments.push(build_ident_fragment(&mut nfa));
+        let frag = regex::compile_regex(&patterns.ident, &mut nfa, TokenKind::Ident)
+            .expect("ident pattern should be a valid regex");
+        fragments.push(frag);
     }
     if needs.integer {
-        fragments.push(build_integer_fragment(&mut nfa));
+        let frag = regex::compile_regex(&patterns.integer, &mut nfa, TokenKind::Integer)
+            .expect("integer pattern should be a valid regex");
+        fragments.push(frag);
     }
     if needs.float {
-        fragments.push(build_float_fragment(&mut nfa));
+        let frag = regex::compile_regex(&patterns.float, &mut nfa, TokenKind::Float)
+            .expect("float pattern should be a valid regex");
+        fragments.push(frag);
     }
     if needs.string_lit {
-        fragments.push(build_string_lit_fragment(&mut nfa));
+        let frag = regex::compile_regex(&patterns.string, &mut nfa, TokenKind::StringLit)
+            .expect("string pattern should be a valid regex");
+        fragments.push(frag);
     }
 
     // Combine character-class fragments via alternation
@@ -54,6 +67,13 @@ pub fn build_nfa(terminals: &[TerminalPattern], needs: &BuiltinNeeds) -> Nfa {
     }
 
     nfa
+}
+
+/// Build an NFA with default literal patterns.
+///
+/// Convenience wrapper for tests and callers that don't need custom patterns.
+pub fn build_nfa_default(terminals: &[TerminalPattern], needs: &BuiltinNeeds) -> Nfa {
+    build_nfa(terminals, needs, &LiteralPatterns::default())
 }
 
 /// What built-in character-class patterns are needed by the grammar.
@@ -369,19 +389,32 @@ pub(crate) fn build_nfa_prefix_only(terminals: &[TerminalPattern], needs: &Built
         nfa.add_epsilon(global_start, trie_root);
     }
 
-    // Build built-in character class patterns (Thompson fragments) — same as build_nfa
+    // Build built-in character class patterns via regex compiler — same as build_nfa
+    let patterns = crate::LiteralPatterns::default();
     let mut fragments: Vec<NfaFragment> = Vec::new();
     if needs.ident {
-        fragments.push(build_ident_fragment(&mut nfa));
+        fragments.push(
+            regex::compile_regex(&patterns.ident, &mut nfa, TokenKind::Ident)
+                .expect("default ident pattern should be valid"),
+        );
     }
     if needs.integer {
-        fragments.push(build_integer_fragment(&mut nfa));
+        fragments.push(
+            regex::compile_regex(&patterns.integer, &mut nfa, TokenKind::Integer)
+                .expect("default integer pattern should be valid"),
+        );
     }
     if needs.float {
-        fragments.push(build_float_fragment(&mut nfa));
+        fragments.push(
+            regex::compile_regex(&patterns.float, &mut nfa, TokenKind::Float)
+                .expect("default float pattern should be valid"),
+        );
     }
     if needs.string_lit {
-        fragments.push(build_string_lit_fragment(&mut nfa));
+        fragments.push(
+            regex::compile_regex(&patterns.string, &mut nfa, TokenKind::StringLit)
+                .expect("default string pattern should be valid"),
+        );
     }
 
     // Combine character-class fragments via alternation
@@ -425,130 +458,6 @@ fn build_string_fragment(nfa: &mut Nfa, text: &str, kind: TokenKind) -> NfaFragm
     }
 
     unreachable!("terminal string must not be empty")
-}
-
-/// Build an NFA fragment for identifiers: `[a-zA-Z_][a-zA-Z0-9_]*`
-///
-/// ```text
-///   start -[a-zA-Z_]-> s1(accept:Ident) -[a-zA-Z0-9_]-> s1(accept:Ident)
-/// ```
-fn build_ident_fragment(nfa: &mut Nfa) -> NfaFragment {
-    let start = nfa.add_state(NfaState::new());
-    let accept = nfa.add_state(NfaState::accepting(TokenKind::Ident));
-
-    // First character: letter or underscore
-    nfa.add_transition(start, accept, CharClass::Range(b'a', b'z'));
-    nfa.add_transition(start, accept, CharClass::Range(b'A', b'Z'));
-    nfa.add_transition(start, accept, CharClass::Single(b'_'));
-
-    // Subsequent characters: letter, digit, or underscore (self-loop)
-    nfa.add_transition(accept, accept, CharClass::Range(b'a', b'z'));
-    nfa.add_transition(accept, accept, CharClass::Range(b'A', b'Z'));
-    nfa.add_transition(accept, accept, CharClass::Range(b'0', b'9'));
-    nfa.add_transition(accept, accept, CharClass::Single(b'_'));
-
-    NfaFragment { start, accept }
-}
-
-/// Build an NFA fragment for integer literals: `[0-9]+`
-///
-/// ```text
-///   start -[0-9]-> s1(accept:Integer) -[0-9]-> s1(accept:Integer)
-/// ```
-fn build_integer_fragment(nfa: &mut Nfa) -> NfaFragment {
-    let start = nfa.add_state(NfaState::new());
-    let accept = nfa.add_state(NfaState::accepting(TokenKind::Integer));
-
-    // One or more digits
-    nfa.add_transition(start, accept, CharClass::Range(b'0', b'9'));
-    nfa.add_transition(accept, accept, CharClass::Range(b'0', b'9'));
-
-    NfaFragment { start, accept }
-}
-
-/// Build an NFA fragment for float literals: `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`
-///
-/// ```text
-///   start -[0-9]-> s1 -[0-9]-> s1 -'.'-> s2 -[0-9]-> frac_accept(accept:Float) -[0-9]-> frac_accept
-///   frac_accept -[eE]-> exp_marker -[0-9]-> exp_accept(accept:Float) -[0-9]-> exp_accept
-///                                   -[+-]-> exp_sign -[0-9]-> exp_accept
-/// ```
-///
-/// Both `frac_accept` and `exp_accept` are accepting states for `TokenKind::Float`.
-/// Rust's `str::parse::<f64>()` already handles scientific notation, so no change
-/// to codegen is needed.
-fn build_float_fragment(nfa: &mut Nfa) -> NfaFragment {
-    let start = nfa.add_state(NfaState::new());
-    let integer_part = nfa.add_state(NfaState::new());
-    let dot = nfa.add_state(NfaState::new());
-    let frac_accept = nfa.add_state(NfaState::accepting(TokenKind::Float));
-
-    // Integer part: one or more digits
-    nfa.add_transition(start, integer_part, CharClass::Range(b'0', b'9'));
-    nfa.add_transition(integer_part, integer_part, CharClass::Range(b'0', b'9'));
-
-    // Dot
-    nfa.add_transition(integer_part, dot, CharClass::Single(b'.'));
-
-    // Fractional part: one or more digits
-    nfa.add_transition(dot, frac_accept, CharClass::Range(b'0', b'9'));
-    nfa.add_transition(frac_accept, frac_accept, CharClass::Range(b'0', b'9'));
-
-    // Optional exponent: [eE][+-]?[0-9]+
-    let exp_marker = nfa.add_state(NfaState::new());
-    let exp_sign = nfa.add_state(NfaState::new());
-    let exp_accept = nfa.add_state(NfaState::accepting(TokenKind::Float));
-
-    // frac_accept -[eE]-> exp_marker
-    nfa.add_transition(frac_accept, exp_marker, CharClass::Single(b'e'));
-    nfa.add_transition(frac_accept, exp_marker, CharClass::Single(b'E'));
-
-    // exp_marker -[+-]-> exp_sign (optional sign)
-    nfa.add_transition(exp_marker, exp_sign, CharClass::Single(b'+'));
-    nfa.add_transition(exp_marker, exp_sign, CharClass::Single(b'-'));
-
-    // exp_marker -[0-9]-> exp_accept (no sign)
-    nfa.add_transition(exp_marker, exp_accept, CharClass::Range(b'0', b'9'));
-
-    // exp_sign -[0-9]-> exp_accept
-    nfa.add_transition(exp_sign, exp_accept, CharClass::Range(b'0', b'9'));
-
-    // exp_accept -[0-9]-> exp_accept (multi-digit exponent)
-    nfa.add_transition(exp_accept, exp_accept, CharClass::Range(b'0', b'9'));
-
-    // The fragment's accept is exp_accept (last possible accepting state),
-    // but frac_accept is ALSO accepting, so both paths work via subset construction.
-    // We return frac_accept as the fragment accept since it's the first accepting state;
-    // the NFA handles both via epsilon-free paths.
-    NfaFragment { start, accept: frac_accept }
-}
-
-/// Build an NFA fragment for string literals: `"[^"]*"`
-///
-/// ```text
-///   start -'"'-> s1 -[^"]-> s1 -'"'-> accept(StringLit)
-/// ```
-fn build_string_lit_fragment(nfa: &mut Nfa) -> NfaFragment {
-    let start = nfa.add_state(NfaState::new());
-    let inside = nfa.add_state(NfaState::new());
-    let accept = nfa.add_state(NfaState::accepting(TokenKind::StringLit));
-
-    // Opening quote
-    nfa.add_transition(start, inside, CharClass::Single(b'"'));
-
-    // Any character except quote (loop)
-    // We model this as explicit ranges that exclude the quote character
-    for byte in 0u8..b'"' {
-        nfa.add_transition(inside, inside, CharClass::Single(byte));
-    }
-    for byte in (b'"' + 1)..=127 {
-        nfa.add_transition(inside, inside, CharClass::Single(byte));
-    }
-
-    // Closing quote
-    nfa.add_transition(inside, accept, CharClass::Single(b'"'));
-
-    NfaFragment { start, accept }
 }
 
 /// Compute the epsilon closure of a set of NFA states.
@@ -657,12 +566,12 @@ mod tests {
     }
 
     #[test]
-    fn test_build_ident_fragment() {
+    fn test_compile_ident_pattern() {
         let mut nfa = Nfa::new();
-        let frag = build_ident_fragment(&mut nfa);
+        let patterns = crate::LiteralPatterns::default();
+        let frag = regex::compile_regex(&patterns.ident, &mut nfa, TokenKind::Ident)
+            .expect("ident pattern should compile");
 
-        // original start (0) + fragment start + accept = 3
-        assert_eq!(nfa.states.len(), 3);
         assert_eq!(nfa.states[frag.accept as usize].accept, Some(TokenKind::Ident));
     }
 
@@ -703,7 +612,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         // Check that the start state has epsilon transitions
         assert!(
             !nfa.states[nfa.start as usize].epsilon.is_empty(),
@@ -1000,7 +909,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
 
         // Start state should have epsilon transitions:
         // - 1 to trie_root (all terminals share one trie)
@@ -1212,7 +1121,7 @@ mod tests {
         };
 
         // Build with DAFSA (current build_keyword_trie)
-        let nfa_dafsa = build_nfa(&terminals, &needs);
+        let nfa_dafsa = build_nfa_default(&terminals, &needs);
         let partition_dafsa = compute_equivalence_classes(&nfa_dafsa);
         let dfa_dafsa = minimize_dfa(&subset_construction(&nfa_dafsa, &partition_dafsa));
 
@@ -1221,13 +1130,16 @@ mod tests {
         let global_start_prefix = nfa_prefix.start;
         let trie_root_prefix = build_keyword_trie_prefix_only(&mut nfa_prefix, &terminals);
         nfa_prefix.add_epsilon(global_start_prefix, trie_root_prefix);
-        // Add character-class fragments
+        // Add character-class fragments via regex compiler
+        let patterns = crate::LiteralPatterns::default();
         if needs.ident {
-            let frag = build_ident_fragment(&mut nfa_prefix);
+            let frag = regex::compile_regex(&patterns.ident, &mut nfa_prefix, TokenKind::Ident)
+                .expect("ident pattern should be valid");
             nfa_prefix.add_epsilon(global_start_prefix, frag.start);
         }
         if needs.integer {
-            let frag = build_integer_fragment(&mut nfa_prefix);
+            let frag = regex::compile_regex(&patterns.integer, &mut nfa_prefix, TokenKind::Integer)
+                .expect("integer pattern should be valid");
             nfa_prefix.add_epsilon(global_start_prefix, frag.start);
         }
         let partition_prefix = compute_equivalence_classes(&nfa_prefix);
@@ -1406,7 +1318,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = minimize_dfa(&subset_construction(&nfa, &partition));
 
@@ -1508,7 +1420,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = minimize_dfa(&subset_construction(&nfa, &partition));
 

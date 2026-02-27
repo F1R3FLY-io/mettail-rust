@@ -8,8 +8,8 @@
 //! - Correct sync predicate tokens (FOLLOW set + structural delimiters)
 
 use crate::{
-    generate_parser, BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec,
-    SyntaxItemSpec,
+    generate_parser, BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec,
+    LiteralPatterns, RuleSpec, SyntaxItemSpec,
 };
 
 /// Build a simple calculator spec (Int with Add, IVar, NumLit).
@@ -53,6 +53,7 @@ fn calculator_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
+        literal_patterns: LiteralPatterns::default(),
     }
 }
 

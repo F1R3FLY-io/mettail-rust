@@ -1145,9 +1145,10 @@ mod tests {
                 rust_code: None,
                 eval_mode: None,
             }],
-            BeamWidthConfig::Explicit(1.5),  // beam_width
-            None,                            // log_semiring_model_path
-            crate::DispatchStrategy::Static, // dispatch_strategy
+            BeamWidthConfig::Explicit(1.5),    // beam_width
+            None,                              // log_semiring_model_path
+            crate::DispatchStrategy::Static,   // dispatch_strategy
+            crate::LiteralPatterns::default(), // literal_patterns
         );
 
         assert_eq!(spec.beam_width, BeamWidthConfig::Explicit(1.5));
