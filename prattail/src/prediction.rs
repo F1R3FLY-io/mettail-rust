@@ -913,7 +913,7 @@ impl std::fmt::Display for GrammarWarning {
                 rules,
             } => write!(
                 f,
-                "ambiguous prefix dispatch for token \"{}\" in category {}: rules [{}] both match",
+                "ambiguous prefix dispatch for token \"{}\" in category {}: rules [{}] all match",
                 token,
                 category,
                 rules.join(", ")
