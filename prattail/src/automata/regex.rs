@@ -555,7 +555,7 @@ fn parse_escape_atom(
             );
         },
         b's' => {
-            for &b in &[b' ', b'\t', b'\n', b'\r'] {
+            for &b in b" \t\n\r" {
                 nfa.add_transition(start, accept, CharClass::Single(b));
             }
         },
