@@ -101,7 +101,10 @@ pub fn compile_regex(
     let len = input.len();
 
     if len == 0 {
-        return Err(RegexError { position: 0, message: "empty pattern".to_string() });
+        return Err(RegexError {
+            position: 0,
+            message: "empty pattern".to_string(),
+        });
     }
 
     let mut pos: usize = 0;
@@ -158,7 +161,9 @@ pub fn compile_regex(
             b'(' => {
                 /* Open group: save current concat context */
                 pos += 1;
-                stack.push(Frame::Group { outer_fragments: std::mem::take(&mut current_fragments) });
+                stack.push(Frame::Group {
+                    outer_fragments: std::mem::take(&mut current_fragments),
+                });
                 current_fragments = Vec::with_capacity(4);
                 continue 'drive;
             },
@@ -275,10 +280,7 @@ fn skip_ebnf_comment(bytes: &[u8], pos: &mut usize) -> Result<(), RegexError> {
     }
     Err(RegexError {
         position: comment_start,
-        message: format!(
-            "unclosed EBNF comment (nesting depth {} at end of input)",
-            depth
-        ),
+        message: format!("unclosed EBNF comment (nesting depth {} at end of input)", depth),
     })
 }
 
@@ -477,11 +479,7 @@ pub fn parse_literal_patterns_ebnf(content: &str) -> Result<LiteralPatterns, Reg
 
 /// Parse a single atom (literal, escape, char class, or dot) and return the
 /// NFA fragment and the new position.
-fn parse_atom(
-    nfa: &mut Nfa,
-    input: &[u8],
-    pos: usize,
-) -> Result<(NfaFragment, usize), RegexError> {
+fn parse_atom(nfa: &mut Nfa, input: &[u8], pos: usize) -> Result<(NfaFragment, usize), RegexError> {
     let byte = input[pos];
     match byte {
         b'[' => parse_char_class_atom(nfa, input, pos),
@@ -497,15 +495,14 @@ fn parse_atom(
         },
         b'\\' => parse_escape_atom(nfa, input, pos),
         /* Metacharacters that shouldn't appear as bare atoms */
-        b'*' | b'+' | b'?' | b'{' => {
-            Err(RegexError {
-                position: pos,
-                message: format!("quantifier '{}' without preceding atom", byte as char),
-            })
-        },
-        b')' => {
-            Err(RegexError { position: pos, message: "unexpected ')'".to_string() })
-        },
+        b'*' | b'+' | b'?' | b'{' => Err(RegexError {
+            position: pos,
+            message: format!("quantifier '{}' without preceding atom", byte as char),
+        }),
+        b')' => Err(RegexError {
+            position: pos,
+            message: "unexpected ')'".to_string(),
+        }),
         _ => {
             /* Literal character */
             let start = nfa.add_state(NfaState::new());
@@ -578,8 +575,8 @@ fn parse_escape_atom(
             nfa.add_transition(start, accept, CharClass::Single(b'\t'));
         },
         /* Escaped metacharacters */
-        b'.' | b'\\' | b'[' | b']' | b'(' | b')' | b'|' | b'+' | b'*' | b'?' | b'^'
-        | b'"' | b'{' | b'}' | b'/' => {
+        b'.' | b'\\' | b'[' | b']' | b'(' | b')' | b'|' | b'+' | b'*' | b'?' | b'^' | b'"'
+        | b'{' | b'}' | b'/' => {
             nfa.add_transition(start, accept, CharClass::Single(escaped));
         },
         _ => {
@@ -641,7 +638,12 @@ fn parse_char_class_atom(
                     continue;
                 },
                 b'w' => {
-                    ranges.extend_from_slice(&[(b'0', b'9'), (b'A', b'Z'), (b'_', b'_'), (b'a', b'z')]);
+                    ranges.extend_from_slice(&[
+                        (b'0', b'9'),
+                        (b'A', b'Z'),
+                        (b'_', b'_'),
+                        (b'a', b'z'),
+                    ]);
                     continue;
                 },
                 b'W' => {
@@ -815,10 +817,7 @@ fn add_ranges(nfa: &mut Nfa, from: u32, to: u32, ranges: &[(u8, u8)]) {
 
 /// Try to parse a quantifier at the current position.
 /// Returns `None` if no quantifier is present.
-fn parse_quantifier(
-    input: &[u8],
-    pos: usize,
-) -> Result<Option<(QuantifyKind, usize)>, RegexError> {
+fn parse_quantifier(input: &[u8], pos: usize) -> Result<Option<(QuantifyKind, usize)>, RegexError> {
     if pos >= input.len() {
         return Ok(None);
     }
@@ -1424,8 +1423,7 @@ mod tests {
             "<string>  = /[a-z]+/ ;\n",
             "<ident>   = /[a-z]+/ ;\n",
         );
-        let patterns =
-            parse_literal_patterns_ebnf(content).expect("nested comments should parse");
+        let patterns = parse_literal_patterns_ebnf(content).expect("nested comments should parse");
         assert_eq!(patterns.integer, "[0-9]+");
     }
 
@@ -1476,7 +1474,10 @@ mod tests {
         let content = "(* outer (* inner *)\n<integer> = /[0-9]+/ ;";
         let result = parse_literal_patterns_ebnf(content);
         assert!(result.is_err());
-        assert!(result.unwrap_err().message.contains("unclosed EBNF comment"));
+        assert!(result
+            .unwrap_err()
+            .message
+            .contains("unclosed EBNF comment"));
     }
 
     #[test]
@@ -1497,15 +1498,11 @@ mod tests {
     #[test]
     fn test_compiled_nfa_has_accepting_state() {
         let mut nfa = Nfa::new();
-        let frag = compile_regex("[0-9]+", &mut nfa, TokenKind::Integer)
-            .expect("should compile");
+        let frag = compile_regex("[0-9]+", &mut nfa, TokenKind::Integer).expect("should compile");
         nfa.add_epsilon(nfa.start, frag.start);
 
         /* The accept state should have TokenKind::Integer */
-        assert_eq!(
-            nfa.states[frag.accept as usize].accept,
-            Some(TokenKind::Integer)
-        );
+        assert_eq!(nfa.states[frag.accept as usize].accept, Some(TokenKind::Integer));
 
         /* Verify epsilon closure from start includes the fragment start */
         let closure = epsilon_closure(&nfa, &[nfa.start]);

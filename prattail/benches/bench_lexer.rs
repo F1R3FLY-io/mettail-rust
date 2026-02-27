@@ -86,7 +86,9 @@ fn bench_build_nfa(c: &mut Criterion) {
     for (name, spec) in &specs {
         let prepared = prepare(spec);
         group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
-            b.iter(|| build_nfa_default(&prepared.lexer_input.terminals, &prepared.lexer_input.needs));
+            b.iter(|| {
+                build_nfa_default(&prepared.lexer_input.terminals, &prepared.lexer_input.needs)
+            });
         });
     }
 

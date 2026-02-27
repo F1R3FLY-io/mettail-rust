@@ -6,8 +6,8 @@
 //! - Error position tracking via Range/Position
 
 use crate::{
-    generate_parser, BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, LiteralPatterns,
-    RuleSpec, SyntaxItemSpec,
+    generate_parser, BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec,
+    LiteralPatterns, RuleSpec, SyntaxItemSpec,
 };
 
 /// Build a simple calculator spec for error tests.
