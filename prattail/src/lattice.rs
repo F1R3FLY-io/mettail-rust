@@ -813,7 +813,7 @@ mod tests {
 
     #[test]
     fn test_resolve_empty_lattice_returns_error() {
-        let source: TokenSource<TestToken, TestSpan> = TokenSource::lattice(0);
+        let _source: TokenSource<TestToken, TestSpan> = TokenSource::lattice(0);
         // The lattice variant with 0 capacity starts empty
         // But let's create a truly empty lattice
         let source2: TokenSource<TestToken, TestSpan> = TokenSource::Lattice(TokenLattice::new());

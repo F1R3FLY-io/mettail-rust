@@ -74,9 +74,14 @@ pub struct ParserBundle {
     pub(crate) cast_rules: Vec<CastRule>,
     /// Whether the grammar has binder rules (^x.{body} lambda syntax).
     pub(crate) has_binders: bool,
-    /// Beam width configuration for WFST prediction pruning (feature-gated).
+    /// Beam width configuration for WFST prediction pruning.
+    /// Only read when feature `wfst` is enabled; kept unconditional to avoid
+    /// `#[cfg]` on every `ParserBundle` construction site.
+    #[cfg_attr(not(feature = "wfst"), allow(dead_code))]
     pub(crate) beam_width: crate::BeamWidthConfig,
     /// Dispatch strategy (unresolved — resolution requires FIRST-set and overlap data).
+    /// Only read when feature `wfst` is enabled.
+    #[cfg_attr(not(feature = "wfst"), allow(dead_code))]
     pub(crate) dispatch_strategy: crate::DispatchStrategy,
 }
 
@@ -296,6 +301,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
                     },
                     SyntaxItemSpec::IdentCapture { .. }
                     | SyntaxItemSpec::Binder { .. }
+                    | SyntaxItemSpec::BinderCollection { .. }
                     | SyntaxItemSpec::Collection { .. }
                     | SyntaxItemSpec::ZipMapSep { .. }
                     | SyntaxItemSpec::Optional { .. } => FirstItem::Ident,
@@ -882,7 +888,8 @@ fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
     for item in items {
         match item {
             SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
-            SyntaxItemSpec::Collection { separator, .. } => {
+            SyntaxItemSpec::Collection { separator, .. }
+            | SyntaxItemSpec::BinderCollection { separator, .. } => {
                 terminals.push(separator.clone());
             },
             SyntaxItemSpec::ZipMapSep { body_items, separator, .. } => {
@@ -1008,6 +1015,12 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
             right_category: right_category.clone(),
             body_items: body_items.iter().map(convert_syntax_item_to_rd).collect(),
             separator: separator.clone(),
+        },
+        SyntaxItemSpec::BinderCollection { param_name, separator } => {
+            RDSyntaxItem::BinderCollection {
+                param_name: param_name.clone(),
+                separator: separator.clone(),
+            }
         },
         SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
             inner: inner.iter().map(convert_syntax_item_to_rd).collect(),

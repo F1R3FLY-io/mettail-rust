@@ -347,6 +347,9 @@ pub enum ScopeKind {
     Single,
     /// Multi binder: Scope<Vec<Binder<String>>, Box<T>>
     Multi,
+    /// Collection variable capturing the entire Vec<Binder<String>>
+    /// Used when a single variable in ^[xs] matches all binders of a multi-abstraction
+    MultiCollection,
 }
 
 #[derive(Debug, Clone)]
@@ -1029,36 +1032,57 @@ impl PatternTerm {
                                     body,
                                 }) = &args[field_idx]
                                 {
-                                    // Multi-binder: binder_var is Vec<Binder<String>>
-                                    // Bind each binder variable to its corresponding element
-                                    for (i, binder) in binders.iter().enumerate() {
-                                        let binder_elem_var = format_ident!("{}_b{}", field_var, i);
-                                        let idx = syn::Index::from(i);
-
-                                        // Extract the i-th binder from the Vec
-                                        result.clauses.push(quote! {
-                                            let #binder_elem_var = #binder_var[#idx].clone()
+                                    // Detect collection-variable mode: single binder name
+                                    // matching a MultiAbstraction captures the entire Vec<Binder<String>>
+                                    let is_collection_var = binders.len() == 1
+                                        && rule.term_context.as_ref().is_some_and(|tc| {
+                                            tc.iter().any(|p| {
+                                                matches!(
+                                                    p,
+                                                    super::grammar::TermParam::MultiAbstraction { .. }
+                                                )
+                                            })
                                         });
 
-                                        // Bind the binder name to its FreeVar
+                                    if is_collection_var {
+                                        let var_name = &binders[0];
                                         result.bindings.insert(
-                                            binder.to_string(),
+                                            var_name.to_string(),
                                             VariableBinding {
-                                                expression: quote! { #binder_elem_var.0.clone() },
+                                                expression: quote! { #binder_var.clone() },
                                                 lang_type: category.clone(),
-                                                scope_kind: Some(ScopeKind::Multi),
+                                                scope_kind: Some(ScopeKind::MultiCollection),
                                             },
                                         );
+                                    } else {
+                                        // Individual binder matching: bind each to its position
+                                        for (i, binder) in binders.iter().enumerate() {
+                                            let binder_elem_var =
+                                                format_ident!("{}_b{}", field_var, i);
+                                            let idx = syn::Index::from(i);
 
-                                        // Also bind the full binder for RHS reconstruction
-                                        result.bindings.insert(
-                                            format!("__binder_{}", binder),
-                                            VariableBinding {
-                                                expression: quote! { #binder_elem_var.clone() },
-                                                lang_type: category.clone(),
-                                                scope_kind: Some(ScopeKind::Multi),
-                                            },
-                                        );
+                                            result.clauses.push(quote! {
+                                                let #binder_elem_var = #binder_var[#idx].clone()
+                                            });
+
+                                            result.bindings.insert(
+                                                binder.to_string(),
+                                                VariableBinding {
+                                                    expression: quote! { #binder_elem_var.0.clone() },
+                                                    lang_type: category.clone(),
+                                                    scope_kind: Some(ScopeKind::Multi),
+                                                },
+                                            );
+
+                                            result.bindings.insert(
+                                                format!("__binder_{}", binder),
+                                                VariableBinding {
+                                                    expression: quote! { #binder_elem_var.clone() },
+                                                    lang_type: category.clone(),
+                                                    scope_kind: Some(ScopeKind::Multi),
+                                                },
+                                            );
+                                        }
                                     }
 
                                     // Process the MultiLambda's body with body_var
@@ -1788,8 +1812,25 @@ impl PatternTerm {
             },
 
             PatternTerm::MultiLambda { binders, body } => {
-                // Construct a multi-binder Scope using from_parts_unsafe
                 let body_expr = body.to_ascent_rhs(bindings, language);
+
+                // Collection-variable mode: single binder capturing entire Vec<Binder<String>>
+                if binders.len() == 1 {
+                    let name = binders[0].to_string();
+                    if let Some(binding) = bindings.get(&name) {
+                        if binding.scope_kind == Some(ScopeKind::MultiCollection) {
+                            let binder_expr = &binding.expression;
+                            return quote! {
+                                mettail_runtime::Scope::from_parts_unsafe(
+                                    #binder_expr,
+                                    Box::new(#body_expr)
+                                )
+                            };
+                        }
+                    }
+                }
+
+                // Individual binder construction
                 let binder_exprs: Vec<_> = binders.iter().map(|b| {
                     let binder_name = b.to_string();
                     let full_binder_key = format!("__binder_{}", b);

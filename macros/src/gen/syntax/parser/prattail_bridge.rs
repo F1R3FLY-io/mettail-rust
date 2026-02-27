@@ -253,7 +253,7 @@ fn convert_syntax_pattern(
                             if binder.to_string() == name_str {
                                 items.push(SyntaxItemSpec::Binder {
                                     param_name: name_str,
-                                    category: extract_base_category(ty),
+                                    category: extract_binder_category(ty),
                                     is_multi: false,
                                 });
                             } else {
@@ -268,7 +268,7 @@ fn convert_syntax_pattern(
                             if binder.to_string() == name_str {
                                 items.push(SyntaxItemSpec::Binder {
                                     param_name: name_str,
-                                    category: extract_base_category(ty),
+                                    category: extract_binder_category(ty),
                                     is_multi: true,
                                 });
                             } else {
@@ -317,14 +317,14 @@ fn classify_param_from_context(
             TermParam::Abstraction { binder, ty, .. } if binder.to_string() == name_str => {
                 SyntaxItemSpec::Binder {
                     param_name: name_str.to_string(),
-                    category: extract_base_category(ty),
+                    category: extract_binder_category(ty),
                     is_multi: false,
                 }
             },
             TermParam::MultiAbstraction { binder, ty, .. } if binder.to_string() == name_str => {
                 SyntaxItemSpec::Binder {
                     param_name: name_str.to_string(),
-                    category: extract_base_category(ty),
+                    category: extract_binder_category(ty),
                     is_multi: true,
                 }
             },
@@ -366,16 +366,29 @@ fn convert_pattern_op(
                 // Chained pattern: e.g., *zip(ns,xs).*map(|n,x| n "?" x).*sep(",")
                 convert_chained_sep(source_op, separator, context, cat_names, items);
             } else {
-                // Simple collection sep: e.g., ps.*sep("|")
                 let coll_name = collection.to_string();
-                let (elem_cat, kind) = find_collection_info(&coll_name, context);
 
-                items.push(SyntaxItemSpec::Collection {
-                    param_name: coll_name,
-                    element_category: elem_cat,
-                    separator: separator.clone(),
-                    kind,
+                // Check if this is a multi-binder collection (e.g., xs.*sep(",")
+                // where xs comes from ^[xs].p:[Name* -> Proc])
+                let is_multi_binder = context.iter().any(|p| {
+                    matches!(p, TermParam::MultiAbstraction { binder, .. }
+                        if binder.to_string() == coll_name)
                 });
+
+                if is_multi_binder {
+                    items.push(SyntaxItemSpec::BinderCollection {
+                        param_name: coll_name,
+                        separator: separator.clone(),
+                    });
+                } else {
+                    let (elem_cat, kind) = find_collection_info(&coll_name, context);
+                    items.push(SyntaxItemSpec::Collection {
+                        param_name: coll_name,
+                        element_category: elem_cat,
+                        separator: separator.clone(),
+                        kind,
+                    });
+                }
             }
         },
         PatternOp::Zip { left, right } => {
@@ -531,13 +544,13 @@ fn find_param_category(name: &str, context: &[TermParam]) -> String {
                 return extract_base_category(ty);
             },
             TermParam::Abstraction { binder, ty, .. } if binder.to_string() == name => {
-                return extract_base_category(ty);
+                return extract_binder_category(ty);
             },
             TermParam::Abstraction { body, ty, .. } if body.to_string() == name => {
                 return extract_base_category(ty);
             },
             TermParam::MultiAbstraction { binder, ty, .. } if binder.to_string() == name => {
-                return extract_base_category(ty);
+                return extract_binder_category(ty);
             },
             TermParam::MultiAbstraction { body, ty, .. } if body.to_string() == name => {
                 return extract_base_category(ty);
@@ -613,12 +626,22 @@ fn convert_grammar_items(
 }
 
 /// Extract the base category name from a TypeExpr.
+/// For Arrow types, follows the codomain (appropriate for body variables).
 fn extract_base_category(ty: &TypeExpr) -> String {
     match ty {
         TypeExpr::Base(ident) => ident.to_string(),
         TypeExpr::Collection { element, .. } => extract_base_category(element),
         TypeExpr::Arrow { codomain, .. } => extract_base_category(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_category(inner),
+    }
+}
+
+/// Extract the binder's category from an abstraction type.
+/// For Arrow types `[A -> B]` or `[A* -> B]`, returns the domain category `A`.
+fn extract_binder_category(ty: &TypeExpr) -> String {
+    match ty {
+        TypeExpr::Arrow { domain, .. } => extract_base_category(domain),
+        _ => extract_base_category(ty),
     }
 }
 

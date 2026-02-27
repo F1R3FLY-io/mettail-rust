@@ -450,6 +450,7 @@ fn generate_language_struct(
     let primary_lower = primary_type.to_string().to_lowercase();
     let primary_relation = format_ident!("{}", primary_lower);
     let rw_relation = format_ident!("rw_{}", primary_lower);
+    let eq_ind_common = format_ident!("__eq_{}_ind_common", primary_lower);
     let _primary_type_str = primary_type.to_string();
 
     // Generate type inference helper
@@ -550,6 +551,47 @@ fn generate_language_struct(
                     })
                     .collect();
 
+                // Extract equivalence classes from eqrel union-find
+                let equivalences = {
+                    use std::collections::hash_map::DefaultHasher;
+                    use std::collections::{HashMap, HashSet};
+                    use std::hash::{Hash, Hasher};
+
+                    let hash_of = |t: &#primary_type| -> u64 {
+                        let mut h = DefaultHasher::new();
+                        t.hash(&mut h);
+                        h.finish()
+                    };
+
+                    let mut classes: HashMap<u64, HashSet<u64>> = HashMap::new();
+                    for (a, b) in prog.#eq_ind_common.iter_all_added() {
+                        let ha = hash_of(a);
+                        let hb = hash_of(b);
+                        if ha != hb {
+                            classes.entry(ha).or_default().insert(hb);
+                            classes.entry(hb).or_default().insert(ha);
+                        }
+                    }
+
+                    // Deduplicate: each element appears in one class
+                    let mut seen: HashSet<u64> = HashSet::new();
+                    let mut result = Vec::new();
+                    for (id, peers) in &classes {
+                        if seen.contains(id) { continue; }
+                        let mut class: HashSet<u64> = peers.clone();
+                        class.insert(*id);
+                        for &member in &class {
+                            seen.insert(member);
+                        }
+                        if class.len() > 1 {
+                            result.push(mettail_runtime::EquivClass {
+                                term_ids: class.into_iter().collect(),
+                            });
+                        }
+                    }
+                    result
+                };
+
                 // Extract custom relations
                 let mut custom_relations = std::collections::HashMap::new();
                 #custom_relation_extraction
@@ -557,7 +599,7 @@ fn generate_language_struct(
                 mettail_runtime::AscentResults {
                     all_terms: term_infos,
                     rewrites: rewrite_list,
-                    equivalences: Vec::new(),
+                    equivalences,
                     custom_relations,
                 }
             }
@@ -1203,6 +1245,7 @@ fn generate_language_struct_multi(
             let cat = &t.name;
             let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
             let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
+            let eq_ind = format_ident!("__eq_{}_ind_common", cat.to_string().to_lowercase());
             let variant = format_ident!("{}", cat);
             // List/Bag implement Display (ListLit/BagLit produce [] and {}), use Display for round-trip parsing
             let display_fmt = quote! { format!("{}", t) };
@@ -1224,9 +1267,41 @@ fn generate_language_struct_multi(
                         w_from.hash(&mut h1); w_to.hash(&mut h2);
                         mettail_runtime::Rewrite { from_id: h1.finish(), to_id: h2.finish(), rule_name: Some("rewrite".to_string()) }
                     }).collect();
+                    let equivalences = {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::collections::{HashMap, HashSet};
+                        use std::hash::{Hash, Hasher};
+                        let hash_of = |t: &#cat| -> u64 {
+                            let wrapped = #inner_enum_name::#variant(t.clone());
+                            let mut h = DefaultHasher::new();
+                            wrapped.hash(&mut h);
+                            h.finish()
+                        };
+                        let mut classes: HashMap<u64, HashSet<u64>> = HashMap::new();
+                        for (a, b) in prog.#eq_ind.iter_all_added() {
+                            let ha = hash_of(a);
+                            let hb = hash_of(b);
+                            if ha != hb {
+                                classes.entry(ha).or_default().insert(hb);
+                                classes.entry(hb).or_default().insert(ha);
+                            }
+                        }
+                        let mut seen: HashSet<u64> = HashSet::new();
+                        let mut result = Vec::new();
+                        for (id, peers) in &classes {
+                            if seen.contains(id) { continue; }
+                            let mut class: HashSet<u64> = peers.clone();
+                            class.insert(*id);
+                            for &member in &class { seen.insert(member); }
+                            if class.len() > 1 {
+                                result.push(mettail_runtime::EquivClass { term_ids: class.into_iter().collect() });
+                            }
+                        }
+                        result
+                    };
                     let mut custom_relations = std::collections::HashMap::new();
                     #custom_relation_extraction
-                    mettail_runtime::AscentResults { all_terms: term_infos, rewrites: rewrite_list, equivalences: Vec::new(), custom_relations }
+                    mettail_runtime::AscentResults { all_terms: term_infos, rewrites: rewrite_list, equivalences, custom_relations }
                 }
             }
         })
@@ -1344,6 +1419,7 @@ fn generate_language_struct_multi(
                 let cat = &t.name;
                 let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
                 let rw_rel = format_ident!("rw_{}", cat.to_string().to_lowercase());
+                let eq_ind = format_ident!("__eq_{}_ind_common", cat.to_string().to_lowercase());
                 let variant = format_ident!("{}", cat);
                 // List/Bag implement Display (ListLit/BagLit produce [] and {}), use Display for round-trip parsing
                 let display_fmt = quote! { format!("{}", t) };
@@ -1365,9 +1441,41 @@ fn generate_language_struct_multi(
                             w_from.hash(&mut h1); w_to.hash(&mut h2);
                             mettail_runtime::Rewrite { from_id: h1.finish(), to_id: h2.finish(), rule_name: Some("rewrite".to_string()) }
                         }).collect();
+                        let equivalences = {
+                            use std::collections::hash_map::DefaultHasher;
+                            use std::collections::{HashMap, HashSet};
+                            use std::hash::{Hash, Hasher};
+                            let hash_of = |t: &#cat| -> u64 {
+                                let wrapped = #inner_enum_name::#variant(t.clone());
+                                let mut h = DefaultHasher::new();
+                                wrapped.hash(&mut h);
+                                h.finish()
+                            };
+                            let mut classes: HashMap<u64, HashSet<u64>> = HashMap::new();
+                            for (a, b) in prog.#eq_ind.iter_all_added() {
+                                let ha = hash_of(a);
+                                let hb = hash_of(b);
+                                if ha != hb {
+                                    classes.entry(ha).or_default().insert(hb);
+                                    classes.entry(hb).or_default().insert(ha);
+                                }
+                            }
+                            let mut seen: HashSet<u64> = HashSet::new();
+                            let mut result = Vec::new();
+                            for (id, peers) in &classes {
+                                if seen.contains(id) { continue; }
+                                let mut class: HashSet<u64> = peers.clone();
+                                class.insert(*id);
+                                for &member in &class { seen.insert(member); }
+                                if class.len() > 1 {
+                                    result.push(mettail_runtime::EquivClass { term_ids: class.into_iter().collect() });
+                                }
+                            }
+                            result
+                        };
                         let mut custom_relations = std::collections::HashMap::new();
                         #custom_relation_extraction
-                        mettail_runtime::AscentResults { all_terms: term_infos, rewrites: rewrite_list, equivalences: Vec::new(), custom_relations }
+                        mettail_runtime::AscentResults { all_terms: term_infos, rewrites: rewrite_list, equivalences, custom_relations }
                     }
                 }
             })
@@ -2270,10 +2378,20 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
         let arity = rel.param_types.len();
         let tuple_vars: Vec<syn::Ident> = (0..arity).map(|i| format_ident!("e{}", i)).collect();
 
-        // Use {:?} for all relation tuple elements so we never require Display on payload types (Vec, HashBag)
-        let format_exprs: Vec<TokenStream> = tuple_vars
+// Format each tuple element; use DisplaySlice for common collections and
+        // default to debug printing otherwise to avoid requiring Display on all
+        // payload types.
+        let format_exprs: Vec<TokenStream> = rel
+            .param_types
             .iter()
-            .map(|v| quote! { format!("{:?}", #v) })
+            .zip(tuple_vars.iter())
+            .map(|(ty, v)| {
+                if ty.starts_with("Vec") || ty.starts_with("HashSet") {
+                    quote! { format!("{}", mettail_runtime::DisplaySlice(#v.as_slice())) }
+                } else {
+                    quote! { format!("{:?}", #v) }
+                }
+            })
             .collect();
 
         // For arity 1, use (e0,) so Rust treats it as a tuple pattern; (e0) would bind the whole &(Proc,).

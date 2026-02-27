@@ -106,7 +106,7 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
     if let Some(logic) = &language.logic {
         for rel in &logic.relations {
             let name = format_ident!("{}", rel.name.to_string());
-            let param_types: Vec<String> = rel.param_types.iter().map(|t| t.to_string()).collect();
+            let param_types = rel.param_types.clone();
             out.push(RelationForExtraction { name, param_types });
         }
     }

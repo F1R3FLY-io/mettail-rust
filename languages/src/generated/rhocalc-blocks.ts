@@ -117,6 +117,111 @@ const definitions = [
 		colour: "65cda8",
 	},
 
+	// New: ... ...
+	{
+		type: "proc_new",
+		tooltip: "New: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "field_input",
+				name: "VAR",
+				text: "x",
+			},
+			{
+				type: "input_statement",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Err
+	{
+		type: "proc_err",
+		tooltip: "Err",
+		message0: "",
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Cast Int: ...
+	{
+		type: "proc_cast_int",
+		tooltip: "Cast Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Cast Float: ...
+	{
+		type: "proc_cast_float",
+		tooltip: "Cast Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Cast Bool: ...
+	{
+		type: "proc_cast_bool",
+		tooltip: "Cast Bool: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Cast Str: ...
+	{
+		type: "proc_cast_str",
+		tooltip: "Cast Str: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Add: ... ...
 	{
 		type: "proc_add",
@@ -201,78 +306,6 @@ const definitions = [
 				type: "input_value",
 				name: "MESSAGE",
 				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Cast Int: ...
-	{
-		type: "proc_cast_int",
-		tooltip: "Cast Int: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Cast Float: ...
-	{
-		type: "proc_cast_float",
-		tooltip: "Cast Float: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Cast Bool: ...
-	{
-		type: "proc_cast_bool",
-		tooltip: "Cast Bool: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Cast Str: ...
-	{
-		type: "proc_cast_str",
-		tooltip: "Cast Str: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
 			},
 		],
 		inputsInline: true,
@@ -590,39 +623,6 @@ const definitions = [
 				check: "Proc",
 			},
 		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// New: ... ...
-	{
-		type: "proc_new",
-		tooltip: "New: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "field_input",
-				name: "VAR",
-				text: "x",
-			},
-			{
-				type: "input_statement",
-				name: "BODY",
-				check: "Proc",
-			},
-		],
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Err
-	{
-		type: "proc_err",
-		tooltip: "Err",
-		message0: "",
 		inputsInline: true,
 		previousStatement: "Proc",
 		nextStatement: "Proc",

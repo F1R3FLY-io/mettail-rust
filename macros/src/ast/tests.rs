@@ -260,10 +260,12 @@ mod tests {
     // TypeContext and Type Checking Tests
     // =========================================================================
 
+    #[allow(dead_code)]
     fn make_base_type(name: &str) -> TypeExpr {
         TypeExpr::Base(Ident::new(name, proc_macro2::Span::call_site()))
     }
 
+    #[allow(dead_code)]
     fn make_arrow_type(domain: TypeExpr, codomain: TypeExpr) -> TypeExpr {
         TypeExpr::Arrow {
             domain: Box::new(domain),
@@ -275,6 +277,7 @@ mod tests {
     // Constructor Signature and Apply Type Inference Tests
     // =========================================================================
 
+    #[allow(dead_code)]
     fn make_collection_type(coll_type: CollectionType, element: TypeExpr) -> TypeExpr {
         TypeExpr::Collection { coll_type, element: Box::new(element) }
     }

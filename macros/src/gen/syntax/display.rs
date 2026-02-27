@@ -498,19 +498,35 @@ fn generate_pattern_op_display(
             if let Some(chain_source) = source {
                 return generate_chained_sep_display_code(chain_source, separator, param_index, &collection.to_string());
             }
-            // Use positional ident (f0, f1) so we don't shadow formatter "f" or reference missing param names
-            let idx = param_index.get(&collection.to_string()).copied().unwrap_or(0);
+            // Determine collection name and a safe identifier (avoid shadowing `f` formatter)
+            let coll_name = collection.to_string();
+            let idx = param_index.get(&coll_name).copied().unwrap_or(0);
             let coll_ident =
                 syn::Ident::new(&format!("f{}", idx), proc_macro2::Span::call_site());
             let sep_with_spaces = format!(" {} ", separator);
-            quote! {
-                {
-                    let mut first = true;
-                    for (item, count) in #coll_ident.iter() {
-                        for _ in 0..count {
+
+            // If this collection is the abstraction binder, iterate binder_names
+            if _abstraction_binder.as_ref().map(|s| s.as_str()) == Some(&coll_name) {
+                quote! {
+                    {
+                        let mut first = true;
+                        for name in &binder_names {
                             if !first { write!(f, #sep_with_spaces)?; }
                             first = false;
-                            write!(f, "{}", item)?;
+                            write!(f, "{}", name)?;
+                        }
+                    }
+                }
+            } else {
+                quote! {
+                    {
+                        let mut first = true;
+                        for (item, count) in #coll_ident.iter() {
+                            for _ in 0..count {
+                                if !first { write!(f, #sep_with_spaces)?; }
+                                first = false;
+                                write!(f, "{}", item)?;
+                            }
                         }
                     }
                 }

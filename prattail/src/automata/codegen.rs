@@ -788,12 +788,13 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
 ///
 /// Requires `num_classes ≤ 32` (each state's live transitions fit in a `u32` bitmap).
 /// Lookup uses bit-test + popcount: O(1) with hardware POPCNT.
-pub fn build_bitmap_tables(dfa: &Dfa) -> BitmapTables {
-    assert!(
-        dfa.num_classes <= 32,
-        "bitmap compression requires num_classes <= 32, got {}",
-        dfa.num_classes
-    );
+pub fn build_bitmap_tables(dfa: &Dfa) -> Result<BitmapTables, String> {
+    if dfa.num_classes > 32 {
+        return Err(format!(
+            "bitmap compression requires num_classes <= 32, got {}",
+            dfa.num_classes
+        ));
+    }
 
     let num_states = dfa.states.len();
     let mut bitmaps = Vec::with_capacity(num_states);
@@ -814,7 +815,7 @@ pub fn build_bitmap_tables(dfa: &Dfa) -> BitmapTables {
         bitmaps.push(bitmap);
     }
 
-    BitmapTables { bitmaps, offsets, targets }
+    Ok(BitmapTables { bitmaps, offsets, targets })
 }
 
 /// Write the comb-compressed transition tables as static arrays.
@@ -906,7 +907,7 @@ fn write_compressed_lexer(
     let comb = compress_rows_comb(dfa, num_classes);
 
     if num_classes <= 32 {
-        let bitmap = build_bitmap_tables(dfa);
+        let bitmap = build_bitmap_tables(dfa).expect("num_classes verified <= 32");
         if bitmap.total_bytes() <= comb.total_bytes() {
             write_bitmap_driven_lexer(buf, dfa, partition, &bitmap);
             return CodegenStrategy::BitmapCompressed;
@@ -1958,7 +1959,7 @@ mod tests {
         dfa.set_transition(0, 0, s1); // state 0, class 0 → s1
         dfa.set_transition(0, 2, s1); // state 0, class 2 → s1
 
-        let tables = build_bitmap_tables(&dfa);
+        let tables = build_bitmap_tables(&dfa).expect("test DFA has <= 32 classes");
 
         // State 0 has classes 0 and 2 set → bitmap = 0b0101 = 5
         assert_eq!(tables.bitmaps[0], 5);
@@ -1991,7 +1992,7 @@ mod tests {
 
         assert!(partition.num_classes <= 32, "bitmap test requires ≤32 classes");
 
-        let tables = build_bitmap_tables(&dfa);
+        let tables = build_bitmap_tables(&dfa).expect("test DFA has <= 32 classes");
 
         for (state_idx, state) in dfa.states.iter().enumerate() {
             for class_id in 0..partition.num_classes {
@@ -2015,12 +2016,12 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "bitmap compression requires num_classes <= 32")]
     fn test_bitmap_num_classes_guard() {
-        // Must panic for num_classes > 32
+        // Must return Err for num_classes > 32
         let mut dfa = Dfa::new(33);
         dfa.states[0].transitions = vec![DEAD_STATE; 33];
-        build_bitmap_tables(&dfa);
+        let result = build_bitmap_tables(&dfa);
+        assert!(result.is_err(), "build_bitmap_tables must reject num_classes > 32");
     }
 
     #[test]

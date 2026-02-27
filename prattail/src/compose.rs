@@ -345,7 +345,9 @@ fn validate_category_refs(
 ) {
     for item in items {
         match item {
-            SyntaxItemSpec::Terminal(_) | SyntaxItemSpec::IdentCapture { .. } => {},
+            SyntaxItemSpec::Terminal(_)
+            | SyntaxItemSpec::IdentCapture { .. }
+            | SyntaxItemSpec::BinderCollection { .. } => {},
 
             SyntaxItemSpec::NonTerminal { category, .. } => {
                 if !valid_categories.contains(category) {

@@ -254,10 +254,31 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                     })
                 } else if has_multi_binder {
                     // Multi-binder constructor: normalize the scope body
+                    // Count non-abstraction fields that precede the scope
+                    let ctx = rule.term_context.as_ref().unwrap();
+                    let pre_scope_fields: Vec<_> = ctx
+                        .iter()
+                        .take_while(|p| matches!(p, TermParam::Simple { .. }))
+                        .enumerate()
+                        .map(|(i, _)| {
+                            let name = format_ident!("field_{}", i);
+                            name
+                        })
+                        .collect();
+
+                    let field_patterns: Vec<_> = pre_scope_fields
+                        .iter()
+                        .map(|name| quote! { #name })
+                        .collect();
+                    let field_clones: Vec<_> = pre_scope_fields
+                        .iter()
+                        .map(|name| quote! { #name.clone() })
+                        .collect();
+
                     Some(quote! {
-                        #category::#label(field_0, scope) => {
+                        #category::#label(#(#field_patterns,)* scope) => {
                             #category::#label(
-                                field_0.clone(),
+                                #(#field_clones,)*
                                 mettail_runtime::Scope::from_parts_unsafe(
                                     scope.inner().unsafe_pattern.clone(),
                                     Box::new(scope.inner().unsafe_body.as_ref().normalize())

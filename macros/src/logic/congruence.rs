@@ -343,7 +343,9 @@ fn find_rewrite_context_in_term(
 
                         if let Some(arg) = args.get(field_idx) {
                             // Check if body contains source_var
-                            if let Pattern::Term(PatternTerm::Lambda { body, .. }) = arg {
+                            if let Pattern::Term(PatternTerm::Lambda { body, .. })
+                            | Pattern::Term(PatternTerm::MultiLambda { body, .. }) = arg
+                            {
                                 if pattern_contains_var(body, source_var) {
                                     return Some(RewriteContext::Binding {
                                         category,

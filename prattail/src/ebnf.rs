@@ -201,7 +201,7 @@ fn write_lexical_tokens(buf: &mut String, categories: &[CategoryInfo]) {
             "<integer> = /[0-9]+/{:>pad$}(* {} *) ;",
             "",
             integer_type,
-            pad = 22 - "<integer> = /[0-9]+/".len() + 22
+            pad = 44_usize.saturating_sub("<integer> = /[0-9]+/".len())
         )
         .unwrap();
     }
@@ -211,7 +211,7 @@ fn write_lexical_tokens(buf: &mut String, categories: &[CategoryInfo]) {
             "<float>   = /[0-9]+\\.[0-9]+/{:>pad$}(* {} *) ;",
             "",
             float_type,
-            pad = 22 - "<float>   = /[0-9]+\\.[0-9]+/".len() + 22
+            pad = 44_usize.saturating_sub("<float>   = /[0-9]+\\.[0-9]+/".len())
         )
         .unwrap();
     }
@@ -635,6 +635,9 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
         } => {
             let body: Vec<String> = body_items.iter().map(format_syntax_item).collect();
             format!("{{ {} / \"{}\" }}", body.join(" "), separator)
+        },
+        SyntaxItemSpec::BinderCollection { param_name, separator } => {
+            format!("{{ ^{} / \"{}\" }}", param_name, separator)
         },
         SyntaxItemSpec::Optional { inner } => {
             let items: Vec<String> = inner.iter().map(format_syntax_item).collect();
@@ -1391,6 +1394,12 @@ mod tests {
                 right_category: right_category.clone(),
                 body_items: body_items.iter().map(convert_syntax_item).collect(),
                 separator: separator.clone(),
+            },
+            SyntaxItemSpec::BinderCollection { param_name, separator } => {
+                RDSyntaxItem::BinderCollection {
+                    param_name: param_name.clone(),
+                    separator: separator.clone(),
+                }
             },
             SyntaxItemSpec::Optional { inner } => RDSyntaxItem::Optional {
                 inner: inner.iter().map(convert_syntax_item).collect(),

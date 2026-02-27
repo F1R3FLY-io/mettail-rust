@@ -87,6 +87,7 @@ pub fn classify_rule(
 fn has_binder_recursive(syntax: &[SyntaxItemSpec], check_multi: bool) -> bool {
     syntax.iter().any(|item| match item {
         SyntaxItemSpec::Binder { is_multi, .. } => *is_multi == check_multi,
+        SyntaxItemSpec::BinderCollection { .. } => check_multi,
         SyntaxItemSpec::ZipMapSep { body_items, .. } => {
             has_binder_recursive(body_items, check_multi)
         },

@@ -233,6 +233,22 @@ pub fn generate_rewrite_rules(language: &LanguageDef, cat_filter: CategoryFilter
     let auto_congruence_rules = congruence::generate_auto_congruence_rules(language, cat_filter);
     rules.extend(auto_congruence_rules);
 
+    // Equation-rewrite closure: if a is equation-equivalent to b and b rewrites
+    // to c, then a also rewrites to c. Needed because congruence rules match
+    // `proc(lhs)` directly rather than through `eq_cat(s_orig, s)`.
+    // When eq only has reflexive entries this is a no-op.
+    for lang_type in &language.types {
+        if !in_cat_filter(&lang_type.name, cat_filter) {
+            continue;
+        }
+        let rn = common::relation_names(&lang_type.name);
+        let eq_rel = &rn.eq_rel;
+        let rw_rel = &rn.rw_rel;
+        rules.push(quote! {
+            #rw_rel(a.clone(), c.clone()) <-- #eq_rel(a, b), #rw_rel(b.clone(), c);
+        });
+    }
+
     quote! {
         #(#rules)*
     }

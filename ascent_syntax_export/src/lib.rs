@@ -148,6 +148,27 @@ pub fn parse_ascent_program_text(text: &str) -> syn::Result<AscentProgram> {
     )
 }
 
+/// Parse Ascent program from a token stream into an AST.
+///
+/// Like [`parse_ascent_program_text`] but accepts a `proc_macro2::TokenStream`
+/// directly, avoiding a round-trip through string representation.
+pub fn parse_ascent_program_tokens(tokens: proc_macro2::TokenStream) -> syn::Result<AscentProgram> {
+    let dummy_path: syn::Path = syn::parse_quote!(::ascent::ascent);
+
+    syn::parse::Parser::parse2(
+        |input: syn::parse::ParseStream| match vendored::ascent_syntax::parse_ascent_program(
+            input,
+            dummy_path.clone(),
+        )? {
+            Either::Left(program) => Ok(program),
+            Either::Right(_) => {
+                Err(syn::Error::new(input.span(), "include_source! is not supported"))
+            },
+        },
+        tokens,
+    )
+}
+
 /// Extract relation information from a parsed program.
 ///
 /// Returns a vector of (relation_name, field_types, is_lattice) tuples.

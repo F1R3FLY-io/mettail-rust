@@ -138,4 +138,8 @@ rw_term(lhs.clone(), rhs) <--
     rw_term((** body).clone(), body_rewritten),
     let rhs = Term::Lam(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
 
+rw_term(a.clone(), c.clone()) <--
+    eq_term(a, b),
+    rw_term(b.clone(), c);
+
 }

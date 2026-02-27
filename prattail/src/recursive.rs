@@ -72,6 +72,8 @@ pub enum RDSyntaxItem {
         body_items: Vec<RDSyntaxItem>,
         separator: String,
     },
+    /// A separated list of binder identifiers.
+    BinderCollection { param_name: String, separator: String },
     /// An optional group.
     Optional { inner: Vec<RDSyntaxItem> },
 }
@@ -410,6 +412,32 @@ fn write_parse_items(
                     } else {
                         CaptureKind::Collection
                     },
+                });
+            },
+            RDSyntaxItem::BinderCollection { param_name, separator } => {
+                let sep_variant = terminal_to_variant_name(separator);
+                write!(
+                    buf,
+                    "let mut {param_name} = Vec::new(); \
+                    loop {{ \
+                        match expect_ident(tokens, pos) {{ \
+                            Ok(name) => {{ \
+                                {param_name}.push(name); \
+                                if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                    *pos += 1; \
+                                }} else {{ \
+                                    break; \
+                                }} \
+                            }} \
+                            Err(_) => break, \
+                        }} \
+                    }}",
+                )
+                .unwrap();
+
+                captures.push(Capture {
+                    name: param_name.clone(),
+                    kind: CaptureKind::Binder,
                 });
             },
             RDSyntaxItem::Optional { inner } => {

@@ -57,8 +57,8 @@ pub struct LogicBlock {
 pub struct RelationDecl {
     /// Relation name (e.g., "path")
     pub name: Ident,
-    /// Parameter types (e.g., [Proc, Proc])
-    pub param_types: Vec<Ident>,
+    /// Parameter type strings (e.g., ["Proc", "Proc"] or ["Vec<Proc>"])
+    pub param_types: Vec<String>,
 }
 
 /// A typed parameter in the type context
@@ -84,6 +84,14 @@ pub enum Premise {
     /// Relation query: rel(arg1, arg2, ...)
     /// Currently used for env_var(x, v), extensible to arbitrary relations
     RelationQuery { relation: Ident, args: Vec<Ident> },
+
+    /// Universal quantification over a collection: xs.*map(|x| premise)
+    /// Means "for all x in xs, premise holds"
+    ForAll {
+        collection: Ident,
+        param: Ident,
+        body: Box<Premise>,
+    },
 }
 
 /// Equation in unified judgement syntax
@@ -136,6 +144,12 @@ pub enum Condition {
         relation: Ident,
         /// Arguments to the relation (e.g., ["x", "v"])
         args: Vec<Ident>,
+    },
+    /// Universal quantification: for all x in collection, body holds
+    ForAll {
+        collection: Ident,
+        param: Ident,
+        body: Box<Condition>,
     },
 }
 
@@ -657,10 +671,11 @@ fn parse_equations(input: ParseStream) -> SynResult<Vec<Equation>> {
 }
 
 /// Parse a single premise in the propositional context
-/// Grammar: freshness | congruence | relation_query
+/// Grammar: freshness | congruence | relation_query | forall
 ///   freshness  ::= ident "#" (ident | "..." ident)
 ///   congruence ::= ident "~>" ident
 ///   relation   ::= ident "(" (ident ("," ident)*)? ")"
+///   forall     ::= ident "." "*" "map" "(" "|" ident "|" premise ")"
 fn parse_premise(input: ParseStream) -> SynResult<Premise> {
     let first = input.parse::<Ident>()?;
 
@@ -692,10 +707,32 @@ fn parse_premise(input: ParseStream) -> SynResult<Premise> {
             }
         }
         Ok(Premise::RelationQuery { relation: first, args })
+    } else if input.peek(Token![.]) {
+        // ForAll: xs.*map(|x| premise)
+        let _ = input.parse::<Token![.]>()?;
+        let _ = input.parse::<Token![*]>()?;
+        let op = input.parse::<Ident>()?;
+        if op != "map" {
+            return Err(syn::Error::new(
+                op.span(),
+                "expected 'map' in quantified premise (xs.*map(|x| ...))",
+            ));
+        }
+        let content;
+        syn::parenthesized!(content in input);
+        let _ = content.parse::<Token![|]>()?;
+        let param = content.parse::<Ident>()?;
+        let _ = content.parse::<Token![|]>()?;
+        let body = parse_premise(&content)?;
+        Ok(Premise::ForAll {
+            collection: first,
+            param,
+            body: Box::new(body),
+        })
     } else {
         Err(syn::Error::new(
             first.span(),
-            "expected premise: 'x # term', 'S ~> T', or 'rel(args)'",
+            "expected premise: 'x # term', 'S ~> T', 'rel(args)', or 'xs.*map(|x| ...)'",
         ))
     }
 }
@@ -1187,11 +1224,23 @@ fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
     let content;
     syn::braced!(content in input);
 
-    // Capture the entire content as a TokenStream (passed through verbatim)
+    // Capture the entire content as a TokenStream (passed through verbatim to Ascent)
     let tokens: TokenStream = content.parse()?;
 
-    // Extract relation declarations from the token stream
-    let relations = extract_relation_decls(&tokens);
+    // Parse as an Ascent program to extract relation declarations with proper type handling
+    let program = ascent_syntax_export::parse_ascent_program_tokens(tokens.clone())?;
+    let relations = program
+        .relations
+        .into_iter()
+        .map(|rel| {
+            let param_types = rel
+                .field_types
+                .iter()
+                .map(|ty| quote::quote!(#ty).to_string())
+                .collect();
+            RelationDecl { name: rel.name, param_types }
+        })
+        .collect();
 
     // Optional comma after closing brace
     if input.peek(Token![,]) {
@@ -1199,52 +1248,4 @@ fn parse_logic(input: ParseStream) -> SynResult<LogicBlock> {
     }
 
     Ok(LogicBlock { relations, content: tokens })
-}
-
-/// Extract relation declarations from a token stream
-/// Looks for patterns like: relation name(Type1, Type2, ...);
-fn extract_relation_decls(tokens: &TokenStream) -> Vec<RelationDecl> {
-    use proc_macro2::TokenTree;
-
-    let mut relations = Vec::new();
-    let token_vec: Vec<TokenTree> = tokens.clone().into_iter().collect();
-
-    let mut i = 0;
-    while i < token_vec.len() {
-        // Look for "relation" keyword
-        if let TokenTree::Ident(ident) = &token_vec[i] {
-            if ident == "relation" && i + 2 < token_vec.len() {
-                // Next should be the relation name
-                if let TokenTree::Ident(name) = &token_vec[i + 1] {
-                    // Then a group with parentheses containing types
-                    if let TokenTree::Group(group) = &token_vec[i + 2] {
-                        if group.delimiter() == proc_macro2::Delimiter::Parenthesis {
-                            // Parse the types from the group
-                            let param_types = parse_relation_params(group.stream());
-                            relations.push(RelationDecl { name: name.clone(), param_types });
-                        }
-                    }
-                }
-            }
-        }
-        i += 1;
-    }
-
-    relations
-}
-
-/// Parse relation parameter types from a token stream like "Proc, Proc"
-fn parse_relation_params(tokens: TokenStream) -> Vec<Ident> {
-    use proc_macro2::TokenTree;
-
-    let mut params = Vec::new();
-
-    for token in tokens {
-        if let TokenTree::Ident(ident) = token {
-            params.push(ident);
-        }
-        // Skip punctuation (commas)
-    }
-
-    params
 }

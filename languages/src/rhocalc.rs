@@ -35,6 +35,20 @@ language! {
         NQuote . p:Proc
         |- "@" "(" p ")" : Name ;
 
+        PNew . ^[xs].p:[Name* -> Proc]
+        |- "new" "(" xs.*sep(",") ")" "in" "{" p "}" : Proc;
+
+        // customize error handling
+        // (e.g. filter results by =/= Err)
+        Err . |- "error" : Proc;
+
+        // cast rust-native types as processes
+        CastInt . k:Int |- k : Proc;
+        CastFloat . k:Float |- k : Proc;
+        CastBool . k:Bool |- k : Proc;
+        CastStr . s:Str |- s : Proc;
+
+        // and invoke any methods on them
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() + *b.clone())),
@@ -66,11 +80,6 @@ language! {
                 _ => Proc::Err,
             }}
         ] fold;
-
-        CastInt . k:Int |- k : Proc;
-        CastFloat . k:Float |- k : Proc;
-        CastBool . k:Bool |- k : Proc;
-        CastStr . s:Str |- s : Proc;
 
         Eq . a:Proc, b:Proc |- a "==" b : Proc ![
             { match (&a, &b) {
@@ -282,16 +291,20 @@ language! {
             }}
         ] fold;
 
-        PNew . ^x.p:[Name -> Proc] |- "new" "(" x "," p ")" : Proc;
 
-        Err . |- "error" : Proc;
     },
 
     equations {
         QuoteDrop . |- (NQuote (PDrop N)) = N ;
+
+        Extrude . xs.*map(|x| x # ...rest)
+            |- (PPar {(PNew ^[xs].p), ...rest}) = (PNew ^[xs].(PPar {p, ...rest})) ;
     },
 
     rewrites {
+
+        // communication:
+        // (n1 ? x1 , ... , nk ? xk).{ p } | n1!(q1) | ... | nk!(qk) ~> p(@q1,...,@qk)
         Comm . |- (PPar {(PInputs ns cont), *zip(ns,qs).*map(|n,q| (POutput n q)), ...rest})
             ~> (PPar {(eval cont qs.*map(|q| (NQuote q))), ...rest});
 
@@ -299,6 +312,9 @@ language! {
 
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
 
+        NewCong . | S ~> T |- (PNew ^[xs].S) ~> (PNew ^[xs].T);
+
+        // TODO: shorthand to make these in the term declarations
         AddCongL . | S ~> T |- (Add S X) ~> (Add T X);
 
         AddCongR . | S ~> T |- (Add X S) ~> (Add X T);
@@ -345,43 +361,30 @@ language! {
     },
 
     logic {
-        proc(p) <-- if let Ok(p) = Proc::parse("^x.{{ x | serv!(req) }}");
-        proc(p) <-- if let Ok(p) = Proc::parse("^x.{x}");
-
-        // relation can_comm(Proc,Name);
-        // can_comm(p,n) <--
-        //     proc(p),name(n),
-        //     if let Proc::PPar(elems) = p,
-        //     for elem1 in elems.clone(),
-        //     if let Proc::POutput(channel,_) = elem1,
-        //     if *channel == *n,
-        //     for elem2 in elems.clone(),
-        //     if let Proc::PInputs(ns, _) = elem2,
-        //     if ns.len() == 1,
-        //     if *ns.first().unwrap() == *n;
-
-        // relation garbage(Name,Proc);
-        // garbage(n,p) <--
-        //     proc(p),name(n),
-        //     !(proc(k), trans(p,k,q), can_comm(q,n));
-
-        // Only apply contexts to the stepped term (step_term), so res is bounded and rw_proc(res,q) can be computed.
-        proc(res) <--
-            step_term(p), proc(c),
-            if let Proc::LamProc(_) = c,
-            let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())),
-            let res = app.normalize();
-
-        proc(res) <--
-            step_term(p), proc(c),
-            if let Proc::MLamProc(_) = c,
-            let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]),
-            let res = app.normalize();
-
+        // many-step to a result
         relation path(Proc, Proc);
         path(p0, p1) <-- rw_proc(p0, p1);
         path(p0, p2) <-- path(p0, p1), path(p1, p2);
 
+        // or we can store every step!
+        relation path_vec(Vec<Proc>);
+        path_vec(xs) <--
+            proc(x0), rw_proc(x0,x1),
+            let xs = vec![x0.clone(), x1.clone()];
+        path_vec(zs) <--
+            path_vec(xs), path_vec(ys),
+            if xs.last() == ys.first(),
+            let zs = [xs.as_slice(), ys.as_slice()].concat();
+
+        // paths where term size (display length) strictly decreases at every step
+        // TODO: currently makes execution slow; investigate why
+        // relation shrinking_path(Vec<Proc>);
+        // shrinking_path(xs) <--
+        //     path_vec(xs),
+        //     if xs.windows(2).all(|w| w[0].to_string().len() > w[1].to_string().len());
+
+        // context-labelled transition system:
+        // p -c-> q if c(p)~>q
         relation trans(Proc, Proc, Proc);
         trans(p,c,q) <--
             step_term(p), proc(c),
@@ -396,5 +399,26 @@ language! {
             let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]),
             let res = app.normalize(),
             path(res.clone(), q);
+
+        // contexts for testing (TODO: auto-generate)
+        // proc(p) <-- if let Ok(p) = Proc::parse("^x.{{ x | serv!(req) }}");
+        // proc(p) <-- if let Ok(p) = Proc::parse("^x.{x}");
+
+        // rules to add c(p) to the set of processes
+        proc(res) <--
+            step_term(p), proc(c),
+            if let Proc::LamProc(_) = c,
+            let app = Proc::ApplyProc(Box::new(c.clone()), Box::new(p.clone())),
+            let res = app.normalize();
+        proc(res) <--
+            step_term(p), proc(c),
+            if let Proc::MLamProc(_) = c,
+            let app = Proc::MApplyProc(Box::new(c.clone()), vec![p.clone()]),
+            let res = app.normalize();
+
+        // relation garbage(Name,Proc);
+        // garbage(n,p) <--
+        //     proc(p),name(n),
+        //     !(proc(k), trans(p,k,q), can_comm(q,n));
     },
 }

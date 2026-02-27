@@ -521,13 +521,169 @@ fn test_calculator_infer_var_type() {
     assert!(x_type.is_some(), "x should have inferred type");
 }
 
-/// Bare variable `a` in an all-native language (Calculator) should infer as the
-/// primary category. Calculator declares Proc first, so primary is Proc.
+// ── Bug 2: All comparison operators (not just ==) ──
+
+#[test]
+fn test_gt_int() {
+    calc_normal_form("3 > 1", "true");
+    calc_normal_form("1 > 3", "false");
+}
+
+#[test]
+fn test_lt_int() {
+    calc_normal_form("1 < 3", "true");
+    calc_normal_form("3 < 1", "false");
+}
+
+#[test]
+fn test_lteq_int() {
+    calc_normal_form("3 <= 3", "true");
+    calc_normal_form("1 <= 3", "true");
+    calc_normal_form("3 <= 1", "false");
+}
+
+#[test]
+fn test_gteq_int() {
+    calc_normal_form("3 >= 3", "true");
+    calc_normal_form("3 >= 1", "true");
+    calc_normal_form("1 >= 3", "false");
+}
+
+#[test]
+fn test_ne_int() {
+    calc_normal_form("3 != 4", "true");
+    calc_normal_form("3 != 3", "false");
+}
+
+#[test]
+fn test_gt_float() {
+    calc_normal_form("3.0 > 1.0", "true");
+    calc_normal_form("1.0 > 3.0", "false");
+}
+
+#[test]
+fn test_eq_str() {
+    calc_normal_form(r#""a" == "a""#, "true");
+    calc_normal_form(r#""a" == "b""#, "false");
+}
+
+// ── Bug 1: Parenthesized cross-category expressions ──
+
+#[test]
+fn test_parenthesized_eq_int() {
+    calc_normal_form("(3 == 3)", "true");
+    calc_normal_form("(1 == 2)", "false");
+}
+
+#[test]
+fn test_parenthesized_gt_int() {
+    calc_normal_form("(3 > 1)", "true");
+    calc_normal_form("(1 > 3)", "false");
+}
+
+#[test]
+fn test_parenthesized_lt_int() {
+    calc_normal_form("(1 < 3)", "true");
+}
+
+#[test]
+fn test_parenthesized_bool_same() {
+    calc_normal_form("(true and false)", "false");
+    calc_normal_form("(not true)", "false");
+}
+
+#[test]
+fn test_nested_paren_cross() {
+    calc_normal_form("((3 == 3))", "true");
+}
+
+#[test]
+fn test_paren_cross_in_bool_expr() {
+    calc_normal_form("(1 == 1) and (2 == 2)", "true");
+    calc_normal_form("(1 == 2) and (2 == 2)", "false");
+}
+
+#[test]
+fn test_paren_int_still_works() {
+    calc_normal_form("(3 + 2)", "5");
+    calc_normal_form("(3 + 2)!", "120");
+}
+
+// ── Bug 1+2 combined: parenthesized non-equality comparisons ──
+
+#[test]
+fn test_paren_gt_int() {
+    calc_normal_form("(3 > 1)", "true");
+}
+
+#[test]
+fn test_paren_ne_int() {
+    calc_normal_form("(3 != 4)", "true");
+}
+
+// ── REPL-style exec scenario ──
+
+#[test]
+fn test_exec_paren_cross_category() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let term = lang.parse_term("(3 == 3)").expect("parse (3 == 3)");
+    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    let displays: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        displays.contains(&"true".to_string()),
+        "expected normal form \"true\" for \"(3 == 3)\", got: {:?}",
+        displays
+    );
+}
+
+/// Bare variable `a` in an all-native language (Calculator) should infer as `Int`
+/// (the primary category). Calculator has no non-native categories, so all parsers
+/// are tried unconditionally. The Ambiguous result gets the primary category preference
+/// from `infer_term_type`.
 #[test]
 fn test_bare_variable_type_is_int() {
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let term = lang.parse_term("a").expect("parse 'a'");
     let term_type = lang.infer_term_type(term.as_ref());
-    assert_eq!(format!("{}", term_type), "Proc");
+    // Calculator is all-native, so "a" is Ambiguous across all categories;
+    // type should show primary (Int)
+    assert_eq!(format!("{}", term_type), "Int");
+}
+
+// --- Nested cast expressions (NFA disambiguation) ---
+
+#[test]
+fn test_float_of_int() {
+    calc_normal_form("float(10)", "10.0");
+}
+
+#[test]
+fn test_nested_float_float_int() {
+    calc_normal_form("float(float(10))", "10.0");
+}
+
+#[test]
+fn test_triple_nested_float() {
+    calc_normal_form("float(float(float(10)))", "10.0");
+}
+
+#[test]
+fn test_nested_int_int() {
+    calc_normal_form("int(int(5))", "5");
+}
+
+#[test]
+fn test_nested_int_float() {
+    calc_normal_form("int(float(42))", "42");
+}
+
+#[test]
+fn test_nested_float_int_arithmetic() {
+    calc_normal_form("sin(3.14) + 3.0 * float(float(10))", "30.001592652916486");
 }

@@ -514,4 +514,12 @@ rw_proc(parent.clone(), result) <--
     rw_proc(elem.clone(), elem_rewritten),
     let result = Proc::PPar({ let mut new_bag = bag.clone(); new_bag.remove(elem); Proc::insert_into_ppar(& mut new_bag, elem_rewritten.clone()); new_bag });
 
+rw_proc(a.clone(), c.clone()) <--
+    eq_proc(a, b),
+    rw_proc(b.clone(), c);
+
+rw_name(a.clone(), c.clone()) <--
+    eq_name(a, b),
+    rw_name(b.clone(), c);
+
 }

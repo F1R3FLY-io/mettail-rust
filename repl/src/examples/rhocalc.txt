@@ -3,6 +3,8 @@ add = { a!(2) | b!(3) | (a?x,b?y).{ *(x) + *(y) } }
 comm = { a!(0) | (a?x).{*(x)}}
 multi_comm = {a!(p) | b!(q) | c!(r) | (a?x, b?y, c?z).{{*(x) | *(y) | *(z)}}}
 
+new_test = {a!(0) | new (x) in { (a?z).{*(z)}} }
+
 // duplication and replication
 dup = ^l.{(l?x).{{*(x)|l!(*(x))}}}
 rep = ^n.{^a.{^cont.{{$name(dup,n)|n!((a?y).{{$name(cont,y)|$name(dup,n)}})}}}}

@@ -439,15 +439,76 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
         .filter(|h| h.category == *cat && h.ident_lookahead.is_some())
         .collect();
 
-    // Generate match arms from terminal-first prefix handlers
-    for handler in prefix_handlers {
-        if handler.category != *cat {
-            continue;
+    // Generate match arms from terminal-first prefix handlers.
+    // NFA disambiguation: group handlers by dispatch token. When multiple handlers
+    // share the same token (e.g., FloatId and IntToFloat both dispatch on KwFloat),
+    // emit a single merged arm that tries all alternatives NFA-style.
+    {
+        let mut handlers_by_token: std::collections::BTreeMap<String, Vec<&PrefixHandler>> =
+            std::collections::BTreeMap::new();
+        for handler in prefix_handlers {
+            if handler.category != *cat {
+                continue;
+            }
+            if handler.match_arm.is_empty() {
+                continue;
+            }
+            // Extract the token pattern: everything before " => "
+            if let Some(idx) = handler.match_arm.find(" => ") {
+                let token_pattern = handler.match_arm[..idx].to_string();
+                handlers_by_token
+                    .entry(token_pattern)
+                    .or_default()
+                    .push(handler);
+            } else {
+                // Fallback: push as-is
+                match_arms.push(handler.match_arm.clone());
+            }
         }
-        if handler.match_arm.is_empty() {
-            continue;
+
+        for (token_pattern, handlers) in &handlers_by_token {
+            if handlers.len() == 1 {
+                // Singleton: emit the original match arm
+                match_arms.push(handlers[0].match_arm.clone());
+            } else {
+                // Multiple handlers share this token — NFA-style merged arm
+                let mut arm = format!("{} => {{", token_pattern);
+                arm.push_str("let nfa_saved = *pos;");
+                write!(arm, "let mut nfa_results: Vec<{}> = Vec::new();", cat).unwrap();
+                arm.push_str("let mut nfa_positions: Vec<usize> = Vec::new();");
+                arm.push_str("let mut nfa_first_err: Option<ParseError> = None;");
+
+                for handler in handlers {
+                    arm.push_str("*pos = nfa_saved;");
+                    write!(
+                        arm,
+                        "match {}(tokens, pos) {{ \
+                            Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); }}, \
+                            Err(e) => {{ if nfa_first_err.is_none() {{ nfa_first_err = Some(e); }} }}, \
+                        }}",
+                        handler.parse_fn_name,
+                    )
+                    .unwrap();
+                }
+
+                arm.push_str("match nfa_results.len() {");
+                write!(
+                    arm,
+                    "0 => Err(nfa_first_err.unwrap_or_else(|| \
+                        ParseError::UnexpectedToken {{ \
+                            expected: \"{cat} expression\", \
+                            found: format!(\"{{:?}}\", &tokens[nfa_saved].0), \
+                            range: tokens[nfa_saved].1, \
+                        }} \
+                    )),",
+                )
+                .unwrap();
+                arm.push_str("_ => { *pos = nfa_positions[0]; Ok(nfa_results.into_iter().next().expect(\"nfa_results non-empty\")) },");
+                arm.push('}'); // close match
+                arm.push('}'); // close arm body
+                match_arms.push(arm);
+            }
         }
-        match_arms.push(handler.match_arm.clone());
     }
 
     // Add native literal match arms for this category's own native type
