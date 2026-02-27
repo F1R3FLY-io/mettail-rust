@@ -1428,6 +1428,74 @@ const definitions = [
 		colour: "51e05f",
 	},
 
+	// Proc To Int: ...
+	{
+		type: "int_proc_to_int",
+		tooltip: "Proc To Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Proc To Float: ...
+	{
+		type: "float_proc_to_float",
+		tooltip: "Proc To Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Float",
+		colour: "e05196",
+	},
+
+	// Proc To Bool: ...
+	{
+		type: "bool_proc_to_bool",
+		tooltip: "Proc To Bool: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Proc To Str: ...
+	{
+		type: "str_proc_to_str",
+		tooltip: "Proc To Str: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Str",
+		colour: "51e05f",
+	},
+
 	// Custom Op: ... ...
 	{
 		type: "int_custom_op",
