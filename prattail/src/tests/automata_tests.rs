@@ -4,7 +4,7 @@
 use crate::automata::{
     codegen::generate_lexer_string,
     minimize::minimize_dfa,
-    nfa::{build_nfa_default, build_nfa_prefix_only, BuiltinNeeds},
+    nfa::{build_nfa, build_nfa_prefix_only, BuiltinNeeds},
     partition::compute_equivalence_classes,
     subset::subset_construction,
     TerminalPattern, TokenKind, DEAD_STATE,
@@ -25,7 +25,7 @@ fn build_pipeline(
         })
         .collect();
 
-    let nfa = build_nfa_default(&terminal_patterns, &needs);
+    let nfa = build_nfa(&terminal_patterns, &needs, &crate::LiteralPatterns::default());
     let partition = compute_equivalence_classes(&nfa);
     let dfa = subset_construction(&nfa, &partition);
     let min_dfa = minimize_dfa(&dfa);
@@ -254,7 +254,7 @@ fn test_minimization_reduces_states() {
         boolean: false,
     };
 
-    let nfa = build_nfa_default(&terminals, &needs);
+    let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
     let partition = compute_equivalence_classes(&nfa);
     let dfa = subset_construction(&nfa, &partition);
     let min_dfa = minimize_dfa(&dfa);
@@ -281,7 +281,7 @@ fn run_codegen_pipeline(
     let nfa = if use_prefix_only {
         build_nfa_prefix_only(terminals, needs)
     } else {
-        build_nfa_default(terminals, needs)
+        build_nfa(terminals, needs, &crate::LiteralPatterns::default())
     };
     let partition = compute_equivalence_classes(&nfa);
     let dfa = subset_construction(&nfa, &partition);
@@ -309,7 +309,8 @@ fn run_codegen_pipeline(
         token_kinds.push(terminal.kind.clone());
     }
 
-    let (code, _strategy) = generate_lexer_string(&min_dfa, &partition, &token_kinds, "test");
+    let (code, _strategy, _variant_map, _ambiguity) =
+        generate_lexer_string(&min_dfa, &partition, &token_kinds, "test");
     code
 }
 

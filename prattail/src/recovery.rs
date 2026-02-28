@@ -138,6 +138,29 @@ impl fmt::Display for RepairAction {
     }
 }
 
+impl RepairAction {
+    /// Return the semantic edit-distance cost of this repair action.
+    ///
+    /// Unlike tropical weights in `costs::*` which are tuned for Viterbi
+    /// shortest-path, `EditWeight` counts discrete token-level edits:
+    /// - Skip: 1 edit per skipped token
+    /// - Delete: 1 edit (remove one unexpected token)
+    /// - Insert: 2 edits (fabricate a missing token — more disruptive)
+    /// - Substitute: 2 edits (replace wrong token — moderate disruption)
+    ///
+    /// Compose with `ProductWeight<TropicalWeight, EditWeight>` to jointly
+    /// optimize parse quality and repair minimality.
+    pub fn edit_cost(&self) -> crate::automata::semiring::EditWeight {
+        use crate::automata::semiring::EditWeight;
+        match self {
+            RepairAction::SkipToSync { skip_count, .. } => EditWeight::new(*skip_count as u32),
+            RepairAction::DeleteToken => EditWeight::delete(),
+            RepairAction::InsertToken { .. } => EditWeight::insert(),
+            RepairAction::SubstituteToken { .. } => EditWeight::substitute(),
+        }
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // RepairResult — the full recovery recommendation
 // ══════════════════════════════════════════════════════════════════════════════

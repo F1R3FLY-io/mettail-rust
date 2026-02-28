@@ -157,12 +157,12 @@ path has zero overhead from recovery logic.
 
 ## Further Reading
 
-Detailed documentation lives under `prattail/docs/experimental/wfst/`:
+Detailed documentation lives under `prattail/docs/`:
 
-- **Theory**: `../../prattail/docs/experimental/wfst/theory/` - Semirings, tropical algebra, Viterbi
-- **Architecture**: `../../prattail/docs/experimental/wfst/architecture/` - Module structure and data flow
-- **Design**: `../../prattail/docs/experimental/wfst/design/` - Decision records and trade-offs
-- **Usage**: `../../prattail/docs/experimental/wfst/usage/` - Worked examples and recipes
+- **Theory**: `../../prattail/docs/theory/wfst/` - Semirings, tropical algebra, Viterbi
+- **Architecture**: `../../prattail/docs/architecture/wfst/` - Module structure and data flow
+- **Design**: `../../prattail/docs/design/wfst/` - Decision records and trade-offs
+- **Usage**: `../../prattail/docs/usage/wfst/` - Worked examples and recipes
 
 Benchmark results: `../../prattail/docs/benchmarks/wfst-pipeline-integration.md`
 

@@ -9,11 +9,10 @@
 #![allow(dead_code)]
 
 use std::collections::BTreeMap;
-#[cfg(feature = "wfst")]
 use std::collections::BTreeSet;
 
 use mettail_prattail::automata::minimize::minimize_dfa;
-use mettail_prattail::automata::nfa::build_nfa_default;
+use mettail_prattail::automata::nfa::build_nfa;
 use mettail_prattail::automata::partition::{compute_equivalence_classes, AlphabetPartition};
 use mettail_prattail::automata::subset::subset_construction;
 use mettail_prattail::automata::{Dfa, Nfa, TokenKind};
@@ -29,8 +28,7 @@ use mettail_prattail::prediction::{
 };
 use mettail_prattail::recursive::{write_rd_handler, CollectionKind, RDRuleInfo, RDSyntaxItem};
 use mettail_prattail::{
-    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, LiteralPatterns, RuleSpec,
-    SyntaxItemSpec,
+    BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec,
 };
 
 // proc_macro2::TokenStream no longer needed — all codegen is string-based
@@ -244,7 +242,6 @@ pub fn minimal_spec() -> LanguageSpec {
         ],
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
-        dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
     }
 }
@@ -290,7 +287,6 @@ pub fn small_spec() -> LanguageSpec {
         ],
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
-        dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
     }
 }
@@ -334,7 +330,6 @@ pub fn medium_spec() -> LanguageSpec {
         ],
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
-        dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
     }
 }
@@ -387,7 +382,6 @@ pub fn complex_spec() -> LanguageSpec {
         ],
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
-        dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
     }
 }
@@ -440,7 +434,6 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
         rules,
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
-        dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
     }
 }
@@ -615,7 +608,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
 
     // ── Phase 1b: Automata pipeline ──
 
-    let nfa = build_nfa_default(&lexer_input.terminals, &lexer_input.needs);
+    let nfa = build_nfa(&lexer_input.terminals, &lexer_input.needs, &LiteralPatterns::default());
     let partition = compute_equivalence_classes(&nfa);
     let dfa = subset_construction(&nfa, &partition);
     let min_dfa = minimize_dfa(&dfa);
@@ -904,25 +897,19 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WFST helpers (feature = "wfst")
+// WFST helpers
 // ══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "wfst")]
 use mettail_prattail::automata::semiring::TropicalWeight;
-#[cfg(feature = "wfst")]
 use mettail_prattail::lattice::TokenLattice;
-#[cfg(feature = "wfst")]
 use mettail_prattail::recovery::RecoveryWfst;
-#[cfg(feature = "wfst")]
 use mettail_prattail::token_id::{TokenId, TokenIdMap};
-#[cfg(feature = "wfst")]
 use mettail_prattail::wfst::{PredictionWfst, PredictionWfstBuilder};
 
 #[cfg(feature = "wfst-log")]
 use mettail_prattail::automata::semiring::{LogWeight, Semiring};
 
 /// Precomputed WFST data structures built from a `PreparedSpec`.
-#[cfg(feature = "wfst")]
 pub struct WfstPreparedSpec {
     pub base: PreparedSpec,
     pub token_id_map: TokenIdMap,
@@ -935,7 +922,6 @@ pub struct WfstPreparedSpec {
 ///
 /// Constructs TokenIdMap, PredictionWfst per category, RecoveryWfst per category,
 /// and collects sample token names for prediction benchmarks.
-#[cfg(feature = "wfst")]
 pub fn prepare_wfst(spec: &LanguageSpec) -> WfstPreparedSpec {
     let base = prepare(spec);
 
@@ -1037,7 +1023,6 @@ pub fn prepare_wfst(spec: &LanguageSpec) -> WfstPreparedSpec {
 /// Creates a DAG with `n_nodes` nodes, each with up to `edges_per_node` forward
 /// edges. Weights are deterministic (derived from node/edge indices) to ensure
 /// reproducible benchmarks. Returns `(lattice, final_node_index)`.
-#[cfg(feature = "wfst")]
 pub fn build_synthetic_lattice(
     n_nodes: usize,
     edges_per_node: usize,
@@ -1088,7 +1073,6 @@ pub fn build_synthetic_dag<W: Semiring>(
 }
 
 /// Deterministic TropicalWeight from node indices.
-#[cfg(feature = "wfst")]
 pub fn tropical_weight_fn(from: usize, to: usize) -> TropicalWeight {
     TropicalWeight::new(((from * 7 + to * 13) % 100) as f64 / 10.0)
 }
@@ -1103,7 +1087,6 @@ pub fn log_weight_fn(from: usize, to: usize) -> LogWeight {
 /// Build a sample token ID sequence for recovery benchmarks.
 ///
 /// Creates a deterministic sequence of `len` token IDs from the given map.
-#[cfg(feature = "wfst")]
 pub fn build_sample_token_ids(map: &TokenIdMap, len: usize) -> Vec<TokenId> {
     let all_ids: Vec<TokenId> = map.iter().map(|(_, id)| id).collect();
     if all_ids.is_empty() {

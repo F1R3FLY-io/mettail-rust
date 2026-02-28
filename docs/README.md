@@ -82,7 +82,7 @@ Internal documentation about the documentation itself:
 2. **Theory**: `guides/theory_syntax.md` - See formal language
 3. **Design**: `design/made/ascent_generation.md` - Execution model
 4. **Performance**: `design/exploring/performance.md` - Optimization strategies
-4.5. **WFSTs**: `guides/wfst_features.md` → `../../prattail/docs/experimental/wfst/` - Weighted parsing
+4.5. **WFSTs**: `guides/wfst_features.md` → `../../prattail/docs/{theory,architecture,design,usage}/wfst/` - Weighted parsing
 5. **Future**: `main_goals.md` → Theory Translation section
 
 ---

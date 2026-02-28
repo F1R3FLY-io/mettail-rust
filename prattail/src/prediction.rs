@@ -118,6 +118,25 @@ pub enum DispatchAction {
     },
 }
 
+impl DispatchAction {
+    /// Return a human-readable rule label for this action.
+    ///
+    /// Used by composed dispatch to identify rules in codegen output.
+    /// For `Variable`, returns the category name (caller should prepend "Var" if needed).
+    pub fn rule_label(&self) -> String {
+        match self {
+            DispatchAction::Direct { rule_label, .. } => rule_label.clone(),
+            DispatchAction::Lookahead { fallback, .. } => {
+                fallback.clone().unwrap_or_else(|| "Lookahead".to_string())
+            }
+            DispatchAction::CrossCategory { rule_label, .. } => rule_label.clone(),
+            DispatchAction::Cast { wrapper_label, .. } => wrapper_label.clone(),
+            DispatchAction::Grouping { .. } => "Grouping".to_string(),
+            DispatchAction::Variable { category } => format!("Var{}", category),
+        }
+    }
+}
+
 /// One alternative in a lookahead decision.
 #[derive(Debug, Clone)]
 pub struct LookaheadAlternative {
@@ -568,7 +587,6 @@ fn copy_follow(
 /// However, existing rules that don't reference new categories are already stable
 /// and converge in zero iterations, so the cost is proportional to the new rules'
 /// dependency depth, not the total grammar size.
-#[cfg(feature = "wfst")]
 pub fn incremental_first_sets(
     existing: &BTreeMap<String, FirstSet>,
     new_rules: &[RuleInfo],
@@ -628,7 +646,6 @@ pub fn incremental_first_sets(
 ///
 /// Like `incremental_first_sets`, this runs the fixed-point over the new rules
 /// only. Existing rules that don't reference new categories are already stable.
-#[cfg(feature = "wfst")]
 pub fn incremental_follow_sets(
     existing: &BTreeMap<String, FirstSet>,
     new_inputs: &[FollowSetInput],
@@ -665,7 +682,6 @@ pub fn incremental_follow_sets(
 ///
 /// Used during grammar composition to incrementally build the terminal set
 /// for the merged grammar without re-scanning all rules.
-#[cfg(feature = "wfst")]
 pub fn merge_terminal_sets(a: &BTreeSet<String>, b: &BTreeSet<String>) -> BTreeSet<String> {
     let mut merged = a.clone();
     merged.extend(b.iter().cloned());
@@ -1137,7 +1153,6 @@ fn collect_referenced_categories(
 /// - **Grouping**: LParen → `Grouping { open: "(", close: ")" }`
 /// - **Cast**: tokens unique to source category → `Cast { source, wrapper }`
 /// - **Cross-category**: from cross-category rules and overlap analysis
-#[cfg(feature = "wfst")]
 pub fn build_dispatch_action_tables(
     categories: &[String],
     first_sets: &BTreeMap<String, FirstSet>,
@@ -1399,5 +1414,834 @@ pub fn generate_first_set_check(first_set: &FirstSet, token_var: &str) -> TokenS
         quote! { false }
     } else {
         quote! { matches!(#token_ident, #(#checks)|*) }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Composed dispatch — WFST-composed (category, DFA state) → (token, rule, weight)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A single entry in the composed dispatch table.
+///
+/// Represents one valid (token_kind, rule) choice for an ambiguous
+/// (category, DFA state) pair, with a composed weight for ranking.
+#[derive(Debug, Clone)]
+pub struct ComposedEntry {
+    /// Compact ID of the token kind (from `TokenVariantMap`).
+    pub token_kind_id: u8,
+    /// Token variant name (e.g., "KwError", "Ident").
+    pub token_variant_name: String,
+    /// Rule label (e.g., "CompareProc", "VarProc").
+    pub rule_label: String,
+    /// Composed weight: `lexer_weight ⊗ rule_weight` (tropical times = addition).
+    /// Lower = preferred by tropical shortest path.
+    pub weight: f64,
+}
+
+/// Compute the composed dispatch table for all ambiguous DFA states.
+///
+/// For each (category, ambiguous DFA state) pair, composes the lexer's
+/// alternative accepts with the grammar's FIRST sets and rule weights
+/// to produce a weight-ranked slice of `ComposedEntry`s.
+///
+/// This is the core Phase 6C algorithm: WFST composition computed eagerly
+/// over only the ambiguous states — not a full automaton product, just
+/// pointwise composition.
+///
+/// When `prediction_wfsts` is `Some`, uses `PredictionWfst::predict()` for
+/// weight-accurate results. When `None`, falls back to FIRST-set filtering
+/// with rule specificity weights.
+pub fn compute_composed_dispatch(
+    ambiguous_states: &[(super::automata::StateId, Vec<(super::automata::TokenKind, super::automata::semiring::TropicalWeight)>)],
+    categories: &[String],
+    first_sets: &BTreeMap<String, FirstSet>,
+    variant_map: &super::automata::codegen::TokenVariantMap,
+    prediction_wfsts: Option<&BTreeMap<String, crate::wfst::PredictionWfst>>,
+    rule_infos: &[RuleInfo],
+) -> BTreeMap<(String, u32), Vec<ComposedEntry>> {
+    let mut table: BTreeMap<(String, u32), Vec<ComposedEntry>> = BTreeMap::new();
+
+    for &(state_id, ref alts) in ambiguous_states {
+        for category in categories {
+            let first_set = match first_sets.get(category) {
+                Some(fs) => fs,
+                None => continue,
+            };
+
+            let mut entries: Vec<ComposedEntry> = Vec::new();
+
+            for (tok_kind, lexer_weight) in alts {
+                // Map TokenKind → variant name for FIRST set membership test
+                let variant_name = token_kind_to_variant_name(tok_kind);
+
+                // Check if this token kind is in the category's FIRST set
+                if !first_set.contains(&variant_name) {
+                    continue;
+                }
+
+                let tok_id = variant_map.kind_to_id(tok_kind).unwrap_or(0);
+
+                // Try PredictionWfst first for weight-accurate results
+                let wfst_result = prediction_wfsts
+                    .and_then(|wfsts| wfsts.get(category))
+                    .map(|wfst| wfst.predict(&variant_name));
+
+                if let Some(actions) = wfst_result {
+                    if !actions.is_empty() {
+                        for action in actions {
+                            let rule_label = action.action.rule_label();
+                            let composed = lexer_weight.value() + action.weight.value();
+                            entries.push(ComposedEntry {
+                                token_kind_id: tok_id,
+                                token_variant_name: variant_name.clone(),
+                                rule_label,
+                                weight: composed,
+                            });
+                        }
+                        continue;
+                    }
+                    /* PredictionWfst exists but had no actions for this token;
+                       fall through to rule_infos fallback below. */
+                }
+
+                // Fallback: no PredictionWfst or no actions — use FIRST-set-aware
+                // rule specificity weights
+                let matching_rules =
+                    find_rules_for_token(rule_infos, category, &variant_name, first_sets);
+
+                if matching_rules.is_empty() {
+                    // Token is in FIRST set but no specific rule found;
+                    // create a generic entry (e.g., variable fallback)
+                    entries.push(ComposedEntry {
+                        token_kind_id: tok_id,
+                        token_variant_name: variant_name.clone(),
+                        rule_label: format!("Var{}", category),
+                        weight: lexer_weight.value() + 2.0, // variable fallback penalty
+                    });
+                } else {
+                    for (rule_label, specificity) in &matching_rules {
+                        let rule_weight = specificity_weight(*specificity);
+                        // Composed weight = lexer_weight ⊗ rule_weight
+                        // (tropical times = addition)
+                        let composed = lexer_weight.value() + rule_weight;
+                        entries.push(ComposedEntry {
+                            token_kind_id: tok_id,
+                            token_variant_name: variant_name.clone(),
+                            rule_label: rule_label.clone(),
+                            weight: composed,
+                        });
+                    }
+                }
+            }
+
+            if !entries.is_empty() {
+                // Sort by weight ascending (best first)
+                entries.sort_by(|a, b| {
+                    a.weight
+                        .partial_cmp(&b.weight)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
+
+                // Emit codegen-time ambiguity warning using counting semiring:
+                // CountingWeight tracks derivation count per (category, token).
+                // count > 1 indicates ambiguity requiring tropical resolution.
+                let derivation_count = crate::automata::semiring::CountingWeight::new(entries.len() as u64);
+                if derivation_count.count() > 1 {
+                    let alts_desc: Vec<String> = entries
+                        .iter()
+                        .map(|e| {
+                            format!(
+                                "  - Token::{} → rule {} (weight {:.2})",
+                                e.token_variant_name, e.rule_label, e.weight
+                            )
+                        })
+                        .collect();
+                    eprintln!(
+                        "warning: {}-way ambiguity at ({}, DFA state {}): {} derivations\n{}\n  \
+                         Resolved by tropical shortest path → {}",
+                        derivation_count.count(),
+                        category,
+                        state_id,
+                        derivation_count.count(),
+                        alts_desc.join("\n"),
+                        entries[0].rule_label,
+                    );
+                }
+
+                table.insert((category.clone(), state_id), entries);
+            }
+        }
+    }
+
+    table
+}
+
+/// Compute rule specificity weight.
+///
+/// Weight = 1 / (1 + terminals + 0.5 × nonterminals).
+/// More specific rules (more structural tokens) get **lower** weight,
+/// which is preferred by tropical shortest path (min).
+fn specificity_weight(specificity: f64) -> f64 {
+    1.0 / (1.0 + specificity)
+}
+
+/// Count the structural specificity of a rule: terminals + 0.5 × nonterminals.
+fn compute_rule_specificity(rule: &RuleInfo) -> f64 {
+    let mut terminals = 0.0;
+    let mut nonterminals = 0.0;
+    for item in &rule.first_items {
+        match item {
+            FirstItem::Terminal(_) => terminals += 1.0,
+            FirstItem::NonTerminal(_) => nonterminals += 1.0,
+            FirstItem::Ident => nonterminals += 0.5,
+        }
+    }
+    terminals + 0.5 * nonterminals
+}
+
+/// Find rules in a category whose FIRST token matches a given variant name.
+///
+/// Returns `Vec<(rule_label, specificity_score)>`.
+fn find_rules_for_token(
+    rule_infos: &[RuleInfo],
+    category: &str,
+    variant_name: &str,
+    first_sets: &BTreeMap<String, FirstSet>,
+) -> Vec<(String, f64)> {
+    let mut matches = Vec::new();
+
+    for rule in rule_infos {
+        if rule.category != category {
+            continue;
+        }
+        if rule.is_infix {
+            continue; // infix rules aren't dispatched by prefix token
+        }
+
+        // Check if this rule's first item matches the variant name
+        let first_matches = rule.first_items.first().map_or(false, |item| {
+            match item {
+                FirstItem::Terminal(t) => terminal_to_variant_name(t) == variant_name,
+                FirstItem::NonTerminal(nt_category) => {
+                    // Cross-category NT: check if variant_name is in the FIRST set
+                    // of the referenced NT's category
+                    first_sets
+                        .get(nt_category.as_str())
+                        .map_or(false, |fs| fs.contains(variant_name))
+                },
+                FirstItem::Ident => variant_name == "Ident",
+            }
+        });
+
+        if first_matches {
+            let specificity = compute_rule_specificity(rule);
+            matches.push((rule.label.clone(), specificity));
+        }
+    }
+
+    matches
+}
+
+/// Convert a `TokenKind` to its variant name for FIRST set lookups.
+fn token_kind_to_variant_name(kind: &super::automata::TokenKind) -> String {
+    use super::automata::codegen::terminal_to_variant_name;
+    match kind {
+        super::automata::TokenKind::Eof => "Eof".to_string(),
+        super::automata::TokenKind::Ident => "Ident".to_string(),
+        super::automata::TokenKind::Integer => "Integer".to_string(),
+        super::automata::TokenKind::Float => "Float".to_string(),
+        super::automata::TokenKind::True => "Boolean".to_string(),
+        super::automata::TokenKind::False => "Boolean".to_string(),
+        super::automata::TokenKind::StringLit => "StringLit".to_string(),
+        super::automata::TokenKind::Fixed(text) => terminal_to_variant_name(text),
+        super::automata::TokenKind::Dollar => "Dollar".to_string(),
+        super::automata::TokenKind::DoubleDollar => "DoubleDollar".to_string(),
+    }
+}
+
+/// Emit composed dispatch table as a generated Rust function.
+///
+/// Produces:
+/// ```text
+/// fn composed_dispatch(category_id: u8, dfa_state: u32) -> &'static [(u8, &'static str, f64)] { ... }
+/// ```
+pub fn emit_composed_dispatch_table(
+    buf: &mut String,
+    table: &BTreeMap<(String, u32), Vec<ComposedEntry>>,
+    categories: &[String],
+) {
+    use std::fmt::Write;
+
+    // Map category names to IDs
+    let cat_to_id: BTreeMap<&str, u8> = categories
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.as_str(), i as u8))
+        .collect();
+
+    // Category ID constants
+    for (name, &id) in &cat_to_id {
+        write!(buf, "const CATEGORY_ID_{}: u8 = {};", name.to_uppercase(), id).unwrap();
+    }
+
+    // Static dispatch table entries
+    buf.push_str(
+        "fn composed_dispatch(category_id: u8, dfa_state: u32) -> &'static [(u8, &'static str, f64)] {",
+    );
+    buf.push_str("match (category_id, dfa_state) {");
+
+    for ((category, state_id), entries) in table {
+        let cat_id = cat_to_id.get(category.as_str()).copied().unwrap_or(255);
+        write!(buf, "({}, {}) => &[", cat_id, state_id).unwrap();
+        for entry in entries {
+            write!(
+                buf,
+                "({}, \"{}\", {:.6}),",
+                entry.token_kind_id, entry.rule_label, entry.weight
+            )
+            .unwrap();
+        }
+        buf.push_str("],");
+    }
+
+    buf.push_str("_ => &[] } }");
+}
+
+/// Build a resolution map from composed dispatch entries for use in standard batch dispatch.
+///
+/// For each `(category, ambiguous_token_variant)` pair in the composed dispatch table,
+/// picks the winning rule (lowest tropical weight) and records both the rule label
+/// and the winning weight. The weight is preserved so dispatch codegen can sort
+/// deterministic arms by weight (most likely first), improving CPU branch prediction.
+///
+/// Returns `BTreeMap<(category, token_variant), (winning_rule_label, weight)>`.
+pub fn resolve_dispatch_winners(
+    composed_table: &BTreeMap<(String, u32), Vec<ComposedEntry>>,
+) -> BTreeMap<(String, String), (String, f64)> {
+    let mut winners: BTreeMap<(String, String), (String, f64)> = BTreeMap::new();
+
+    for ((category, _state_id), entries) in composed_table {
+        for entry in entries {
+            let key = (category.clone(), entry.token_variant_name.clone());
+            match winners.get(&key) {
+                Some((_existing_label, existing_weight)) if *existing_weight <= entry.weight => {
+                    /* existing winner has equal or better weight; keep it */
+                }
+                _ => {
+                    winners.insert(key, (entry.rule_label.clone(), entry.weight));
+                }
+            }
+        }
+    }
+
+    winners
+}
+
+/// Build a weight map covering ALL (category, token_variant) pairs for dispatch arm ordering.
+///
+/// This provides weights for both ambiguous and deterministic tokens:
+/// - **Ambiguous tokens**: use composed dispatch weights (tropical shortest-path winner)
+/// - **Deterministic tokens**: use rule specificity weight (more specific = lower weight)
+///
+/// The resulting map is passed to dispatch codegen so that ALL match arms — not just
+/// ambiguous ones — can be sorted by weight (most likely first), improving CPU branch
+/// prediction hit rate.
+pub fn build_complete_weight_map(
+    composed_table: &BTreeMap<(String, u32), Vec<ComposedEntry>>,
+    first_sets: &BTreeMap<String, FirstSet>,
+    rule_infos: &[RuleInfo],
+    category_names: &[String],
+) -> BTreeMap<(String, String), f64> {
+    let mut weight_map: BTreeMap<(String, String), f64> = BTreeMap::new();
+
+    // 1. Seed with ambiguous token weights from composed dispatch (best weight per (cat, token))
+    for ((category, _state_id), entries) in composed_table {
+        for entry in entries {
+            let key = (category.clone(), entry.token_variant_name.clone());
+            match weight_map.get(&key) {
+                Some(&existing) if existing <= entry.weight => { /* keep better */ }
+                _ => { weight_map.insert(key, entry.weight); }
+            }
+        }
+    }
+
+    // 2. Fill deterministic tokens: for each category, each FIRST-set token that
+    //    doesn't already have a weight gets a specificity-based weight.
+    for category in category_names {
+        let first_set = match first_sets.get(category) {
+            Some(fs) => fs,
+            None => continue,
+        };
+
+        for token in &first_set.tokens {
+            let key = (category.clone(), token.clone());
+            if weight_map.contains_key(&key) {
+                continue; // already has an ambiguous weight
+            }
+
+            // Find the best (most specific) rule matching this token in this category
+            let matching = find_rules_for_token(rule_infos, category, token, first_sets);
+            if matching.is_empty() {
+                // Variable fallback — higher weight (less specific)
+                weight_map.insert(key, 2.0);
+            } else {
+                // Use the best specificity weight (lowest = most specific)
+                let best = matching.iter()
+                    .map(|(_, specificity)| specificity_weight(*specificity))
+                    .fold(f64::INFINITY, f64::min);
+                weight_map.insert(key, best);
+            }
+        }
+    }
+
+    weight_map
+}
+
+#[cfg(test)]
+mod composed_dispatch_tests {
+    use super::*;
+    use crate::automata::{
+        codegen::TokenVariantMap,
+        semiring::TropicalWeight,
+        TokenKind,
+    };
+
+    fn make_variant_map() -> TokenVariantMap {
+        TokenVariantMap::from_token_kinds(&[
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Integer,
+            TokenKind::Fixed("error".to_string()),
+            TokenKind::Fixed("+".to_string()),
+        ])
+    }
+
+    fn make_rule_infos() -> Vec<RuleInfo> {
+        vec![
+            RuleInfo {
+                label: "CompareProc".to_string(),
+                category: "Proc".to_string(),
+                first_items: vec![
+                    FirstItem::Terminal("error".to_string()),
+                ],
+                is_infix: false,
+                is_var: false,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: false,
+            },
+            RuleInfo {
+                label: "VarProc".to_string(),
+                category: "Proc".to_string(),
+                first_items: vec![FirstItem::Ident],
+                is_infix: false,
+                is_var: true,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: false,
+            },
+            RuleInfo {
+                label: "AddInt".to_string(),
+                category: "Int".to_string(),
+                first_items: vec![FirstItem::Ident],
+                is_infix: true,
+                is_var: false,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: false,
+            },
+            RuleInfo {
+                label: "VarInt".to_string(),
+                category: "Int".to_string(),
+                first_items: vec![FirstItem::Ident],
+                is_infix: false,
+                is_var: true,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: false,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_composed_dispatch_basic() {
+        let variant_map = make_variant_map();
+        let rule_infos = make_rule_infos();
+
+        let mut first_sets = BTreeMap::new();
+        let mut proc_first = FirstSet::new();
+        proc_first.insert("KwError");
+        proc_first.insert("Ident");
+        first_sets.insert("Proc".to_string(), proc_first);
+
+        let mut int_first = FirstSet::new();
+        int_first.insert("Ident");
+        int_first.insert("Integer");
+        first_sets.insert("Int".to_string(), int_first);
+
+        let categories = vec!["Proc".to_string(), "Int".to_string()];
+
+        // Ambiguous state 7: "error" matches both Fixed("error") and Ident
+        let ambiguous_states = vec![
+            (
+                7u32,
+                vec![
+                    (
+                        TokenKind::Fixed("error".to_string()),
+                        TropicalWeight::new(0.0), // high priority
+                    ),
+                    (
+                        TokenKind::Ident,
+                        TropicalWeight::new(9.0), // low priority
+                    ),
+                ],
+            ),
+        ];
+
+        let table = compute_composed_dispatch(
+            &ambiguous_states,
+            &categories,
+            &first_sets,
+            &variant_map,
+            None,
+            &rule_infos,
+        );
+
+        // Should have entries for (Proc, 7) and (Int, 7)
+        assert!(
+            table.contains_key(&("Proc".to_string(), 7)),
+            "should have composed entry for (Proc, 7)"
+        );
+        assert!(
+            table.contains_key(&("Int".to_string(), 7)),
+            "should have composed entry for (Int, 7)"
+        );
+
+        // (Proc, 7): should have entries for both KwError→CompareProc and Ident→VarProc
+        let proc_entries = &table[&("Proc".to_string(), 7)];
+        assert!(proc_entries.len() >= 2, "Proc should have at least 2 entries");
+        // Best entry should be the one with lowest weight
+        assert!(
+            proc_entries[0].weight <= proc_entries[1].weight,
+            "entries should be sorted by weight ascending"
+        );
+
+        // (Int, 7): only Ident is in Int's FIRST set
+        let int_entries = &table[&("Int".to_string(), 7)];
+        assert!(
+            !int_entries.is_empty(),
+            "Int should have entries for Ident"
+        );
+        // All entries should use Ident token
+        for entry in int_entries {
+            assert_eq!(entry.token_variant_name, "Ident");
+        }
+    }
+
+    #[test]
+    fn test_composed_dispatch_empty_when_no_ambiguity() {
+        let variant_map = make_variant_map();
+        let rule_infos = make_rule_infos();
+        let first_sets = BTreeMap::new();
+        let categories = vec!["Proc".to_string()];
+
+        // No ambiguous states
+        let table = compute_composed_dispatch(
+            &[],
+            &categories,
+            &first_sets,
+            &variant_map,
+            None,
+            &rule_infos,
+        );
+        assert!(table.is_empty());
+    }
+
+    #[test]
+    fn test_specificity_weight() {
+        // More specific = lower weight = preferred
+        let high_specificity = specificity_weight(2.5); // e.g., 2 terminals + 1 NT
+        let low_specificity = specificity_weight(0.0); // no terminals, no NTs
+
+        assert!(
+            high_specificity < low_specificity,
+            "higher specificity should yield lower weight: {} vs {}",
+            high_specificity,
+            low_specificity
+        );
+    }
+
+    #[test]
+    fn test_compute_rule_specificity() {
+        let rule_with_terminals = RuleInfo {
+            label: "Compare".to_string(),
+            category: "Proc".to_string(),
+            first_items: vec![
+                FirstItem::Terminal("==".to_string()),
+                FirstItem::NonTerminal("Int".to_string()),
+            ],
+            is_infix: false,
+            is_var: false,
+            is_literal: false,
+            is_cross_category: false,
+            is_cast: false,
+        };
+        let specificity = compute_rule_specificity(&rule_with_terminals);
+        // 1 terminal + 0.5 * 1 nonterminal = 1.5
+        assert!((specificity - 1.5).abs() < 1e-10);
+
+        let var_rule = RuleInfo {
+            label: "Var".to_string(),
+            category: "Proc".to_string(),
+            first_items: vec![FirstItem::Ident],
+            is_infix: false,
+            is_var: true,
+            is_literal: false,
+            is_cross_category: false,
+            is_cast: false,
+        };
+        let var_specificity = compute_rule_specificity(&var_rule);
+        // 0.5 * 0.5 (Ident counts as 0.5 nonterminal) = 0.25
+        assert!((var_specificity - 0.25).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_emit_composed_dispatch_table() {
+        let mut table = BTreeMap::new();
+        table.insert(
+            ("Proc".to_string(), 7),
+            vec![
+                ComposedEntry {
+                    token_kind_id: 3,
+                    token_variant_name: "KwError".to_string(),
+                    rule_label: "CompareProc".to_string(),
+                    weight: 0.29,
+                },
+                ComposedEntry {
+                    token_kind_id: 1,
+                    token_variant_name: "Ident".to_string(),
+                    rule_label: "VarProc".to_string(),
+                    weight: 10.0,
+                },
+            ],
+        );
+
+        let categories = vec!["Proc".to_string(), "Int".to_string()];
+        let mut buf = String::new();
+        emit_composed_dispatch_table(&mut buf, &table, &categories);
+
+        assert!(buf.contains("CATEGORY_ID_PROC"));
+        assert!(buf.contains("composed_dispatch"));
+        assert!(buf.contains("CompareProc"));
+        assert!(buf.contains("VarProc"));
+
+        // Verify it parses as valid Rust tokens
+        let _ts: proc_macro2::TokenStream = buf
+            .parse()
+            .expect("composed dispatch table should be valid Rust");
+    }
+
+    /// Test that NonTerminal rules are matched via FIRST-set lookup (not hardcoded to "Ident").
+    ///
+    /// Regression test for the bug where `find_rules_for_token()` hardcoded
+    /// `variant_name == "Ident"` for NonTerminal items, incorrectly matching
+    /// only Ident tokens regardless of the NT's actual FIRST set.
+    #[test]
+    fn test_composed_dispatch_nonterminal_first_set() {
+        let variant_map = make_variant_map();
+
+        // Set up: category "Proc" has a cross-category rule whose first item
+        // is NonTerminal("Int"), and Int's FIRST set contains "Integer".
+        let rule_infos = vec![
+            RuleInfo {
+                label: "CrossInt".to_string(),
+                category: "Proc".to_string(),
+                first_items: vec![FirstItem::NonTerminal("Int".to_string())],
+                is_infix: false,
+                is_var: false,
+                is_literal: false,
+                is_cross_category: true,
+                is_cast: false,
+            },
+            RuleInfo {
+                label: "VarProc".to_string(),
+                category: "Proc".to_string(),
+                first_items: vec![FirstItem::Ident],
+                is_infix: false,
+                is_var: true,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: false,
+            },
+        ];
+
+        let mut first_sets = BTreeMap::new();
+        let mut proc_first = FirstSet::new();
+        proc_first.insert("Integer"); // Integer in Proc's FIRST (via cross-cat)
+        proc_first.insert("Ident");
+        first_sets.insert("Proc".to_string(), proc_first);
+
+        let mut int_first = FirstSet::new();
+        int_first.insert("Integer");
+        int_first.insert("Ident");
+        first_sets.insert("Int".to_string(), int_first);
+
+        let categories = vec!["Proc".to_string()];
+
+        // Ambiguous state: Integer token is in both variants
+        let ambiguous_states = vec![(
+            5u32,
+            vec![
+                (TokenKind::Integer, TropicalWeight::new(0.0)),
+                (TokenKind::Ident, TropicalWeight::new(9.0)),
+            ],
+        )];
+
+        let table = compute_composed_dispatch(
+            &ambiguous_states,
+            &categories,
+            &first_sets,
+            &variant_map,
+            None,
+            &rule_infos,
+        );
+
+        let proc_entries = &table[&("Proc".to_string(), 5)];
+
+        // The CrossInt rule should match Integer via NonTerminal("Int")'s FIRST set
+        let cross_int = proc_entries
+            .iter()
+            .find(|e| e.rule_label == "CrossInt");
+        assert!(
+            cross_int.is_some(),
+            "CrossInt should be matched for Integer token via NT FIRST set; got entries: {:?}",
+            proc_entries,
+        );
+
+        // The Ident token should still match VarProc
+        let var_proc = proc_entries
+            .iter()
+            .find(|e| e.rule_label == "VarProc" && e.token_variant_name == "Ident");
+        assert!(
+            var_proc.is_some(),
+            "VarProc should be matched for Ident token; got entries: {:?}",
+            proc_entries,
+        );
+    }
+
+    /// When `prediction_wfsts` is `Some(...)`, `compute_composed_dispatch` should
+    /// use WFST weights instead of falling back to rule-specificity weights.
+    #[test]
+    fn test_composed_dispatch_with_prediction_wfsts() {
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::{PredictionWfstBuilder, PredictionWfst};
+
+        let variant_map = make_variant_map();
+        let rule_infos = make_rule_infos();
+
+        let mut first_sets = BTreeMap::new();
+        let mut proc_first = FirstSet::new();
+        proc_first.insert("KwError");
+        proc_first.insert("Ident");
+        first_sets.insert("Proc".to_string(), proc_first);
+
+        let mut int_first = FirstSet::new();
+        int_first.insert("Ident");
+        int_first.insert("Integer");
+        first_sets.insert("Int".to_string(), int_first);
+
+        let categories = vec!["Proc".to_string(), "Int".to_string()];
+
+        // Build a PredictionWfst for "Proc" that assigns specific weights
+        let token_map = TokenIdMap::from_names(
+            vec!["KwError".to_string(), "Ident".to_string(), "Integer".to_string()],
+        );
+        let mut proc_builder = PredictionWfstBuilder::new("Proc", token_map.clone());
+        proc_builder.add_action(
+            "KwError",
+            crate::prediction::DispatchAction::Direct {
+                rule_label: "CompareProc".to_string(),
+                parse_fn: "parse_CompareProc".to_string(),
+            },
+            TropicalWeight::new(0.5),
+        );
+        proc_builder.add_action(
+            "Ident",
+            crate::prediction::DispatchAction::Direct {
+                rule_label: "VarProc".to_string(),
+                parse_fn: "parse_VarProc".to_string(),
+            },
+            TropicalWeight::new(1.0),
+        );
+        let proc_wfst = proc_builder.build();
+
+        let mut prediction_wfsts: BTreeMap<String, PredictionWfst> = BTreeMap::new();
+        prediction_wfsts.insert("Proc".to_string(), proc_wfst);
+
+        // Ambiguous state 7: "error" matches both Fixed("error") and Ident
+        let ambiguous_states = vec![(
+            7u32,
+            vec![
+                (
+                    TokenKind::Fixed("error".to_string()),
+                    TropicalWeight::new(0.0),
+                ),
+                (
+                    TokenKind::Ident,
+                    TropicalWeight::new(9.0),
+                ),
+            ],
+        )];
+
+        // Call with Some(prediction_wfsts)
+        let table = compute_composed_dispatch(
+            &ambiguous_states,
+            &categories,
+            &first_sets,
+            &variant_map,
+            Some(&prediction_wfsts),
+            &rule_infos,
+        );
+
+        // (Proc, 7): should use WFST weights (0.0+0.5=0.5 for CompareProc via KwError,
+        // 9.0+1.0=10.0 for VarProc via Ident)
+        let proc_entries = &table[&("Proc".to_string(), 7)];
+        assert!(
+            proc_entries.len() >= 2,
+            "Proc should have at least 2 entries with WFST; got: {:?}",
+            proc_entries,
+        );
+        // Best entry (lowest weight) should be first due to sorting
+        assert!(
+            proc_entries[0].weight <= proc_entries[1].weight,
+            "entries should be sorted by weight ascending; got: {:?}",
+            proc_entries,
+        );
+
+        // Verify the WFST-derived weights differ from specificity-only fallback:
+        // WFST weight for KwError→CompareProc = lexer(0.0) + wfst(0.5) = 0.5
+        let compare_entry = proc_entries.iter().find(|e| e.rule_label == "CompareProc");
+        assert!(
+            compare_entry.is_some(),
+            "CompareProc should be in WFST-weighted entries; got: {:?}",
+            proc_entries,
+        );
+        let compare_weight = compare_entry.expect("CompareProc entry missing").weight;
+        assert!(
+            (compare_weight - 0.5).abs() < 1e-6,
+            "CompareProc weight should be 0.5 (lexer 0.0 + wfst 0.5); got {}",
+            compare_weight,
+        );
+
+        // (Int, 7): no PredictionWfst for Int, so should fall back to specificity
+        let int_entries = &table[&("Int".to_string(), 7)];
+        assert!(
+            !int_entries.is_empty(),
+            "Int should have fallback entries for Ident; got empty",
+        );
+        // Int entries should NOT have WFST weight 10.0 — they use specificity fallback
+        for entry in int_entries {
+            assert_eq!(entry.token_variant_name, "Ident");
+        }
     }
 }

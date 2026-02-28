@@ -199,7 +199,7 @@ pub struct DfaState {
     /// Length is always `num_classes` (stored in parent `Dfa`).
     /// `DEAD_STATE` means no transition for that equivalence class.
     pub transitions: Vec<StateId>,
-    /// If this is an accepting state, which token kind it produces.
+    /// If this is an accepting state, which token kind it produces (primary winner).
     pub accept: Option<TokenKind>,
     /// Tropical weight for this accepting state.
     ///
@@ -207,6 +207,15 @@ pub struct DfaState {
     /// construction. Lower weight = higher priority.
     /// Non-accepting states have `TropicalWeight::zero()` (infinity).
     pub weight: TropicalWeight,
+    /// Alternative accept tokens for this DFA state, sorted by weight (ascending).
+    ///
+    /// Non-empty only for **ambiguous** states where 2+ distinct `TokenKind`s
+    /// are valid (e.g., a keyword like `error` that also matches the identifier
+    /// pattern). The primary winner is in `accept`/`weight`; this vec contains
+    /// ALL alternatives including the primary, for use by composed dispatch tables.
+    ///
+    /// Empty for unambiguous states (zero overhead).
+    pub alt_accepts: Vec<(TokenKind, TropicalWeight)>,
 }
 
 impl DfaState {
@@ -216,7 +225,14 @@ impl DfaState {
             transitions: vec![DEAD_STATE; num_classes],
             accept: None,
             weight: TropicalWeight::zero(),
+            alt_accepts: Vec::new(),
         }
+    }
+
+    /// Whether this state has ambiguous accepts (2+ distinct token kinds).
+    #[inline]
+    pub fn is_ambiguous(&self) -> bool {
+        !self.alt_accepts.is_empty()
     }
 }
 
@@ -256,6 +272,24 @@ impl Dfa {
     #[inline]
     pub fn set_transition(&mut self, state: StateId, class: ClassId, target: StateId) {
         self.states[state as usize].transitions[class as usize] = target;
+    }
+
+    /// Whether any DFA state has ambiguous accepts (2+ distinct token kinds).
+    pub fn has_ambiguous_accepts(&self) -> bool {
+        self.states.iter().any(|s| s.is_ambiguous())
+    }
+
+    /// Collect all ambiguous DFA states: `(state_id, alt_accepts_slice)`.
+    ///
+    /// Returns only states with 2+ distinct token kinds in their accept set.
+    /// The returned slices are sorted by weight (ascending = best first).
+    pub fn ambiguous_states(&self) -> Vec<(StateId, &[(TokenKind, TropicalWeight)])> {
+        self.states
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.is_ambiguous())
+            .map(|(i, s)| (i as StateId, s.alt_accepts.as_slice()))
+            .collect()
     }
 }
 

@@ -288,6 +288,46 @@ lib.rs
 - `CrossCategoryRule`: source/result categories, operator, backtrack flag
 - `CastRule`: source/target categories, wrapper constructor label
 
+### WFST Modules (Always-On)
+
+The following modules provide weighted finite-state transducer support for
+prediction, recovery, and lattice-based decoding. All WFST code is always
+compiled (no feature gate); only the log semiring modules require `wfst-log`.
+
+#### Always-On Modules
+
+- **`wfst.rs`** -- `PredictionWfst`, `PredictionWfstBuilder`, `predict()`,
+  `predict_with_confidence()`, `predict_pruned()`, `WeightedAction`,
+  `WeightedTransition`, CSR-format state/transition arrays
+- **`token_id.rs`** -- `TokenIdMap`, compact token-to-integer mapping for
+  WFST state indexing
+- **`lattice.rs`** -- `TokenLattice<T, S, W>`, `LatticeEdge<T, S, W>`,
+  `ViterbiPath`, `viterbi_best_path()`, `viterbi_best_path_beam()`,
+  `n_best_paths()`, `linear_to_lattice_generic()`
+- **`recovery.rs`** -- `RepairAction`, `RecoveryWfst`, `find_recovery()`,
+  `find_recovery_contextual()`, `viterbi_recovery_beam()`,
+  `edit_cost()` (EditWeight integration)
+- **`compose.rs`** -- `compose_wfsts()`, WFST product construction for
+  combining prediction and lexer transducers
+- **`automata/semiring.rs`** -- `Semiring` trait and six semiring types:
+  - `TropicalWeight` -- `(R+ ∪ {+∞}, min, +, +∞, 0.0)`, default dispatch
+  - `CountingWeight` -- `(N, +, ×, 0, 1)`, codegen-time ambiguity detection
+  - `BooleanWeight` -- `({0, 1}, ∨, ∧, 0, 1)`, dead-rule detection
+  - `EditWeight` -- `(N, min, +, ∞, 0)`, error recovery cost
+  - `ProductWeight<A, B>` -- lexicographic product of two semirings
+  - `LogWeight` -- `(R+ ∪ {+∞}, log-sum-exp, +, +∞, 0.0)` (`wfst-log` only)
+
+#### `wfst-log` Feature-Gated Modules
+
+- **`forward_backward.rs`** -- Forward-backward algorithm for log-semiring
+  WFST training
+- **`log_push.rs`** -- Log-semiring weight pushing for WFST normalization
+- **`training.rs`** -- `RuleWeights`, `TrainedModel` (serde JSON),
+  `TrainingStats` for learning dispatch weights from parse corpora
+
+> **Cross-reference:** See [architecture/wfst/module-map.md](wfst/module-map.md)
+> for detailed WFST module architecture and data flow.
+
 ---
 
 ## External Dependencies

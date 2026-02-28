@@ -1,8 +1,8 @@
 //! Integration tests for the full parser generation pipeline.
 
 use crate::{
-    binding_power::Associativity, generate_parser, BeamWidthConfig, CategorySpec, DispatchStrategy,
-    LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec,
+    binding_power::Associativity, generate_parser, BeamWidthConfig, CategorySpec, LanguageSpec,
+    LiteralPatterns, RuleSpec, SyntaxItemSpec,
 };
 
 /// Helper: extract category names from a slice of `CategorySpec`.
@@ -69,7 +69,6 @@ fn calculator_spec() -> LanguageSpec {
         ],
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
-        dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
     }
 }
@@ -82,7 +81,7 @@ fn test_generate_parser_produces_code() {
 
     // Should contain lexer components
     assert!(code_str.contains("Token"), "should contain Token enum");
-    assert!(code_str.contains("Span"), "should contain Span struct");
+    assert!(code_str.contains("Range"), "should contain Range struct");
     assert!(code_str.contains("lex"), "should contain lex function");
 
     // Should contain parser components
@@ -104,8 +103,14 @@ fn test_generate_parser_code_size() {
     let lines = code_str.matches(';').count() + code_str.matches('{').count();
 
     // For a simple calculator, generated code should be compact
-    // (much less than LALRPOP's ~1,000 lines for Calculator)
-    assert!(lines < 500, "generated code should be compact, got ~{} lines", lines);
+    // (much less than LALRPOP's ~1,000 lines for Calculator).
+    // context-sensitive-lex adds lazy parsers, LexerAdapter, EXPECTED constants,
+    // and context-sensitive parse functions — legitimately more code.
+    #[cfg(feature = "context-sensitive-lex")]
+    let limit = 600;
+    #[cfg(not(feature = "context-sensitive-lex"))]
+    let limit = 500;
+    assert!(lines < limit, "generated code should be compact, got ~{} lines (limit {})", lines, limit);
 }
 
 #[test]
@@ -182,7 +187,6 @@ fn test_generate_parser_two_categories() {
         ],
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
-        dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
     };
 
@@ -390,16 +394,204 @@ fn test_generate_parser_with_mixfix() {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WFST lexer weight emission tests (feature = "wfst")
+// Context-sensitive lexing (Phase 6G)
 // ══════════════════════════════════════════════════════════════════════════════
 
-#[cfg(feature = "wfst")]
+#[test]
+fn test_standard_path_has_no_backtracking() {
+    let spec = calculator_spec();
+
+    let code = generate_parser(&spec);
+    let code_str = code.to_string();
+
+    // Standard batch path should NOT contain save/restore backtracking
+    // (composed dispatch resolves ambiguous tokens at codegen time)
+    let saved_count = code_str.matches("let saved = * pos").count()
+        + code_str.matches("let saved = *pos").count();
+    assert_eq!(
+        saved_count, 0,
+        "standard path should have zero save/restore backtracking, found {}",
+        saved_count,
+    );
+}
+
+#[test]
+#[cfg(feature = "context-sensitive-lex")]
+fn test_emits_context_sensitive_lex_infrastructure_with_feature() {
+    let spec = calculator_spec();
+
+    let code = generate_parser(&spec);
+    let code_str = code.to_string();
+
+    // Context-sensitive lex infrastructure should be emitted when feature is enabled
+    assert!(
+        code_str.contains("struct Lexer"),
+        "should emit Lexer struct with context-sensitive-lex feature"
+    );
+    assert!(
+        code_str.contains("struct LexerAdapter"),
+        "should emit LexerAdapter with context-sensitive-lex feature"
+    );
+    assert!(
+        code_str.contains("next_token_for_category"),
+        "should emit next_token_for_category with context-sensitive-lex feature"
+    );
+    assert!(
+        code_str.contains("accept_token_by_kind"),
+        "should emit accept_token_by_kind with context-sensitive-lex feature"
+    );
+    assert!(
+        code_str.contains("parse_Int_lazy"),
+        "should emit parse_Cat_lazy with context-sensitive-lex feature"
+    );
+    assert!(
+        code_str.contains("set_category"),
+        "lazy parser should call adapter.set_category() with context-sensitive-lex feature"
+    );
+
+    // Phase 6H: Enhanced error messages
+    assert!(
+        code_str.contains("EXPECTED_INT"),
+        "should emit per-category EXPECTED_ constants with context-sensitive-lex feature"
+    );
+    assert!(
+        code_str.contains("expected_for_category"),
+        "should emit expected_for_category() with context-sensitive-lex feature"
+    );
+    assert!(
+        code_str.contains("lex_error"),
+        "LexerAdapter should have lex_error field with context-sensitive-lex feature"
+    );
+    assert!(
+        code_str.contains("take_error"),
+        "LexerAdapter should expose take_error() with context-sensitive-lex feature"
+    );
+}
+
+#[test]
+#[cfg(not(feature = "context-sensitive-lex"))]
+fn test_no_lazy_parsers_without_feature() {
+    let spec = calculator_spec();
+
+    let code = generate_parser(&spec);
+    let code_str = code.to_string();
+
+    // Lazy parsers should NOT be emitted without feature
+    assert!(
+        !code_str.contains("parse_Int_lazy"),
+        "should NOT emit parse_Cat_lazy without context-sensitive-lex feature"
+    );
+    assert!(
+        !code_str.contains("struct Lexer"),
+        "should NOT emit Lexer struct without context-sensitive-lex feature"
+    );
+    assert!(
+        !code_str.contains("struct LexerAdapter"),
+        "should NOT emit LexerAdapter without context-sensitive-lex feature"
+    );
+}
+
+#[test]
+#[cfg(feature = "context-sensitive-lex")]
+fn test_expected_messages_contain_first_set() {
+    use crate::RuleSpecInput;
+
+    // Two-category grammar: Proc (with Var) and Int (with i32 native type)
+    let types = vec![
+        CategorySpec {
+            name: "Proc".to_string(),
+            native_type: None,
+            is_primary: true,
+        },
+        CategorySpec {
+            name: "Int".to_string(),
+            native_type: Some("i32".to_string()),
+            is_primary: false,
+        },
+    ];
+
+    let spec = LanguageSpec::with_options(
+        "TestLang".to_string(),
+        types,
+        vec![
+            RuleSpecInput {
+                label: "PVar".to_string(),
+                category: "Proc".to_string(),
+                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
+                associativity: Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+            },
+            RuleSpecInput {
+                label: "IVar".to_string(),
+                category: "Int".to_string(),
+                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
+                associativity: Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+            },
+            RuleSpecInput {
+                label: "NumLit".to_string(),
+                category: "Int".to_string(),
+                syntax: vec![],
+                associativity: Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+            },
+        ],
+        BeamWidthConfig::Disabled,
+        None,
+        LiteralPatterns::default(),
+    );
+
+    let code = generate_parser(&spec);
+    let code_str = code.to_string();
+
+    // Verify both categories have EXPECTED_ constants
+    assert!(
+        code_str.contains("EXPECTED_PROC"),
+        "should emit EXPECTED_PROC constant"
+    );
+    assert!(
+        code_str.contains("EXPECTED_INT"),
+        "should emit EXPECTED_INT constant"
+    );
+
+    // Verify the expected message for Int includes "integer literal" (from i32 native type)
+    assert!(
+        code_str.contains("integer literal"),
+        "EXPECTED_INT should mention 'integer literal' from i32 native type"
+    );
+
+    // Verify lazy parser propagates lex errors via take_error()
+    assert!(
+        code_str.contains("take_error"),
+        "lazy parser should check adapter.take_error() for lex error propagation"
+    );
+
+    // Verify the enhanced error message format in next_token_for_category
+    assert!(
+        code_str.contains("expected_for_category"),
+        "next_token_for_category should use expected_for_category() for enhanced errors"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WFST lexer weight emission tests
+// ══════════════════════════════════════════════════════════════════════════════
+
 mod wfst_lexer_weight_tests {
     use super::*;
     use crate::automata::{
         codegen::generate_lexer_string,
         minimize::minimize_dfa,
-        nfa::{build_nfa_default, BuiltinNeeds},
+        nfa::{build_nfa, BuiltinNeeds},
         partition::compute_equivalence_classes,
         subset::subset_construction,
         TerminalPattern, TokenKind,
@@ -416,11 +608,12 @@ mod wfst_lexer_weight_tests {
             })
             .collect();
         let token_kinds: Vec<TokenKind> = terminal_specs.iter().map(|(_, k)| k.clone()).collect();
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         let dfa = minimize_dfa(&dfa);
-        let (code, _) = generate_lexer_string(&dfa, &partition, &token_kinds, "test");
+        let (code, _, _variant_map, _ambiguity) =
+            generate_lexer_string(&dfa, &partition, &token_kinds, "test");
         code
     }
 
@@ -573,7 +766,7 @@ mod wfst_lexer_weight_tests {
         assert!(!code.is_empty(), "generated code with WFST statics should not be empty");
     }
 
-    /// Build a calculator spec with Weighted dispatch strategy to trigger WFST embedding.
+    /// Build a calculator spec with beam width for WFST embedding tests.
     fn calculator_spec_weighted() -> LanguageSpec {
         #[allow(unused_imports)]
         use crate::RuleSpecInput;
@@ -621,7 +814,6 @@ mod wfst_lexer_weight_tests {
             ],
             BeamWidthConfig::Explicit(1.5),
             None,
-            DispatchStrategy::Weighted,
             LiteralPatterns::default(),
         )
     }

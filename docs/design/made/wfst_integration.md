@@ -235,7 +235,7 @@ cross-category overlap causes incorrect parse results or excessive backtracking.
 
 - User guide: `../../docs/guides/wfst_features.md`
 - Benchmark report: `../../prattail/docs/benchmarks/wfst-pipeline-integration.md`
-- Detailed WFST documentation: `../../prattail/docs/experimental/wfst/`
+- Detailed WFST documentation: `../../prattail/docs/{theory,architecture,design,usage}/wfst/`
 
 ---
 

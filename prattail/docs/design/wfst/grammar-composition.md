@@ -1,13 +1,12 @@
 # Grammar Composition
 
-**Feature gate:** `wfst`
-
 **Date:** 2026-02-22
+**Updated:** 2026-02-28
 
 Grammar composition combines two independently defined `LanguageSpec` values
 into a single merged specification that accepts inputs from either source
 grammar. The merged specification is then passed to `generate_parser()` through
-the normal PraTTaIL pipeline — composition is a preprocessing step, not a
+the normal PraTTaIL pipeline -- composition is a preprocessing step, not a
 parallel parsing mode.
 
 The operation is analogous to WFST union: two automata that recognize
@@ -23,17 +22,21 @@ transitions, so the merge algorithm works structurally:
 4. All rules are reclassified in the merged grammar (cast detection, infix
    detection, etc.).
 
+All composition functionality is always compiled and available -- there is
+no feature gate for grammar composition. Every grammar processed by the
+PraTTaIL pipeline receives WFST-weighted composition automatically.
+
 ---
 
 ## Table of Contents
 
 1. [Language Union Semantics](#1-language-union-semantics)
-2. [compose\_languages Algorithm](#2-compose_languages-algorithm)
+2. [compose_languages Algorithm](#2-compose_languages-algorithm)
 3. [Category Merging](#3-category-merging)
 4. [Rule Merging](#4-rule-merging)
 5. [Validation and Error Variants](#5-validation-and-error-variants)
-6. [compose\_many](#6-compose_many)
-7. [composition\_summary](#7-composition_summary)
+6. [compose_many](#6-compose_many)
+7. [composition_summary](#7-composition_summary)
 8. [Diagrams](#8-diagrams)
 9. [Example: Calculator + BooleanLogic](#9-example-calculator--booleanlogic)
 10. [WFST-Aware Composition](#10-wfst-aware-composition)
@@ -63,9 +66,9 @@ and core types.
 
 ---
 
-## 2. compose\_languages Algorithm
+## 2. compose_languages Algorithm
 
-`compose_languages(spec_a, spec_b) → Result<LanguageSpec, Vec<CompositionError>>`
+`compose_languages(spec_a, spec_b) -> Result<LanguageSpec, Vec<CompositionError>>`
 
 All validation errors are collected into a `Vec<CompositionError>` before
 returning. This means multiple errors are reported in one call rather than
@@ -73,30 +76,30 @@ failing on the first.
 
 ```
 Step 1: merge_categories(spec_a.types, spec_b.types)
-    ─ accumulate by name; A-priority for native_type
-    ─ error: CategoryNativeTypeMismatch if shared category has different native_type
+    - accumulate by name; A-priority for native_type
+    - error: CategoryNativeTypeMismatch if shared category has different native_type
 
 Step 2: merge_rules(spec_a, spec_b)
-    ─ A rules first, then B rules
-    ─ error: DuplicateRuleLabel if any label appears in both
+    - A rules first, then B rules
+    - error: DuplicateRuleLabel if any label appears in both
 
 Step 3: validate_category_refs(all merged rules)
-    ─ check every NonTerminal, Binder, Collection, ZipMapSep category reference
-    ─ error: InvalidCategoryReference if referenced category not in merged types
+    - check every NonTerminal, Binder, Collection, ZipMapSep category reference
+    - error: InvalidCategoryReference if referenced category not in merged types
 
 Step 4: check_associativity_conflicts(spec_a, spec_b)
-    ─ for each (terminal, category) pair appearing as infix in both:
-    ─ error: AssociativityConflict if associativity differs
+    - for each (terminal, category) pair appearing as infix in both:
+    - error: AssociativityConflict if associativity differs
 
-Step 5: if any errors → return Err(errors)
+Step 5: if any errors -> return Err(errors)
 
 Step 6: check_binding_power_conflicts(spec_a, spec_b)
-    ─ for each (terminal, category) pair with explicit prefix_precedence in both:
-    ─ error: BindingPowerConflict if precedence values differ
+    - for each (terminal, category) pair with explicit prefix_precedence in both:
+    - error: BindingPowerConflict if precedence values differ
 
 Step 7: LanguageSpec::new(merged_name, merged_types, merged_inputs)
-    ─ reclassifies all rules via classify_rule()
-    ─ merged_name = "A_B" (concatenation of grammar names)
+    - reclassifies all rules via classify_rule()
+    - merged_name = "A_B" (concatenation of grammar names)
 ```
 
 The reclassification in step 7 re-derives all flags that the pipeline
@@ -115,13 +118,13 @@ referenced category changes its position in the type hierarchy.
 - All categories from grammar A are added first in their original order.
 - For each category from grammar B:
   - If the name already exists (from A): verify `native_type` matches. No
-    duplication — the A-side version is kept.
+    duplication -- the A-side version is kept.
   - If the name is new: append it to the merged list.
 
 The `is_primary` flag is handled with a `seen_primary` sentinel: the first
 primary category encountered across A then B becomes the primary of the merged
 grammar. All subsequent categories with `is_primary = true` are demoted.
-This is intentionally not an error — the rationale is given in the source:
+This is intentionally not an error -- the rationale is given in the source:
 
 > `MultiplePrimaryCategories` is intentionally NOT an error. When two grammars
 > both declare a primary, `merge_categories()` keeps the first grammar's primary
@@ -164,11 +167,11 @@ The grammar author must resolve both.
 
 ---
 
-## 6. compose\_many
+## 6. compose_many
 
-`compose_many(specs: &[&LanguageSpec]) → Result<LanguageSpec, Vec<CompositionError>>`
+`compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<CompositionError>>`
 
-Folds left: `compose(A, B)` → `compose(AB, C)` → … This means grammar A
+Folds left: `compose(A, B)` -> `compose(AB, C)` -> ... This means grammar A
 has highest priority, followed by B, followed by C.
 
 If any pairwise composition fails, `compose_many` propagates the error
@@ -180,9 +183,9 @@ composition.
 
 ---
 
-## 7. composition\_summary
+## 7. composition_summary
 
-`composition_summary(spec_a, spec_b, merged) → CompositionSummary`
+`composition_summary(spec_a, spec_b, merged) -> CompositionSummary`
 
 A non-failing diagnostic query that returns counts and the list of shared
 category names. This is useful for logging and user-facing diagnostics without
@@ -193,7 +196,7 @@ pub struct CompositionSummary {
     pub merged_name: String,
     pub categories_a: usize,
     pub categories_b: usize,
-    pub categories_merged: usize,   // ≤ categories_a + categories_b
+    pub categories_merged: usize,   // <= categories_a + categories_b
     pub rules_a: usize,
     pub rules_b: usize,
     pub shared_categories: Vec<String>,
@@ -213,26 +216,26 @@ Composed 'A_B': 3 categories (2 from A, 2 from B, 1 shared), 2 rules (1 + 1)
 ### 8.1 Merge Steps
 
 ```
-  ┌─────────────────────┐      ┌─────────────────────┐
-  │   Grammar A         │      │   Grammar B         │
-  │                     │      │                     │
-  │  categories:        │      │  categories:        │
-  │    Expr {Int} ●     │      │    Expr {Bool} ●    │  ← mismatch!
-  │                     │      │    Val  {Int}       │
-  │  rules:             │      │  rules:             │
-  │    Add, Mul, Num    │      │    And, Or, True    │
-  └─────────────────────┘      └─────────────────────┘
-             │                          │
-             └──────────┬───────────────┘
-                        ▼
+  +---------------------+      +---------------------+
+  |   Grammar A         |      |   Grammar B         |
+  |                     |      |                     |
+  |  categories:        |      |  categories:        |
+  |    Expr {Int} *     |      |    Expr {Bool} *    |  <- mismatch!
+  |                     |      |    Val  {Int}       |
+  |  rules:             |      |  rules:             |
+  |    Add, Mul, Num    |      |    And, Or, True    |
+  +---------------------+      +---------------------+
+             |                          |
+             +----------+---------------+
+                        v
           compose_languages(A, B)
-                        │
-          ┌─────────────┼─────────────────┐
-          │             │                 │
-          ▼             ▼                 ▼
+                        |
+          +-------------+-----------------+
+          |             |                 |
+          v             v                 v
     merge_categories  merge_rules    validate
-          │
-          ▼
+          |
+          v
     ERROR: CategoryNativeTypeMismatch
     category = "Expr", native_type_a = Some("Int"),
                         native_type_b = Some("Bool")
@@ -241,60 +244,60 @@ Composed 'A_B': 3 categories (2 from A, 2 from B, 1 shared), 2 rules (1 + 1)
 The fix: grammar B should use a distinct category name.
 
 ```
-  ┌─────────────────────┐      ┌─────────────────────┐
-  │   Grammar A (Calc)  │      │   Grammar B (Logic) │
-  │                     │      │                     │
-  │  categories:        │      │  categories:        │
-  │    Expr {Int} ●     │      │    BoolExpr {Bool} ●│
-  │                     │      │                     │
-  │  rules:             │      │  rules:             │
-  │    Add, Mul, Num    │      │    And, Or, True    │
-  └─────────────────────┘      └─────────────────────┘
-             │                          │
-             └──────────┬───────────────┘
-                        ▼
+  +---------------------+      +---------------------+
+  |   Grammar A (Calc)  |      |   Grammar B (Logic) |
+  |                     |      |                     |
+  |  categories:        |      |  categories:        |
+  |    Expr {Int} *     |      |    BoolExpr {Bool} *|
+  |                     |      |                     |
+  |  rules:             |      |  rules:             |
+  |    Add, Mul, Num    |      |    And, Or, True    |
+  +---------------------+      +---------------------+
+             |                          |
+             +----------+---------------+
+                        v
           compose_languages(A, B)
-                        │
+                        |
           merged grammar "Calc_Logic":
-          ┌─────────────▼──────────────────────┐
-          │  categories:                       │
-          │    Expr     {Int}  is_primary=true │  ← from A
-          │    BoolExpr {Bool} is_primary=false│  ← from B (demoted)
-          │                                    │
-          │  rules (A first, then B):          │
-          │    Add, Mul, Num                   │
-          │    And, Or, True                   │
-          └────────────────────────────────────┘
+          +-------------v----------------------+
+          |  categories:                       |
+          |    Expr     {Int}  is_primary=true |  <- from A
+          |    BoolExpr {Bool} is_primary=false|  <- from B (demoted)
+          |                                    |
+          |  rules (A first, then B):          |
+          |    Add, Mul, Num                   |
+          |    And, Or, True                   |
+          +------------------------------------+
 ```
 
 ### 8.2 Composition Data-Flow
 
 ```
-  spec_a ──────────────────────────────────────────┐
-                                                   │
-  spec_b ──────────────────────────────────────────┤
-                                                   │
-                                                   ▼
+  spec_a --------------------------------------------------+
+                                                           |
+  spec_b --------------------------------------------------+
+                                                           |
+                                                           v
                                   compose_languages(a, b)
-                                          │
-              ┌───────────────────────────┼────────────────────────┐
-              │                           │                        │
-              ▼                           ▼                        ▼
+                                          |
+              +---------------------------+------------------------+
+              |                           |                        |
+              v                           v                        v
       merge_categories            merge_rules              validate refs
-      (name → CategorySpec)       (label collision)        + associativity
-              │                           │                        │
-              └───────────────────────────┼────────────────────────┘
-                                          │
-                                   errors? ─── yes ──► Err(Vec<CompositionError>)
-                                          │ no
-                                          ▼
+      (name -> CategorySpec)       (label collision)        + associativity
+              |                           |                        |
+              +---------------------------+------------------------+
+                                          |
+                                   errors? --- yes --> Err(Vec<CompositionError>)
+                                          | no
+                                          v
                                  LanguageSpec::new(
                                    name = "A_B",
                                    types = merged_types,
-                                   rules = merged_inputs   ← reclassified
+                                   rules = merged_inputs   <- reclassified
                                  )
-                                          │
-                                          ▼
+                                          |
+                                          v
                                   generate_parser()
                                   (normal pipeline)
 ```
@@ -311,19 +314,19 @@ logic grammar. They use different categories so there is no type conflict.
 ```rust
 // categories: Int { i32 } (primary)
 // rules:
-//   NumLit: Int → "0"
-//   Add:    Int → Int "+" Int
-//   Mul:    Int → Int "*" Int
+//   NumLit: Int -> "0"
+//   Add:    Int -> Int "+" Int
+//   Mul:    Int -> Int "*" Int
 ```
 
 **Grammar B (BoolLogic):**
 
 ```rust
-// categories: BoolExpr { bool } (primary — will be demoted)
+// categories: BoolExpr { bool } (primary -- will be demoted)
 // rules:
-//   TrueLit: BoolExpr → "true"
-//   And:     BoolExpr → BoolExpr "&&" BoolExpr
-//   Or:      BoolExpr → BoolExpr "||" BoolExpr
+//   TrueLit: BoolExpr -> "true"
+//   And:     BoolExpr -> BoolExpr "&&" BoolExpr
+//   Or:      BoolExpr -> BoolExpr "||" BoolExpr
 ```
 
 **Composition:**
@@ -349,7 +352,7 @@ use prattail::compose::composition_summary;
 
 let summary = composition_summary(&calc_spec, &logic_spec, &merged);
 println!("{}", summary);
-// → Composed 'Calculator_BoolLogic': 2 categories (1 from A, 1 from B, 0 shared), 6 rules (3 + 3)
+// -> Composed 'Calculator_BoolLogic': 2 categories (1 from A, 1 from B, 0 shared), 6 rules (3 + 3)
 ```
 
 **Cross-category extension (rules that span both grammars):**
@@ -360,8 +363,8 @@ If you want `BoolExpr` rules that compare `Int` values:
 // Grammar C: comparison operators
 // categories: BoolExpr { bool } (shared with B)
 // rules:
-//   Eq: BoolExpr → Int "==" Int   (cross-category: Int in BoolExpr rule)
-//   Lt: BoolExpr → Int "<"  Int
+//   Eq: BoolExpr -> Int "==" Int   (cross-category: Int in BoolExpr rule)
+//   Lt: BoolExpr -> Int "<"  Int
 ```
 
 This composes cleanly with the `A_B` merged grammar because `Int` exists in
@@ -378,16 +381,14 @@ let merged_abc = compose_many(&[&calc_spec, &logic_spec, &cmp_spec])
 
 ## 10. WFST-Aware Composition
 
-**Feature gate:** `wfst`
+Grammar composition includes WFST-aware capabilities: prediction WFST merging,
+incremental FIRST/FOLLOW set computation, and binding-power conflict detection.
+These are always available as part of the standard pipeline.
 
-When the `wfst` feature is active, grammar composition gains additional
-capabilities: prediction WFST merging, incremental FIRST/FOLLOW set
-computation, and binding-power conflict detection.
-
-### 10.1 compose\_with\_wfst
+### 10.1 compose_with_wfst
 
 `compose_with_wfst(spec_a, spec_b, wfsts_a, wfsts_b, terminals_a, terminals_b)
-→ Result<WfstCompositionResult, Vec<CompositionError>>`
+-> Result<WfstCompositionResult, Vec<CompositionError>>`
 
 This function combines two grammar specs AND their prediction WFSTs in a
 single operation:
@@ -422,21 +423,21 @@ pub struct WfstCompositionSummary {
 When composing grammars at runtime, the incremental helpers avoid full
 FIRST/FOLLOW recomputation:
 
-- `incremental_first_sets(existing, new_rules, new_categories)` — extends
+- `incremental_first_sets(existing, new_rules, new_categories)` -- extends
   existing FIRST sets with tokens contributed by new rules. Runs fixed-point
   iteration over new rules only; existing categories are stable.
-- `incremental_follow_sets(existing, new_inputs, new_categories, first_sets)` —
+- `incremental_follow_sets(existing, new_inputs, new_categories, first_sets)` --
   extends existing FOLLOW sets using new rule inputs.
-- `merge_terminal_sets(a, b)` — BTreeSet union.
+- `merge_terminal_sets(a, b)` -- BTreeSet union.
 
-These are defined in `prattail/src/prediction.rs` under `#[cfg(feature = "wfst")]`.
+These are defined in `prattail/src/prediction.rs`.
 
 ### 10.3 PredictionWfst::union
 
 `PredictionWfst::union(&mut self, other: &PredictionWfst)` merges another
 WFST into `self` via weighted union:
 
-1. Builds a token-name → token-ID mapping from `other` into `self`'s namespace.
+1. Builds a token-name -> token-ID mapping from `other` into `self`'s namespace.
 2. Appends `other`'s actions (with offset-adjusted indices) to `self`.
 3. Imports `other`'s start-state transitions into `self`'s start state,
    creating new final states for each imported transition.
@@ -478,9 +479,8 @@ recomputed by `LanguageSpec::new()` during reclassification.
 | `merge_terminal_sets`                     | `prattail/src/prediction.rs` |
 | `PredictionWfst::union`                   | `prattail/src/wfst.rs`       |
 
-Test count: 19 (in `prattail/src/compose.rs` `#[cfg(test)]` module; 13 core + 6 WFST-gated).
+Test count: 19 (in `prattail/src/compose.rs` `#[cfg(test)]` module; 13 core + 6 WFST composition).
 
 See also:
-- [../README.md](../README.md) — WFST subsystem overview and feature tiers
-- [prediction.md](prediction.md) — after composition, each merged category gets a prediction WFST
-- [../../../design/architecture-overview.md](../../../design/architecture-overview.md) — PraTTaIL pipeline where `generate_parser()` is called
+- [prediction.md](prediction.md) -- after composition, each merged category gets a prediction WFST
+- [../../design/architecture-overview.md](../../design/architecture-overview.md) -- PraTTaIL pipeline where `generate_parser()` is called

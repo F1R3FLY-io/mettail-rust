@@ -69,12 +69,7 @@ pub fn build_nfa(
     nfa
 }
 
-/// Build an NFA with default literal patterns.
-///
-/// Convenience wrapper for tests and callers that don't need custom patterns.
-pub fn build_nfa_default(terminals: &[TerminalPattern], needs: &BuiltinNeeds) -> Nfa {
-    build_nfa(terminals, needs, &LiteralPatterns::default())
-}
+
 
 /// What built-in character-class patterns are needed by the grammar.
 #[derive(Debug, Clone, Default)]
@@ -425,40 +420,6 @@ pub(crate) fn build_nfa_prefix_only(terminals: &[TerminalPattern], needs: &Built
     nfa
 }
 
-/// Build an NFA fragment for a fixed string terminal (Thompson chain).
-///
-/// Creates a chain of single-character transitions ending in an accept state.
-/// For example, `"=="` becomes:
-/// ```text
-///   start -'='-> s1 -'='-> accept(EqEq)
-/// ```
-///
-/// **Note:** This function is preserved for testing and reference. The primary
-/// `build_nfa()` uses `build_keyword_trie()` instead for prefix sharing.
-#[cfg(test)]
-fn build_string_fragment(nfa: &mut Nfa, text: &str, kind: TokenKind) -> NfaFragment {
-    let bytes = text.as_bytes();
-    assert!(!bytes.is_empty(), "terminal string must not be empty");
-
-    let start = nfa.add_state(NfaState::new());
-    let mut current = start;
-
-    for (i, &byte) in bytes.iter().enumerate() {
-        if i == bytes.len() - 1 {
-            // Last character: transition to accept state
-            let accept = nfa.add_state(NfaState::accepting(kind.clone()));
-            nfa.add_transition(current, accept, CharClass::Single(byte));
-            return NfaFragment { start, accept };
-        } else {
-            // Intermediate character: transition to next state
-            let next = nfa.add_state(NfaState::new());
-            nfa.add_transition(current, next, CharClass::Single(byte));
-            current = next;
-        }
-    }
-
-    unreachable!("terminal string must not be empty")
-}
 
 /// Compute the epsilon closure of a set of NFA states.
 ///
@@ -541,30 +502,6 @@ pub fn epsilon_closure_reuse(
 mod tests {
     use super::*;
 
-    // ══════════════════════════════════════════════════════════════════════
-    // Thompson chain tests (build_string_fragment — preserved for reference)
-    // ══════════════════════════════════════════════════════════════════════
-
-    #[test]
-    fn test_build_string_fragment() {
-        let mut nfa = Nfa::new();
-        let frag = build_string_fragment(&mut nfa, "+", TokenKind::Fixed("+".to_string()));
-
-        // Should have: original start (0), fragment start, accept
-        assert_eq!(nfa.states.len(), 3);
-        assert!(nfa.states[frag.accept as usize].accept.is_some());
-    }
-
-    #[test]
-    fn test_build_multi_char_fragment() {
-        let mut nfa = Nfa::new();
-        let frag = build_string_fragment(&mut nfa, "==", TokenKind::Fixed("==".to_string()));
-
-        // original start (0) + fragment start + intermediate + accept = 4
-        assert_eq!(nfa.states.len(), 4);
-        assert!(nfa.states[frag.accept as usize].accept.is_some());
-    }
-
     #[test]
     fn test_compile_ident_pattern() {
         let mut nfa = Nfa::new();
@@ -612,7 +549,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
         // Check that the start state has epsilon transitions
         assert!(
             !nfa.states[nfa.start as usize].epsilon.is_empty(),
@@ -819,29 +756,11 @@ mod tests {
             },
         ];
 
-        // Chain construction state count
-        let mut chain_nfa = Nfa::new();
-        for t in &terminals {
-            build_string_fragment(&mut chain_nfa, &t.text, t.kind.clone());
-        }
-        let chain_states = chain_nfa.states.len() - 1; // exclude global start
-
         // Trie construction state count
         let mut trie_nfa = Nfa::new();
         let trie_root = build_keyword_trie(&mut trie_nfa, &terminals);
         let trie_states = trie_nfa.states.len() - 1; // exclude global start
 
-        assert!(
-            trie_states < chain_states,
-            "trie ({} states) should use fewer states than chains ({} states)",
-            trie_states,
-            chain_states,
-        );
-
-        // Verify specific counts:
-        // Chain: 7 terminals produce 7 fragment_starts + sum of chars in all terminals
-        //   = (1) + (2) + (2) + (1) + (2) + (1) + (2) = 11 intermediate/accept states
-        //   + 7 fragment starts = 18 states (excl. global start)
         // Trie: = → ==(4), !=(3), + → ++(4), - → ->(4) = ~10 states + trie_root
         assert!(trie_states <= 11, "trie should have at most 11 states (got {})", trie_states);
 
@@ -909,7 +828,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
 
         // Start state should have epsilon transitions:
         // - 1 to trie_root (all terminals share one trie)
@@ -1121,7 +1040,7 @@ mod tests {
         };
 
         // Build with DAFSA (current build_keyword_trie)
-        let nfa_dafsa = build_nfa_default(&terminals, &needs);
+        let nfa_dafsa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
         let partition_dafsa = compute_equivalence_classes(&nfa_dafsa);
         let dfa_dafsa = minimize_dfa(&subset_construction(&nfa_dafsa, &partition_dafsa));
 
@@ -1318,7 +1237,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
         let dfa = minimize_dfa(&subset_construction(&nfa, &partition));
 
@@ -1420,7 +1339,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
         let dfa = minimize_dfa(&subset_construction(&nfa, &partition));
 

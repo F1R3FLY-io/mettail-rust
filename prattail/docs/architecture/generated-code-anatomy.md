@@ -994,6 +994,92 @@ initialization and insertion expressions change.
 
 ---
 
+## Part 18: WFST-Generated Code (Always-On)
+
+WFST prediction and recovery infrastructure is always emitted in the generated
+parser. The pipeline constructs prediction WFSTs at codegen time and serializes
+them as static CSR (Compressed Sparse Row) format arrays. At runtime, a
+`LazyLock<PredictionWfst>` deserializes these arrays on first access.
+
+### Static CSR Arrays
+
+For each grammar category, the pipeline emits constant arrays:
+
+```rust
+// Static prediction WFST for category Proc (CSR format)
+static PREDICTION_PROC_STATES: &[u32] = &[0, 3, 7, ...];   // row offsets
+static PREDICTION_PROC_ARCS: &[(u8, u8, f64)] = &[          // (input, output, weight)
+    (0, 1, 0.50),  // Token::KwError → Err rule, weight 0.50
+    (1, 2, 0.80),  // Token::Ident → PVar rule, weight 0.80
+    // ...
+];
+```
+
+### LazyLock Runtime Access
+
+```rust
+static PROC_WFST: LazyLock<PredictionWfst> = LazyLock::new(|| {
+    PredictionWfst::from_csr(
+        PREDICTION_PROC_STATES,
+        PREDICTION_PROC_ARCS,
+    )
+});
+```
+
+### Weight-Ordered Dispatch Arms
+
+WFST prediction weights determine the ordering of match arms in the generated
+dispatch functions. Arms with lower tropical weight (higher likelihood) appear
+first, improving branch prediction on common inputs:
+
+```rust
+fn parse_Proc_prefix<'a>(
+    tokens: &[(Token<'a>, Span)],
+    pos: &mut usize,
+) -> Result<Proc, String> {
+    match &tokens[*pos].0 {
+        // Weight 0.50: Err rule (specific keyword)
+        Token::KwError => { /* ... */ },
+        // Weight 0.80: PVar rule (generic variable fallback)
+        Token::Ident(name) => { /* ... */ },
+        // ...
+    }
+}
+```
+
+### Recovery Functions (Weighted)
+
+Error recovery functions use WFST weights to rank repair actions:
+
+```rust
+// RepairAction::edit_cost() uses EditWeight semiring
+// Recovery strategies are tried in weight order:
+//   1. Skip (lowest weight) — skip unexpected token
+//   2. Insert — insert expected token
+//   3. Substitute — replace with expected token
+//   4. Delete — remove unexpected token sequence
+```
+
+### Weight Annotations (Codegen-Time Diagnostics)
+
+The pipeline emits compile-time warnings using CountingWeight (ambiguity
+detection) and BooleanWeight (dead-rule detection):
+
+```
+warning: 2-way ambiguity at (Proc, DFA state 7):
+  - Token::KwError → rule Err (weight 0.50)
+  - Token::Ident → rule PVar (weight 9.80)
+  Resolved by tropical shortest path → Err
+
+warning: dead rules detected: FloatToStr, FloatToBool
+  These rules are unreachable in the grammar.
+```
+
+> **Cross-reference:** See [benchmarks/wfst-pipeline-integration.md](../benchmarks/wfst-pipeline-integration.md)
+> for runtime data flow details and performance impact.
+
+---
+
 ## Tracing an Example Parse
 
 **Input:** `"3 + x * 2 == 5"`

@@ -504,6 +504,53 @@ BTreeMap<String, FirstSet>   (FOLLOW sets)
 
 ---
 
+## WFST Prediction Data Flow (Always-On)
+
+WFST-weighted prediction is always active in the pipeline. FIRST/FOLLOW sets
+feed into prediction WFST construction, which produces weight-ordered dispatch
+arms and static CSR arrays embedded in the generated parser.
+
+```
+FIRST sets + FOLLOW sets + DispatchTables + Overlaps
+    │
+    ▼
+[build_prediction_wfsts()]
+    │
+    ├───▶ For each category:
+    │       Build PredictionWfst from FIRST sets and dispatch actions
+    │       Compute action weights via rule specificity analysis
+    │       Sort dispatch arms by TropicalWeight (lowest = most likely)
+    │
+    ├───▶ [compute_composed_dispatch()]
+    │       Compose lexer multi-accept DFA states with prediction WFSTs
+    │       FIRST-set membership filter → rule specificity lookup → weight composition
+    │       CountingWeight pass: emit codegen-time ambiguity warnings
+    │       BooleanWeight pass: detect dead (unreachable) rules
+    │
+    ├───▶ [resolve_dispatch_winners()]
+    │       For each (category, token) pair:
+    │         Select tropical shortest-path winner → (winning_rule, weight)
+    │       → BTreeMap<(String, String), (String, f64)>
+    │
+    ├───▶ [emit_prediction_wfst_static()]
+    │       Serialize PredictionWfsts as static CSR-format arrays:
+    │         PREDICTION_<CAT>_STATES, PREDICTION_<CAT>_ARCS, etc.
+    │       Runtime access via LazyLock<PredictionWfst>
+    │
+    └───▶ [write_category_dispatch_weighted()]
+            Emit weight-ordered dispatch match arms in generated parser code
+            Composed dispatch resolutions override arm ordering for ambiguous tokens
+            Zero runtime cost — codegen-only arm reordering
+
+    ───▶  Static CSR arrays + weight-ordered dispatch arms
+          (embedded in generated TokenStream)
+```
+
+> **Cross-reference:** See [benchmarks/wfst-pipeline-integration.md](../benchmarks/wfst-pipeline-integration.md)
+> for detailed WFST pipeline benchmark results and performance analysis.
+
+---
+
 ## Error Recovery Data Flow
 
 ```

@@ -17,7 +17,7 @@ use crate::ast::{
 use crate::gen::native::native_type_to_string;
 use mettail_prattail::{
     binding_power::Associativity, recursive::CollectionKind, BeamWidthConfig, CategorySpec,
-    DispatchStrategy, LanguageSpec, LiteralPatterns, RuleSpecInput, SyntaxItemSpec,
+    LanguageSpec, LiteralPatterns, RuleSpecInput, SyntaxItemSpec,
 };
 
 /// Convert a `LanguageDef` to a PraTTaIL `LanguageSpec`.
@@ -65,24 +65,12 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                 _ => unreachable!("log_semiring_model_path type validated at parse time"),
             });
 
-    let dispatch_strategy = match language.options.get("dispatch") {
-        Some(AttributeValue::Keyword(kw)) => match kw.as_str() {
-            "static" => DispatchStrategy::Static,
-            "weighted" => DispatchStrategy::Weighted,
-            "auto" => DispatchStrategy::Auto,
-            _ => unreachable!("dispatch keyword validated at parse time"),
-        },
-        None => DispatchStrategy::Static,
-        _ => unreachable!("dispatch type validated at parse time"),
-    };
-
     LanguageSpec::with_options(
         language.name.to_string(),
         categories,
         inputs,
         beam_width,
         log_semiring_model_path,
-        dispatch_strategy,
         LiteralPatterns::default(),
     )
 }

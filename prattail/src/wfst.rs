@@ -155,6 +155,23 @@ impl PredictionWfst {
         results
     }
 
+    /// Returns `(action, derivation_count)` for each dispatch action at the
+    /// given token.
+    ///
+    /// The derivation count indicates ambiguity: `count > 1` means multiple
+    /// rules can handle this token in the current category. The dispatch
+    /// codegen can use this to prefer deterministic (count=1) arms over
+    /// ambiguous ones.
+    ///
+    /// The total derivation count for a token is the number of actions
+    /// returned by `predict()` — this method annotates each action with
+    /// that count for downstream use in product semiring compositions.
+    pub fn predict_with_confidence(&self, token_name: &str) -> Vec<(&WeightedAction, crate::automata::semiring::CountingWeight)> {
+        let actions = self.predict(token_name);
+        let count = crate::automata::semiring::CountingWeight::new(actions.len() as u64);
+        actions.into_iter().map(|a| (a, count)).collect()
+    }
+
     /// Query prediction with beam pruning: returns only actions within
     /// `beam_width` of the best action's weight.
     ///
@@ -1147,7 +1164,6 @@ mod tests {
             }],
             BeamWidthConfig::Explicit(1.5),          // beam_width
             None,                                    // log_semiring_model_path
-            crate::DispatchStrategy::Static,         // dispatch_strategy
             crate::LiteralPatterns::default(),       // literal_patterns
         );
 

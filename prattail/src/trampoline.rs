@@ -282,9 +282,8 @@ pub struct TrampolineConfig {
     pub follow_set: FirstSet,
     /// Whether the grammar has binders.
     pub has_binders: bool,
-    /// Optional prediction WFST for weight-ordered dispatch (feature = "wfst").
+    /// Optional prediction WFST for weight-ordered dispatch.
     /// When present, prefix match arms are reordered by tropical weight (lowest first).
-    #[cfg(feature = "wfst")]
     pub prediction_wfst: Option<crate::wfst::PredictionWfst>,
 }
 
@@ -640,7 +639,7 @@ pub fn write_trampolined_parser(
     write!(
         buf,
         "fn {parse_fn}<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             min_bp: u8, \
         ) -> Result<{cat}, ParseError> {{ \
@@ -684,7 +683,7 @@ fn write_trampoline_body(
     write!(
         buf,
         "fn {parse_fn}_impl<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             min_bp: u8, \
             stack: &mut Vec<{frame_enum}>, \
@@ -765,7 +764,6 @@ fn write_prefix_phase(
     .unwrap();
 
     // Emit WFST weight annotations as comments (for debugging/verification)
-    #[cfg(feature = "wfst")]
     if let Some(ref wfst) = config.prediction_wfst {
         if let Some(comment) = crate::wfst::generate_weighted_dispatch(wfst, &config.category) {
             buf.push_str(&comment);
@@ -1034,11 +1032,13 @@ fn write_prefix_match_arms(
             .collect::<String>()
     );
 
-    // When WFST is enabled, reorder lookahead handlers by weight (lowest first = most likely).
+    // Reorder lookahead handlers by weight (lowest first = most likely).
     // This ensures the most probable ident-dispatch path is tried first, reducing backtracking.
-    #[cfg(feature = "wfst")]
+    // Uses WFST prediction weights (tropical shortest path — most precise).
     let lookahead_handlers = {
         let mut sorted = lookahead_handlers;
+
+        // Sort by WFST prediction weights (lowest = most likely first)
         if let Some(ref wfst) = config.prediction_wfst {
             sorted.sort_by(|a, b| {
                 let weight_a = a
@@ -1060,6 +1060,7 @@ fn write_prefix_match_arms(
                 weight_a.cmp(&weight_b)
             });
         }
+
         sorted
     };
 
@@ -1190,8 +1191,8 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                 .unwrap();
             },
             _ => {
-                // Collection, ZipMapSep, Optional — kept as inline but not yet handled
-                // (these are complex items that need special treatment)
+                // Collection, ZipMapSep, Optional — handled via standalone parse functions
+                // (not trampolined; see `should_use_standalone_fn()` and module docs §4)
             },
         }
     }
@@ -1332,6 +1333,65 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
             write!(
                 buf,
                 "Token::StringLit(v) => {{ let val = (*v).to_string(); *pos += 1; break 'prefix {}::StringLit(val); }},",
+                cat,
+            ).unwrap();
+        },
+        _ => {},
+    }
+}
+
+/// Write native literal match arms for the lazy (adapter-based) parser.
+///
+/// Like `write_native_literal_arm` but uses `adapter.advance()` instead of
+/// `*pos += 1` and applies the same type conversions (casts, `.into()`, etc.).
+fn write_native_literal_arm_lazy(buf: &mut String, cat: &str, native_type: &str) {
+    match native_type {
+        "i32" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ let val = *v as i32; adapter.advance(); break 'prefix {}::NumLit(val); }},",
+                cat,
+            ).unwrap();
+        },
+        "i64" | "isize" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ let val = *v; adapter.advance(); break 'prefix {}::NumLit(val); }},",
+                cat,
+            ).unwrap();
+        },
+        "u32" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ let val = *v as u32; adapter.advance(); break 'prefix {}::NumLit(val); }},",
+                cat,
+            ).unwrap();
+        },
+        "u64" | "usize" => {
+            write!(
+                buf,
+                "Token::Integer(v) => {{ let val = *v as u64; adapter.advance(); break 'prefix {}::NumLit(val); }},",
+                cat,
+            ).unwrap();
+        },
+        "f32" | "f64" => {
+            write!(
+                buf,
+                "Token::Float(v) => {{ let val = (*v).into(); adapter.advance(); break 'prefix {}::FloatLit(val); }},",
+                cat,
+            ).unwrap();
+        },
+        "bool" => {
+            write!(
+                buf,
+                "Token::Boolean(v) => {{ let val = *v; adapter.advance(); break 'prefix {}::BoolLit(val); }},",
+                cat,
+            ).unwrap();
+        },
+        "str" | "String" => {
+            write!(
+                buf,
+                "Token::StringLit(v) => {{ let val = (*v).to_string(); adapter.advance(); break 'prefix {}::StringLit(val); }},",
                 cat,
             ).unwrap();
         },
@@ -2297,7 +2357,7 @@ pub fn write_trampolined_parser_recovering(
     write!(
         buf,
         "fn {parse_fn}<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             min_bp: u8, \
             errors: &mut Vec<ParseError>, \
@@ -2341,5 +2401,604 @@ fn capitalize_first(s: &str) -> String {
             result.extend(chars);
             result
         },
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Lazy parser generation (Phase 6E: context-sensitive lexing via LexerAdapter)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Generate a lazy `parse_Cat_lazy()` function that uses `LexerAdapter` for
+/// context-sensitive lexing.
+///
+/// Unlike the trampolined parser which operates on `&[(Token, Range)]` slices,
+/// the lazy parser uses `&mut LexerAdapter<'a>` which provides:
+/// - `set_category(id)`: sets the lexer's category context for disambiguation
+/// - `peek()`: returns the next token without consuming it
+/// - `peek_range()`: returns the range of the next token
+/// - `advance()`: consumes the current token
+/// - `is_eof()`: checks for end of input
+///
+/// The lazy parser calls `adapter.set_category(CATEGORY_ID_CAT)` before prefix
+/// dispatch so the lexer resolves ambiguous DFA states using the composed
+/// dispatch table. This eliminates cross-category backtracking.
+///
+/// This is a recursive descent parser (not trampolined) — stack safety comes
+/// from the existing trampolined parser for the standard path. The lazy parser
+/// is always emitted as part of the context-sensitive lexing infrastructure,
+/// providing `parse_Cat_lazy()` entry points for parser-driven lexing.
+pub fn write_trampolined_parser_lazy(
+    buf: &mut String,
+    config: &TrampolineConfig,
+    bp_table: &BindingPowerTable,
+    prefix_handlers: &[PrefixHandler],
+    rd_rules: &[RDRuleInfo],
+    category_index: usize,
+) {
+    let cat = &config.category;
+    let parse_fn = format!("parse_{}_lazy", cat);
+
+    let has_led = config.has_infix || config.has_postfix || config.has_mixfix;
+
+    /* Emit infix_bp / make_infix / postfix_bp / make_postfix if not already
+       emitted by write_trampolined_parser (they are shared). The lazy parser
+       reuses the same helper functions. */
+
+    /* Build expected message for error reporting */
+    let expected_msg = crate::pratt::build_expected_message_pub(cat, &config.own_first_set);
+    let expected_escaped = expected_msg.replace('\\', "\\\\").replace('"', "\\\"");
+
+    /* ── Function signature ── */
+    write!(
+        buf,
+        "fn {parse_fn}<'a>(\
+            adapter: &mut LexerAdapter<'a>, \
+            min_bp: u8, \
+        ) -> Result<{cat}, ParseError> {{",
+    )
+    .unwrap();
+
+    /* Set category context for context-sensitive lexing */
+    write!(buf, "adapter.set_category({});", category_index).unwrap();
+    buf.push_str("let mut cur_bp = min_bp;");
+
+    /* ═══ Prefix dispatch ═══ */
+    write!(
+        buf,
+        "let mut lhs: {} = 'prefix: {{",
+        cat,
+    )
+    .unwrap();
+
+    /* EOF check — propagate lex errors if the adapter captured one */
+    write!(
+        buf,
+        "if adapter.is_eof() {{ \
+            if let Some(lex_err) = adapter.take_error() {{ \
+                return Err(ParseError::LexError {{ \
+                    message: lex_err, \
+                    position: Position {{ byte_offset: 0, line: 0, column: 0 }}, \
+                }}); \
+            }} \
+            return Err(ParseError::UnexpectedEof {{ \
+                expected: \"{expected_escaped}\", \
+                range: Range::zero(), \
+            }}); \
+        }}",
+    )
+    .unwrap();
+
+    /* Match on peeked token */
+    buf.push_str("match adapter.peek() {");
+
+    /* ── Terminal-first RD handlers ── */
+    for rd_rule in rd_rules {
+        if rd_rule.category != *cat {
+            continue;
+        }
+        if is_simple_collection(rd_rule) || rd_rule.prefix_bp.is_some() {
+            continue;
+        }
+
+        let starts_with_nonterminal = matches!(
+            rd_rule.items.first(),
+            Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
+        );
+
+        if starts_with_nonterminal {
+            continue; /* handled by ident/native below */
+        }
+
+        let first_terminal = rd_rule.items.iter().find_map(|item| {
+            if let RDSyntaxItem::Terminal(t) = item {
+                Some(t.clone())
+            } else {
+                None
+            }
+        });
+
+        if let Some(ref terminal) = first_terminal {
+            let variant = terminal_to_variant_name(terminal);
+
+            /* For complex rules, delegate to standalone parse fn.
+               These standalone fns use the token-slice API, so for now we skip
+               them in the lazy parser. A future enhancement would create lazy
+               versions of standalone fns. For now, the lazy parser handles
+               simple rules inline. */
+            if should_use_standalone_fn(rd_rule) {
+                continue;
+            }
+
+            let segments = split_rd_handler(rd_rule);
+            if segments.is_empty() {
+                continue;
+            }
+
+            write!(buf, "Token::{} => {{", variant).unwrap();
+
+            /* Consume the dispatch terminal */
+            buf.push_str("adapter.advance();");
+
+            /* Inline remaining items from the first segment (skipping the first terminal) */
+            write_lazy_inline_items(buf, &segments[0].inline_items, true, cat);
+
+            if let Some(ref nt) = segments[0].nonterminal {
+                /* Same-category nonterminal: recursive call */
+                if nt.category == *cat {
+                    write!(
+                        buf,
+                        "let {} = parse_{}_lazy(adapter, {})?;",
+                        nt.param_name, cat, nt.bp,
+                    )
+                    .unwrap();
+                } else {
+                    /* Cross-category: recursive call to other category's lazy parser */
+                    write!(
+                        buf,
+                        "let {} = parse_{}_lazy(adapter, {})?;",
+                        nt.param_name, nt.category, nt.bp,
+                    )
+                    .unwrap();
+                }
+
+                /* Continue with remaining segments inline */
+                for seg_idx in 1..segments.len() {
+                    let seg = &segments[seg_idx];
+                    write_lazy_inline_items(buf, &seg.inline_items, false, cat);
+
+                    if let Some(ref next_nt) = seg.nonterminal {
+                        if next_nt.category == *cat {
+                            write!(
+                                buf,
+                                "let {} = parse_{}_lazy(adapter, {})?;",
+                                next_nt.param_name, cat, next_nt.bp,
+                            )
+                            .unwrap();
+                        } else {
+                            write!(
+                                buf,
+                                "let {} = parse_{}_lazy(adapter, {})?;",
+                                next_nt.param_name, next_nt.category, next_nt.bp,
+                            )
+                            .unwrap();
+                        }
+                    }
+                }
+
+                /* Final constructor */
+                write_lazy_rd_constructor(buf, rd_rule);
+            } else {
+                /* No same-category nonterminal: fully inline */
+                write_lazy_rd_constructor(buf, rd_rule);
+            }
+
+            buf.push_str("},");
+        }
+    }
+
+    /* ── Unary prefix operators ── */
+    for rd_rule in rd_rules {
+        if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
+            continue;
+        }
+        if let Some(RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
+            let variant = terminal_to_variant_name(t);
+            let bp = rd_rule.prefix_bp.unwrap_or(0);
+            write!(
+                buf,
+                "Token::{} => {{ \
+                    adapter.advance(); \
+                    let operand = parse_{}_lazy(adapter, {})?; \
+                    break 'prefix {}::{}(Box::new(operand)); \
+                }},",
+                variant, cat, bp, cat, rd_rule.label,
+            )
+            .unwrap();
+        }
+    }
+
+    /* ── Grouped expression (parenthesized) ── */
+    write!(
+        buf,
+        "Token::LParen => {{ \
+            adapter.advance(); \
+            let inner = parse_{}_lazy(adapter, 0)?; \
+            if !matches!(adapter.peek(), Token::RParen) {{ \
+                return Err(ParseError::UnexpectedToken {{ \
+                    expected: \"')'\", \
+                    found: format!(\"{{:?}}\", adapter.peek()), \
+                    range: *adapter.peek_range(), \
+                }}); \
+            }} \
+            adapter.advance(); \
+            break 'prefix inner; \
+        }},",
+        cat,
+    )
+    .unwrap();
+
+    /* ── Native literal ── */
+    if let Some(ref native_type) = config.native_type {
+        write_native_literal_arm_lazy(buf, cat, native_type);
+    }
+
+    /* ── Ident capture (variable rules + ident-first RD rules) ── */
+    /* A "var rule" is one with exactly one IdentCapture item and nothing else */
+    let is_var_rule = |r: &RDRuleInfo| -> bool {
+        r.category == *cat
+            && r.items.len() == 1
+            && matches!(r.items[0], RDSyntaxItem::IdentCapture { .. })
+    };
+    let has_var = rd_rules.iter().any(|r| is_var_rule(r));
+    if has_var {
+        let var_label = rd_rules
+            .iter()
+            .find(|r| is_var_rule(r))
+            .map(|r| r.label.clone())
+            .unwrap_or_else(|| format!("{}Var", &cat[..1]));
+
+        /* Check for ident-lookahead handlers (rules starting with ident then terminal) */
+        let lookahead_handlers: Vec<&PrefixHandler> = prefix_handlers
+            .iter()
+            .filter(|h| h.category == *cat && h.ident_lookahead.is_some())
+            .collect();
+
+        if lookahead_handlers.is_empty() {
+            write!(
+                buf,
+                "Token::Ident(name) => {{ \
+                    let name_str = name.to_string(); \
+                    adapter.advance(); \
+                    break 'prefix {}::{}(name_str); \
+                }},",
+                cat, var_label,
+            )
+            .unwrap();
+        } else {
+            /* Ident with lookahead: peek at 2nd token to decide */
+            buf.push_str("Token::Ident(name) => {");
+            buf.push_str("let name_str = name.to_string();");
+            buf.push_str("adapter.advance();");
+
+            /* Check lookahead for each handler */
+            buf.push_str("match adapter.peek() {");
+            for handler in &lookahead_handlers {
+                if let Some(ref lookahead) = handler.ident_lookahead {
+                    let la_variant = terminal_to_variant_name(lookahead);
+
+                    /* Find the corresponding RD rule */
+                    if let Some(rd_rule) = rd_rules.iter().find(|r| r.label == handler.label && r.category == *cat) {
+                        write!(buf, "Token::{} => {{", la_variant).unwrap();
+                        buf.push_str("adapter.advance();");
+
+                        /* Parse remaining items after ident + lookahead terminal */
+                        let remaining_items: Vec<_> = rd_rule.items.iter().skip(2).collect();
+                        for item in &remaining_items {
+                            write_lazy_single_item(buf, item, cat);
+                        }
+
+                        /* Construct the result */
+                        write_lazy_rd_constructor_from_rule(buf, rd_rule, cat);
+                        buf.push_str("},");
+                    }
+                }
+            }
+
+            /* Default: just a variable */
+            write!(
+                buf,
+                "_ => {{ break 'prefix {}::{}(name_str); }}",
+                cat, var_label,
+            )
+            .unwrap();
+            buf.push_str("}"); /* close match adapter.peek() */
+            buf.push_str("},"); /* close Token::Ident arm */
+        }
+    }
+
+    /* ── Catch-all ── */
+    write!(
+        buf,
+        "other => {{ \
+            return Err(ParseError::UnexpectedToken {{ \
+                expected: \"{expected_escaped}\", \
+                found: format!(\"{{:?}}\", other), \
+                range: *adapter.peek_range(), \
+            }}); \
+        }}",
+    )
+    .unwrap();
+
+    buf.push_str("}"); /* close match */
+    buf.push_str("};"); /* close 'prefix block */
+
+    /* ═══ Infix loop ═══ */
+    if has_led {
+        /* Clear category context for infix tokens (unambiguous) */
+        buf.push_str("adapter.set_category(0);");
+
+        buf.push_str("loop {");
+        buf.push_str("if adapter.is_eof() { break; }");
+        buf.push_str("let token = adapter.peek().clone();");
+
+        if config.has_postfix {
+            write!(
+                buf,
+                "if let Some(l_bp) = postfix_bp_{}(&token) {{ \
+                    if l_bp < cur_bp {{ break; }} \
+                    adapter.advance(); \
+                    lhs = make_postfix_{}(&token, lhs); \
+                    continue; \
+                }}",
+                cat, cat,
+            )
+            .unwrap();
+        }
+
+        if config.has_infix {
+            write!(
+                buf,
+                "if let Some((l_bp, r_bp)) = infix_bp_{}(&token) {{ \
+                    if l_bp < cur_bp {{ break; }} \
+                    adapter.advance(); \
+                    let rhs = parse_{}_lazy(adapter, r_bp)?; \
+                    lhs = make_infix_{}(&token, lhs, rhs); \
+                    continue; \
+                }}",
+                cat, cat, cat,
+            )
+            .unwrap();
+        }
+
+        if config.has_mixfix {
+            write_lazy_mixfix_handlers(buf, config, bp_table);
+        }
+
+        buf.push_str("break;"); /* no infix match */
+        buf.push_str("}"); /* close infix loop */
+    }
+
+    buf.push_str("Ok(lhs)");
+    buf.push('}'); /* close function */
+}
+
+/// Write inline items for the lazy parser (adapter-based).
+///
+/// Similar to `write_inline_items()` but uses `adapter.advance()` instead of `*pos += 1`.
+fn write_lazy_inline_items(
+    buf: &mut String,
+    items: &[RDSyntaxItem],
+    skip_first: bool,
+    _cat: &str,
+) {
+    for (i, item) in items.iter().enumerate() {
+        if skip_first && i == 0 {
+            /* First item is the dispatch terminal — already consumed by the match arm */
+            if matches!(item, RDSyntaxItem::Terminal(_)) {
+                continue;
+            }
+        }
+        write_lazy_single_item(buf, item, _cat);
+    }
+}
+
+/// Write a single inline item for the lazy parser.
+fn write_lazy_single_item(buf: &mut String, item: &RDSyntaxItem, _cat: &str) {
+    match item {
+        RDSyntaxItem::Terminal(t) => {
+            let variant = terminal_to_variant_name(t);
+            write!(
+                buf,
+                "if !matches!(adapter.peek(), Token::{}) {{ \
+                    return Err(ParseError::UnexpectedToken {{ \
+                        expected: \"{}\", \
+                        found: format!(\"{{:?}}\", adapter.peek()), \
+                        range: *adapter.peek_range(), \
+                    }}); \
+                }} \
+                adapter.advance();",
+                variant,
+                t.replace('\\', "\\\\").replace('"', "\\\""),
+            )
+            .unwrap();
+        },
+        RDSyntaxItem::IdentCapture { param_name } => {
+            write!(
+                buf,
+                "let {} = match adapter.peek() {{ \
+                    Token::Ident(s) => {{ let v = s.to_string(); adapter.advance(); v }}, \
+                    other => return Err(ParseError::UnexpectedToken {{ \
+                        expected: \"identifier\", \
+                        found: format!(\"{{:?}}\", other), \
+                        range: *adapter.peek_range(), \
+                    }}), \
+                }};",
+                param_name,
+            )
+            .unwrap();
+        },
+        RDSyntaxItem::NonTerminal { category, param_name, .. } => {
+            write!(
+                buf,
+                "let {} = parse_{}_lazy(adapter, 0)?;",
+                param_name, category,
+            )
+            .unwrap();
+        },
+        RDSyntaxItem::Binder { param_name, .. } => {
+            write!(
+                buf,
+                "let {} = match adapter.peek() {{ \
+                    Token::Ident(s) => {{ let v = s.to_string(); adapter.advance(); v }}, \
+                    other => return Err(ParseError::UnexpectedToken {{ \
+                        expected: \"binder identifier\", \
+                        found: format!(\"{{:?}}\", other), \
+                        range: *adapter.peek_range(), \
+                    }}), \
+                }};",
+                param_name,
+            )
+            .unwrap();
+        },
+        /* Collection, ZipMapSep, etc. are handled by standalone fns — skip for now */
+        _ => {},
+    }
+}
+
+/// Write the constructor for an RD rule in the lazy parser.
+fn write_lazy_rd_constructor(buf: &mut String, rd_rule: &RDRuleInfo) {
+    let cat = &rd_rule.category;
+    let label = &rd_rule.label;
+
+    if rd_rule.has_binder {
+        /* Binder rule: Cat::Label(extra_args..., Scope::new(Binder(binder), Box::new(body))) */
+        let binder = rd_rule.items.iter().find_map(|item| match item {
+            RDSyntaxItem::Binder { param_name, .. } => Some(param_name.clone()),
+            _ => None,
+        });
+        let body = rd_rule.items.iter().rev().find_map(|item| match item {
+            RDSyntaxItem::NonTerminal { param_name, .. } => Some(param_name.clone()),
+            _ => None,
+        });
+        if let (Some(binder_name), Some(body_name)) = (binder, body) {
+            /* Extra args (non-binder, non-body) */
+            let extras: Vec<String> = rd_rule.items.iter().filter_map(|item| {
+                match item {
+                    RDSyntaxItem::NonTerminal { param_name, .. } if *param_name != body_name => {
+                        Some(format!("Box::new({})", param_name))
+                    },
+                    RDSyntaxItem::IdentCapture { param_name } => Some(param_name.clone()),
+                    _ => None,
+                }
+            }).collect();
+
+            write!(buf, "break 'prefix {}::{}(", cat, label).unwrap();
+            for extra in &extras {
+                write!(buf, "{}, ", extra).unwrap();
+            }
+            write!(
+                buf,
+                "mettail_runtime::Scope::new(\
+                mettail_runtime::Binder(mettail_runtime::get_or_create_var({})), \
+                Box::new({}),\
+            ));",
+                binder_name, body_name
+            ).unwrap();
+        } else {
+            write!(buf, "break 'prefix {}::{};", cat, label).unwrap();
+        }
+    } else {
+        /* Non-binder rule */
+        let params: Vec<String> = rd_rule.items.iter().filter_map(|item| {
+            match item {
+                RDSyntaxItem::NonTerminal { param_name, .. } => Some(format!("Box::new({})", param_name)),
+                RDSyntaxItem::IdentCapture { param_name } => Some(param_name.clone()),
+                _ => None,
+            }
+        }).collect();
+
+        if params.is_empty() {
+            write!(buf, "break 'prefix {}::{};", cat, label).unwrap();
+        } else {
+            write!(buf, "break 'prefix {}::{}({});", cat, label, params.join(", ")).unwrap();
+        }
+    }
+}
+
+/// Write the constructor for an RD rule, building from items (for ident-lookahead rules).
+fn write_lazy_rd_constructor_from_rule(buf: &mut String, rd_rule: &RDRuleInfo, cat: &str) {
+    /* Delegate to the shared constructor logic */
+    let mut temp_rule = rd_rule.clone();
+    temp_rule.category = cat.to_string();
+    write_lazy_rd_constructor(buf, &temp_rule);
+}
+
+/// Write mixfix handlers for the lazy parser's infix loop.
+fn write_lazy_mixfix_handlers(
+    buf: &mut String,
+    config: &TrampolineConfig,
+    bp_table: &BindingPowerTable,
+) {
+    let cat = &config.category;
+    let mixfix_ops = bp_table.mixfix_operators_for_category(cat);
+
+    for op in &mixfix_ops {
+        let trigger_variant = terminal_to_variant_name(&op.terminal);
+        let label = &op.label;
+
+        write!(
+            buf,
+            "if matches!(token, Token::{}) {{ \
+                let l_bp = mixfix_bp_{}(&token).unwrap_or((0, 0)).0; \
+                if l_bp >= cur_bp {{ \
+                    adapter.advance();",
+            trigger_variant, cat,
+        )
+        .unwrap();
+
+        /* Parse each interior part: operand followed by optional separator */
+        for part in &op.mixfix_parts {
+            /* Parse the operand */
+            write!(
+                buf,
+                "let {} = parse_{}_lazy(adapter, 0)?;",
+                part.param_name, part.operand_category,
+            )
+            .unwrap();
+
+            /* Parse the separator terminal (if present) */
+            if let Some(ref sep) = part.following_terminal {
+                let sep_variant = terminal_to_variant_name(sep);
+                write!(
+                    buf,
+                    "if !matches!(adapter.peek(), Token::{}) {{ \
+                        return Err(ParseError::UnexpectedToken {{ \
+                            expected: \"{}\", \
+                            found: format!(\"{{:?}}\", adapter.peek()), \
+                            range: *adapter.peek_range(), \
+                        }}); \
+                    }} \
+                    adapter.advance();",
+                    sep_variant,
+                    sep.replace('\\', "\\\\").replace('"', "\\\""),
+                )
+                .unwrap();
+            }
+        }
+
+        /* Construct result */
+        let mut param_strs: Vec<String> = Vec::new();
+        param_strs.push("Box::new(lhs)".to_string());
+        for part in &op.mixfix_parts {
+            param_strs.push(format!("Box::new({})", part.param_name));
+        }
+        write!(
+            buf,
+            "lhs = {}::{}({}); continue;",
+            cat, label, param_strs.join(", "),
+        )
+        .unwrap();
+
+        buf.push_str("} }"); /* close if l_bp >= cur_bp + if matches! */
     }
 }

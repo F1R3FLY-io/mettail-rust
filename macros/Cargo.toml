@@ -13,8 +13,8 @@ readme = "../README.md"
 proc-macro = true
 
 [features]
-## Propagate WFST features to mettail-prattail.
-wfst = ["mettail-prattail/wfst"]
+## Propagate features to mettail-prattail.
+context-sensitive-lex = ["mettail-prattail/context-sensitive-lex"]
 wfst-log = ["mettail-prattail/wfst-log"]
 
 [dependencies]

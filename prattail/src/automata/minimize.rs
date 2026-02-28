@@ -75,20 +75,30 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
         }
     }
 
-    // --- Step 2: Initial partition — group by (accept token kind, weight) ---
-    // States with different accept tokens or different weights cannot be merged.
-    // Weight is included in the partition key to preserve WFST weight semantics:
-    // two states accepting the same token but with different tropical weights
-    // represent different priority levels and must remain distinct.
+    // --- Step 2: Initial partition — group by (accept, weight, alt_accepts) ---
+    // States with different accept tokens, weights, or alternative accept sets
+    // cannot be merged. The alt_accepts field distinguishes ambiguous states
+    // (multi-accept) from unambiguous ones with the same primary accept,
+    // ensuring composed dispatch tables remain correct after minimization.
     //
     // We use BTreeMap with a composite key. For weight, we use the bit
-    // representation of f64 for total ordering.
-    let mut accept_groups: BTreeMap<(Option<&super::TokenKind>, u64), Vec<StateId>> =
-        BTreeMap::new();
+    // representation of f64 for total ordering. For alt_accepts, we encode
+    // as a Vec of (TokenKind, weight_bits) pairs for comparison.
+    type PartitionKey<'a> = (
+        Option<&'a super::TokenKind>,
+        u64,
+        Vec<(&'a super::TokenKind, u64)>,
+    );
+    let mut accept_groups: BTreeMap<PartitionKey<'_>, Vec<StateId>> = BTreeMap::new();
     for (i, state) in dfa.states.iter().enumerate() {
         let weight_bits = state.weight.value().to_bits();
+        let alt_key: Vec<(&super::TokenKind, u64)> = state
+            .alt_accepts
+            .iter()
+            .map(|(k, w)| (k, w.value().to_bits()))
+            .collect();
         accept_groups
-            .entry((state.accept.as_ref(), weight_bits))
+            .entry((state.accept.as_ref(), weight_bits, alt_key))
             .or_default()
             .push(i as StateId);
     }
@@ -259,6 +269,7 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
     let representative = partitions[start_partition][0];
     new_dfa.states[0].accept = dfa.states[representative as usize].accept.clone();
     new_dfa.states[0].weight = dfa.states[representative as usize].weight;
+    new_dfa.states[0].alt_accepts = dfa.states[representative as usize].alt_accepts.clone();
 
     // Assign remaining states
     for &part_idx in &non_empty {
@@ -270,6 +281,7 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
             transitions: vec![DEAD_STATE; num_classes],
             accept: dfa.states[rep as usize].accept.clone(),
             weight: dfa.states[rep as usize].weight,
+            alt_accepts: dfa.states[rep as usize].alt_accepts.clone(),
         });
         partition_to_new_state[part_idx] = new_state;
     }
@@ -365,6 +377,7 @@ pub fn canonicalize_state_order(dfa: &mut Dfa) {
             transitions: new_transitions,
             accept: old_state.accept.clone(),
             weight: old_state.weight,
+            alt_accepts: old_state.alt_accepts.clone(),
         });
     }
 
@@ -375,7 +388,8 @@ pub fn canonicalize_state_order(dfa: &mut Dfa) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automata::nfa::{build_nfa_default, BuiltinNeeds};
+    use crate::automata::nfa::{build_nfa, BuiltinNeeds};
+    use crate::LiteralPatterns;
     use crate::automata::partition::compute_equivalence_classes;
     use crate::automata::subset::subset_construction;
     use crate::automata::TerminalPattern;
@@ -403,7 +417,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         let min_dfa = minimize_dfa(&dfa);
@@ -450,7 +464,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         let min_dfa = minimize_dfa(&dfa);
@@ -500,7 +514,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         let min_dfa = minimize_dfa(&dfa);
@@ -518,6 +532,123 @@ mod tests {
         assert_eq!(
             min_dfa.states[state2 as usize].accept,
             Some(TokenKind::Fixed("==".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_minimize_preserves_multi_accept() {
+        // Keyword "error" overlaps with identifier — both should survive minimization
+        let terminals = vec![TerminalPattern {
+            text: "error".to_string(),
+            kind: TokenKind::Fixed("error".to_string()),
+            is_keyword: true,
+        }];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: false,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+
+        // Pre-minimization: should have ambiguous state
+        assert!(
+            dfa.has_ambiguous_accepts(),
+            "pre-minimization DFA should have ambiguous accepts for 'error'"
+        );
+
+        let min_dfa = minimize_dfa(&dfa);
+
+        // Post-minimization: ambiguous state must survive
+        assert!(
+            min_dfa.has_ambiguous_accepts(),
+            "post-minimization DFA must preserve ambiguous accepts"
+        );
+
+        // Walk "error" through minimized DFA
+        let mut state = min_dfa.start;
+        for &byte in b"error" {
+            let class = partition.classify(byte);
+            state = min_dfa.transition(state, class);
+            assert_ne!(state, DEAD_STATE);
+        }
+
+        let dfa_state = &min_dfa.states[state as usize];
+
+        // Primary still Fixed("error")
+        assert_eq!(
+            dfa_state.accept,
+            Some(TokenKind::Fixed("error".to_string())),
+        );
+
+        // alt_accepts preserved with both kinds
+        assert!(
+            dfa_state.is_ambiguous(),
+            "minimized state after 'error' should still be ambiguous"
+        );
+        let kinds: Vec<&TokenKind> = dfa_state.alt_accepts.iter().map(|(k, _)| k).collect();
+        assert!(kinds.contains(&&TokenKind::Ident));
+        assert!(kinds.contains(&&TokenKind::Fixed("error".to_string())));
+    }
+
+    #[test]
+    fn test_minimize_does_not_merge_ambiguous_with_unambiguous() {
+        // Two keywords "if" and "in" — after "i", the DFA state is ambiguous (ident).
+        // After "if" → ambiguous (keyword + ident). After "in" → ambiguous (keyword + ident).
+        // After "ix" → unambiguous (just ident). Minimization must NOT merge "if" and "ix"
+        // states since they differ in alt_accepts.
+        let terminals = vec![
+            TerminalPattern {
+                text: "if".to_string(),
+                kind: TokenKind::Fixed("if".to_string()),
+                is_keyword: true,
+            },
+        ];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: false,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+        let min_dfa = minimize_dfa(&dfa);
+
+        // Walk "if" — should be ambiguous
+        let mut state_if = min_dfa.start;
+        for &byte in b"if" {
+            let class = partition.classify(byte);
+            state_if = min_dfa.transition(state_if, class);
+            assert_ne!(state_if, DEAD_STATE);
+        }
+        assert!(
+            min_dfa.states[state_if as usize].is_ambiguous(),
+            "state after 'if' should be ambiguous"
+        );
+
+        // Walk "ix" — should NOT be ambiguous (just ident)
+        let mut state_ix = min_dfa.start;
+        for &byte in b"ix" {
+            let class = partition.classify(byte);
+            state_ix = min_dfa.transition(state_ix, class);
+            assert_ne!(state_ix, DEAD_STATE);
+        }
+        assert!(
+            !min_dfa.states[state_ix as usize].is_ambiguous(),
+            "state after 'ix' should NOT be ambiguous"
+        );
+
+        // They must be different states (not merged by minimization)
+        assert_ne!(
+            state_if, state_ix,
+            "ambiguous 'if' and unambiguous 'ix' states must not be merged"
         );
     }
 }

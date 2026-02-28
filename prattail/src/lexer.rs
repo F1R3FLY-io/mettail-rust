@@ -13,7 +13,7 @@ use proc_macro2::TokenStream;
 use crate::automata::{
     codegen::{
         analyze_sparsity, generate_lexer_code, generate_lexer_string, terminal_to_variant_name,
-        CodegenStrategy,
+        CodegenStrategy, LexerAmbiguityInfo, TokenVariantMap,
     },
     minimize::minimize_dfa,
     nfa::{build_nfa, BuiltinNeeds},
@@ -47,6 +47,10 @@ pub struct LexerStats {
     pub codegen_strategy: CodegenStrategy,
     /// Fraction of DFA transitions that are DEAD (0.0 to 1.0).
     pub dead_fraction: f64,
+    /// Bidirectional mapping between token variant names and compact u8 IDs.
+    pub variant_map: TokenVariantMap,
+    /// Information about ambiguous DFA states (multi-accept).
+    pub ambiguity_info: LexerAmbiguityInfo,
 }
 
 /// Run the full lexer generation pipeline and return generated Rust code.
@@ -96,6 +100,10 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     let (code, codegen_strategy) =
         generate_lexer_code(&min_dfa, &partition, &token_kinds, &input.language_name);
 
+    // Build variant map and ambiguity info (also needed for diagnostics)
+    let variant_map = TokenVariantMap::from_token_kinds(&token_kinds);
+    let ambiguity_info = crate::automata::codegen::analyze_ambiguity(&min_dfa);
+
     let stats = LexerStats {
         num_terminals: input.terminals.len(),
         num_nfa_states,
@@ -104,6 +112,8 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
         num_equiv_classes,
         codegen_strategy,
         dead_fraction: sparsity.dead_fraction,
+        variant_map,
+        ambiguity_info,
     };
 
     (code, stats)
@@ -157,7 +167,7 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     let sparsity = analyze_sparsity(&min_dfa);
 
     // Step 6: Generate code as string
-    let (code, codegen_strategy) =
+    let (code, codegen_strategy, variant_map, ambiguity_info) =
         generate_lexer_string(&min_dfa, &partition, &token_kinds, &input.language_name);
 
     let stats = LexerStats {
@@ -168,6 +178,8 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
         num_equiv_classes,
         codegen_strategy,
         dead_fraction: sparsity.dead_fraction,
+        variant_map,
+        ambiguity_info,
     };
 
     (code, stats)

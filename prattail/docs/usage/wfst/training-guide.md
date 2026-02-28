@@ -1,5 +1,7 @@
 # Training Guide
 
+**Updated:** 2026-02-28
+
 The training subsystem lives in `prattail/src/training.rs` and is gated
 behind the `wfst-log` feature. It implements a supervised SGD weight-learning
 loop that takes a corpus of annotated parse examples, adjusts rule weights
@@ -8,30 +10,30 @@ parse, and serializes the result to a `TrainedModel` JSON file. That file can
 then be referenced from the `language!` DSL via `log_semiring_model_path`.
 
 > **Feature requirement:** all APIs in this section require
-> `--features wfst-log`. If only `--features wfst` is active, the
-> `training` module is not compiled.
+> `--features wfst-log`. The `training` module is only compiled when this
+> feature is active.
 
 ---
 
 ## 1. Conceptual Background
 
 Every grammar rule is assigned a weight in the log-probability semiring.
-`LogWeight` stores `−ln(p)`, so lower values correspond to higher
+`LogWeight` stores `-ln(p)`, so lower values correspond to higher
 probability. Uniform initialization sets every weight to `LogWeight::one()`
-(`−ln(1.0) = 0.0`), meaning all rules start as equally likely.
+(`-ln(1.0) = 0.0`), meaning all rules start as equally likely.
 
 Training nudges weights via the gradient of the per-example loss:
 
 ```
-loss(example) = correct_path_weight − total_weight
+loss(example) = correct_path_weight - total_weight
 ```
 
 where both quantities are sums of `LogWeight` values (negated log-probabilities).
 A gradient step for rule `r` reads:
 
 ```
-gradient[r] = expected_count(r, correct) − expected_count(r, all)
-weight[r]   ← weight[r] − learning_rate × gradient[r]
+gradient[r] = expected_count(r, correct) - expected_count(r, all)
+weight[r]   <- weight[r] - learning_rate x gradient[r]
               (clamped to 0.0 to stay in valid log-probability range)
 ```
 
@@ -39,21 +41,21 @@ Rules that appear more often in correct parses than in the overall average
 receive a smaller (more probable) weight; rules that appear less often are
 pushed toward larger (less probable) values.
 
-> **Current status — experimental:** full forward-backward parse-lattice
-> construction is a research TODO. The current implementation supplies rule
-> counts directly from `TrainingExample::expected_rule_labels` and uses a
-> uniform approximation for the "all parses" distribution. The interface and
-> serialization format are stable; the accuracy of the learned weights will
-> improve as the lattice construction is completed.
+> **Note:** Full forward-backward parse-lattice construction is a planned
+> extension. The current implementation supplies rule counts directly from
+> `TrainingExample::expected_rule_labels` and uses a uniform approximation
+> for the "all parses" distribution. The interface and serialization format
+> are stable; the accuracy of the learned weights will improve as the lattice
+> construction is completed.
 
 ---
 
 ## 2. End-to-End Workflow
 
 The numbered steps below map directly to the workflow diagram in
-[Section 9](#9-workflow-diagram).
+[Section 10](#10-workflow-diagram).
 
-### Step 1 — Assemble a training corpus
+### Step 1 -- Assemble a training corpus
 
 Collect input strings and the sequence of rule labels that constitute the
 correct parse for each. Rule labels are the constructor names defined in the
@@ -78,7 +80,7 @@ let examples = vec![
 ];
 ```
 
-### Step 2 — Initialise weights
+### Step 2 -- Initialise weights
 
 `RuleWeights::uniform` accepts a slice of rule-label strings and sets every
 weight to `LogWeight::one()` (probability 1.0, cost 0.0):
@@ -98,7 +100,7 @@ The label list must include every rule that may appear in the training corpus.
 Labels absent from the list are treated as having weight `LogWeight::one()`
 by the `get()` accessor but are not updated during training.
 
-### Step 3 — Optionally adjust the learning rate
+### Step 3 -- Optionally adjust the learning rate
 
 The default learning rate is `0.1`. A smaller value converges more slowly but
 more stably; a larger value converges faster but may oscillate.
@@ -109,7 +111,7 @@ weights.set_learning_rate(0.01);
 
 Query the current rate at any time with `weights.learning_rate()`.
 
-### Step 4 — Run the training loop
+### Step 4 -- Run the training loop
 
 `RuleWeights::train` runs the full epoch loop and returns a `TrainingStats`
 record. The second argument is the number of epochs; the call blocks until
@@ -136,13 +138,13 @@ the last two epochs falls below `1e-6`. You may inspect
 The `recommended_beam_width` is a `TropicalWeight` derived as:
 
 ```
-max over examples of (correct_path_weight − best_single_rule_weight)
+max over examples of (correct_path_weight - best_single_rule_weight)
                     + 0.5  (safety margin)
 ```
 
 If the correct path was always the minimum-cost path, this field is `None`.
 
-### Step 5 — Convert to a serializable model
+### Step 5 -- Convert to a serializable model
 
 `to_trained_model` packages the trained weights and the stats record into a
 `TrainedModel` that can be written to JSON. The `num_examples` field in the
@@ -156,7 +158,7 @@ let mut model = weights.to_trained_model(&stats);
 model.metadata.num_examples = examples.len();
 ```
 
-### Step 6 — Save to disk
+### Step 6 -- Save to disk
 
 ```rust
 model.save("models/calc_model.json").expect("failed to save trained model");
@@ -175,7 +177,7 @@ let loaded = TrainedModel::load("models/calc_model.json")
 assert_eq!(loaded.rule_weights, model.rule_weights);
 ```
 
-### Step 7 — Reference in the DSL
+### Step 7 -- Reference in the DSL
 
 ```rust
 language! {
@@ -238,7 +240,7 @@ pub struct TrainingStats {
 
 ```rust
 pub struct TrainedModel {
-    pub rule_weights: BTreeMap<String, f64>,    // rule label → weight value
+    pub rule_weights: BTreeMap<String, f64>,    // rule label -> weight value
     pub recommended_beam_width: Option<f64>,    // from training stats
     pub metadata: TrainedModelMetadata,
 }
@@ -300,8 +302,8 @@ with defaults to maintain backward compatibility.
 
 ## 5. Manual Weight Update (Advanced)
 
-`train()` is a convenience wrapper. For custom training loops — early
-stopping, learning-rate scheduling, evaluation on a held-out set — use
+`train()` is a convenience wrapper. For custom training loops -- early
+stopping, learning-rate scheduling, evaluation on a held-out set -- use
 `compute_loss` and `update` directly:
 
 ```rust
@@ -320,7 +322,7 @@ for epoch in 0..1000 {
         }
 
         // Uniform approximation for all-parses distribution
-        let n = weights.learning_rate(); // borrow hack — just for illustration
+        let n = weights.learning_rate(); // borrow hack -- just for illustration
         let _ = n; // silence unused warning in doc example
 
         // Compute loss and update
@@ -430,7 +432,7 @@ wfst.with_trained_weights(&model);
 // Now predict() returns results ordered by trained weights
 ```
 
-This means trained weights affect **runtime dispatch** — not just the next
+This means trained weights affect **runtime dispatch** -- not just the next
 recompilation. The pipeline embeds both the WFST and the model as static
 data, so no file I/O is needed at parse time.
 
@@ -494,44 +496,43 @@ Both files are compiled only under `#[cfg(feature = "wfst-log")]`.
 ## 10. Workflow Diagram
 
 The seven numbered steps form a linear pipeline. The horizontal boundary
-below the diagram marks the divide between offline training (steps 1–6) and
-compile-time DSL consumption (step 7). Dotted verticals (┊) mark where
-data crosses that boundary.
+below the diagram marks the divide between offline training (steps 1-6) and
+compile-time DSL consumption (step 7).
 
 ```
-  ① Corpus                   raw (input, label-sequence) pairs
-       │
-       ▼
-  ② TrainingExamples         Vec<TrainingExample> structs
-       │
-       ▼
-  ③ RuleWeights::uniform()   all weights = LogWeight::one()
-       │
-       ▼
-  ④ train(examples, epochs)  SGD loop → TrainingStats
-       │
-       ▼
-  ⑤ to_trained_model(&stats) TrainedModel { rule_weights, recommended_beam_width, metadata }
-       │
-       ▼
-  ⑥ model.save("model.json") pretty-printed JSON on disk
-       ┊
-  ╌╌╌╌┊╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌  compile-time boundary  ╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌
-       ┊
-       ▼
-  ⑦ DSL: log_semiring_model_path: "model.json"
+  (1) Corpus                   raw (input, label-sequence) pairs
+       |
+       v
+  (2) TrainingExamples         Vec<TrainingExample> structs
+       |
+       v
+  (3) RuleWeights::uniform()   all weights = LogWeight::one()
+       |
+       v
+  (4) train(examples, epochs)  SGD loop -> TrainingStats
+       |
+       v
+  (5) to_trained_model(&stats) TrainedModel { rule_weights, recommended_beam_width, metadata }
+       |
+       v
+  (6) model.save("model.json") pretty-printed JSON on disk
+       :
+  ----:------------------------  compile-time boundary  ----------------------------
+       :
+       v
+  (7) DSL: log_semiring_model_path: "model.json"
          beam_width: auto
-         → pipeline reads model → Explicit(recommended_beam_width)
+         -> pipeline reads model -> Explicit(recommended_beam_width)
 ```
 
 ---
 
 ## 11. Cross-References
 
-- [usage/feature-gates.md](feature-gates.md) — enabling `wfst-log`, test counts per tier
-- [usage/dsl-configuration.md](dsl-configuration.md) — `beam_width: auto` and
+- [feature-gates.md](feature-gates.md) -- enabling `wfst-log`, test counts per tier
+- [dsl-configuration.md](dsl-configuration.md) -- `beam_width: auto` and
   `log_semiring_model_path` option semantics
-- [theory/viterbi-and-forward-backward.md](../theory/viterbi-and-forward-backward.md) — the forward-backward
+- [../../theory/wfst/viterbi-and-forward-backward.md](../../theory/wfst/viterbi-and-forward-backward.md) -- the forward-backward
   algorithm underlying expected rule counts
 - `BeamWidthConfig::Auto` resolution at pipeline time is documented in
-  [usage/dsl-configuration.md](dsl-configuration.md)
+  [dsl-configuration.md](dsl-configuration.md)

@@ -1,64 +1,39 @@
-//! Criterion A/B benchmark: static vs weighted dispatch strategies.
+//! Criterion benchmark: parser generation dispatch performance.
 //!
 //! Three benchmark groups:
-//! 1. `dispatch/a_b` — Static vs Weighted for each standard spec (4 specs)
-//! 2. `dispatch/scaling` — Static vs Weighted at N = 5, 10, 20, 50, 100 rules
+//! 1. `dispatch/pipeline` — Pipeline cost for each standard spec (4 specs)
+//! 2. `dispatch/scaling` — Pipeline cost at N = 5, 10, 20, 50, 100 rules
 //! 3. `dispatch/grammar_gen` — Expression generation overhead per spec
 //!
-//! Run static-only (no wfst feature):
+//! Run:
 //!   cargo bench -p mettail-prattail --bench bench_dispatch --features grammar-gen
-//!
-//! Run full A/B (with wfst):
-//!   cargo bench -p mettail-prattail --bench bench_dispatch --features grammar-gen,wfst
 
 mod bench_specs;
 
 use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use mettail_prattail::grammar_gen::generate_bench_inputs;
-use mettail_prattail::{generate_parser, DispatchStrategy, LanguageSpec};
+use mettail_prattail::generate_parser;
 
 use bench_specs::{complex_spec, medium_spec, minimal_spec, small_spec, synthetic_spec};
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Helpers
+// Group 1: Pipeline cost for each standard spec
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Clone a spec with a different dispatch strategy.
-fn with_dispatch(spec: &LanguageSpec, strategy: DispatchStrategy) -> LanguageSpec {
-    let mut s = spec.clone();
-    s.dispatch_strategy = strategy;
-    s
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Group 1: A/B comparison for each standard spec
-// ══════════════════════════════════════════════════════════════════════════════
-
-fn dispatch_ab(c: &mut Criterion) {
-    let specs: Vec<(&str, LanguageSpec)> = vec![
+fn dispatch_pipeline(c: &mut Criterion) {
+    let specs = vec![
         ("minimal", minimal_spec()),
         ("small", small_spec()),
         ("medium", medium_spec()),
         ("complex", complex_spec()),
     ];
 
-    let mut group = c.benchmark_group("dispatch/a_b");
+    let mut group = c.benchmark_group("dispatch/pipeline");
 
     for (name, spec) in &specs {
-        // Static dispatch
-        let static_spec = with_dispatch(spec, DispatchStrategy::Static);
-        group.bench_with_input(BenchmarkId::new("static", name), &static_spec, |b, s| {
+        group.bench_with_input(BenchmarkId::from_parameter(name), spec, |b, s| {
             b.iter(|| generate_parser(s))
         });
-
-        // Weighted dispatch (only available with wfst feature)
-        #[cfg(feature = "wfst")]
-        {
-            let weighted_spec = with_dispatch(spec, DispatchStrategy::Weighted);
-            group.bench_with_input(BenchmarkId::new("weighted", name), &weighted_spec, |b, s| {
-                b.iter(|| generate_parser(s))
-            });
-        }
     }
 
     group.finish();
@@ -76,20 +51,9 @@ fn dispatch_scaling(c: &mut Criterion) {
     for &n in &rule_counts {
         let spec = synthetic_spec(n);
 
-        // Static
-        let static_spec = with_dispatch(&spec, DispatchStrategy::Static);
-        group.bench_with_input(BenchmarkId::new("static", n), &static_spec, |b, s| {
+        group.bench_with_input(BenchmarkId::from_parameter(n), &spec, |b, s| {
             b.iter(|| generate_parser(s))
         });
-
-        // Weighted (wfst feature)
-        #[cfg(feature = "wfst")]
-        {
-            let weighted_spec = with_dispatch(&spec, DispatchStrategy::Weighted);
-            group.bench_with_input(BenchmarkId::new("weighted", n), &weighted_spec, |b, s| {
-                b.iter(|| generate_parser(s))
-            });
-        }
     }
 
     group.finish();
@@ -100,7 +64,7 @@ fn dispatch_scaling(c: &mut Criterion) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn dispatch_grammar_gen(c: &mut Criterion) {
-    let specs: Vec<(&str, LanguageSpec, &str)> = vec![
+    let specs = vec![
         ("minimal", minimal_spec(), "Term"),
         ("small", small_spec(), "Int"),
         ("medium", medium_spec(), "Proc"),
@@ -124,5 +88,5 @@ fn dispatch_grammar_gen(c: &mut Criterion) {
 // Criterion main
 // ══════════════════════════════════════════════════════════════════════════════
 
-criterion_group!(benches, dispatch_ab, dispatch_scaling, dispatch_grammar_gen);
+criterion_group!(benches, dispatch_pipeline, dispatch_scaling, dispatch_grammar_gen);
 criterion_main!(benches);

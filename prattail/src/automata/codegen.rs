@@ -15,12 +15,184 @@
 use std::fmt::Write;
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
 
-use super::{partition::AlphabetPartition, Dfa, TokenKind, DEAD_STATE};
+use super::{partition::AlphabetPartition, semiring::TropicalWeight, Dfa, StateId, TokenKind, DEAD_STATE};
 
 /// Threshold: use direct-coded for small DFAs, table-driven for larger ones.
 const DIRECT_CODED_THRESHOLD: usize = 30;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Token variant map — compact integer IDs for token kinds
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Bidirectional mapping between token variant names and compact integer IDs.
+///
+/// Used by the composed dispatch tables and `TokenFilter` bitset to reference
+/// token kinds by a single `u8` instead of matching on enum variant names.
+/// IDs are assigned in declaration order during `write_token_enum()`, so they
+/// are deterministic across compilations.
+#[derive(Debug, Clone)]
+pub struct TokenVariantMap {
+    /// Token variant name → compact ID (e.g., "Ident" → 1).
+    pub name_to_id: std::collections::BTreeMap<String, u8>,
+    /// Compact ID → token variant name (e.g., 1 → "Ident").
+    pub id_to_name: Vec<String>,
+    /// Total number of distinct token variants.
+    pub count: u8,
+}
+
+impl TokenVariantMap {
+    /// Build a `TokenVariantMap` from the token kinds used in a grammar.
+    ///
+    /// Assigns IDs in a deterministic order: Eof (0), Ident (1), then
+    /// remaining kinds in the order they appear in `token_kinds`, deduplicated.
+    pub fn from_token_kinds(token_kinds: &[TokenKind]) -> Self {
+        let mut name_to_id = std::collections::BTreeMap::new();
+        let mut id_to_name = Vec::new();
+
+        let mut insert = |name: String| {
+            if !name_to_id.contains_key(&name) {
+                let id = id_to_name.len() as u8;
+                name_to_id.insert(name.clone(), id);
+                id_to_name.push(name);
+            }
+        };
+
+        // Always include Eof and Ident first (stable IDs)
+        insert("Eof".to_string());
+        insert("Ident".to_string());
+
+        for kind in token_kinds {
+            let name = match kind {
+                TokenKind::Eof => "Eof".to_string(),
+                TokenKind::Ident => "Ident".to_string(),
+                TokenKind::Integer => "Integer".to_string(),
+                TokenKind::Float => "Float".to_string(),
+                TokenKind::True | TokenKind::False => "Boolean".to_string(),
+                TokenKind::StringLit => "StringLit".to_string(),
+                TokenKind::Fixed(text) => terminal_to_variant_name(text),
+                TokenKind::Dollar => "Dollar".to_string(),
+                TokenKind::DoubleDollar => "DoubleDollar".to_string(),
+            };
+            insert(name);
+        }
+
+        let count = id_to_name.len() as u8;
+        TokenVariantMap {
+            name_to_id,
+            id_to_name,
+            count,
+        }
+    }
+
+    /// Look up the ID for a token variant name, or `None` if not in the map.
+    pub fn get_id(&self, name: &str) -> Option<u8> {
+        self.name_to_id.get(name).copied()
+    }
+
+    /// Look up the token variant name for an ID, or `None` if out of range.
+    pub fn get_name(&self, id: u8) -> Option<&str> {
+        self.id_to_name.get(id as usize).map(|s| s.as_str())
+    }
+
+    /// Look up the ID for a `TokenKind`.
+    pub fn kind_to_id(&self, kind: &TokenKind) -> Option<u8> {
+        let name = match kind {
+            TokenKind::Eof => "Eof".to_string(),
+            TokenKind::Ident => "Ident".to_string(),
+            TokenKind::Integer => "Integer".to_string(),
+            TokenKind::Float => "Float".to_string(),
+            TokenKind::True | TokenKind::False => "Boolean".to_string(),
+            TokenKind::StringLit => "StringLit".to_string(),
+            TokenKind::Fixed(text) => terminal_to_variant_name(text),
+            TokenKind::Dollar => "Dollar".to_string(),
+            TokenKind::DoubleDollar => "DoubleDollar".to_string(),
+        };
+        self.get_id(&name)
+    }
+}
+
+/// A compact bitset of token variant IDs, supporting up to 64 variants.
+///
+/// Used for efficient FIRST-set membership tests in the generated parser.
+/// Each bit position corresponds to a `TokenVariantMap` ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TokenFilter(pub u64);
+
+impl TokenFilter {
+    /// Filter containing all token variants.
+    pub const ALL: Self = TokenFilter(!0u64);
+
+    /// Empty filter (no tokens).
+    pub const EMPTY: Self = TokenFilter(0);
+
+    /// Create a filter containing a single token variant ID.
+    #[inline]
+    pub fn singleton(id: u8) -> Self {
+        debug_assert!(id < 64, "TokenFilter supports at most 64 variants");
+        TokenFilter(1u64 << id)
+    }
+
+    /// Test whether a token variant ID is in this filter.
+    #[inline]
+    pub fn contains(&self, id: u8) -> bool {
+        id < 64 && (self.0 & (1u64 << id)) != 0
+    }
+
+    /// Union of two filters.
+    #[inline]
+    pub fn union(self, other: Self) -> Self {
+        TokenFilter(self.0 | other.0)
+    }
+
+    /// Intersection of two filters.
+    #[inline]
+    pub fn intersection(self, other: Self) -> Self {
+        TokenFilter(self.0 & other.0)
+    }
+
+    /// Whether this filter is empty.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0 == 0
+    }
+
+    /// Number of token variants in this filter.
+    #[inline]
+    pub fn count(&self) -> u32 {
+        self.0.count_ones()
+    }
+}
+
+/// Lexer analysis: information about ambiguous DFA states.
+///
+/// Returned alongside the lexer code string so the parser codegen can
+/// build composed dispatch tables for context-sensitive lexing.
+#[derive(Debug, Clone)]
+pub struct LexerAmbiguityInfo {
+    /// Whether the DFA has any ambiguous accepting states.
+    pub has_ambiguous: bool,
+    /// Ambiguous states: `(dfa_state_id, alternatives)` sorted by weight ascending.
+    /// Empty if `has_ambiguous` is false.
+    pub ambiguous_states: Vec<(StateId, Vec<(TokenKind, TropicalWeight)>)>,
+}
+
+/// Analyze a DFA for multi-accept ambiguity.
+pub fn analyze_ambiguity(dfa: &Dfa) -> LexerAmbiguityInfo {
+    let has_ambiguous = dfa.has_ambiguous_accepts();
+    let ambiguous_states = if has_ambiguous {
+        dfa.ambiguous_states()
+            .into_iter()
+            .map(|(id, alts)| (id, alts.to_vec()))
+            .collect()
+    } else {
+        Vec::new()
+    };
+    LexerAmbiguityInfo {
+        has_ambiguous,
+        ambiguous_states,
+    }
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Primary API — string-based codegen with single TokenStream parse
@@ -30,7 +202,7 @@ const DIRECT_CODED_THRESHOLD: usize = 30;
 ///
 /// Includes:
 /// - `Token` enum definition
-/// - `Span` struct
+/// - `Position` and `Range` structs
 /// - Equivalence class lookup table
 /// - The `lex()` function
 ///
@@ -43,7 +215,8 @@ pub fn generate_lexer_code(
     token_kinds: &[TokenKind],
     language_name: &str,
 ) -> (TokenStream, CodegenStrategy) {
-    let (buf, strategy) = generate_lexer_string(dfa, partition, token_kinds, language_name);
+    let (buf, strategy, _variant_map, _ambiguity) =
+        generate_lexer_string(dfa, partition, token_kinds, language_name);
     let ts = buf
         .parse::<TokenStream>()
         .expect("generated lexer code must be valid Rust");
@@ -56,13 +229,14 @@ pub fn generate_lexer_code(
 /// codegen path. The caller appends parser code to this string and does a
 /// single `str::parse::<TokenStream>()` at the end.
 ///
-/// Returns the generated code string and which codegen strategy was selected.
+/// Returns the generated code string, codegen strategy, token variant map,
+/// and DFA ambiguity info.
 pub fn generate_lexer_string(
     dfa: &Dfa,
     partition: &AlphabetPartition,
     token_kinds: &[TokenKind],
     _language_name: &str,
-) -> (String, CodegenStrategy) {
+) -> (String, CodegenStrategy, TokenVariantMap, LexerAmbiguityInfo) {
     // Estimate buffer size: ~8KB for typical grammars, scales with DFA size
     let estimated_size = 4096 + dfa.states.len() * partition.num_classes * 16;
     let mut buf = String::with_capacity(estimated_size);
@@ -78,7 +252,10 @@ pub fn generate_lexer_string(
         write_compressed_lexer(&mut buf, dfa, partition)
     };
 
-    (buf, strategy)
+    let variant_map = TokenVariantMap::from_token_kinds(token_kinds);
+    let ambiguity_info = analyze_ambiguity(dfa);
+
+    (buf, strategy, variant_map, ambiguity_info)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -179,8 +356,7 @@ fn write_position_and_range_defs(buf: &mut String) {
                  write!(f, \"{}-{}\", self.start, self.end) \
              } \
          }\n\
-         /// Backward-compatible type alias for migration.\n\
-         pub type Span = Range;\n",
+",
     );
 }
 
@@ -274,7 +450,6 @@ fn write_accept_arms(buf: &mut String, dfa: &Dfa) {
 /// Returns the tropical weight (as raw f64) for each accepting DFA state.
 /// Non-accepting states return `f64::INFINITY` (tropical zero / unreachable).
 /// Used by `lex_weighted()` to emit `(Token, Range, f64)` triples.
-#[cfg(feature = "wfst")]
 fn write_accept_weight_arms(buf: &mut String, dfa: &Dfa) {
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
@@ -304,25 +479,6 @@ fn write_transition_arms(buf: &mut String, dfa: &Dfa) {
     buf.push_str("_ => u32::MAX }");
 }
 
-/// Write the flat transition table to a string buffer (for table-driven lexer).
-///
-/// Superseded by `write_comb_tables()` — preserved for reference and testing.
-#[allow(dead_code)]
-fn write_transition_table(buf: &mut String, dfa: &Dfa, num_classes: usize) {
-    let table_size = dfa.states.len() * num_classes;
-    write!(buf, "static TRANSITIONS: [u32; {}] = [", table_size).unwrap();
-    let mut first = true;
-    for state in &dfa.states {
-        for &target in &state.transitions {
-            if !first {
-                buf.push(',');
-            }
-            first = false;
-            write!(buf, "{}", target).unwrap();
-        }
-    }
-    buf.push_str("];");
-}
 
 /// Write a TokenKind constructor expression to a string buffer.
 ///
@@ -424,7 +580,6 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     buf.push('}');
 
     // WFST weight emission: accept_weight() + lex_weighted()
-    #[cfg(feature = "wfst")]
     {
         buf.push_str(
             "/// Get the tropical weight for an accepting DFA state.\n\
@@ -441,7 +596,6 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
 ///
 /// Direct-coded lexers don't use `dfa_next()` — they inline the transition logic.
 /// This function generates the weighted lex variant for the direct-coded path.
-#[cfg(feature = "wfst")]
 fn write_lex_weighted_function_direct_coded(buf: &mut String) {
     buf.push_str(
         "/// Lex with weight emission: each token carries its tropical weight \
@@ -496,82 +650,306 @@ fn write_lex_weighted_function_direct_coded(buf: &mut String) {
     );
 }
 
-/// Write a complete table-driven lexer to a string buffer (flat transition table).
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Incremental Lexer struct + LexerAdapter codegen (Phase 6D)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Emit per-category expected-token description constants.
 ///
-/// Superseded by `write_comb_driven_lexer()` and `write_bitmap_driven_lexer()`
-/// — preserved for reference and testing.
-#[allow(dead_code)]
-fn write_table_driven_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPartition) {
-    let num_classes = partition.num_classes;
+/// Generates `const EXPECTED_<CAT>: &str = "...";` for each category, using
+/// the FIRST set to build a human-readable description of valid tokens.
+/// Used by `next_token_for_category()` and `LexerAdapter` error messages.
+///
+/// Always emitted as part of the context-sensitive lexing infrastructure.
+pub fn write_expected_category_descriptions(
+    buf: &mut String,
+    expected_messages: &[(String, String)],
+) {
+    for (cat_name, msg) in expected_messages {
+        let escaped = msg.replace('\\', "\\\\").replace('"', "\\\"");
+        write!(
+            buf,
+            "const EXPECTED_{}: &str = \"{}\";",
+            cat_name.to_uppercase(),
+            escaped,
+        )
+        .unwrap();
+    }
+}
 
-    write_class_table(buf, partition);
-    write_transition_table(buf, dfa, num_classes);
-
-    write!(
-        buf,
-        "const NUM_STATES: usize = {}; const NUM_CLASSES: usize = {}; const DEAD: u32 = u32::MAX;",
-        dfa.states.len(),
-        num_classes
-    )
-    .unwrap();
+/// Write the `Lexer<'a>` struct and associated methods to a string buffer.
+///
+/// The Lexer struct provides incremental (token-at-a-time) lexing, as opposed
+/// to the batch `lex()` function that eagerly tokenizes the entire input.
+///
+/// Two methods:
+/// - `next_token()`: unfiltered, identical to the inner loop of `lex()`
+/// - `next_token_for_category(category_id)`: uses composed dispatch for ambiguous states
+///
+/// Always emitted as part of the context-sensitive lexing infrastructure.
+pub fn write_lexer_struct(
+    buf: &mut String,
+    ambiguity_info: &LexerAmbiguityInfo,
+    category_names: &[String],
+) {
 
     buf.push_str(
-        "fn is_whitespace(b: u8) -> bool { matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r') }",
+        "pub struct Lexer<'a> { \
+         input: &'a str, \
+         bytes: &'a [u8], \
+         pos: usize, \
+         line: usize, \
+         col: usize, \
+         file_id: Option<u32>, \
+         } \
+         impl<'a> Lexer<'a> { \
+         pub fn new(input: &'a str, file_id: Option<u32>) -> Self { \
+         Lexer { input, bytes: input.as_bytes(), pos: 0, line: 0, col: 0, file_id } \
+         } \
+         pub fn is_eof(&self) -> bool { self.pos >= self.bytes.len() } \
+         pub fn position(&self) -> Position { \
+         Position { byte_offset: self.pos, line: self.line, column: self.col } \
+         } \
+         ",
     );
 
-    // lex() function with line/column tracking — zero-copy: Token<'a> borrows from input
+    // next_token() — identical to the inner loop of lex()
     buf.push_str(
-        "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String> { \
-         lex_with_file_id(input, None) \
-         }\n\
-         pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range)>, String> { \
-         let bytes = input.as_bytes(); \
-         let mut pos: usize = 0; \
-         let mut line: usize = 0; \
-         let mut col: usize = 0; \
-         let mut tokens: Vec<(Token<'a>, Range)> = Vec::with_capacity(input.len() / 2); \
-         while pos < bytes.len() { \
-         while pos < bytes.len() && is_whitespace(bytes[pos]) { \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } else { col += 1; } \
-         pos += 1; } \
-         if pos >= bytes.len() { break; } \
-         let start = pos; \
-         let start_line = line; \
-         let start_col = col; \
+        "pub fn next_token(&mut self) -> Result<(Token<'a>, Range), String> { \
+         while self.pos < self.bytes.len() && is_whitespace(self.bytes[self.pos]) { \
+         if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } else { self.col += 1; } \
+         self.pos += 1; } \
+         if self.pos >= self.bytes.len() { \
+         let eof_pos = Position { byte_offset: self.pos, line: self.line, column: self.col }; \
+         return Ok((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id: self.file_id })); \
+         } \
+         let start = self.pos; \
+         let start_line = self.line; \
+         let start_col = self.col; \
          let mut state: u32 = 0; \
          let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if accept_token(0, &input[start..start]).is_some() { last_accept = Some((0, pos, line, col)); } \
-         while pos < bytes.len() { \
-         let class = CHAR_CLASS[bytes[pos] as usize] as usize; \
-         let next = TRANSITIONS[state as usize * NUM_CLASSES + class]; \
-         if next == DEAD { break; } \
+         if accept_token(0, &self.input[start..start]).is_some() { last_accept = Some((0, self.pos, self.line, self.col)); } \
+         while self.pos < self.bytes.len() { \
+         let class = CHAR_CLASS[self.bytes[self.pos] as usize]; \
+         let next = dfa_next(state, class); \
+         if next == u32::MAX { break; } \
          state = next; \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } \
-         else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
-         pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
+         if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } \
+         else if self.bytes[self.pos] & 0xC0 != 0x80 { self.col += 1; } \
+         self.pos += 1; \
+         if accept_token(state, &self.input[start..self.pos]).is_some() { last_accept = Some((state, self.pos, self.line, self.col)); } \
          } \
          match last_accept { \
          Some((accept_state, end, end_line, end_col)) => { \
-         pos = end; line = end_line; col = end_col; \
-         let text = &input[start..end]; \
-         if let Some(token) = accept_token(accept_state, text) { \
-         tokens.push((token, Range { \
+         self.pos = end; self.line = end_line; self.col = end_col; \
+         let text = &self.input[start..end]; \
+         match accept_token(accept_state, text) { \
+         Some(token) => Ok((token, Range { \
          start: Position { byte_offset: start, line: start_line, column: start_col }, \
          end: Position { byte_offset: end, line: end_line, column: end_col }, \
-         file_id })); } } \
-         None => { return Err(format!(\"{}:{}: unexpected character '{}'\", \
-         line + 1, col + 1, bytes[start] as char)); } \
+         file_id: self.file_id })), \
+         None => Err(format!(\"{}:{}: internal error: accept state without token\", self.line + 1, self.col + 1)) \
          } } \
-         let eof_pos = Position { byte_offset: pos, line, column: col }; \
-         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id })); \
-         Ok(tokens) }",
+         None => Err(format!(\"{}:{}: unexpected character '{}'\", \
+         start_line + 1, start_col + 1, self.bytes[start] as char)) \
+         } }",
     );
 
-    // accept_token() function — returns Token<'a> borrowing from text
-    buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(buf, dfa);
-    buf.push('}');
+    // next_token_for_category(category_id) — context-aware
+    if ambiguity_info.has_ambiguous {
+        buf.push_str(
+            "pub fn next_token_for_category(&mut self, category_id: u8) -> Result<(Token<'a>, Range), String> { \
+             while self.pos < self.bytes.len() && is_whitespace(self.bytes[self.pos]) { \
+             if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } else { self.col += 1; } \
+             self.pos += 1; } \
+             if self.pos >= self.bytes.len() { \
+             let eof_pos = Position { byte_offset: self.pos, line: self.line, column: self.col }; \
+             return Ok((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id: self.file_id })); \
+             } \
+             let start = self.pos; \
+             let start_line = self.line; \
+             let start_col = self.col; \
+             let mut state: u32 = 0; \
+             let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
+             if accept_token(0, &self.input[start..start]).is_some() { last_accept = Some((0, self.pos, self.line, self.col)); } \
+             while self.pos < self.bytes.len() { \
+             let class = CHAR_CLASS[self.bytes[self.pos] as usize]; \
+             let next = dfa_next(state, class); \
+             if next == u32::MAX { break; } \
+             state = next; \
+             if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } \
+             else if self.bytes[self.pos] & 0xC0 != 0x80 { self.col += 1; } \
+             self.pos += 1; \
+             if accept_token(state, &self.input[start..self.pos]).is_some() { last_accept = Some((state, self.pos, self.line, self.col)); } \
+             } \
+             match last_accept { \
+             Some((accept_state, end, end_line, end_col)) => { \
+             self.pos = end; self.line = end_line; self.col = end_col; \
+             let text = &self.input[start..end]; \
+             let dispatch = composed_dispatch(category_id, accept_state); \
+             if dispatch.is_empty() { \
+             match accept_token(accept_state, text) { \
+             Some(token) => Ok((token, Range { \
+             start: Position { byte_offset: start, line: start_line, column: start_col }, \
+             end: Position { byte_offset: end, line: end_line, column: end_col }, \
+             file_id: self.file_id })), \
+             None => Err(format!(\"{}:{}: internal error: accept state without token\", self.line + 1, self.col + 1)) \
+             } \
+             } else { \
+             let (kind_id, _rule, _weight) = dispatch[0]; \
+             match accept_token_by_kind(accept_state, text, kind_id) { \
+             Some(token) => Ok((token, Range { \
+             start: Position { byte_offset: start, line: start_line, column: start_col }, \
+             end: Position { byte_offset: end, line: end_line, column: end_col }, \
+             file_id: self.file_id })), \
+             None => match accept_token(accept_state, text) { \
+             Some(token) => Ok((token, Range { \
+             start: Position { byte_offset: start, line: start_line, column: start_col }, \
+             end: Position { byte_offset: end, line: end_line, column: end_col }, \
+             file_id: self.file_id })), \
+             None => Err(format!(\"{}:{}: internal error: accept state without token\", self.line + 1, self.col + 1)) \
+             } } } } \
+             None => Err(format!(\"{}:{}: unexpected character '{}'; expected {}\", \
+             start_line + 1, start_col + 1, self.bytes[start] as char, expected_for_category(category_id))) \
+             } }",
+        );
+    } else {
+        // No ambiguous states — next_token_for_category uses same DFA as next_token
+        // but still provides category-aware error messages
+        buf.push_str(
+            "pub fn next_token_for_category(&mut self, category_id: u8) -> Result<(Token<'a>, Range), String> { \
+             match self.next_token() { \
+             Ok(tok_range) => Ok(tok_range), \
+             Err(msg) => Err(format!(\"{} (expected {})\", msg, expected_for_category(category_id))), \
+             } }",
+        );
+    }
+
+    buf.push_str("} "); // close impl Lexer
+
+    // Emit expected_for_category() at module scope so it's accessible from both
+    // Lexer methods and lazy parser functions.
+    let mut expected_fn = String::from(
+        "fn expected_for_category(category_id: u8) -> &'static str { match category_id { ",
+    );
+    for (i, cat) in category_names.iter().enumerate() {
+        write!(expected_fn, "{} => EXPECTED_{}, ", i, cat.to_uppercase()).unwrap();
+    }
+    expected_fn.push_str("_ => \"token\" } }");
+    buf.push_str(&expected_fn);
+
+    // NOTE: lex() is already emitted by the standard lexer codegen path
+    // (write_direct_coded_lexer / write_compressed_lexer). No duplicate needed.
+}
+
+/// Write the `accept_token_by_kind()` function for ambiguous states.
+///
+/// Given a DFA state and a target kind_id, returns the token constructed
+/// as if that specific token kind was accepted. Handles the mapping from
+/// kind_id back to the appropriate Token constructor.
+pub fn write_accept_token_by_kind(
+    buf: &mut String,
+    variant_map: &TokenVariantMap,
+) {
+
+    buf.push_str(
+        "fn accept_token_by_kind<'a>(state: u32, text: &'a str, kind_id: u8) -> Option<Token<'a>> {",
+    );
+    buf.push_str("match kind_id {");
+
+    // Emit a match arm for each token variant
+    for (name, &id) in &variant_map.name_to_id {
+        write!(buf, "{} => Some(", id).unwrap();
+        match name.as_str() {
+            "Eof" => buf.push_str("Token::Eof"),
+            "Ident" => buf.push_str("Token::Ident(text)"),
+            "Integer" => buf.push_str("Token::Integer(text.parse::<i64>().expect(\"invalid integer literal\"))"),
+            "Float" => buf.push_str("Token::Float(text.parse::<f64>().expect(\"invalid float literal\"))"),
+            "Boolean" => {
+                buf.push_str("if text == \"true\" { Token::Boolean(true) } else { Token::Boolean(false) }");
+            },
+            "StringLit" => buf.push_str("Token::StringLit(&text[1..text.len()-1])"),
+            "Dollar" => buf.push_str("Token::Dollar(&text[1..])"),
+            "DoubleDollar" => buf.push_str("Token::DoubleDollar(&text[2..text.len()-1])"),
+            variant => {
+                write!(buf, "Token::{}", variant).unwrap();
+            },
+        }
+        buf.push_str("),");
+    }
+
+    buf.push_str("_ => accept_token(state, text) } }");
+}
+
+/// Write the `LexerAdapter` struct for parser-driven lexing.
+///
+/// Wraps a `Lexer` with a small token buffer for peek-ahead and
+/// category-aware disambiguation.
+///
+/// Error handling: lex errors are captured and stored. When a lex error occurs,
+/// the adapter stores the error message and reports EOF. The stored error can be
+/// retrieved via `take_error()` for proper error propagation in the parser.
+pub fn write_lexer_adapter(buf: &mut String) {
+    buf.push_str(
+        "pub struct LexerAdapter<'a> { \
+         lexer: Lexer<'a>, \
+         buf: Vec<(Token<'a>, Range)>, \
+         cursor: usize, \
+         category_id: u8, \
+         lex_error: Option<String>, \
+         } \
+         impl<'a> LexerAdapter<'a> { \
+         pub fn new(lexer: Lexer<'a>) -> Self { \
+         LexerAdapter { lexer, buf: Vec::with_capacity(4), cursor: 0, category_id: 0, lex_error: None } \
+         } \
+         pub fn set_category(&mut self, id: u8) { self.category_id = id; } \
+         fn ensure_buffered(&mut self, n: usize) { \
+         while self.buf.len() <= self.cursor + n { \
+         if self.lex_error.is_some() { \
+         let pos = self.lexer.position(); \
+         self.buf.push((Token::Eof, Range { start: pos, end: pos, file_id: None })); \
+         break; \
+         } \
+         let result = if self.category_id > 0 { \
+         self.lexer.next_token_for_category(self.category_id) \
+         } else { \
+         self.lexer.next_token() \
+         }; \
+         match result { \
+         Ok(tok_range) => self.buf.push(tok_range), \
+         Err(msg) => { \
+         self.lex_error = Some(msg); \
+         let pos = self.lexer.position(); \
+         self.buf.push((Token::Eof, Range { start: pos, end: pos, file_id: None })); \
+         break; \
+         } } } } \
+         pub fn peek(&mut self) -> &Token<'a> { \
+         self.ensure_buffered(0); \
+         &self.buf[self.cursor].0 \
+         } \
+         pub fn peek_range(&mut self) -> &Range { \
+         self.ensure_buffered(0); \
+         &self.buf[self.cursor].1 \
+         } \
+         pub fn peek_ahead(&mut self, n: usize) -> Option<&Token<'a>> { \
+         self.ensure_buffered(n); \
+         self.buf.get(self.cursor + n).map(|(t, _)| t) \
+         } \
+         pub fn advance(&mut self) { \
+         self.ensure_buffered(0); \
+         if self.cursor < self.buf.len() { self.cursor += 1; } \
+         if self.cursor > 8 { \
+         self.buf.drain(..self.cursor); \
+         self.cursor = 0; \
+         } } \
+         pub fn is_eof(&mut self) -> bool { \
+         matches!(self.peek(), Token::Eof) \
+         } \
+         pub fn take_error(&mut self) -> Option<String> { \
+         self.lex_error.take() \
+         } } ",
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -953,7 +1331,6 @@ fn write_comb_driven_lexer(
     buf.push('}');
 
     // WFST weight emission: accept_weight() + lex_weighted()
-    #[cfg(feature = "wfst")]
     {
         buf.push_str(
             "/// Get the tropical weight for an accepting DFA state.\n\
@@ -1002,7 +1379,6 @@ fn write_bitmap_driven_lexer(
     buf.push('}');
 
     // WFST weight emission: accept_weight() + lex_weighted()
-    #[cfg(feature = "wfst")]
     {
         buf.push_str(
             "/// Get the tropical weight for an accepting DFA state.\n\
@@ -1075,7 +1451,6 @@ fn write_lex_function_with_dfa_next(buf: &mut String) {
 /// (lower = higher priority). Feature-gated: only emitted when `wfst` feature is enabled.
 ///
 /// Shared between comb-driven and bitmap-driven lexers.
-#[cfg(feature = "wfst")]
 fn write_lex_weighted_function_with_dfa_next(buf: &mut String) {
     buf.push_str(
         "/// Lex with weight emission: each token carries its tropical weight \
@@ -1130,468 +1505,16 @@ fn write_lex_weighted_function_with_dfa_next(buf: &mut String) {
     );
 }
 
-// Preserved for reference: the original flat table-driven lexer.
-// Superseded by write_comb_driven_lexer() and write_bitmap_driven_lexer().
-// #[allow(dead_code)]
-// fn write_table_driven_lexer(buf, dfa, partition) { ... }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Legacy quote!-based API — kept for sub-function benchmarking comparison
+// Utility functions
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Generate the Token enum with variants for all token kinds.
-///
-/// Uses `quote!` macro (legacy). The primary `generate_lexer_code` uses
-/// string-based generation instead.
-pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
-    let mut variants = Vec::new();
-    let mut seen = std::collections::HashSet::new();
-
-    // Always include these
-    variants.push(quote! {
-        /// End of input
-        Eof
-    });
-    seen.insert("Eof".to_string());
-
-    variants.push(quote! {
-        /// Identifier
-        Ident(String)
-    });
-    seen.insert("Ident".to_string());
-
-    for kind in token_kinds {
-        match kind {
-            TokenKind::Eof | TokenKind::Ident => {},
-            TokenKind::Integer => {
-                if seen.insert("Integer".to_string()) {
-                    variants.push(quote! {
-                        /// Integer literal
-                        Integer(i64)
-                    });
-                }
-            },
-            TokenKind::Float => {
-                if seen.insert("Float".to_string()) {
-                    variants.push(quote! {
-                        /// Float literal
-                        Float(f64)
-                    });
-                }
-            },
-            TokenKind::True | TokenKind::False => {
-                if seen.insert("Boolean".to_string()) {
-                    variants.push(quote! {
-                        /// Boolean literal
-                        Boolean(bool)
-                    });
-                }
-            },
-            TokenKind::StringLit => {
-                if seen.insert("StringLit".to_string()) {
-                    variants.push(quote! {
-                        /// String literal
-                        StringLit(String)
-                    });
-                }
-            },
-            TokenKind::Fixed(text) => {
-                let variant_name = terminal_to_variant_name(text);
-                if seen.insert(variant_name.clone()) {
-                    let variant_ident = format_ident!("{}", variant_name);
-                    let doc = format!("Terminal: `{}`", text);
-                    variants.push(quote! {
-                        #[doc = #doc]
-                        #variant_ident
-                    });
-                }
-            },
-            TokenKind::Dollar => {
-                if seen.insert("Dollar".to_string()) {
-                    variants.push(quote! {
-                        /// Dollar-prefixed identifier ($proc, $name, etc.)
-                        Dollar(String)
-                    });
-                }
-            },
-            TokenKind::DoubleDollar => {
-                if seen.insert("DoubleDollar".to_string()) {
-                    variants.push(quote! {
-                        /// Double-dollar application ($$proc(, $$name(, etc.)
-                        DoubleDollar(String)
-                    });
-                }
-            },
-        }
-    }
-
-    quote! {
-        #[derive(Debug, Clone, PartialEq)]
-        pub enum Token {
-            #(#variants),*
-        }
-    }
-}
-
-/// Generate the Position + Range type definitions (legacy quote!-based API).
-pub fn generate_span_def() -> TokenStream {
-    quote! {
-        /// A position in source code. All fields are 0-indexed.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        pub struct Position {
-            pub byte_offset: usize,
-            pub line: usize,
-            pub column: usize,
-        }
-        impl Position {
-            pub fn zero() -> Self { Position { byte_offset: 0, line: 0, column: 0 } }
-        }
-        impl ::std::fmt::Display for Position {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                write!(f, "{}:{}", self.line + 1, self.column + 1)
-            }
-        }
-        /// A range in source code with beginning and ending positions.
-        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-        pub struct Range {
-            pub start: Position,
-            pub end: Position,
-            pub file_id: Option<u32>,
-        }
-        impl Range {
-            pub fn zero() -> Self {
-                Range { start: Position::zero(), end: Position::zero(), file_id: None }
-            }
-        }
-        impl ::std::fmt::Display for Range {
-            fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-                write!(f, "{}-{}", self.start, self.end)
-            }
-        }
-        /// Backward-compatible type alias.
-        pub type Span = Range;
-    }
-}
-
-/// Generate a direct-coded lexer (each DFA state as a match arm).
-///
-/// Uses `quote!` macro (legacy). The primary `generate_lexer_code` uses
-/// string-based generation instead.
-pub fn generate_direct_coded_lexer(
-    dfa: &Dfa,
-    partition: &AlphabetPartition,
-    _token_kinds: &[TokenKind],
-) -> TokenStream {
-    // Generate the equivalence class lookup table
-    let class_table = generate_class_table(partition);
-
-    // Generate accept table
-    let accept_arms = generate_accept_match_arms(dfa);
-
-    // Generate the DFA transition logic
-    let transition_arms = generate_transition_match_arms(dfa, partition);
-
-    let num_classes_lit = partition.num_classes;
-
-    quote! {
-        /// Equivalence class lookup table (byte → class ID)
-        static CHAR_CLASS: [u8; 256] = #class_table;
-
-        /// Number of equivalence classes
-        const NUM_CLASSES: usize = #num_classes_lit;
-
-        /// Whitespace equivalence class
-        fn is_whitespace(b: u8) -> bool {
-            matches!(b, b' ' | b'\t' | b'\n' | b'\r')
-        }
-
-        /// Lex a complete input string into a vector of (Token, Span) pairs.
-        pub fn lex(input: &str) -> Result<Vec<(Token, Span)>, String> {
-            let bytes = input.as_bytes();
-            let mut pos: usize = 0;
-            let mut tokens: Vec<(Token, Span)> = Vec::with_capacity(input.len() / 2);
-
-            while pos < bytes.len() {
-                // Skip whitespace
-                while pos < bytes.len() && is_whitespace(bytes[pos]) {
-                    pos += 1;
-                }
-                if pos >= bytes.len() {
-                    break;
-                }
-
-                let start = pos;
-                let mut state: u32 = 0; // DFA start state
-                let mut last_accept: Option<(u32, usize)> = None; // (state, end_pos)
-
-                // Check if start state is accepting
-                if let Some(_) = accept_token(0, &input[start..start]) {
-                    last_accept = Some((0, pos));
-                }
-
-                // Maximal munch: run DFA until dead state, record last accept
-                while pos < bytes.len() {
-                    let class = CHAR_CLASS[bytes[pos] as usize];
-                    let next = dfa_next(state, class);
-                    if next == u32::MAX {
-                        break;
-                    }
-                    state = next;
-                    pos += 1;
-                    if accept_token(state, &input[start..pos]).is_some() {
-                        last_accept = Some((state, pos));
-                    }
-                }
-
-                match last_accept {
-                    Some((accept_state, end)) => {
-                        pos = end;
-                        let text = &input[start..end];
-                        if let Some(token) = accept_token(accept_state, text) {
-                            tokens.push((token, Span { start, end }));
-                        }
-                    }
-                    None => {
-                        return Err(format!(
-                            "unexpected character '{}' at position {}",
-                            bytes[start] as char, start
-                        ));
-                    }
-                }
-            }
-
-            tokens.push((Token::Eof, Span { start: pos, end: pos }));
-            Ok(tokens)
-        }
-
-        /// DFA transition function
-        fn dfa_next(state: u32, class: u8) -> u32 {
-            #transition_arms
-        }
-
-        /// Map an accepting DFA state + matched text to a Token
-        fn accept_token(state: u32, text: &str) -> Option<Token> {
-            #accept_arms
-        }
-    }
-}
-
-/// Generate a table-driven lexer (for larger DFAs).
-///
-/// Uses `quote!` macro (legacy). The primary `generate_lexer_code` uses
-/// string-based generation instead.
-pub fn generate_table_driven_lexer(
-    dfa: &Dfa,
-    partition: &AlphabetPartition,
-    _token_kinds: &[TokenKind],
-) -> TokenStream {
-    let class_table = generate_class_table(partition);
-    let num_states = dfa.states.len();
-    let num_classes = partition.num_classes;
-
-    // Build flat transition table: transitions[state * num_classes + class] = next_state
-    // DfaState.transitions is already a dense array, so we can directly flatten it.
-    let mut transitions: Vec<u32> = Vec::with_capacity(num_states * num_classes);
-    for state in &dfa.states {
-        transitions.extend_from_slice(&state.transitions);
-    }
-
-    let transitions_tokens: Vec<proc_macro2::TokenTree> = transitions
-        .iter()
-        .map(|&t| proc_macro2::TokenTree::Literal(proc_macro2::Literal::u32_suffixed(t)))
-        .collect();
-
-    let accept_arms = generate_accept_match_arms(dfa);
-    let num_states_lit = num_states;
-    let num_classes_lit = num_classes;
-    let table_size = transitions.len();
-
-    quote! {
-        /// Equivalence class lookup table (byte → class ID)
-        static CHAR_CLASS: [u8; 256] = #class_table;
-
-        /// DFA transition table (flat: state * NUM_CLASSES + class → next_state)
-        static TRANSITIONS: [u32; #table_size] = [#(#transitions_tokens),*];
-
-        const NUM_STATES: usize = #num_states_lit;
-        const NUM_CLASSES: usize = #num_classes_lit;
-        const DEAD: u32 = u32::MAX;
-
-        fn is_whitespace(b: u8) -> bool {
-            matches!(b, b' ' | b'\t' | b'\n' | b'\r')
-        }
-
-        /// Lex a complete input string into a vector of (Token, Span) pairs.
-        pub fn lex(input: &str) -> Result<Vec<(Token, Span)>, String> {
-            let bytes = input.as_bytes();
-            let mut pos: usize = 0;
-            let mut tokens: Vec<(Token, Span)> = Vec::with_capacity(input.len() / 2);
-
-            while pos < bytes.len() {
-                // Skip whitespace
-                while pos < bytes.len() && is_whitespace(bytes[pos]) {
-                    pos += 1;
-                }
-                if pos >= bytes.len() {
-                    break;
-                }
-
-                let start = pos;
-                let mut state: u32 = 0;
-                let mut last_accept: Option<(u32, usize)> = None;
-
-                if accept_token(0, &input[start..start]).is_some() {
-                    last_accept = Some((0, pos));
-                }
-
-                while pos < bytes.len() {
-                    let class = CHAR_CLASS[bytes[pos] as usize] as usize;
-                    let next = TRANSITIONS[state as usize * NUM_CLASSES + class];
-                    if next == DEAD {
-                        break;
-                    }
-                    state = next;
-                    pos += 1;
-                    if accept_token(state, &input[start..pos]).is_some() {
-                        last_accept = Some((state, pos));
-                    }
-                }
-
-                match last_accept {
-                    Some((accept_state, end)) => {
-                        pos = end;
-                        let text = &input[start..end];
-                        if let Some(token) = accept_token(accept_state, text) {
-                            tokens.push((token, Span { start, end }));
-                        }
-                    }
-                    None => {
-                        return Err(format!(
-                            "unexpected character '{}' at position {}",
-                            bytes[start] as char, start
-                        ));
-                    }
-                }
-            }
-
-            tokens.push((Token::Eof, Span { start: pos, end: pos }));
-            Ok(tokens)
-        }
-
-        /// Map an accepting DFA state + matched text to a Token
-        fn accept_token(state: u32, text: &str) -> Option<Token> {
-            #accept_arms
-        }
-    }
-}
-
-/// Generate the equivalence class lookup table as a Rust array literal.
-///
-/// Uses `proc_macro2::Literal` directly instead of individual `quote!` calls
-/// for each of the 256 entries, reducing TokenStream allocation overhead.
-pub fn generate_class_table(partition: &AlphabetPartition) -> TokenStream {
-    let entries: Vec<proc_macro2::TokenTree> = partition
-        .byte_to_class
-        .iter()
-        .map(|&c| proc_macro2::TokenTree::Literal(proc_macro2::Literal::u8_suffixed(c)))
-        .collect();
-
-    quote! { [#(#entries),*] }
-}
-
-/// Generate match arms for the accept_token function.
-pub fn generate_accept_match_arms(dfa: &Dfa) -> TokenStream {
-    let mut arms: Vec<TokenStream> = Vec::new();
-
-    for (state_idx, state) in dfa.states.iter().enumerate() {
-        if let Some(ref kind) = state.accept {
-            let state_lit = state_idx as u32;
-            let token_expr = token_kind_to_constructor(kind);
-            arms.push(quote! {
-                #state_lit => Some(#token_expr)
-            });
-        }
-    }
-
-    arms.push(quote! { _ => None });
-
-    quote! {
-        match state {
-            #(#arms),*
-        }
-    }
-}
-
-/// Generate match arms for the dfa_next transition function (direct-coded).
-pub fn generate_transition_match_arms(dfa: &Dfa, _partition: &AlphabetPartition) -> TokenStream {
-    let mut state_arms: Vec<TokenStream> = Vec::new();
-
-    for (state_idx, state) in dfa.states.iter().enumerate() {
-        // Check if any transition is non-dead
-        let has_transitions = state.transitions.iter().any(|&t| t != super::DEAD_STATE);
-        if !has_transitions {
-            continue;
-        }
-
-        let state_lit = state_idx as u32;
-        let mut class_arms: Vec<TokenStream> = Vec::new();
-
-        for (class_id, &target) in state.transitions.iter().enumerate() {
-            if target != super::DEAD_STATE {
-                let class_lit = class_id as u8;
-                let target_lit = target;
-                class_arms.push(quote! {
-                    #class_lit => #target_lit
-                });
-            }
-        }
-        class_arms.push(quote! { _ => u32::MAX });
-
-        state_arms.push(quote! {
-            #state_lit => match class {
-                #(#class_arms),*
-            }
-        });
-    }
-
-    state_arms.push(quote! { _ => u32::MAX });
-
-    quote! {
-        match state {
-            #(#state_arms),*
-        }
-    }
-}
-
-/// Convert a TokenKind to a Token constructor expression.
-pub fn token_kind_to_constructor(kind: &TokenKind) -> TokenStream {
-    match kind {
-        TokenKind::Eof => quote! { Token::Eof },
-        TokenKind::Ident => quote! { Token::Ident(text.to_string()) },
-        TokenKind::Integer => quote! {
-            Token::Integer(text.parse::<i64>().expect("invalid integer literal"))
-        },
-        TokenKind::Float => quote! {
-            Token::Float(text.parse::<f64>().expect("invalid float literal"))
-        },
-        TokenKind::True => quote! { Token::Boolean(true) },
-        TokenKind::False => quote! { Token::Boolean(false) },
-        TokenKind::StringLit => quote! {
-            Token::StringLit(text[1..text.len()-1].to_string())
-        },
-        TokenKind::Fixed(text) => {
-            let variant_name = terminal_to_variant_name(text);
-            let variant_ident = format_ident!("{}", variant_name);
-            quote! { Token::#variant_ident }
-        },
-        TokenKind::Dollar => quote! {
-            Token::Dollar(text[1..].to_string())
-        },
-        TokenKind::DoubleDollar => quote! {
-            Token::DoubleDollar(text[2..text.len()-1].to_string())
-        },
-    }
-}
+// NOTE: The legacy quote!-based codegen API (generate_token_enum, generate_span_def,
+// generate_direct_coded_lexer, generate_table_driven_lexer, generate_class_table,
+// generate_accept_match_arms, generate_transition_match_arms, token_kind_to_constructor)
+// was removed as part of backwards-compatibility cleanup. The string-based codegen
+// (write_*) functions are the canonical implementation.
 
 /// Convert a terminal string to a Rust-safe variant name.
 ///
@@ -1713,7 +1636,7 @@ mod tests {
     use super::*;
     use crate::automata::{
         minimize::minimize_dfa,
-        nfa::{build_nfa_default, BuiltinNeeds},
+        nfa::{build_nfa, BuiltinNeeds},
         partition::compute_equivalence_classes,
         subset::subset_construction,
         DfaState, TerminalPattern,
@@ -1758,7 +1681,7 @@ mod tests {
                 is_keyword: text.chars().all(|c| c.is_alphanumeric()),
             })
             .collect();
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         (minimize_dfa(&dfa), partition)
@@ -2047,10 +1970,190 @@ mod tests {
             TokenKind::Fixed("-".to_string()),
         ];
 
-        let (code, _strategy) = generate_lexer_string(&dfa, &partition, &token_kinds, "test");
+        let (code, _strategy, _variant_map, _ambiguity) =
+            generate_lexer_string(&dfa, &partition, &token_kinds, "test");
         // If this doesn't panic, the generated code is valid Rust
         let _ts: TokenStream = code
             .parse()
             .expect("generated compressed lexer should be valid Rust");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // TokenVariantMap tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_variant_map_basic() {
+        let kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Integer,
+            TokenKind::Fixed("+".to_string()),
+        ];
+        let map = TokenVariantMap::from_token_kinds(&kinds);
+
+        assert_eq!(map.count, 4); // Eof, Ident, Integer, Plus
+        assert_eq!(map.get_id("Eof"), Some(0));
+        assert_eq!(map.get_id("Ident"), Some(1));
+        assert_eq!(map.get_id("Integer"), Some(2));
+        assert_eq!(map.get_id("Plus"), Some(3));
+        assert_eq!(map.get_id("Missing"), None);
+
+        assert_eq!(map.get_name(0), Some("Eof"));
+        assert_eq!(map.get_name(1), Some("Ident"));
+        assert_eq!(map.get_name(2), Some("Integer"));
+        assert_eq!(map.get_name(3), Some("Plus"));
+        assert_eq!(map.get_name(4), None);
+    }
+
+    #[test]
+    fn test_variant_map_deduplicates() {
+        let kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Ident, // duplicate
+            TokenKind::Integer,
+            TokenKind::Integer, // duplicate
+            TokenKind::True,
+            TokenKind::False, // maps to same "Boolean" variant
+        ];
+        let map = TokenVariantMap::from_token_kinds(&kinds);
+
+        // Eof, Ident, Integer, Boolean = 4 unique
+        assert_eq!(map.count, 4);
+        assert_eq!(map.get_id("Boolean"), Some(3));
+    }
+
+    #[test]
+    fn test_variant_map_kind_to_id() {
+        let kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Fixed("error".to_string()),
+        ];
+        let map = TokenVariantMap::from_token_kinds(&kinds);
+
+        assert_eq!(map.kind_to_id(&TokenKind::Eof), Some(0));
+        assert_eq!(map.kind_to_id(&TokenKind::Ident), Some(1));
+        assert_eq!(
+            map.kind_to_id(&TokenKind::Fixed("error".to_string())),
+            Some(2)
+        );
+        assert_eq!(map.kind_to_id(&TokenKind::Integer), None);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // TokenFilter tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_token_filter_empty() {
+        let f = TokenFilter::EMPTY;
+        assert!(f.is_empty());
+        assert_eq!(f.count(), 0);
+        assert!(!f.contains(0));
+        assert!(!f.contains(63));
+    }
+
+    #[test]
+    fn test_token_filter_singleton() {
+        let f = TokenFilter::singleton(5);
+        assert!(!f.is_empty());
+        assert_eq!(f.count(), 1);
+        assert!(f.contains(5));
+        assert!(!f.contains(0));
+        assert!(!f.contains(4));
+        assert!(!f.contains(6));
+    }
+
+    #[test]
+    fn test_token_filter_union() {
+        let f1 = TokenFilter::singleton(1);
+        let f2 = TokenFilter::singleton(3);
+        let f = f1.union(f2);
+        assert_eq!(f.count(), 2);
+        assert!(f.contains(1));
+        assert!(f.contains(3));
+        assert!(!f.contains(0));
+        assert!(!f.contains(2));
+    }
+
+    #[test]
+    fn test_token_filter_intersection() {
+        let f1 = TokenFilter::singleton(1).union(TokenFilter::singleton(2));
+        let f2 = TokenFilter::singleton(2).union(TokenFilter::singleton(3));
+        let f = f1.intersection(f2);
+        assert_eq!(f.count(), 1);
+        assert!(f.contains(2));
+        assert!(!f.contains(1));
+        assert!(!f.contains(3));
+    }
+
+    #[test]
+    fn test_token_filter_all() {
+        let f = TokenFilter::ALL;
+        assert!(!f.is_empty());
+        assert!(f.contains(0));
+        assert!(f.contains(63));
+        assert_eq!(f.count(), 64);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // LexerAmbiguityInfo tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_ambiguity_info_no_ambiguity() {
+        let terminals = vec![
+            TerminalPattern {
+                text: "+".to_string(),
+                kind: TokenKind::Fixed("+".to_string()),
+                is_keyword: false,
+            },
+        ];
+        let needs = BuiltinNeeds {
+            ident: false,
+            integer: true,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+        let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+        let min_dfa = minimize_dfa(&dfa);
+
+        let info = analyze_ambiguity(&min_dfa);
+        assert!(!info.has_ambiguous);
+        assert!(info.ambiguous_states.is_empty());
+    }
+
+    #[test]
+    fn test_ambiguity_info_with_keyword() {
+        let terminals = vec![TerminalPattern {
+            text: "error".to_string(),
+            kind: TokenKind::Fixed("error".to_string()),
+            is_keyword: true,
+        }];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: false,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+        let nfa = build_nfa(&terminals, &needs, &crate::LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+        let min_dfa = minimize_dfa(&dfa);
+
+        let info = analyze_ambiguity(&min_dfa);
+        assert!(info.has_ambiguous);
+        assert!(!info.ambiguous_states.is_empty());
+
+        // Verify the ambiguous state has both kinds
+        for (_, alts) in &info.ambiguous_states {
+            assert!(alts.len() >= 2);
+        }
     }
 }

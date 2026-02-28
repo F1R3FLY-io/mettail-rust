@@ -133,11 +133,6 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let parse_fn = format_ident!("parse_{}", cat);
             let parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
 
-            // When WFST is enabled, parse_structured_weighted() calls lex_weighted()
-            // and stores the weight vector alongside the token/range pairs.
-            // The parser itself still receives &[(Token, Range)] — weights are
-            // consumed by the lattice/prediction layers in later sprints.
-            #[cfg(feature = "wfst")]
             let wfst_methods = quote! {
                 /// Parse with weight emission: calls `lex_weighted()` to get
                 /// per-token tropical weights, then parses normally.
@@ -165,8 +160,35 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                 }
             };
 
-            #[cfg(not(feature = "wfst"))]
-            let wfst_methods = quote! {};
+            #[cfg(feature = "context-sensitive-lex")]
+            let context_sensitive_method = {
+                let parse_fn_lazy = format_ident!("parse_{}_lazy", cat);
+                quote! {
+                    /// Parse using context-sensitive lexing via parser-driven dispatch.
+                    ///
+                    /// Uses the composed dispatch table to resolve lexer ambiguities
+                    /// based on parser context (current category), eliminating
+                    /// backtracking. Produces identical results to `parse()` for
+                    /// unambiguous grammars; for ambiguous grammars (keyword/ident
+                    /// overlaps), resolves using WFST-composed weights.
+                    ///
+                    /// Requires the `context-sensitive-lex` feature.
+                    pub fn parse_context_sensitive(input: &str) -> Result<#cat, ParseError> {
+                        let mut adapter = LexerAdapter::new(Lexer::new(input, None));
+                        let result = #parse_fn_lazy(&mut adapter, 0)?;
+                        if !adapter.is_eof() {
+                            return Err(ParseError::TrailingTokens {
+                                found: format!("{:?}", adapter.peek()),
+                                range: *adapter.peek_range(),
+                            });
+                        }
+                        Ok(result)
+                    }
+                }
+            };
+
+            #[cfg(not(feature = "context-sensitive-lex"))]
+            let context_sensitive_method = quote! {};
 
             quote! {
                 impl #cat {
@@ -240,6 +262,8 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     }
 
                     #wfst_methods
+
+                    #context_sensitive_method
                 }
             }
         })

@@ -598,10 +598,7 @@ impl RuleSpecOwned {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, LiteralPatterns, RuleSpec,
-        SyntaxItemSpec,
-    };
+    use crate::{BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec};
 
     /// Build a minimal calculator spec for testing.
     fn calculator_spec() -> LanguageSpec {
@@ -652,7 +649,6 @@ mod tests {
             ],
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
-            dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
         }
     }

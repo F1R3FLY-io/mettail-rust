@@ -8,12 +8,13 @@ edition = "2021"
 # Tests use separate test binaries
 
 [features]
-## Propagate WFST features through macros to mettail-prattail.
-wfst = ["mettail-macros/wfst"]
-wfst-log = ["mettail-macros/wfst-log"]
+## Propagate features through macros to mettail-prattail.
+context-sensitive-lex = ["mettail-macros/context-sensitive-lex"]
+wfst-log = ["mettail-macros/wfst-log", "mettail-prattail/wfst-log"]
 
 [dependencies]
 mettail-macros = { path = "../macros" }
+mettail-prattail = { path = "../prattail" }
 mettail-runtime = { path = "../runtime" }
 moniker = { workspace = true }
 rand = { workspace = true }

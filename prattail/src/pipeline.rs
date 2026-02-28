@@ -24,6 +24,7 @@ use crate::binding_power::{analyze_binding_powers, BindingPowerTable, InfixRuleI
 use crate::dispatch::{
     categories_needing_dispatch, write_category_dispatch, CastRule, CrossCategoryRule,
 };
+use crate::automata::codegen::{LexerAmbiguityInfo, TokenVariantMap};
 use crate::lexer::{extract_terminals, generate_lexer_as_string, GrammarRuleInfo, TypeInfo};
 use crate::pratt::{
     write_dispatch_recovering, write_parser_helpers, write_recovery_helpers, PrefixHandler,
@@ -75,14 +76,7 @@ pub struct ParserBundle {
     /// Whether the grammar has binder rules (^x.{body} lambda syntax).
     pub(crate) has_binders: bool,
     /// Beam width configuration for WFST prediction pruning.
-    /// Only read when feature `wfst` is enabled; kept unconditional to avoid
-    /// `#[cfg]` on every `ParserBundle` construction site.
-    #[cfg_attr(not(feature = "wfst"), allow(dead_code))]
     pub(crate) beam_width: crate::BeamWidthConfig,
-    /// Dispatch strategy (unresolved — resolution requires FIRST-set and overlap data).
-    /// Only read when feature `wfst` is enabled.
-    #[cfg_attr(not(feature = "wfst"), allow(dead_code))]
-    pub(crate) dispatch_strategy: crate::DispatchStrategy,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -95,13 +89,16 @@ pub struct ParserBundle {
 // Compile-time state machine with 3 total moves — never stored in collections.
 #[allow(clippy::large_enum_variant)]
 pub enum PipelineState {
-    /// Bundles extracted, ready for parallel codegen.
+    /// Bundles extracted, ready for codegen.
     Ready {
         lexer_bundle: LexerBundle,
         parser_bundle: ParserBundle,
     },
     /// Both code strings generated, ready to merge.
-    Generated { lexer_code: String, parser_code: String },
+    Generated {
+        lexer_code: String,
+        parser_code: String,
+    },
     /// Final output produced.
     Complete(TokenStream),
 }
@@ -115,8 +112,13 @@ impl PipelineState {
     pub fn advance(self) -> Self {
         match self {
             PipelineState::Ready { lexer_bundle, parser_bundle } => {
-                let lexer_code = generate_lexer_code(&lexer_bundle);
-                let parser_code = generate_parser_code(&parser_bundle);
+                let (lexer_code, variant_map, ambiguity_info) =
+                    generate_lexer_code_with_map(&lexer_bundle);
+                let parser_code = generate_parser_code_with_context(
+                    &parser_bundle,
+                    &variant_map,
+                    &ambiguity_info,
+                );
                 PipelineState::Generated { lexer_code, parser_code }
             },
             PipelineState::Generated { lexer_code, parser_code } => {
@@ -403,7 +405,6 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         cast_rules,
         has_binders,
         beam_width: spec.beam_width.clone(),
-        dispatch_strategy: spec.dispatch_strategy.clone(),
     };
 
     (lexer_bundle, parser_bundle)
@@ -413,10 +414,11 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
 // Generate phase (parallel via rayon::join)
 // ══════════════════════════════════════════════════════════════════════════════
 
-/// Generate lexer code from the lexer bundle.
-///
-/// Runs the full automata pipeline: terminal extraction → NFA → DFA → minimize → codegen.
-fn generate_lexer_code(bundle: &LexerBundle) -> String {
+/// Generate lexer code from the lexer bundle, returning the variant map
+/// and ambiguity info alongside the generated code string.
+fn generate_lexer_code_with_map(
+    bundle: &LexerBundle,
+) -> (String, TokenVariantMap, LexerAmbiguityInfo) {
     let mut lexer_input = extract_terminals(
         &bundle.grammar_rules,
         &bundle.type_infos,
@@ -424,14 +426,37 @@ fn generate_lexer_code(bundle: &LexerBundle) -> String {
         &bundle.category_names,
     );
     lexer_input.literal_patterns = bundle.literal_patterns.clone();
-    let (lexer_str, _stats) = generate_lexer_as_string(&lexer_input);
-    lexer_str
+    let (lexer_str, stats) = generate_lexer_as_string(&lexer_input);
+    (lexer_str, stats.variant_map, stats.ambiguity_info)
+}
+
+/// Generate parser code with lexer context (variant map + ambiguity info).
+///
+/// Passes lexer context to `generate_parser_code()` so the composed dispatch
+/// table can be computed once and used both for:
+/// 1. Standard batch path: deterministic dispatch arms (no backtracking)
+/// 2. Context-sensitive lex (feature-gated): Lexer struct, LexerAdapter, lazy parsers
+fn generate_parser_code_with_context(
+    bundle: &ParserBundle,
+    variant_map: &TokenVariantMap,
+    ambiguity_info: &LexerAmbiguityInfo,
+) -> String {
+    generate_parser_code(bundle, variant_map, ambiguity_info)
 }
 
 /// Generate parser code from the parser bundle.
 ///
 /// Runs: FIRST/FOLLOW sets → RD handlers → Pratt parsers → cross-category dispatch.
-fn generate_parser_code(bundle: &ParserBundle) -> String {
+///
+/// When `variant_map` and `ambiguity_info` are provided, computes the composed
+/// dispatch table once and uses it to:
+/// 1. Emit deterministic match arms in standard batch dispatch (no backtracking)
+/// 2. Emit context-sensitive lex infrastructure (feature-gated behind `context-sensitive-lex`)
+fn generate_parser_code(
+    bundle: &ParserBundle,
+    variant_map: &TokenVariantMap,
+    ambiguity_info: &LexerAmbiguityInfo,
+) -> String {
     let category_names: Vec<String> = bundle.categories.iter().map(|c| c.name.clone()).collect();
     let primary_category = category_names.first().map(|s| s.as_str()).unwrap_or("");
 
@@ -485,29 +510,10 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         primary_category,
     );
 
-    // ── Dispatch strategy resolution ─────────────────────────────────────
-    // Resolve Auto → Static or Weighted based on grammar metrics.
-    // Must happen after overlap analysis (needed for ambiguous_overlap_count).
-    #[cfg(feature = "wfst")]
-    let use_wfst = {
-        let ambiguous_count = overlaps
-            .values()
-            .filter(|o| !o.ambiguous_tokens.tokens.is_empty())
-            .count();
-        let resolved = bundle.dispatch_strategy.resolve(
-            bundle.rule_infos.len(),
-            bundle.cross_rules.len(),
-            ambiguous_count,
-        );
-        resolved == crate::DispatchStrategy::Weighted
-    };
-
-    // ── WFST construction (feature-gated + dispatch-gated) ────────────────
+    // ── WFST construction ─────────────────────────────────────────────────
     // Build prediction WFSTs and recovery WFSTs from FIRST/FOLLOW/overlap data.
     // These are consulted by weighted dispatch and recovery codegen below.
-    // Only constructed when the resolved dispatch strategy is Weighted.
-    #[cfg(feature = "wfst")]
-    let (prediction_wfsts, recovery_wfsts, _token_id_map) = if use_wfst {
+    let (prediction_wfsts, recovery_wfsts, _token_id_map) = {
         use crate::prediction::build_dispatch_action_tables;
         use crate::recovery::build_recovery_wfsts;
         use crate::token_id::TokenIdMap;
@@ -540,6 +546,45 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             let beam = crate::automata::semiring::TropicalWeight::new(beam_value);
             for wfst in prediction_wfsts.values_mut() {
                 wfst.set_beam_width(Some(beam));
+            }
+        }
+
+        // Dead-rule detection via boolean semiring projection.
+        // For each non-infix, non-var, non-literal rule, check if any token in
+        // its FIRST set has a prediction WFST action that routes to this rule.
+        // Rules with no reachable prediction are dead code.
+        for rule_info in &bundle.rule_infos {
+            // Skip rules handled outside prefix dispatch prediction:
+            // - infix: Pratt infix loop
+            // - var/literal: builtin prefix handlers
+            // - cross-category: dispatch wrappers
+            // - cast: Pratt prefix cast handlers
+            if rule_info.is_infix || rule_info.is_var || rule_info.is_literal
+                || rule_info.is_cross_category || rule_info.is_cast
+            {
+                continue;
+            }
+
+            let wfst = match prediction_wfsts.get(&rule_info.category) {
+                Some(w) => w,
+                None => continue,
+            };
+
+            // Check if any token leads to this rule via the prediction WFST
+            let reachable = first_sets
+                .get(&rule_info.category)
+                .map_or(false, |fs| {
+                    fs.tokens.iter().any(|tok| {
+                        wfst.predict(tok).iter().any(|a| a.action.rule_label() == rule_info.label)
+                    })
+                });
+
+            if !reachable {
+                eprintln!(
+                    "warning: rule {} in category {} is unreachable (dead code) — \
+                     no token in FIRST({}) dispatches to it via prediction WFST",
+                    rule_info.label, rule_info.category, rule_info.category,
+                );
             }
         }
 
@@ -587,27 +632,15 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
         );
 
         (prediction_wfsts, recovery_wfsts, token_id_map)
-    } else {
-        // Static dispatch: no WFST construction needed.
-        // Empty maps cause all downstream .get() calls to return None,
-        // naturally falling through to the static path.
-        (
-            std::collections::BTreeMap::new(),
-            Vec::new(),
-            crate::token_id::TokenIdMap::from_names(std::iter::empty()),
-        )
     };
 
-    // ── WFST static embedding (feature-gated) ─────────────────────────────
+    // ── WFST static embedding ─────────────────────────────────────────────
     // Emit prediction WFSTs as CSR-format static arrays with LazyLock constructors.
     // This makes the WFST data available at runtime for dynamic prediction
     // (e.g., with trained model weights overriding heuristic weights).
     let mut buf = String::with_capacity(8192);
-    #[cfg(feature = "wfst")]
-    {
-        emit_prediction_wfst_static(&mut buf, &prediction_wfsts);
-        emit_recovery_wfst_static(&mut buf, &recovery_wfsts);
-    }
+    emit_prediction_wfst_static(&mut buf, &prediction_wfsts);
+    emit_recovery_wfst_static(&mut buf, &recovery_wfsts);
 
     // Generate RD handlers
     let mut all_prefix_handlers: Vec<PrefixHandler> = Vec::with_capacity(bundle.rd_rules.len());
@@ -630,11 +663,65 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
     // Determine dispatch categories
     let dispatch_categories = categories_needing_dispatch(&bundle.cross_rules, &bundle.cast_rules);
 
+    // ── Composed dispatch resolution ────────────────────────────────────────
+    // Compute the composed dispatch table from lexer ambiguity info and
+    // FIRST sets. This is used at codegen time to resolve ambiguous tokens
+    // deterministically — eliminating save/restore backtracking in the
+    // standard batch path. Computed before trampoline generation so that
+    // composed weights are available for ident-lookahead handler sorting.
+    use crate::prediction::{
+        build_complete_weight_map, compute_composed_dispatch, resolve_dispatch_winners,
+    };
+
+    let (composed_resolutions, complete_weight_map) =
+        if ambiguity_info.has_ambiguous {
+            let composed = compute_composed_dispatch(
+                &ambiguity_info.ambiguous_states,
+                &category_names,
+                &first_sets,
+                variant_map,
+                Some(&prediction_wfsts),
+                &bundle.rule_infos,
+            );
+
+            // Emit context-sensitive lex infrastructure (feature-gated)
+            #[cfg(feature = "context-sensitive-lex")]
+            {
+                use crate::prediction::emit_composed_dispatch_table;
+                emit_composed_dispatch_table(&mut buf, &composed, &category_names);
+            }
+
+            // Build complete weight map covering ALL (category, token) pairs.
+            // Ambiguous tokens use composed dispatch weights; deterministic tokens
+            // use rule specificity weights. Used for dispatch arm ordering.
+            let weight_map = build_complete_weight_map(
+                &composed,
+                &first_sets,
+                &bundle.rule_infos,
+                &category_names,
+            );
+
+            (
+                Some(resolve_dispatch_winners(&composed)),
+                Some(weight_map),
+            )
+        } else {
+            // No ambiguous states — still build weight map for deterministic tokens
+            let weight_map = build_complete_weight_map(
+                &BTreeMap::new(),
+                &first_sets,
+                &bundle.rule_infos,
+                &category_names,
+            );
+            (None, Some(weight_map))
+        };
+
     // Write parser helpers
     write_parser_helpers(&mut buf);
 
     // Write trampolined parsers per category (stack-safe via explicit continuation stack)
-    for cat in &bundle.categories {
+    for (cat_idx, cat) in bundle.categories.iter().enumerate() {
+        let _ = cat_idx; /* used by context-sensitive-lex feature gate */
         let has_infix = !bundle.bp_table.operators_for_category(&cat.name).is_empty();
         let has_postfix = !bundle
             .bp_table
@@ -670,7 +757,6 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             all_first_sets: first_sets.clone(),
             follow_set: own_follow,
             has_binders: bundle.has_binders,
-            #[cfg(feature = "wfst")]
             prediction_wfst: prediction_wfsts.get(&cat.name).cloned(),
         };
 
@@ -687,9 +773,23 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             &cat_handlers,
             &bundle.rd_rules,
         );
+
+        // Emit lazy parser for this category (context-sensitive lex, feature-gated)
+        #[cfg(feature = "context-sensitive-lex")]
+        {
+            crate::trampoline::write_trampolined_parser_lazy(
+                &mut buf,
+                &tramp_config,
+                &bundle.bp_table,
+                &cat_handlers,
+                &bundle.rd_rules,
+                cat_idx,
+            );
+        }
     }
 
-    // Write cross-category dispatch
+    // Write cross-category dispatch — uses composed resolutions for
+    // deterministic arms (no backtracking)
     for cat in &bundle.categories {
         let cat_cross: Vec<CrossCategoryRule> = bundle
             .cross_rules
@@ -701,30 +801,21 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             continue;
         }
 
-        // Use WFST-weighted dispatch when a prediction WFST is available
-        #[cfg(feature = "wfst")]
-        let used_weighted = {
-            if let Some(wfst) = prediction_wfsts.get(&cat.name) {
-                crate::dispatch::write_category_dispatch_weighted(
-                    &mut buf,
-                    &cat.name,
-                    &cat_cross,
-                    &[],
-                    &overlaps,
-                    &first_sets,
-                    wfst,
-                );
-                true
-            } else {
-                false
-            }
-        };
-        #[cfg(not(feature = "wfst"))]
-        let used_weighted = false;
-
-        if !used_weighted {
-            write_category_dispatch(&mut buf, &cat.name, &cat_cross, &[], &overlaps, &first_sets);
-        }
+        // WFST-weighted dispatch (always-on)
+        let wfst = prediction_wfsts.get(&cat.name).expect(
+            "prediction WFST should exist for every category with cross-category rules"
+        );
+        write_category_dispatch(
+            &mut buf,
+            &cat.name,
+            &cat_cross,
+            &[],
+            &overlaps,
+            &first_sets,
+            wfst,
+            composed_resolutions.as_ref(),
+            complete_weight_map.as_ref(),
+        );
     }
 
     // ── Error recovery functions (parallel set, zero overhead on non-recovering path) ──
@@ -794,53 +885,63 @@ fn generate_parser_code(bundle: &ParserBundle) -> String {
             all_first_sets: first_sets.clone(),
             follow_set: own_follow,
             has_binders: bundle.has_binders,
-            #[cfg(feature = "wfst")]
             prediction_wfst: None, // Recovery wrappers don't need weighted dispatch
         };
 
-        // Generate WFST-based recovery function when wfst feature is enabled.
-        // This generates a weighted recovery helper that evaluates skip, delete,
+        // Generate WFST-based recovery function.
+        // Generates a weighted recovery helper that evaluates skip, delete,
         // and substitute strategies — replacing the linear sync_to() scan.
-        #[cfg(feature = "wfst")]
-        {
-            if let Some(recovery_wfst) = recovery_wfsts.iter().find(|w| w.category() == cat.name) {
-                generate_wfst_recovery_fn(&mut buf, &cat.name, recovery_wfst);
-            }
+        if let Some(recovery_wfst) = recovery_wfsts.iter().find(|w| w.category() == cat.name) {
+            generate_wfst_recovery_fn(&mut buf, &cat.name, recovery_wfst);
         }
 
         // Generate recovering trampolined parser (wraps fail-fast trampoline with error catch)
-        #[cfg(feature = "wfst")]
-        {
-            // Use WFST recovery when available
-            if recovery_wfsts.iter().any(|w| w.category() == cat.name) {
-                write_trampolined_parser_recovering_wfst(&mut buf, &tramp_config);
-            } else {
-                write_trampolined_parser_recovering(
-                    &mut buf,
-                    &tramp_config,
-                    &bundle.bp_table,
-                    &crate::trampoline::FrameInfo {
-                        enum_name: format!("Frame_{}", cat.name),
-                        variants: Vec::new(),
-                    },
-                );
-            }
+        // Use WFST recovery when available
+        if recovery_wfsts.iter().any(|w| w.category() == cat.name) {
+            write_trampolined_parser_recovering_wfst(&mut buf, &tramp_config);
+        } else {
+            write_trampolined_parser_recovering(
+                &mut buf,
+                &tramp_config,
+                &bundle.bp_table,
+                &crate::trampoline::FrameInfo {
+                    enum_name: format!("Frame_{}", cat.name),
+                    variants: Vec::new(),
+                },
+            );
         }
-        #[cfg(not(feature = "wfst"))]
-        write_trampolined_parser_recovering(
-            &mut buf,
-            &tramp_config,
-            &bundle.bp_table,
-            &crate::trampoline::FrameInfo {
-                enum_name: format!("Frame_{}", cat.name),
-                variants: Vec::new(),
-            },
-        );
 
         // Generate recovering dispatch wrapper if needed
         if needs_dispatch {
             write_dispatch_recovering(&mut buf, &cat.name);
         }
+    }
+
+    // ── Context-sensitive lex infrastructure (feature-gated) ──────────────
+    // Emits: Lexer struct, LexerAdapter, accept_token_by_kind, EXPECTED_<CAT>
+    // constants, and category ID constants. These are only needed for the
+    // parse_context_sensitive() entry point / lazy parser path.
+    #[cfg(feature = "context-sensitive-lex")]
+    {
+        use crate::automata::codegen::{
+            write_accept_token_by_kind, write_expected_category_descriptions,
+            write_lexer_adapter, write_lexer_struct,
+        };
+
+        // Build per-category expected messages: [(cat_name, message)]
+        let expected_messages: Vec<(String, String)> = category_names
+            .iter()
+            .map(|cat| {
+                let first_set = first_sets.get(cat).cloned().unwrap_or_default();
+                let msg = crate::pratt::build_expected_message_pub(cat, &first_set);
+                (cat.clone(), msg)
+            })
+            .collect();
+
+        write_expected_category_descriptions(&mut buf, &expected_messages);
+        write_lexer_struct(&mut buf, ambiguity_info, &category_names);
+        write_accept_token_by_kind(&mut buf, variant_map);
+        write_lexer_adapter(&mut buf);
     }
 
     // Debug dump: write generated parser code to file for inspection
@@ -1028,7 +1129,25 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WFST static embedding (feature = "wfst")
+// Helpers
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Format an `f64` as a valid Rust literal. Handles infinities and NaN
+/// which `{:?}` would render as `inf` / `nan` — not valid Rust tokens.
+fn format_f64(v: f64) -> String {
+    if v.is_infinite() && v.is_sign_positive() {
+        "f64::INFINITY".to_string()
+    } else if v.is_infinite() {
+        "f64::NEG_INFINITY".to_string()
+    } else if v.is_nan() {
+        "f64::NAN".to_string()
+    } else {
+        format!("{:?}_f64", v)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// WFST static embedding (always-on)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Emit a `PredictionWfst` as CSR-format static arrays with a `LazyLock` constructor.
@@ -1054,7 +1173,6 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
 ///
 /// The `LazyLock` is initialized on first access and persists for the process
 /// lifetime. Since the data is entirely `static`, there is no runtime I/O.
-#[cfg(feature = "wfst")]
 fn emit_prediction_wfst_static(
     buf: &mut String,
     prediction_wfsts: &std::collections::BTreeMap<String, crate::wfst::PredictionWfst>,
@@ -1101,7 +1219,7 @@ fn emit_prediction_wfst_static(
             if i > 0 {
                 buf.push(',');
             }
-            write!(buf, "({}_u16, {}_u32, {:?}_f64)", token_id, target, weight).unwrap();
+            write!(buf, "({}_u16, {}_u32, {})", token_id, target, format_f64(*weight)).unwrap();
         }
         buf.push_str("];");
 
@@ -1116,7 +1234,7 @@ fn emit_prediction_wfst_static(
             if i > 0 {
                 buf.push(',');
             }
-            write!(buf, "({}_usize, {}_usize, {}, {:?}_f64)", start, count, is_final, fw).unwrap();
+            write!(buf, "({}_usize, {}_usize, {}, {})", start, count, is_final, format_f64(*fw)).unwrap();
         }
         buf.push_str("];");
 
@@ -1134,9 +1252,8 @@ fn emit_prediction_wfst_static(
         match wfst.beam_width {
             Some(bw) => write!(
                 buf,
-                "static WFST_BEAM_WIDTH_{}: Option<f64> = Some({:?}_f64);",
-                category,
-                bw.value(),
+                "static WFST_BEAM_WIDTH_{}: Option<f64> = Some({});",
+                category, format_f64(bw.value()),
             )
             .unwrap(),
             None => {
@@ -1163,7 +1280,7 @@ fn emit_prediction_wfst_static(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WFST recovery static embedding (feature = "wfst")
+// WFST recovery static embedding (always-on)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Emit recovery WFST data as static arrays for runtime context-aware recovery.
@@ -1177,7 +1294,6 @@ fn emit_prediction_wfst_static(
 ///
 /// These arrays are consumed by `RecoveryWfst::from_flat()` at runtime when
 /// full context-aware recovery is needed (Sprint 4).
-#[cfg(feature = "wfst")]
 fn emit_recovery_wfst_static(buf: &mut String, recovery_wfsts: &[crate::recovery::RecoveryWfst]) {
     use std::fmt::Write;
 
@@ -1234,7 +1350,7 @@ fn emit_recovery_wfst_static(buf: &mut String, recovery_wfsts: &[crate::recovery
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// WFST recovery codegen (feature = "wfst")
+// WFST recovery codegen (always-on)
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Generate a WFST-based weighted recovery function for a category.
@@ -1248,7 +1364,7 @@ fn emit_recovery_wfst_static(buf: &mut String, recovery_wfsts: &[crate::recovery
 /// Generated signatures:
 /// ```text
 /// fn wfst_recover_Cat<'a>(
-///     tokens: &[(Token<'a>, Span)],
+///     tokens: &[(Token<'a>, Range)],
 ///     pos: &mut usize,
 ///     depth: usize,
 ///     binding_power: u8,
@@ -1257,7 +1373,6 @@ fn emit_recovery_wfst_static(buf: &mut String, recovery_wfsts: &[crate::recovery
 ///     open_brackets: u16,
 /// ) -> bool  // true if recovery succeeded
 /// ```
-#[cfg(feature = "wfst")]
 fn generate_wfst_recovery_fn(
     buf: &mut String,
     category: &str,
@@ -1310,7 +1425,7 @@ fn generate_wfst_recovery_fn(
          /// context-aware cost adjustments from nesting depth, binding power, and
          /// bracket balance.
          fn wfst_recover_{cat}<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             depth: usize, \
             binding_power: u8, \
@@ -1429,7 +1544,6 @@ fn generate_wfst_recovery_fn(
 /// Bracket counters are maintained inline: incremented on open delimiters,
 /// decremented on close delimiters. This provides Tier 2 (bracket balance)
 /// context to the recovery function at zero overhead on the happy path.
-#[cfg(feature = "wfst")]
 fn write_trampolined_parser_recovering_wfst(
     buf: &mut String,
     config: &crate::trampoline::TrampolineConfig,
@@ -1457,7 +1571,7 @@ fn write_trampolined_parser_recovering_wfst(
     write!(
         buf,
         "fn {parse_fn}<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             min_bp: u8, \
             errors: &mut Vec<ParseError>, \

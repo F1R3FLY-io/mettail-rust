@@ -615,9 +615,8 @@ fn test_follow_sets_zipmapsep() {
     );
 }
 
-// ── Incremental FIRST/FOLLOW tests (wfst feature) ──
+// ── Incremental FIRST/FOLLOW tests ──
 
-#[cfg(feature = "wfst")]
 #[test]
 fn test_incremental_first_sets_extends_existing() {
     use crate::prediction::incremental_first_sets;
@@ -662,7 +661,6 @@ fn test_incremental_first_sets_extends_existing() {
     assert!(bool_first.contains("KwTrue"), "Bool FIRST should contain KwTrue");
 }
 
-#[cfg(feature = "wfst")]
 #[test]
 fn test_incremental_first_sets_matches_full_recomputation() {
     use crate::prediction::incremental_first_sets;
@@ -726,7 +724,6 @@ fn test_incremental_first_sets_matches_full_recomputation() {
     }
 }
 
-#[cfg(feature = "wfst")]
 #[test]
 fn test_incremental_follow_sets_extends_existing() {
     use crate::prediction::{incremental_follow_sets, FollowSetInput};
@@ -760,7 +757,6 @@ fn test_incremental_follow_sets_extends_existing() {
     assert!(int_follow.contains("RParen"), "RParen added from new rule");
 }
 
-#[cfg(feature = "wfst")]
 #[test]
 fn test_merge_terminal_sets() {
     use crate::prediction::merge_terminal_sets;

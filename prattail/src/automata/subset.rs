@@ -81,9 +81,10 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
     // Start state: epsilon-closure of NFA start (uses original epsilon_closure
     // for the initial set since we need an owned Vec for state_map insertion)
     let start_set = epsilon_closure(nfa, &[nfa.start]);
-    let (start_accept, start_weight) = resolve_accept(nfa, &start_set);
-    dfa.states[0].accept = start_accept;
-    dfa.states[0].weight = start_weight;
+    let resolved = resolve_accept(nfa, &start_set);
+    dfa.states[0].accept = resolved.kind;
+    dfa.states[0].weight = resolved.weight;
+    dfa.states[0].alt_accepts = resolved.alt_accepts;
     state_map.insert(start_set.clone(), 0);
     worklist.push(start_set);
 
@@ -118,11 +119,12 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
             let target_dfa_state = if let Some(&existing) = state_map.get(ec_closure.as_slice()) {
                 existing
             } else {
-                let (accept, weight) = resolve_accept(nfa, &ec_closure);
+                let resolved = resolve_accept(nfa, &ec_closure);
                 let new_state = dfa.add_state(DfaState {
                     transitions: vec![DEAD_STATE; num_classes],
-                    accept,
-                    weight,
+                    accept: resolved.kind,
+                    weight: resolved.weight,
+                    alt_accepts: resolved.alt_accepts,
                 });
                 state_map.insert(ec_closure.clone(), new_state);
                 worklist.push(ec_closure.clone());
@@ -142,33 +144,76 @@ pub fn subset_construction(nfa: &Nfa, partition: &AlphabetPartition) -> Dfa {
     dfa
 }
 
-/// Resolve the accept token and weight for a set of NFA states.
+/// Resolved accept information for a set of NFA states.
 ///
-/// If multiple NFA states in the set are accepting, the one with highest
-/// priority (lowest tropical weight) wins. Returns `(token_kind, weight)`.
-fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> (Option<TokenKind>, TropicalWeight) {
-    let mut best_kind: Option<&TokenKind> = None;
-    let mut best_weight = TropicalWeight::zero(); // infinity = unreachable
+/// Contains the primary (highest-priority) accept token and weight, plus
+/// ALL alternative accepts sorted by weight. `alt_accepts` is non-empty
+/// only when 2+ distinct `TokenKind`s are valid for this DFA state.
+pub(crate) struct ResolvedAccept {
+    /// Primary accept (lowest weight = highest priority), or `None`.
+    pub kind: Option<TokenKind>,
+    /// Weight of the primary accept. `TropicalWeight::zero()` (infinity) if no accept.
+    pub weight: TropicalWeight,
+    /// All alternative accepts (including the primary), sorted by weight ascending.
+    /// Empty if 0 or 1 accepting NFA states (unambiguous).
+    pub alt_accepts: Vec<(TokenKind, TropicalWeight)>,
+}
+
+/// Resolve the accept token, weight, and ALL alternatives for a set of NFA states.
+///
+/// Primary: highest priority (lowest tropical weight) wins.
+/// Alternatives: all distinct `TokenKind`s, deduplicated, sorted by weight.
+/// `alt_accepts` is populated only when 2+ distinct token kinds exist.
+fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> ResolvedAccept {
+    // Collect all accepting (kind, weight) pairs, keeping the best weight per kind.
+    let mut by_kind: std::collections::BTreeMap<TokenKind, TropicalWeight> =
+        std::collections::BTreeMap::new();
 
     for &s in states {
         let nfa_state = &nfa.states[s as usize];
         if let Some(ref kind) = nfa_state.accept {
-            // Tropical plus = min: lower weight wins (higher priority)
             let w = nfa_state.weight;
-            if best_kind.is_none() || w < best_weight {
-                best_kind = Some(kind);
-                best_weight = w;
-            }
+            by_kind
+                .entry(kind.clone())
+                .and_modify(|existing| {
+                    if w < *existing {
+                        *existing = w;
+                    }
+                })
+                .or_insert(w);
         }
     }
 
-    (best_kind.cloned(), best_weight)
+    if by_kind.is_empty() {
+        return ResolvedAccept {
+            kind: None,
+            weight: TropicalWeight::zero(),
+            alt_accepts: Vec::new(),
+        };
+    }
+
+    // Sort alternatives by weight (ascending = best first)
+    let mut alts: Vec<(TokenKind, TropicalWeight)> = by_kind.into_iter().collect();
+    alts.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+
+    let kind = alts[0].0.clone();
+    let weight = alts[0].1;
+
+    // Only populate alt_accepts when 2+ distinct token kinds
+    let alt_accepts = if alts.len() >= 2 { alts } else { Vec::new() };
+
+    ResolvedAccept {
+        kind: Some(kind),
+        weight,
+        alt_accepts,
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automata::nfa::{build_nfa_default, BuiltinNeeds};
+    use crate::automata::nfa::{build_nfa, BuiltinNeeds};
+    use crate::LiteralPatterns;
     use crate::automata::partition::compute_equivalence_classes;
     use crate::automata::TerminalPattern;
     use crate::automata::TokenKind;
@@ -195,7 +240,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
 
@@ -233,7 +278,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa_default(&terminals, &needs);
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
 
@@ -252,5 +297,206 @@ mod tests {
             &Some(TokenKind::Fixed("error".to_string())),
             "keyword 'error' should have higher priority than identifier"
         );
+    }
+
+    #[test]
+    fn test_multi_accept_keyword_ident() {
+        // "error" is both a keyword and a valid identifier.
+        // The DFA state after "error" should have alt_accepts with both.
+        let terminals = vec![TerminalPattern {
+            text: "error".to_string(),
+            kind: TokenKind::Fixed("error".to_string()),
+            is_keyword: true,
+        }];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: false,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+
+        // Walk "error" through the DFA
+        let mut state = dfa.start;
+        for &byte in b"error" {
+            let class = partition.classify(byte);
+            state = dfa.transition(state, class);
+            assert_ne!(state, super::DEAD_STATE);
+        }
+
+        let dfa_state = &dfa.states[state as usize];
+
+        // Primary winner is Fixed("error") (higher priority)
+        assert_eq!(
+            dfa_state.accept,
+            Some(TokenKind::Fixed("error".to_string())),
+        );
+
+        // alt_accepts should contain both Fixed("error") and Ident
+        assert!(
+            dfa_state.is_ambiguous(),
+            "state after 'error' should be ambiguous (keyword + ident)"
+        );
+        assert_eq!(dfa_state.alt_accepts.len(), 2);
+
+        // Verify both kinds are present
+        let kinds: Vec<&TokenKind> = dfa_state.alt_accepts.iter().map(|(k, _)| k).collect();
+        assert!(kinds.contains(&&TokenKind::Ident));
+        assert!(kinds.contains(&&TokenKind::Fixed("error".to_string())));
+
+        // Verify weight ordering: Fixed (priority 10) should be first (lower weight)
+        assert!(
+            dfa_state.alt_accepts[0].1 <= dfa_state.alt_accepts[1].1,
+            "alt_accepts should be sorted by weight ascending"
+        );
+    }
+
+    #[test]
+    fn test_unambiguous_states_have_empty_alt_accepts() {
+        // Pure operators like "+" should NOT have alt_accepts
+        let terminals = vec![
+            TerminalPattern {
+                text: "+".to_string(),
+                kind: TokenKind::Fixed("+".to_string()),
+                is_keyword: false,
+            },
+        ];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: true,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+
+        // Walk "+" through the DFA
+        let mut state = dfa.start;
+        let class = partition.classify(b'+');
+        state = dfa.transition(state, class);
+        assert_ne!(state, super::DEAD_STATE);
+
+        let dfa_state = &dfa.states[state as usize];
+        assert_eq!(dfa_state.accept, Some(TokenKind::Fixed("+".to_string())));
+        assert!(
+            !dfa_state.is_ambiguous(),
+            "'+' should not be ambiguous"
+        );
+        assert!(dfa_state.alt_accepts.is_empty());
+    }
+
+    #[test]
+    fn test_multi_accept_boolean_ident() {
+        // "true" is both a boolean keyword and a valid identifier
+        let terminals = vec![TerminalPattern {
+            text: "true".to_string(),
+            kind: TokenKind::True,
+            is_keyword: true,
+        }];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: false,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+
+        // Walk "true" through the DFA
+        let mut state = dfa.start;
+        for &byte in b"true" {
+            let class = partition.classify(byte);
+            state = dfa.transition(state, class);
+            assert_ne!(state, super::DEAD_STATE);
+        }
+
+        let dfa_state = &dfa.states[state as usize];
+
+        // Primary winner: True (priority 10) beats Ident (priority 1)
+        assert_eq!(dfa_state.accept, Some(TokenKind::True));
+
+        // Should be ambiguous (True + Ident)
+        assert!(
+            dfa_state.is_ambiguous(),
+            "state after 'true' should be ambiguous (boolean + ident)"
+        );
+    }
+
+    #[test]
+    fn test_dfa_has_ambiguous_accepts() {
+        // Grammar with keyword → has_ambiguous_accepts() = true
+        let terminals = vec![TerminalPattern {
+            text: "if".to_string(),
+            kind: TokenKind::Fixed("if".to_string()),
+            is_keyword: true,
+        }];
+        let needs = BuiltinNeeds {
+            ident: true,
+            integer: false,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+
+        assert!(
+            dfa.has_ambiguous_accepts(),
+            "DFA with keyword 'if' and ident should have ambiguous accepts"
+        );
+
+        let ambiguous = dfa.ambiguous_states();
+        assert!(!ambiguous.is_empty(), "should find ambiguous states");
+
+        // Each ambiguous state should have 2+ alternatives
+        for (_, alts) in &ambiguous {
+            assert!(alts.len() >= 2, "ambiguous state should have 2+ alternatives");
+        }
+    }
+
+    #[test]
+    fn test_dfa_no_ambiguous_accepts() {
+        // Grammar with only operators → no ambiguous states
+        let terminals = vec![
+            TerminalPattern {
+                text: "+".to_string(),
+                kind: TokenKind::Fixed("+".to_string()),
+                is_keyword: false,
+            },
+            TerminalPattern {
+                text: "-".to_string(),
+                kind: TokenKind::Fixed("-".to_string()),
+                is_keyword: false,
+            },
+        ];
+        let needs = BuiltinNeeds {
+            ident: false,
+            integer: true,
+            float: false,
+            string_lit: false,
+            boolean: false,
+        };
+
+        let nfa = build_nfa(&terminals, &needs, &LiteralPatterns::default());
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+
+        assert!(
+            !dfa.has_ambiguous_accepts(),
+            "DFA with only operators should not have ambiguous accepts"
+        );
+        assert!(dfa.ambiguous_states().is_empty());
     }
 }

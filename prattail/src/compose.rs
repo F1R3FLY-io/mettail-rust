@@ -51,8 +51,7 @@ use std::fmt;
 
 use crate::binding_power::Associativity;
 use crate::{
-    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, LiteralPatterns, RuleSpecInput,
-    SyntaxItemSpec,
+    BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpecInput, SyntaxItemSpec,
 };
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -598,7 +597,6 @@ pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<Composi
             rules: Vec::new(),
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
-            dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
         });
     }
@@ -619,7 +617,6 @@ pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<Composi
 ///
 /// Contains the merged `LanguageSpec` plus pre-built prediction WFSTs for each
 /// category, constructed via weighted union rather than full pipeline rebuild.
-#[cfg(feature = "wfst")]
 #[derive(Debug)]
 pub struct WfstCompositionResult {
     /// The merged language specification.
@@ -635,7 +632,6 @@ pub struct WfstCompositionResult {
 }
 
 /// Enriched composition summary including WFST statistics.
-#[cfg(feature = "wfst")]
 #[derive(Debug, Clone)]
 pub struct WfstCompositionSummary {
     /// Base composition summary.
@@ -650,7 +646,6 @@ pub struct WfstCompositionSummary {
     pub total_states: usize,
 }
 
-#[cfg(feature = "wfst")]
 impl fmt::Display for WfstCompositionSummary {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
@@ -684,7 +679,6 @@ impl fmt::Display for WfstCompositionSummary {
 ///
 /// For fresh builds, `compose_languages()` + a full pipeline run is simpler
 /// and equally efficient.
-#[cfg(feature = "wfst")]
 pub fn compose_with_wfst(
     spec_a: &LanguageSpec,
     spec_b: &LanguageSpec,
@@ -780,7 +774,6 @@ mod tests {
             rules: rule_specs,
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
-            dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
         }
     }
@@ -905,7 +898,6 @@ mod tests {
             rules: rules_b,
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
-            dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
         };
 
@@ -1146,7 +1138,6 @@ mod tests {
             )],
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
-            dispatch_strategy: DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
         };
 
@@ -1226,8 +1217,7 @@ mod tests {
                 rules,
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
-                dispatch_strategy: DispatchStrategy::Static,
-                literal_patterns: LiteralPatterns::default(),
+                    literal_patterns: LiteralPatterns::default(),
             };
             // Manually set prefix_precedence to simulate user override
             spec.rules[0].prefix_precedence = Some(10);
@@ -1260,8 +1250,7 @@ mod tests {
                 rules,
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
-                dispatch_strategy: DispatchStrategy::Static,
-                literal_patterns: LiteralPatterns::default(),
+                    literal_patterns: LiteralPatterns::default(),
             };
             spec.rules[0].prefix_precedence = Some(20);
             spec
@@ -1307,8 +1296,7 @@ mod tests {
                 rules,
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
-                dispatch_strategy: DispatchStrategy::Static,
-                literal_patterns: LiteralPatterns::default(),
+                    literal_patterns: LiteralPatterns::default(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1339,8 +1327,7 @@ mod tests {
                 rules,
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
-                dispatch_strategy: DispatchStrategy::Static,
-                literal_patterns: LiteralPatterns::default(),
+                    literal_patterns: LiteralPatterns::default(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1352,7 +1339,6 @@ mod tests {
 
     // ── WFST-aware composition tests ────────────────────────────────────
 
-    #[cfg(feature = "wfst")]
     #[test]
     fn test_compose_with_wfst_disjoint() {
         use crate::automata::semiring::TropicalWeight;
@@ -1415,7 +1401,6 @@ mod tests {
         assert!(result.terminals.contains("true"));
     }
 
-    #[cfg(feature = "wfst")]
     #[test]
     fn test_compose_with_wfst_shared_category() {
         use crate::automata::semiring::TropicalWeight;
@@ -1489,7 +1474,6 @@ mod tests {
         assert_eq!(ident_results[0].weight, TropicalWeight::new(2.0));
     }
 
-    #[cfg(feature = "wfst")]
     #[test]
     fn test_compose_with_wfst_summary_display() {
         use crate::automata::semiring::TropicalWeight;

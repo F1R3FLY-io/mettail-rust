@@ -106,7 +106,7 @@ pub fn write_rd_handler(buf: &mut String, rule: &RDRuleInfo) -> PrefixHandler {
     write!(
         buf,
         "fn {parse_fn_name}<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
         ) -> Result<{cat}, ParseError> {{ \
             {body} \
@@ -614,7 +614,7 @@ pub fn write_dollar_handlers(
         write!(
             buf,
             "fn {single_fn}<'a>(\
-                tokens: &[(Token<'a>, Span)], \
+                tokens: &[(Token<'a>, Range)], \
                 pos: &mut usize, \
             ) -> Result<{cat}, ParseError> {{ \
                 expect_token(tokens, pos, |t| matches!(t, Token::{dollar_variant}), \"${dom_lower}\")?; \
@@ -643,7 +643,7 @@ pub fn write_dollar_handlers(
         write!(
             buf,
             "fn {multi_fn}<'a>(\
-                tokens: &[(Token<'a>, Span)], \
+                tokens: &[(Token<'a>, Range)], \
                 pos: &mut usize, \
             ) -> Result<{cat}, ParseError> {{ \
                 expect_token(tokens, pos, |t| matches!(t, Token::{ddollar_variant}), \"$${dom_lower}(\")?; \
@@ -727,7 +727,7 @@ pub fn write_lambda_handlers(
     write!(
         buf,
         "fn parse_lambda<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
         ) -> Result<{cat}, ParseError> {{ \
             expect_token(tokens, pos, |t| matches!(t, Token::Caret), \"^\")?; \

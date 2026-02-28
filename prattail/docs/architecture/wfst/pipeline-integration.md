@@ -1,12 +1,14 @@
 # WFST Pipeline Integration
 
-**Date:** 2026-02-22
+**Date:** 2026-02-28
 
 This document explains exactly where the WFST subsystem attaches to the
 PraTTaIL compile-time pipeline, what data flows between each stage, and
-how the `DispatchStrategy` enum determines whether WFST construction
-actually runs. Reading this document alongside `pipeline.rs` and
-`prediction.rs` should leave no gaps about when and why WFST code fires.
+how WFST construction is wired into every grammar build. All grammars
+receive WFST-weighted dispatch — there is no feature gate or strategy
+enum controlling whether WFST construction runs. Reading this document
+alongside `pipeline.rs` and `prediction.rs` should leave no gaps about
+when and why WFST code fires.
 
 ---
 
@@ -14,8 +16,8 @@ actually runs. Reading this document alongside `pipeline.rs` and
 
 1. [Pipeline State Machine](#1-pipeline-state-machine)
 2. [WFST Insertion Point](#2-wfst-insertion-point)
-3. [DispatchStrategy Resolution](#3-dispatchstrategy-resolution)
-4. [Data Flow Inside generate_parser_code](#4-data-flow-inside-generate_parser_code)
+3. [Data Flow Inside generate_parser_code](#3-data-flow-inside-generate_parser_code)
+4. [Dead-Rule Detection](#4-dead-rule-detection)
 5. [Data Bundles Annotated](#5-data-bundles-annotated)
 6. [Runtime Data Flow](#6-runtime-data-flow)
 7. [Codegen Outputs](#7-codegen-outputs)
@@ -44,10 +46,10 @@ moves it one step forward; it cannot go backwards.
   └──────────────────────────────────────────────────────────────────────┘
 ```
 
-`Ready → Generated` calls `generate_lexer_code()` and
+`Ready -> Generated` calls `generate_lexer_code()` and
 `generate_parser_code()` sequentially, producing two Rust source strings.
 
-`Generated → Complete` concatenates the two strings and parses them into
+`Generated -> Complete` concatenates the two strings and parses them into
 a single `TokenStream` that the proc-macro returns to the compiler.
 
 `run_pipeline()` in `pipeline.rs` is the sole entry point. It calls
@@ -74,100 +76,43 @@ output is written to the output buffer. The overall sequence is:
   │
   ├─ 4. compute_follow_sets_from_inputs()  ← FOLLOW sets per category
   │
-  ├─ 5. DispatchStrategy::resolve()   ← Static or Weighted decision
-  │           │
-  │           ▼
-  ├─ 6. [wfst] WFST construction ─────── ← INSERT POINT ──────────────────┐
-  │       │                                                                 │
-  │       ├─ a. build_dispatch_action_tables()   (prediction.rs)           │
-  │       ├─ b. build_prediction_wfsts()         (wfst.rs)                 │
-  │       ├─ c. apply beam width config          (pipeline.rs)             │
-  │       ├─ d. TokenIdMap::from_names()         (token_id.rs)             │
-  │       └─ e. build_recovery_wfsts()           (recovery.rs)             │
-  │                                                                         │
-  ├─ 7. write_rd_handler() × N        ← RD prefix handlers                 │
-  │                                                                         │
-  ├─ 8. write_trampolined_parser() ←───── uses prediction_wfst per cat ────┘
+  ├─ 5. WFST construction ──────────────────────────────────────────────┐
+  │       │                                                              │
+  │       ├─ a. build_dispatch_action_tables()   (prediction.rs)        │
+  │       ├─ b. build_prediction_wfsts()         (wfst.rs)              │
+  │       ├─ c. apply beam width config          (pipeline.rs)          │
+  │       ├─ d. TokenIdMap::from_names()         (token_id.rs)          │
+  │       ├─ e. build_recovery_wfsts()           (recovery.rs)          │
+  │       └─ f. dead-rule detection              (BooleanWeight)        │
+  │                                                                      │
+  ├─ 6. resolve_dispatch_winners() ← composed dispatch resolution       │
+  │                                                                      │
+  ├─ 7. write_rd_handler() × N        ← RD prefix handlers              │
+  │                                                                      │
+  ├─ 8. write_trampolined_parser() ←───── uses prediction_wfst per cat ─┘
   │      per category
   │
-  ├─ 9. [wfst] write_category_dispatch_weighted()  (dispatch.rs)
-  │    else     write_category_dispatch()
+  ├─ 9. write_category_dispatch_weighted()  (dispatch.rs)
   │
   ├─ 10. write_recovery_helpers()
   │
   └─ 11. per category:
          ├─ generate_sync_predicate()
-         ├─ [wfst] generate_wfst_recovery_fn()     (pipeline.rs private)
-         └─ [wfst] write_trampolined_parser_recovering_wfst()
-              else  write_trampolined_parser_recovering()
+         ├─ generate_wfst_recovery_fn()     (pipeline.rs)
+         └─ write_trampolined_parser_recovering_wfst()
 ```
 
-If the `wfst` feature is absent, steps 6, 9, and the WFST branches in
-step 11 are entirely removed by the compiler. The resulting binary is
-identical to a build that never had WFST code.
+WFST construction always runs. There is no conditional branch or feature
+gate — every grammar build produces prediction and recovery WFSTs.
 
 ---
 
-## 3. DispatchStrategy Resolution
-
-`DispatchStrategy` is an enum on `LanguageSpec` with three variants.
-It is resolved to a concrete `Static` or `Weighted` decision at the
-start of the WFST block in step 6. The resolution happens after overlap
-analysis so that `ambiguous_overlap_count` is available.
-
-```
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │  DispatchStrategy::resolve(                                         │
-  │      total_rules,                                                   │
-  │      cross_category_count,                                          │
-  │      ambiguous_overlap_count,                                       │
-  │  ) -> DispatchStrategy                                              │
-  │                                                                     │
-  │     ┌──────────────────────────────────────────────────────────┐   │
-  │     │  feature = "wfst" absent?                                │   │
-  │     │         │                                                │   │
-  │     │        YES ──► warn if Weighted ──► return Static        │   │
-  │     │         │                                                │   │
-  │     │        NO                                                │   │
-  │     │         │                                                │   │
-  │     │         ▼                                                │   │
-  │     │   self == Static? ──YES──► return Static                 │   │
-  │     │         │                                                │   │
-  │     │        NO                                                │   │
-  │     │         │                                                │   │
-  │     │   self == Weighted? ──YES──► return Weighted             │   │
-  │     │         │                                                │   │
-  │     │        NO  (Auto)                                        │   │
-  │     │         │                                                │   │
-  │     │         ▼                                                │   │
-  │     │   (total_rules ≥ 30 AND cross_category_count > 0)        │   │
-  │     │         OR ambiguous_overlap_count ≥ 3                   │   │
-  │     │         │           │                                    │   │
-  │     │        YES          NO                                   │   │
-  │     │         │           │                                    │   │
-  │     │         ▼           ▼                                    │   │
-  │     │      Weighted     Static                                 │   │
-  │     └──────────────────────────────────────────────────────────┘   │
-  └─────────────────────────────────────────────────────────────────────┘
-```
-
-The thresholds in `Auto` mode reflect the empirical finding that WFST
-overhead is negligible relative to compilation time once a grammar has 30
-or more rules with cross-category interactions, or when three or more
-token-overlap ambiguities require weighted tie-breaking.
-
-`Static` is the default because most small-to-medium grammars do not need
-weighted dispatch. The `Weighted` variant forces WFST construction
-regardless of grammar size.
-
----
-
-## 4. Data Flow Inside generate_parser_code
+## 3. Data Flow Inside generate_parser_code
 
 This section traces every input and output of the WFST construction block
-(step 6 from section 2) in the order the code executes.
+(step 5 from section 2) in the order the code executes.
 
-### Step 6a — build_dispatch_action_tables
+### Step 5a — build_dispatch_action_tables
 
 ```
   Inputs:
@@ -193,7 +138,7 @@ dispatches to, the rule category, and an initial weight derived from rule
 priority and overlap count. These become the transition weights in the
 prediction WFST.
 
-### Step 6b — build_prediction_wfsts
+### Step 5b — build_prediction_wfsts
 
 ```
   Inputs:
@@ -213,7 +158,7 @@ table. The initial state represents the start of a prefix; each arc
 transitions to a state corresponding to one or more rules that could match
 that token prefix.
 
-### Step 6c — apply beam width
+### Step 5c — apply beam width
 
 ```
   Inputs:
@@ -229,7 +174,7 @@ Beam pruning discards prediction paths whose total cost exceeds
 `beam_width` times the cost of the best surviving path. `Auto` mode
 requires `wfst-log` and a `log_semiring_model_path` option.
 
-### Step 6d — TokenIdMap::from_names
+### Step 5d — TokenIdMap::from_names
 
 ```
   Inputs:
@@ -246,7 +191,7 @@ Tokens are collected, sorted, and deduplicated before being assigned
 compact `u16` IDs. Sorting ensures deterministic ID assignment across
 incremental recompiles.
 
-### Step 6e — build_recovery_wfsts
+### Step 5e — build_recovery_wfsts
 
 ```
   Inputs:
@@ -273,6 +218,59 @@ token in the grammar:
 Viterbi over the recovery WFST finds the minimum-cost repair sequence for
 a given error position.
 
+### Step 5f — dead-rule detection
+
+```
+  Inputs:
+    prediction_wfsts     BTreeMap<String, PredictionWfst>
+
+  Process:
+    For each category's PredictionWfst, compute BooleanWeight
+    reachability from the start state. Any rule whose corresponding
+    WFST arc has Boolean forward weight 0 (false) is unreachable.
+
+  Outputs:
+    Diagnostic warnings for dead rules (rules that can never fire).
+```
+
+Dead-rule detection uses the BooleanWeight semiring's reachability analysis
+to identify rules that have no token path leading to them. Known dead rules
+in the current grammar include: FloatToStr, FloatToBool, StrToBool, IntId,
+FloatId, BoolId, StrId, POutput.
+
+---
+
+## 4. Dead-Rule Detection
+
+After WFST construction, the pipeline performs a BooleanWeight reachability
+check to identify dead rules. This analysis is integrated into the pipeline
+as follows:
+
+```
+  BooleanWeight Dead-Rule Detection
+  ┌───────────────────────────────────────────────────────────────┐
+  │                                                               │
+  │  For each category C:                                         │
+  │    1. Take prediction_wfsts[C]                                │
+  │    2. For each action A registered in the WFST:               │
+  │       a. Check if any transition from state 0 leads to A      │
+  │       b. If no token maps to A → A is dead                    │
+  │    3. Emit diagnostic: "rule X in category C is unreachable"  │
+  │                                                               │
+  │  This uses BooleanWeight semantics:                           │
+  │    - Each arc has weight 1 (reachable) or 0 (unreachable)     │
+  │    - Forward pass: α[v] = ⊕ { α[u] ⊗ w(u,v) }               │
+  │    - Under Boolean: ⊕ = OR, ⊗ = AND                          │
+  │    - A rule is live iff its action state has α > 0            │
+  │                                                               │
+  │  Dead rules are reported but not removed from the grammar     │
+  │  (they may be intentionally present for documentation or      │
+  │  future use). The diagnostic helps grammar authors identify   │
+  │  rules that are shadowed by higher-priority alternatives.     │
+  │                                                               │
+  └───────────────────────────────────────────────────────────────┘
+```
+
 ---
 
 ## 5. Data Bundles Annotated
@@ -282,7 +280,7 @@ the pipeline together with the WFST-specific fields added by each step.
 
 ```
   LanguageSpec
-  (rules, types, beam_width, dispatch_strategy)
+  (rules, types, beam_width)
          │
          ▼ extract_from_spec()
   ┌─────────────────────────────────────────────────┐
@@ -295,41 +293,43 @@ the pipeline together with the WFST-specific fields added by each step.
   │  { categories, rule_infos, rd_rules,            │
   │    cross_rules, cast_rules, bp_table,           │
   │    follow_inputs, has_binders,                  │
-  │    dispatch_strategy,        ← DispatchStrategy │
   │    beam_width }              ← BeamWidthConfig  │
   └─────────────────────────────────────────────────┘
          │
          ▼ compute_first_sets() / compute_follow_sets_from_inputs()
   { first_sets, follow_sets, overlaps }    ← grammar analysis output
          │
-         ▼ DispatchStrategy::resolve()
-  use_wfst: bool               ← gate for WFST construction
-         │
-         ▼ [wfst] build_dispatch_action_tables()
+         ▼ build_dispatch_action_tables()
   dispatch_actions             ← token→rule weight tables
          │
-         ▼ [wfst] build_prediction_wfsts()
+         ▼ build_prediction_wfsts()
   prediction_wfsts             ← BTreeMap<category, PredictionWfst>
          │
-         ▼ [wfst] TokenIdMap::from_names()
+         ▼ TokenIdMap::from_names()
   token_id_map                 ← compact u16 token identifiers
          │
-         ▼ [wfst] build_recovery_wfsts()
+         ▼ build_recovery_wfsts()
   recovery_wfsts               ← Vec<RecoveryWfst>
+         │
+         ▼ dead-rule detection (BooleanWeight)
+  diagnostics                  ← warnings for unreachable rules
+         │
+         ▼ resolve_dispatch_winners()
+  composed_resolutions         ← BTreeMap<(cat, token), (rule, weight)>
          │
          ▼ codegen (write_* functions)
   ┌──────────────────────────────────────────────────────────────────────┐
   │  Generated parser code (String)                                      │
   │                                                                      │
-  │  • RD prefix handlers      ← write_rd_handler() × N                 │
-  │  • Trampolined parsers      ← write_trampolined_parser()             │
+  │  * RD prefix handlers      ← write_rd_handler() × N                 │
+  │  * Trampolined parsers      ← write_trampolined_parser()             │
   │      ↳ prediction_wfst injected into TrampolineConfig per category   │
-  │  • Cross-cat dispatch       ← write_category_dispatch_weighted()     │
-  │      (or static fallback)     [wfst] weight-ordered match arms       │
-  │  • Sync predicates          ← generate_sync_predicate()              │
-  │  • WFST recovery fns        ← generate_wfst_recovery_fn()    [wfst]  │
-  │  • Recovering parsers       ← write_trampolined_parser_              │
-  │                               recovering_wfst()               [wfst]  │
+  │  * Cross-cat dispatch       ← write_category_dispatch_weighted()     │
+  │      weight-ordered match arms                                       │
+  │  * Sync predicates          ← generate_sync_predicate()              │
+  │  * WFST recovery fns        ← generate_wfst_recovery_fn()            │
+  │  * Recovering parsers       ← write_trampolined_parser_              │
+  │                               recovering_wfst()                      │
   └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -337,11 +337,8 @@ the pipeline together with the WFST-specific fields added by each step.
 
 ## 6. Runtime Data Flow
 
-Sprints 1–4 of the WFST integration plan completed the full runtime
-wiring. In addition to the compile-time dispatch arm reordering described
-in earlier sections, the pipeline now **embeds WFST data structures as
-static arrays** in the generated parser code, enabling runtime prediction
-and recovery.
+The pipeline **embeds WFST data structures as static arrays** in the
+generated parser code, enabling runtime prediction and recovery.
 
 ### 6.1 CSR Static Embedding (Prediction)
 
@@ -349,7 +346,7 @@ and recovery.
 `PredictionWfst` into **Compressed Sparse Row (CSR)** format:
 
 ```rust
-// Generated code (under #[cfg(feature = "wfst")])
+// Generated code
 static WFST_TRANSITIONS_Cat: &[(u16, u32, f64)] = &[
     // (token_id, target_state, weight)
     (0, 1, 0.0), (1, 1, 0.5), (2, 1, 2.0), ...
@@ -408,7 +405,7 @@ These are reconstructed via `RecoveryWfst::from_flat()` at runtime.
 
 ### 6.4 Runtime Recovery Path
 
-The generated `wfst_recover_Cat()` function now accepts full context:
+The generated `wfst_recover_Cat()` function accepts full context:
 
 ```rust
 fn wfst_recover_Cat<'a>(
@@ -452,9 +449,10 @@ the `ident_lookahead` handlers by WFST weight before emitting their
 
 `write_category_dispatch_weighted()` in `dispatch.rs` emits a `match`
 block for cross-category dispatch where arms are ordered from lowest
-WFST weight (highest priority) to highest. This replaces the unweighted
-`write_category_dispatch()` function which orders arms by FIRST-set
-insertion.
+WFST weight (highest priority) to highest. Arms are sorted by the
+weight from `build_complete_weight_map()`, which covers all
+(category, token) pairs: ambiguous pairs use composed weights,
+deterministic pairs use rule specificity weights.
 
 ### 7.3 WFST Recovery Function
 
@@ -478,7 +476,7 @@ insert, substitute) with full 3-tier context multipliers:
 
 - **Tier 1** (frame context): depth and binding power adjust skip/insert
   multipliers.
-- **Tier 2** (bracket balance): unmatched brackets get a 0.3× insert
+- **Tier 2** (bracket balance): unmatched brackets get a 0.3x insert
   multiplier for the matching closer.
 - **Tier 3** (parse simulation): simulated continuation validates the
   repair leads to a plausible parse state.
@@ -521,7 +519,7 @@ When set to `1`, the EBNF representation of the grammar is written to
 `./prattail-ebnf-<language>.txt` in the current directory. When set to a
 path, that path is used as the output directory. The EBNF dump is produced
 before WFST construction, so it reflects the grammar as seen by the
-pipeline regardless of feature flags.
+pipeline.
 
 ### PRATTAIL_DUMP_PARSER
 
@@ -533,9 +531,8 @@ PRATTAIL_DUMP_PARSER=/tmp/dump cargo build
 When set, the full generated parser Rust source is written to
 `prattail-parser-<categories>.rs`. This file includes the WFST-generated
 comments, weighted dispatch arms, recovery functions, and recovering
-trampoline entries when the `wfst` feature is active. Diff two dumps
-(with and without `--features wfst`) to see exactly what the WFST
-subsystem adds.
+trampoline entries. Diff two dumps (with and without `--features wfst-log`)
+to see exactly what the `wfst-log` subsystem adds.
 
 ---
 
@@ -544,32 +541,35 @@ subsystem adds.
 The following table maps each concept in this document to its primary
 source location.
 
-| Concept | File | Line Range |
-|---------|------|-----------|
-| `PipelineState` state machine | `pipeline.rs` | ~83–131 |
-| `run_pipeline()` entry point | `pipeline.rs` | ~143–174 |
-| `generate_parser_code()` | `pipeline.rs` | ~429–857 |
-| `DispatchStrategy` enum + `resolve()` | `lib.rs` | ~140–201 |
-| WFST construction block | `pipeline.rs` | ~504–598 |
-| `build_dispatch_action_tables()` | `prediction.rs` | ~1055–end |
-| `build_prediction_wfsts()` | `wfst.rs` | ~294–386 |
-| `generate_weighted_dispatch()` | `wfst.rs` | ~387–448 |
-| Beam width application | `pipeline.rs` | ~537–543 |
-| `TokenIdMap::from_names()` | `token_id.rs` | ~42–51 |
-| `build_recovery_wfsts()` | `recovery.rs` | ~487–540 |
-| `write_category_dispatch_weighted()` | `dispatch.rs` | ~212–end |
-| Weighted ident-lookahead sort | `trampoline.rs` | ~948–973 |
-| `emit_prediction_wfst_static()` | `pipeline.rs` | (wfst-gated) |
-| `emit_recovery_wfst_static()` | `pipeline.rs` | (wfst-gated) |
-| `generate_wfst_recovery_fn()` | `pipeline.rs` | (wfst-gated) |
-| `write_trampolined_parser_recovering_wfst()` | `pipeline.rs` | (wfst-gated) |
-| `PredictionWfst::from_flat()` | `wfst.rs` | (wfst-gated) |
-| `PredictionWfst::with_trained_weights()` | `wfst.rs` | (wfst-log-gated) |
-| `RecoveryWfst::from_flat()` | `recovery.rs` | (wfst-gated) |
-| `ParseSimulator::from_flat()` | `recovery.rs` | (wfst-gated) |
-| `TrainedModel::from_embedded()` | `training.rs` | (wfst-log-gated) |
-| `PRATTAIL_DUMP_EBNF` handler | `pipeline.rs` | ~158–162 |
-| `PRATTAIL_DUMP_PARSER` handler | `pipeline.rs` | ~847–855 |
+| Concept | File |
+|---------|------|
+| `PipelineState` state machine | `pipeline.rs` |
+| `run_pipeline()` entry point | `pipeline.rs` |
+| `generate_parser_code()` | `pipeline.rs` |
+| WFST construction block | `pipeline.rs` |
+| `build_dispatch_action_tables()` | `prediction.rs` |
+| `resolve_dispatch_winners()` | `prediction.rs` |
+| `build_prediction_wfsts()` | `wfst.rs` |
+| `generate_weighted_dispatch()` | `wfst.rs` |
+| Beam width application | `pipeline.rs` |
+| `TokenIdMap::from_names()` | `token_id.rs` |
+| `build_recovery_wfsts()` | `recovery.rs` |
+| `write_category_dispatch_weighted()` | `dispatch.rs` |
+| `build_complete_weight_map()` | `dispatch.rs` / `prediction.rs` |
+| Weighted ident-lookahead sort | `trampoline.rs` |
+| `emit_prediction_wfst_static()` | `pipeline.rs` |
+| `emit_recovery_wfst_static()` | `pipeline.rs` |
+| `generate_wfst_recovery_fn()` | `pipeline.rs` |
+| `write_trampolined_parser_recovering_wfst()` | `pipeline.rs` |
+| `PredictionWfst::from_flat()` | `wfst.rs` |
+| `PredictionWfst::with_trained_weights()` | `wfst.rs` (wfst-log) |
+| `RecoveryWfst::from_flat()` | `recovery.rs` |
+| `ParseSimulator::from_flat()` | `recovery.rs` |
+| `TrainedModel::from_embedded()` | `training.rs` (wfst-log) |
+| `RepairAction::edit_cost()` | `recovery.rs` |
+| BooleanWeight dead-rule detection | `pipeline.rs` |
+| `PRATTAIL_DUMP_EBNF` handler | `pipeline.rs` |
+| `PRATTAIL_DUMP_PARSER` handler | `pipeline.rs` |
 
 ---
 
@@ -577,13 +577,11 @@ source location.
 
 - Module inventory and dependency graph: see
   [module-map.md](module-map.md) (this directory).
-- `PredictionWfst` construction details: see
-  [../design/prediction.md](../design/prediction.md).
-- `RecoveryWfst` edit-cost encoding: see
-  [../design/error-recovery.md](../design/error-recovery.md).
+- Semiring axioms and instances: see
+  [../../theory/wfst/semirings.md](../../theory/wfst/semirings.md).
+- Viterbi algorithm and forward-backward algorithm: see
+  [../../theory/wfst/viterbi-and-forward-backward.md](../../theory/wfst/viterbi-and-forward-backward.md).
 - Beam width DSL option: see
-  [../usage/dsl-configuration.md](../usage/dsl-configuration.md).
-- Overall pipeline overview: see
-  [../../../design/architecture-overview.md](../../../design/architecture-overview.md).
+  [../../usage/wfst/dsl-configuration.md](../../usage/wfst/dsl-configuration.md).
 - Trampoline parser architecture: see
-  [../../../architecture/generated-code-anatomy.md](../../../architecture/generated-code-anatomy.md).
+  [../../architecture/generated-code-anatomy.md](../../architecture/generated-code-anatomy.md).

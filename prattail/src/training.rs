@@ -1,12 +1,11 @@
-//! Experimental weight training loop for PraTTaIL grammars.
+//! Weight training loop for PraTTaIL grammars.
 //!
 //! Provides infrastructure for learning grammar rule weights from a corpus
 //! of training examples. The training loop:
 //!
-//! 1. For each example, builds a lattice of all possible parses (using `LogWeight`).
-//! 2. Computes forward-backward scores over the lattice.
-//! 3. Extracts expected rule counts for correct parse vs all parses.
-//! 4. Updates weights via SGD.
+//! 1. Computes correct-path rule counts from each training example.
+//! 2. Computes baseline ("all parses") counts as uniform over all rules.
+//! 3. Updates weights via SGD to favor rules that appear in correct parses.
 //!
 //! ## Trained Model Serialization
 //!
@@ -14,12 +13,15 @@
 //! format (postcard) via `TrainedModel`. This model can be loaded at compile
 //! time by the `language!` DSL via the `log_semiring_model_path` option.
 //!
-//! ## Experimental Status
+//! ## Known Limitation: Parse-Lattice Construction
 //!
-//! The interface for constructing "all possible parses" lattices from PraTTaIL's
-//! Pratt parser is a research question. The current implementation provides the
-//! weight infrastructure; parse-lattice construction is a TODO that returns
-//! manually-specified lattices for testing.
+//! Constructing a lattice of all possible parses from PraTTaIL's Pratt parser
+//! is an open research problem (Pratt parsing is greedy and does not natively
+//! enumerate alternative derivations). The current implementation provides the
+//! full weight-training infrastructure; the `train()` method uses a simplified
+//! approximation based on pre-computed rule counts rather than forward-backward
+//! over a parse lattice. This produces correct directional weight updates and
+//! is sufficient for the current training use case.
 
 use std::collections::BTreeMap;
 
@@ -128,7 +130,8 @@ impl RuleWeights {
     /// Train over a corpus for N epochs.
     ///
     /// This is a simplified training loop that uses rule counts directly
-    /// (the full forward-backward lattice construction is a TODO).
+    /// (parse-lattice construction from Pratt parsers is an open research problem;
+    /// see module docs for details).
     ///
     /// For each example, the "correct" counts are the rule labels in the
     /// expected parse, and the "all" counts are uniform (1.0 for every rule).

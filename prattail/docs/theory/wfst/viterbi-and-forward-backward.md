@@ -7,13 +7,15 @@ positions in the input string; edges are weighted tokenization hypotheses
 at each position. From this DAG the parser must extract:
 
 - **The best single parse** — the minimum-weight path (Viterbi).
+  Viterbi is always available (not feature-gated).
 - **A beam of plausible parses** — the k paths within some weight
   budget of the best (beam-pruned Viterbi).
 - **The partition function** — the total weight of all paths,
   needed for normalisation in weight training and computing posteriors
-  (forward-backward).
+  (forward-backward). *Requires feature `wfst-log`.*
 - **The top-N alternative parses** — ranked alternative paths for
   error recovery and N-best output (N-best enumeration).
+  *Requires feature `wfst-log`.*
 
 Each algorithm operates generically over any `Semiring`. Under
 `TropicalWeight`, "total weight" means "minimum cost path." Under
@@ -26,13 +28,13 @@ probabilities."
 
 ### 2.1 Token Lattice as a DAG
 
-A `TokenLattice<T, S>` stores an adjacency list:
+A `TokenLattice<T, S, W>` stores an adjacency list:
 
 ```
 edges[node_id] = [ LatticeEdge { token_span, target, weight }, … ]
 ```
 
-Nodes are position indices (0, 1, …, N). An edge from node `u` to
+Nodes are position indices (0, 1, ..., N). An edge from node `u` to
 node `v` with weight `w` asserts "the input from position u to position
 v can be tokenised as the given token with weight w."
 
@@ -44,27 +46,34 @@ sort and allowing all algorithms below to process nodes in index order.
 
 ### 2.2 Types
 
+The lattice types are generic over the weight type `W`, defaulting to
+`TropicalWeight`:
+
 ```rust
 pub enum TokenSource<T, S> {
     Linear(Vec<(T, S)>),       // common case: unambiguous, zero overhead
     Lattice(TokenLattice<T, S>),
 }
 
-pub struct TokenLattice<T, S> {
-    edges: Vec<Vec<LatticeEdge<T, S>>>,
+pub struct TokenLattice<T, S, W = TropicalWeight> {
+    edges: Vec<Vec<LatticeEdge<T, S, W>>>,
 }
 
-pub struct LatticeEdge<T, S> {
+pub struct LatticeEdge<T, S, W = TropicalWeight> {
     pub token_span: (T, S),
     pub target:     usize,
-    pub weight:     TropicalWeight,
+    pub weight:     W,
 }
 
-pub struct ViterbiPath<T, S> {
+pub struct ViterbiPath<T, S, W = TropicalWeight> {
     pub tokens:       Vec<(T, S)>,
-    pub total_weight: TropicalWeight,
+    pub total_weight: W,
 }
 ```
+
+The generic parameter `W` allows the same lattice infrastructure to be
+used with any semiring (TropicalWeight, CountingWeight, BooleanWeight,
+EditWeight, ProductWeight, or LogWeight).
 
 ---
 
@@ -147,6 +156,13 @@ path_edges.reverse();
 Time complexity: **O(V + E)** where V = nodes, E = edges.
 Space complexity: **O(V)** for dist and pred arrays.
 
+### 3.4 Generic Viterbi
+
+`viterbi_generic<W: Semiring + Ord>()` provides generic lattice path
+extraction for any semiring that implements `Ord`. This enables Viterbi
+over non-tropical lattices (e.g., EditWeight lattices for minimum-edit
+path extraction, or ProductWeight lattices for multi-objective optimization).
+
 ---
 
 ## 4. Beam-Pruned Viterbi
@@ -183,7 +199,7 @@ Beam pruning is an **approximation**: it can discard the optimal path if
 
 - At least one path (the best path is never pruned, because when it is
   first found it sets `best_final`, and its own cost equals `best_final`).
-- The optimal path is returned when `beam_width ≥ 0` (trivially). For very
+- The optimal path is returned when `beam_width >= 0` (trivially). For very
   small beam_width the approximation degrades gracefully.
 
 Callers that need exact results should pass `beam_width = None`.
@@ -234,6 +250,8 @@ The function is generic over any `Semiring W`. Swapping
 ---
 
 ## 6. Backward Algorithm
+
+*Forward-backward is available under feature `wfst-log`.*
 
 ### 6.1 Definition
 
@@ -307,7 +325,7 @@ useful for:
 ### 7.2 Algorithm: Heap-Based Eppstein-Style Search
 
 PraTTaIL uses a simplified heap-based approach suitable for
-small-to-medium recovery lattices (typically 5–50 nodes):
+small-to-medium recovery lattices (typically 5-50 nodes):
 
 ```
 heap ← min-heap, initialised with state (weight=1̄, node=0, path=[])
@@ -339,18 +357,18 @@ while let Some(state) = heap.pop() {
 }
 ```
 
-This limits exploration to `n × |nodes| × 4` state expansions. In the
-worst case, this means each node is visited at most `n × 4` times per
+This limits exploration to `n x |nodes| x 4` state expansions. In the
+worst case, this means each node is visited at most `n x 4` times per
 requested path, ensuring the algorithm terminates in bounded time even
 when the lattice has many cycles of equal weight.
 
 ### 7.4 Complexity
 
-- Time: **O(max_explored × log(heap_size))** ≈ O(n·V·log(n·V))
-- Space: **O(n·V)** for the heap and path copies
+- Time: **O(max_explored x log(heap_size))** ~ O(n*V*log(n*V))
+- Space: **O(n*V)** for the heap and path copies
 
-For the typical recovery scenario (n ≤ 10, V ≤ 50), this is well
-within interactive latency budgets (~100 μs).
+For the typical recovery scenario (n <= 10, V <= 50), this is well
+within interactive latency budgets (~100 us).
 
 ---
 
@@ -387,33 +405,33 @@ Drawn with crossing arcs annotated:
 
 ### 8.1 Forward Scores (TropicalWeight)
 
-Process nodes 0 → 5 in order:
+Process nodes 0 -> 5 in order:
 
 | Node | Incoming edges | α[node] = min(predecessors) |
 |:----:|:--------------|:----------------------------|
 | 0    | (start)        | 0.0 (= 1̄)                   |
-| 1    | 0→1 (0.0+1.0)  | 1.0                          |
-| 2    | 0→2 (0.0+3.0)  | 3.0                          |
-| 3    | 0→3 (0.0+1.5)  | 1.5                          |
-| 4    | 3→4 (1.5+1.0)  | 2.5                          |
-| 5    | 1→5 (1.0+2.0)=3.0, 2→5 (3.0+0.5)=3.5, 4→5 (2.5+0.5)=3.0 → **min=3.0** | 3.0 |
+| 1    | 0->1 (0.0+1.0)  | 1.0                          |
+| 2    | 0->2 (0.0+3.0)  | 3.0                          |
+| 3    | 0->3 (0.0+1.5)  | 1.5                          |
+| 4    | 3->4 (1.5+1.0)  | 2.5                          |
+| 5    | 1->5 (1.0+2.0)=3.0, 2->5 (3.0+0.5)=3.5, 4->5 (2.5+0.5)=3.0 -> **min=3.0** | 3.0 |
 
 **Forward score at final node = 3.0.**
 
 ### 8.2 Backward Scores (TropicalWeight)
 
-Process nodes 5 → 0 in reverse:
+Process nodes 5 -> 0 in reverse:
 
 | Node | Outgoing edges | β[node] = min(successors) |
 |:----:|:--------------|:--------------------------|
 | 5    | (final)        | 0.0 (= 1̄)                 |
-| 4    | 4→5 (0.5+0.0)  | 0.5                        |
-| 3    | 3→4 (1.0+0.5)  | 1.5                        |
-| 2    | 2→5 (0.5+0.0)  | 0.5                        |
-| 1    | 1→5 (2.0+0.0)  | 2.0                        |
-| 0    | 0→1 (1.0+2.0)=3.0, 0→2 (3.0+0.5)=3.5, 0→3 (1.5+1.5)=3.0 → **min=3.0** | 3.0 |
+| 4    | 4->5 (0.5+0.0)  | 0.5                        |
+| 3    | 3->4 (1.0+0.5)  | 1.5                        |
+| 2    | 2->5 (0.5+0.0)  | 0.5                        |
+| 1    | 1->5 (2.0+0.0)  | 2.0                        |
+| 0    | 0->1 (1.0+2.0)=3.0, 0->2 (3.0+0.5)=3.5, 0->3 (1.5+1.5)=3.0 -> **min=3.0** | 3.0 |
 
-**Backward score at start node = 3.0.** ✓ Identity α[5] = β[0] = 3.0 holds.
+**Backward score at start node = 3.0.** Identity α[5] = β[0] = 3.0 holds.
 
 ### 8.3 Viterbi Best Path
 
@@ -427,12 +445,12 @@ pred[4] = (3, edge 3→4)
 pred[5] = (1, edge 1→5)     ← tied with (4, 4→5), (1, 1→5) selected first
 ```
 
-Backtrace from node 5: 5 ← 1 ← 0.
+Backtrace from node 5: 5 <- 1 <- 0.
 
-**Best path: 0 → 1 → 5, tokens = [edge(0→1), edge(1→5)], total weight = 3.0.**
+**Best path: 0 -> 1 -> 5, tokens = [edge(0->1), edge(1->5)], total weight = 3.0.**
 
-(Path C via nodes 3→4 also has weight 3.0 and would be found by N-best
-with N ≥ 2, but Viterbi returns whichever tied path is encountered first
+(Path C via nodes 3->4 also has weight 3.0 and would be found by N-best
+with N >= 2, but Viterbi returns whichever tied path is encountered first
 in iteration order.)
 
 ### 8.4 N-Best Paths (wfst-log, N=3)
@@ -442,9 +460,9 @@ The heap-based N-best returns them in order:
 
 | Rank | Path      | Weight |
 |:----:|:----------|:------:|
-| 1    | 0→1→5     | 3.0    |
-| 2    | 0→3→4→5   | 3.0    |
-| 3    | 0→2→5     | 3.5    |
+| 1    | 0->1->5     | 3.0    |
+| 2    | 0->3->4->5   | 3.0    |
+| 3    | 0->2->5     | 3.5    |
 
 Paths of equal weight are returned in heap-pop order (determined by
 insertion order when weights are tied).
@@ -473,7 +491,7 @@ insertion order when weights are tied).
 | `n_best_tests::test_n_best_many_paths` | N-best | Top 3 of 4 paths returned |
 | `n_best_tests::test_n_best_unreachable` | N-best | Empty on unreachable lattice |
 
-**`forward_backward.rs` (7 tests):**
+**`forward_backward.rs` (7 tests, feature `wfst-log`):**
 
 | Test | Algorithm | What it verifies |
 |:-----|:---------|:----------------|
@@ -485,23 +503,28 @@ insertion order when weights are tied).
 | `log_tests::test_forward_scores_diamond_log` | Forward (Log) | Log sum-over-paths |
 | `log_tests::test_forward_backward_consistency_log` | Both (Log) | Identity under LogWeight |
 
+Additionally, 7 generic lattice tests verify `viterbi_generic<W>()` and
+`linear_to_lattice_generic<W>()` for non-tropical weight types.
+
 ---
 
 ## 10. Source Reference
 
 | Symbol | Location |
 |:-------|:---------|
-| `TokenSource<T,S>` | `prattail/src/lattice.rs` lines 51–131 |
-| `TokenLattice<T,S>` | `prattail/src/lattice.rs` lines 174–262 |
-| `LatticeEdge<T,S>` | `prattail/src/lattice.rs` lines 181–188 |
-| `ViterbiPath<T,S>` | `prattail/src/lattice.rs` lines 276–281 |
-| `viterbi_best_path` | `prattail/src/lattice.rs` lines 289–294 |
-| `viterbi_best_path_beam` | `prattail/src/lattice.rs` lines 304–390 |
-| `linear_to_lattice` | `prattail/src/lattice.rs` lines 400–413 |
-| `n_best_paths` (wfst-log) | `prattail/src/lattice.rs` lines 440–535 |
-| `forward_scores` | `prattail/src/forward_backward.rs` lines 33–51 |
-| `backward_scores` | `prattail/src/forward_backward.rs` lines 67–83 |
-| `total_weight` | `prattail/src/forward_backward.rs` lines 88–91 |
+| `TokenSource<T,S>` | `prattail/src/lattice.rs` |
+| `TokenLattice<T,S,W>` | `prattail/src/lattice.rs` |
+| `LatticeEdge<T,S,W>` | `prattail/src/lattice.rs` |
+| `ViterbiPath<T,S,W>` | `prattail/src/lattice.rs` |
+| `viterbi_best_path` | `prattail/src/lattice.rs` |
+| `viterbi_best_path_beam` | `prattail/src/lattice.rs` |
+| `viterbi_generic` | `prattail/src/lattice.rs` |
+| `linear_to_lattice` | `prattail/src/lattice.rs` |
+| `linear_to_lattice_generic` | `prattail/src/lattice.rs` |
+| `n_best_paths` (wfst-log) | `prattail/src/lattice.rs` |
+| `forward_scores` | `prattail/src/forward_backward.rs` (wfst-log) |
+| `backward_scores` | `prattail/src/forward_backward.rs` (wfst-log) |
+| `total_weight` | `prattail/src/forward_backward.rs` (wfst-log) |
 
 ---
 

@@ -198,6 +198,428 @@ impl Default for TropicalWeight {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// CountingWeight
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Counting semiring `(ℕ, +, ×, 0, 1)`.
+///
+/// Counts the number of distinct paths/derivations through the automaton.
+///
+/// - `plus = addition`: sums path counts from parallel alternatives
+/// - `times = multiplication`: multiplies segment counts along a path
+/// - `zero = 0`: no paths (identity for addition)
+/// - `one = 1`: one path (identity for multiplication)
+///
+/// **Application**: Compose with `TropicalWeight` via `ProductWeight` to get
+/// `(best_weight, derivation_count)`. Tokens with `count > 1` are ambiguous.
+/// Used for ambiguity detection and confidence metrics at codegen time.
+///
+/// Uses saturating arithmetic to avoid overflow on pathological grammars.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CountingWeight(pub u64);
+
+impl CountingWeight {
+    /// Create a counting weight with the given path count.
+    #[inline]
+    pub const fn new(count: u64) -> Self {
+        CountingWeight(count)
+    }
+
+    /// Get the path count.
+    #[inline]
+    pub const fn count(self) -> u64 {
+        self.0
+    }
+}
+
+impl Semiring for CountingWeight {
+    #[inline]
+    fn zero() -> Self {
+        CountingWeight(0)
+    }
+
+    #[inline]
+    fn one() -> Self {
+        CountingWeight(1)
+    }
+
+    #[inline]
+    fn plus(&self, other: &Self) -> Self {
+        CountingWeight(self.0.saturating_add(other.0))
+    }
+
+    #[inline]
+    fn times(&self, other: &Self) -> Self {
+        CountingWeight(self.0.saturating_mul(other.0))
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+
+    #[inline]
+    fn is_one(&self) -> bool {
+        self.0 == 1
+    }
+
+    fn approx_eq(&self, other: &Self, _epsilon: f64) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl fmt::Display for CountingWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+impl Default for CountingWeight {
+    fn default() -> Self {
+        Self::one()
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// BooleanWeight
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Boolean semiring `({false, true}, ∨, ∧, false, true)`.
+///
+/// Tests reachability / language emptiness.
+///
+/// - `plus = ∨` (disjunction): any reachable path makes the state reachable
+/// - `times = ∧` (conjunction): both segments must be reachable
+/// - `zero = false`: unreachable (identity for ∨)
+/// - `one = true`: reachable (identity for ∧)
+///
+/// **Application**: Dead-rule detection at codegen time. For each grammar rule,
+/// project the prediction WFST onto the boolean semiring. Rules where
+/// `predict(token).weight == BooleanWeight(false)` for all tokens are
+/// unreachable and can be flagged with a compile-time warning.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct BooleanWeight(pub bool);
+
+impl BooleanWeight {
+    /// Create a boolean weight.
+    #[inline]
+    pub const fn new(reachable: bool) -> Self {
+        BooleanWeight(reachable)
+    }
+
+    /// Whether this weight represents a reachable state.
+    #[inline]
+    pub const fn is_reachable(self) -> bool {
+        self.0
+    }
+}
+
+impl Semiring for BooleanWeight {
+    #[inline]
+    fn zero() -> Self {
+        BooleanWeight(false)
+    }
+
+    #[inline]
+    fn one() -> Self {
+        BooleanWeight(true)
+    }
+
+    #[inline]
+    fn plus(&self, other: &Self) -> Self {
+        BooleanWeight(self.0 || other.0)
+    }
+
+    #[inline]
+    fn times(&self, other: &Self) -> Self {
+        BooleanWeight(self.0 && other.0)
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        !self.0
+    }
+
+    #[inline]
+    fn is_one(&self) -> bool {
+        self.0
+    }
+
+    fn approx_eq(&self, other: &Self, _epsilon: f64) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl fmt::Display for BooleanWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", if self.0 { "⊤" } else { "⊥" })
+    }
+}
+
+impl Default for BooleanWeight {
+    fn default() -> Self {
+        Self::one()
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// EditWeight
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Edit-distance semiring `(ℕ ∪ {∞}, min, +, ∞, 0)`.
+///
+/// Counts minimum token-level edits needed for error recovery. Isomorphic to
+/// tropical over ℕ but semantically distinct — values represent edit operations
+/// rather than arbitrary costs.
+///
+/// - `plus = min`: selects the repair strategy with fewest edits
+/// - `times = +`: accumulates edit counts along a repair path
+/// - `zero = ∞ (u32::MAX)`: impossible repair (identity for min)
+/// - `one = 0`: no edits needed (identity for addition)
+///
+/// **Application**: Replace fixed `f64` costs in `recovery.rs`. Compose with
+/// `ProductWeight<TropicalWeight, EditWeight>` to find the parse that is both
+/// highest-priority AND minimum-edit. The existing `find_best_recovery()`
+/// becomes a Viterbi shortest-path over the product semiring.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct EditWeight(pub u32);
+
+impl EditWeight {
+    /// Infinite edit distance (unreachable / zero element).
+    pub const INFINITY: EditWeight = EditWeight(u32::MAX);
+
+    /// Create an edit weight with the given distance.
+    #[inline]
+    pub const fn new(distance: u32) -> Self {
+        EditWeight(distance)
+    }
+
+    /// Get the edit distance value.
+    #[inline]
+    pub const fn distance(self) -> u32 {
+        self.0
+    }
+
+    /// Cost of skipping one input token.
+    #[inline]
+    pub const fn skip() -> Self {
+        EditWeight(1)
+    }
+
+    /// Cost of deleting an unexpected token.
+    #[inline]
+    pub const fn delete() -> Self {
+        EditWeight(1)
+    }
+
+    /// Cost of inserting a missing token.
+    #[inline]
+    pub const fn insert() -> Self {
+        EditWeight(2)
+    }
+
+    /// Cost of substituting a wrong token.
+    #[inline]
+    pub const fn substitute() -> Self {
+        EditWeight(2)
+    }
+}
+
+impl Semiring for EditWeight {
+    #[inline]
+    fn zero() -> Self {
+        Self::INFINITY
+    }
+
+    #[inline]
+    fn one() -> Self {
+        EditWeight(0)
+    }
+
+    #[inline]
+    fn plus(&self, other: &Self) -> Self {
+        EditWeight(self.0.min(other.0))
+    }
+
+    #[inline]
+    fn times(&self, other: &Self) -> Self {
+        EditWeight(self.0.saturating_add(other.0))
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.0 == u32::MAX
+    }
+
+    #[inline]
+    fn is_one(&self) -> bool {
+        self.0 == 0
+    }
+
+    fn approx_eq(&self, other: &Self, _epsilon: f64) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl PartialOrd for EditWeight {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for EditWeight {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl fmt::Display for EditWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_zero() {
+            write!(f, "∞")
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
+
+impl Default for EditWeight {
+    fn default() -> Self {
+        Self::one()
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ProductWeight
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Product semiring `(S₁ × S₂)` — computes two metrics simultaneously.
+///
+/// - `plus`: component-wise plus (selects best in each dimension independently)
+/// - `times`: component-wise times (accumulates in each dimension)
+/// - `zero`: `(S₁::zero(), S₂::zero())`
+/// - `one`: `(S₁::one(), S₂::one())`
+///
+/// **Applications**:
+/// - `ProductWeight<TropicalWeight, CountingWeight>`: best parse + "was it
+///   unique?" → **confidence metric** for dispatch decisions
+/// - `ProductWeight<TropicalWeight, EditWeight>`: best parse + minimum repair
+///   distance → **optimal error recovery**
+///
+/// Note: The product semiring applies `plus`/`times` component-wise. For
+/// lexicographic ordering (where the second component only breaks ties in
+/// the first), a separate `LexicographicWeight` would be needed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ProductWeight<S1: Semiring, S2: Semiring> {
+    /// First component weight.
+    pub left: S1,
+    /// Second component weight.
+    pub right: S2,
+}
+
+impl<S1: Semiring, S2: Semiring> ProductWeight<S1, S2> {
+    /// Create a product weight from two components.
+    #[inline]
+    pub const fn new(left: S1, right: S2) -> Self {
+        ProductWeight { left, right }
+    }
+}
+
+impl<S1: Semiring + Eq + std::hash::Hash, S2: Semiring + Eq + std::hash::Hash> Semiring
+    for ProductWeight<S1, S2>
+{
+    #[inline]
+    fn zero() -> Self {
+        ProductWeight {
+            left: S1::zero(),
+            right: S2::zero(),
+        }
+    }
+
+    #[inline]
+    fn one() -> Self {
+        ProductWeight {
+            left: S1::one(),
+            right: S2::one(),
+        }
+    }
+
+    #[inline]
+    fn plus(&self, other: &Self) -> Self {
+        ProductWeight {
+            left: self.left.plus(&other.left),
+            right: self.right.plus(&other.right),
+        }
+    }
+
+    #[inline]
+    fn times(&self, other: &Self) -> Self {
+        ProductWeight {
+            left: self.left.times(&other.left),
+            right: self.right.times(&other.right),
+        }
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.left.is_zero() || self.right.is_zero()
+    }
+
+    #[inline]
+    fn is_one(&self) -> bool {
+        self.left.is_one() && self.right.is_one()
+    }
+
+    fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
+        self.left.approx_eq(&other.left, epsilon) && self.right.approx_eq(&other.right, epsilon)
+    }
+}
+
+impl<S1: Semiring + Eq, S2: Semiring + Eq> Eq for ProductWeight<S1, S2> {}
+
+impl<S1: Semiring + Ord, S2: Semiring + Ord> PartialOrd for ProductWeight<S1, S2> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Lexicographic ordering: compare left component first, then right.
+///
+/// This means `ProductWeight<TropicalWeight, EditWeight>` will prefer
+/// the parse with the best tropical weight; ties are broken by edit distance.
+impl<S1: Semiring + Ord, S2: Semiring + Ord> Ord for ProductWeight<S1, S2> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.left.cmp(&other.left).then_with(|| self.right.cmp(&other.right))
+    }
+}
+
+impl<S1: Semiring + Eq + std::hash::Hash, S2: Semiring + Eq + std::hash::Hash> std::hash::Hash
+    for ProductWeight<S1, S2>
+{
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.left.hash(state);
+        self.right.hash(state);
+    }
+}
+
+impl<S1: Semiring + fmt::Display, S2: Semiring + fmt::Display> fmt::Display
+    for ProductWeight<S1, S2>
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "({}, {})", self.left, self.right)
+    }
+}
+
+impl<S1: Semiring, S2: Semiring> Default for ProductWeight<S1, S2> {
+    fn default() -> Self {
+        ProductWeight {
+            left: S1::one(),
+            right: S2::one(),
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // LogWeight (feature = "wfst-log")
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -498,6 +920,328 @@ mod tests {
         set.insert(TropicalWeight::new(3.0));
         assert!(set.contains(&TropicalWeight::new(3.0)));
         assert!(!set.contains(&TropicalWeight::new(4.0)));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // CountingWeight tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_counting_semiring_laws() {
+        let a = CountingWeight::new(3);
+        let b = CountingWeight::new(5);
+        let z = CountingWeight::zero();
+        let one = CountingWeight::one();
+
+        // Zero identity: 0 + a = a
+        assert_eq!(z.plus(&a), a);
+        assert_eq!(a.plus(&z), a);
+
+        // One identity: 1 * a = a
+        assert_eq!(one.times(&a), a);
+        assert_eq!(a.times(&one), a);
+
+        // Zero annihilates: 0 * a = 0
+        assert!(z.times(&a).is_zero());
+        assert!(a.times(&z).is_zero());
+
+        // Plus is commutative: a + b = b + a
+        assert_eq!(a.plus(&b), b.plus(&a));
+
+        // Times is commutative: a * b = b * a
+        assert_eq!(a.times(&b), b.times(&a));
+    }
+
+    #[test]
+    fn test_counting_plus_is_add() {
+        let a = CountingWeight::new(3);
+        let b = CountingWeight::new(5);
+        assert_eq!(a.plus(&b), CountingWeight::new(8));
+    }
+
+    #[test]
+    fn test_counting_times_is_mul() {
+        let a = CountingWeight::new(3);
+        let b = CountingWeight::new(5);
+        assert_eq!(a.times(&b), CountingWeight::new(15));
+    }
+
+    #[test]
+    fn test_counting_saturating() {
+        let big = CountingWeight::new(u64::MAX);
+        let two = CountingWeight::new(2);
+        // Saturating add
+        assert_eq!(big.plus(&two), CountingWeight::new(u64::MAX));
+        // Saturating mul
+        assert_eq!(big.times(&two), CountingWeight::new(u64::MAX));
+    }
+
+    #[test]
+    fn test_counting_not_idempotent() {
+        let a = CountingWeight::new(3);
+        // plus(3, 3) = 6 ≠ 3, not idempotent
+        assert_ne!(a.plus(&a), a);
+        assert_eq!(a.plus(&a), CountingWeight::new(6));
+    }
+
+    #[test]
+    fn test_counting_distributivity() {
+        // a * (b + c) = a*b + a*c
+        let a = CountingWeight::new(2);
+        let b = CountingWeight::new(3);
+        let c = CountingWeight::new(4);
+        let lhs = a.times(&b.plus(&c));
+        let rhs = a.times(&b).plus(&a.times(&c));
+        assert_eq!(lhs, rhs);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // BooleanWeight tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_boolean_semiring_laws() {
+        let t = BooleanWeight::new(true);
+        let f = BooleanWeight::new(false);
+        let z = BooleanWeight::zero();
+        let one = BooleanWeight::one();
+
+        // Zero = false, One = true
+        assert_eq!(z, f);
+        assert_eq!(one, t);
+
+        // Zero identity: false ∨ a = a
+        assert_eq!(z.plus(&t), t);
+        assert_eq!(z.plus(&f), f);
+
+        // One identity: true ∧ a = a
+        assert_eq!(one.times(&t), t);
+        assert_eq!(one.times(&f), f);
+
+        // Zero annihilates: false ∧ a = false
+        assert_eq!(z.times(&t), z);
+        assert_eq!(z.times(&f), z);
+    }
+
+    #[test]
+    fn test_boolean_plus_is_or() {
+        let t = BooleanWeight::new(true);
+        let f = BooleanWeight::new(false);
+        assert_eq!(t.plus(&t), t);
+        assert_eq!(t.plus(&f), t);
+        assert_eq!(f.plus(&t), t);
+        assert_eq!(f.plus(&f), f);
+    }
+
+    #[test]
+    fn test_boolean_times_is_and() {
+        let t = BooleanWeight::new(true);
+        let f = BooleanWeight::new(false);
+        assert_eq!(t.times(&t), t);
+        assert_eq!(t.times(&f), f);
+        assert_eq!(f.times(&t), f);
+        assert_eq!(f.times(&f), f);
+    }
+
+    #[test]
+    fn test_boolean_idempotent() {
+        let t = BooleanWeight::new(true);
+        let f = BooleanWeight::new(false);
+        // Plus is idempotent: a ∨ a = a
+        assert_eq!(t.plus(&t), t);
+        assert_eq!(f.plus(&f), f);
+    }
+
+    #[test]
+    fn test_boolean_reachability() {
+        let reachable = BooleanWeight::new(true);
+        let unreachable = BooleanWeight::new(false);
+        assert!(reachable.is_reachable());
+        assert!(!unreachable.is_reachable());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // EditWeight tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_edit_semiring_laws() {
+        let a = EditWeight::new(3);
+        let b = EditWeight::new(5);
+        let z = EditWeight::zero();
+        let one = EditWeight::one();
+
+        // Zero identity: min(∞, a) = a
+        assert_eq!(z.plus(&a), a);
+        assert_eq!(a.plus(&z), a);
+
+        // One identity: 0 + a = a
+        assert_eq!(one.times(&a), a);
+        assert_eq!(a.times(&one), a);
+
+        // Zero annihilates: ∞ + a = ∞ (saturating)
+        assert!(z.times(&a).is_zero());
+        assert!(a.times(&z).is_zero());
+
+        // Commutativity
+        assert_eq!(a.plus(&b), b.plus(&a));
+        assert_eq!(a.times(&b), b.times(&a));
+    }
+
+    #[test]
+    fn test_edit_plus_is_min() {
+        let a = EditWeight::new(3);
+        let b = EditWeight::new(5);
+        assert_eq!(a.plus(&b), EditWeight::new(3));
+        assert_eq!(b.plus(&a), EditWeight::new(3));
+    }
+
+    #[test]
+    fn test_edit_times_is_add() {
+        let a = EditWeight::new(3);
+        let b = EditWeight::new(5);
+        assert_eq!(a.times(&b), EditWeight::new(8));
+    }
+
+    #[test]
+    fn test_edit_idempotent() {
+        let a = EditWeight::new(3);
+        // min(3, 3) = 3, idempotent
+        assert_eq!(a.plus(&a), a);
+    }
+
+    #[test]
+    fn test_edit_operation_costs() {
+        assert_eq!(EditWeight::skip().distance(), 1);
+        assert_eq!(EditWeight::delete().distance(), 1);
+        assert_eq!(EditWeight::insert().distance(), 2);
+        assert_eq!(EditWeight::substitute().distance(), 2);
+    }
+
+    #[test]
+    fn test_edit_infinity() {
+        assert_eq!(EditWeight::INFINITY, EditWeight::zero());
+        assert!(EditWeight::INFINITY.is_zero());
+        assert_eq!(EditWeight::INFINITY.distance(), u32::MAX);
+    }
+
+    #[test]
+    fn test_edit_saturating() {
+        let big = EditWeight::new(u32::MAX - 1);
+        let two = EditWeight::new(2);
+        assert_eq!(big.times(&two), EditWeight::new(u32::MAX));
+    }
+
+    #[test]
+    fn test_edit_ordering() {
+        let a = EditWeight::new(1);
+        let b = EditWeight::new(5);
+        let z = EditWeight::zero();
+        assert!(a < b);
+        assert!(b < z);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ProductWeight tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_product_semiring_laws() {
+        type PW = ProductWeight<TropicalWeight, CountingWeight>;
+        let a = PW::new(TropicalWeight::new(2.0), CountingWeight::new(3));
+        let b = PW::new(TropicalWeight::new(5.0), CountingWeight::new(2));
+        let z = PW::zero();
+        let one = PW::one();
+
+        // Zero identity
+        assert_eq!(z.plus(&a), a);
+        assert_eq!(a.plus(&z), a);
+
+        // One identity
+        assert_eq!(one.times(&a), a);
+        assert_eq!(a.times(&one), a);
+
+        // Zero annihilates
+        assert!(z.times(&a).is_zero());
+        assert!(a.times(&z).is_zero());
+
+        // Commutativity of plus
+        assert_eq!(a.plus(&b), b.plus(&a));
+    }
+
+    #[test]
+    fn test_product_tropical_counting() {
+        type PW = ProductWeight<TropicalWeight, CountingWeight>;
+
+        let a = PW::new(TropicalWeight::new(2.0), CountingWeight::new(3));
+        let b = PW::new(TropicalWeight::new(5.0), CountingWeight::new(2));
+
+        // Plus: component-wise (min, add)
+        let sum = a.plus(&b);
+        assert_eq!(sum.left, TropicalWeight::new(2.0)); // min(2, 5) = 2
+        assert_eq!(sum.right, CountingWeight::new(5)); // 3 + 2 = 5
+
+        // Times: component-wise (add, mul)
+        let prod = a.times(&b);
+        assert_eq!(prod.left, TropicalWeight::new(7.0)); // 2 + 5 = 7
+        assert_eq!(prod.right, CountingWeight::new(6)); // 3 * 2 = 6
+    }
+
+    #[test]
+    fn test_product_tropical_edit() {
+        type PW = ProductWeight<TropicalWeight, EditWeight>;
+
+        let a = PW::new(TropicalWeight::new(1.0), EditWeight::new(2));
+        let b = PW::new(TropicalWeight::new(3.0), EditWeight::new(1));
+
+        // Plus: component-wise (min, min)
+        let sum = a.plus(&b);
+        assert_eq!(sum.left, TropicalWeight::new(1.0)); // min(1, 3) = 1
+        assert_eq!(sum.right, EditWeight::new(1)); // min(2, 1) = 1
+
+        // Times: component-wise (add, add)
+        let prod = a.times(&b);
+        assert_eq!(prod.left, TropicalWeight::new(4.0)); // 1 + 3 = 4
+        assert_eq!(prod.right, EditWeight::new(3)); // 2 + 1 = 3
+    }
+
+    #[test]
+    fn test_product_is_zero() {
+        type PW = ProductWeight<TropicalWeight, CountingWeight>;
+        // is_zero if either component is zero
+        let z_left = PW::new(TropicalWeight::zero(), CountingWeight::new(5));
+        assert!(z_left.is_zero());
+
+        let z_right = PW::new(TropicalWeight::new(1.0), CountingWeight::zero());
+        assert!(z_right.is_zero());
+
+        let neither = PW::new(TropicalWeight::new(1.0), CountingWeight::new(1));
+        assert!(!neither.is_zero());
+    }
+
+    #[test]
+    fn test_product_is_one() {
+        type PW = ProductWeight<TropicalWeight, CountingWeight>;
+        let one = PW::one();
+        assert!(one.is_one());
+        assert_eq!(one.left, TropicalWeight::one());
+        assert_eq!(one.right, CountingWeight::one());
+    }
+
+    #[test]
+    fn test_product_default() {
+        type PW = ProductWeight<TropicalWeight, CountingWeight>;
+        let d = PW::default();
+        assert!(d.is_one());
+    }
+
+    #[test]
+    fn test_product_approx_eq() {
+        type PW = ProductWeight<TropicalWeight, CountingWeight>;
+        let a = PW::new(TropicalWeight::new(1.0), CountingWeight::new(3));
+        let b = PW::new(TropicalWeight::new(1.0 + 1e-12), CountingWeight::new(3));
+        assert!(a.approx_eq(&b, 1e-10));
+        assert!(!a.approx_eq(&b, 1e-15));
     }
 
     // ═══════════════════════════════════════════════════════════════════════

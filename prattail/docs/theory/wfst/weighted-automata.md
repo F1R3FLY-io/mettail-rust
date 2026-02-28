@@ -14,6 +14,9 @@ tried first. For unambiguous tokens this ranking is trivial (one action
 at weight 0.0); for ambiguous tokens it encodes a learned or heuristic
 preference ordering that reduces expected backtracking cost.
 
+All grammars receive WFST-weighted dispatch — there is no feature gate
+required for the core WFST prediction infrastructure.
+
 ---
 
 ## 2. Formal Definition
@@ -40,7 +43,7 @@ Each arc in δ carries a label σ ∈ Σ and a weight w ∈ K.
 
 ### 2.1 Path Weight
 
-A **path** π = (q₀, σ₁, w₁, q₁), (q₁, σ₂, w₂, q₂), …, (qₙ₋₁, σₙ, wₙ, qₙ)
+A **path** π = (q₀, σ₁, w₁, q₁), (q₁, σ₂, w₂, q₂), ..., (qₙ₋₁, σₙ, wₙ, qₙ)
 from initial state q₀ ∈ I to final state qₙ ∈ F has path weight:
 
 ```
@@ -94,7 +97,7 @@ pub type TokenId = u16;
 ```
 
 `u16` supports up to 65,535 distinct token variants. Typical PraTTaIL
-grammars have 20–100 token variants, so the range is never a practical
+grammars have 20-100 token variants, so the range is never a practical
 constraint. `EPSILON_TOKEN = u16::MAX = 65535` is reserved.
 
 ### 4.2 TokenIdMap
@@ -272,11 +275,11 @@ pub fn predict(&self, token_name: &str) -> Vec<&WeightedAction> {
 
 Step-by-step for `predict("Ident")` on the 5-state diagram above:
 
-1. **Token resolution**: `token_map.get("Ident")` → `id=1`.
+1. **Token resolution**: `token_map.get("Ident")` -> `id=1`.
 2. **Arc scan**: iterate transitions of state 0, keep those where
    `input == 1` — finds arcs to states 2 (w=2.0) and 3 (w=0.5).
 3. **Action lookup**: dereference `action_idx` into `self.actions`.
-4. **Sort**: results ordered by weight ascending → [w=0.5, w=2.0].
+4. **Sort**: results ordered by weight ascending -> [w=0.5, w=2.0].
 5. **Return**: `[CastToName, Var]`.
 
 ### 7.2 Beam-Pruned Prediction
@@ -309,7 +312,7 @@ threshold = 0.5 + 1.0 = 1.5
 ```
 
 The best action is always preserved regardless of beam width (since
-`best.weight ≤ threshold` by construction).
+`best.weight <= threshold` by construction).
 
 ---
 
@@ -381,10 +384,10 @@ token — typically 1-3 for well-designed grammars.
 
 ### 9.2 Trained Weight Override
 
-`PredictionWfst::with_trained_weights()` replaces heuristic weights
-with learned weights from a `TrainedModel`. The WFST structure is
-unchanged; only the transition weights are updated. This means the
-prediction ranking reflects corpus statistics rather than static grammar
+`PredictionWfst::with_trained_weights()` (feature `wfst-log`) replaces
+heuristic weights with learned weights from a `TrainedModel`. The WFST
+structure is unchanged; only the transition weights are updated. This means
+the prediction ranking reflects corpus statistics rather than static grammar
 topology.
 
 ---
@@ -401,18 +404,18 @@ topology.
 | `test_compute_action_weight` | Weight values for all DispatchAction variants |
 | `test_generate_weighted_dispatch_empty` | Empty WFST returns None |
 | `test_generate_weighted_dispatch_produces_comments` | Code comment includes "ambiguous" |
-| `test_beam_pruning_none_is_identity` | No beam → same as predict() |
+| `test_beam_pruning_none_is_identity` | No beam -> same as predict() |
 | `test_beam_pruning_filters_high_weight` | Threshold correctly applied |
 | `test_beam_pruning_preserves_best` | Best action always returned |
 | `test_beam_width_from_builder` | Builder sets beam_width |
-| `test_beam_width_from_language_spec` | DSL `beam_width: 1.5` → TropicalWeight(1.5) |
+| `test_beam_width_from_language_spec` | DSL `beam_width: 1.5` -> TropicalWeight(1.5) |
 
 **`token_id.rs` (4 tests):**
 
 | Test | What it verifies |
 |:-----|:----------------|
 | `test_token_id_map_basic` | get_or_insert is idempotent |
-| `test_token_id_map_lookup` | Bidirectional name↔id lookup |
+| `test_token_id_map_lookup` | Bidirectional name<->id lookup |
 | `test_token_id_map_from_names` | Deduplication and sort order |
 | `test_token_id_map_iter` | Iteration in ID order |
 
@@ -422,16 +425,16 @@ topology.
 
 | Symbol | Location |
 |:-------|:---------|
-| `WfstStateId`, `NO_STATE` | `prattail/src/wfst.rs` lines 36–39 |
-| `WeightedTransition` | `prattail/src/wfst.rs` lines 44–56 |
-| `WfstState` | `prattail/src/wfst.rs` lines 59–91 |
-| `WeightedAction` | `prattail/src/wfst.rs` lines 93–100 |
-| `PredictionWfst` | `prattail/src/wfst.rs` lines 117–195 |
-| `PredictionWfstBuilder` | `prattail/src/wfst.rs` lines 202–279 |
-| `build_prediction_wfsts` | `prattail/src/wfst.rs` lines 294–337 |
-| `compute_action_weight` | `prattail/src/wfst.rs` lines 349–372 |
-| `TokenId`, `EPSILON_TOKEN` | `prattail/src/token_id.rs` lines 13–16 |
-| `TokenIdMap` | `prattail/src/token_id.rs` lines 22–91 |
+| `WfstStateId`, `NO_STATE` | `prattail/src/wfst.rs` |
+| `WeightedTransition` | `prattail/src/wfst.rs` |
+| `WfstState` | `prattail/src/wfst.rs` |
+| `WeightedAction` | `prattail/src/wfst.rs` |
+| `PredictionWfst` | `prattail/src/wfst.rs` |
+| `PredictionWfstBuilder` | `prattail/src/wfst.rs` |
+| `build_prediction_wfsts` | `prattail/src/wfst.rs` |
+| `compute_action_weight` | `prattail/src/wfst.rs` |
+| `TokenId`, `EPSILON_TOKEN` | `prattail/src/token_id.rs` |
+| `TokenIdMap` | `prattail/src/token_id.rs` |
 
 ---
 

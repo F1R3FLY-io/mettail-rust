@@ -16,7 +16,7 @@ use mettail_prattail::dispatch::write_category_dispatch;
 use mettail_prattail::pratt::{write_parser_helpers, write_pratt_parser};
 use mettail_prattail::recursive::write_rd_handler;
 
-use bench_specs::{complex_spec, medium_spec, minimal_spec, prepare, small_spec};
+use bench_specs::{complex_spec, medium_spec, minimal_spec, prepare, prepare_wfst, small_spec};
 
 fn bench_rd_handlers(c: &mut Criterion) {
     let mut group = c.benchmark_group("codegen/rd_handlers");
@@ -84,30 +84,51 @@ fn bench_dispatch(c: &mut Criterion) {
     let specs = [("small", small_spec()), ("complex", complex_spec())];
 
     for (name, spec) in &specs {
-        let prepared = prepare(spec);
-        group.bench_with_input(BenchmarkId::from_parameter(name), &prepared, |b, prepared| {
-            b.iter(|| {
-                let mut buf = String::with_capacity(4096);
-                for cat in &prepared.categories {
-                    let cat_cross: Vec<_> = prepared
-                        .cross_rules
-                        .iter()
-                        .filter(|r| r.result_category == *cat)
-                        .cloned()
-                        .collect();
-                    if !cat_cross.is_empty() {
-                        write_category_dispatch(
-                            &mut buf,
-                            cat,
-                            &cat_cross,
-                            &[],
-                            &prepared.overlaps,
-                            &prepared.first_sets,
-                        );
+        let wfst_prepared = prepare_wfst(spec);
+        group.bench_with_input(
+            BenchmarkId::from_parameter(name),
+            &wfst_prepared,
+            |b, wfst_prepared| {
+                b.iter(|| {
+                    let mut buf = String::with_capacity(4096);
+                    let prepared = &wfst_prepared.base;
+                    for cat in &prepared.categories {
+                        let cat_cross: Vec<_> = prepared
+                            .cross_rules
+                            .iter()
+                            .filter(|r| r.result_category == *cat)
+                            .cloned()
+                            .collect();
+                        if !cat_cross.is_empty() {
+                            // Use the prediction WFST for this category (or a
+                            // dummy empty one if no WFST was built for this cat).
+                            let empty_wfst;
+                            let prediction_wfst = match wfst_prepared.prediction_wfsts.get(cat) {
+                                Some(w) => w,
+                                None => {
+                                    empty_wfst = mettail_prattail::wfst::PredictionWfstBuilder::new(
+                                        cat,
+                                        wfst_prepared.token_id_map.clone(),
+                                    ).build();
+                                    &empty_wfst
+                                }
+                            };
+                            write_category_dispatch(
+                                &mut buf,
+                                cat,
+                                &cat_cross,
+                                &[],
+                                &prepared.overlaps,
+                                &prepared.first_sets,
+                                prediction_wfst,
+                                None,
+                                None,
+                            );
+                        }
                     }
-                }
-            });
-        });
+                });
+            },
+        );
     }
 
     group.finish();

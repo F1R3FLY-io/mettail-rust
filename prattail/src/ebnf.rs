@@ -1274,7 +1274,6 @@ mod tests {
             ],
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
-            dispatch_strategy: crate::DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
         }
     }
@@ -1467,7 +1466,6 @@ mod tests {
             cast_rules,
             has_binders,
             beam_width: crate::BeamWidthConfig::Disabled,
-            dispatch_strategy: crate::DispatchStrategy::Static,
         }
     }
 
@@ -1673,7 +1671,6 @@ mod tests {
             ],
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
-            dispatch_strategy: crate::DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
         };
 
@@ -1745,7 +1742,6 @@ mod tests {
             ],
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
-            dispatch_strategy: crate::DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
         };
 
@@ -1810,7 +1806,6 @@ mod tests {
             ],
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
-            dispatch_strategy: crate::DispatchStrategy::Static,
             literal_patterns: LiteralPatterns::default(),
         };
 

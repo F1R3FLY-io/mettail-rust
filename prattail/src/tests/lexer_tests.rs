@@ -91,7 +91,7 @@ fn test_generate_lexer_produces_code() {
 
     // Verify it contains expected elements
     assert!(code_str.contains("Token"), "should contain Token enum");
-    assert!(code_str.contains("Span"), "should contain Span struct");
+    assert!(code_str.contains("Range"), "should contain Range struct");
     assert!(code_str.contains("lex"), "should contain lex function");
 
     // Verify stats are reasonable

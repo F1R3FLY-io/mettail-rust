@@ -214,6 +214,34 @@ prattail/src/
   │                          cast rules, comparison rules,
   │                          FIRST-set-driven backtracking decisions
   │
+  ├── wfst.rs                WFST prediction engine (always-on):
+  │                          PredictionWfst, predict(), predict_pruned(),
+  │                          predict_with_confidence(), CSR serialization,
+  │                          WeightedAction, WeightedTransition
+  │
+  ├── token_id.rs            Compact token-to-integer mapping for
+  │                          WFST state indexing (TokenIdMap)
+  │
+  ├── lattice.rs             Token lattice and Viterbi decoding:
+  │                          TokenLattice<T,S,W>, viterbi_best_path(),
+  │                          viterbi_best_path_beam(), n_best_paths()
+  │
+  ├── recovery.rs            WFST-weighted error recovery:
+  │                          RepairAction, RecoveryWfst, edit_cost(),
+  │                          find_recovery(), find_recovery_contextual()
+  │
+  ├── compose.rs             WFST product construction:
+  │                          compose_wfsts() for combining transducers
+  │
+  ├── automata/semiring.rs   Semiring trait + 6 semiring types:
+  │                          TropicalWeight, CountingWeight, BooleanWeight,
+  │                          EditWeight, ProductWeight (always-on),
+  │                          LogWeight (wfst-log feature only)
+  │
+  ├── forward_backward.rs    Forward-backward algorithm (wfst-log only)
+  ├── log_push.rs            Log weight pushing (wfst-log only)
+  ├── training.rs            Model training (wfst-log only)
+  │
   └── tests/
         ├── mod.rs
         ├── automata_tests.rs
@@ -378,6 +406,23 @@ are infix, literal, variable, or cross-category).
   backtrack and try own-category (Bool) parse.
 - On `KwTrue`/`KwFalse` (unique to Bool): fall through to `parse_Bool_own`.
 
+**Phase 6.5: WFST Prediction (always-on).** The pipeline constructs
+prediction WFSTs from FIRST sets and dispatch action tables. Composed
+dispatch resolves ambiguous multi-accept DFA states via tropical
+shortest-path composition. The pipeline emits static CSR arrays
+(`PREDICTION_<CAT>_STATES`, `PREDICTION_<CAT>_ARCS`) and reorders
+dispatch match arms by WFST prediction weights. CountingWeight
+detects ambiguity; BooleanWeight detects dead rules. All WFST
+computation happens at codegen time with zero runtime overhead.
+
 **Phase 7: Assembly.** All code is concatenated into a single `TokenStream`
 and returned to the macros crate, which injects it into the caller's module
 scope.
+
+> **Cross-references:**
+> - [design/composed-dispatch.md](composed-dispatch.md) -- WFST-composed dispatch table computation
+> - [design/multi-accept-dfa.md](multi-accept-dfa.md) -- Multi-accept DFA analysis
+> - [design/lazy-trampoline-parser.md](lazy-trampoline-parser.md) -- Lazy trampoline parser architecture
+> - [design/incremental-lexer.md](incremental-lexer.md) -- Incremental lexer design
+> - [design/parser-driven-lexing.md](parser-driven-lexing.md) -- Parser-driven lexing overview
+> - [theory/wfst/semirings.md](../theory/wfst/semirings.md) -- Semiring theory

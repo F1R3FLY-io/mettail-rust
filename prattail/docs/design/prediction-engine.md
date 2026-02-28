@@ -47,6 +47,17 @@ drive five critical decisions:
    grammar issues (ambiguous prefixes, left recursion, unused categories)
    at compile time without blocking compilation.
 
+**Note on WFST integration:** FIRST/FOLLOW sets and dispatch tables computed by
+this engine feed directly into the WFST prediction layer. Prediction weights
+are always computed -- the `wfst` feature was removed and all WFST code is now
+always-on. The prediction engine's outputs drive WFST construction via
+`build_prediction_wfsts()` in `wfst.rs`, which converts dispatch action tables
+into weighted transducers for optimal dispatch arm ordering.
+
+> **Cross-reference:** See [design/wfst/prediction.md](wfst/prediction.md)
+> for WFST prediction weight computation and the tropical shortest-path
+> dispatch resolution algorithm.
+
 ---
 
 ## 2. FIRST Set Computation

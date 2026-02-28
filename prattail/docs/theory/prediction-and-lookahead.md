@@ -737,6 +737,41 @@ necessary and dispatch directly in all other cases.
 
 ---
 
+## 11. WFST Prediction Weights (Always-On)
+
+FIRST/FOLLOW sets computed by the prediction engine feed directly into
+WFST prediction weight construction. This integration is always active --
+the `wfst` feature was removed and all WFST code is now part of the
+default pipeline.
+
+The WFST prediction layer extends the dispatch tables described in Section 4
+with tropical semiring weights:
+
+1. **Rule specificity weights.** Each grammar rule receives a specificity
+   score based on its syntactic structure (terminals contribute 1.0,
+   nonterminals 0.5). More specific rules receive lower tropical weights,
+   causing the `min` operation to prefer them.
+
+2. **Composed dispatch.** For multi-accept DFA states (where the lexer
+   recognizes multiple token kinds), the prediction WFST composes lexer
+   priorities with rule specificity weights via tropical `times` (addition).
+   The composed table resolves all ambiguous dispatch points deterministically.
+
+3. **Dispatch arm ordering.** The generated match arms in prefix handlers
+   are sorted by WFST prediction weight. Lower-weight (more likely) arms
+   appear first, improving branch prediction in the CPU pipeline.
+
+4. **Codegen-time diagnostics.** CountingWeight detects ambiguous dispatch
+   points; BooleanWeight detects dead (unreachable) rules. Both operate
+   at codegen time with zero runtime overhead.
+
+> **Cross-reference:** See [theory/wfst/weighted-automata.md](wfst/weighted-automata.md)
+> for the theoretical foundations of weighted automata and semiring-based
+> prediction, including formal definitions of the tropical and log semirings
+> and their application to parse dispatch.
+
+---
+
 ## References
 
 1. Aho, A. V., Sethi, R., & Ullman, J. D. (1986). _Compilers: Principles,

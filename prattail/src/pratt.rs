@@ -157,7 +157,7 @@ pub fn write_pratt_parser(
         write!(
             buf,
             "fn {parse_fn}<'a>(\
-                tokens: &[(Token<'a>, Span)], \
+                tokens: &[(Token<'a>, Range)], \
                 pos: &mut usize, \
                 min_bp: u8, \
             ) -> Result<{cat}, ParseError> {{ \
@@ -173,7 +173,7 @@ pub fn write_pratt_parser(
         write!(
             buf,
             "fn {parse_fn}<'a>(\
-                tokens: &[(Token<'a>, Span)], \
+                tokens: &[(Token<'a>, Range)], \
                 pos: &mut usize, \
                 _min_bp: u8, \
             ) -> Result<{cat}, ParseError> {{ \
@@ -365,7 +365,7 @@ fn write_handle_mixfix(buf: &mut String, config: &PrattConfig, bp_table: &Bindin
         "fn handle_mixfix_{cat}<'a>(\
             trigger: &Token<'a>, \
             lhs: {cat}, \
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             r_bp: u8, \
         ) -> Result<{cat}, ParseError> {{ match trigger {{",
@@ -603,7 +603,7 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
     write!(
         buf,
         "fn parse_{cat}_prefix<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
         ) -> Result<{cat}, ParseError> {{ \
             if *pos >= tokens.len() {{ \
@@ -643,7 +643,7 @@ pub struct PrefixHandler {
 pub fn write_parser_helpers(buf: &mut String) {
     buf.push_str(
         "fn expect_token<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             predicate: impl Fn(&Token) -> bool, \
             expected: &'static str, \
@@ -663,7 +663,7 @@ pub fn write_parser_helpers(buf: &mut String) {
                 }) \
             } \
         }\n\
-        fn expect_ident<'a>(tokens: &[(Token<'a>, Span)], pos: &mut usize) -> Result<String, ParseError> { \
+        fn expect_ident<'a>(tokens: &[(Token<'a>, Range)], pos: &mut usize) -> Result<String, ParseError> { \
             if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
                 return Err(ParseError::UnexpectedEof { expected: \"identifier\", range: eof_range }); \
@@ -683,10 +683,10 @@ pub fn write_parser_helpers(buf: &mut String) {
                 } \
             } \
         }\n\
-        fn peek_token<'a, 'b>(tokens: &'b [(Token<'a>, Span)], pos: usize) -> Option<&'b Token<'a>> { \
+        fn peek_token<'a, 'b>(tokens: &'b [(Token<'a>, Range)], pos: usize) -> Option<&'b Token<'a>> { \
             tokens.get(pos).map(|(t, _)| t) \
         }\n\
-        fn peek_ahead<'a, 'b>(tokens: &'b [(Token<'a>, Span)], pos: usize, offset: usize) -> Option<&'b Token<'a>> { \
+        fn peek_ahead<'a, 'b>(tokens: &'b [(Token<'a>, Range)], pos: usize, offset: usize) -> Option<&'b Token<'a>> { \
             tokens.get(pos + offset).map(|(t, _)| t) \
         }",
     );
@@ -705,7 +705,7 @@ pub fn write_recovery_helpers(buf: &mut String) {
     buf.push_str(
         // sync_to: advance position to the next sync token
         "fn sync_to<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             sync: &dyn Fn(&Token) -> bool, \
         ) { \
@@ -717,7 +717,7 @@ pub fn write_recovery_helpers(buf: &mut String) {
         // expect_token_rec: token insertion repair. On mismatch, push error but
         // don't consume the mismatched token (pretend the expected token was there).
         fn expect_token_rec<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             predicate: impl Fn(&Token) -> bool, \
             expected: &'static str, \
@@ -742,7 +742,7 @@ pub fn write_recovery_helpers(buf: &mut String) {
         }\n\
         // expect_ident_rec: on mismatch, push error and return placeholder.
         fn expect_ident_rec<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             errors: &mut Vec<ParseError>, \
         ) -> String { \
@@ -794,7 +794,7 @@ pub fn write_pratt_parser_recovering(
     write!(
         buf,
         "fn {parse_fn}<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             min_bp: u8, \
             errors: &mut Vec<ParseError>, \
@@ -932,7 +932,7 @@ pub fn write_dispatch_recovering(buf: &mut String, category: &str) {
     write!(
         buf,
         "fn parse_{cat}_recovering<'a>(\
-            tokens: &[(Token<'a>, Span)], \
+            tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             min_bp: u8, \
             errors: &mut Vec<ParseError>, \

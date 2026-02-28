@@ -374,3 +374,29 @@ ensures each recovery level uses contextually appropriate sync predicates.
 **Layer 5 output:** An AST that may contain error nodes in regions where parsing
 failed, but where subsequent valid portions of the input are correctly parsed.
 The error nodes preserve source location information for error reporting.
+
+---
+
+## 9. WFST-Weighted Error Recovery (Always-On)
+
+In addition to the FOLLOW-set-based panic-mode recovery described above,
+PraTTaIL provides WFST-weighted error recovery that is always active (no
+feature gate required). The WFST recovery layer ranks repair strategies
+using the EditWeight semiring, selecting the lowest-cost repair action
+among skip, insert, substitute, and delete operations.
+
+The `RecoveryWfst` in `recovery.rs` provides:
+- `find_recovery()` -- find the cheapest repair for a given error position
+- `find_recovery_contextual()` -- context-aware recovery using bracket balance
+  and frame kind analysis
+- `viterbi_recovery_beam()` -- beam-pruned recovery search for complex errors
+- `RepairAction::edit_cost()` -- edit distance cost for each repair strategy
+
+WFST recovery operates alongside (not replacing) the sync-predicate-based
+recovery described in Sections 2-6. The sync predicates provide the coarse
+synchronization points; the WFST recovery layer provides fine-grained repair
+ranking within those synchronization windows.
+
+> **Cross-reference:** See [design/wfst/error-recovery.md](../wfst/error-recovery.md)
+> for the WFST error recovery architecture, repair action ranking, and
+> benchmark results.

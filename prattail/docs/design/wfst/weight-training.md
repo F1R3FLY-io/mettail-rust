@@ -3,12 +3,13 @@
 **Feature gate:** `wfst-log`
 
 **Date:** 2026-02-22
+**Updated:** 2026-02-28
 
 Weight training adapts grammar rule weights to a corpus of example inputs.
 An untrained grammar assigns every action the same base cost based purely on
 action kind (Direct = 0.0, Variable = 2.0, etc.). A trained grammar adjusts
 those costs so that rules appearing frequently in correct parses receive lower
-weights — making them tried first — while rules that appear rarely receive
+weights -- making them tried first -- while rules that appear rarely receive
 higher weights.
 
 The training infrastructure lives in two modules: `training.rs` drives the
@@ -16,6 +17,8 @@ SGD loop and serializes the result; `log_push.rs` normalizes the resulting
 weights so that beam pruning has consistent semantics across all states. Both
 modules require the `wfst-log` feature because they operate in the
 log-probability semiring rather than the tropical semiring.
+
+The training API and serialization format are stable.
 
 ---
 
@@ -39,22 +42,22 @@ log-probability semiring rather than the tropical semiring.
 
 ## 1. The Log-Weight Semiring
 
-Training operates over `LogWeight`, the semiring `(ℝ ∪ {−∞}, log-sum-exp, +,
-−∞, 0)`:
+Training operates over `LogWeight`, the semiring `(R u {-inf}, log-sum-exp, +,
+-inf, 0)`:
 
-- **Addition** `a ⊕ b = −ln(e^{−a} + e^{−b})` — numerically stable log-sum-exp
-- **Multiplication** `a ⊗ b = a + b` — log-probabilities add
-- **Zero** `0̄ = +∞` (log of probability 0 — unreachable)
-- **One** `1̄ = 0.0` (log of probability 1.0 — certain)
+- **Addition** `a + b = -ln(e^{-a} + e^{-b})` -- numerically stable log-sum-exp
+- **Multiplication** `a x b = a + b` -- log-probabilities add
+- **Zero** `0-bar = +inf` (log of probability 0 -- unreachable)
+- **One** `1-bar = 0.0` (log of probability 1.0 -- certain)
 
 `LogWeight::is_zero()` checks `value == f64::INFINITY`.
 `LogWeight::one()` is `LogWeight::new(0.0)`.
 
-The relationship to probability is `p = exp(−w)`, so `w = 0.0` means
-probability 1.0 and `w = 2.0` means probability `e^{−2} ≈ 0.135`.
+The relationship to probability is `p = exp(-w)`, so `w = 0.0` means
+probability 1.0 and `w = 2.0` means probability `e^{-2} ~ 0.135`.
 
 Training decreases the log-weight of frequently correct rules (increases their
-probability). Weights are clamped to `≥ 0.0` to prevent negative log-weights,
+probability). Weights are clamped to `>= 0.0` to prevent negative log-weights,
 which would correspond to probabilities greater than 1.0 and break the semiring
 interpretation.
 
@@ -91,7 +94,7 @@ TrainingExample {
 The `input` field is currently informational; the simplified training loop uses
 `expected_rule_labels` directly without re-parsing `input`. Full parse-lattice
 construction (running the parser over `input` and collecting all parses) is a
-planned extension — see the module-level doc comment in `training.rs`.
+planned extension -- see the module-level doc comment in `training.rs`.
 
 ---
 
@@ -118,20 +121,20 @@ log-probability of the correct parse path and the negative log-probability of
 the partition function (sum over all paths):
 
 ```
-correct_weight = ⊗_{r ∈ expected_rule_labels} w[r]
+correct_weight = x_{r in expected_rule_labels} w[r]
               = sum of log-weights for each rule in the correct parse
 
-total_weight   = ⊕_{r ∈ all_rules} w[r]
+total_weight   = +_{r in all_rules} w[r]
               = log-sum-exp of all rule weights
 
-loss = correct_weight.value() − total_weight.value()
+loss = correct_weight.value() - total_weight.value()
 ```
 
-In probability terms, this is `−ln(P(correct) / P(all))`. When the correct
-parse is the most probable one, `correct_weight ≈ total_weight` and `loss ≈ 0`.
+In probability terms, this is `-ln(P(correct) / P(all))`. When the correct
+parse is the most probable one, `correct_weight ~ total_weight` and `loss ~ 0`.
 
 The simplified training loop uses a uniform "all" distribution: the total
-weight is `⊕` over all rule weights (log-sum-exp). In a full implementation,
+weight is `+` over all rule weights (log-sum-exp). In a full implementation,
 the "all" weight would come from the forward probability computed by
 `forward_backward.rs` over the complete parse lattice.
 
@@ -142,7 +145,7 @@ the "all" weight would come from the forward probability computed by
 For each rule label `r`, the gradient is:
 
 ```
-gradient[r] = expected_count(r, correct) − expected_count(r, all)
+gradient[r] = expected_count(r, correct) - expected_count(r, all)
 ```
 
 Where:
@@ -155,12 +158,12 @@ Where:
 The weight update is:
 
 ```
-w[r] ← max(0.0, w[r] − learning_rate × gradient[r])
+w[r] <- max(0.0, w[r] - learning_rate x gradient[r])
 ```
 
 Rules appearing more in the correct parse than expected (`gradient > 0`) get
 decreased log-weight, increasing their probability. Rules appearing less get
-increased log-weight (or stay at 0.0 if already clamped). The `max(0.0, …)`
+increased log-weight (or stay at 0.0 if already clamped). The `max(0.0, ...)`
 clamp enforces the semiring constraint.
 
 ---
@@ -183,7 +186,7 @@ for epoch in 0..epochs:
 
 The function returns `TrainingStats` containing the per-epoch loss list,
 the final loss, a convergence flag, and the recommended beam width. It does
-not return the updated weights separately — they are mutated in-place on
+not return the updated weights separately -- they are mutated in-place on
 `self`.
 
 ---
@@ -193,7 +196,7 @@ not return the updated weights separately — they are mutated in-place on
 The `converged` flag in `TrainingStats` is set when:
 
 ```
-|epoch_losses[last] − epoch_losses[last − 1]| < 1e-6
+|epoch_losses[last] - epoch_losses[last - 1]| < 1e-6
 ```
 
 This is the default tolerance for the simplified SGD loop. A production
@@ -215,15 +218,15 @@ examples:
 
 ```
 for each example:
-    correct_weight = Σ w[r] for r in expected_rule_labels
-    best_weight    = Σ min(w[*]) for each step in the correct parse
-    gap = correct_weight − best_weight
+    correct_weight = sum w[r] for r in expected_rule_labels
+    best_weight    = sum min(w[*]) for each step in the correct parse
+    gap = correct_weight - best_weight
 
 recommended_beam_width = max(all gaps) + safety_margin (0.5)
 ```
 
 If the correct path is always the best path (gap = 0 for every example), no
-beam width recommendation is made — the model has converged to the point where
+beam width recommendation is made -- the model has converged to the point where
 beam pruning is unnecessary. In this case, `TrainingStats::recommended_beam_width`
 is `None`.
 
@@ -237,7 +240,7 @@ distribution.
 
 After training, weights may be locally unnormalized: the sum of outgoing edge
 probabilities at a given state may not equal 1.0. This means beam thresholds
-are incomparable across states — a threshold of 1.5 may admit 3 actions at one
+are incomparable across states -- a threshold of 1.5 may admit 3 actions at one
 state but only 1 at another.
 
 `log_push_weights` normalizes the weights using Mohri's weight-pushing
@@ -246,27 +249,27 @@ algorithm:
 **Algorithm:**
 
 ```
-1. Compute backward potentials β[q] for each node q:
-   β[q] = ⊕_{paths from q to final} (weight of path)
+1. Compute backward potentials B[q] for each node q:
+   B[q] = +_{paths from q to final} (weight of path)
          = log-sum-exp of all path weights from q to sink
 
    (computed by backward_scores() in forward_backward.rs)
 
 2. For each edge (p, q, w):
-   w' = w + β[q] − β[p]
+   w' = w + B[q] - B[p]
 
-   (in log semiring: times is +, so w' = w.value() + β[q].value() − β[p].value())
+   (in log semiring: times is +, so w' = w.value() + B[q].value() - B[p].value())
 ```
 
 After pushing, the outgoing edges at every reachable state sum to probability
 1.0 in the log semiring:
 
 ```
-Σ_q exp(−w'(p→q)) = Σ_q exp(−(w(p→q) + β[q] − β[p]))
-                   = exp(β[p]) × Σ_q exp(−w(p→q)) × exp(−β[q])
-                   = exp(β[p]) × Σ_q exp(−(w(p→q) + β[q]))
-                   = exp(β[p]) × exp(−β[p])    [by definition of β[p]]
-                   = 1.0
+sum_q exp(-w'(p->q)) = sum_q exp(-(w(p->q) + B[q] - B[p]))
+                     = exp(B[p]) x sum_q exp(-w(p->q)) x exp(-B[q])
+                     = exp(B[p]) x sum_q exp(-(w(p->q) + B[q]))
+                     = exp(B[p]) x exp(-B[p])    [by definition of B[p]]
+                     = 1.0
 ```
 
 **Path weight preservation:** log-pushing does not change the weight of any
@@ -313,7 +316,7 @@ Weights are stored as raw `f64` values (not wrapped in `LogWeight`).
 `TrainedModel::save(path)` writes prettified JSON to the given path.
 `TrainedModel::load(path)` reads and deserializes the file.
 `TrainedModel::from_embedded(json_str)` deserializes from an in-memory
-JSON string — designed for use with `include_str!()` to embed the model
+JSON string -- designed for use with `include_str!()` to embed the model
 in generated code without runtime file I/O.
 
 The `log_semiring_model_path` option in the `language!` DSL points to a saved
@@ -326,49 +329,49 @@ uses the rule weights to initialize the prediction WFSTs.
 
 ```
   Corpus of source files
-       │
-       ▼
+       |
+       v
   Vec<TrainingExample>
   { input: String,
     expected_rule_labels: Vec<String> }
-       │
-       ▼
+       |
+       v
   RuleWeights::uniform(labels)
   (all weights = LogWeight(0.0) = probability 1.0)
-       │
-       ▼
+       |
+       v
   rw.set_learning_rate(lr)
-       │
-       ▼
+       |
+       v
   rw.train(examples, epochs)
-       │
-       ├─ per-epoch SGD:
-       │   correct_weight ─── log-semiring ×
-       │   total_weight   ─── log-sum-exp
-       │   gradient       ─── count(correct) − count(all)
-       │   update         ─── w -= lr × gradient, clamp ≥ 0
-       │
-       ▼
+       |
+       +-- per-epoch SGD:
+       |   correct_weight --- log-semiring x
+       |   total_weight   --- log-sum-exp
+       |   gradient       --- count(correct) - count(all)
+       |   update         --- w -= lr x gradient, clamp >= 0
+       |
+       v
   TrainingStats
   { epoch_losses, final_loss,
     converged, recommended_beam_width }
-       │
-       ▼
+       |
+       v
   rw.to_trained_model(&stats)
-       │
-       ▼
+       |
+       v
   TrainedModel
   { rule_weights, recommended_beam_width, metadata }
-       │
-       ├──── [optional] log_push_weights(&mut edges, ...)
-       │     ← normalize via backward_scores()
-       │
-       ▼
+       |
+       +---- [optional] log_push_weights(&mut edges, ...)
+       |     <- normalize via backward_scores()
+       |
+       v
   model.save("grammar_weights.json")
-       │
-       ▼
+       |
+       v
   grammar_weights.json
-  ← loaded at compile time by language! { options {
+  <- loaded at compile time by language! { options {
       log_semiring_model_path: "grammar_weights.json" } }
 ```
 
@@ -389,18 +392,18 @@ rate 0.1, and 3 epochs.
 
 **Training examples:**
 
-- Example A: `"1 + 2"` → `[Lit, Add, Lit]`
-- Example B: `"3 * 4"` → `[Lit, Mul, Lit]`
+- Example A: `"1 + 2"` -> `[Lit, Add, Lit]`
+- Example B: `"3 * 4"` -> `[Lit, Mul, Lit]`
 
 **Epoch 1 (after processing both examples):**
 
 For example A:
 - `correct_weight = w[Lit] + w[Add] + w[Lit] = 0.0`
-- `total_weight = log-sum-exp(0.0, 0.0, 0.0) ≈ −1.099` (ln 3 ≈ 1.099)
-- `loss ≈ 0.0 − (−1.099) = 1.099`
-- `gradient[Lit] = 2 − 1/3 ≈ 1.667`, `gradient[Add] = 1 − 1/3 ≈ 0.667`
-- Update: `w[Lit] ← max(0, 0.0 − 0.1 × 1.667) = 0.0` (clamped)
-  - `w[Add] ← max(0, 0.0 − 0.1 × 0.667) = 0.0` (clamped)
+- `total_weight = log-sum-exp(0.0, 0.0, 0.0) ~ -1.099` (ln 3 ~ 1.099)
+- `loss ~ 0.0 - (-1.099) = 1.099`
+- `gradient[Lit] = 2 - 1/3 ~ 1.667`, `gradient[Add] = 1 - 1/3 ~ 0.667`
+- Update: `w[Lit] <- max(0, 0.0 - 0.1 x 1.667) = 0.0` (clamped)
+  - `w[Add] <- max(0, 0.0 - 0.1 x 0.667) = 0.0` (clamped)
 
 For example B (symmetric, Mul updated similarly).
 
@@ -419,7 +422,7 @@ where some rules dominate, weights diverge more clearly.
 | Mul  | 0.0     | 0.0     | 0.0     |
 | Lit  | 0.0     | 0.0     | 0.0     |
 
-`converged = true` at epoch 3 (|Δloss| < 1e-6).
+`converged = true` at epoch 3 (|delta-loss| < 1e-6).
 `recommended_beam_width = None` (correct path = best path).
 
 This small example shows that the clamp and uniform corpus lead to a "neutral"
@@ -445,7 +448,7 @@ distributions (some rules much more frequent than others).
 Test counts: 12 (training.rs) + 2 (log_push.rs).
 
 See also:
-- [../theory/semirings.md](../theory/semirings.md) — log-probability semiring axioms
-- [../theory/viterbi-and-forward-backward.md](../theory/viterbi-and-forward-backward.md) — posterior computation
-- [prediction.md](prediction.md) — how trained weights feed the prediction WFST
-- [error-recovery.md](error-recovery.md) — recovery cost model (tropical, not log)
+- [../../theory/wfst/semirings.md](../../theory/wfst/semirings.md) -- log-probability semiring axioms
+- [../../theory/wfst/viterbi-and-forward-backward.md](../../theory/wfst/viterbi-and-forward-backward.md) -- posterior computation
+- [prediction.md](prediction.md) -- how trained weights feed the prediction WFST
+- [error-recovery.md](error-recovery.md) -- recovery cost model (tropical, not log)
