@@ -51,6 +51,7 @@ pub mod wfst;
 
 pub mod compose;
 pub mod lattice;
+pub mod lint;
 pub mod recovery;
 pub mod runtime_types;
 
@@ -182,6 +183,9 @@ pub struct LanguageSpec {
     /// Configurable literal token patterns for the lexer.
     /// Default: `LiteralPatterns::default()` (standard patterns from `literal_patterns.ebnf`).
     pub literal_patterns: LiteralPatterns,
+    /// Configuration for error recovery costs and thresholds.
+    /// Default: `RecoveryConfig::default()` (matches hardcoded constants).
+    pub recovery_config: recovery::RecoveryConfig,
 }
 
 /// A category (type) in the language.
@@ -384,6 +388,7 @@ impl LanguageSpec {
             beam_width,
             log_semiring_model_path,
             literal_patterns,
+            recovery_config: recovery::RecoveryConfig::default(),
         }
     }
 }
@@ -428,6 +433,10 @@ impl RuleSpec {
         }
     }
 }
+
+// Re-exports for generated code and external use
+pub use recovery::{RecoveryConfig, ParseSimulator, SimulationResult};
+pub use lint::{LintDiagnostic, LintSeverity, LintContext};
 
 /// Generate a complete parser for a language specification.
 ///

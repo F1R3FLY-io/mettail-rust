@@ -782,7 +782,7 @@ pub fn write_lambda_handlers(
                 }} \
                 _ => {{ \
                     Err(ParseError::UnexpectedToken {{ \
-                        expected: \"identifier or '['\", \
+                        expected: Cow::Borrowed(\"identifier or '['\"), \
                         found: format!(\"{{:?}}\", tokens[*pos].0), \
                         range: tokens[*pos].1, \
                     }}) \

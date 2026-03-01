@@ -124,8 +124,14 @@ Key types: `WfstStateId`, `WeightedTransition`, `WfstState`,
 
 Key functions: `build_prediction_wfsts()`, `generate_weighted_dispatch()`,
 `PredictionWfst::from_flat()`, `PredictionWfst::predict()`,
-`PredictionWfst::predict_pruned()`,
+`PredictionWfst::predict_pruned()`, `PredictionWfst::nfa_alternative_order()`,
 `PredictionWfst::with_trained_weights()` (wfst-log only).
+
+`nfa_alternative_order()` returns indices into a rule label slice sorted by
+tropical weight (lowest first). Used by the trampoline's NFA merged prefix arm
+codegen to order try-all alternatives so the weight-best alternative is tried
+first and returned as the primary result. Unknown rules get a default weight of
+0.5 (cast-level priority).
 
 #### `token_id.rs`
 
@@ -278,6 +284,11 @@ always-available, `[log]` for `#[cfg(feature = "wfst-log")]`.
                                          └─────────────────────────────────────────────────────
 ```
 
+**Additional dependency (not shown above):** `trampoline.rs` calls
+`wfst.rs::PredictionWfst::nfa_alternative_order()` to order NFA merged prefix
+arm alternatives by tropical weight. This dependency flows from the trampoline
+codegen (Layer 2.5) to the WFST prediction engine.
+
 Reading the graph: a module on the left of `──►` imports from the module
 on the right.
 
@@ -358,6 +369,8 @@ pub struct PredictionWfst                  // compiled prediction automaton
   ::predict(&self, token: &str) -> &[WeightedAction]
   ::predict_pruned(&self, token: &str) -> Vec<&WeightedAction>
   ::predict_with_confidence(&self, token: &str) -> ...
+  ::nfa_alternative_order(&self, token: &str, labels: &[&str]) -> Vec<(usize, TropicalWeight)>
+  ::beam_width(&self) -> Option<TropicalWeight>
   ::set_beam_width(&mut self, beam: Option<TropicalWeight>)
   ::from_flat(category, state_offsets, transitions, token_names, beam)
   ::with_trained_weights(&mut self, model: &TrainedModel)  // [log]

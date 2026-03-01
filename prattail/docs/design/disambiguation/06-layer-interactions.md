@@ -56,6 +56,12 @@ layer's choices:
   └──────────────────────────────┬────────────────────────────────────────┘
                                  │
   ┌──────────────────────────────▼────────────────────────────────────────┐
+  │  LAYER 2.5: NFA INTRA-CATEGORY DISAMBIGUATION                        │
+  │  NFA try-all + forced-prefix replay + WFST weight                     │
+  │  (Not activated for this input — no multi-rule token groups in Bool)  │
+  └──────────────────────────────┬────────────────────────────────────────┘
+                                 │
+  ┌──────────────────────────────▼────────────────────────────────────────┐
   │  LAYER 4: CROSS-CATEGORY RESOLUTION                                   │
   │  FIRST set partition + save/restore                                   │
   │  Resolves: Ident("b") → Int var? Or Bool var?                         │
@@ -265,6 +271,17 @@ Cross-category resolution (Layer 4) may consume tokens and then **backtrack**.
 If error recovery were to activate during a cross-category attempt, it would
 skip tokens that should be preserved for the fallback path. Layer 4's
 backtracking must complete before Layer 5 considers error recovery.
+
+### 3.5 Why Layer 2.5 Sits Between Prediction and Precedence
+
+Layer 2.5 (NFA intra-category disambiguation) must run **after** Layer 2
+selects the ambiguous token group but **before** Layer 3's Pratt loop executes.
+The NFA merged arm replaces the single-rule prefix dispatch with a try-all
+loop that returns the best prefix result. The Pratt infix loop then runs on
+that prefix, unaware of the NFA mechanism. During forced-prefix replay (§3.5
+of [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)), each
+alternative gets its own complete prefix + infix parse, so Layer 3 operates
+correctly on each NFA alternative independently.
 
 ### 3.4 Why Precedence and Cross-Category Interleave
 
@@ -543,8 +560,20 @@ own-category parse also fails, **then** Layer 5 takes over.
                     │           fallback    │     │
                     └──────────────┬────────┊─────┘
                                    │        │
-                    ┌──────────────▼────┐   │
-                    │ LAYER 3:          │   │
+                    ┌──────────────▼────────┊─────┐
+                    │  LAYER 2.5: NFA      │     │
+                    │  Intra-Category      │     │
+                    │  ┌────────────────┐  │     │
+                    │  │ Multi-rule     │  │     │
+                    │  │ token group?   │  │     │
+                    │  │ YES→try-all    │  │     │
+                    │  │     spill N-1  │  │     │
+                    │  │ NO →pass thru  │  │     │
+                    │  └──────┬─────────┘  │     │
+                    └─────────┊────────────┘     │
+                              │                  │
+                    ┌─────────▼────┐             │
+                    │ LAYER 3:     │             │
                     │ Precedence        │   │
                     │ ┌───────────┐     │   │
                     │ │ Pratt     │     │   │
@@ -605,57 +634,198 @@ own-category parse also fails, **then** Layer 5 takes over.
 
 ---
 
-## 7. Design Properties
+## 7. End-to-End Trace: `"float(x)"` with env `{x=42}` — Layer 2.5 Active
 
-### 7.1 Completeness
+This trace exercises Layer 2.5 (NFA intra-category disambiguation), showing
+how the NFA merged arm, forced-prefix replay, and semantic disambiguation
+compose to resolve the input.
+
+### 7.1 Layer 1: Lexing
+
+```
+Characters: f l o a t ( x )
+            ↓ ↓ ↓ ↓ ↓ ↓ ↓ ↓
+
+Decision L1a: "float" → KwFloat    (keyword priority 10 > Ident priority 1)
+Decision L1b: "(" → LParen
+Decision L1c: "x" → Ident("x")
+Decision L1d: ")" → RParen
+
+Token stream: [KwFloat, LParen, Ident("x"), RParen]
+```
+
+### 7.2 Layer 2: Dispatch Table Lookup
+
+```
+Goal: parse Float. First token: KwFloat.
+
+Dispatch table for Float:
+  KwFloat → NFA-ambiguous: [FloatId, IntToFloat, BoolToFloat, StrToFloat]
+  KwInt   → Direct(FloatToInt)
+  ...
+
+Decision L2a: KwFloat maps to 4 rules → NFA merged arm (Layer 2.5).
+```
+
+### 7.3 Layer 2.5: NFA Merged Arm
+
+```
+NFA merged arm for Float, token KwFloat:
+  Save nfa_saved = 0.
+
+  Try FloatId (weight 0.50):
+    parse "float" "(" Float ")" → FloatId(FloatVar("x")). pos=4.
+    → Ok. nfa_results.push, weight 0.50.
+
+  Try IntToFloat (weight 1.00):
+    parse "float" "(" Int ")" → IntToFloat(IntVar("x")). pos=4.
+    → Ok. nfa_results.push, weight 1.00.
+
+  Try BoolToFloat (weight 1.50):
+    parse "float" "(" Bool ")" → BoolToFloat(BoolVar("x")). pos=4.
+    → Ok. nfa_results.push, weight 1.50.
+
+  Try StrToFloat (weight 2.00):
+    parse "float" "(" Str ")" → StrToFloat(StrVar("x")). pos=4.
+    → Ok. nfa_results.push, weight 2.00.
+
+  Result selection: 4 successes.
+    Best (index 0, weight 0.50) → FloatId(FloatVar("x")).
+    Spill: [(IntToFloat(IVar("x")), 4, 1.00),
+            (BoolToFloat(BVar("x")), 4, 1.50),
+            (StrToFloat(SVar("x")), 4, 2.00)]
+    → NFA_PREFIX_SPILL_FLOAT.set(spill)
+    → NFA_PRIMARY_WEIGHT_FLOAT.set(0.50)
+
+  break 'prefix FloatId(FloatVar("x")).
+```
+
+### 7.4 Layer 3: Infix Loop
+
+```
+parse_Float(min_bp=0):
+  lhs = FloatId(FloatVar("x")). pos = 4.
+  INFIX LOOP: Eof → break.
+  Return: FloatId(FloatVar("x")).
+```
+
+### 7.5 Layer 6: parse_preserving_vars Drain
+
+```
+Primary: Float(FloatId(FloatVar("x"))), weight 0.50.
+
+Drain NFA_PREFIX_SPILL_FLOAT:
+  Replay 1: IntToFloat(IntVar("x")), weight 1.00
+    → Float::parse with forced prefix → FloatId skipped, IntToFloat used.
+    → Infix: Eof → break. Result: IntToFloat(IntVar("x")).
+    → successes.push(Float(IntToFloat(IntVar("x")))).
+
+  Replay 2: BoolToFloat(BoolVar("x")), weight 1.50
+    → Float(BoolToFloat(BoolVar("x"))).
+
+  Replay 3: StrToFloat(StrVar("x")), weight 2.00
+    → Float(StrToFloat(StrVar("x"))).
+
+successes = [Float(FloatId(FVar("x"))), Float(IntToFloat(IVar("x"))),
+             Float(BoolToFloat(BVar("x"))), Float(StrToFloat(SVar("x")))]
+weights   = [0.50, 1.00, 1.50, 2.00]
+```
+
+### 7.6 Layer 6: Three-Stage Resolution with env `{x=42}`
+
+```
+Stage A (from_alternatives): 0 ground (all contain variables) → Ambiguous.
+
+Stage B (substitute_env with int_env = {"x": 42}):
+  [0] FloatId(FloatVar("x"))        → FloatId(FloatVar("x"))     ← no change
+  [1] IntToFloat(IntVar("x"))       → IntToFloat(NumLit(42))     ← PROGRESSED
+  [2] BoolToFloat(BoolVar("x"))     → BoolToFloat(BoolVar("x"))  ← no change
+  [3] StrToFloat(StrVar("x"))       → StrToFloat(StrVar("x"))    ← no change
+
+  Progress filter: only [1] progressed.
+  from_alternatives: len == 1 → IntToFloat(NumLit(42)).
+
+Stage C: not reached (resolved at Stage B).
+
+Ascent: IntToFloat(NumLit(42)) → FloatLit(42.0).
+Result: "42.0"
+```
+
+### 7.7 Decision Summary
+
+| #    | Layer  | Decision                                              | Mechanism                  |
+|------|--------|-------------------------------------------------------|----------------------------|
+| L1a  | 1      | `"float"` → `KwFloat` (priority 10 > Ident 1)         | Priority tiebreaker        |
+| L2a  | 2      | KwFloat → 4-way NFA-ambiguous                         | FIRST set overlap          |
+| L2.5 | 2.5    | Try all 4 → 4 successes, best FloatId, spill 3       | NFA try-all + spillover    |
+| L3   | 3      | Eof → break (no infix)                                 | BP comparison              |
+| L6a  | 6A     | 0 ground → Ambiguous                                  | Ground-filter              |
+| L6b  | 6B     | IntToFloat progressed (var → lit) → singleton          | Substitution progress      |
+| Asc  | Ascent | IntToFloat(NumLit(42)) → FloatLit(42.0)               | Rewrite rule               |
+
+---
+
+## 8. Design Properties
+
+### 8.1 Completeness
 
 Every class of parsing ambiguity is handled by exactly one layer:
 
-| Ambiguity                | Layer | Guarantee                                                                               |
-|--------------------------|-------|-----------------------------------------------------------------------------------------|
-| Token boundaries         | 1     | Maximal munch always produces longest valid token                                       |
-| Token identity           | 1     | Priority always resolves same-length conflicts                                          |
-| Rule selection           | 2     | Dispatch table covers all FIRST set tokens                                              |
-| Operator precedence      | 3     | BP comparison is total ordering on operators                                            |
-| Operator associativity   | 3     | BP pair asymmetry determines left/right                                                 |
-| Category ownership       | 4     | Three-way partition + backtracking is exhaustive                                        |
-| Error recovery           | 5     | Sync predicate guarantees eventual sync (at Eof worst case)                             |
-| Multi-category ambiguity | 6     | Groundness + substitution + declaration-order evaluation resolves all multi-parse cases |
+| Ambiguity                   | Layer | Guarantee                                                                               |
+|-----------------------------|-------|-----------------------------------------------------------------------------------------|
+| Token boundaries            | 1     | Maximal munch always produces longest valid token                                       |
+| Token identity              | 1     | Priority always resolves same-length conflicts                                          |
+| Rule selection              | 2     | Dispatch table covers all FIRST set tokens                                              |
+| Intra-category rule overlap | 2.5   | NFA try-all collects all alternatives; spillover to Layer 6 for resolution              |
+| Operator precedence         | 3     | BP comparison is total ordering on operators                                            |
+| Operator associativity      | 3     | BP pair asymmetry determines left/right                                                 |
+| Category ownership          | 4     | Three-way partition + backtracking is exhaustive                                        |
+| Error recovery              | 5     | Sync predicate guarantees eventual sync (at Eof worst case)                             |
+| Multi-category ambiguity    | 6     | Groundness + substitution + declaration-order evaluation resolves all multi-parse cases |
 
-### 7.2 Composability
+### 8.2 Composability
 
 The layers compose without interference because each layer:
 1. Consumes the previous layer's output format (characters → tokens → rules → expressions → typed nodes → disambiguated nodes)
 2. Resolves a disjoint class of ambiguity
 3. Preserves all information needed by subsequent layers
 
-### 7.3 Performance Characteristics
+### 8.3 Performance Characteristics
 
-| Layer             | Happy-Path Cost                  | Failure Cost                          |
-|-------------------|----------------------------------|---------------------------------------|
-| 1. Lexical        | O(n) in input length             | N/A (always succeeds for valid chars) |
-| 2. Prediction     | O(1) per parse decision          | O(1) (dispatch lookup)                |
-| 3. Precedence     | O(1) per operator                | O(1) (comparison always resolves)     |
-| 4. Cross-Category | O(1) for unique tokens           | O(k) for ambiguous tokens             |
-| 5. Error Recovery | O(0) (not activated)             | O(skip) tokens skipped                |
-| 6. Semantic       | O(cats) * O(parse) for NFA-style | O(cats) * O(Ascent) for fallback      |
+| Layer              | Happy-Path Cost                     | Failure Cost                          |
+|--------------------|-------------------------------------|---------------------------------------|
+| 1. Lexical         | O(n) in input length                | N/A (always succeeds for valid chars) |
+| 2. Prediction      | O(1) per parse decision             | O(1) (dispatch lookup)                |
+| 2.5 NFA Intra-Cat  | O(0) (no ambiguity → Cell::take)    | O(k) try k alternatives, spill N-1   |
+| 3. Precedence      | O(1) per operator                   | O(1) (comparison always resolves)     |
+| 4. Cross-Category  | O(1) for unique tokens              | O(k) for ambiguous tokens             |
+| 5. Error Recovery  | O(0) (not activated)                | O(skip) tokens skipped                |
+| 6. Semantic        | O(cats) * O(parse) for NFA-style    | O(cats) * O(Ascent) for fallback      |
 
 **Total:** O(n) for lexing + O(tokens) for parsing, with O(1) per syntactic
 disambiguation decision. Layer 6 adds O(categories) overhead for multi-category
 parsing, with most ambiguities resolved in O(is_ground) structural checks.
 No exponential blowup from backtracking (Layer 4 is bounded).
 
-### 7.4 Separation of Concerns
+### 8.4 Separation of Concerns
 
 Each layer is implemented in separate source files with well-defined interfaces:
 
 ```
-Layer 1: automata/     (mod.rs, nfa.rs, codegen.rs, partition.rs)
-Layer 2: prediction.rs (FIRST sets, dispatch tables, warnings)
-Layer 3: binding_power.rs, pratt.rs (BP assignment, Pratt loop)
-Layer 4: dispatch.rs   (cross-category wrapper generation)
-Layer 5: prediction.rs (FOLLOW sets, sync predicates)
+Layer 1:   automata/     (mod.rs, nfa.rs, codegen.rs, partition.rs)
+Layer 2:   prediction.rs (FIRST sets, dispatch tables, warnings)
+Layer 2.5: trampoline.rs (NFA merged arms) + wfst.rs (weight ordering)
+           + pipeline.rs (detection, warnings) + language.rs (drain, weights)
+Layer 3:   binding_power.rs, pratt.rs (BP assignment, Pratt loop)
+Layer 4:   dispatch.rs   (cross-category wrapper generation)
+Layer 5:   prediction.rs (FOLLOW sets, sync predicates)
 ```
+
+Layer 2.5 spans three files (`trampoline.rs`, `wfst.rs`, `language.rs`) because
+it bridges compile-time codegen (trampoline), weight computation (wfst), and
+runtime drain (language). Despite this span, the interfaces are clean: the
+compile-time side emits thread-local declarations and merged arms, the runtime
+side drains and replays.
 
 Layer 6 (semantic disambiguation) was added as a new layer rather than modifying
 existing layers, confirming this separation-of-concerns property. See
@@ -677,21 +847,22 @@ no probe is emitted and all parsers run unconditionally. See
 
 ---
 
-## 8. Comparison: All Layers on One Token
+## 9. Comparison: All Layers on One Token
 
 To illustrate how the same token passes through different layers in different
 contexts, consider `Ident("x")`:
 
-| Context                          | Layer   | Decision                                                                   |
-|----------------------------------|---------|----------------------------------------------------------------------------|
-| In source text `"x + 1"`         | Layer 1 | Maximal munch: `"x"` → `Ident("x")`                                        |
-| Parsing `Bool`, first token      | Layer 2 | Ambiguous (in FIRST(Int) ∩ FIRST(Bool))                                    |
-| Cross-category attempt           | Layer 4 | Save, parse as `IVar("x")`, peek for `==`                                  |
-| Peek fails (next is `&&`)        | Layer 4 | Restore, fall through to `parse_Bool_own`                                  |
-| In `parse_Bool_own` prefix       | Layer 3 | Dispatch to `BVar` (variable rule)                                         |
-| After error in expression        | Layer 5 | `Ident` is NOT a sync token → skip past                                    |
-| NFA-style multi-category parse   | Layer 6 | `Ident("x")` → both `IntVar("x")` and `FloatVar("x")` → `Ambiguous`        |
-| With env `{x=1.0}`, substitution | Layer 6 | Float progresses (`FloatVar` → `FloatLit(1.0)`), Int does not → Float wins |
+| Context                          | Layer     | Decision                                                                     |
+|----------------------------------|-----------|------------------------------------------------------------------------------|
+| In source text `"x + 1"`         | Layer 1   | Maximal munch: `"x"` → `Ident("x")`                                          |
+| Parsing `Bool`, first token      | Layer 2   | Ambiguous (in FIRST(Int) ∩ FIRST(Bool))                                      |
+| Inside `float(x)`, inner parse   | Layer 2.5 | NFA merged arm: try Float, Int, Bool, Str for inner → spill N-1             |
+| Cross-category attempt           | Layer 4   | Save, parse as `IVar("x")`, peek for `==`                                    |
+| Peek fails (next is `&&`)        | Layer 4   | Restore, fall through to `parse_Bool_own`                                    |
+| In `parse_Bool_own` prefix       | Layer 3   | Dispatch to `BVar` (variable rule)                                           |
+| After error in expression        | Layer 5   | `Ident` is NOT a sync token → skip past                                      |
+| NFA-style multi-category parse   | Layer 6   | `Ident("x")` → both `IntVar("x")` and `FloatVar("x")` → `Ambiguous`          |
+| With env `{x=1.0}`, substitution | Layer 6   | Float progresses (`FloatVar` → `FloatLit(1.0)`), Int does not → Float wins   |
 
-The same token `Ident("x")` is handled by up to five different layers depending
+The same token `Ident("x")` is handled by up to six different layers depending
 on the parsing context, and each layer resolves a different question about it.

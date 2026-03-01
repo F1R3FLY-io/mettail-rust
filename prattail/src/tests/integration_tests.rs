@@ -70,6 +70,7 @@ fn calculator_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
+        recovery_config: crate::recovery::RecoveryConfig::default(),
     }
 }
 
@@ -188,6 +189,7 @@ fn test_generate_parser_two_categories() {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
+        recovery_config: crate::recovery::RecoveryConfig::default(),
     };
 
     let code = generate_parser(&spec);

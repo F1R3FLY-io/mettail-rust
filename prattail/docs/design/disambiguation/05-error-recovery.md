@@ -400,3 +400,18 @@ ranking within those synchronization windows.
 > **Cross-reference:** See [design/wfst/error-recovery.md](../wfst/error-recovery.md)
 > for the WFST error recovery architecture, repair action ranking, and
 > benchmark results.
+
+---
+
+## 10. Extended Recovery Documentation
+
+The error recovery expansion added new repair strategies, configurable
+parameters, and thread-local state infrastructure beyond the panic-mode
+recovery described in this document. See:
+
+- [Extended Recovery Strategies](../wfst/extended-recovery-strategies.md) — SwapTokens, CategorySwitch, Composite, multi-step Viterbi, 7-strategy evaluation
+- [RecoveryConfig](../wfst/recovery-config.md) — 19 tunable parameters replacing hardcoded constants
+- [Recovery State Propagation](../../architecture/wfst/recovery-state-propagation.md) — Thread-local state cells, pipeline integration, zero-overhead design
+- [Recovery Tuning Guide](../../usage/wfst/recovery-tuning.md) — Practical parameter tuning and diagnostics interpretation
+- [Multi-Step Viterbi Theory](../../theory/wfst/multi-step-viterbi-recovery.md) — Repair lattice, transposition edit, correctness proof
+- [Cascade Suppression Theory](../../theory/wfst/cascade-suppression.md) — Absorbing-state model for error cascade prevention

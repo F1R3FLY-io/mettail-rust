@@ -43,6 +43,17 @@ alternatives to the next layer.
                └─────────────────────┬──────────────────────────┘
                                      │
                     ┌────────────────▼────────────────────────┐
+                    │  Rule selected (or NFA-ambiguous group) │
+                    └────────────────┬────────────────────────┘
+                                     │
+               ┌─────────────────────▼──────────────────────────┐
+  Layer 2.5    │  NFA INTRA-CATEGORY DISAMBIGUATION             │
+               │  NFA try-all + forced-prefix replay + WFST     │
+               │  Resolves: multiple rules in same category     │
+               │            share the same dispatch token       │
+               └─────────────────────┬──────────────────────────┘
+                                     │
+                    ┌────────────────▼────────────────────────┐
                     │  Rule selected (prefix handler chosen)  │
                     └────────────────┬────────────────────────┘
                                      │
@@ -98,6 +109,7 @@ alternatives to the next layer.
 |-----------------------|----------------------------------|-----------------------------------------------------------------------|-----------------------------------------|
 | **1. Lexical**        | Token boundaries and identity    | DFA + maximal munch + priority                                        | `==` vs `=` + `=`; `true` vs identifier |
 | **2. Prediction**     | Which parse rule to apply        | FIRST sets + dispatch tables                                          | `(` → grouping vs `42` → literal        |
+| **2.5 NFA Intra-Cat** | Multiple rules share first token | NFA try-all + forced-prefix replay + WFST weight                      | `float(x)` → FloatId vs IntToFloat      |
 | **3. Precedence**     | Operator binding and grouping    | Binding power pairs                                                   | `1+2*3` → `1+(2*3)`                     |
 | **4. Cross-Category** | Which type category owns a token | FIRST set partition + backtrack                                       | `x` could be `Int` var or `Bool` var    |
 | **5. Recovery**       | Where to resume after error      | FOLLOW sets + sync delimiters                                         | Skip to `)` or `;` after bad expression |
@@ -127,6 +139,11 @@ show all six layers acting on real input.
 - The traces follow input through all six layers, annotating each disambiguation
   decision
 
+**If you want to understand intra-category rule ambiguity (same token, multiple rules):**
+- Read [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md) for the
+  NFA try-all mechanism, forced-prefix replay, beam pruning, and weight-aware
+  tiebreaking that resolves cases where multiple rules share the same dispatch token
+
 **If you want to understand multi-category ambiguity:**
 - Read [07-semantic-disambiguation.md](07-semantic-disambiguation.md) for the
   NFA-style multi-category parse, `Ambiguous` variant, groundness checking, and
@@ -152,12 +169,14 @@ show all six layers acting on real input.
 | [05-error-recovery.md](05-error-recovery.md)                       | 5     | ~300  | FOLLOW sets, structural delimiters, panic-mode recovery         |
 | [06-layer-interactions.md](06-layer-interactions.md)               | All   | ~700  | End-to-end traces, layer ordering, master flowchart             |
 | [07-semantic-disambiguation.md](07-semantic-disambiguation.md)     | 6     | ~450  | NFA-style parse, Ambiguous, is_ground(), three-stage resolution |
+| [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)   | 2.5   | ~600  | NFA try-all, forced-prefix replay, beam pruning, weight-aware   |
 
 ### File Numbering
 
 Files 01-05 correspond to Layers 1-5 of the disambiguation model. File 06 is
 a cross-cutting interactions document (not a layer) showing end-to-end traces
 through all layers. File 07 corresponds to Layer 6 (semantic disambiguation).
+File 08 corresponds to Layer 2.5 (NFA intra-category disambiguation).
 The file numbers reflect creation order rather than a strict layer numbering.
 
 ### Notation Conventions
@@ -180,6 +199,7 @@ themselves.
 | 3. Precedence     | [theory/pratt-parsing.md](../../../docs/theory/pratt-parsing.md) §2-5                       | [design/pratt-generator.md](../pratt-generator.md)                      |
 | 4. Cross-Category | [theory/prediction-and-lookahead.md](../../../docs/theory/prediction-and-lookahead.md) §5   | [design/cross-category-dispatch.md](../cross-category-dispatch.md) §1-7 |
 | 5. Recovery       | [theory/prediction-and-lookahead.md](../../../docs/theory/prediction-and-lookahead.md) §3   | [design/prediction-engine.md](../prediction-engine.md) §8               |
+| 2.5 NFA Intra-Cat | --                                                                                          | [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)         |
 | 6. Semantic       | --                                                                                          | [07-semantic-disambiguation.md](07-semantic-disambiguation.md)          |
 
 ## Key Source Files
@@ -194,6 +214,7 @@ themselves.
 | `prattail/src/binding_power.rs`      | 3       | BP assignment, associativity                                |
 | `prattail/src/pratt.rs`              | 3       | Pratt loop, led chain, prefix handlers                      |
 | `prattail/src/dispatch.rs`           | 4       | Cross-category dispatch generation                          |
-| `prattail/src/trampoline.rs`         | 3, 4    | Stack-safe trampolined versions of layers 3-4               |
+| `prattail/src/trampoline.rs`         | 2.5,3,4 | NFA merged arms, stack-safe trampolined parsers             |
+| `prattail/src/wfst.rs`              | 2.5     | `nfa_alternative_order()`, WFST weight ordering             |
 | `macros/src/gen/term_ops/ground.rs`  | 6       | `is_ground()` deep recursive groundness check               |
-| `macros/src/gen/runtime/language.rs` | 6       | `Ambiguous` variant, `from_alternatives()`, NFA-style parse |
+| `macros/src/gen/runtime/language.rs` | 2.5, 6  | `Ambiguous`, `from_alternatives()`, NFA drain, weights      |

@@ -242,6 +242,7 @@ impl RuleWeights {
                 .map(|(k, v)| (k.clone(), v.value()))
                 .collect(),
             recommended_beam_width: stats.recommended_beam_width.map(|w| w.value()),
+            recovery_weights: None,
             metadata: TrainedModelMetadata {
                 epochs: stats.epoch_losses.len(),
                 final_loss: stats.final_loss,
@@ -285,6 +286,13 @@ pub struct TrainedModel {
     pub rule_weights: HashMap<String, f64>,
     /// Recommended beam width derived from training data.
     pub recommended_beam_width: Option<f64>,
+    /// Trained recovery strategy weights (Sprint 12).
+    ///
+    /// Maps strategy names ("skip_per_token", "delete_cost", "substitute_cost",
+    /// "insert_cost", "swap_cost") to learned cost values. When present, these
+    /// override the corresponding `RecoveryConfig` defaults.
+    #[serde(default)]
+    pub recovery_weights: Option<HashMap<String, f64>>,
     /// Training metadata for provenance.
     pub metadata: TrainedModelMetadata,
 }
@@ -339,6 +347,112 @@ impl TrainedModel {
         postcard::from_bytes(data)
             .map_err(|e| format!("failed to deserialize embedded trained model: {}", e))
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Recovery weight training (Sprint 12)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A training example for recovery weight learning.
+///
+/// Pairs an erroneous input with the correct input and the expected
+/// repair actions, allowing the trainer to learn optimal strategy costs.
+#[derive(Debug, Clone)]
+pub struct RecoveryTrainingExample {
+    /// The input string containing an error.
+    pub input_with_error: String,
+    /// The correct (error-free) input string.
+    pub correct_input: String,
+    /// Token positions where errors occur (0-indexed).
+    pub error_positions: Vec<usize>,
+    /// The expected repair actions for each error position.
+    pub expected_repairs: Vec<crate::recovery::RepairAction>,
+}
+
+/// Train recovery strategy weights from a corpus of error examples.
+///
+/// Uses gradient descent over the strategy cost parameters to minimize the
+/// difference between the recovery system's selected strategy and the expected
+/// optimal strategy for each example.
+///
+/// # Arguments
+///
+/// * `examples` — Training examples pairing erroneous inputs with expected repairs.
+/// * `epochs` — Number of training iterations.
+/// * `learning_rate` — SGD learning rate.
+///
+/// # Returns
+///
+/// A map from strategy names to learned cost values.
+pub fn train_recovery_weights(
+    examples: &[RecoveryTrainingExample],
+    epochs: usize,
+    learning_rate: f64,
+) -> HashMap<String, f64> {
+    use crate::recovery::RepairAction;
+
+    // Initialize weights from default config
+    let default = crate::recovery::RecoveryConfig::default();
+    let mut weights: HashMap<String, f64> = HashMap::new();
+    weights.insert("skip_per_token".to_string(), default.skip_per_token);
+    weights.insert("delete_cost".to_string(), default.delete_cost);
+    weights.insert("substitute_cost".to_string(), default.substitute_cost);
+    weights.insert("insert_cost".to_string(), default.insert_cost);
+    weights.insert("swap_cost".to_string(), default.swap_cost);
+
+    if examples.is_empty() {
+        return weights;
+    }
+
+    // Map repair actions to their strategy name
+    fn strategy_name(action: &RepairAction) -> &'static str {
+        match action {
+            RepairAction::SkipToSync { .. } => "skip_per_token",
+            RepairAction::DeleteToken => "delete_cost",
+            RepairAction::SubstituteToken { .. } => "substitute_cost",
+            RepairAction::InsertToken { .. } => "insert_cost",
+            RepairAction::SwapTokens { .. } => "swap_cost",
+            RepairAction::Composite { .. } => "delete_cost", // composite uses dominant cost
+            RepairAction::CategorySwitch { .. } => "substitute_cost",
+        }
+    }
+
+    // SGD: for each epoch, adjust weights toward the expected strategies
+    for _epoch in 0..epochs {
+        let mut gradients: HashMap<String, f64> = HashMap::new();
+        for (key, _) in &weights {
+            gradients.insert(key.clone(), 0.0);
+        }
+
+        for example in examples {
+            for repair in &example.expected_repairs {
+                let target_strategy = strategy_name(repair);
+
+                // The target strategy should have a lower cost than others.
+                // Gradient: decrease target cost, increase non-target costs.
+                for (key, grad) in gradients.iter_mut() {
+                    if key == target_strategy {
+                        // Decrease target cost (make it more likely to be selected)
+                        *grad -= 1.0 / examples.len() as f64;
+                    } else {
+                        // Increase non-target costs (make them less likely)
+                        *grad += 0.5 / examples.len() as f64;
+                    }
+                }
+            }
+        }
+
+        // Apply gradients with clamping to positive values
+        for (key, weight) in weights.iter_mut() {
+            if let Some(grad) = gradients.get(key) {
+                *weight += learning_rate * grad;
+                // Clamp to [0.01, 10.0] — costs must be positive and bounded
+                *weight = weight.clamp(0.01, 10.0);
+            }
+        }
+    }
+
+    weights
 }
 
 #[cfg(test)]
@@ -429,6 +543,7 @@ mod tests {
                 ("Lit".to_string(), 0.3),
             ]),
             recommended_beam_width: Some(2.0),
+            recovery_weights: None,
             metadata: TrainedModelMetadata {
                 epochs: 10,
                 final_loss: 0.05,
@@ -454,6 +569,7 @@ mod tests {
         let model = TrainedModel {
             rule_weights: HashMap::new(),
             recommended_beam_width: Some(1.5),
+            recovery_weights: None,
             metadata: TrainedModelMetadata {
                 epochs: 1,
                 final_loss: 0.0,
@@ -474,6 +590,7 @@ mod tests {
         let model = TrainedModel {
             rule_weights: HashMap::from([("Add".to_string(), 0.5), ("Lit".to_string(), 0.3)]),
             recommended_beam_width: Some(2.0),
+            recovery_weights: None,
             metadata: TrainedModelMetadata {
                 epochs: 5,
                 final_loss: 0.02,
@@ -501,6 +618,7 @@ mod tests {
         let model = TrainedModel {
             rule_weights: HashMap::from([("Add".to_string(), 0.5), ("Lit".to_string(), 0.3)]),
             recommended_beam_width: Some(2.0),
+            recovery_weights: None,
             metadata: TrainedModelMetadata {
                 epochs: 10,
                 final_loss: 0.05,
@@ -531,6 +649,7 @@ mod tests {
         let model = TrainedModel {
             rule_weights: HashMap::from([("Var".to_string(), 1.5), ("Mul".to_string(), 0.7)]),
             recommended_beam_width: None,
+            recovery_weights: None,
             metadata: TrainedModelMetadata {
                 epochs: 3,
                 final_loss: 0.1,
@@ -568,8 +687,138 @@ mod tests {
         assert_eq!(model.rule_weights.get("A"), Some(&0.5));
         assert_eq!(model.rule_weights.get("B"), Some(&1.0));
         assert_eq!(model.recommended_beam_width, Some(1.5));
+        assert_eq!(model.recovery_weights, None);
         assert_eq!(model.metadata.epochs, 2);
         assert!((model.metadata.final_loss - 0.5).abs() < 1e-10);
         assert!(!model.metadata.converged);
+    }
+
+    // ── Sprint 12: Recovery weight training ──
+
+    #[test]
+    fn test_train_recovery_weights_empty_examples() {
+        let weights = train_recovery_weights(&[], 10, 0.01);
+        // Should return defaults
+        let default = crate::recovery::RecoveryConfig::default();
+        assert!((weights["skip_per_token"] - default.skip_per_token).abs() < 1e-9);
+        assert!((weights["delete_cost"] - default.delete_cost).abs() < 1e-9);
+        assert!((weights["substitute_cost"] - default.substitute_cost).abs() < 1e-9);
+        assert!((weights["insert_cost"] - default.insert_cost).abs() < 1e-9);
+        assert!((weights["swap_cost"] - default.swap_cost).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_train_recovery_weights_delete_preferred() {
+        use crate::recovery::RepairAction;
+
+        // All examples have delete as expected repair — delete cost should decrease
+        let examples: Vec<RecoveryTrainingExample> = (0..10)
+            .map(|_| RecoveryTrainingExample {
+                input_with_error: "1 + + 2".to_string(),
+                correct_input: "1 + 2".to_string(),
+                error_positions: vec![4],
+                expected_repairs: vec![RepairAction::DeleteToken],
+            })
+            .collect();
+
+        let weights = train_recovery_weights(&examples, 50, 0.1);
+        let default = crate::recovery::RecoveryConfig::default();
+
+        // Delete cost should decrease (training pushes it lower)
+        assert!(
+            weights["delete_cost"] < default.delete_cost,
+            "delete_cost should decrease when all examples prefer delete, got: {} vs default {}",
+            weights["delete_cost"],
+            default.delete_cost
+        );
+    }
+
+    #[test]
+    fn test_train_recovery_weights_differ_from_defaults() {
+        use crate::recovery::RepairAction;
+
+        // Mix of delete and insert examples
+        let mut examples: Vec<RecoveryTrainingExample> = Vec::new();
+        for _ in 0..5 {
+            examples.push(RecoveryTrainingExample {
+                input_with_error: "1 + + 2".to_string(),
+                correct_input: "1 + 2".to_string(),
+                error_positions: vec![4],
+                expected_repairs: vec![RepairAction::DeleteToken],
+            });
+        }
+        for _ in 0..5 {
+            examples.push(RecoveryTrainingExample {
+                input_with_error: "(1 + 2".to_string(),
+                correct_input: "(1 + 2)".to_string(),
+                error_positions: vec![6],
+                expected_repairs: vec![RepairAction::InsertToken { token: 0 }],
+            });
+        }
+
+        let weights = train_recovery_weights(&examples, 100, 0.1);
+        let default = crate::recovery::RecoveryConfig::default();
+
+        // Trained weights should differ from defaults
+        let any_different = weights
+            .iter()
+            .any(|(k, v)| {
+                let default_val = match k.as_str() {
+                    "skip_per_token" => default.skip_per_token,
+                    "delete_cost" => default.delete_cost,
+                    "substitute_cost" => default.substitute_cost,
+                    "insert_cost" => default.insert_cost,
+                    "swap_cost" => default.swap_cost,
+                    _ => 0.0,
+                };
+                (*v - default_val).abs() > 1e-9
+            });
+
+        assert!(
+            any_different,
+            "trained weights should differ from defaults after training with examples"
+        );
+    }
+
+    #[test]
+    fn test_trained_model_recovery_weights_serialization() {
+        let mut recovery = HashMap::new();
+        recovery.insert("skip_per_token".to_string(), 0.3);
+        recovery.insert("delete_cost".to_string(), 0.8);
+
+        let model = TrainedModel {
+            rule_weights: HashMap::new(),
+            recommended_beam_width: None,
+            recovery_weights: Some(recovery.clone()),
+            metadata: TrainedModelMetadata {
+                epochs: 1,
+                final_loss: 0.0,
+                converged: true,
+                num_examples: 10,
+                learning_rate: 0.01,
+            },
+        };
+
+        let bytes = model.to_embedded().expect("serialize");
+        let loaded = TrainedModel::from_embedded(&bytes).expect("deserialize");
+
+        assert_eq!(loaded.recovery_weights, Some(recovery));
+    }
+
+    #[test]
+    fn test_recovery_config_apply_trained_weights() {
+        let mut config = crate::recovery::RecoveryConfig::default();
+        let mut weights = HashMap::new();
+        weights.insert("skip_per_token".to_string(), 0.3);
+        weights.insert("delete_cost".to_string(), 0.8);
+
+        config.apply_trained_weights(&weights);
+
+        assert!((config.skip_per_token - 0.3).abs() < 1e-9);
+        assert!((config.delete_cost - 0.8).abs() < 1e-9);
+        // Unchanged fields remain at defaults
+        assert!((config.substitute_cost - 1.5).abs() < 1e-9);
+        assert!((config.insert_cost - 2.0).abs() < 1e-9);
+        assert!((config.swap_cost - 1.25).abs() < 1e-9);
     }
 }

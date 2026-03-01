@@ -1080,6 +1080,137 @@ warning: dead rules detected: FloatToStr, FloatToBool
 
 ---
 
+## Part 19: NFA Merged Prefix Arms
+
+**Source module:** `trampoline.rs` (`write_nfa_merged_prefix_arm`, `write_nfa_inline_constructor`)
+
+When multiple RD rules in the same category share the same dispatch token (e.g.,
+`FloatId`, `IntToFloat`, `BoolToFloat`, `StrToFloat` all starting with `KwFloat`),
+PraTTaIL generates an NFA merged prefix arm that tries all alternatives via
+save/restore. Using the Calculator's Float category as an example:
+
+### Thread-Local Declarations (3 per Category)
+
+```rust
+thread_local! {
+    // N-1 prefix alternatives from NFA merged arms
+    static NFA_PREFIX_SPILL_FLOAT: std::cell::Cell<Vec<(Float, usize, f64)>> =
+        std::cell::Cell::new(Vec::new());
+
+    // Forced prefix override for replay
+    static NFA_FORCED_PREFIX_FLOAT: std::cell::Cell<Option<(Float, usize, f64)>> =
+        std::cell::Cell::new(None);
+
+    // Weight of the primary NFA result
+    static NFA_PRIMARY_WEIGHT_FLOAT: std::cell::Cell<f64> =
+        std::cell::Cell::new(0.5);
+}
+```
+
+These are emitted for **all** categories (not just NFA-ambiguous ones) so that
+`parse_preserving_vars` can unconditionally drain them. Cost when unused:
+`Cell::take()` on empty `Vec` / `None` / default `f64` is a pointer swap or
+register read.
+
+### Forced-Prefix Check (at Prefix Phase Start)
+
+```rust
+// Generated at the very top of parse_Float_prefix
+{
+    let forced = NFA_FORCED_PREFIX_FLOAT.with(|cell| cell.take());
+    if let Some((forced_val, forced_pos, _forced_weight)) = forced {
+        *pos = forced_pos;
+        break 'prefix forced_val;
+    }
+}
+// ... normal prefix match follows
+```
+
+When `parse_preserving_vars` replays an NFA alternative, it sets this cell to
+`Some(...)`. The parser reads it, skips the entire NFA try-all and token match,
+advances `pos`, and breaks with the forced value. The infix loop then runs
+normally.
+
+### NFA Merged Prefix Arm (for `Token::KwFloat`)
+
+```rust
+Token::KwFloat => {
+    let nfa_saved = *pos;
+    let mut nfa_results: Vec<Float> = Vec::new();
+    let mut nfa_positions: Vec<usize> = Vec::new();
+    let mut nfa_weights: Vec<f64> = Vec::new();
+    let mut nfa_first_err: Option<ParseError> = None;
+
+    // Alternative 1: FloatId (weight 0.50 — tried first)
+    *pos = nfa_saved;
+    match (|| -> Result<Float, ParseError> {
+        expect_token(tokens, pos, |t| matches!(t, Token::KwFloat), "float")?;
+        expect_token(tokens, pos, |t| matches!(t, Token::LParen), "(")?;
+        let a = parse_Float(tokens, pos, 0)?;
+        expect_token(tokens, pos, |t| matches!(t, Token::RParen), ")")?;
+        Ok(Float::FloatId(Box::new(a)))
+    })() {
+        Ok(v) => { nfa_results.push(v); nfa_positions.push(*pos); nfa_weights.push(0.50); }
+        Err(e) => { if nfa_first_err.is_none() { nfa_first_err = Some(e); } }
+    }
+
+    // Alternative 2: IntToFloat (weight 1.00)
+    *pos = nfa_saved;
+    match (|| -> Result<Float, ParseError> {
+        expect_token(tokens, pos, |t| matches!(t, Token::KwFloat), "float")?;
+        expect_token(tokens, pos, |t| matches!(t, Token::LParen), "(")?;
+        let a = parse_Int(tokens, pos, 0)?;    // <-- parses inner as Int
+        expect_token(tokens, pos, |t| matches!(t, Token::RParen), ")")?;
+        Ok(Float::IntToFloat(Box::new(a)))
+    })() {
+        Ok(v) => { nfa_results.push(v); nfa_positions.push(*pos); nfa_weights.push(1.00); }
+        Err(e) => { if nfa_first_err.is_none() { nfa_first_err = Some(e); } }
+    }
+
+    // ... (BoolToFloat at 1.50, StrToFloat at 2.00 follow same pattern)
+
+    match nfa_results.len() {
+        0 => { return Err(nfa_first_err.expect("at least one error")); }
+        _ => {
+            *pos = nfa_positions[0];
+            let best = nfa_results.remove(0);
+            let best_weight = nfa_weights.remove(0);
+            // Spill remaining alternatives to thread-local
+            let mut spill = Vec::new();
+            for i in 0..nfa_results.len() {
+                spill.push((nfa_results.remove(0), nfa_positions[i+1], nfa_weights[i]));
+            }
+            NFA_PREFIX_SPILL_FLOAT.with(|cell| cell.set(spill));
+            NFA_PRIMARY_WEIGHT_FLOAT.with(|cell| cell.set(best_weight));
+            break 'prefix best;
+        }
+    }
+}
+```
+
+Each alternative is wrapped in a closure `(|| -> Result<...> { ... })()` so that
+`?` returns from the closure (as `Err`) without aborting the outer NFA loop.
+Alternatives are ordered by WFST tropical weight (lowest = most likely first),
+determined by `nfa_alternative_order()` at compile time.
+
+### Code Size Addendum
+
+┌───────────────────────────────────────┬───────────────────┐
+│ Component                             │ Approximate Lines │
+├───────────────────────────────────────┼───────────────────┤
+│ NFA thread-locals (3 per category)    │ ~10               │
+│ Forced-prefix check (per category)    │ ~5                │
+│ NFA merged arm (per ambiguous token)  │ ~50-80            │
+│ **Per NFA-ambiguous category total**  │ **~65-95**        │
+└───────────────────────────────────────┴───────────────────┘
+
+> **Cross-reference:** See
+> [../design/disambiguation/08-nfa-wfst-disambiguation.md](../design/disambiguation/08-nfa-wfst-disambiguation.md)
+> for the full Layer 2.5 architecture, including beam pruning, weight-aware
+> `from_alternatives`, and the forced-prefix replay mechanism.
+
+---
+
 ## Tracing an Example Parse
 
 **Input:** `"3 + x * 2 == 5"`

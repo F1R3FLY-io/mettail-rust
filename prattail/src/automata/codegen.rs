@@ -328,6 +328,7 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
 /// with a single import from the runtime crate. Generated code uses the shared
 /// definitions (~200 lines removed from each generated parser).
 fn write_runtime_types_import(buf: &mut String) {
+    buf.push_str("use std::borrow::Cow;");
     buf.push_str("use mettail_prattail::runtime_types::*;");
 }
 

@@ -42,6 +42,9 @@ adds probabilistic training via the log semiring.
 1. [Semirings Overview](theory/wfst/semirings.md) — Axioms, instances, numerical stability
 2. [Weighted Automata](theory/wfst/weighted-automata.md) — WFST structure, TokenId, PredictionWfst
 3. [Viterbi and Forward-Backward](theory/wfst/viterbi-and-forward-backward.md) — Shortest-path, beam pruning, N-best
+4. [Token Lattices](theory/wfst/token-lattices.md) — Weighted DAG for lexical ambiguity, Viterbi, beam pruning, N-best
+5. [Multi-Step Viterbi Recovery](theory/wfst/multi-step-viterbi-recovery.md) — Repair lattice, transposition edit, correctness
+6. [Cascade Suppression](theory/wfst/cascade-suppression.md) — Absorbing-state model for error cascade prevention
 
 **Theory — Per-Semiring:**
 
@@ -58,13 +61,19 @@ adds probabilistic training via the log semiring.
 
 - [Module Map](architecture/wfst/module-map.md) — Module inventory, dependency graph, feature-gate matrix
 - [Pipeline Integration](architecture/wfst/pipeline-integration.md) — WFST insertion point, data flow, codegen outputs
+- [Token Lattice Integration](architecture/wfst/token-lattices.md) — Module dependencies, compile-time vs runtime, recovery/dispatch integration
+- [Recovery State Propagation](architecture/wfst/recovery-state-propagation.md) — Thread-local state, pipeline integration, zero-overhead design
 
 **Design:**
 
 - [Prediction WFSTs](design/wfst/prediction.md) — Weight assignment, 2-state architecture, beam pruning
 - [Error Recovery](design/wfst/error-recovery.md) — Edit-cost repair, 3-tier context, Viterbi recovery
+- [Extended Recovery Strategies](design/wfst/extended-recovery-strategies.md) — New repair actions, multi-step Viterbi, cross-category recovery
+- [RecoveryConfig](design/wfst/recovery-config.md) — Tunable recovery parameters and trained weights
 - [Grammar Composition](design/wfst/grammar-composition.md) — Language union, WFST-aware merging
+- [Dead-Rule Detection](design/wfst/dead-rule-detection.md) — Three-tier analysis: literal, category-reachability, WFST dispatch
 - [Weight Training](design/wfst/weight-training.md) — LogWeight SGD, forward-backward, trained models (`wfst-log`)
+- [Token Lattices](design/wfst/token-lattices.md) — Two-path abstraction, generic semiring parametrization, algorithm trade-offs
 
 **Design — Per-Semiring:**
 
@@ -82,6 +91,7 @@ adds probabilistic training via the log semiring.
 - [Feature Gates](usage/wfst/feature-gates.md) — Two-tier model (default + wfst-log), test counts
 - [DSL Configuration](usage/wfst/dsl-configuration.md) — `beam_width`, `log_semiring_model_path`
 - [Training Guide](usage/wfst/training-guide.md) — Corpus preparation, SGD training, model serialization (`wfst-log`)
+- [Recovery Tuning Guide](usage/wfst/recovery-tuning.md) — Parameter tuning, diagnostics interpretation, trained weights
 
 ---
 

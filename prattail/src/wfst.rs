@@ -1106,6 +1106,7 @@ mod tests {
         let model = crate::training::TrainedModel {
             rule_weights,
             recommended_beam_width: None,
+            recovery_weights: None,
             metadata: crate::training::TrainedModelMetadata {
                 epochs: 10,
                 final_loss: 0.01,
@@ -1149,6 +1150,7 @@ mod tests {
         let model = crate::training::TrainedModel {
             rule_weights,
             recommended_beam_width: None,
+            recovery_weights: None,
             metadata: crate::training::TrainedModelMetadata {
                 epochs: 5,
                 final_loss: 0.05,

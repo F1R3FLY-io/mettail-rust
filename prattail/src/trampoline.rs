@@ -319,7 +319,7 @@ fn write_nfa_merged_prefix_arm(
             buf,
             "0 => {{ return Err(nfa_first_err.unwrap_or_else(|| \
                 ParseError::UnexpectedToken {{ \
-                    expected: \"{cat} expression\", \
+                    expected: Cow::Borrowed(\"{cat} expression\"), \
                     found: format!(\"{{:?}}\", &tokens[nfa_saved].0), \
                     range: tokens[nfa_saved].1, \
                 }} \
@@ -667,6 +667,14 @@ pub struct TrampolineConfig {
     /// are emitted and the NFA merged arm spills N-1 alternatives for forced-prefix
     /// replay in `parse_preserving_vars`.
     pub needs_nfa_spillover: bool,
+    /// Missing cast rule suggestions: `(token_variant_name, source_category)` pairs.
+    ///
+    /// For each source category that has tokens in its FIRST set (unique to it,
+    /// not in the target's own FIRST set) but has NO cast rule to this target
+    /// category, the unique tokens are listed here. Used in prefix error fallback
+    /// to suggest missing cast rules (e.g., `"Hint: 'at' is a Proc expression,
+    /// but no Proc → Float cast rule exists"`).
+    pub cast_suggestions: Vec<(String, String)>,
 }
 
 /// Write the Frame enum declaration for a category.
@@ -1011,6 +1019,66 @@ pub fn write_trampolined_parser(
     )
     .unwrap();
 
+    // ── 3a. Generate frame_kind_of helper + FRAME_STATE thread-local ──
+    // Used by recovery (Tier 1 frame-kind cost multipliers). Updated at the top
+    // of each 'drive iteration to reflect the current frame context. Zero
+    // overhead when recovery is not active — the Cell write is a pointer store
+    // and the match is branch-predicted (same top frame across many iterations).
+    write!(
+        buf,
+        "thread_local! {{ \
+            static FRAME_STATE_{cat_upper}: std::cell::Cell<(u16, u8)> = \
+                std::cell::Cell::new((0, 9)); /* (depth, FrameKind::Other) */ \
+        }}",
+    )
+    .unwrap();
+
+    // Emit frame_kind_of helper: maps top-of-stack variant to FrameKind u8.
+    {
+        use std::fmt::Write;
+        write!(
+            buf,
+            "fn frame_kind_of_{cat}(stack: &[{frame_enum}]) -> u8 {{ \
+                match stack.last() {{",
+            frame_enum = frame_info.enum_name,
+        )
+        .unwrap();
+
+        // Classify each variant by prefix convention
+        for variant in &frame_info.variants {
+            let kind_u8 = if variant.name == "InfixRHS" {
+                1_u8 // FrameKind::InfixRHS
+            } else if variant.name == "GroupClose" {
+                4 // FrameKind::Group
+            } else if variant.name.starts_with("CollectionElem_") {
+                3 // FrameKind::Collection
+            } else if variant.name.starts_with("Mixfix_") {
+                5 // FrameKind::Mixfix
+            } else if variant.name.starts_with("UnaryPrefix_") {
+                0 // FrameKind::Prefix
+            } else if variant.name.starts_with("LambdaBody_") {
+                6 // FrameKind::Lambda
+            } else if variant.name.starts_with("Dollar") || variant.name.starts_with("Ddollar") {
+                7 // FrameKind::Dollar
+            } else if variant.name.starts_with("CastWrap_") {
+                8 // FrameKind::CastWrap
+            } else {
+                9 // FrameKind::Other (RD segments, etc.)
+            };
+
+            // Use wildcard pattern for all fields
+            write!(
+                buf,
+                "Some({}::{} {{ .. }}) => {}_u8,",
+                frame_info.enum_name, variant.name, kind_u8,
+            )
+            .unwrap();
+        }
+
+        buf.push_str("None => 9_u8,"); // empty stack → Other
+        buf.push_str("}}");
+    }
+
     // ── 3b. Generate NFA spillover thread-locals ──
     // Thread-locals for forced-prefix replay. The spillover buffer collects N-1
     // prefix alternatives from NFA merged arms, and the forced-prefix Cell
@@ -1104,6 +1172,21 @@ fn write_trampoline_body(
     // ═══ Main trampoline loop ═══
     buf.push_str("'drive: loop {");
 
+    // Update frame state thread-local at the top of each 'drive iteration.
+    // This reflects the current depth and frame kind before prefix dispatch
+    // (where parse errors are raised). Recovery reads this thread-local to
+    // apply Tier 1 frame-kind cost multipliers.
+    {
+        let cat_upper = cat.to_uppercase();
+        write!(
+            buf,
+            "FRAME_STATE_{cat_upper}.with(|c| c.set(\
+                (stack.len() as u16, frame_kind_of_{cat}(stack))\
+            ));",
+        )
+        .unwrap();
+    }
+
     // ═══ Phase A: Prefix dispatch ═══
     write_prefix_phase(buf, config, prefix_handlers, rd_rules, frame_info, &expected_escaped);
 
@@ -1148,7 +1231,7 @@ fn write_prefix_phase(
             let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
             match stack.pop() {{ \
                 None => return Err(ParseError::UnexpectedEof {{ \
-                    expected: \"{expected_escaped}\", \
+                    expected: Cow::Borrowed(\"{expected_escaped}\"), \
                     range: eof_range, \
                 }}),",
     )
@@ -1160,7 +1243,7 @@ fn write_prefix_phase(
     write!(
         buf,
         "Some(_) => return Err(ParseError::UnexpectedEof {{ \
-            expected: \"{expected_escaped}\", \
+            expected: Cow::Borrowed(\"{expected_escaped}\"), \
             range: eof_range, \
         }}), \
         }} \
@@ -1549,18 +1632,60 @@ fn write_prefix_match_arms(
     }
 
     // ── Error fallback ──
-    write!(
-        buf,
-        "other => {{ \
-            let err = Err(ParseError::UnexpectedToken {{ \
-                expected: \"{expected_escaped}\", \
-                found: format!(\"{{:?}}\", other), \
-                range: tokens[*pos].1, \
-            }}); \
-            match stack.pop() {{ \
-                None => return err.map(|_: {cat}| unreachable!()),",
-    )
-    .unwrap();
+    if config.cast_suggestions.is_empty() {
+        write!(
+            buf,
+            "other => {{ \
+                let err = Err(ParseError::UnexpectedToken {{ \
+                    expected: Cow::Borrowed(\"{expected_escaped}\"), \
+                    found: format!(\"{{:?}}\", other), \
+                    range: tokens[*pos].1, \
+                }}); \
+                match stack.pop() {{ \
+                    None => return err.map(|_: {cat}| unreachable!()),",
+        )
+        .unwrap();
+    } else {
+        // Build a static array of (token_debug_prefix, source_category) pairs
+        // for runtime lookup of missing cast rule hints.
+        let mut suggestions_literal = String::from("&[");
+        for (token, source_cat) in &config.cast_suggestions {
+            // Token variant names like "KwAt" need to match the Debug output prefix.
+            // Debug format is e.g. `KwAt(...)` or just `KwAt`.
+            let escaped_token = token.replace('\\', "\\\\").replace('"', "\\\"");
+            let escaped_cat = source_cat.replace('\\', "\\\\").replace('"', "\\\"");
+            write!(suggestions_literal, "(\"{}\", \"{}\"),", escaped_token, escaped_cat).unwrap();
+        }
+        suggestions_literal.push(']');
+
+        write!(
+            buf,
+            "other => {{ \
+                let found_str = format!(\"{{:?}}\", other); \
+                let cast_suggestions: &[(&str, &str)] = {suggestions}; \
+                let mut hint = String::new(); \
+                for &(tok, source_cat) in cast_suggestions {{ \
+                    if found_str.starts_with(tok) {{ \
+                        hint = format!(\" Hint: this is a {{}} expression, but no {{}} → {cat} cast rule exists.\", source_cat, source_cat); \
+                        break; \
+                    }} \
+                }} \
+                let expected_msg = if hint.is_empty() {{ \
+                    Cow::Borrowed(\"{expected_escaped}\") \
+                }} else {{ \
+                    Cow::Owned(format!(\"{expected_escaped}{{}}\", hint)) \
+                }}; \
+                let err = Err(ParseError::UnexpectedToken {{ \
+                    expected: expected_msg, \
+                    found: found_str, \
+                    range: tokens[*pos].1, \
+                }}); \
+                match stack.pop() {{ \
+                    None => return err.map(|_: {cat}| unreachable!()),",
+            suggestions = suggestions_literal,
+        )
+        .unwrap();
+    }
     // Collection catch on prefix error
     write_collection_error_catch_inline(buf, config, rd_rules, frame_info);
     write!(
@@ -1875,7 +2000,7 @@ fn write_lambda_prefix_arm(buf: &mut String, config: &TrampolineConfig, frame_in
                 }} \
                 _ => {{ \
                     return Err(ParseError::UnexpectedToken {{ \
-                        expected: \"identifier or '['\", \
+                        expected: Cow::Borrowed(\"identifier or '['\"), \
                         found: format!(\"{{:?}}\", tokens[*pos].0), \
                         range: tokens[*pos].1, \
                     }}); \
@@ -2919,7 +3044,7 @@ pub fn write_trampolined_parser_lazy(
                 }}); \
             }} \
             return Err(ParseError::UnexpectedEof {{ \
-                expected: \"{expected_escaped}\", \
+                expected: Cow::Borrowed(\"{expected_escaped}\"), \
                 range: Range::zero(), \
             }}); \
         }}",
@@ -3063,7 +3188,7 @@ pub fn write_trampolined_parser_lazy(
                 buf,
                 "0 => {{ return Err(nfa_first_err.unwrap_or_else(|| \
                     ParseError::UnexpectedToken {{ \
-                        expected: \"{cat} expression\", \
+                        expected: Cow::Borrowed(\"{cat} expression\"), \
                         found: format!(\"{{:?}}\", adapter.peek()), \
                         range: *adapter.peek_range(), \
                     }} \
@@ -3130,7 +3255,7 @@ pub fn write_trampolined_parser_lazy(
             let inner = parse_{}_lazy(adapter, 0)?; \
             if !matches!(adapter.peek(), Token::RParen) {{ \
                 return Err(ParseError::UnexpectedToken {{ \
-                    expected: \"')'\", \
+                    expected: Cow::Borrowed(\"')'\"), \
                     found: format!(\"{{:?}}\", adapter.peek()), \
                     range: *adapter.peek_range(), \
                 }}); \
@@ -3226,7 +3351,7 @@ pub fn write_trampolined_parser_lazy(
         buf,
         "other => {{ \
             return Err(ParseError::UnexpectedToken {{ \
-                expected: \"{expected_escaped}\", \
+                expected: Cow::Borrowed(\"{expected_escaped}\"), \
                 found: format!(\"{{:?}}\", other), \
                 range: *adapter.peek_range(), \
             }}); \
@@ -3316,7 +3441,7 @@ fn write_lazy_single_item(buf: &mut String, item: &RDSyntaxItem, _cat: &str) {
                 buf,
                 "if !matches!(adapter.peek(), Token::{}) {{ \
                     return Err(ParseError::UnexpectedToken {{ \
-                        expected: \"{}\", \
+                        expected: Cow::Borrowed(\"{}\"), \
                         found: format!(\"{{:?}}\", adapter.peek()), \
                         range: *adapter.peek_range(), \
                     }}); \
@@ -3333,7 +3458,7 @@ fn write_lazy_single_item(buf: &mut String, item: &RDSyntaxItem, _cat: &str) {
                 "let {} = match adapter.peek() {{ \
                     Token::Ident(s) => {{ let v = s.to_string(); adapter.advance(); v }}, \
                     other => return Err(ParseError::UnexpectedToken {{ \
-                        expected: \"identifier\", \
+                        expected: Cow::Borrowed(\"identifier\"), \
                         found: format!(\"{{:?}}\", other), \
                         range: *adapter.peek_range(), \
                     }}), \
@@ -3356,7 +3481,7 @@ fn write_lazy_single_item(buf: &mut String, item: &RDSyntaxItem, _cat: &str) {
                 "let {} = match adapter.peek() {{ \
                     Token::Ident(s) => {{ let v = s.to_string(); adapter.advance(); v }}, \
                     other => return Err(ParseError::UnexpectedToken {{ \
-                        expected: \"binder identifier\", \
+                        expected: Cow::Borrowed(\"binder identifier\"), \
                         found: format!(\"{{:?}}\", other), \
                         range: *adapter.peek_range(), \
                     }}), \
@@ -3538,7 +3663,7 @@ fn write_lazy_mixfix_handlers(
                     buf,
                     "if !matches!(adapter.peek(), Token::{}) {{ \
                         return Err(ParseError::UnexpectedToken {{ \
-                            expected: \"{}\", \
+                            expected: Cow::Borrowed(\"{}\"), \
                             found: format!(\"{{:?}}\", adapter.peek()), \
                             range: *adapter.peek_range(), \
                         }}); \

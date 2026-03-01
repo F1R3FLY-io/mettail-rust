@@ -15,13 +15,21 @@ preceding abstract rules.
 **Source files:**
 - `macros/src/gen/term_ops/ground.rs` — `is_ground()` method generation
 - `macros/src/gen/runtime/language.rs` — `Ambiguous` variant, `from_alternatives()`,
-  `substitute_env()`, `run_ascent_typed()`, NFA-style multi-category parse
+  `substitute_env()`, `run_ascent_typed()`, NFA-style multi-category parse,
+  `AMBIGUOUS_WEIGHTS` thread-local, weight-aware tiebreaking
+- `prattail/src/trampoline.rs` — NFA merged prefix arms, `NFA_PREFIX_SPILL_CAT`,
+  `NFA_FORCED_PREFIX_CAT`, `NFA_PRIMARY_WEIGHT_CAT` thread-locals
+- `prattail/src/pipeline.rs` — NFA spillover detection, CountingWeight warnings
+- `prattail/src/wfst.rs` — `nfa_alternative_order()` for weight-ordered alternatives
 
 **Cross-references:**
 - [04-cross-category-resolution.md](04-cross-category-resolution.md) — Layer 4
   handles syntactic cross-category dispatch; Layer 6 handles cases Layer 4 cannot
 - [06-layer-interactions.md](06-layer-interactions.md) — Layer interaction properties
   and end-to-end traces
+- [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md) — Layer 2.5 NFA
+  intra-category disambiguation; produces the spillover that Layer 6 consumes via
+  the drain loop in `parse_preserving_vars`
 
 ---
 
@@ -74,21 +82,53 @@ parse_preserving_vars(input):
     first_tok = probe_tokens[0]
 
   successes = []
+  success_weights = []
   first_err = None
 
-  for each category in parse_order:     // declaration order
+  for each category Cat in parse_order:     // declaration order
     // Skip native categories when first token is Ident (§2.3)
     if has_non_native_categories AND category.is_native AND first_tok is Ident:
       continue
     match Cat::parse(input):
-      Ok(term) → successes.push(TermInner::Cat(term))
-      Err(e)   → if first_err is None: first_err = Some(e)
+      Ok(term) →
+        successes.push(TermInner::Cat(term))
+        // Record WFST weight of primary NFA result (Layer 2.5)
+        success_weights.push(NFA_PRIMARY_WEIGHT_CAT.take())
 
+        // === NFA intra-category drain (Layer 2.5 → Layer 6 bridge) ===
+        // When NFA merged prefix arms spill N-1 alternatives,
+        // replay each with forced-prefix override to get full parse
+        // (prefix + infix loop). See 08-nfa-wfst-disambiguation.md §3.5.
+        spilled = NFA_PREFIX_SPILL_CAT.take()
+        for (alt_prefix, alt_pos, alt_weight) in spilled:
+          NFA_FORCED_PREFIX_CAT.set(Some((alt_prefix, alt_pos, alt_weight)))
+          match Cat::parse(input):
+            Ok(alt_term) →
+              successes.push(TermInner::Cat(alt_term))
+              success_weights.push(alt_weight)
+            Err(_) → ()
+          NFA_PREFIX_SPILL_CAT.take()    // clear nested spillover
+
+      Err(e) →
+        NFA_PREFIX_SPILL_CAT.take()      // clear spillover on error
+        if first_err is None: first_err = Some(e)
+
+  AMBIGUOUS_WEIGHTS.set(success_weights)   // carry weights to from_alternatives
   match successes.len():
     0 → Err(first_err)
     1 → Ok(Term(successes[0]))                  // unambiguous
     _ → Ok(Term(from_alternatives(successes)))   // may be Ambiguous
 ```
+
+The NFA drain loop bridges Layer 2.5 (intra-category NFA try-all) and
+Layer 6 (semantic disambiguation). When `Float::parse("float(x) + 1.0")`
+returns `FloatAdd(FloatId(FloatVar("x")), FloatLit(1.0))` as its primary
+result, N-1 alternatives (e.g., `IntToFloat`, `BoolToFloat`, `StrToFloat`)
+are spilled to `NFA_PREFIX_SPILL_FLOAT`. The drain loop replays each
+alternative through the complete parser (prefix + infix), producing full
+AST nodes like `FloatAdd(IntToFloat(IntVar("x")), FloatLit(1.0))`.
+These join the `successes` vector alongside cross-category alternatives,
+allowing Layer 6's three-stage resolution to consider all possibilities.
 
 Two details are critical: the order in which parsers run (§2.1), and the
 optimization that avoids redundant parses (§2.3).
@@ -305,18 +345,28 @@ from_alternatives(alts):
     Ambiguous(inner) → inner,   // flatten nested → preserves element order
     other → [other],
   }).collect()                  // Vec preserves insertion order
+  n_alts = flat.len()
 
-  match flat.len():
+  match n_alts:
     0 → panic("empty alternatives")
     1 → flat[0]                          // singleton unwrap
     _ →
       accepting = flat.filter(is_accepting)
-      if accepting.len() == 1:
-        return accepting[0]              // ground-filter: exactly one ground → wins
-      Ambiguous(flat)                    // still ambiguous
+      match accepting.len():
+        0 → Ambiguous(flat)              // no ground → defer to substitution
+        1 → accepting[0]                 // ground-filter: exactly one ground → wins
+        n if n > 1 →
+          // Multiple ground: WFST weight tiebreaker (Layer 2.5)
+          weights = AMBIGUOUS_WEIGHTS.take()
+          if weights.len() == n_alts AND flat.len() == n_alts:
+            // Parallel length invariant holds
+            best_idx = accepting.min_by(|(i,_),(j,_)| weights[i] <=> weights[j]).index
+            flat[best_idx]               // min-weight (most likely) accepting wins
+          else:
+            accepting[0]                 // fallback: first accepting (decl order)
 ```
 
-Two properties to note:
+Three properties to note:
 
 1. **Order preservation:** `flat_map` followed by `collect()` into a `Vec`
    preserves the order of the input elements. Alternatives that entered in
@@ -328,6 +378,17 @@ Two properties to note:
    variables), it wins immediately — no `Ambiguous` wrapper is created. This
    resolves many literal-only inputs at parse time, before substitution or
    evaluation are ever attempted (see Stage A in §5.1).
+
+3. **Weight-aware tiebreaking:** When multiple alternatives are ground (e.g.,
+   `float(42)` producing both `FloatId(NumLit(42))` and
+   `IntToFloat(NumLit(42))`), the WFST tropical weight carried through
+   `AMBIGUOUS_WEIGHTS` selects the most likely one. The parallel length
+   invariant (`weights.len() == n_alts == flat.len()`) ensures that each
+   `weights[i]` corresponds to `flat[i]`. If the invariant does not hold
+   (because flattening nested `Ambiguous` changed the count), the fallback
+   is the first accepting alternative per declaration order. See
+   [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md) §5 for
+   details.
 
 ---
 
@@ -946,7 +1007,27 @@ alternatives (typically 2–4).
 
 ---
 
-## 10. Key Source Files
+## 10. Thread-Local Inventory
+
+Layer 6 relies on four thread-locals that bridge Layer 2.5 (NFA intra-category
+disambiguation) with the semantic resolution pipeline:
+
+| Thread-Local                     | Type                                 | Scope      | Purpose                                                                |
+|----------------------------------|--------------------------------------|------------|------------------------------------------------------------------------|
+| `NFA_PREFIX_SPILL_CAT`           | `Cell<Vec<(Cat, usize, f64)>>`       | Per-cat    | N-1 NFA alternatives from merged prefix arm, drained in §2 drain loop  |
+| `NFA_FORCED_PREFIX_CAT`          | `Cell<Option<(Cat, usize, f64)>>`    | Per-cat    | Override: forces parser to use given prefix, skipping NFA try-all      |
+| `NFA_PRIMARY_WEIGHT_CAT`         | `Cell<f64>`                          | Per-cat    | WFST weight of primary NFA result (default 0.5 when unambiguous)       |
+| `AMBIGUOUS_WEIGHTS`              | `Cell<Vec<f64>>`                     | Per-lang   | Parallel to `successes`; carried to `from_alternatives` for tiebreaking |
+
+All four use `Cell` (not `RefCell`) because the trampoline's standalone
+functions may cause re-entrancy. `Cell::take()` and `Cell::set()` are safe
+for re-entrant access patterns. See
+[08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md) §3.4 for
+design rationale.
+
+---
+
+## 11. Key Source Files
 
 | File                                 | Lines     | Purpose                                                    |
 |--------------------------------------|-----------|------------------------------------------------------------|

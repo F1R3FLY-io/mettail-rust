@@ -140,6 +140,7 @@ The dispatch table maps each first token to a `DispatchAction` (`prediction.rs`,
 | `Lookahead`     | Multiple rules share first token   | Inspect second token to disambiguate      |
 | `CrossCategory` | Rule references different category | Parse source category, check for operator |
 | `Cast`          | Type embedding rule                | Parse source category, wrap result        |
+| `NfaMerged`     | Multiple rules, same 1st+2nd token | NFA try-all (Layer 2.5)                   |
 | `Grouping`      | Parenthesized expression           | Match open, parse inner, match close      |
 | `Variable`      | Default fallback                   | Accept any Ident as variable              |
 
@@ -151,7 +152,8 @@ For each category:
 2. Build map: `first_token → [matching_rules]`
 3. For each first token:
    - **One rule:** Emit `Direct`, `Cast`, or `Variable` action
-   - **Multiple rules:** Emit `Lookahead` action with alternatives
+   - **Multiple rules, distinguishable by 2nd token:** Emit `Lookahead`
+   - **Multiple rules, same 1st+2nd tokens:** Emit NFA merged arm (Layer 2.5)
 4. If category has a variable rule: set as `default_action`
 
 ### 3.3 Dispatch Table Data Structure
@@ -326,6 +328,14 @@ warnings (`prediction.rs`, lines 771-1013).
 
 ### 7.1 AmbiguousPrefix Warning
 
+> **Superseded:** For rules that share a dispatch token within the same
+> category (e.g., `FloatId`, `IntToFloat`, `BoolToFloat`, `StrToFloat` all
+> starting with `KwFloat`), this warning is superseded by Layer 2.5's
+> structured NFA disambiguation. See
+> [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md) §4.2 for the
+> replacement CountingWeight diagnostics that provide weight-aware ambiguity
+> analysis.
+
 **Condition:** Multiple non-infix, non-variable, non-literal rules in the same
 category start with the same terminal token.
 
@@ -339,7 +349,9 @@ warning: ambiguous prefix token "Ident" in category Proc
 
 **What to do:** Add a distinguishing first terminal, or restructure rules so
 FIRST sets are disjoint. PraTTaIL will use lookahead as a workaround but warns
-that the grammar may be confusing.
+that the grammar may be confusing. For NFA-ambiguous cases (same first *and*
+second token), Layer 2.5 automatically tries all alternatives and defers
+resolution to semantic disambiguation.
 
 ### 7.2 LeftRecursion Warning
 
@@ -385,6 +397,14 @@ classes to later layers:
 
 - **Error recovery:** When no rule matches (syntax error), prediction has no
   fallback. Layer 5 determines where to resynchronize.
+
+- **Intra-category rule ambiguity:** When multiple rules within the same
+  category share the same first (and second) token — such as `FloatId`,
+  `IntToFloat`, `BoolToFloat`, `StrToFloat` all starting with `float(` —
+  prediction cannot distinguish them even with 2-token lookahead. Layer 2.5
+  (NFA intra-category disambiguation) handles these cases by trying all
+  alternatives and deferring resolution to semantic disambiguation (Layer 6).
+  See [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md).
 
 ---
 

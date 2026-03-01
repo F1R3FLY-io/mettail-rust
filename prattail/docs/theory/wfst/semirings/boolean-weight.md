@@ -261,53 +261,75 @@ yields `false` -- they are dead.
 
 PraTTaIL uses BooleanWeight semantics (though not the BooleanWeight struct
 directly) in `pipeline.rs` to detect dead grammar rules at compile time.
+Detection uses a three-tier architecture implemented in `detect_dead_rules()`
+(`pipeline.rs:106–207`), surfaced through the unified lint layer as lint
+W01 (`lint.rs:786–832`).
 
-### 6.1 Algorithm
+### 6.1 Three-Tier Algorithm
 
-After the prediction WFST is constructed for each syntactic category, the
-pipeline iterates over every rule and checks whether any token in that
-category's FIRST set dispatches to the rule through the prediction WFST:
+The algorithm classifies each rule into exactly one tier:
 
 ```
 for each rule R in grammar:
-    if R is infix, variable, literal, cross-category, or cast:
-        skip  // handled by other mechanisms
+
+    // Tier 1: Literal rules
+    if R.is_literal:
+        dead if R.category has no native_type
+        continue
+
+    // Tier 2: Same-category infix/var rules
+    if (R.is_infix and not R.is_cross_category) or R.is_var:
+        dead if R.category ∉ reachable_categories
+        continue
+        where reachable_categories = μX. {C | FIRST(C) ≠ ∅}
+                                       ∪ {C | ∃ cast/cross-cat rule r:
+                                              r.source ∈ X ∧ r.target = C}
+
+    // Tier 3: Prefix/cast/cross-category rules (implicit Boolean projection)
     let wfst = prediction_wfst[R.category]
-    reachable = false
-    for each token T in FIRST(R.category):
-        for each action A in wfst.predict(T):
-            if A.rule_label == R.label:
-                reachable = true
-                break
+    reachable = ∨_{T ∈ FIRST(R.category)} [wfst.predict(T) routes to R]
     if not reachable:
-        emit warning: "rule R in category C is unreachable (dead code)"
+        warn WfstUnreachable
 ```
 
-This is precisely a Boolean reachability query: we are asking whether
-`∨_{T in FIRST(C)} [wfst.predict(T) routes to R]` equals `true`.
+Tier 3 is the Boolean reachability query from sections 4–5: the predicate
+`∨_{T ∈ FIRST(C)} [wfst.predict(T) routes to R]` is equivalent to
+projecting each WFST transition weight onto BooleanWeight via
+`w → BooleanWeight(w ≠ zero)` and computing `plus` (disjunction) across
+all transitions.
 
 ### 6.2 Dead rules detected in practice
 
-**Calculator language** (the test grammar in `languages/`):
+**Calculator language** (8 dead rules, all Tier 3):
 
-| Rule        | Category | Reason                                    |
-|-------------|----------|-------------------------------------------|
-| FloatToStr  | Expr     | No token dispatches float-to-string cast  |
-| FloatToBool | Expr     | No token dispatches float-to-boolean cast |
-| StrToBool   | Expr     | No token dispatches string-to-boolean cast|
-| IntId       | Expr     | Identity rule shadowed by direct parse    |
-| FloatId     | Expr     | Identity rule shadowed by direct parse    |
-| BoolId      | Expr     | Identity rule shadowed by direct parse    |
-| StrId       | Expr     | Identity rule shadowed by direct parse    |
+| Rule | Category | Reason |
+|------|----------|--------|
+| FloatToStr | Str | Cast shadowed by higher-priority alternatives |
+| FloatToBool | Bool | Cast shadowed by higher-priority alternatives |
+| StrToBool | Bool | Cast shadowed by higher-priority alternatives |
+| IntId | Int | Identity rule shadowed by direct parse |
+| FloatId | Float | Identity rule shadowed by direct parse |
+| BoolId | Bool | Identity rule shadowed by direct parse |
+| StrId | Str | Identity rule shadowed by direct parse |
+| POutput | Proc | Output rule unreachable via prefix dispatch |
 
-**RhoCalc language**:
+**RhoCalc language** (36 dead rules, all Tier 3):
 
-| Rule    | Category | Reason                                       |
-|---------|----------|----------------------------------------------|
-| POutput | Proc     | Output rule unreachable via prefix dispatch   |
+The RhoCalc grammar detects 36 dead rules, primarily cross-category
+comparison operators and cast rules where higher-priority direct
+alternatives shadow the cross-category dispatch path.
 
-These warnings help the language designer identify rules that should either be
-removed or restructured to become reachable.
+### 6.3 Lint layer integration
+
+Dead-rule warnings are no longer emitted via inline `eprintln!` calls.
+Instead, `detect_dead_rules()` returns `Vec<DeadRuleWarning>` (three
+variants: `LiteralNoNativeType`, `UnreachableCategory`, `WfstUnreachable`),
+which `lint_w01_dead_rule()` wraps into `LintDiagnostic` entries with
+variant-specific hints.  The unified `run_lints()` entry point in
+`lint.rs:136–176` invokes all 23 lints including W01.
+
+See [../../../design/wfst/dead-rule-detection.md](../../../design/wfst/dead-rule-detection.md)
+for the full design document.
 
 ---
 

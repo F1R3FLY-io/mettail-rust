@@ -16,7 +16,8 @@
 //!                  bundles         ParserBundle ──→ parser_code   into TokenStream
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt;
 
 use proc_macro2::TokenStream;
 
@@ -31,7 +32,8 @@ use crate::pratt::{
 };
 use crate::prediction::{
     analyze_cross_category_overlaps, compute_first_sets, compute_follow_sets_from_inputs,
-    detect_grammar_warnings, generate_sync_predicate, FirstItem, FollowSetInput, RuleInfo,
+    generate_sync_predicate, FirstItem, FirstSet, FollowSetInput,
+    RuleInfo,
 };
 use crate::recursive::{
     write_dollar_handlers, write_lambda_handlers, write_rd_handler, RDRuleInfo, RDSyntaxItem,
@@ -39,7 +41,170 @@ use crate::recursive::{
 use crate::trampoline::{
     write_trampolined_parser, write_trampolined_parser_recovering, TrampolineConfig,
 };
+use crate::wfst::PredictionWfst;
 use crate::{LanguageSpec, LiteralPatterns, SyntaxItemSpec};
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Dead-rule detection
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A dead-rule warning produced by WFST-based reachability analysis.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeadRuleWarning {
+    /// Literal rule in a category with no `native_type`.
+    LiteralNoNativeType {
+        rule_label: String,
+        category: String,
+    },
+    /// Infix/var rule whose entire category is unreachable (no prefix rule
+    /// can start a parse in that category).
+    UnreachableCategory {
+        rule_label: String,
+        category: String,
+    },
+    /// Prefix/cast/cross-category rule that no FIRST-set token dispatches to
+    /// via the prediction WFST.
+    WfstUnreachable {
+        rule_label: String,
+        category: String,
+    },
+}
+
+impl fmt::Display for DeadRuleWarning {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            DeadRuleWarning::LiteralNoNativeType { rule_label, category } => write!(
+                f,
+                "warning: literal rule {} in category {} is unreachable (dead code) — \
+                 category has no native_type",
+                rule_label, category,
+            ),
+            DeadRuleWarning::UnreachableCategory { rule_label, category } => write!(
+                f,
+                "warning: rule {} in category {} is unreachable (dead code) — \
+                 category {} has no reachable prefix rules",
+                rule_label, category, category,
+            ),
+            DeadRuleWarning::WfstUnreachable { rule_label, category } => write!(
+                f,
+                "warning: rule {} in category {} is unreachable (dead code) — \
+                 no token in FIRST({}) dispatches to it via prediction WFST",
+                rule_label, category, category,
+            ),
+        }
+    }
+}
+
+/// Detect dead rules via three-tier analysis:
+///   1. **Literal rules**: dead if their category has no `native_type`
+///   2. **Infix/var rules**: dead if their entire category is unreachable
+///   3. **Prefix rules** (incl. cast, cross-category): dead if no FIRST-set
+///      token dispatches to them via the prediction WFST
+///
+/// Returns a list of warnings (one per dead rule). The caller decides whether
+/// to `eprintln!` them or collect them for testing.
+pub(crate) fn detect_dead_rules(
+    rule_infos: &[RuleInfo],
+    categories: &[CategoryInfo],
+    first_sets: &HashMap<String, FirstSet>,
+    prediction_wfsts: &HashMap<String, PredictionWfst>,
+) -> Vec<DeadRuleWarning> {
+    let mut warnings = Vec::new();
+
+    // Tier 2 prerequisite: compute reachable categories.
+    // A category is reachable if it has a non-empty FIRST set or is
+    // reachable via cross-category/cast rules from another reachable category.
+    let reachable_categories: HashSet<String> = {
+        let mut reachable = HashSet::new();
+        // Seed: categories with non-empty FIRST sets
+        for (cat, fs) in first_sets {
+            if !fs.tokens.is_empty() {
+                reachable.insert(cat.clone());
+            }
+        }
+        // Fixed-point: add categories reachable via cross-cat/cast from
+        // reachable sources.
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for rule in rule_infos {
+                if rule.is_cross_category || rule.is_cast {
+                    let source = rule.first_items.iter().find_map(|fi| {
+                        if let FirstItem::NonTerminal(cat) = fi {
+                            Some(cat.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(src) = source {
+                        if reachable.contains(&src)
+                            && reachable.insert(rule.category.clone())
+                        {
+                            changed = true;
+                        }
+                    }
+                }
+            }
+        }
+        reachable
+    };
+
+    for rule_info in rule_infos {
+        // Tier 1: literal rules — dead if category has no native_type.
+        if rule_info.is_literal {
+            let has_native = categories
+                .iter()
+                .any(|c| c.name == rule_info.category && c.native_type.is_some());
+            if !has_native {
+                warnings.push(DeadRuleWarning::LiteralNoNativeType {
+                    rule_label: rule_info.label.clone(),
+                    category: rule_info.category.clone(),
+                });
+            }
+            continue;
+        }
+
+        // Tier 2: same-category infix/postfix/mixfix and var rules — dead
+        // if their entire category is unreachable (no prefix rule can start
+        // a parse in that category).
+        if (rule_info.is_infix && !rule_info.is_cross_category) || rule_info.is_var {
+            if !reachable_categories.contains(&rule_info.category) {
+                warnings.push(DeadRuleWarning::UnreachableCategory {
+                    rule_label: rule_info.label.clone(),
+                    category: rule_info.category.clone(),
+                });
+            }
+            continue;
+        }
+
+        // Tier 3: all remaining prefix rules (including cast and cross-
+        // category) — dead if no token in FIRST set dispatches to them
+        // via the prediction WFST.
+        let wfst = match prediction_wfsts.get(&rule_info.category) {
+            Some(w) => w,
+            None => continue,
+        };
+
+        let reachable = first_sets
+            .get(&rule_info.category)
+            .map_or(false, |fs| {
+                fs.tokens.iter().any(|tok| {
+                    wfst.predict(tok)
+                        .iter()
+                        .any(|a| a.action.rule_label() == rule_info.label)
+                })
+            });
+
+        if !reachable {
+            warnings.push(DeadRuleWarning::WfstUnreachable {
+                rule_label: rule_info.label.clone(),
+                category: rule_info.category.clone(),
+            });
+        }
+    }
+
+    warnings
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Data bundles — all Send+Sync
@@ -58,10 +223,13 @@ pub struct LexerBundle {
 }
 
 /// Category metadata for the parser pipeline. Send+Sync.
-pub(crate) struct CategoryInfo {
-    pub(crate) name: String,
-    pub(crate) native_type: Option<String>,
-    pub(crate) is_primary: bool,
+pub struct CategoryInfo {
+    /// Category name (e.g., "Proc", "Int").
+    pub name: String,
+    /// Native Rust type name, if any (e.g., "i32", "bool").
+    pub native_type: Option<String>,
+    /// Whether this is the primary (first-declared) category.
+    pub is_primary: bool,
 }
 
 /// All data needed by the parser pipeline. Send+Sync.
@@ -77,6 +245,10 @@ pub struct ParserBundle {
     pub(crate) has_binders: bool,
     /// Beam width configuration for WFST prediction pruning.
     pub(crate) beam_width: crate::BeamWidthConfig,
+    /// Recovery configuration (costs, thresholds, beam width).
+    pub(crate) recovery_config: crate::recovery::RecoveryConfig,
+    /// All syntax per rule: (label, category, syntax). Used by lint layer.
+    pub(crate) all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)>,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -147,21 +319,9 @@ impl PipelineState {
 pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
     let (lexer_bundle, parser_bundle) = extract_from_spec(spec);
 
-    // Run grammar warning detection and emit to stderr (standard for proc-macro diagnostics)
-    let category_names: Vec<String> = spec.types.iter().map(|t| t.name.clone()).collect();
-    let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = spec
-        .rules
-        .iter()
-        .map(|r| (r.label.clone(), r.category.clone(), r.syntax.clone()))
-        .collect();
-    let warnings = detect_grammar_warnings(&parser_bundle.rule_infos, &category_names, &all_syntax);
-    for warning in &warnings {
-        /* Skip AmbiguousPrefix here — superseded by WFST-aware warnings below (Phase 2b) */
-        if matches!(warning, crate::prediction::GrammarWarning::AmbiguousPrefix { .. }) {
-            continue;
-        }
-        eprintln!("warning: {}", warning);
-    }
+    // NOTE: Grammar warnings (G01-G03) and WFST warnings (W01, W02) are now handled
+    // by the unified lint layer inside generate_parser_code(). The early
+    // detect_grammar_warnings() call has been migrated to lint::run_lints().
 
     // EBNF debug dump (opt-in via environment variable)
     if let Ok(dump_target) = std::env::var("PRATTAIL_DUMP_EBNF") {
@@ -399,6 +559,13 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         })
         .collect();
 
+    // Build all_syntax for lint layer (label, category, syntax triples)
+    let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = spec
+        .rules
+        .iter()
+        .map(|r| (r.label.clone(), r.category.clone(), r.syntax.clone()))
+        .collect();
+
     let parser_bundle = ParserBundle {
         categories,
         bp_table,
@@ -409,6 +576,8 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         cast_rules,
         has_binders,
         beam_width: spec.beam_width.clone(),
+        recovery_config: spec.recovery_config.clone(),
+        all_syntax,
     };
 
     (lexer_bundle, parser_bundle)
@@ -517,7 +686,7 @@ fn generate_parser_code(
     // ── WFST construction ─────────────────────────────────────────────────
     // Build prediction WFSTs and recovery WFSTs from FIRST/FOLLOW/overlap data.
     // These are consulted by weighted dispatch and recovery codegen below.
-    let (prediction_wfsts, recovery_wfsts, _token_id_map) = {
+    let (prediction_wfsts, recovery_wfsts, token_id_map) = {
         use crate::prediction::build_dispatch_action_tables;
         use crate::recovery::build_recovery_wfsts;
         use crate::token_id::TokenIdMap;
@@ -553,44 +722,7 @@ fn generate_parser_code(
             }
         }
 
-        // Dead-rule detection via boolean semiring projection.
-        // For each non-infix, non-var, non-literal rule, check if any token in
-        // its FIRST set has a prediction WFST action that routes to this rule.
-        // Rules with no reachable prediction are dead code.
-        for rule_info in &bundle.rule_infos {
-            // Skip rules handled outside prefix dispatch prediction:
-            // - infix: Pratt infix loop
-            // - var/literal: builtin prefix handlers
-            // - cross-category: dispatch wrappers
-            // - cast: Pratt prefix cast handlers
-            if rule_info.is_infix || rule_info.is_var || rule_info.is_literal
-                || rule_info.is_cross_category || rule_info.is_cast
-            {
-                continue;
-            }
-
-            let wfst = match prediction_wfsts.get(&rule_info.category) {
-                Some(w) => w,
-                None => continue,
-            };
-
-            // Check if any token leads to this rule via the prediction WFST
-            let reachable = first_sets
-                .get(&rule_info.category)
-                .map_or(false, |fs| {
-                    fs.tokens.iter().any(|tok| {
-                        wfst.predict(tok).iter().any(|a| a.action.rule_label() == rule_info.label)
-                    })
-                });
-
-            if !reachable {
-                eprintln!(
-                    "warning: rule {} in category {} is unreachable (dead code) — \
-                     no token in FIRST({}) dispatches to it via prediction WFST",
-                    rule_info.label, rule_info.category, rule_info.category,
-                );
-            }
-        }
+        // NOTE: Dead-rule detection (W01) now handled by lint::run_lints() below.
 
         // Build token ID map from all FIRST set tokens (shared across recovery WFSTs)
         let mut all_tokens: Vec<String> = Vec::new();
@@ -645,6 +777,80 @@ fn generate_parser_code(
     let mut buf = String::with_capacity(8192);
     emit_prediction_wfst_static(&mut buf, &prediction_wfsts);
     emit_recovery_wfst_static(&mut buf, &recovery_wfsts);
+
+    // Emit recovery beam width constant from RecoveryConfig.
+    // Used by viterbi_multi_step() when multi-step recovery is wired (Sprint 8).
+    {
+        use std::fmt::Write;
+        let beam_str = match bundle.recovery_config.beam_width {
+            Some(w) => format!("Some({})", format_f64(w)),
+            None => "None".to_string(),
+        };
+        write!(
+            buf,
+            "const RECOVERY_BEAM_WIDTH: Option<f64> = {};",
+            beam_str
+        )
+        .unwrap();
+    }
+
+    // Emit ParseSimulator static data for Tier 3 recovery simulation.
+    emit_parse_simulator_static(
+        &mut buf,
+        &first_sets,
+        &follow_sets,
+        &bundle.bp_table,
+        &category_names,
+        &token_id_map,
+    );
+
+    // Compute the set of token variant names that actually exist in the grammar's
+    // Token enum. The TokenIdMap may contain superset tokens (e.g., Semi) that don't
+    // appear in all grammars — emitting match arms for non-existent variants causes errors.
+    let grammar_token_variants: std::collections::HashSet<String> = {
+        let mut variants = std::collections::HashSet::new();
+        // Always present
+        variants.insert("Eof".to_string());
+        variants.insert("Ident".to_string());
+        // Native-type-derived builtin tokens
+        for cat in &bundle.categories {
+            match cat.native_type.as_deref() {
+                Some("i32" | "i64" | "u32" | "u64" | "usize" | "isize") => {
+                    variants.insert("Integer".to_string());
+                }
+                Some("f32" | "f64") => {
+                    variants.insert("Float".to_string());
+                }
+                Some("bool") => {
+                    variants.insert("Boolean".to_string());
+                }
+                Some("String" | "&str") => {
+                    variants.insert("StringLit".to_string());
+                }
+                _ => {}
+            }
+        }
+        // Structural delimiters (always in Token enum)
+        for v in &["LParen", "RParen", "LBrace", "RBrace", "LBracket", "RBracket", "Comma"] {
+            variants.insert(v.to_string());
+        }
+        // All FIRST set tokens (these must be in the Token enum)
+        for fs in first_sets.values() {
+            for tok in fs.sorted_tokens() {
+                variants.insert(tok.to_string());
+            }
+        }
+        // All FOLLOW set tokens
+        for fs in follow_sets.values() {
+            for tok in fs.sorted_tokens() {
+                variants.insert(tok.to_string());
+            }
+        }
+        variants
+    };
+
+    // Emit token_to_id helper for Tier 3 simulation (Token → u16 TokenId).
+    emit_token_to_id_fn(&mut buf, &token_id_map, &grammar_token_variants);
 
     // Generate RD handlers
     let mut all_prefix_handlers: Vec<PrefixHandler> = Vec::with_capacity(bundle.rd_rules.len());
@@ -728,38 +934,30 @@ fn generate_parser_code(
         &category_names,
     );
 
-    // CountingWeight ambiguity warnings: for each NFA-ambiguous prefix group,
-    // warn when all alternatives have equal WFST weight (resolution deferred
-    // to semantic disambiguation via substitute_env/from_alternatives).
-    for cat_name in &nfa_spillover_categories {
-        let rd_by_token = crate::trampoline::group_rd_by_dispatch_token_pub(
-            &bundle.rd_rules,
-            cat_name,
-        );
-        if let Some(wfst) = prediction_wfsts.get(cat_name.as_str()) {
-            for (token, rules) in &rd_by_token {
-                if rules.len() <= 1 {
-                    continue;
-                }
-                let labels: Vec<&str> = rules.iter().map(|r| r.label.as_str()).collect();
-                let ordered = wfst.nfa_alternative_order(token, &labels);
-                let weights: Vec<f64> = ordered.iter().map(|(_, w)| w.0).collect();
-                let all_equal = weights.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-12);
-                eprintln!(
-                    "warning: ambiguous prefix dispatch for token {:?} in category {}: \
-                     rules {:?} all match",
-                    token, cat_name, labels,
-                );
-                if all_equal {
-                    eprintln!(
-                        "  \u{2192} all {} alternatives have equal weight ({:.1}); \
-                         resolution deferred to semantic disambiguation",
-                        rules.len(),
-                        weights.first().copied().unwrap_or(0.5),
-                    );
-                }
-            }
-        }
+    // ── Unified lint layer ─────────────────────────────────────────────────
+    // Construct LintContext with all pipeline data and run all 23 lints.
+    // Replaces the previous ad-hoc eprintln! blocks for dead rules (W01),
+    // NFA ambiguity (W02), and grammar warnings (G01-G03).
+    {
+        let lint_ctx = crate::lint::LintContext {
+            categories: &bundle.categories,
+            rules: &bundle.rule_infos,
+            rd_rules: &bundle.rd_rules,
+            first_sets: &first_sets,
+            follow_sets: &follow_sets,
+            bp_table: &bundle.bp_table,
+            prediction_wfsts: &prediction_wfsts,
+            recovery_wfsts: &recovery_wfsts,
+            cast_rules: &bundle.cast_rules,
+            cross_rules: &bundle.cross_rules,
+            nfa_spillover_categories: &nfa_spillover_categories,
+            recovery_config: &bundle.recovery_config,
+            all_syntax: &bundle.all_syntax,
+            follow_inputs: &bundle.follow_inputs,
+        };
+
+        let diagnostics = crate::lint::run_lints(&lint_ctx);
+        crate::lint::emit_diagnostics(&diagnostics);
     }
 
     // Write parser helpers
@@ -789,6 +987,32 @@ fn generate_parser_code(
         let own_first = first_sets.get(&cat.name).cloned().unwrap_or_default();
         let own_follow = follow_sets.get(&cat.name).cloned().unwrap_or_default();
 
+        // Compute missing cast suggestions: for each source category that has
+        // unique tokens (not in target's FIRST set) but NO cast rule to this
+        // target category, map each unique token → source category name.
+        let cast_suggestions: Vec<(String, String)> = {
+            let existing_sources: std::collections::HashSet<&str> = cat_cast_rules
+                .iter()
+                .map(|r| r.source_category.as_str())
+                .collect();
+            let mut suggestions = Vec::new();
+            for source_cat in &category_names {
+                if source_cat == &cat.name {
+                    continue; // skip self
+                }
+                if existing_sources.contains(source_cat.as_str()) {
+                    continue; // cast rule already exists
+                }
+                if let Some(source_first) = first_sets.get(source_cat) {
+                    let unique = source_first.difference(&own_first);
+                    for token in unique.sorted_tokens() {
+                        suggestions.push((token.to_string(), source_cat.clone()));
+                    }
+                }
+            }
+            suggestions
+        };
+
         let tramp_config = TrampolineConfig {
             category: cat.name.clone(),
             is_primary: cat.is_primary,
@@ -805,6 +1029,7 @@ fn generate_parser_code(
             has_binders: bundle.has_binders,
             prediction_wfst: prediction_wfsts.get(&cat.name).cloned(),
             needs_nfa_spillover: nfa_spillover_categories.contains(&cat.name),
+            cast_suggestions,
         };
 
         let cat_handlers: Vec<PrefixHandler> = all_prefix_handlers
@@ -934,13 +1159,65 @@ fn generate_parser_code(
             has_binders: bundle.has_binders,
             prediction_wfst: None, // Recovery wrappers don't need weighted dispatch
             needs_nfa_spillover: false, // Recovery path doesn't use NFA spillover
+            cast_suggestions: Vec::new(), // Recovery path doesn't emit prefix match arms
         };
+
+        // Emit cross-category cast recovery static: for each source category
+        // that has a cast rule to this category, list its FIRST set token IDs.
+        // Used by Strategy 6 in wfst_recover_Cat for cross-category recovery.
+        {
+            use std::fmt::Write;
+            let cat_cast_rules: Vec<_> = bundle
+                .cast_rules
+                .iter()
+                .filter(|r| r.target_category == cat.name)
+                .collect();
+
+            // Only emit for multi-category grammars with cast rules
+            if category_names.len() > 1 && !cat_cast_rules.is_empty() {
+                write!(
+                    buf,
+                    "static CROSS_CAT_CASTS_{cat}: &[(&str, &[u16])] = &[",
+                    cat = cat.name,
+                )
+                .unwrap();
+
+                let mut first_entry = true;
+                for cast_rule in &cat_cast_rules {
+                    if let Some(source_first) = first_sets.get(&cast_rule.source_category) {
+                        if !first_entry {
+                            buf.push(',');
+                        }
+                        first_entry = false;
+                        let ids: Vec<u16> = source_first
+                            .sorted_tokens()
+                            .iter()
+                            .filter_map(|t| token_id_map.get(t))
+                            .collect();
+                        write!(buf, "(\"{}\", &[", cast_rule.source_category).unwrap();
+                        for (i, id) in ids.iter().enumerate() {
+                            if i > 0 {
+                                buf.push(',');
+                            }
+                            write!(buf, "{}_u16", id).unwrap();
+                        }
+                        buf.push_str("])");
+                    }
+                }
+                buf.push_str("];");
+            }
+        }
 
         // Generate WFST-based recovery function.
         // Generates a weighted recovery helper that evaluates skip, delete,
         // and substitute strategies — replacing the linear sync_to() scan.
+        let has_cross_casts = category_names.len() > 1
+            && bundle
+                .cast_rules
+                .iter()
+                .any(|r| r.target_category == cat.name);
         if let Some(recovery_wfst) = recovery_wfsts.iter().find(|w| w.category() == cat.name) {
-            generate_wfst_recovery_fn(&mut buf, &cat.name, recovery_wfst);
+            generate_wfst_recovery_fn(&mut buf, &cat.name, recovery_wfst, has_cross_casts);
         }
 
         // Generate recovering trampolined parser (wraps fail-fast trampoline with error catch)
@@ -1398,6 +1675,136 @@ fn emit_recovery_wfst_static(buf: &mut String, recovery_wfsts: &[crate::recovery
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ParseSimulator static embedding (Tier 3 recovery simulation)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Emit ParseSimulator data as static arrays for runtime Tier 3 recovery simulation.
+///
+/// Generates per-category FIRST/FOLLOW/infix token ID arrays and a `LazyLock<ParseSimulator>`
+/// for context-aware repair rescoring. Only initialized on first access (error path only).
+///
+/// Generated code:
+/// ```text
+/// static SIM_FIRST_SETS: &[(&str, &[u16])] = &[("Int", &[3, 7]), ("Bool", &[5])];
+/// static SIM_FOLLOW_SETS: &[(&str, &[u16])] = &[("Int", &[1, 2]), ("Bool", &[1])];
+/// static SIM_INFIX_SETS: &[(&str, &[u16])] = &[("Int", &[4]), ("Bool", &[])];
+/// static PARSE_SIMULATOR: std::sync::LazyLock<ParseSimulator> = std::sync::LazyLock::new(|| {
+///     ParseSimulator::from_flat(SIM_FIRST_SETS, SIM_FOLLOW_SETS, SIM_INFIX_SETS, 5)
+/// });
+/// ```
+fn emit_parse_simulator_static(
+    buf: &mut String,
+    first_sets: &std::collections::HashMap<String, crate::prediction::FirstSet>,
+    follow_sets: &std::collections::HashMap<String, crate::prediction::FirstSet>,
+    bp_table: &crate::binding_power::BindingPowerTable,
+    category_names: &[String],
+    token_id_map: &crate::token_id::TokenIdMap,
+) {
+    use std::fmt::Write;
+
+    // Helper to emit a set-of-sets array: &[(&str, &[u16])]
+    let emit_set_array = |buf: &mut String, name: &str, sets: &std::collections::HashMap<String, crate::prediction::FirstSet>| {
+        write!(buf, "static {}: &[(&str, &[u16])] = &[", name).unwrap();
+        let mut first = true;
+        for cat in category_names {
+            if let Some(fs) = sets.get(cat) {
+                if !first { buf.push(','); }
+                first = false;
+                let ids: Vec<u16> = fs.sorted_tokens()
+                    .iter()
+                    .filter_map(|t| token_id_map.get(*t))
+                    .collect();
+                write!(buf, "(\"{}\", &[", cat).unwrap();
+                for (i, id) in ids.iter().enumerate() {
+                    if i > 0 { buf.push(','); }
+                    write!(buf, "{}_u16", id).unwrap();
+                }
+                buf.push_str("])");
+            }
+        }
+        buf.push_str("];");
+    };
+
+    emit_set_array(buf, "SIM_FIRST_SETS", first_sets);
+    emit_set_array(buf, "SIM_FOLLOW_SETS", follow_sets);
+
+    // Build infix set from binding power table
+    write!(buf, "static SIM_INFIX_SETS: &[(&str, &[u16])] = &[").unwrap();
+    let mut first = true;
+    for cat in category_names {
+        let ops = bp_table.operators_for_category(cat);
+        if !first { buf.push(','); }
+        first = false;
+        write!(buf, "(\"{}\", &[", cat).unwrap();
+        let mut ids: Vec<u16> = ops
+            .iter()
+            .filter_map(|op| {
+                let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+                token_id_map.get(&variant)
+            })
+            .collect();
+        ids.sort();
+        ids.dedup();
+        for (i, id) in ids.iter().enumerate() {
+            if i > 0 { buf.push(','); }
+            write!(buf, "{}_u16", id).unwrap();
+        }
+        buf.push_str("])");
+    }
+    buf.push_str("];");
+
+    // Emit LazyLock<ParseSimulator>
+    buf.push_str(
+        "static PARSE_SIMULATOR: std::sync::LazyLock<mettail_prattail::recovery::ParseSimulator> = \
+         std::sync::LazyLock::new(|| { \
+             mettail_prattail::recovery::ParseSimulator::from_flat(\
+                 SIM_FIRST_SETS, SIM_FOLLOW_SETS, SIM_INFIX_SETS, 5\
+             ) \
+         });"
+    );
+}
+
+/// Emit a `token_to_id(t: &Token) -> u16` function mapping each Token variant to its TokenId.
+///
+/// Used by Tier 3 recovery simulation: converts `&[(Token, Range)]` slices to `&[u16]`
+/// for `ParseSimulator::simulate_after_repair()`. Only called on error paths.
+///
+/// Only emits match arms for token variants that actually exist in the grammar's Token enum
+/// (filtered by `valid_variants`), avoiding compile errors for non-existent variants.
+fn emit_token_to_id_fn(
+    buf: &mut String,
+    token_id_map: &crate::token_id::TokenIdMap,
+    valid_variants: &std::collections::HashSet<String>,
+) {
+    use std::fmt::Write;
+
+    buf.push_str("fn token_to_id(t: &Token) -> u16 { match t {");
+
+    for (name, id) in token_id_map.iter() {
+        // Only emit match arms for variants that exist in the grammar's Token enum
+        if !valid_variants.contains(name) {
+            continue;
+        }
+
+        // Tokens with payloads need wildcard patterns
+        let pattern = match name {
+            "Ident" => "Token::Ident(_)".to_string(),
+            "Integer" => "Token::Integer(_)".to_string(),
+            "Float" => "Token::Float(_)".to_string(),
+            "Boolean" => "Token::Boolean(_)".to_string(),
+            "StringLit" => "Token::StringLit(_)".to_string(),
+            "Eof" => "Token::Eof".to_string(),
+            other => format!("Token::{}", other),
+        };
+        write!(buf, "{} => {}_u16,", pattern, id).unwrap();
+    }
+
+    // Catch-all for any unmapped variants → use u16::MAX as sentinel
+    buf.push_str("_ => u16::MAX,");
+    buf.push_str("}}");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // WFST recovery codegen (always-on)
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1425,6 +1832,7 @@ fn generate_wfst_recovery_fn(
     buf: &mut String,
     category: &str,
     recovery_wfst: &crate::recovery::RecoveryWfst,
+    has_cross_casts: bool,
 ) {
     use std::fmt::Write;
 
@@ -1465,13 +1873,14 @@ fn generate_wfst_recovery_fn(
     let max_skip: usize = 32; // Same as recovery::costs::MAX_SKIP_LOOKAHEAD
 
     // Generate the full 4-strategy context-aware recovery function
+    let cat_upper = category.to_uppercase();
     write!(
         buf,
         "/// WFST-based 4-strategy context-aware recovery for category `{cat}`.
          ///
          /// Evaluates skip-to-sync, delete, insert, and substitute strategies with
-         /// context-aware cost adjustments from nesting depth, binding power, and
-         /// bracket balance.
+         /// context-aware cost adjustments from nesting depth, binding power,
+         /// frame kind, and bracket balance.
          fn wfst_recover_{cat}<'a>(\
             tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
@@ -1480,18 +1889,24 @@ fn generate_wfst_recovery_fn(
             open_parens: u16, \
             open_braces: u16, \
             open_brackets: u16, \
-         ) -> bool {{ \
+         ) -> Option<String> {{ \
             let start = *pos; \
             let remaining = tokens.len() - start; \
             let max_look = if remaining < {max_skip} {{ remaining }} else {{ {max_skip} }}; \
             let mut best_pos: Option<usize> = None; \
             let mut best_cost: f64 = f64::INFINITY; \
+            let mut best_desc: String = String::new(); \
+            /* Read frame state from thread-local (depth, frame_kind) */ \
+            let (frame_depth, frame_kind) = FRAME_STATE_{cat_upper}.with(|c| c.get()); \
+            let effective_depth = if frame_depth > 0 {{ frame_depth as usize }} else {{ depth }}; \
             /* Tier 1: depth-based skip multiplier */ \
-            let skip_mult: f64 = if depth > 1000 {{ 0.5 }} \
-                else if depth < 10 {{ 2.0 }} else {{ 1.0 }}; \
+            let skip_mult: f64 = if effective_depth > 1000 {{ 0.5 }} \
+                else if effective_depth < 10 {{ 2.0 }} else {{ 1.0 }}; \
             /* Tier 1: BP-based skip multiplier */ \
             let bp_mult: f64 = if binding_power < 4 {{ 0.75 }} else {{ 1.0 }}; \
-            let combined_skip_mult = skip_mult * bp_mult; \
+            /* Tier 1: frame-kind skip multiplier (InfixRHS = 1) */ \
+            let frame_skip_mult: f64 = if frame_kind == 1 {{ 0.75 }} else {{ 1.0 }}; \
+            let combined_skip_mult = skip_mult * bp_mult * frame_skip_mult; \
             /* Strategy 1: Skip to nearest sync token (0.5/token * context mult) */ \
             for skip in 0..max_look {{ \
                 let idx = start + skip; \
@@ -1500,6 +1915,7 @@ fn generate_wfst_recovery_fn(
                     if cost < best_cost {{ \
                         best_cost = cost; \
                         best_pos = Some(idx); \
+                        best_desc = format!(\"skip {{}} token(s) to '{{:?}}'\", skip, &tokens[idx].0); \
                     }} \
                     break; \
                 }} \
@@ -1510,11 +1926,14 @@ fn generate_wfst_recovery_fn(
                 if cost < best_cost {{ \
                     best_cost = cost; \
                     best_pos = Some(start + 1); \
+                    best_desc = \"delete unexpected token\".to_string(); \
                 }} \
             }} \
             /* Strategy 3: Insert missing closing delimiter (bracket-aware) */ \
             {{ \
-                let base_insert = 2.0_f64;",
+                /* frame_kind: 3=Collection (0.5x), 4=Group (0.5x) */ \
+                let frame_insert_mult: f64 = if frame_kind == 3 || frame_kind == 4 {{ 0.5 }} else {{ 1.0 }}; \
+                let base_insert = 2.0_f64 * frame_insert_mult;",
         cat = category,
         max_skip = max_skip,
         sync_pats = sync_patterns.join(" | "),
@@ -1530,6 +1949,7 @@ fn generate_wfst_recovery_fn(
                 if cost < best_cost {{ \
                     best_cost = cost; \
                     best_pos = Some(start); /* phantom insert — don't advance */ \
+                    best_desc = \"insert missing ')'\".to_string(); \
                 }} \
             }}"
         )
@@ -1543,6 +1963,7 @@ fn generate_wfst_recovery_fn(
                 if cost < best_cost {{ \
                     best_cost = cost; \
                     best_pos = Some(start); \
+                    best_desc = \"insert missing '}}'\".to_string(); \
                 }} \
             }}"
         )
@@ -1556,6 +1977,7 @@ fn generate_wfst_recovery_fn(
                 if cost < best_cost {{ \
                     best_cost = cost; \
                     best_pos = Some(start); \
+                    best_desc = \"insert missing ']'\".to_string(); \
                 }} \
             }}"
         )
@@ -1567,21 +1989,74 @@ fn generate_wfst_recovery_fn(
         "   }} \
             /* Strategy 4: Substitute current token with sync token (cost 1.5 * sub_mult) */ \
             if remaining > 0 {{ \
-                let sub_mult = 1.0_f64; /* mixfix/other adjustments could go here */ \
+                /* frame_kind: 5=Mixfix (0.75x) */ \
+                let sub_mult: f64 = if frame_kind == 5 {{ 0.75 }} else {{ 1.0 }}; \
                 let cost = 1.5 * sub_mult; \
                 if cost < best_cost {{ \
                     best_cost = cost; \
                     best_pos = Some(start + 1); \
+                    best_desc = \"substitute unexpected token\".to_string(); \
                 }} \
             }} \
-            /* Apply best strategy */ \
-            match best_pos {{ \
-                Some(new_pos) => {{ *pos = new_pos; true }} \
-                None => false \
+            /* Tier 3: ParseSimulator rescoring — simulate continuation after best repair */ \
+            if let Some(new_pos) = best_pos {{ \
+                let sim_ids: Vec<u16> = tokens[new_pos..].iter().map(|(t, _)| token_to_id(t)).collect(); \
+                let sim_result = PARSE_SIMULATOR.simulate_after_repair(&sim_ids, 0, \"{cat}\"); \
+                let sim_mult = PARSE_SIMULATOR.cost_multiplier(&sim_result); \
+                best_cost *= sim_mult; \
             }} \
-         }}",
+            /* Multi-step Viterbi: evaluate composite repair sequences */ \
+            {{ \
+                let all_ids: Vec<u16> = tokens[start..].iter().map(|(t, _)| token_to_id(t)).collect(); \
+                let sync_set: std::collections::BTreeSet<u16> = \
+                    RECOVERY_SYNC_TOKENS_{cat}.iter().copied().collect(); \
+                if let Some(seq) = mettail_prattail::recovery::viterbi_multi_step(\
+                    &all_ids, 0, &sync_set, &mettail_prattail::recovery::RecoveryConfig::default()\
+                ) {{ \
+                    let multi_cost = seq.total_cost.value(); \
+                    if multi_cost < best_cost {{ \
+                        best_cost = multi_cost; \
+                        best_pos = Some(start + seq.new_pos); \
+                        best_desc = format!(\"{{}} action(s): {{}}\", \
+                            seq.actions.len(), \
+                            seq.actions.iter().map(|a| format!(\"{{:?}}\", a)).collect::<Vec<_>>().join(\", \") \
+                        ); \
+                    }} \
+                }} \
+            }}",
+        cat = category,
     )
     .unwrap();
+
+    // Strategy 6: Cross-category recovery (only for grammars with cast rules to this category)
+    if has_cross_casts {
+        buf.push_str("/* Strategy 6: Cross-category recovery via cast rules */");
+        buf.push_str("if remaining > 0 {");
+        buf.push_str("let err_tok_id = token_to_id(&tokens[start].0);");
+        buf.push_str(&format!(
+            "for &(source_cat, source_first_ids) in CROSS_CAT_CASTS_{}.iter() {{",
+            category,
+        ));
+        buf.push_str("if source_first_ids.contains(&err_tok_id) {");
+        buf.push_str("let cast_cost = 1.5_f64 * 0.5_f64;");
+        buf.push_str("if cast_cost < best_cost {");
+        buf.push_str("best_cost = cast_cost;");
+        buf.push_str("best_pos = Some(start);");
+        buf.push_str(&format!(
+            r#"best_desc = format!("try parsing as {{}} (cast to {})", source_cat);"#,
+            category,
+        ));
+        buf.push_str("} break; } } }");
+    }
+
+    buf.push_str(
+        "/* Apply best strategy */ \
+            match best_pos { \
+                Some(new_pos) => { *pos = new_pos; Some(best_desc) } \
+                None => None \
+            } \
+         }",
+    );
 }
 
 /// Generate recovering parser variant that uses WFST recovery instead of sync_to.
@@ -1611,37 +2086,69 @@ fn write_trampolined_parser_recovering_wfst(
         format!("parse_{}", cat)
     };
 
-    // Generate the recovering parser with bracket balance tracking.
-    // The bracket counters are local to each recovering parse call.
-    // For a truly integrated solution (Sprint 4+), these would be threaded
-    // through the trampoline state. For now, we scan backwards from the
-    // error position to estimate the current bracket balance.
+    // Cascade prevention window (from RecoveryConfig default).
+    let cascade_window = crate::recovery::RecoveryConfig::default().cascade_window;
+
+    // Emit thread-local bracket state for incremental tracking.
+    // State: (last_scanned_pos, paren_count, brace_count, bracket_count).
+    // On each error, only scan tokens from last_scanned_pos to current pos,
+    // giving O(total_tokens) across all errors instead of O(pos * num_errors).
     write!(
         buf,
-        "fn {parse_fn}<'a>(\
+        "thread_local! {{ \
+            static BRACKET_STATE_{cat}: std::cell::Cell<(usize, u16, u16, u16)> = \
+                std::cell::Cell::new((0, 0, 0, 0)); \
+            static LAST_ERROR_POS_{cat}: std::cell::Cell<usize> = \
+                std::cell::Cell::new(usize::MAX); \
+        }} \
+        fn {parse_fn}<'a>(\
             tokens: &[(Token<'a>, Range)], \
             pos: &mut usize, \
             min_bp: u8, \
             errors: &mut Vec<ParseError>, \
         ) -> Option<{cat}> {{ \
+            if min_bp == 0 {{ \
+                BRACKET_STATE_{cat}.with(|c| c.set((0, 0, 0, 0))); \
+                LAST_ERROR_POS_{cat}.with(|c| c.set(usize::MAX)); \
+            }} \
             match {own_parse_fn}(tokens, pos, min_bp) {{ \
                 Ok(v) => Some(v), \
                 Err(e) => {{ \
-                    errors.push(e); \
-                    /* Estimate bracket balance by scanning tokens consumed so far */ \
-                    let mut op: u16 = 0; let mut ob: u16 = 0; let mut ok: u16 = 0; \
-                    for i in 0..*pos {{ \
-                        match &tokens[i].0 {{ \
-                            Token::LParen => op = op.saturating_add(1), \
-                            Token::RParen => op = op.saturating_sub(1), \
-                            Token::LBrace => ob = ob.saturating_add(1), \
-                            Token::RBrace => ob = ob.saturating_sub(1), \
-                            Token::LBracket => ok = ok.saturating_add(1), \
-                            Token::RBracket => ok = ok.saturating_sub(1), \
-                            _ => {{}} \
-                        }} \
+                    /* Cascade prevention: if this error is within {cascade_window} tokens \
+                       of the last error, suppress it and just advance by 1 */ \
+                    let last_err = LAST_ERROR_POS_{cat}.with(|c| c.get()); \
+                    if last_err != usize::MAX && *pos <= last_err + {cascade_window} {{ \
+                        if *pos < tokens.len() {{ *pos += 1; }} \
+                        return None; \
                     }} \
-                    wfst_recover_{cat}(tokens, pos, 0, min_bp, op, ob, ok); \
+                    LAST_ERROR_POS_{cat}.with(|c| c.set(*pos)); \
+                    /* Incremental bracket balance: scan only new tokens since last error */ \
+                    let (op, ob, ok) = BRACKET_STATE_{cat}.with(|c| {{ \
+                        let (last, mut op, mut ob, mut ok) = c.get(); \
+                        let scan_to = if *pos < tokens.len() {{ *pos }} else {{ tokens.len() }}; \
+                        for i in last..scan_to {{ \
+                            match &tokens[i].0 {{ \
+                                Token::LParen => op = op.saturating_add(1), \
+                                Token::RParen => op = op.saturating_sub(1), \
+                                Token::LBrace => ob = ob.saturating_add(1), \
+                                Token::RBrace => ob = ob.saturating_sub(1), \
+                                Token::LBracket => ok = ok.saturating_add(1), \
+                                Token::RBracket => ok = ok.saturating_sub(1), \
+                                _ => {{}} \
+                            }} \
+                        }} \
+                        c.set((scan_to, op, ob, ok)); \
+                        (op, ob, ok) \
+                    }}); \
+                    let repair_range = e.range(); \
+                    match wfst_recover_{cat}(tokens, pos, 0, min_bp, op, ob, ok) {{ \
+                        Some(desc) => errors.push(ParseError::RecoveryApplied {{ \
+                            original_error: Box::new(e), \
+                            repair_description: desc, \
+                            range: repair_range, \
+                        }}), \
+                        None => errors.push(e), \
+                    }} \
                     None \
                 }} \
             }} \

@@ -650,6 +650,7 @@ mod tests {
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
         }
     }
 

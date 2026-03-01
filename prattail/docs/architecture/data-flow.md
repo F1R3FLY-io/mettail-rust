@@ -126,6 +126,14 @@ LanguageSpec
     │       ├───▶ detect_grammar_warnings(rule_infos, categories, all_syntax)
     │       │       → Vec<GrammarWarning> (emitted at compile time)
     │       │
+    │       ├───▶ detect NFA spillover categories
+    │       │       categories_needing_nfa_spillover(dispatch_tables, rule_infos)
+    │       │       → Vec<(category, token, Vec<(rule_label, f64)>)>
+    │       │       Identifies dispatch tokens with 2+ rules after lookahead
+    │       │       Orders alternatives by WFST TropicalWeight via nfa_alternative_order()
+    │       │       Beam pruning: filter alternatives where weight > best + beam_width
+    │       │       Sets TrampolineConfig.needs_nfa_spillover per category
+    │       │
     │       ├───▶ write_parser_helpers(buf)
     │       │       expect_token, expect_ident, peek_token, peek_ahead
     │       │
@@ -537,12 +545,19 @@ FIRST sets + FOLLOW sets + DispatchTables + Overlaps
     │         PREDICTION_<CAT>_STATES, PREDICTION_<CAT>_ARCS, etc.
     │       Runtime access via LazyLock<PredictionWfst>
     │
-    └───▶ [write_category_dispatch_weighted()]
-            Emit weight-ordered dispatch match arms in generated parser code
-            Composed dispatch resolutions override arm ordering for ambiguous tokens
-            Zero runtime cost — codegen-only arm reordering
+    ├───▶ [write_category_dispatch_weighted()]
+    │       Emit weight-ordered dispatch match arms in generated parser code
+    │       Composed dispatch resolutions override arm ordering for ambiguous tokens
+    │       Zero runtime cost — codegen-only arm reordering
+    │
+    └───▶ [nfa_alternative_order()]
+            For categories with NFA spillover (intra-category ambiguity):
+              Query PredictionWfst for tropical weights of ambiguous rules
+              Sort by weight (lowest = most likely = tried first)
+              Default 0.5 for rules without explicit WFST weight
+            Feeds into NFA merged prefix arm generation (Phase 3, step 5g)
 
-    ───▶  Static CSR arrays + weight-ordered dispatch arms
+    ───▶  Static CSR arrays + weight-ordered dispatch arms + NFA alternative ordering
           (embedded in generated TokenStream)
 ```
 
@@ -704,6 +719,7 @@ Phase 3 output ────▶ ┊ // Parser helpers          │
 | Pratt parser generation          | O(Categories × R)                                   | O(Categories)            |
 | Recovery generation              | O(Categories × \|FOLLOW\|)                          | O(Categories)            |
 | Cross-category dispatch          | O(Categories^2 × Tokens)                            | O(Categories^2)          |
+| NFA spillover detection          | O(Categories × Tokens × R_per_token)                | O(Categories × R_ambig)  |
 | Final parse (str → TokenStream)  | O(\|generated code\|)                               | O(\|generated code\|)    |
 
 Where D = DFA states, C = equivalence classes, N = NFA states.

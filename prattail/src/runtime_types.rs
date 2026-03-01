@@ -11,6 +11,7 @@
 //! provides grammar-specific closures for `dfa_next`, `is_accepting`, and
 //! `accept_token`; the compiler monomorphizes away the closure overhead.
 
+use std::borrow::Cow;
 use std::fmt;
 
 /// A position in source code. All fields are 0-indexed.
@@ -62,15 +63,19 @@ impl fmt::Display for Range {
 }
 
 /// Structured parse error with source location.
+///
+/// The `expected` field uses `Cow<'static, str>` so that the common case
+/// (static string from generated code) is zero-alloc, while cast-rule
+/// diagnostics can append dynamic hints at no cost on the happy path.
 #[derive(Debug, Clone)]
 pub enum ParseError {
     UnexpectedToken {
-        expected: &'static str,
+        expected: Cow<'static, str>,
         found: String,
         range: Range,
     },
     UnexpectedEof {
-        expected: &'static str,
+        expected: Cow<'static, str>,
         range: Range,
     },
     LexError {
@@ -79,6 +84,15 @@ pub enum ParseError {
     },
     TrailingTokens {
         found: String,
+        range: Range,
+    },
+    /// A recovery action was applied to continue parsing past an error.
+    ///
+    /// Wraps the original error with a human-readable description of the
+    /// repair that was applied (e.g., "skip 2 token(s) to ';'").
+    RecoveryApplied {
+        original_error: Box<ParseError>,
+        repair_description: String,
         range: Range,
     },
 }
@@ -115,6 +129,11 @@ impl fmt::Display for ParseError {
                 range.start.column + 1,
                 found
             ),
+            ParseError::RecoveryApplied {
+                original_error,
+                repair_description,
+                ..
+            } => write!(f, "{} (recovered: {})", original_error, repair_description),
         }
     }
 }
@@ -131,6 +150,7 @@ impl ParseError {
                 file_id: None,
             },
             ParseError::TrailingTokens { range, .. } => *range,
+            ParseError::RecoveryApplied { range, .. } => *range,
         }
     }
 }

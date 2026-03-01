@@ -83,7 +83,8 @@ output is written to the output buffer. The overall sequence is:
   │       ├─ c. apply beam width config          (pipeline.rs)          │
   │       ├─ d. TokenIdMap::from_names()         (token_id.rs)          │
   │       ├─ e. build_recovery_wfsts()           (recovery.rs)          │
-  │       └─ f. dead-rule detection              (BooleanWeight)        │
+  │       ├─ f. dead-rule detection              (BooleanWeight)        │
+  │       └─ g. NFA spillover detection          (trampoline.rs)       │
   │                                                                      │
   ├─ 6. resolve_dispatch_winners() ← composed dispatch resolution       │
   │                                                                      │
@@ -218,50 +219,107 @@ token in the grammar:
 Viterbi over the recovery WFST finds the minimum-cost repair sequence for
 a given error position.
 
-### Step 5f — dead-rule detection
+### Step 5f — dead-rule detection (three-tier)
 
 ```
   Inputs:
-    prediction_wfsts     BTreeMap<String, PredictionWfst>
+    rule_infos           &[RuleInfo]        — all grammar rules
+    categories           &[CategoryInfo]    — category metadata
+    first_sets           HashMap<String,    — FIRST set per category
+                           FirstSet>
+    prediction_wfsts     HashMap<String,    — per-category PredictionWfst
+                           PredictionWfst>
 
-  Process:
-    For each category's PredictionWfst, compute BooleanWeight
-    reachability from the start state. Any rule whose corresponding
-    WFST arc has Boolean forward weight 0 (false) is unreachable.
+  Process (detect_dead_rules() in pipeline.rs:106–207):
+    Tier 1: Literal rules — dead if category has no native_type
+    Tier 2: Same-cat infix/var — dead if category unreachable
+            (fixed-point over cross-cat/cast edges)
+    Tier 3: Prefix/cast/cross-cat — dead if no FIRST token
+            dispatches to rule via prediction WFST
 
   Outputs:
-    Diagnostic warnings for dead rules (rules that can never fire).
+    Vec<DeadRuleWarning>   — one per dead rule, three variants:
+      LiteralNoNativeType  (tier 1)
+      UnreachableCategory  (tier 2)
+      WfstUnreachable      (tier 3)
 ```
 
-Dead-rule detection uses the BooleanWeight semiring's reachability analysis
-to identify rules that have no token path leading to them. Known dead rules
-in the current grammar include: FloatToStr, FloatToBool, StrToBool, IntId,
-FloatId, BoolId, StrId, POutput.
+Detection runs through the unified lint layer: `lint_w01_dead_rule()` in
+`lint.rs:786–832` wraps `detect_dead_rules()` into `LintDiagnostic`
+entries with variant-specific hints. Known dead rules in the calculator
+grammar: FloatToStr, FloatToBool, StrToBool, IntId, FloatId, BoolId,
+StrId, POutput (8 total). RhoCalc has 36 dead rules.
+
+### Step 5g — NFA spillover detection
+
+```
+  Inputs:
+    rd_rules             &[RDRuleInfo]       — recursive-descent rules
+    category_names       &[String]           — all grammar categories
+    prediction_wfsts     &BTreeMap<String,   — per-category PredictionWfst
+                           PredictionWfst>
+
+  Process:
+    categories_needing_nfa_spillover(rd_rules, category_names) identifies
+    categories where multiple RD rules share the same dispatch token.
+    For each such category, group_rd_by_dispatch_token_pub() enumerates
+    the ambiguous token groups. If a PredictionWfst is available,
+    nfa_alternative_order() sorts the alternatives by tropical weight
+    and emits CountingWeight-based ambiguity diagnostics.
+
+  Outputs:
+    nfa_spillover_categories   HashSet<String>  — categories needing NFA
+                                                  merged arms and spillover
+                                                  thread-locals
+
+  Effects:
+    TrampolineConfig.needs_nfa_spillover set for each ambiguous category.
+    CountingWeight warnings emitted for equal-weight groups.
+    Sets up codegen for NFA merged prefix arms, thread-local declarations,
+    and forced-prefix checks in the trampolined parser.
+```
+
+NFA spillover detection identifies intra-category rule ambiguity — where
+Layer 2's dispatch tables map a single token to multiple rules within one
+category. This feeds into the trampoline codegen, which emits NFA merged
+prefix arms that try all alternatives via save/restore. See
+[../../design/disambiguation/08-nfa-wfst-disambiguation.md](../../design/disambiguation/08-nfa-wfst-disambiguation.md)
+for the full Layer 2.5 architecture.
 
 ---
 
 ## 4. Dead-Rule Detection
 
-After WFST construction, the pipeline performs a BooleanWeight reachability
-check to identify dead rules. This analysis is integrated into the pipeline
-as follows:
+After WFST construction, the pipeline performs a three-tier analysis to
+identify dead rules.  Detection runs via `detect_dead_rules()` in
+`pipeline.rs:106–207` and is surfaced through the unified lint layer
+(`lint.rs`, lint ID W01).
 
 ```
-  BooleanWeight Dead-Rule Detection
+  Three-Tier Dead-Rule Detection (pipeline.rs:106–207)
   ┌───────────────────────────────────────────────────────────────┐
   │                                                               │
-  │  For each category C:                                         │
-  │    1. Take prediction_wfsts[C]                                │
-  │    2. For each action A registered in the WFST:               │
-  │       a. Check if any transition from state 0 leads to A      │
-  │       b. If no token maps to A → A is dead                    │
-  │    3. Emit diagnostic: "rule X in category C is unreachable"  │
+  │  For each rule R:                                             │
   │                                                               │
-  │  This uses BooleanWeight semantics:                           │
-  │    - Each arc has weight 1 (reachable) or 0 (unreachable)     │
-  │    - Forward pass: α[v] = ⊕ { α[u] ⊗ w(u,v) }               │
-  │    - Under Boolean: ⊕ = OR, ⊗ = AND                          │
-  │    - A rule is live iff its action state has α > 0            │
+  │  Tier 1 — Literal rules                                       │
+  │    if R.is_literal:                                           │
+  │      dead if category has no native_type                      │
+  │      (no match arm generated → definitionally unreachable)    │
+  │                                                               │
+  │  Tier 2 — Same-category infix/var rules                       │
+  │    if (R.is_infix && !R.is_cross_category) || R.is_var:      │
+  │      dead if category ∉ reachable_categories                  │
+  │      (reachable = μX. {C|FIRST(C)≠∅} ∪                       │
+  │                        {C|∃cast/cross-cat r: src∈X,tgt=C})   │
+  │                                                               │
+  │  Tier 3 — Prefix/cast/cross-category rules                    │
+  │    dead if no token in FIRST(R.category) dispatches to R      │
+  │    via the prediction WFST (implicit BooleanWeight query)     │
+  │                                                               │
+  │  Data flow:                                                   │
+  │    detect_dead_rules() → Vec<DeadRuleWarning>                 │
+  │      → lint_w01_dead_rule() → Vec<LintDiagnostic>             │
+  │        → emit_diagnostics() → stderr                          │
   │                                                               │
   │  Dead rules are reported but not removed from the grammar     │
   │  (they may be intentionally present for documentation or      │
@@ -270,6 +328,10 @@ as follows:
   │                                                               │
   └───────────────────────────────────────────────────────────────┘
 ```
+
+See [../../design/wfst/dead-rule-detection.md](../../design/wfst/dead-rule-detection.md)
+for the full design document including correctness properties, complexity
+analysis, and practical results.
 
 ---
 
@@ -311,8 +373,11 @@ the pipeline together with the WFST-specific fields added by each step.
          ▼ build_recovery_wfsts()
   recovery_wfsts               ← Vec<RecoveryWfst>
          │
-         ▼ dead-rule detection (BooleanWeight)
-  diagnostics                  ← warnings for unreachable rules
+         ▼ dead-rule detection (three-tier: literal / category-reachability / WFST)
+  DeadRuleWarning[]            ← per-rule dead-rule classification
+         │
+         ▼ lint::run_lints() (23 lints including W01 dead-rule)
+  LintDiagnostic[]             ← structured warnings for unreachable rules
          │
          ▼ resolve_dispatch_winners()
   composed_resolutions         ← BTreeMap<(cat, token), (rule, weight)>
@@ -501,6 +566,45 @@ repair actions (advancing `pos` and skipping tokens as instructed), and
 retries parsing. The non-recovering path is zero-overhead: when parsing
 succeeds the recovery function is never called.
 
+### 7.5 NFA Thread-Locals and Merged Arms
+
+For categories with NFA-ambiguous prefix groups (e.g., Float in Calculator),
+the trampoline codegen emits three additional pieces:
+
+**Thread-local declarations** (per category, emitted for all categories):
+
+```rust
+thread_local! {
+    static NFA_PREFIX_SPILL_FLOAT: Cell<Vec<(Float, usize, f64)>> = Cell::new(Vec::new());
+    static NFA_FORCED_PREFIX_FLOAT: Cell<Option<(Float, usize, f64)>> = Cell::new(None);
+    static NFA_PRIMARY_WEIGHT_FLOAT: Cell<f64> = Cell::new(0.5);
+}
+```
+
+**Forced-prefix check** (at top of each category's prefix block):
+
+```rust
+{ let forced = NFA_FORCED_PREFIX_FLOAT.with(|cell| cell.take());
+  if let Some((forced_val, forced_pos, _)) = forced {
+      *pos = forced_pos;
+      break 'prefix forced_val;
+  } }
+```
+
+**NFA merged prefix arm** (for ambiguous token groups only):
+
+```rust
+Token::KwFloat => {
+    let nfa_saved = *pos;
+    // Try each alternative with save/restore, collect results
+    // Best → break 'prefix; N-1 → NFA_PREFIX_SPILL
+}
+```
+
+These are generated by `write_nfa_merged_prefix_arm()` in `trampoline.rs`.
+The full architecture is documented in
+[../../design/disambiguation/08-nfa-wfst-disambiguation.md](../../design/disambiguation/08-nfa-wfst-disambiguation.md).
+
 ---
 
 ## 8. Debugging the Pipeline
@@ -567,7 +671,19 @@ source location.
 | `ParseSimulator::from_flat()` | `recovery.rs` |
 | `TrainedModel::from_embedded()` | `training.rs` (wfst-log) |
 | `RepairAction::edit_cost()` | `recovery.rs` |
-| BooleanWeight dead-rule detection | `pipeline.rs` |
+| `detect_dead_rules()` (three-tier) | `pipeline.rs` |
+| `DeadRuleWarning` enum | `pipeline.rs` |
+| `lint_w01_dead_rule()` | `lint.rs` |
+| `run_lints()` (23 lints) | `lint.rs` |
+| NFA spillover detection | `pipeline.rs` + `trampoline.rs` |
+| `categories_needing_nfa_spillover()` | `trampoline.rs` |
+| `group_rd_by_dispatch_token()` | `trampoline.rs` |
+| `write_nfa_merged_prefix_arm()` | `trampoline.rs` |
+| `write_nfa_inline_constructor()` | `trampoline.rs` |
+| `nfa_alternative_order()` | `wfst.rs` |
+| NFA thread-local declarations | `trampoline.rs` (codegen) |
+| Forced-prefix check | `trampoline.rs` (codegen) |
+| `AMBIGUOUS_WEIGHTS` thread-local | `language.rs` (macros) |
 | `PRATTAIL_DUMP_EBNF` handler | `pipeline.rs` |
 | `PRATTAIL_DUMP_PARSER` handler | `pipeline.rs` |
 

@@ -9,19 +9,24 @@ receive a compile-time warning.
 
 ## 1. Role in Pipeline
 
-BooleanWeight underpins dead-rule detection in `pipeline.rs:552-589`. For each
-grammar rule, the pipeline checks whether any token in the category's FIRST set
-has a prediction WFST transition that routes to that rule. If no token reaches
-the rule, it is dead code.
+BooleanWeight underpins dead-rule detection via a three-tier analysis in
+`detect_dead_rules()` (`pipeline.rs:106–207`).  Each grammar rule is
+classified by exactly one tier: literal rules (tier 1), same-category
+infix/var rules (tier 2), and prefix/cast/cross-category rules (tier 3).
+Tier 3 performs the implicit BooleanWeight projection — checking whether
+any token in the category's FIRST set dispatches to the rule through the
+prediction WFST.
 
 | Stage | File | Lines | Description |
 |-------|------|-------|-------------|
-| Dead-rule scan | `pipeline.rs` | 552-589 | Iterate rules, query WFST, emit warnings |
-| Type definition | `semiring.rs` | 283-363 | BooleanWeight struct, Semiring impl |
+| Three-tier dead-rule analysis | `pipeline.rs` | 106–207 | `detect_dead_rules()` returns `Vec<DeadRuleWarning>` |
+| W01 lint wrapper | `lint.rs` | 786–832 | `lint_w01_dead_rule()` maps warnings to `LintDiagnostic` |
+| Type definition | `semiring.rs` | 283–363 | BooleanWeight struct, Semiring impl |
 
 Dead-rule detection runs unconditionally during the Generate phase (no feature
-gate). It executes after prediction WFST construction and before dispatch
-codegen, ensuring warnings appear before code emission.
+gate).  It executes after prediction WFST construction, surfaced through the
+unified lint layer (`lint.rs`, lint ID W01) with structured `LintDiagnostic`
+entries and variant-specific hints.
 
 ---
 
@@ -29,7 +34,7 @@ codegen, ensuring warnings appear before code emission.
 
 The current implementation does **not** explicitly project the prediction WFST
 onto BooleanWeight. Instead, it performs reachability queries directly against
-the TropicalWeight WFST (`pipeline.rs:574-580`):
+the TropicalWeight WFST (Tier 3 in `pipeline.rs:183–203`):
 
 ```rust
 let reachable = first_sets
@@ -61,61 +66,56 @@ then computing `plus` (disjunction) across all transitions.
 
 ## 3. Current Implementation
 
-The dead-rule detection walk-through in `pipeline.rs:552-589`:
+Dead-rule detection uses a three-tier algorithm in `detect_dead_rules()`
+(`pipeline.rs:106–207`):
 
 ```
-for each rule_info in bundle.rule_infos:
-  |
-  // Step 1: Skip rules handled outside prefix dispatch
-  if rule_info.is_infix
-     || rule_info.is_var
-     || rule_info.is_literal
-     || rule_info.is_cross_category
-     || rule_info.is_cast:
-    continue  // see section 4 for rationale
-  |
-  // Step 2: Get prediction WFST for this rule's category
-  wfst = prediction_wfsts[rule_info.category]
-  |
-  // Step 3: Check reachability (implicit boolean projection)
-  reachable = false
-  for each token in FIRST(rule_info.category):
-    for each action in wfst.predict(token):
-      if action.rule_label() == rule_info.label:
-        reachable = true
-        break
-  |
-  // Step 4: Emit warning if unreachable
-  if !reachable:
-    eprintln!(
-      "warning: rule {} in category {} is unreachable (dead code) --
-       no token in FIRST({}) dispatches to it via prediction WFST",
-      rule_info.label, rule_info.category, rule_info.category
-    )
+for each rule R in rule_infos:
+
+    // Tier 1: Literal rules — structural check
+    if R.is_literal:
+        has_native = categories.any(c → c.name == R.category && c.native_type.is_some())
+        if not has_native: warn LiteralNoNativeType
+        continue
+
+    // Tier 2: Same-category infix/var — category reachability
+    if (R.is_infix && !R.is_cross_category) || R.is_var:
+        if R.category ∉ reachable_categories: warn UnreachableCategory
+        continue
+
+    // Tier 3: Prefix/cast/cross-category — WFST dispatch query
+    wfst = prediction_wfsts[R.category]
+    reachable = ∨_{T ∈ FIRST(R.category)} [wfst.predict(T) routes to R]
+    if not reachable: warn WfstUnreachable
+
+where:
+    reachable_categories = μX. {C | FIRST(C) ≠ ∅}
+                             ∪ {C | ∃ cast/cross-cat rule r: r.source ∈ X ∧ r.target = C}
 ```
 
-The warning is emitted via `eprintln!` rather than a structured diagnostic
-because PraTTaIL runs inside a proc-macro context. Future work could use
-`proc_macro::Diagnostic` once stabilized.
+Warnings are surfaced via the unified lint layer: `lint_w01_dead_rule()` in
+`lint.rs:786–832` wraps each `DeadRuleWarning` variant into a
+`LintDiagnostic` with structured formatting (Rust compiler style:
+`warning[W01]: ...`) and variant-specific hint messages.
 
 ---
 
-## 4. Exclusion Filters
+## 4. Coverage by Tier
 
-The following rule types are excluded from dead-rule detection
-(`pipeline.rs:562-564`):
+The three-tier system covers **all** rule types — no rule is excluded from
+detection.  Each tier handles a specific subset:
 
-| Rule Type | Field | Reason |
-|-----------|-------|--------|
-| **Infix** | `is_infix` | Handled by the Pratt infix loop, not prefix dispatch. The WFST only covers prefix dispatch. |
-| **Variable** | `is_var` | Built-in prefix handler for `Token::Ident`; not routed through the prediction WFST. |
-| **Literal** | `is_literal` | Built-in prefix handler for `Token::Integer`, `Token::Float`, etc.; same as var. |
-| **Cross-category** | `is_cross_category` | Handled by dispatch wrappers (`dispatch.rs`); the WFST may not have explicit actions for these. |
-| **Cast** | `is_cast` | Handled by Pratt prefix cast handlers; dispatch is via unique-to-source FIRST set tokens, not WFST actions. |
+| Tier | Rule Types Covered | Detection Method |
+|------|--------------------|------------------|
+| **1** | Literal rules (`is_literal`) | Structural: category has `native_type`? |
+| **2** | Same-cat infix (`is_infix && !is_cross_category`), postfix, mixfix, var (`is_var`) | Graph: category in reachable fixed-point? |
+| **3** | Prefix, cast (`is_cast`), cross-category (`is_cross_category`) | WFST: any FIRST token dispatches to rule? |
 
-These rule types have non-standard dispatch paths that bypass the prediction
-WFST. Checking them against the WFST would produce false-positive "dead rule"
-warnings for every infix operator and every literal/variable rule.
+This replaces the previous single-pass implementation that skipped 5 rule
+types (infix, var, literal, cross-category, cast).  The three-tier design
+eliminates those exclusions: literal rules are handled structurally (tier 1),
+infix/var rules are handled via category reachability (tier 2), and cast and
+cross-category rules are handled via WFST dispatch queries (tier 3).
 
 ---
 
@@ -155,7 +155,7 @@ fn project_boolean(wfst: &PredictionWfst) -> BTreeMap<String, BooleanWeight> {
 }
 ```
 
-This would replace the inline loop in `pipeline.rs:556-589` with a single
+This would replace the Tier 3 loop in `pipeline.rs:183–203` with a single
 projection call, making the code more compositional.
 
 ---
@@ -180,9 +180,13 @@ Boolean  <--project--  Tropical  --embed-->  Log
 
 ## 7. Source Reference & See Also
 
-- **Type definition**: `semiring.rs:283-363`
-- **Dead-rule detection**: `pipeline.rs:552-589`
-- **Theory**: `prattail/docs/theory/wfst/semirings.md` -- section 7
-- **Pipeline integration**: `prattail/docs/benchmarks/wfst-pipeline-integration.md`
-- **Tropical weight**: `tropical-weight.md` -- the weight from which boolean
+- **Type definition**: `semiring.rs:283–363`
+- **`detect_dead_rules()` (three-tier)**: `pipeline.rs:106–207`
+- **`DeadRuleWarning` enum**: `pipeline.rs:48–96`
+- **`lint_w01_dead_rule()`**: `lint.rs:786–832`
+- **`run_lints()` entry point**: `lint.rs:136–176`
+- **Dead-rule detection design**: [../dead-rule-detection.md](../dead-rule-detection.md)
+- **Theory**: `prattail/docs/theory/wfst/semirings.md` — section 7
+- **Pipeline integration**: `prattail/docs/architecture/wfst/pipeline-integration.md` — §4
+- **Tropical weight**: `tropical-weight.md` — the weight from which boolean
   reachability is projected

@@ -188,7 +188,7 @@ pub fn write_category_dispatch(
             write!(arm, " => {{ let left = parse_{}(tokens, pos, 0)?; ", source_cat).unwrap();
             arm.push_str("if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                return Err(ParseError::UnexpectedEof { expected: \"operator\", range: eof_range }); \
+                return Err(ParseError::UnexpectedEof { expected: Cow::Borrowed(\"operator\"), range: eof_range }); \
             } ");
             arm.push_str("match &tokens[*pos].0 { ");
 
@@ -209,7 +209,7 @@ pub fn write_category_dispatch(
                 "other => { \
                 let range = tokens[*pos].1; \
                 Err(ParseError::UnexpectedToken { \
-                    expected: \"comparison operator\", \
+                    expected: Cow::Borrowed(\"comparison operator\"), \
                     found: format!(\"{:?}\", other), \
                     range, \
                 }) \
@@ -328,7 +328,7 @@ pub fn write_category_dispatch(
             if *pos >= tokens.len() {{ \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
                 return Err(ParseError::UnexpectedEof {{ \
-                    expected: \"{cat}\", \
+                    expected: Cow::Borrowed(\"{cat}\"), \
                     range: eof_range, \
                 }}); \
             }} \

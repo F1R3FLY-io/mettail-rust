@@ -81,6 +81,142 @@ pub mod costs {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// RecoveryConfig — parameterized cost/threshold tuning
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Parameterized configuration for error recovery costs and thresholds.
+///
+/// Grammar authors can tune recovery behavior by adjusting these values.
+/// The `Default` implementation matches the current hardcoded constants in
+/// `costs::*` and `RecoveryContext` multiplier methods.
+///
+/// ## Cost hierarchy (default)
+///
+/// | Strategy   | Cost | Rationale |
+/// |------------|------|-----------|
+/// | Skip       | 0.5/token | Cheapest: advance past unexpected content |
+/// | Delete     | 1.0  | Cheap: pretend the token wasn't there |
+/// | Swap       | 1.25 | Moderate: preserves all tokens, just reordered |
+/// | Substitute | 1.5  | Moderate: replace with something valid |
+/// | Insert     | 2.0  | Expensive: fabricate a missing token |
+///
+/// ## Threshold semantics
+///
+/// - `deep_nesting_threshold`: depth above which skip is cheaper (noisy context)
+/// - `shallow_depth_threshold`: depth below which skip is more expensive (precise repair preferred)
+/// - `low_bp_threshold`: binding power below which skip is cheaper (loose binding)
+#[derive(Debug, Clone)]
+pub struct RecoveryConfig {
+    // ── Per-strategy base costs ──────────────────────────────────────────
+    /// Cost per skipped token (default: 0.5).
+    pub skip_per_token: f64,
+    /// Cost to delete one token (default: 1.0).
+    pub delete_cost: f64,
+    /// Cost to substitute one token for another (default: 1.5).
+    pub substitute_cost: f64,
+    /// Cost to insert a missing token (default: 2.0).
+    pub insert_cost: f64,
+    /// Cost to swap two adjacent tokens (default: 1.25).
+    pub swap_cost: f64,
+
+    // ── Lookahead ────────────────────────────────────────────────────────
+    /// Maximum tokens to consider skipping before giving up (default: 32).
+    pub max_skip_lookahead: usize,
+
+    // ── Tier 1: Depth scaling ────────────────────────────────────────────
+    /// Depth above which skip cost is discounted (default: 1000).
+    pub deep_nesting_threshold: usize,
+    /// Skip multiplier when depth exceeds `deep_nesting_threshold` (default: 0.5).
+    pub deep_nesting_skip_mult: f64,
+    /// Depth below which skip cost is penalized (default: 10).
+    pub shallow_depth_threshold: usize,
+    /// Skip multiplier when depth is below `shallow_depth_threshold` (default: 2.0).
+    pub shallow_depth_skip_mult: f64,
+
+    // ── Tier 1: BP scaling ───────────────────────────────────────────────
+    /// Binding power below which skip cost is discounted (default: 4).
+    pub low_bp_threshold: u8,
+    /// Skip multiplier when BP is below `low_bp_threshold` (default: 0.75).
+    pub low_bp_skip_mult: f64,
+
+    // ── Tier 1: Frame-kind multipliers ───────────────────────────────────
+    /// Insert multiplier in Collection frames (default: 0.5).
+    pub collection_insert_mult: f64,
+    /// Insert multiplier in Group frames (default: 0.5).
+    pub group_insert_mult: f64,
+    /// Insert multiplier when bracket balance is unmatched (default: 0.3).
+    pub bracket_insert_mult: f64,
+    /// Substitute multiplier in Mixfix frames (default: 0.75).
+    pub mixfix_substitute_mult: f64,
+
+    // ── Tier 3: Simulation multipliers ───────────────────────────────────
+    /// Cost multiplier when simulation shows valid continuation (default: 0.5).
+    pub simulation_valid_mult: f64,
+    /// Cost penalty per unmatched token when simulation fails (default: 0.2).
+    pub simulation_fail_penalty: f64,
+
+    // ── Beam pruning ─────────────────────────────────────────────────────
+    /// Beam width for Viterbi recovery (default: Some(3.0)).
+    /// `None` disables beam pruning.
+    pub beam_width: Option<f64>,
+
+    // ── Cascade prevention ───────────────────────────────────────────────
+    /// Number of tokens within which consecutive errors are suppressed (default: 3).
+    pub cascade_window: usize,
+}
+
+impl Default for RecoveryConfig {
+    fn default() -> Self {
+        RecoveryConfig {
+            skip_per_token: 0.5,
+            delete_cost: 1.0,
+            substitute_cost: 1.5,
+            insert_cost: 2.0,
+            swap_cost: 1.25,
+            max_skip_lookahead: 32,
+            deep_nesting_threshold: 1000,
+            deep_nesting_skip_mult: 0.5,
+            shallow_depth_threshold: 10,
+            shallow_depth_skip_mult: 2.0,
+            low_bp_threshold: 4,
+            low_bp_skip_mult: 0.75,
+            collection_insert_mult: 0.5,
+            group_insert_mult: 0.5,
+            bracket_insert_mult: 0.3,
+            mixfix_substitute_mult: 0.75,
+            simulation_valid_mult: 0.5,
+            simulation_fail_penalty: 0.2,
+            beam_width: Some(3.0),
+            cascade_window: 3,
+        }
+    }
+}
+
+impl RecoveryConfig {
+    /// Apply trained recovery weights from a `TrainedModel`.
+    ///
+    /// Overrides the base strategy costs with learned values where present.
+    /// Unknown keys are silently ignored.
+    pub fn apply_trained_weights(&mut self, weights: &std::collections::HashMap<String, f64>) {
+        if let Some(&v) = weights.get("skip_per_token") {
+            self.skip_per_token = v;
+        }
+        if let Some(&v) = weights.get("delete_cost") {
+            self.delete_cost = v;
+        }
+        if let Some(&v) = weights.get("substitute_cost") {
+            self.substitute_cost = v;
+        }
+        if let Some(&v) = weights.get("insert_cost") {
+            self.insert_cost = v;
+        }
+        if let Some(&v) = weights.get("swap_cost") {
+            self.swap_cost = v;
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // RepairAction — what the recovery suggests doing
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -121,6 +257,40 @@ pub enum RepairAction {
         /// The token to substitute in.
         replacement: TokenId,
     },
+
+    /// Swap two adjacent tokens.
+    ///
+    /// Common typo pattern: `a b+` should be `a + b`. Transposition preserves
+    /// all tokens but reorders them. Cost: 1.25 (between delete and substitute —
+    /// preserves all information).
+    SwapTokens {
+        /// Position of the first token in the swap pair.
+        pos_a: usize,
+        /// Position of the second token in the swap pair.
+        pos_b: usize,
+    },
+
+    /// A composite repair consisting of multiple atomic actions.
+    ///
+    /// Produced by `viterbi_multi_step()` when the optimal repair requires
+    /// more than one step (e.g., delete+skip+sync).
+    Composite {
+        /// Ordered sequence of atomic repair actions.
+        steps: Vec<RepairAction>,
+    },
+
+    /// Switch to parsing via a different category (using a cast rule).
+    ///
+    /// When the error token is in another category's FIRST set and a cast rule
+    /// connects that category to the current one, this repair delegates parsing
+    /// to the source category. Cost: `substitute_cost * 0.5` = 0.75 (preserves
+    /// semantic intent via cast).
+    CategorySwitch {
+        /// Category we're switching from (the current/target category).
+        from_category: String,
+        /// Category we're switching to (the source category that has a cast rule).
+        to_category: String,
+    },
 }
 
 impl fmt::Display for RepairAction {
@@ -134,11 +304,62 @@ impl fmt::Display for RepairAction {
             RepairAction::SubstituteToken { replacement } => {
                 write!(f, "substitute with token {}", replacement)
             },
+            RepairAction::SwapTokens { pos_a, pos_b } => {
+                write!(f, "swap tokens at positions {} and {}", pos_a, pos_b)
+            },
+            RepairAction::Composite { steps } => {
+                for (i, step) in steps.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", step)?;
+                }
+                Ok(())
+            },
+            RepairAction::CategorySwitch { from_category, to_category } => {
+                write!(f, "switch {} → {}", from_category, to_category)
+            },
         }
     }
 }
 
 impl RepairAction {
+    /// Produce a human-readable description of this repair action.
+    ///
+    /// Uses the `token_names` slice (indexed by `TokenId`) to resolve
+    /// token IDs to their grammar-level names. This is called on the
+    /// error path only; happy-path parsing never invokes it.
+    pub fn describe(&self, token_names: &[&str]) -> String {
+        let name = |id: TokenId| -> &str {
+            token_names.get(id as usize).copied().unwrap_or("?")
+        };
+        match self {
+            RepairAction::SkipToSync { skip_count, sync_token } => {
+                format!("skip {} token(s) to '{}'", skip_count, name(*sync_token))
+            }
+            RepairAction::InsertToken { token } => {
+                format!("insert missing '{}'", name(*token))
+            }
+            RepairAction::DeleteToken => "delete unexpected token".to_string(),
+            RepairAction::SubstituteToken { replacement } => {
+                format!("expected '{}' here", name(*replacement))
+            }
+            RepairAction::SwapTokens { .. } => {
+                "swap adjacent tokens".to_string()
+            }
+            RepairAction::Composite { steps } => {
+                steps
+                    .iter()
+                    .map(|s| s.describe(token_names))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            }
+            RepairAction::CategorySwitch { from_category, to_category } => {
+                format!("try parsing as {} (cast {} → {})", to_category, to_category, from_category)
+            }
+        }
+    }
+
     /// Return the semantic edit-distance cost of this repair action.
     ///
     /// Unlike tropical weights in `costs::*` which are tuned for Viterbi
@@ -157,6 +378,12 @@ impl RepairAction {
             RepairAction::DeleteToken => EditWeight::delete(),
             RepairAction::InsertToken { .. } => EditWeight::insert(),
             RepairAction::SubstituteToken { .. } => EditWeight::substitute(),
+            RepairAction::SwapTokens { .. } => EditWeight::new(1), // single edit operation
+            RepairAction::Composite { steps } => {
+                let total = steps.iter().map(|s| s.edit_cost().0).sum::<u32>();
+                EditWeight::new(total)
+            },
+            RepairAction::CategorySwitch { .. } => EditWeight::substitute(), // semantic substitution
         }
     }
 }
@@ -174,6 +401,15 @@ pub struct RepairResult {
     pub new_pos: usize,
     /// Total tropical cost of this repair.
     pub cost: TropicalWeight,
+}
+
+impl RepairResult {
+    /// Produce a human-readable description of this repair result.
+    ///
+    /// Delegates to `RepairAction::describe()` with the given token name table.
+    pub fn describe(&self, token_names: &[&str]) -> String {
+        self.action.describe(token_names)
+    }
 }
 
 impl fmt::Display for RepairResult {
@@ -304,6 +540,24 @@ impl RecoveryWfst {
                     action: RepairAction::SubstituteToken { replacement: sync_id },
                     new_pos: pos + 1, // consume the substituted token
                     cost: costs::SUBSTITUTE,
+                };
+                best = Some(pick_better(best, result));
+            }
+        }
+
+        // Strategy 5: SwapTokens — swap adjacent tokens
+        if remaining.len() >= 2 {
+            // Check if swapping remaining[0] and remaining[1] produces a sync token
+            // at position 0, or if the swapped pair looks better to the parser
+            let swapped_first = remaining[1];
+            if self.sync_tokens.contains(&swapped_first) {
+                let result = RepairResult {
+                    action: RepairAction::SwapTokens {
+                        pos_a: pos,
+                        pos_b: pos + 1,
+                    },
+                    new_pos: pos + 2, // consume both tokens in swapped order
+                    cost: TropicalWeight::new(1.25), // SWAP cost
                 };
                 best = Some(pick_better(best, result));
             }
@@ -510,6 +764,314 @@ pub fn viterbi_recovery_beam(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Full Viterbi lattice with all repair edge types
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// The kind of edge in the repair lattice, used for backtrace reconstruction.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RepairEdgeKind {
+    /// Skip edge: advance past one token (`i → i+1`), cost = `skip_per_token`.
+    Skip,
+    /// Delete edge: remove one unexpected token (`i → i+1`), cost = `delete_cost`.
+    Delete,
+    /// Substitute edge: replace current token with a sync token (`i → i+1`),
+    /// cost = `substitute_cost`.
+    Substitute(TokenId),
+    /// Insert edge: fabricate a missing sync token (`i → i`, self-loop),
+    /// cost = `insert_cost`. Max 1 per position to prevent infinite loops.
+    Insert(TokenId),
+    /// Sync edge: free transition to the sink when a sync token is reached
+    /// (`i → SINK`), cost = 0.
+    Sync(TokenId),
+    /// Swap edge: consume two positions in reversed order (`i → i+2`),
+    /// cost = `swap_cost`.
+    Swap,
+}
+
+/// A multi-step recovery sequence produced by the full Viterbi lattice.
+///
+/// Unlike `RepairResult` which encodes a single action, `RepairSequence`
+/// captures the globally optimal sequence of repairs found by the Viterbi
+/// search across all edge types.
+#[derive(Debug, Clone)]
+pub struct RepairSequence {
+    /// Ordered sequence of repair actions from error position to sync point.
+    pub actions: Vec<RepairAction>,
+    /// New parser position after applying all repairs.
+    pub new_pos: usize,
+    /// Total tropical cost of the entire sequence.
+    pub total_cost: TropicalWeight,
+    /// Total edit-distance cost of the sequence.
+    pub total_edits: crate::automata::semiring::EditWeight,
+}
+
+impl fmt::Display for RepairSequence {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "repair sequence (")?;
+        for (i, action) in self.actions.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", action)?;
+        }
+        write!(
+            f,
+            ") cost: {:.2}, edits: {}, new_pos: {}",
+            self.total_cost.value(),
+            self.total_edits.0,
+            self.new_pos
+        )
+    }
+}
+
+/// Find the minimum-cost multi-step recovery sequence using the full Viterbi lattice.
+///
+/// Builds a repair lattice with all edge types:
+/// - **Skip**: `i → i+1`, cost `config.skip_per_token`
+/// - **Delete**: `i → i+1`, cost `config.delete_cost`
+/// - **Substitute**: `i → i+1`, cost `config.substitute_cost` (when token is NOT a sync token)
+/// - **Insert**: `i → i` (self-loop), cost `config.insert_cost` (max 1 per position)
+/// - **Sync**: `i → SINK`, cost 0 (when token at `i` IS a sync token)
+///
+/// Runs Viterbi forward pass, then backtraces to reconstruct the optimal
+/// repair action sequence.
+///
+/// Returns `None` if no sync point is reachable within `max_skip_lookahead`.
+pub fn viterbi_multi_step(
+    token_ids: &[TokenId],
+    pos: usize,
+    sync_tokens: &BTreeSet<TokenId>,
+    config: &RecoveryConfig,
+) -> Option<RepairSequence> {
+    let remaining = &token_ids[pos..];
+    let max_lookahead = remaining.len().min(config.max_skip_lookahead);
+
+    if max_lookahead == 0 {
+        return None;
+    }
+
+    // Nodes: 0..max_lookahead are token positions, max_lookahead is the virtual sink.
+    // Additionally, each position has an "inserted" variant at max_lookahead + 1 + i.
+    // But for simplicity, we track insert with a bool array instead.
+    let num_nodes = max_lookahead + 1;
+    let sink = max_lookahead;
+
+    // dist[i] = minimum cost to reach node i from node 0
+    let mut dist = vec![TropicalWeight::zero(); num_nodes]; // infinity
+    dist[0] = TropicalWeight::one(); // zero cost to reach start
+
+    // pred[i] = (predecessor node, edge kind)
+    let mut pred: Vec<Option<(usize, RepairEdgeKind)>> = vec![None; num_nodes];
+
+    // Track whether an insert has been applied at each position (max 1 per position)
+    let mut inserted = vec![false; max_lookahead];
+
+    let beam_width = config.beam_width.map(TropicalWeight::new);
+
+    // Forward pass through positions
+    for i in 0..max_lookahead {
+        if dist[i].is_zero() {
+            continue; // unreachable
+        }
+
+        // Beam pruning
+        if let Some(beam) = beam_width {
+            if !dist[sink].is_zero() && dist[i].value() > dist[sink].value() + beam.value() {
+                continue;
+            }
+        }
+
+        let token_at_i = remaining[i];
+
+        // ── Sync edge: i → SINK (free) when at sync token ────────────
+        if sync_tokens.contains(&token_at_i) {
+            let cost_to_sink = dist[i];
+            if cost_to_sink < dist[sink] {
+                dist[sink] = cost_to_sink;
+                pred[sink] = Some((i, RepairEdgeKind::Sync(token_at_i)));
+            }
+        }
+
+        // ── Skip edge: i → i+1, cost skip_per_token ─────────────────
+        if i + 1 < num_nodes {
+            let new_cost = TropicalWeight::new(dist[i].value() + config.skip_per_token);
+
+            if let Some(beam) = beam_width {
+                if !dist[sink].is_zero() && new_cost.value() > dist[sink].value() + beam.value() {
+                    // pruned
+                } else if new_cost < dist[i + 1] {
+                    dist[i + 1] = new_cost;
+                    pred[i + 1] = Some((i, RepairEdgeKind::Skip));
+                }
+            } else if new_cost < dist[i + 1] {
+                dist[i + 1] = new_cost;
+                pred[i + 1] = Some((i, RepairEdgeKind::Skip));
+            }
+        }
+
+        // ── Delete edge: i → i+1, cost delete_cost ───────────────────
+        if i + 1 < num_nodes {
+            let new_cost = TropicalWeight::new(dist[i].value() + config.delete_cost);
+            if new_cost < dist[i + 1] {
+                dist[i + 1] = new_cost;
+                pred[i + 1] = Some((i, RepairEdgeKind::Delete));
+            }
+        }
+
+        // ── Substitute edge: i → i+1, cost substitute_cost ──────────
+        // Only when the token at i is NOT already a sync token
+        if i + 1 < num_nodes && !sync_tokens.contains(&token_at_i) {
+            for &sync_id in sync_tokens {
+                let new_cost = TropicalWeight::new(dist[i].value() + config.substitute_cost);
+                if new_cost < dist[i + 1] {
+                    dist[i + 1] = new_cost;
+                    pred[i + 1] = Some((i, RepairEdgeKind::Substitute(sync_id)));
+                }
+            }
+        }
+
+        // ── Swap edge: i → i+2, cost swap_cost ────────────────────
+        // Only when i+1 exists (two adjacent tokens to swap)
+        if i + 2 <= max_lookahead {
+            let new_cost = TropicalWeight::new(dist[i].value() + config.swap_cost);
+            if new_cost < dist[i + 2] {
+                dist[i + 2] = new_cost;
+                pred[i + 2] = Some((i, RepairEdgeKind::Swap));
+            }
+        }
+
+        // ── Insert edge: i → i (self-loop), cost insert_cost ────────
+        // Max 1 insert per position to prevent infinite loops
+        if !inserted[i] {
+            for &sync_id in sync_tokens {
+                let new_cost = TropicalWeight::new(dist[i].value() + config.insert_cost);
+                // After insert, we're still at i but the inserted token is phantom.
+                // Model as: the insert makes the sync token available at position i,
+                // so we add a sync edge from i to sink with insert cost.
+                if new_cost < dist[sink] {
+                    dist[sink] = new_cost;
+                    pred[sink] = Some((i, RepairEdgeKind::Insert(sync_id)));
+                    inserted[i] = true;
+                }
+            }
+        }
+    }
+
+    // If sink is unreachable, no recovery found
+    if dist[sink].is_zero() {
+        return None;
+    }
+
+    // ── Backtrace: reconstruct the action sequence ───────────────────────
+    let mut actions_reversed: Vec<RepairAction> = Vec::new();
+    let mut current = sink;
+    let mut final_sync_pos = pos; // position where we sync
+
+    while let Some((prev, edge_kind)) = pred[current] {
+        match edge_kind {
+            RepairEdgeKind::Sync(sync_token) => {
+                // The sync edge itself is free — but record the sync point
+                final_sync_pos = pos + prev;
+                current = prev;
+                // If prev==0 and no more predecessors, we were already at sync
+                if pred[prev].is_none() {
+                    // Already at sync — record SkipToSync with skip_count=0
+                    actions_reversed.push(RepairAction::SkipToSync {
+                        skip_count: 0,
+                        sync_token,
+                    });
+                    break;
+                }
+            },
+            RepairEdgeKind::Skip => {
+                // Skip was part of a skip-to-sync chain
+                // We'll consolidate at the end
+                current = prev;
+            },
+            RepairEdgeKind::Delete => {
+                actions_reversed.push(RepairAction::DeleteToken);
+                current = prev;
+            },
+            RepairEdgeKind::Substitute(sync_id) => {
+                actions_reversed.push(RepairAction::SubstituteToken { replacement: sync_id });
+                current = prev;
+            },
+            RepairEdgeKind::Swap => {
+                actions_reversed.push(RepairAction::SwapTokens {
+                    pos_a: pos + prev,
+                    pos_b: pos + prev + 1,
+                });
+                current = prev;
+            },
+            RepairEdgeKind::Insert(sync_id) => {
+                actions_reversed.push(RepairAction::InsertToken { token: sync_id });
+                final_sync_pos = pos + prev; // insert doesn't advance
+                current = prev;
+                if pred[prev].is_none() {
+                    break;
+                }
+            },
+        }
+    }
+
+    // Count consecutive skips from the start of the chain to build SkipToSync
+    // Walk from node 0 forward along pred chain to find skip sequences
+    // Actually, let's rebuild from scratch: walk from 0 forward using a separate approach
+    // The backtrace gives us the actions in reverse. Reverse them.
+    actions_reversed.reverse();
+
+    // If there are no explicit actions but we reached the sink via skips+sync,
+    // compute the skip count
+    if actions_reversed.is_empty() {
+        // Pure skip chain to sync
+        let skip_count = (final_sync_pos - pos).max(0);
+        let sync_token = if final_sync_pos < token_ids.len() {
+            token_ids[final_sync_pos]
+        } else {
+            return None;
+        };
+        actions_reversed.push(RepairAction::SkipToSync {
+            skip_count,
+            sync_token,
+        });
+    }
+
+    // Check if we have a pure skip+sync pattern and consolidate
+    let all_skips_and_sync =
+        actions_reversed.iter().all(|a| matches!(a, RepairAction::SkipToSync { .. }));
+    if !all_skips_and_sync {
+        // There are non-skip actions. Check if there are trailing skips that
+        // should be consolidated into a SkipToSync at the end.
+        // For now, if the last action isn't a SkipToSync and we reached a sync,
+        // append a sync marker.
+        let has_sync = actions_reversed
+            .iter()
+            .any(|a| matches!(a, RepairAction::SkipToSync { .. }));
+        if !has_sync && final_sync_pos < token_ids.len() {
+            // Add the final sync action
+            actions_reversed.push(RepairAction::SkipToSync {
+                skip_count: 0,
+                sync_token: token_ids[final_sync_pos],
+            });
+        }
+    }
+
+    // Compute total edits
+    let total_edits = actions_reversed
+        .iter()
+        .fold(crate::automata::semiring::EditWeight::new(0), |acc, a| {
+            crate::automata::semiring::EditWeight::new(acc.0.saturating_add(a.edit_cost().0))
+        });
+
+    Some(RepairSequence {
+        actions: actions_reversed,
+        new_pos: final_sync_pos,
+        total_cost: dist[sink],
+        total_edits,
+    })
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Builder — construct RecoveryWfsts for all categories
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -667,28 +1229,33 @@ impl Default for RecoveryContext {
 impl RecoveryContext {
     /// Compute a cost multiplier for **skip** actions based on frame context.
     ///
-    /// - Deep nesting (depth > 1000): 0.5x (skip is safe — likely noise)
-    /// - Shallow (depth < 10): 2.0x (precise repair preferred)
-    /// - InfixRHS: 0.75x (skip bad operand, find next statement)
-    /// - Low BP (< 4): 0.75x (loose binding, skip is safe)
+    /// - Deep nesting (depth > threshold): `deep_nesting_skip_mult` (skip is safe — likely noise)
+    /// - Shallow (depth < threshold): `shallow_depth_skip_mult` (precise repair preferred)
+    /// - InfixRHS: `low_bp_skip_mult` (skip bad operand, find next statement)
+    /// - Low BP (< threshold): `low_bp_skip_mult` (loose binding, skip is safe)
     pub fn skip_multiplier(&self) -> f64 {
+        self.skip_multiplier_with(&RecoveryConfig::default())
+    }
+
+    /// Compute skip multiplier using the provided config.
+    pub fn skip_multiplier_with(&self, config: &RecoveryConfig) -> f64 {
         let mut m = 1.0;
 
         // Depth scaling
-        if self.depth > 1000 {
-            m *= 0.5;
-        } else if self.depth < 10 {
-            m *= 2.0;
+        if self.depth > config.deep_nesting_threshold {
+            m *= config.deep_nesting_skip_mult;
+        } else if self.depth < config.shallow_depth_threshold {
+            m *= config.shallow_depth_skip_mult;
         }
 
         // Frame-kind adjustments
         if self.frame_kind == FrameKind::InfixRHS {
-            m *= 0.75;
+            m *= config.low_bp_skip_mult;
         }
 
         // BP scaling
-        if self.binding_power < 4 {
-            m *= 0.75;
+        if self.binding_power < config.low_bp_threshold {
+            m *= config.low_bp_skip_mult;
         }
 
         m
@@ -696,15 +1263,20 @@ impl RecoveryContext {
 
     /// Compute a cost multiplier for **insert** actions based on frame context.
     ///
-    /// - Collection: 0.5x (missing separator/element is common)
-    /// - Group: 0.5x (missing closing delimiter is common)
+    /// - Collection: `collection_insert_mult` (missing separator/element is common)
+    /// - Group: `group_insert_mult` (missing closing delimiter is common)
     /// - High BP (> 20): 1.5x (deep in tight-binding context, precise repair needed)
     pub fn insert_multiplier(&self) -> f64 {
+        self.insert_multiplier_with(&RecoveryConfig::default())
+    }
+
+    /// Compute insert multiplier using the provided config.
+    pub fn insert_multiplier_with(&self, config: &RecoveryConfig) -> f64 {
         let mut m = 1.0;
 
         match self.frame_kind {
-            FrameKind::Collection => m *= 0.5,
-            FrameKind::Group => m *= 0.5,
+            FrameKind::Collection => m *= config.collection_insert_mult,
+            FrameKind::Group => m *= config.group_insert_mult,
             _ => {},
         }
 
@@ -717,12 +1289,17 @@ impl RecoveryContext {
 
     /// Compute a cost multiplier for **substitute** actions based on frame context.
     ///
-    /// - Mixfix: 0.75x (wrong token in multi-part operator)
+    /// - Mixfix: `mixfix_substitute_mult` (wrong token in multi-part operator)
     pub fn substitute_multiplier(&self) -> f64 {
+        self.substitute_multiplier_with(&RecoveryConfig::default())
+    }
+
+    /// Compute substitute multiplier using the provided config.
+    pub fn substitute_multiplier_with(&self, config: &RecoveryConfig) -> f64 {
         let mut m = 1.0;
 
         if self.frame_kind == FrameKind::Mixfix {
-            m *= 0.75;
+            m *= config.mixfix_substitute_mult;
         }
 
         m
@@ -732,12 +1309,21 @@ impl RecoveryContext {
     /// based on bracket balance.
     ///
     /// When there are unmatched open brackets, inserting the matching closer
-    /// is strongly preferred (0.3x cost).
+    /// is strongly preferred (`bracket_insert_mult` cost).
     pub fn bracket_insert_multiplier(&self, token_name: Option<&str>) -> f64 {
+        self.bracket_insert_multiplier_with(token_name, &RecoveryConfig::default())
+    }
+
+    /// Compute bracket insert multiplier using the provided config.
+    pub fn bracket_insert_multiplier_with(
+        &self,
+        token_name: Option<&str>,
+        config: &RecoveryConfig,
+    ) -> f64 {
         match token_name {
-            Some("RParen") if self.open_parens > 0 => 0.3,
-            Some("RBrace") if self.open_braces > 0 => 0.3,
-            Some("RBracket") if self.open_brackets > 0 => 0.3,
+            Some("RParen") if self.open_parens > 0 => config.bracket_insert_mult,
+            Some("RBrace") if self.open_braces > 0 => config.bracket_insert_mult,
+            Some("RBracket") if self.open_brackets > 0 => config.bracket_insert_mult,
             _ => 1.0,
         }
     }
@@ -905,15 +1491,21 @@ impl ParseSimulator {
         SimulationResult::ValidContinuation { tokens_consumed: consumed }
     }
 
-    /// Compute a cost multiplier based on simulation result.
+    /// Compute a cost multiplier based on simulation result (default config).
     ///
     /// - `ValidContinuation` → 0.5x (repair leads to good continuation)
     /// - `FailedAt(n)` → `1.0 + (lookahead - n) * 0.2` (penalize earlier failures more)
     pub fn cost_multiplier(&self, result: &SimulationResult) -> f64 {
+        self.cost_multiplier_with(result, &RecoveryConfig::default())
+    }
+
+    /// Compute a cost multiplier based on simulation result using the provided config.
+    pub fn cost_multiplier_with(&self, result: &SimulationResult, config: &RecoveryConfig) -> f64 {
         match result {
-            SimulationResult::ValidContinuation { .. } => 0.5,
+            SimulationResult::ValidContinuation { .. } => config.simulation_valid_mult,
             SimulationResult::FailedAt { position } => {
-                1.0 + (self.lookahead_depth.saturating_sub(*position)) as f64 * 0.2
+                1.0 + (self.lookahead_depth.saturating_sub(*position)) as f64
+                    * config.simulation_fail_penalty
             },
         }
     }
@@ -1057,8 +1649,104 @@ impl RecoveryWfst {
             }
         }
 
+        // ── Strategy 5: SwapTokens ───────────────────────────────────────
+        if remaining.len() >= 2 {
+            let swapped_first = remaining[1];
+            if self.sync_tokens.contains(&swapped_first) {
+                let base_cost = TropicalWeight::new(1.25); // SWAP cost
+                let tier1_mult = ctx.skip_multiplier(); // swap is a mild reorder
+
+                let tier3_mult = if let Some(sim) = simulator {
+                    let sim_result = sim.simulate_after_repair(token_ids, pos + 2, category);
+                    sim.cost_multiplier(&sim_result)
+                } else {
+                    1.0
+                };
+
+                let result = RepairResult {
+                    action: RepairAction::SwapTokens {
+                        pos_a: pos,
+                        pos_b: pos + 1,
+                    },
+                    new_pos: pos + 2,
+                    cost: TropicalWeight::new(base_cost.value() * tier1_mult * tier3_mult),
+                };
+                best = Some(pick_better(best, result));
+            }
+        }
+
         best
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Lattice-aware recovery (feature = "context-sensitive-lex")
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Try recovery using alternative tokenization paths from a token lattice.
+///
+/// When the lexer produces a `TokenLattice` (due to lexical ambiguity), this
+/// function extracts up to `n_best` alternative tokenization paths from the
+/// error position and runs `find_best_recovery()` on each. The cheapest
+/// successful recovery across all tokenizations is returned.
+///
+/// A small penalty per alternative tried is applied to prefer the primary
+/// tokenization (the one already attempted by the parser).
+///
+/// # Arguments
+///
+/// * `alternative_token_ids` — List of `(Vec<TokenId>, TropicalWeight)` pairs,
+///   each representing an alternative tokenization path with its lexer weight.
+/// * `pos` — Error position within each alternative path (relative to path start).
+/// * `sync_tokens` — Set of synchronization token IDs.
+/// * `config` — Recovery configuration for cost computation.
+///
+/// # Returns
+///
+/// The cheapest `RepairResult` across all alternatives, with cost adjusted by
+/// the lexer weight of the selected alternative.
+#[cfg(feature = "context-sensitive-lex")]
+pub fn lattice_recovery(
+    alternative_token_ids: &[(Vec<TokenId>, crate::automata::semiring::TropicalWeight)],
+    pos: usize,
+    sync_tokens: &std::collections::BTreeSet<TokenId>,
+    config: &RecoveryConfig,
+) -> Option<RepairResult> {
+    use crate::automata::semiring::Semiring;
+
+    let mut best: Option<RepairResult> = None;
+    let alternative_penalty = 0.1_f64; // slight penalty per alternative tried
+
+    for (alt_idx, (token_ids, lexer_weight)) in alternative_token_ids.iter().enumerate() {
+        if pos >= token_ids.len() {
+            continue;
+        }
+
+        // Run recovery on this alternative tokenization
+        if let Some(seq) = viterbi_multi_step(token_ids, pos, sync_tokens, config) {
+            let mut cost = seq.total_cost.value();
+
+            // Apply lexer weight — prefer primary tokenization
+            cost *= lexer_weight.value();
+
+            // Penalize non-primary alternatives slightly
+            cost += alt_idx as f64 * alternative_penalty;
+
+            let repair = RepairResult {
+                action: if seq.actions.len() == 1 {
+                    seq.actions.into_iter().next().expect("non-empty actions vec")
+                } else {
+                    RepairAction::Composite { steps: seq.actions }
+                },
+                new_pos: pos + seq.new_pos,
+                cost: crate::automata::semiring::TropicalWeight::new(cost),
+            };
+
+            best = Some(pick_better(best, repair));
+        }
+    }
+
+    best
 }
 
 #[cfg(test)]
@@ -1813,5 +2501,531 @@ mod tests {
         // Empty simulator, any token fails
         let result = sim.simulate_after_repair(&[0], 0, "Expr");
         assert!(matches!(result, SimulationResult::FailedAt { position: 0 }));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // RecoveryConfig tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_recovery_config_default_matches_hardcoded_costs() {
+        let config = RecoveryConfig::default();
+        assert!((config.skip_per_token - 0.5).abs() < 1e-9);
+        assert!((config.delete_cost - 1.0).abs() < 1e-9);
+        assert!((config.substitute_cost - 1.5).abs() < 1e-9);
+        assert!((config.insert_cost - 2.0).abs() < 1e-9);
+        assert!((config.swap_cost - 1.25).abs() < 1e-9);
+        assert_eq!(config.max_skip_lookahead, 32);
+        assert_eq!(config.deep_nesting_threshold, 1000);
+        assert!((config.deep_nesting_skip_mult - 0.5).abs() < 1e-9);
+        assert_eq!(config.shallow_depth_threshold, 10);
+        assert!((config.shallow_depth_skip_mult - 2.0).abs() < 1e-9);
+        assert_eq!(config.low_bp_threshold, 4);
+        assert!((config.low_bp_skip_mult - 0.75).abs() < 1e-9);
+        assert!((config.collection_insert_mult - 0.5).abs() < 1e-9);
+        assert!((config.group_insert_mult - 0.5).abs() < 1e-9);
+        assert!((config.bracket_insert_mult - 0.3).abs() < 1e-9);
+        assert!((config.mixfix_substitute_mult - 0.75).abs() < 1e-9);
+        assert!((config.simulation_valid_mult - 0.5).abs() < 1e-9);
+        assert!((config.simulation_fail_penalty - 0.2).abs() < 1e-9);
+        assert_eq!(config.beam_width, Some(3.0));
+        assert_eq!(config.cascade_window, 3);
+    }
+
+    #[test]
+    fn test_recovery_config_default_identical_to_no_config() {
+        // Verify that *_with(&default) produces the same result as the no-config variant
+        let ctx = RecoveryContext {
+            depth: 5000,
+            binding_power: 10,
+            frame_kind: FrameKind::Collection,
+            open_parens: 2,
+            ..Default::default()
+        };
+        let config = RecoveryConfig::default();
+
+        assert!((ctx.skip_multiplier() - ctx.skip_multiplier_with(&config)).abs() < 1e-9);
+        assert!((ctx.insert_multiplier() - ctx.insert_multiplier_with(&config)).abs() < 1e-9);
+        assert!((ctx.substitute_multiplier() - ctx.substitute_multiplier_with(&config)).abs() < 1e-9);
+        assert!(
+            (ctx.bracket_insert_multiplier(Some("RParen"))
+                - ctx.bracket_insert_multiplier_with(Some("RParen"), &config))
+            .abs()
+                < 1e-9
+        );
+    }
+
+    #[test]
+    fn test_recovery_config_custom_insert_always_wins() {
+        // With insert_cost set very low, InsertToken should always be cheapest
+        let config = RecoveryConfig {
+            insert_cost: 0.1,
+            ..RecoveryConfig::default()
+        };
+        // InsertToken cost = 0.1, DeleteToken cost = 1.0
+        assert!(config.insert_cost < config.delete_cost);
+        assert!(config.insert_cost < config.skip_per_token);
+    }
+
+    #[test]
+    fn test_recovery_config_custom_thresholds() {
+        let config = RecoveryConfig {
+            deep_nesting_threshold: 500,
+            deep_nesting_skip_mult: 0.25,
+            shallow_depth_threshold: 20,
+            shallow_depth_skip_mult: 3.0,
+            low_bp_threshold: 8,
+            low_bp_skip_mult: 0.5,
+            ..RecoveryConfig::default()
+        };
+
+        // Depth 600 > 500 → deep nesting
+        let deep_ctx = RecoveryContext {
+            depth: 600,
+            binding_power: 10,
+            ..Default::default()
+        };
+        assert!((deep_ctx.skip_multiplier_with(&config) - 0.25).abs() < 1e-9);
+
+        // Depth 15 < 20 → shallow
+        let shallow_ctx = RecoveryContext {
+            depth: 15,
+            binding_power: 10,
+            ..Default::default()
+        };
+        assert!((shallow_ctx.skip_multiplier_with(&config) - 3.0).abs() < 1e-9);
+
+        // BP 6 < 8 → low BP
+        let low_bp_ctx = RecoveryContext {
+            depth: 50,
+            binding_power: 6,
+            ..Default::default()
+        };
+        assert!((low_bp_ctx.skip_multiplier_with(&config) - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_recovery_config_custom_frame_multipliers() {
+        let config = RecoveryConfig {
+            collection_insert_mult: 0.25,
+            group_insert_mult: 0.8,
+            mixfix_substitute_mult: 0.4,
+            bracket_insert_mult: 0.1,
+            ..RecoveryConfig::default()
+        };
+
+        let collection_ctx = RecoveryContext {
+            depth: 50,
+            frame_kind: FrameKind::Collection,
+            ..Default::default()
+        };
+        assert!((collection_ctx.insert_multiplier_with(&config) - 0.25).abs() < 1e-9);
+
+        let group_ctx = RecoveryContext {
+            depth: 50,
+            frame_kind: FrameKind::Group,
+            ..Default::default()
+        };
+        assert!((group_ctx.insert_multiplier_with(&config) - 0.8).abs() < 1e-9);
+
+        let mixfix_ctx = RecoveryContext {
+            depth: 50,
+            frame_kind: FrameKind::Mixfix,
+            ..Default::default()
+        };
+        assert!((mixfix_ctx.substitute_multiplier_with(&config) - 0.4).abs() < 1e-9);
+
+        let bracket_ctx = RecoveryContext {
+            depth: 50,
+            open_parens: 1,
+            ..Default::default()
+        };
+        assert!(
+            (bracket_ctx.bracket_insert_multiplier_with(Some("RParen"), &config) - 0.1).abs()
+                < 1e-9
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Full Viterbi lattice (multi-step) tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_viterbi_multi_step_skip_to_sync() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        // tokens: [Ident, Plus, Semi, Eof]
+        // Skip 2 tokens to Semi, cost = 2 * 0.5 = 1.0
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Ident").expect("Ident"),
+            token_map.get("Plus").expect("Plus"),
+            token_map.get("Semi").expect("Semi"),
+            token_map.get("Eof").expect("Eof"),
+        ];
+
+        let config = RecoveryConfig::default();
+        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config)
+            .expect("should find recovery");
+
+        assert_eq!(result.new_pos, 2);
+        assert!(result.total_cost.value() <= 1.0 + 1e-9);
+        assert!(!result.actions.is_empty());
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_delete_wins() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        // tokens: [Plus, Semi] — delete Plus (1.0) vs skip to Semi at 1 (0.5)
+        // Skip wins: cost 0.5 < 1.0
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Plus").expect("Plus"),
+            token_map.get("Semi").expect("Semi"),
+        ];
+
+        let config = RecoveryConfig::default();
+        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config)
+            .expect("should find recovery");
+
+        // Should sync at position 1 (Semi) via skip
+        assert_eq!(result.new_pos, 1);
+        // Cost should be 0.5 (one skip to sync)
+        assert!((result.total_cost.value() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_immediate_sync() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        // Already at sync token
+        let token_ids: Vec<TokenId> = vec![token_map.get("Semi").expect("Semi")];
+
+        let config = RecoveryConfig::default();
+        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config)
+            .expect("should find recovery");
+
+        assert_eq!(result.new_pos, 0);
+        assert_eq!(result.total_cost, TropicalWeight::one()); // zero cost
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_no_sync_reachable() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        // No Semi in the remaining tokens, but insert is possible
+        let ident_id = token_map.get("Ident").expect("Ident");
+        let token_ids: Vec<TokenId> = vec![ident_id; 5];
+
+        let config = RecoveryConfig::default();
+        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config);
+
+        // Insert should provide a path: insert Semi at pos 0, cost = 2.0
+        assert!(result.is_some());
+        let seq = result.expect("insert should provide recovery");
+        assert!(seq.actions.iter().any(|a| matches!(a, RepairAction::InsertToken { .. })));
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_empty_input() {
+        let sync_tokens = BTreeSet::new();
+        let config = RecoveryConfig::default();
+        let result = viterbi_multi_step(&[], 0, &sync_tokens, &config);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_insert_guard_prevents_infinite_loop() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        // Only non-sync tokens, insert guard should limit to 1 insert per position
+        let ident_id = token_map.get("Ident").expect("Ident");
+        let token_ids: Vec<TokenId> = vec![ident_id; 3];
+
+        let config = RecoveryConfig::default();
+        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config);
+
+        // Should succeed via insert (finite, no infinite loop)
+        assert!(result.is_some());
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_beam_prunes() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        // tokens with Semi at position 2
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Ident").expect("Ident"),
+            token_map.get("Plus").expect("Plus"),
+            token_map.get("Semi").expect("Semi"),
+        ];
+
+        // Tight beam = 0.5
+        let tight_config = RecoveryConfig {
+            beam_width: Some(0.5),
+            ..RecoveryConfig::default()
+        };
+        let result_tight = viterbi_multi_step(&token_ids, 0, &sync_tokens, &tight_config);
+
+        // No beam
+        let no_beam_config = RecoveryConfig {
+            beam_width: None,
+            ..RecoveryConfig::default()
+        };
+        let result_no_beam = viterbi_multi_step(&token_ids, 0, &sync_tokens, &no_beam_config);
+
+        // Both should find a path
+        assert!(result_tight.is_some());
+        assert!(result_no_beam.is_some());
+    }
+
+    #[test]
+    fn test_repair_sequence_display() {
+        let seq = RepairSequence {
+            actions: vec![
+                RepairAction::DeleteToken,
+                RepairAction::SkipToSync { skip_count: 1, sync_token: 5 },
+            ],
+            new_pos: 3,
+            total_cost: TropicalWeight::new(1.5),
+            total_edits: crate::automata::semiring::EditWeight::new(2),
+        };
+        let display = format!("{}", seq);
+        assert!(display.contains("delete token"));
+        assert!(display.contains("skip 1 tokens"));
+        assert!(display.contains("cost: 1.50"));
+        assert!(display.contains("edits: 2"));
+    }
+
+    #[test]
+    fn test_repair_edge_kind_variants() {
+        // Verify all variants exist and are distinct
+        let skip = RepairEdgeKind::Skip;
+        let delete = RepairEdgeKind::Delete;
+        let substitute = RepairEdgeKind::Substitute(1);
+        let insert = RepairEdgeKind::Insert(2);
+        let sync = RepairEdgeKind::Sync(3);
+        let swap = RepairEdgeKind::Swap;
+
+        assert_ne!(skip, delete);
+        assert_ne!(substitute, insert);
+        assert_ne!(insert, sync);
+        assert_ne!(swap, skip);
+        assert_eq!(skip, RepairEdgeKind::Skip);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // SwapTokens tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_swap_tokens_action_display() {
+        let action = RepairAction::SwapTokens { pos_a: 0, pos_b: 1 };
+        assert_eq!(format!("{}", action), "swap tokens at positions 0 and 1");
+    }
+
+    #[test]
+    fn test_swap_tokens_edit_cost() {
+        let action = RepairAction::SwapTokens { pos_a: 0, pos_b: 1 };
+        assert_eq!(action.edit_cost().0, 1); // single edit operation
+    }
+
+    #[test]
+    fn test_composite_action_display() {
+        let action = RepairAction::Composite {
+            steps: vec![RepairAction::DeleteToken, RepairAction::DeleteToken],
+        };
+        let display = format!("{}", action);
+        assert_eq!(display, "delete token, delete token");
+    }
+
+    #[test]
+    fn test_composite_action_edit_cost() {
+        let action = RepairAction::Composite {
+            steps: vec![
+                RepairAction::DeleteToken,                         // 1
+                RepairAction::InsertToken { token: 0 },            // 2
+                RepairAction::SwapTokens { pos_a: 0, pos_b: 1 },  // 1
+            ],
+        };
+        assert_eq!(action.edit_cost().0, 4);
+    }
+
+    #[test]
+    fn test_find_best_recovery_swap_available() {
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string(), "Eof".to_string()];
+        let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        // tokens: [Plus, Semi, Eof] — swapping Plus and Semi puts Semi at pos 0
+        // Swap cost: 1.25, Skip to Semi at pos 1: 0.5, Delete: 1.0
+        // Skip wins (0.5 < 1.0 < 1.25)
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Plus").expect("Plus"),
+            token_map.get("Semi").expect("Semi"),
+            token_map.get("Eof").expect("Eof"),
+        ];
+
+        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        // Skip should win (cost 0.5 to reach Semi at position 1)
+        match &result.action {
+            RepairAction::SkipToSync { skip_count, .. } => assert_eq!(*skip_count, 1),
+            other => panic!("Expected SkipToSync, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_find_best_recovery_swap_explored() {
+        let token_map = make_token_map();
+        // Only Eof is a sync token — no nearby sync, so swap is explored
+        let sync_names = vec!["Eof".to_string()];
+        let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        // tokens: [Ident, Eof, Plus] — swap gives [Eof, Ident, Plus]
+        // Swap cost: 1.25, puts Eof at pos 0 which IS sync → swap new_pos=2
+        // Delete cost: 1.0, new_pos=1
+        // Skip to Eof at pos 1: 0.5, new_pos=1
+        // Skip wins (0.5)
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Ident").expect("Ident"),
+            token_map.get("Eof").expect("Eof"),
+            token_map.get("Plus").expect("Plus"),
+        ];
+
+        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        // Skip to Eof at position 1 should win
+        assert!(result.cost.value() <= 1.0);
+    }
+
+    #[test]
+    fn test_viterbi_multi_step_swap_edge() {
+        let token_map = make_token_map();
+        let mut sync_tokens = BTreeSet::new();
+        sync_tokens.insert(token_map.get("Semi").expect("Semi"));
+
+        // tokens: [Ident, Semi, Plus] — swap gives Semi at pos 0, i.e., swap(0,1) → reach pos 2
+        // Skip to Semi at pos 1: cost 0.5
+        // Swap: cost 1.25, reaches pos 2
+        // Skip should still win for reaching Semi
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Ident").expect("Ident"),
+            token_map.get("Semi").expect("Semi"),
+            token_map.get("Plus").expect("Plus"),
+        ];
+
+        let config = RecoveryConfig::default();
+        let result = viterbi_multi_step(&token_ids, 0, &sync_tokens, &config)
+            .expect("should find recovery");
+
+        // Skip to Semi is cheaper
+        assert!(result.total_cost.value() <= 1.25 + 1e-9);
+    }
+
+    #[test]
+    fn test_recovery_config_simulation_multipliers() {
+        let config = RecoveryConfig {
+            simulation_valid_mult: 0.3,
+            simulation_fail_penalty: 0.5,
+            ..RecoveryConfig::default()
+        };
+
+        let sim = ParseSimulator::new(BTreeMap::new(), BTreeMap::new(), BTreeMap::new(), 5);
+
+        let valid = SimulationResult::ValidContinuation { tokens_consumed: 3 };
+        assert!((sim.cost_multiplier_with(&valid, &config) - 0.3).abs() < 1e-9);
+
+        let failed = SimulationResult::FailedAt { position: 2 };
+        // 1.0 + (5 - 2) * 0.5 = 1.0 + 1.5 = 2.5
+        assert!((sim.cost_multiplier_with(&failed, &config) - 2.5).abs() < 1e-9);
+    }
+
+    // ── Lattice-aware recovery tests (Sprint 11) ──
+
+    #[cfg(feature = "context-sensitive-lex")]
+    #[test]
+    fn test_lattice_recovery_primary_path_preferred() {
+        let token_map = make_token_map();
+        let semi = token_map.get("Semi").expect("Semi");
+
+        let sync_tokens: std::collections::BTreeSet<TokenId> =
+            [semi].into_iter().collect();
+        let config = RecoveryConfig::default();
+
+        // Primary path: [Plus, Semi] — skip Plus, sync at Semi (cost 0.5)
+        let primary: Vec<TokenId> = vec![
+            token_map.get("Plus").expect("Plus"),
+            semi,
+        ];
+        // Alternative path: [Ident, Integer, Semi] — skip Ident+Integer (cost 1.0)
+        let alt: Vec<TokenId> = vec![
+            token_map.get("Ident").expect("Ident"),
+            token_map.get("Integer").expect("Integer"),
+            semi,
+        ];
+
+        let alternatives = vec![
+            (primary, crate::automata::semiring::TropicalWeight::one()),
+            (alt, crate::automata::semiring::TropicalWeight::one()),
+        ];
+
+        let result = super::lattice_recovery(&alternatives, 0, &sync_tokens, &config);
+        assert!(result.is_some(), "should find recovery from lattice alternatives");
+        // Primary should win (lower cost)
+        let result = result.expect("recovery result");
+        assert!(result.cost.value() <= 0.6, "primary path recovery (skip 1) should be cheapest");
+    }
+
+    #[cfg(feature = "context-sensitive-lex")]
+    #[test]
+    fn test_lattice_recovery_alternative_wins_when_better() {
+        let token_map = make_token_map();
+        let semi = token_map.get("Semi").expect("Semi");
+
+        let sync_tokens: std::collections::BTreeSet<TokenId> =
+            [semi].into_iter().collect();
+        let config = RecoveryConfig::default();
+
+        // Primary path: [Plus, Integer, Ident, Semi] — skip 3 tokens (cost 1.5)
+        let primary: Vec<TokenId> = vec![
+            token_map.get("Plus").expect("Plus"),
+            token_map.get("Integer").expect("Integer"),
+            token_map.get("Ident").expect("Ident"),
+            semi,
+        ];
+        // Alternative path: [Semi] — immediate sync (cost 0 + 0.1 penalty)
+        let alt: Vec<TokenId> = vec![semi];
+
+        let alternatives = vec![
+            (primary, crate::automata::semiring::TropicalWeight::one()),
+            (alt, crate::automata::semiring::TropicalWeight::one()),
+        ];
+
+        let result = super::lattice_recovery(&alternatives, 0, &sync_tokens, &config);
+        assert!(result.is_some(), "should find recovery");
+        let result = result.expect("recovery result");
+        // Alternative should win (immediate sync at cost ~0.1 vs skip 3 at cost 1.5)
+        assert!(result.cost.value() < 0.5, "alternative path with immediate sync should be cheapest");
+    }
+
+    #[cfg(feature = "context-sensitive-lex")]
+    #[test]
+    fn test_lattice_recovery_empty_alternatives() {
+        let sync_tokens: std::collections::BTreeSet<TokenId> = std::collections::BTreeSet::new();
+        let config = RecoveryConfig::default();
+        let alternatives: Vec<(Vec<TokenId>, crate::automata::semiring::TropicalWeight)> = vec![];
+
+        let result = super::lattice_recovery(&alternatives, 0, &sync_tokens, &config);
+        assert!(result.is_none(), "empty alternatives should return None");
     }
 }

@@ -62,3 +62,7 @@ harness = false
 [[bench]]
 name = "bench_scaling"
 harness = false
+
+[[bench]]
+name = "recovery_bench"
+harness = false

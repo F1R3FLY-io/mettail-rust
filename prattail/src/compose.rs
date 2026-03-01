@@ -598,6 +598,7 @@ pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<Composi
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
         });
     }
 
@@ -775,6 +776,7 @@ mod tests {
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
         }
     }
 
@@ -899,6 +901,7 @@ mod tests {
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
         };
 
         let err = compose_languages(&spec_a, &spec_b).expect_err("should fail");
@@ -1139,6 +1142,7 @@ mod tests {
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
         };
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
@@ -1218,6 +1222,7 @@ mod tests {
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
                     literal_patterns: LiteralPatterns::default(),
+                recovery_config: crate::recovery::RecoveryConfig::default(),
             };
             // Manually set prefix_precedence to simulate user override
             spec.rules[0].prefix_precedence = Some(10);
@@ -1251,6 +1256,7 @@ mod tests {
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
                     literal_patterns: LiteralPatterns::default(),
+                recovery_config: crate::recovery::RecoveryConfig::default(),
             };
             spec.rules[0].prefix_precedence = Some(20);
             spec
@@ -1297,6 +1303,7 @@ mod tests {
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
                     literal_patterns: LiteralPatterns::default(),
+                recovery_config: crate::recovery::RecoveryConfig::default(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1328,6 +1335,7 @@ mod tests {
                 beam_width: BeamWidthConfig::Disabled,
                 log_semiring_model_path: None,
                     literal_patterns: LiteralPatterns::default(),
+                recovery_config: crate::recovery::RecoveryConfig::default(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec

@@ -496,7 +496,7 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
                     arm,
                     "0 => Err(nfa_first_err.unwrap_or_else(|| \
                         ParseError::UnexpectedToken {{ \
-                            expected: \"{cat} expression\", \
+                            expected: Cow::Borrowed(\"{cat} expression\"), \
                             found: format!(\"{{:?}}\", &tokens[nfa_saved].0), \
                             range: tokens[nfa_saved].1, \
                         }} \
@@ -653,7 +653,7 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
     match_arms.push(format!(
         "other => {{ \
             Err(ParseError::UnexpectedToken {{ \
-                expected: \"{expected_escaped}\", \
+                expected: Cow::Borrowed(\"{expected_escaped}\"), \
                 found: format!(\"{{:?}}\", other), \
                 range: tokens[*pos].1, \
             }}) \
@@ -670,7 +670,7 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
             if *pos >= tokens.len() {{ \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
                 return Err(ParseError::UnexpectedEof {{ \
-                    expected: \"{expected_escaped}\", \
+                    expected: Cow::Borrowed(\"{expected_escaped}\"), \
                     range: eof_range, \
                 }}); \
             }} \
@@ -711,14 +711,14 @@ pub fn write_parser_helpers(buf: &mut String) {
         ) -> Result<(), ParseError> { \
             if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                return Err(ParseError::UnexpectedEof { expected, range: eof_range }); \
+                return Err(ParseError::UnexpectedEof { expected: Cow::Borrowed(expected), range: eof_range }); \
             } \
             if predicate(&tokens[*pos].0) { \
                 *pos += 1; \
                 Ok(()) \
             } else { \
                 Err(ParseError::UnexpectedToken { \
-                    expected, \
+                    expected: Cow::Borrowed(expected), \
                     found: format!(\"{:?}\", tokens[*pos].0), \
                     range: tokens[*pos].1, \
                 }) \
@@ -727,7 +727,7 @@ pub fn write_parser_helpers(buf: &mut String) {
         fn expect_ident<'a>(tokens: &[(Token<'a>, Range)], pos: &mut usize) -> Result<String, ParseError> { \
             if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                return Err(ParseError::UnexpectedEof { expected: \"identifier\", range: eof_range }); \
+                return Err(ParseError::UnexpectedEof { expected: Cow::Borrowed(\"identifier\"), range: eof_range }); \
             } \
             match &tokens[*pos].0 { \
                 Token::Ident(name) => { \
@@ -737,7 +737,7 @@ pub fn write_parser_helpers(buf: &mut String) {
                 } \
                 other => { \
                     Err(ParseError::UnexpectedToken { \
-                        expected: \"identifier\", \
+                        expected: Cow::Borrowed(\"identifier\"), \
                         found: format!(\"{:?}\", other), \
                         range: tokens[*pos].1, \
                     }) \
@@ -786,7 +786,7 @@ pub fn write_recovery_helpers(buf: &mut String) {
         ) -> bool { \
             if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                errors.push(ParseError::UnexpectedEof { expected, range: eof_range }); \
+                errors.push(ParseError::UnexpectedEof { expected: Cow::Borrowed(expected), range: eof_range }); \
                 return false; \
             } \
             if predicate(&tokens[*pos].0) { \
@@ -794,7 +794,7 @@ pub fn write_recovery_helpers(buf: &mut String) {
                 true \
             } else { \
                 errors.push(ParseError::UnexpectedToken { \
-                    expected, \
+                    expected: Cow::Borrowed(expected), \
                     found: format!(\"{:?}\", tokens[*pos].0), \
                     range: tokens[*pos].1, \
                 }); \
@@ -809,7 +809,7 @@ pub fn write_recovery_helpers(buf: &mut String) {
         ) -> String { \
             if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                errors.push(ParseError::UnexpectedEof { expected: \"identifier\", range: eof_range }); \
+                errors.push(ParseError::UnexpectedEof { expected: Cow::Borrowed(\"identifier\"), range: eof_range }); \
                 return \"__error__\".to_string(); \
             } \
             match &tokens[*pos].0 { \
@@ -820,7 +820,7 @@ pub fn write_recovery_helpers(buf: &mut String) {
                 } \
                 other => { \
                     errors.push(ParseError::UnexpectedToken { \
-                        expected: \"identifier\", \
+                        expected: Cow::Borrowed(\"identifier\"), \
                         found: format!(\"{:?}\", other), \
                         range: tokens[*pos].1, \
                     }); \

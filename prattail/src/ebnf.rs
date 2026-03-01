@@ -1275,6 +1275,7 @@ mod tests {
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
         }
     }
 
@@ -1456,6 +1457,12 @@ mod tests {
             .iter()
             .any(|r| r.has_binder || r.has_multi_binder);
 
+        let all_syntax: Vec<(String, String, Vec<crate::SyntaxItemSpec>)> = spec
+            .rules
+            .iter()
+            .map(|r| (r.label.clone(), r.category.clone(), r.syntax.clone()))
+            .collect();
+
         ParserBundle {
             categories,
             bp_table,
@@ -1466,6 +1473,8 @@ mod tests {
             cast_rules,
             has_binders,
             beam_width: crate::BeamWidthConfig::Disabled,
+            recovery_config: crate::recovery::RecoveryConfig::default(),
+            all_syntax,
         }
     }
 
@@ -1672,6 +1681,7 @@ mod tests {
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1743,6 +1753,7 @@ mod tests {
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1807,6 +1818,7 @@ mod tests {
             beam_width: BeamWidthConfig::Disabled,
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
         };
 
         let bundle = build_bundle(&spec);

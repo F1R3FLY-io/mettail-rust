@@ -28,6 +28,7 @@ use mettail_prattail::prediction::{
     CrossCategoryOverlap, DispatchTable, FirstItem, FirstSet, RuleInfo,
 };
 use mettail_prattail::recursive::{write_rd_handler, CollectionKind, RDRuleInfo, RDSyntaxItem};
+use mettail_prattail::recovery::RecoveryConfig;
 use mettail_prattail::{
     BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec,
 };
@@ -244,6 +245,7 @@ pub fn minimal_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
+        recovery_config: RecoveryConfig::default(),
     }
 }
 
@@ -289,6 +291,7 @@ pub fn small_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
+        recovery_config: RecoveryConfig::default(),
     }
 }
 
@@ -332,6 +335,7 @@ pub fn medium_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
+        recovery_config: RecoveryConfig::default(),
     }
 }
 
@@ -384,6 +388,7 @@ pub fn complex_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
+        recovery_config: RecoveryConfig::default(),
     }
 }
 
@@ -436,6 +441,7 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
+        recovery_config: RecoveryConfig::default(),
     }
 }
 

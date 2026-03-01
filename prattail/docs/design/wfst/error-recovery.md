@@ -546,3 +546,29 @@ See also:
 - [prediction.md](prediction.md) -- prediction WFST (uses the same `TokenIdMap`)
 - [../../theory/wfst/viterbi-and-forward-backward.md](../../theory/wfst/viterbi-and-forward-backward.md) -- Viterbi algorithm correctness
 - [weight-training.md](weight-training.md) -- log-semiring training that can tune recovery weights
+
+---
+
+## 14. Extended Recovery (Sprint Expansion)
+
+This document covers the base WFST recovery architecture: 4 repair actions,
+3-tier context, single-step and Viterbi recovery. The 15-sprint expansion
+added:
+
+- **SwapTokens** (cost 1.25), **CategorySwitch** (cost 0.75), **Composite** (multi-step)
+- **RecoveryConfig** (19 tunable fields replacing hardcoded constants)
+- **viterbi_multi_step()** (full Viterbi lattice with all 6 edge types)
+- **Incremental bracket tracking** (thread-local Cell, replaces O(pos) scan)
+- **Frame kind propagation** (thread-local Cell for depth + FrameKind)
+- **Cascade prevention** (cascade_window suppresses phantom errors)
+- **ParseError::RecoveryApplied** (human-readable descriptions with token names)
+- **Lattice-aware recovery** (context-sensitive-lex feature)
+- **Trained recovery weights** (wfst-log feature, SGD training loop)
+
+See:
+- [extended-recovery-strategies.md](extended-recovery-strategies.md) — 3 new strategies, 7-strategy evaluation, cost hierarchy
+- [recovery-config.md](recovery-config.md) — 19 tunable parameters and trained weights
+- [../../architecture/wfst/recovery-state-propagation.md](../../architecture/wfst/recovery-state-propagation.md) — Thread-local state, pipeline integration, zero-overhead
+- [../../usage/wfst/recovery-tuning.md](../../usage/wfst/recovery-tuning.md) — Practical tuning, diagnostics, training
+- [../../theory/wfst/multi-step-viterbi-recovery.md](../../theory/wfst/multi-step-viterbi-recovery.md) — Repair lattice, correctness
+- [../../theory/wfst/cascade-suppression.md](../../theory/wfst/cascade-suppression.md) — Absorbing-state model
