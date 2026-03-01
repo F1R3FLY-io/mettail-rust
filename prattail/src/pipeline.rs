@@ -156,6 +156,10 @@ pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
         .collect();
     let warnings = detect_grammar_warnings(&parser_bundle.rule_infos, &category_names, &all_syntax);
     for warning in &warnings {
+        /* Skip AmbiguousPrefix here — superseded by WFST-aware warnings below (Phase 2b) */
+        if matches!(warning, crate::prediction::GrammarWarning::AmbiguousPrefix { .. }) {
+            continue;
+        }
         eprintln!("warning: {}", warning);
     }
 
@@ -716,6 +720,48 @@ fn generate_parser_code(
             (None, Some(weight_map))
         };
 
+    // Detect which categories have NFA-ambiguous prefix groups (multiple rules
+    // sharing the same dispatch token). These categories need thread-local spillover
+    // buffers and forced-prefix replay for intra-category disambiguation.
+    let nfa_spillover_categories = crate::trampoline::categories_needing_nfa_spillover(
+        &bundle.rd_rules,
+        &category_names,
+    );
+
+    // CountingWeight ambiguity warnings: for each NFA-ambiguous prefix group,
+    // warn when all alternatives have equal WFST weight (resolution deferred
+    // to semantic disambiguation via substitute_env/from_alternatives).
+    for cat_name in &nfa_spillover_categories {
+        let rd_by_token = crate::trampoline::group_rd_by_dispatch_token_pub(
+            &bundle.rd_rules,
+            cat_name,
+        );
+        if let Some(wfst) = prediction_wfsts.get(cat_name.as_str()) {
+            for (token, rules) in &rd_by_token {
+                if rules.len() <= 1 {
+                    continue;
+                }
+                let labels: Vec<&str> = rules.iter().map(|r| r.label.as_str()).collect();
+                let ordered = wfst.nfa_alternative_order(token, &labels);
+                let weights: Vec<f64> = ordered.iter().map(|(_, w)| w.0).collect();
+                let all_equal = weights.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-12);
+                eprintln!(
+                    "warning: ambiguous prefix dispatch for token {:?} in category {}: \
+                     rules {:?} all match",
+                    token, cat_name, labels,
+                );
+                if all_equal {
+                    eprintln!(
+                        "  \u{2192} all {} alternatives have equal weight ({:.1}); \
+                         resolution deferred to semantic disambiguation",
+                        rules.len(),
+                        weights.first().copied().unwrap_or(0.5),
+                    );
+                }
+            }
+        }
+    }
+
     // Write parser helpers
     write_parser_helpers(&mut buf);
 
@@ -758,6 +804,7 @@ fn generate_parser_code(
             follow_set: own_follow,
             has_binders: bundle.has_binders,
             prediction_wfst: prediction_wfsts.get(&cat.name).cloned(),
+            needs_nfa_spillover: nfa_spillover_categories.contains(&cat.name),
         };
 
         let cat_handlers: Vec<PrefixHandler> = all_prefix_handlers
@@ -886,6 +933,7 @@ fn generate_parser_code(
             follow_set: own_follow,
             has_binders: bundle.has_binders,
             prediction_wfst: None, // Recovery wrappers don't need weighted dispatch
+            needs_nfa_spillover: false, // Recovery path doesn't use NFA spillover
         };
 
         // Generate WFST-based recovery function.

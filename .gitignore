@@ -93,3 +93,5 @@ prattail/target/*
 
 *.sw?
 .#*
+
+perf-profiles/

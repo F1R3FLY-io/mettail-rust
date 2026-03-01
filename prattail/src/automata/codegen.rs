@@ -834,7 +834,10 @@ pub fn write_lexer_adapter(buf: &mut String) {
          } \
          pub fn take_error(&mut self) -> Option<String> { \
          self.lex_error.take() \
-         } } ",
+         } \
+         pub fn pos(&self) -> usize { self.cursor } \
+         pub fn set_pos(&mut self, pos: usize) { self.cursor = pos; } \
+         } ",
     );
 }
 

@@ -190,6 +190,33 @@ impl PredictionWfst {
         }
     }
 
+    /// Returns indices into `rule_labels` sorted by weight (lowest first = most likely).
+    ///
+    /// Used by NFA merged prefix codegen to order try-all alternatives so that
+    /// the weight-best alternative is tried first and returned as the primary
+    /// result. Unknown rules get a default weight of 0.5 (cast-level priority).
+    pub fn nfa_alternative_order(
+        &self,
+        token_name: &str,
+        rule_labels: &[&str],
+    ) -> Vec<(usize, TropicalWeight)> {
+        let predictions = self.predict(token_name);
+        let mut indexed: Vec<(usize, TropicalWeight)> = rule_labels
+            .iter()
+            .enumerate()
+            .map(|(i, label)| {
+                let weight = predictions
+                    .iter()
+                    .find(|a| a.action.rule_label() == *label)
+                    .map(|a| a.weight)
+                    .unwrap_or(TropicalWeight::new(0.5));
+                (i, weight)
+            })
+            .collect();
+        indexed.sort_by(|(_, wa), (_, wb)| wa.cmp(wb));
+        indexed
+    }
+
     /// Set the beam width for pruning.
     pub fn set_beam_width(&mut self, beam: Option<TropicalWeight>) {
         self.beam_width = beam;

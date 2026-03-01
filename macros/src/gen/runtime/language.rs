@@ -282,6 +282,7 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
             /// Final disambiguation: if only one alternative is "accepting" (concrete/ground),
             /// choose it even if more candidates exist.
             fn from_alternatives(alts: Vec<Self>) -> Self {
+                let n_alts = alts.len();
                 let flat: Vec<Self> = alts.into_iter().flat_map(|a| match a {
                     Self::Ambiguous(inner) => inner,
                     other => vec![other],
@@ -290,13 +291,36 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                     0 => panic!("from_alternatives: empty alternatives"),
                     1 => flat.into_iter().next().expect("checked len == 1"),
                     _ => {
-                        // Final disambiguation: if exactly one alternative is accepting
-                        // (concrete/ground), choose it regardless of how many candidates exist.
-                        let accepting: Vec<&Self> = flat.iter().filter(|a| a.is_accepting()).collect();
-                        if accepting.len() == 1 {
-                            return accepting[0].clone();
+                        /* Final disambiguation: if exactly one alternative is accepting
+                           (concrete/ground), choose it regardless of how many candidates exist. */
+                        let accepting: Vec<(usize, &Self)> = flat.iter()
+                            .enumerate()
+                            .filter(|(_, a)| a.is_accepting())
+                            .collect();
+                        match accepting.len() {
+                            1 => accepting[0].1.clone(),
+                            n if n > 1 => {
+                                /* Multiple accepting alternatives — use WFST weights as
+                                   tiebreaker. Lowest tropical weight = most likely.
+                                   Only valid when weights are parallel to flat (no nested
+                                   Ambiguous flattening changed the length). */
+                                let weights = AMBIGUOUS_WEIGHTS.with(|cell| cell.take());
+                                if weights.len() == n_alts && flat.len() == n_alts {
+                                    let best_idx = accepting.iter()
+                                        .min_by(|(i, _), (j, _)| {
+                                            weights[*i].partial_cmp(&weights[*j])
+                                                .unwrap_or(std::cmp::Ordering::Equal)
+                                        })
+                                        .map(|(i, _)| *i)
+                                        .expect("accepting non-empty");
+                                    flat.into_iter().nth(best_idx).expect("valid index")
+                                } else {
+                                    /* Weights unavailable or length mismatch — return first accepting */
+                                    accepting[0].1.clone()
+                                }
+                            }
+                            _ => Self::Ambiguous(flat),
                         }
-                        Self::Ambiguous(flat)
                     }
                 }
             }
@@ -1093,10 +1117,46 @@ fn generate_language_struct_multi(
         .iter()
         .map(|cat| {
             let variant = format_ident!("{}", cat);
+            let cat_upper = cat.to_string().to_uppercase();
+            let spill_name = format_ident!("NFA_PREFIX_SPILL_{}", cat_upper);
+            let forced_name = format_ident!("NFA_FORCED_PREFIX_{}", cat_upper);
+            let primary_weight_name = format_ident!("NFA_PRIMARY_WEIGHT_{}", cat_upper);
             let try_block = quote! {
                 match #cat::parse(input) {
-                    Ok(t) => successes.push(#inner_enum_name::#variant(t)),
-                    Err(e) => if first_err.is_none() { first_err = Some(e); },
+                    Ok(t) => {
+                        successes.push(#inner_enum_name::#variant(t));
+                        /* Record the primary result's WFST weight for disambiguation.
+                           Default 0.5 if no NFA ambiguity occurred (NFA_PRIMARY_WEIGHT
+                           is only set when nfa_results.len() > 1). */
+                        success_weights.push(#primary_weight_name.with(|cell| {
+                            let w = cell.get();
+                            cell.set(0.5); /* reset for next parse */
+                            w
+                        }));
+                        /* Drain NFA prefix spillover and replay with forced prefix.
+                           When the NFA merged arm produces N>1 successes, the best
+                           (weight-lowest) is returned normally and the remaining N-1
+                           are spilled here. Each spilled alternative is replayed through
+                           the full parser (prefix + infix loop) via forced-prefix override
+                           so it gets correct infix context (e.g., float(x) + 1.0).
+                           The position and WFST weight are carried alongside the prefix
+                           value. */
+                        let spilled: Vec<(#cat, usize, f64)> = #spill_name.with(|cell| cell.take());
+                        for (alt_prefix, alt_pos, alt_weight) in spilled {
+                            #forced_name.with(|cell| cell.set(Some((alt_prefix, alt_pos, alt_weight))));
+                            if let Ok(alt_term) = #cat::parse(input) {
+                                successes.push(#inner_enum_name::#variant(alt_term));
+                                success_weights.push(alt_weight);
+                            }
+                            /* Clear any nested spillover from forced-prefix replay */
+                            #spill_name.with(|cell| { cell.take(); });
+                        }
+                    },
+                    Err(e) => {
+                        /* Clear spillover on error to prevent leaking across categories */
+                        #spill_name.with(|cell| { cell.take(); });
+                        if first_err.is_none() { first_err = Some(e); }
+                    },
                 }
             };
             // Guard native categories behind an Ident check when non-native categories exist
@@ -1466,6 +1526,14 @@ fn generate_language_struct_multi(
         /// Language implementation struct (multi-category: one parser/relation per type).
         pub struct #language_name;
 
+        thread_local! {
+            /// WFST weights for NFA-ambiguous alternatives, parallel to the `successes`
+            /// vec in `parse_preserving_vars`. Set before `from_alternatives` so it can
+            /// use weights as tiebreaker when multiple alternatives are accepting.
+            static AMBIGUOUS_WEIGHTS: std::cell::Cell<Vec<f64>> =
+                std::cell::Cell::new(Vec::new());
+        }
+
         impl #language_name {
             /// Parse a term from a string (clears var cache). Tries all category parsers.
             pub fn parse(input: &str) -> Result<#term_name, std::string::String> {
@@ -1485,12 +1553,18 @@ fn generate_language_struct_multi(
                 #lexer_probe
 
                 let mut successes = Vec::new();
+                let mut success_weights: Vec<f64> = Vec::new();
                 let mut first_err = None;
                 #(#parse_tries)*
                 match successes.len() {
                     0 => Err(first_err.unwrap_or_else(|| "Parse error".to_string())),
                     1 => Ok(#term_name(successes.into_iter().next().expect("checked len == 1"))),
-                    _ => Ok(#term_name(#inner_enum_name::from_alternatives(successes))),
+                    _ => {
+                        /* Set AMBIGUOUS_WEIGHTS thread-local so from_alternatives can use
+                           WFST weights for tiebreaking when multiple alternatives are accepting. */
+                        AMBIGUOUS_WEIGHTS.with(|cell| cell.set(success_weights));
+                        Ok(#term_name(#inner_enum_name::from_alternatives(successes)))
+                    }
                 }
             }
 

@@ -644,3 +644,192 @@ fn test_bare_variable_type_is_int() {
     // type should show primary (Int)
     assert_eq!(format!("{}", term_type), "Int");
 }
+
+// ── NFA disambiguation: nested casts (duplicate-token prefix arms) ──
+
+#[test]
+fn test_float_float_nested() {
+    calc_normal_form("float(float(3))", "3.0");
+}
+
+#[test]
+fn test_int_int_nested() {
+    calc_normal_form("int(int(3))", "3");
+}
+
+#[test]
+fn test_float_int_roundtrip() {
+    calc_normal_form("float(int(3.14))", "3.0");
+}
+
+#[test]
+fn test_int_float_roundtrip() {
+    calc_normal_form("int(float(3))", "3");
+}
+
+#[test]
+fn test_all_to_float() {
+    calc_normal_form("float(3)", "3.0");
+    calc_normal_form("float(true)", "1.0");
+    calc_normal_form("float(3.0)", "3.0");
+}
+
+#[test]
+fn test_all_to_int() {
+    calc_normal_form("int(3.14)", "3");
+    calc_normal_form("int(true)", "1");
+    calc_normal_form("int(3)", "3");
+}
+
+#[test]
+fn test_all_to_str() {
+    calc_normal_form("str(3)", r#""3""#);
+    calc_normal_form("str(3.14)", r#""3.14""#);
+    calc_normal_form("str(true)", r#""true""#);
+}
+
+#[test]
+fn test_all_to_bool() {
+    calc_normal_form("bool(1)", "true");
+    calc_normal_form("bool(0)", "false");
+    calc_normal_form("bool(3.14)", "true");
+    calc_normal_form("bool(true)", "true");
+}
+
+#[test]
+fn test_float_cast_in_expr() {
+    calc_normal_form("float(3) + 1.0", "4.0");
+}
+
+#[test]
+fn test_int_cast_in_expr() {
+    calc_normal_form("int(3.14) * 2", "6");
+}
+
+// ── NFA spillover + forced-prefix replay disambiguation tests ──
+
+/// `float(x)` where x is bound to Bool(true) → NFA spillover produces multiple
+/// alternatives (IntToFloat, BoolToFloat, StrToFloat, FloatId). After env
+/// substitution, BoolToFloat(Bool(true)) becomes ground while others remain
+/// variables → from_alternatives picks BoolToFloat. The result is `1.0`.
+#[test]
+fn test_nfa_spillover_float_bool_var() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    let bool_term = lang.parse_term_for_env("true").expect("parse true");
+    lang.add_to_env(env.as_mut(), "x", bool_term.as_ref())
+        .expect("add x");
+    let term = lang.parse_term_for_env("float(x)").expect("parse float(x)");
+    let substituted = lang
+        .substitute_env(term.as_ref(), env.as_ref())
+        .expect("substitute_env");
+    let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
+    assert!(
+        displays.contains(&"1.0"),
+        "expected \"1.0\" for float(x) with x=true, got: {:?}",
+        displays
+    );
+}
+
+/// `float(x) + 1.0` where x is Bool(true) → forced-prefix replay runs the
+/// full parser (prefix + infix loop), so the BoolToFloat alternative gets
+/// wrapped in FloatAdd(BoolToFloat(Bool(true)), FloatLit(1.0)).
+/// After env substitution + Ascent: `1.0 + 1.0 = 2.0`.
+#[test]
+fn test_nfa_spillover_float_bool_var_in_expr() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    let bool_term = lang.parse_term_for_env("true").expect("parse true");
+    lang.add_to_env(env.as_mut(), "x", bool_term.as_ref())
+        .expect("add x");
+    let term = lang
+        .parse_term_for_env("float(x) + 1.0")
+        .expect("parse float(x) + 1.0");
+    let substituted = lang
+        .substitute_env(term.as_ref(), env.as_ref())
+        .expect("substitute_env");
+    let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
+    assert!(
+        displays.contains(&"2.0"),
+        "expected \"2.0\" for float(x) + 1.0 with x=true, got: {:?}",
+        displays
+    );
+}
+
+/// `float(x)` where x is bound to Int(42) → IntToFloat(42) → 42.0
+#[test]
+fn test_nfa_spillover_float_int_var() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    let int_term = lang.parse_term_for_env("42").expect("parse 42");
+    lang.add_to_env(env.as_mut(), "x", int_term.as_ref())
+        .expect("add x");
+    let term = lang.parse_term_for_env("float(x)").expect("parse float(x)");
+    let substituted = lang
+        .substitute_env(term.as_ref(), env.as_ref())
+        .expect("substitute_env");
+    let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
+    assert!(
+        displays.contains(&"42.0"),
+        "expected \"42.0\" for float(x) with x=42, got: {:?}",
+        displays
+    );
+}
+
+/// `int(x)` where x is bound to Float(3.14) → FloatToInt(3.14) → 3
+#[test]
+fn test_nfa_spillover_int_float_var() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    let float_term = lang.parse_term_for_env("3.14").expect("parse 3.14");
+    lang.add_to_env(env.as_mut(), "x", float_term.as_ref())
+        .expect("add x");
+    let term = lang.parse_term_for_env("int(x)").expect("parse int(x)");
+    let substituted = lang
+        .substitute_env(term.as_ref(), env.as_ref())
+        .expect("substitute_env");
+    let results = lang.run_ascent(substituted.as_ref()).expect("run_ascent");
+    let displays: Vec<&str> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.as_str())
+        .collect();
+    assert!(
+        displays.contains(&"3"),
+        "expected \"3\" for int(x) with x=3.14, got: {:?}",
+        displays
+    );
+}
+
+/// Unambiguous `float(3)` — the Int literal 3 matches IntToFloat only.
+/// Verify no regression (this already worked, confirms zero-spillover path).
+#[test]
+fn test_nfa_spillover_unambiguous_float_int_literal() {
+    calc_normal_form("float(3)", "3.0");
+}
+
+/// Unambiguous `float(3) + 1.0` — IntToFloat in expression context.
+/// Verify no regression.
+#[test]
+fn test_nfa_spillover_unambiguous_float_int_literal_in_expr() {
+    calc_normal_form("float(3) + 1.0", "4.0");
+}

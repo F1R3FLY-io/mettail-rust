@@ -62,3 +62,4 @@ opt-level = 3
 
 [profile.bench]
 inherits = "release"          # Benchmarks use LLVM for accurate measurements
+debug = "line-tables-only"    # Source-line attribution in perf profiles
