@@ -2,12 +2,14 @@
 //!
 //! Validates that generated parser code includes proper error handling:
 //! - ParseError variants (UnexpectedToken, UnexpectedEof, LexError, TrailingTokens)
+//!   are defined in `runtime_types` and imported via `use mettail_prattail::runtime_types::*;`
 //! - FIRST-set-based expected messages with friendly names
 //! - Error position tracking via Range/Position
 
 use crate::{
-    generate_parser, BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec,
-    SyntaxItemSpec,
+    generate_parser,
+    runtime_types::{ParseError, Position, Range},
+    BeamWidthConfig, CategorySpec, LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec,
 };
 
 /// Build a simple calculator spec for error tests.
@@ -76,27 +78,35 @@ fn typed_calc_spec() -> LanguageSpec {
     spec
 }
 
-// -- ParseError enum generation --
+// -- ParseError is available via runtime_types import --
 
 #[test]
-fn test_generated_code_contains_parse_error_enum() {
+fn test_generated_code_imports_runtime_types() {
     let spec = calculator_spec();
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    assert!(code_str.contains("ParseError"), "generated code should contain ParseError enum");
+    assert!(
+        code_str.contains("runtime_types"),
+        "generated code should import runtime_types (Position, Range, ParseError, etc.)"
+    );
+}
+
+#[test]
+fn test_generated_code_references_parse_error_variants() {
+    let spec = calculator_spec();
+    let code = generate_parser(&spec);
+    let code_str = code.to_string();
+
+    // The parser code constructs ParseError variants — verify they appear in generated code
+    assert!(code_str.contains("ParseError"), "generated code should reference ParseError");
     assert!(
         code_str.contains("UnexpectedToken"),
-        "generated code should contain UnexpectedToken variant"
+        "generated code should reference UnexpectedToken"
     );
     assert!(
         code_str.contains("UnexpectedEof"),
-        "generated code should contain UnexpectedEof variant"
-    );
-    assert!(code_str.contains("LexError"), "generated code should contain LexError variant");
-    assert!(
-        code_str.contains("TrailingTokens"),
-        "generated code should contain TrailingTokens variant"
+        "generated code should reference UnexpectedEof"
     );
 }
 
@@ -106,9 +116,74 @@ fn test_generated_code_contains_position_and_range() {
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    assert!(code_str.contains("Position"), "generated code should contain Position struct");
-    assert!(code_str.contains("byte_offset"), "Position should have byte_offset field");
-    assert!(code_str.contains("Range"), "generated code should contain Range struct");
+    // Position and Range are now imported from runtime_types via wildcard import.
+    // The generated code references Range in error construction and return types.
+    assert!(
+        code_str.contains("runtime_types"),
+        "generated code should import Position/Range from runtime_types"
+    );
+    assert!(code_str.contains("Range"), "generated code should reference Range struct");
+}
+
+// -- Runtime type trait impls exist --
+
+#[test]
+fn test_parse_error_implements_error_trait() {
+    // ParseError is now defined in runtime_types — verify it implements std::error::Error
+    fn assert_error<T: std::error::Error>() {}
+    assert_error::<ParseError>();
+}
+
+#[test]
+fn test_parse_error_implements_display() {
+    use std::fmt::Display;
+    fn assert_display<T: Display>() {}
+    assert_display::<ParseError>();
+}
+
+#[test]
+fn test_parse_error_from_string() {
+    // Verify From<String> for ParseError works
+    let err: ParseError = "test error".to_string().into();
+    match err {
+        ParseError::LexError { message, position } => {
+            assert_eq!(message, "test error");
+            assert_eq!(position, Position::zero());
+        }
+        _ => panic!("From<String> should produce LexError variant"),
+    }
+}
+
+#[test]
+fn test_parse_error_range_accessor() {
+    let err = ParseError::UnexpectedToken {
+        expected: "test",
+        found: "x".to_string(),
+        range: Range::zero(),
+    };
+    assert_eq!(err.range(), Range::zero());
+}
+
+#[test]
+fn test_format_error_context() {
+    // format_error_context is now in runtime_types — verify it works
+    let input = "hello world";
+    let range = Range {
+        start: Position {
+            byte_offset: 6,
+            line: 0,
+            column: 6,
+        },
+        end: Position {
+            byte_offset: 11,
+            line: 0,
+            column: 11,
+        },
+        file_id: None,
+    };
+    let ctx = crate::runtime_types::format_error_context(input, &range);
+    assert!(ctx.contains("hello world"), "context should contain the source line");
+    assert!(ctx.contains("^^^^^"), "context should contain caret markers");
 }
 
 // -- Expected message generation --
@@ -192,15 +267,18 @@ fn test_generated_code_contains_expect_ident() {
 }
 
 #[test]
-fn test_generated_code_contains_format_error_context() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("format_error_context"),
-        "generated code should contain format_error_context for source context display"
-    );
+fn test_runtime_types_provides_format_error_context() {
+    // format_error_context is now in runtime_types, accessible via the wildcard import.
+    // Verify it works correctly with a simple test case.
+    let input = "1 + 2";
+    let range = Range {
+        start: Position { byte_offset: 2, line: 0, column: 2 },
+        end: Position { byte_offset: 3, line: 0, column: 3 },
+        file_id: None,
+    };
+    let ctx = crate::runtime_types::format_error_context(input, &range);
+    assert!(ctx.contains("1 + 2"), "should contain the source line");
+    assert!(ctx.contains("^"), "should contain caret marker");
 }
 
 // -- EOF error handling --
@@ -215,49 +293,5 @@ fn test_prefix_handler_has_eof_check() {
     assert!(
         code_str.contains("UnexpectedEof"),
         "prefix handler should check for EOF and return UnexpectedEof"
-    );
-}
-
-// -- Error implements std::error::Error --
-
-#[test]
-fn test_parse_error_implements_error_trait() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("std :: error :: Error") || code_str.contains("error :: Error"),
-        "ParseError should implement std::error::Error"
-    );
-}
-
-// -- From<String> for ParseError --
-
-#[test]
-fn test_parse_error_from_string() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("From < String > for ParseError")
-            || code_str.contains("From<String> for ParseError"),
-        "ParseError should implement From<String>"
-    );
-}
-
-// -- Display for ParseError --
-
-#[test]
-fn test_parse_error_display() {
-    let spec = calculator_spec();
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    assert!(
-        code_str.contains("Display for ParseError")
-            || code_str.contains("fmt :: Display for ParseError"),
-        "ParseError should implement Display"
     );
 }

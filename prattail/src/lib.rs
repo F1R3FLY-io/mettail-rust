@@ -52,6 +52,7 @@ pub mod wfst;
 pub mod compose;
 pub mod lattice;
 pub mod recovery;
+pub mod runtime_types;
 
 // ── Log semiring modules (feature = "wfst-log", implies "wfst") ────────────
 #[cfg(feature = "wfst-log")]

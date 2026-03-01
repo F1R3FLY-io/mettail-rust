@@ -10,6 +10,7 @@
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
+use std::collections::HashMap;
 
 use mettail_prattail::automata::minimize::minimize_dfa;
 use mettail_prattail::automata::nfa::build_nfa;
@@ -469,10 +470,10 @@ pub struct PreparedSpec {
     // Phase 3: FIRST sets and prediction
     pub categories: Vec<String>,
     pub rule_infos: Vec<RuleInfo>,
-    pub first_sets: BTreeMap<String, FirstSet>,
-    pub dispatch_tables: BTreeMap<String, DispatchTable>,
-    pub overlaps: BTreeMap<(String, String), CrossCategoryOverlap>,
-    pub max_infix_bp: BTreeMap<String, u8>,
+    pub first_sets: HashMap<String, FirstSet>,
+    pub dispatch_tables: HashMap<String, DispatchTable>,
+    pub overlaps: HashMap<(String, String), CrossCategoryOverlap>,
+    pub max_infix_bp: HashMap<String, u8>,
 
     // Phase 4: RD handlers
     pub rd_rules: Vec<RDRuleInfo>,
@@ -734,8 +735,8 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
     let overlaps = analyze_cross_category_overlaps(&categories, &first_sets);
 
     // Phase 3b: Max infix bp per category
-    let max_infix_bp: BTreeMap<String, u8> = {
-        let mut map = BTreeMap::new();
+    let max_infix_bp: HashMap<String, u8> = {
+        let mut map = HashMap::new();
         for op in &bp_table.operators {
             let max = map.entry(op.category.clone()).or_insert(0u8);
             *max = (*max).max(op.left_bp).max(op.right_bp);

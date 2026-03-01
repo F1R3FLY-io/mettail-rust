@@ -22,7 +22,7 @@
 //! from `lling-llang/src/wfst/`. Only the subset needed for prediction is
 //! included (~150 LOC), not the full WFST algebra.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use crate::automata::semiring::{Semiring, TropicalWeight};
 use crate::prediction::{CrossCategoryOverlap, DispatchAction, FirstSet};
@@ -482,11 +482,11 @@ impl PredictionWfstBuilder {
 ///   (try source first since it's the explicit cross-category rule)
 pub fn build_prediction_wfsts(
     categories: &[String],
-    first_sets: &BTreeMap<String, FirstSet>,
-    overlaps: &BTreeMap<(String, String), CrossCategoryOverlap>,
-    dispatch_actions: &BTreeMap<String, BTreeMap<String, DispatchAction>>,
-) -> BTreeMap<String, PredictionWfst> {
-    let mut result = BTreeMap::new();
+    first_sets: &HashMap<String, FirstSet>,
+    overlaps: &HashMap<(String, String), CrossCategoryOverlap>,
+    dispatch_actions: &HashMap<String, HashMap<String, DispatchAction>>,
+) -> HashMap<String, PredictionWfst> {
+    let mut result = HashMap::new();
 
     // Build shared token ID map from all FIRST sets
     let mut all_tokens: Vec<String> = Vec::new();
@@ -499,9 +499,9 @@ pub fn build_prediction_wfsts(
         let mut builder = PredictionWfstBuilder::new(category, token_map.clone());
 
         if let Some(category_actions) = dispatch_actions.get(category) {
-            let token_order: Vec<(&String, &DispatchAction)> = category_actions.iter().collect();
-            // Maintain declaration order (BTreeMap iterates in key order = sorted token names)
-            // We use enumeration index as a proxy for declaration order
+            let mut token_order: Vec<(&String, &DispatchAction)> = category_actions.iter().collect();
+            // Sort for deterministic ordering (HashMap iteration order is arbitrary)
+            token_order.sort_by(|(a, _), (b, _)| a.cmp(b));
 
             for (order, (token_name, action)) in token_order.iter().enumerate() {
                 // Determine weight based on ambiguity analysis
@@ -533,8 +533,8 @@ fn compute_action_weight(
     _token_name: &str,
     action: &DispatchAction,
     _category: &str,
-    _first_sets: &BTreeMap<String, FirstSet>,
-    _overlaps: &BTreeMap<(String, String), CrossCategoryOverlap>,
+    _first_sets: &HashMap<String, FirstSet>,
+    _overlaps: &HashMap<(String, String), CrossCategoryOverlap>,
     order: usize,
 ) -> TropicalWeight {
     match action {
@@ -571,7 +571,7 @@ pub fn generate_weighted_dispatch(wfst: &PredictionWfst, category: &str) -> Opti
     }
 
     // Group actions by token: for each token, collect all alternatives sorted by weight
-    let mut token_groups: BTreeMap<TokenId, Vec<&WeightedAction>> = BTreeMap::new();
+    let mut token_groups: HashMap<TokenId, Vec<&WeightedAction>> = HashMap::new();
 
     let start_state = &wfst.states[wfst.start as usize];
     for transition in &start_state.transitions {
@@ -737,8 +737,8 @@ mod tests {
 
     #[test]
     fn test_compute_action_weight() {
-        let first_sets = BTreeMap::new();
-        let overlaps = BTreeMap::new();
+        let first_sets = HashMap::new();
+        let overlaps = HashMap::new();
 
         // Direct → 0.0
         let w = super::compute_action_weight(
@@ -1071,7 +1071,7 @@ mod tests {
         let mut wfst = builder.build();
 
         // Create a trained model that overrides "Add" weight
-        let mut rule_weights = std::collections::BTreeMap::new();
+        let mut rule_weights = std::collections::HashMap::new();
         rule_weights.insert("Add".to_string(), 0.3);
         // "NonExistent" should be silently ignored
         rule_weights.insert("NonExistent".to_string(), 99.0);
@@ -1116,7 +1116,7 @@ mod tests {
 
         let mut wfst = builder.build();
 
-        let mut rule_weights = std::collections::BTreeMap::new();
+        let mut rule_weights = std::collections::HashMap::new();
         rule_weights.insert("Add".to_string(), 0.1);
 
         let model = crate::training::TrainedModel {

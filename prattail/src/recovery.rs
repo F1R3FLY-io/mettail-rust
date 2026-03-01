@@ -519,8 +519,8 @@ pub fn viterbi_recovery_beam(
 /// produces a structured `RecoveryWfst` instead of generated code.
 pub fn build_recovery_wfsts(
     categories: &[String],
-    follow_sets: &std::collections::BTreeMap<String, crate::prediction::FirstSet>,
-    grammar_terminals: &BTreeSet<String>,
+    follow_sets: &std::collections::HashMap<String, crate::prediction::FirstSet>,
+    grammar_terminals: &std::collections::HashSet<String>,
     token_map: &TokenIdMap,
 ) -> Vec<RecoveryWfst> {
     let structural = [
@@ -1293,13 +1293,13 @@ mod tests {
 
         let categories = vec!["Int".to_string(), "Expr".to_string()];
 
-        let mut follow_sets = std::collections::BTreeMap::new();
+        let mut follow_sets = std::collections::HashMap::new();
         let mut int_follow = crate::prediction::FirstSet::new();
         int_follow.tokens.insert("Plus".to_string());
         int_follow.tokens.insert("Star".to_string());
         follow_sets.insert("Int".to_string(), int_follow);
 
-        let mut grammar_terminals = BTreeSet::new();
+        let mut grammar_terminals = std::collections::HashSet::new();
         grammar_terminals.insert(";".to_string());
         grammar_terminals.insert(")".to_string());
 

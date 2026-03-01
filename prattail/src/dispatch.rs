@@ -5,7 +5,7 @@
 //! - Cast rules (e.g., `Int → Proc`)
 //! - Prediction-based dispatch using FIRST set analysis
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::fmt::Write;
 
 use crate::automata::codegen::terminal_to_variant_name;
@@ -13,7 +13,7 @@ use crate::prediction::{CrossCategoryOverlap, FirstSet};
 
 /// Deterministic cross-category arms grouped by (source_category, token).
 /// Each entry maps to a list of (label, op_variant, operator) tuples.
-type DeterministicArmMap = BTreeMap<(String, String), Vec<(String, String, String)>>;
+type DeterministicArmMap = HashMap<(String, String), Vec<(String, String, String)>>;
 
 /// A cross-category rule that produces a result in one category from
 /// operands in another category.
@@ -65,11 +65,11 @@ pub fn write_category_dispatch(
     category: &str,
     cross_category_rules: &[CrossCategoryRule],
     cast_rules: &[CastRule],
-    overlaps: &BTreeMap<(String, String), CrossCategoryOverlap>,
-    first_sets: &BTreeMap<String, FirstSet>,
+    overlaps: &HashMap<(String, String), CrossCategoryOverlap>,
+    first_sets: &HashMap<String, FirstSet>,
     prediction_wfst: &crate::wfst::PredictionWfst,
-    composed_resolutions: Option<&BTreeMap<(String, String), (String, f64)>>,
-    weight_map: Option<&BTreeMap<(String, String), f64>>,
+    composed_resolutions: Option<&HashMap<(String, String), (String, f64)>>,
+    weight_map: Option<&HashMap<(String, String), f64>>,
 ) {
     if cross_category_rules.is_empty() && cast_rules.is_empty() {
         return;
@@ -80,14 +80,14 @@ pub fn write_category_dispatch(
 
     // Collect all ambiguous tokens and their cross-category rules,
     // then sort by WFST weight
-    let mut ambiguous_by_token: BTreeMap<String, Vec<(&CrossCategoryRule, String)>> =
-        BTreeMap::new();
+    let mut ambiguous_by_token: HashMap<String, Vec<(&CrossCategoryRule, String)>> =
+        HashMap::new();
     // Collect deterministic arms grouped by (source_category, token) to avoid
     // duplicate match arms when multiple rules share the same source category.
     let mut deterministic_by_token: DeterministicArmMap = DeterministicArmMap::new();
 
     // Track ambiguous tokens already handled by composed dispatch
-    let mut composed_handled: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut composed_handled: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     for rule in cross_category_rules {
         let overlap_key = (rule.source_category.clone(), category.to_string());
@@ -349,7 +349,7 @@ pub fn categories_needing_dispatch(
     cross_category_rules: &[CrossCategoryRule],
     _cast_rules: &[CastRule],
 ) -> Vec<String> {
-    let mut categories = std::collections::BTreeSet::new();
+    let mut categories = std::collections::HashSet::new();
 
     for rule in cross_category_rules {
         categories.insert(rule.result_category.clone());

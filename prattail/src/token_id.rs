@@ -3,8 +3,15 @@
 //! Maps token variant names (e.g., "Plus", "Ident", "Integer") to compact `u16`
 //! identifiers suitable for use as WFST transition labels. This avoids string
 //! comparisons in hot paths and enables efficient WFST state indexing.
+//!
+//! Uses `Arc<str>` for string interning: each token name is allocated once,
+//! and both the lookup HashMap and the id_to_name Vec share the same allocation
+//! via atomic reference counting. `Arc::clone` is a single atomic increment,
+//! vastly cheaper than `String::clone` (which heap-allocates). `Arc<str>` is
+//! also thinner than `String` (no capacity field).
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Compact identifier for a token variant, used as a WFST label.
 ///
@@ -19,26 +26,31 @@ pub const EPSILON_TOKEN: TokenId = TokenId::MAX;
 ///
 /// Built once per grammar during pipeline construction, then used by the
 /// prediction WFST and dispatch code generation.
+///
+/// Internally uses `Arc<str>` for string interning: `get_or_insert` allocates
+/// one `Arc<str>` per unique token name, shared between the lookup HashMap and
+/// the id_to_name Vec. This eliminates the double-clone overhead of the previous
+/// `BTreeMap<String, TokenId>` + `Vec<String>` approach.
 #[derive(Debug, Clone)]
 pub struct TokenIdMap {
-    /// Token variant name → compact ID.
-    name_to_id: BTreeMap<String, TokenId>,
-    /// Compact ID → token variant name.
-    id_to_name: Vec<String>,
+    /// Token variant name → compact ID (O(1) amortized lookup).
+    name_to_id: HashMap<Arc<str>, TokenId>,
+    /// Compact ID → interned token variant name.
+    id_to_name: Vec<Arc<str>>,
 }
 
 impl TokenIdMap {
     /// Create a new empty token ID map.
     pub fn new() -> Self {
         TokenIdMap {
-            name_to_id: BTreeMap::new(),
+            name_to_id: HashMap::new(),
             id_to_name: Vec::new(),
         }
     }
 
     /// Create a token ID map from a set of token variant names.
     ///
-    /// Assigns IDs in sorted order (BTreeMap iteration) for determinism.
+    /// Assigns IDs in sorted order for determinism.
     pub fn from_names(names: impl IntoIterator<Item = String>) -> Self {
         let mut map = TokenIdMap::new();
         let mut sorted: Vec<String> = names.into_iter().collect();
@@ -51,13 +63,17 @@ impl TokenIdMap {
     }
 
     /// Get the ID for a token name, inserting it if not present.
+    ///
+    /// Allocates a single `Arc<str>` for new names, shared between
+    /// the lookup map and the id_to_name Vec.
     pub fn get_or_insert(&mut self, name: &str) -> TokenId {
         if let Some(&id) = self.name_to_id.get(name) {
             return id;
         }
         let id = self.id_to_name.len() as TokenId;
-        self.name_to_id.insert(name.to_string(), id);
-        self.id_to_name.push(name.to_string());
+        let interned: Arc<str> = Arc::from(name);
+        self.name_to_id.insert(Arc::clone(&interned), id);
+        self.id_to_name.push(interned);
         id
     }
 
@@ -68,7 +84,7 @@ impl TokenIdMap {
 
     /// Look up the name for a token ID. Returns `None` if out of range.
     pub fn name(&self, id: TokenId) -> Option<&str> {
-        self.id_to_name.get(id as usize).map(|s| s.as_str())
+        self.id_to_name.get(id as usize).map(|s| &**s)
     }
 
     /// Number of registered tokens.
@@ -86,7 +102,7 @@ impl TokenIdMap {
         self.id_to_name
             .iter()
             .enumerate()
-            .map(|(id, name)| (name.as_str(), id as TokenId))
+            .map(|(id, name)| (&**name, id as TokenId))
     }
 }
 

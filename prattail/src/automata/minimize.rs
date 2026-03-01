@@ -32,8 +32,61 @@ thread_local! {
     static AFFECTED: Cell<Vec<usize>> = const { Cell::new(Vec::new()) };
     /// Reusable buffer for states that transition to the splitter partition.
     static GOES_TO: Cell<Vec<StateId>> = const { Cell::new(Vec::new()) };
-    /// Reusable boolean buffer for tracking seen partitions (avoids duplicates).
-    static SEEN: Cell<Vec<bool>> = const { Cell::new(Vec::new()) };
+    /// Reusable word-level bitset for tracking seen partitions.
+    /// Each u64 word covers 64 partition indices. Only dirty words are
+    /// cleared between iterations via the DIRTY_WORDS tracking vector.
+    static SEEN: Cell<Vec<u64>> = const { Cell::new(Vec::new()) };
+    /// Indices of dirty (non-zero) words in SEEN, for O(dirty) reset.
+    static DIRTY_WORDS: Cell<Vec<usize>> = const { Cell::new(Vec::new()) };
+    /// Reusable bitset for worklist deduplication.
+    /// Indexed by (partition_idx * num_classes + class_id).
+    static IN_WORKLIST: Cell<Vec<u64>> = const { Cell::new(Vec::new()) };
+    /// Dirty word indices for IN_WORKLIST, for O(dirty) reset.
+    static IN_WORKLIST_DIRTY: Cell<Vec<usize>> = const { Cell::new(Vec::new()) };
+}
+
+/// Test bit `idx` in a word-level bitset.
+#[inline(always)]
+fn bitset_test(words: &[u64], idx: usize) -> bool {
+    let word_idx = idx >> 6;
+    let bit_idx = idx & 63;
+    word_idx < words.len() && (words[word_idx] >> bit_idx) & 1 != 0
+}
+
+/// Set bit `idx` in a word-level bitset and track dirty words.
+/// Returns true if the bit was newly set.
+#[inline(always)]
+fn bitset_set_dirty(words: &mut [u64], dirty: &mut Vec<usize>, idx: usize) -> bool {
+    let word_idx = idx >> 6;
+    let bit_idx = idx & 63;
+    let mask = 1u64 << bit_idx;
+    let old_word = words[word_idx];
+    let was_clear = old_word & mask == 0;
+    if was_clear {
+        if old_word == 0 {
+            dirty.push(word_idx);
+        }
+        words[word_idx] = old_word | mask;
+    }
+    was_clear
+}
+
+/// Ensure a word-level bitset has enough words for `n` bits.
+#[inline]
+fn bitset_ensure_capacity(words: &mut Vec<u64>, n: usize) {
+    let needed_words = (n + 63) >> 6;
+    if words.len() < needed_words {
+        words.resize(needed_words, 0);
+    }
+}
+
+/// Clear only dirty words in a bitset, using the dirty-word index.
+#[inline]
+fn bitset_clear_dirty(words: &mut [u64], dirty: &mut Vec<usize>) {
+    for &w in dirty.iter() {
+        words[w] = 0;
+    }
+    dirty.clear();
 }
 
 /// Minimize a DFA using Hopcroft's algorithm with inverse transition map.
@@ -116,15 +169,23 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
         partitions.push(states);
     }
 
-    // --- Step 3: Worklist initialization ---
+    // --- Step 3: Worklist initialization with deduplication bitset ---
     // Hopcroft's "distinguishing set" optimization: add the *smaller* of each
     // pair of {accepting, non-accepting} groups. For multi-group initial partitions,
     // add all groups to the worklist.
     let num_initial = partitions.len();
     // Worklist tracks (partition_index, class_id) pairs
     let mut worklist: Vec<(usize, ClassId)> = Vec::with_capacity(num_initial * num_classes);
+
+    // Worklist deduplication bitset: indexed by (partition_idx * num_classes + class_id)
+    let mut in_worklist = IN_WORKLIST.with(|cell| cell.take());
+    let mut in_worklist_dirty = IN_WORKLIST_DIRTY.with(|cell| cell.take());
+    bitset_ensure_capacity(&mut in_worklist, num_initial * num_classes);
+
     for part_idx in 0..num_initial {
         for class_id in 0..num_classes as ClassId {
+            let wl_idx = part_idx * num_classes + class_id as usize;
+            bitset_set_dirty(&mut in_worklist, &mut in_worklist_dirty, wl_idx);
             worklist.push((part_idx, class_id));
         }
     }
@@ -143,9 +204,21 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
         goes_to_splitter.reserve(n - goes_to_splitter.capacity());
     }
 
+    // Word-level bitset with dirty tracking for O(dirty) reset
     let mut partition_seen = SEEN.with(|cell| cell.take());
+    let mut seen_dirty = DIRTY_WORDS.with(|cell| cell.take());
 
     while let Some((splitter_idx, class_id)) = worklist.pop() {
+        // Clear in_worklist bit for this entry
+        {
+            let wl_idx = splitter_idx * num_classes + class_id as usize;
+            if wl_idx < in_worklist.len() * 64 {
+                let word_idx = wl_idx >> 6;
+                let bit_idx = wl_idx & 63;
+                in_worklist[word_idx] &= !(1u64 << bit_idx);
+            }
+        }
+
         // Skip if the partition is empty (may have been emptied by a split)
         if partitions[splitter_idx].is_empty() {
             continue;
@@ -154,16 +227,14 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
         // Collect all predecessor states that transition into the splitter on class_id.
         // These are the only states that *could* cause a partition to split.
         affected_partitions.clear();
-        // Track which partitions have predecessors (to avoid duplicates)
-        // TLS Vec<bool>: resize to current partition count, reused across iterations
-        partition_seen.clear();
-        partition_seen.resize(partitions.len(), false);
+        // Track which partitions have predecessors — word-level bitset with dirty tracking
+        bitset_clear_dirty(&mut partition_seen, &mut seen_dirty);
+        bitset_ensure_capacity(&mut partition_seen, partitions.len());
 
         for &splitter_state in &partitions[splitter_idx] {
             for &pred in &inverse[splitter_state as usize][class_id as usize] {
                 let pred_part = partition_of[pred as usize];
-                if !partition_seen[pred_part] {
-                    partition_seen[pred_part] = true;
+                if bitset_set_dirty(&mut partition_seen, &mut seen_dirty, pred_part) {
                     affected_partitions.push(pred_part);
                 }
             }
@@ -235,21 +306,29 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
                 partitions.push(new_partition);
             }
 
-            // Add the NEW (smaller) partition to the worklist for all classes.
-            // The existing partition is only added if it was already in the worklist.
-            // Since we can't cheaply check worklist membership, we add the new
-            // partition for all classes (Hopcroft's guarantee: each state moves to
-            // a new partition at most O(log n) times).
+            // Add the NEW (smaller) partition to the worklist for all classes,
+            // but only if not already in the worklist (deduplication).
+            // Ensure in_worklist bitset is large enough for new partitions.
+            bitset_ensure_capacity(&mut in_worklist, (new_part_idx + 1) * num_classes);
             for c in 0..num_classes as ClassId {
-                worklist.push((new_part_idx, c));
+                let wl_idx = new_part_idx * num_classes + c as usize;
+                if !bitset_test(&in_worklist, wl_idx) {
+                    bitset_set_dirty(&mut in_worklist, &mut in_worklist_dirty, wl_idx);
+                    worklist.push((new_part_idx, c));
+                }
             }
         }
     }
 
     // Return TLS buffers for reuse
+    bitset_clear_dirty(&mut partition_seen, &mut seen_dirty);
+    bitset_clear_dirty(&mut in_worklist, &mut in_worklist_dirty);
     AFFECTED.with(|cell| cell.set(affected_partitions));
     GOES_TO.with(|cell| cell.set(goes_to_splitter));
     SEEN.with(|cell| cell.set(partition_seen));
+    DIRTY_WORDS.with(|cell| cell.set(seen_dirty));
+    IN_WORKLIST.with(|cell| cell.set(in_worklist));
+    IN_WORKLIST_DIRTY.with(|cell| cell.set(in_worklist_dirty));
 
     // --- Step 5: Build minimized DFA ---
     let mut new_dfa = Dfa::new(num_classes);

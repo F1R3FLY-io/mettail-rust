@@ -277,7 +277,7 @@ pub struct TrampolineConfig {
     /// Own FIRST set.
     pub own_first_set: FirstSet,
     /// All FIRST sets.
-    pub all_first_sets: std::collections::BTreeMap<String, FirstSet>,
+    pub all_first_sets: std::collections::HashMap<String, FirstSet>,
     /// FOLLOW set.
     pub follow_set: FirstSet,
     /// Whether the grammar has binders.

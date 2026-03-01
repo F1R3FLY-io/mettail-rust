@@ -23,7 +23,7 @@
 //! over a parse lattice. This produces correct directional weight updates and
 //! is sufficient for the current training use case.
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -52,7 +52,7 @@ pub struct TrainingExample {
 #[derive(Debug, Clone)]
 pub struct RuleWeights {
     /// Rule label → weight.
-    weights: BTreeMap<String, LogWeight>,
+    weights: HashMap<String, LogWeight>,
     /// SGD learning rate.
     learning_rate: f64,
 }
@@ -113,8 +113,8 @@ impl RuleWeights {
     /// than in all parses.
     pub fn update(
         &mut self,
-        expected_correct: &BTreeMap<String, f64>,
-        expected_all: &BTreeMap<String, f64>,
+        expected_correct: &HashMap<String, f64>,
+        expected_all: &HashMap<String, f64>,
     ) {
         for (label, weight) in self.weights.iter_mut() {
             let count_correct = expected_correct.get(label).copied().unwrap_or(0.0);
@@ -145,7 +145,7 @@ impl RuleWeights {
             for example in examples {
                 // Compute correct path weight: sum of weights for expected rules
                 let mut correct_weight = LogWeight::one();
-                let mut expected_counts: BTreeMap<String, f64> = BTreeMap::new();
+                let mut expected_counts: HashMap<String, f64> = HashMap::new();
                 for label in &example.expected_rule_labels {
                     correct_weight = correct_weight.times(&self.get(label));
                     *expected_counts.entry(label.clone()).or_insert(0.0) += 1.0;
@@ -153,7 +153,7 @@ impl RuleWeights {
 
                 // Simplified "all" path weight: assume uniform over all rules
                 // In a real implementation, this would come from forward-backward
-                let all_counts: BTreeMap<String, f64> = self
+                let all_counts: HashMap<String, f64> = self
                     .weights
                     .keys()
                     .map(|k| (k.clone(), 1.0 / num_rules as f64))
@@ -282,7 +282,7 @@ pub struct TrainingStats {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrainedModel {
     /// Learned rule weights: rule label → weight value (f64).
-    pub rule_weights: BTreeMap<String, f64>,
+    pub rule_weights: HashMap<String, f64>,
     /// Recommended beam width derived from training data.
     pub recommended_beam_width: Option<f64>,
     /// Training metadata for provenance.
@@ -377,8 +377,8 @@ mod tests {
         rw.set_learning_rate(0.5);
 
         // "Correct" parse uses Add more than expected
-        let expected_correct: BTreeMap<String, f64> = BTreeMap::from([("Add".to_string(), 2.0)]);
-        let expected_all: BTreeMap<String, f64> = BTreeMap::from([("Add".to_string(), 0.5)]);
+        let expected_correct: HashMap<String, f64> = HashMap::from([("Add".to_string(), 2.0)]);
+        let expected_all: HashMap<String, f64> = HashMap::from([("Add".to_string(), 0.5)]);
 
         let add_before = rw.get("Add").value();
         rw.update(&expected_correct, &expected_all);
@@ -423,7 +423,7 @@ mod tests {
     #[test]
     fn test_trained_model_roundtrip() {
         let model = TrainedModel {
-            rule_weights: BTreeMap::from([
+            rule_weights: HashMap::from([
                 ("Add".to_string(), 0.5),
                 ("Mul".to_string(), 1.2),
                 ("Lit".to_string(), 0.3),
@@ -452,7 +452,7 @@ mod tests {
     #[test]
     fn test_trained_model_beam_width() {
         let model = TrainedModel {
-            rule_weights: BTreeMap::new(),
+            rule_weights: HashMap::new(),
             recommended_beam_width: Some(1.5),
             metadata: TrainedModelMetadata {
                 epochs: 1,
@@ -472,7 +472,7 @@ mod tests {
     #[test]
     fn test_trained_model_file_roundtrip() {
         let model = TrainedModel {
-            rule_weights: BTreeMap::from([("Add".to_string(), 0.5), ("Lit".to_string(), 0.3)]),
+            rule_weights: HashMap::from([("Add".to_string(), 0.5), ("Lit".to_string(), 0.3)]),
             recommended_beam_width: Some(2.0),
             metadata: TrainedModelMetadata {
                 epochs: 5,
@@ -499,7 +499,7 @@ mod tests {
     #[test]
     fn test_from_embedded_valid_data() {
         let model = TrainedModel {
-            rule_weights: BTreeMap::from([("Add".to_string(), 0.5), ("Lit".to_string(), 0.3)]),
+            rule_weights: HashMap::from([("Add".to_string(), 0.5), ("Lit".to_string(), 0.3)]),
             recommended_beam_width: Some(2.0),
             metadata: TrainedModelMetadata {
                 epochs: 10,
@@ -529,7 +529,7 @@ mod tests {
     #[test]
     fn test_from_embedded_roundtrip() {
         let model = TrainedModel {
-            rule_weights: BTreeMap::from([("Var".to_string(), 1.5), ("Mul".to_string(), 0.7)]),
+            rule_weights: HashMap::from([("Var".to_string(), 1.5), ("Mul".to_string(), 0.7)]),
             recommended_beam_width: None,
             metadata: TrainedModelMetadata {
                 epochs: 3,

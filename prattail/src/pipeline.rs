@@ -16,7 +16,7 @@
 //!                  bundles         ParserBundle ──→ parser_code   into TokenStream
 //! ```
 
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use proc_macro2::TokenStream;
 
@@ -269,8 +269,8 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
     let bp_table = analyze_binding_powers(&infix_rules);
 
     // Compute max infix bp per category (exclude postfix) for prefix_bp
-    let max_infix_bp: BTreeMap<String, u8> = {
-        let mut map = BTreeMap::new();
+    let max_infix_bp: HashMap<String, u8> = {
+        let mut map = HashMap::new();
         for op in &bp_table.operators {
             if op.is_postfix {
                 continue;
@@ -520,7 +520,7 @@ fn generate_parser_code(
         use crate::wfst::build_prediction_wfsts;
 
         // Build native type map for dispatch action table extraction
-        let native_types: std::collections::BTreeMap<String, Option<String>> = bundle
+        let native_types: std::collections::HashMap<String, Option<String>> = bundle
             .categories
             .iter()
             .map(|c| (c.name.clone(), c.native_type.clone()))
@@ -606,8 +606,8 @@ fn generate_parser_code(
         let token_id_map = TokenIdMap::from_names(all_tokens);
 
         // Collect grammar terminals for recovery WFST construction
-        let grammar_terminals_wfst: std::collections::BTreeSet<String> = {
-            let mut terminals = std::collections::BTreeSet::new();
+        let grammar_terminals_wfst: std::collections::HashSet<String> = {
+            let mut terminals = std::collections::HashSet::new();
             for input in &bundle.follow_inputs {
                 for t in collect_terminals_recursive(&input.syntax) {
                     terminals.insert(t);
@@ -708,7 +708,7 @@ fn generate_parser_code(
         } else {
             // No ambiguous states — still build weight map for deterministic tokens
             let weight_map = build_complete_weight_map(
-                &BTreeMap::new(),
+                &HashMap::new(),
                 &first_sets,
                 &bundle.rule_infos,
                 &category_names,
@@ -823,8 +823,8 @@ fn generate_parser_code(
     // Collect all grammar terminals (raw strings) for sync predicate generation.
     // This determines which structural delimiters (";", ",", etc.) actually exist
     // in the grammar — only those will have corresponding Token variants.
-    let grammar_terminals: std::collections::BTreeSet<String> = {
-        let mut terminals = std::collections::BTreeSet::new();
+    let grammar_terminals: std::collections::HashSet<String> = {
+        let mut terminals = std::collections::HashSet::new();
         for input in &bundle.follow_inputs {
             for t in collect_terminals_recursive(&input.syntax) {
                 terminals.insert(t);
@@ -1175,7 +1175,7 @@ fn format_f64(v: f64) -> String {
 /// lifetime. Since the data is entirely `static`, there is no runtime I/O.
 fn emit_prediction_wfst_static(
     buf: &mut String,
-    prediction_wfsts: &std::collections::BTreeMap<String, crate::wfst::PredictionWfst>,
+    prediction_wfsts: &std::collections::HashMap<String, crate::wfst::PredictionWfst>,
 ) {
     use std::fmt::Write;
 

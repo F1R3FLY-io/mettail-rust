@@ -109,7 +109,7 @@ pub struct PrattConfig {
     /// FIRST set for this category (for determining unique cast rule tokens).
     pub own_first_set: FirstSet,
     /// FIRST sets for all categories (for determining unique tokens per source).
-    pub all_first_sets: std::collections::BTreeMap<String, FirstSet>,
+    pub all_first_sets: std::collections::HashMap<String, FirstSet>,
     /// FOLLOW set for this category — tokens that can appear after a complete expression.
     /// Used for error messages ("expected one of: ...") and sync point selection.
     pub follow_set: FirstSet,

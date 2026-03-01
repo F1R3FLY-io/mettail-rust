@@ -6,7 +6,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{HashMap, HashSet};
 
 use crate::automata::codegen::terminal_to_variant_name;
 
@@ -14,7 +14,7 @@ use crate::automata::codegen::terminal_to_variant_name;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FirstSet {
     /// Set of token variant names (e.g., "Plus", "Ident", "Integer").
-    pub tokens: BTreeSet<String>,
+    pub tokens: HashSet<String>,
     /// Whether this category can derive the empty string (epsilon).
     /// A category is nullable if it has an optional group at top level,
     /// a zero-minimum collection, a cast to a nullable category, or
@@ -24,7 +24,7 @@ pub struct FirstSet {
 
 impl FirstSet {
     pub fn new() -> Self {
-        FirstSet { tokens: BTreeSet::new(), nullable: false }
+        FirstSet { tokens: HashSet::new(), nullable: false }
     }
 
     pub fn insert(&mut self, token: &str) {
@@ -42,14 +42,14 @@ impl FirstSet {
 
     pub fn intersection(&self, other: &FirstSet) -> FirstSet {
         FirstSet {
-            tokens: self.tokens.intersection(&other.tokens).cloned().collect(),
+            tokens: self.tokens.iter().filter(|t| other.tokens.contains(t.as_str())).cloned().collect(),
             nullable: self.nullable && other.nullable,
         }
     }
 
     pub fn difference(&self, other: &FirstSet) -> FirstSet {
         FirstSet {
-            tokens: self.tokens.difference(&other.tokens).cloned().collect(),
+            tokens: self.tokens.iter().filter(|t| !other.tokens.contains(t.as_str())).cloned().collect(),
             nullable: self.nullable && !other.nullable,
         }
     }
@@ -60,6 +60,13 @@ impl FirstSet {
 
     pub fn len(&self) -> usize {
         self.tokens.len()
+    }
+
+    /// Return tokens in sorted order (for deterministic codegen emission).
+    pub fn sorted_tokens(&self) -> Vec<&str> {
+        let mut tokens: Vec<&str> = self.tokens.iter().map(|s| s.as_str()).collect();
+        tokens.sort_unstable();
+        tokens
     }
 }
 
@@ -154,7 +161,7 @@ pub struct DispatchTable {
     /// Category name.
     pub category: String,
     /// Map from first token variant name → action.
-    pub entries: BTreeMap<String, DispatchAction>,
+    pub entries: HashMap<String, DispatchAction>,
     /// Default action (usually variable fallback).
     pub default_action: Option<DispatchAction>,
 }
@@ -203,8 +210,8 @@ pub enum FirstItem {
 /// - **Reusable buffer:** `tokens_to_add` Vec is reused across iterations
 ///   (stack-local, not TLS — `clear()` drops Strings so only the Vec shell
 ///   is retained, making TLS marginal for the added complexity).
-pub fn compute_first_sets(rules: &[RuleInfo], categories: &[String]) -> BTreeMap<String, FirstSet> {
-    let mut first_sets: BTreeMap<String, FirstSet> = BTreeMap::new();
+pub fn compute_first_sets(rules: &[RuleInfo], categories: &[String]) -> HashMap<String, FirstSet> {
+    let mut first_sets: HashMap<String, FirstSet> = HashMap::new();
 
     // Initialize empty FIRST sets for all categories
     for cat in categories {
@@ -281,10 +288,10 @@ pub struct FollowSetInput {
 pub fn compute_follow_sets_from_inputs(
     inputs: &[FollowSetInput],
     categories: &[String],
-    first_sets: &BTreeMap<String, FirstSet>,
+    first_sets: &HashMap<String, FirstSet>,
     primary_category: &str,
-) -> BTreeMap<String, FirstSet> {
-    let mut follow_sets: BTreeMap<String, FirstSet> = BTreeMap::new();
+) -> HashMap<String, FirstSet> {
+    let mut follow_sets: HashMap<String, FirstSet> = HashMap::new();
 
     for cat in categories {
         follow_sets.insert(cat.clone(), FirstSet::new());
@@ -339,9 +346,9 @@ pub fn compute_follow_sets_from_inputs(
 pub fn compute_follow_sets(
     rules: &[crate::RuleSpec],
     categories: &[String],
-    first_sets: &BTreeMap<String, FirstSet>,
+    first_sets: &HashMap<String, FirstSet>,
     primary_category: &str,
-) -> BTreeMap<String, FirstSet> {
+) -> HashMap<String, FirstSet> {
     let inputs: Vec<FollowSetInput> = rules
         .iter()
         .map(|r| FollowSetInput {
@@ -362,8 +369,8 @@ pub fn compute_follow_sets(
 fn propagate_follow_from_items(
     items: &[crate::SyntaxItemSpec],
     rule_category: &str,
-    first_sets: &BTreeMap<String, FirstSet>,
-    follow_sets: &mut BTreeMap<String, FirstSet>,
+    first_sets: &HashMap<String, FirstSet>,
+    follow_sets: &mut HashMap<String, FirstSet>,
 ) -> bool {
     let mut changed = false;
     for i in 0..items.len() {
@@ -447,7 +454,7 @@ fn propagate_follow_from_items(
 /// - nullable: whether the entire suffix can derive epsilon
 fn first_of_suffix(
     items: &[crate::SyntaxItemSpec],
-    first_sets: &BTreeMap<String, FirstSet>,
+    first_sets: &HashMap<String, FirstSet>,
 ) -> (FirstSet, bool) {
     let mut result = FirstSet::new();
     let mut nullable = true; // empty suffix is nullable
@@ -514,7 +521,7 @@ fn first_of_suffix(
 ///
 /// Returns `true` if any new token was inserted (for dirty-flag convergence).
 fn add_first_to_follow(
-    follow_sets: &mut BTreeMap<String, FirstSet>,
+    follow_sets: &mut HashMap<String, FirstSet>,
     category: &str,
     first: &FirstSet,
 ) -> bool {
@@ -533,7 +540,7 @@ fn add_first_to_follow(
 ///
 /// Returns `true` if the token was newly inserted (for dirty-flag convergence).
 fn add_token_to_follow(
-    follow_sets: &mut BTreeMap<String, FirstSet>,
+    follow_sets: &mut HashMap<String, FirstSet>,
     category: &str,
     token: &str,
 ) -> bool {
@@ -549,7 +556,7 @@ fn add_token_to_follow(
 /// No-op when from_category == to_category (would just add to itself).
 /// Returns `true` if any new token was copied (for dirty-flag convergence).
 fn copy_follow(
-    follow_sets: &mut BTreeMap<String, FirstSet>,
+    follow_sets: &mut HashMap<String, FirstSet>,
     from_category: &str,
     to_category: &str,
 ) -> bool {
@@ -588,10 +595,10 @@ fn copy_follow(
 /// and converge in zero iterations, so the cost is proportional to the new rules'
 /// dependency depth, not the total grammar size.
 pub fn incremental_first_sets(
-    existing: &BTreeMap<String, FirstSet>,
+    existing: &HashMap<String, FirstSet>,
     new_rules: &[RuleInfo],
     new_categories: &[String],
-) -> BTreeMap<String, FirstSet> {
+) -> HashMap<String, FirstSet> {
     let mut first_sets = existing.clone();
 
     // Ensure all new categories have entries
@@ -647,11 +654,11 @@ pub fn incremental_first_sets(
 /// Like `incremental_first_sets`, this runs the fixed-point over the new rules
 /// only. Existing rules that don't reference new categories are already stable.
 pub fn incremental_follow_sets(
-    existing: &BTreeMap<String, FirstSet>,
+    existing: &HashMap<String, FirstSet>,
     new_inputs: &[FollowSetInput],
     new_categories: &[String],
-    first_sets: &BTreeMap<String, FirstSet>,
-) -> BTreeMap<String, FirstSet> {
+    first_sets: &HashMap<String, FirstSet>,
+) -> HashMap<String, FirstSet> {
     let mut follow_sets = existing.clone();
 
     // Ensure all new categories have entries
@@ -682,7 +689,7 @@ pub fn incremental_follow_sets(
 ///
 /// Used during grammar composition to incrementally build the terminal set
 /// for the merged grammar without re-scanning all rules.
-pub fn merge_terminal_sets(a: &BTreeSet<String>, b: &BTreeSet<String>) -> BTreeSet<String> {
+pub fn merge_terminal_sets(a: &HashSet<String>, b: &HashSet<String>) -> HashSet<String> {
     let mut merged = a.clone();
     merged.extend(b.iter().cloned());
     merged
@@ -695,9 +702,9 @@ pub fn merge_terminal_sets(a: &BTreeSet<String>, b: &BTreeSet<String>) -> BTreeS
 pub fn build_dispatch_tables(
     rules: &[RuleInfo],
     categories: &[String],
-    first_sets: &BTreeMap<String, FirstSet>,
-) -> BTreeMap<String, DispatchTable> {
-    let mut tables: BTreeMap<String, DispatchTable> = BTreeMap::new();
+    first_sets: &HashMap<String, FirstSet>,
+) -> HashMap<String, DispatchTable> {
+    let mut tables: HashMap<String, DispatchTable> = HashMap::new();
 
     for cat in categories {
         let cat_rules: Vec<&RuleInfo> = rules
@@ -705,11 +712,11 @@ pub fn build_dispatch_tables(
             .filter(|r| r.category == *cat && !r.is_infix)
             .collect();
 
-        let mut entries: BTreeMap<String, DispatchAction> = BTreeMap::new();
+        let mut entries: HashMap<String, DispatchAction> = HashMap::new();
         let mut default_action = None;
 
         // Build a map from first token → list of rules that can start with it
-        let mut token_to_rules: BTreeMap<String, Vec<&RuleInfo>> = BTreeMap::new();
+        let mut token_to_rules: HashMap<String, Vec<&RuleInfo>> = HashMap::new();
 
         for rule in &cat_rules {
             if rule.is_var {
@@ -848,9 +855,9 @@ pub fn build_dispatch_tables(
 /// require save/restore backtracking.
 pub fn analyze_cross_category_overlaps(
     categories: &[String],
-    first_sets: &BTreeMap<String, FirstSet>,
-) -> BTreeMap<(String, String), CrossCategoryOverlap> {
-    let mut overlaps = BTreeMap::new();
+    first_sets: &HashMap<String, FirstSet>,
+) -> HashMap<(String, String), CrossCategoryOverlap> {
+    let mut overlaps = HashMap::new();
 
     for i in 0..categories.len() {
         for j in 0..categories.len() {
@@ -988,7 +995,7 @@ fn detect_ambiguous_prefix(
     categories: &[String],
     warnings: &mut Vec<GrammarWarning>,
 ) {
-    use std::collections::BTreeMap;
+    use std::collections::HashMap;
 
     for cat in categories {
         // Collect non-infix, non-var, non-literal rules for this category
@@ -998,7 +1005,7 @@ fn detect_ambiguous_prefix(
             .collect();
 
         // Map terminal → list of rule labels
-        let mut terminal_to_rules: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut terminal_to_rules: HashMap<String, Vec<String>> = HashMap::new();
 
         for rule in &prefix_rules {
             for item in &rule.first_items {
@@ -1076,10 +1083,10 @@ fn detect_unused_categories(
     all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
     warnings: &mut Vec<GrammarWarning>,
 ) {
-    use std::collections::BTreeSet;
+    use std::collections::HashSet;
 
     // Collect all categories referenced in syntax items
-    let mut referenced: BTreeSet<String> = BTreeSet::new();
+    let mut referenced: HashSet<String> = HashSet::new();
 
     for (_, _, syntax) in all_syntax {
         collect_referenced_categories(syntax, &mut referenced);
@@ -1100,7 +1107,7 @@ fn detect_unused_categories(
 /// Recursively collect all category names referenced in syntax items.
 fn collect_referenced_categories(
     items: &[crate::SyntaxItemSpec],
-    referenced: &mut std::collections::BTreeSet<String>,
+    referenced: &mut std::collections::HashSet<String>,
 ) {
     for item in items {
         match item {
@@ -1155,19 +1162,19 @@ fn collect_referenced_categories(
 /// - **Cross-category**: from cross-category rules and overlap analysis
 pub fn build_dispatch_action_tables(
     categories: &[String],
-    first_sets: &BTreeMap<String, FirstSet>,
-    overlaps: &BTreeMap<(String, String), CrossCategoryOverlap>,
+    first_sets: &HashMap<String, FirstSet>,
+    overlaps: &HashMap<(String, String), CrossCategoryOverlap>,
     rd_rules: &[crate::recursive::RDRuleInfo],
     cross_rules: &[crate::dispatch::CrossCategoryRule],
     cast_rules: &[crate::dispatch::CastRule],
-    native_types: &BTreeMap<String, Option<String>>,
-) -> BTreeMap<String, BTreeMap<String, DispatchAction>> {
+    native_types: &HashMap<String, Option<String>>,
+) -> HashMap<String, HashMap<String, DispatchAction>> {
     use crate::automata::codegen::terminal_to_variant_name;
 
-    let mut tables: BTreeMap<String, BTreeMap<String, DispatchAction>> = BTreeMap::new();
+    let mut tables: HashMap<String, HashMap<String, DispatchAction>> = HashMap::new();
 
     for cat in categories {
-        let mut entries: BTreeMap<String, DispatchAction> = BTreeMap::new();
+        let mut entries: HashMap<String, DispatchAction> = HashMap::new();
 
         // ── Terminal-first RD rules → Direct dispatch ──
         for rd_rule in rd_rules {
@@ -1330,7 +1337,7 @@ pub fn generate_sync_predicate(
     buf: &mut String,
     category: &str,
     follow_set: &FirstSet,
-    grammar_terminals: &std::collections::BTreeSet<String>,
+    grammar_terminals: &std::collections::HashSet<String>,
 ) {
     let mut patterns: Vec<String> = Vec::new();
 
@@ -1454,12 +1461,12 @@ pub struct ComposedEntry {
 pub fn compute_composed_dispatch(
     ambiguous_states: &[(super::automata::StateId, Vec<(super::automata::TokenKind, super::automata::semiring::TropicalWeight)>)],
     categories: &[String],
-    first_sets: &BTreeMap<String, FirstSet>,
+    first_sets: &HashMap<String, FirstSet>,
     variant_map: &super::automata::codegen::TokenVariantMap,
-    prediction_wfsts: Option<&BTreeMap<String, crate::wfst::PredictionWfst>>,
+    prediction_wfsts: Option<&HashMap<String, crate::wfst::PredictionWfst>>,
     rule_infos: &[RuleInfo],
-) -> BTreeMap<(String, u32), Vec<ComposedEntry>> {
-    let mut table: BTreeMap<(String, u32), Vec<ComposedEntry>> = BTreeMap::new();
+) -> HashMap<(String, u32), Vec<ComposedEntry>> {
+    let mut table: HashMap<(String, u32), Vec<ComposedEntry>> = HashMap::new();
 
     for &(state_id, ref alts) in ambiguous_states {
         for category in categories {
@@ -1606,7 +1613,7 @@ fn find_rules_for_token(
     rule_infos: &[RuleInfo],
     category: &str,
     variant_name: &str,
-    first_sets: &BTreeMap<String, FirstSet>,
+    first_sets: &HashMap<String, FirstSet>,
 ) -> Vec<(String, f64)> {
     let mut matches = Vec::new();
 
@@ -1667,13 +1674,13 @@ fn token_kind_to_variant_name(kind: &super::automata::TokenKind) -> String {
 /// ```
 pub fn emit_composed_dispatch_table(
     buf: &mut String,
-    table: &BTreeMap<(String, u32), Vec<ComposedEntry>>,
+    table: &HashMap<(String, u32), Vec<ComposedEntry>>,
     categories: &[String],
 ) {
     use std::fmt::Write;
 
     // Map category names to IDs
-    let cat_to_id: BTreeMap<&str, u8> = categories
+    let cat_to_id: HashMap<&str, u8> = categories
         .iter()
         .enumerate()
         .map(|(i, c)| (c.as_str(), i as u8))
@@ -1716,9 +1723,9 @@ pub fn emit_composed_dispatch_table(
 ///
 /// Returns `BTreeMap<(category, token_variant), (winning_rule_label, weight)>`.
 pub fn resolve_dispatch_winners(
-    composed_table: &BTreeMap<(String, u32), Vec<ComposedEntry>>,
-) -> BTreeMap<(String, String), (String, f64)> {
-    let mut winners: BTreeMap<(String, String), (String, f64)> = BTreeMap::new();
+    composed_table: &HashMap<(String, u32), Vec<ComposedEntry>>,
+) -> HashMap<(String, String), (String, f64)> {
+    let mut winners: HashMap<(String, String), (String, f64)> = HashMap::new();
 
     for ((category, _state_id), entries) in composed_table {
         for entry in entries {
@@ -1747,12 +1754,12 @@ pub fn resolve_dispatch_winners(
 /// ambiguous ones — can be sorted by weight (most likely first), improving CPU branch
 /// prediction hit rate.
 pub fn build_complete_weight_map(
-    composed_table: &BTreeMap<(String, u32), Vec<ComposedEntry>>,
-    first_sets: &BTreeMap<String, FirstSet>,
+    composed_table: &HashMap<(String, u32), Vec<ComposedEntry>>,
+    first_sets: &HashMap<String, FirstSet>,
     rule_infos: &[RuleInfo],
     category_names: &[String],
-) -> BTreeMap<(String, String), f64> {
-    let mut weight_map: BTreeMap<(String, String), f64> = BTreeMap::new();
+) -> HashMap<(String, String), f64> {
+    let mut weight_map: HashMap<(String, String), f64> = HashMap::new();
 
     // 1. Seed with ambiguous token weights from composed dispatch (best weight per (cat, token))
     for ((category, _state_id), entries) in composed_table {
@@ -1868,7 +1875,7 @@ mod composed_dispatch_tests {
         let variant_map = make_variant_map();
         let rule_infos = make_rule_infos();
 
-        let mut first_sets = BTreeMap::new();
+        let mut first_sets = HashMap::new();
         let mut proc_first = FirstSet::new();
         proc_first.insert("KwError");
         proc_first.insert("Ident");
@@ -1942,7 +1949,7 @@ mod composed_dispatch_tests {
     fn test_composed_dispatch_empty_when_no_ambiguity() {
         let variant_map = make_variant_map();
         let rule_infos = make_rule_infos();
-        let first_sets = BTreeMap::new();
+        let first_sets = HashMap::new();
         let categories = vec!["Proc".to_string()];
 
         // No ambiguous states
@@ -2007,7 +2014,7 @@ mod composed_dispatch_tests {
 
     #[test]
     fn test_emit_composed_dispatch_table() {
-        let mut table = BTreeMap::new();
+        let mut table = HashMap::new();
         table.insert(
             ("Proc".to_string(), 7),
             vec![
@@ -2075,7 +2082,7 @@ mod composed_dispatch_tests {
             },
         ];
 
-        let mut first_sets = BTreeMap::new();
+        let mut first_sets = HashMap::new();
         let mut proc_first = FirstSet::new();
         proc_first.insert("Integer"); // Integer in Proc's FIRST (via cross-cat)
         proc_first.insert("Ident");
@@ -2139,7 +2146,7 @@ mod composed_dispatch_tests {
         let variant_map = make_variant_map();
         let rule_infos = make_rule_infos();
 
-        let mut first_sets = BTreeMap::new();
+        let mut first_sets = HashMap::new();
         let mut proc_first = FirstSet::new();
         proc_first.insert("KwError");
         proc_first.insert("Ident");
@@ -2175,7 +2182,7 @@ mod composed_dispatch_tests {
         );
         let proc_wfst = proc_builder.build();
 
-        let mut prediction_wfsts: BTreeMap<String, PredictionWfst> = BTreeMap::new();
+        let mut prediction_wfsts: HashMap<String, PredictionWfst> = HashMap::new();
         prediction_wfsts.insert("Proc".to_string(), proc_wfst);
 
         // Ambiguous state 7: "error" matches both Fixed("error") and Ident

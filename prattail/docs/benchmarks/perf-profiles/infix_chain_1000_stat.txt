@@ -1,0 +1,32 @@
+Benchmarking infix/left_chain/1000
+Benchmarking infix/left_chain/1000: Warming up for 3.0000 s
+Benchmarking infix/left_chain/1000: Collecting 100 samples in estimated 5.2670 s (25k iterations)
+Benchmarking infix/left_chain/1000: Analyzing
+infix/left_chain/1000   time:   [201.60 µs 202.94 µs 204.34 µs]
+                        thrpt:  [4.8938 Melem/s 4.9276 Melem/s 4.9603 Melem/s]
+                 change:
+                        time:   [-5.0257% -4.1726% -3.3014%] (p = 0.00 < 0.05)
+                        thrpt:  [+3.4141% +4.3543% +5.2916%]
+                        Performance has improved.
+Found 1 outliers among 100 measurements (1.00%)
+  1 (1.00%) high mild
+
+
+ Performance counter stats for 'target/release/deps/bench_infix-9b3a7ea0e9438026 --bench -- infix/left_chain/1000':
+
+    59,631,661,205      cycles:u                                                              
+   123,995,610,011      instructions:u                                                        
+    21,695,057,862      branch-instructions:u                                                 
+       249,095,679      branch-misses:u                                                       
+        83,742,934      cache-references:u                                                    
+         2,694,545      cache-misses:u                                                        
+    34,036,576,540      L1-dcache-loads:u                                                     
+       819,893,011      L1-dcache-load-misses:u                                               
+         3,383,098      L1-icache-load-misses:u                                               
+
+      20.406371541 seconds time elapsed
+
+      19.996536000 seconds user
+       0.294580000 seconds sys
+
+

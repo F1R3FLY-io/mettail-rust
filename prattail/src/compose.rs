@@ -46,7 +46,7 @@
 //! WFST operations. Grammar composition is the PraTTaIL analog of WFST union:
 //! the merged grammar accepts inputs from either source grammar.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 
 use crate::binding_power::Associativity;
@@ -624,9 +624,9 @@ pub struct WfstCompositionResult {
     /// Per-category prediction WFSTs, built via weighted union of the input WFSTs.
     /// Categories that appear in only one source grammar get their WFST unchanged.
     /// Categories shared across both sources get a union of both WFSTs.
-    pub prediction_wfsts: BTreeMap<String, crate::wfst::PredictionWfst>,
+    pub prediction_wfsts: HashMap<String, crate::wfst::PredictionWfst>,
     /// Terminal set of the merged grammar (union of both sources).
-    pub terminals: BTreeSet<String>,
+    pub terminals: HashSet<String>,
     /// Enriched composition summary with WFST statistics.
     pub summary: WfstCompositionSummary,
 }
@@ -682,10 +682,10 @@ impl fmt::Display for WfstCompositionSummary {
 pub fn compose_with_wfst(
     spec_a: &LanguageSpec,
     spec_b: &LanguageSpec,
-    wfsts_a: &BTreeMap<String, crate::wfst::PredictionWfst>,
-    wfsts_b: &BTreeMap<String, crate::wfst::PredictionWfst>,
-    terminals_a: &BTreeSet<String>,
-    terminals_b: &BTreeSet<String>,
+    wfsts_a: &HashMap<String, crate::wfst::PredictionWfst>,
+    wfsts_b: &HashMap<String, crate::wfst::PredictionWfst>,
+    terminals_a: &HashSet<String>,
+    terminals_b: &HashSet<String>,
 ) -> Result<WfstCompositionResult, Vec<CompositionError>> {
     // Step 1: Compose the language specs
     let merged_spec = compose_languages(spec_a, spec_b)?;
@@ -695,7 +695,7 @@ pub fn compose_with_wfst(
     let terminals = crate::prediction::merge_terminal_sets(terminals_a, terminals_b);
 
     // Step 3: Merge prediction WFSTs per category
-    let mut prediction_wfsts: BTreeMap<String, crate::wfst::PredictionWfst> = BTreeMap::new();
+    let mut prediction_wfsts: HashMap<String, crate::wfst::PredictionWfst> = HashMap::new();
     let mut wfsts_merged = 0usize;
 
     for cat in &merged_spec.types {
@@ -1382,13 +1382,13 @@ mod tests {
         );
         let wfst_b = builder_b.build();
 
-        let mut wfsts_a = BTreeMap::new();
+        let mut wfsts_a = HashMap::new();
         wfsts_a.insert("Int".to_string(), wfst_a);
-        let mut wfsts_b = BTreeMap::new();
+        let mut wfsts_b = HashMap::new();
         wfsts_b.insert("Bool".to_string(), wfst_b);
 
-        let terminals_a: BTreeSet<String> = ["0"].iter().map(|s| s.to_string()).collect();
-        let terminals_b: BTreeSet<String> = ["true"].iter().map(|s| s.to_string()).collect();
+        let terminals_a: HashSet<String> = ["0"].iter().map(|s| s.to_string()).collect();
+        let terminals_b: HashSet<String> = ["true"].iter().map(|s| s.to_string()).collect();
 
         let result =
             compose_with_wfst(&spec_a, &spec_b, &wfsts_a, &wfsts_b, &terminals_a, &terminals_b)
@@ -1445,13 +1445,13 @@ mod tests {
         );
         let wfst_b = builder_b.build();
 
-        let mut wfsts_a = BTreeMap::new();
+        let mut wfsts_a = HashMap::new();
         wfsts_a.insert("Expr".to_string(), wfst_a);
-        let mut wfsts_b = BTreeMap::new();
+        let mut wfsts_b = HashMap::new();
         wfsts_b.insert("Expr".to_string(), wfst_b);
 
-        let terminals_a: BTreeSet<String> = ["0"].iter().map(|s| s.to_string()).collect();
-        let terminals_b: BTreeSet<String> = ["x"].iter().map(|s| s.to_string()).collect();
+        let terminals_a: HashSet<String> = ["0"].iter().map(|s| s.to_string()).collect();
+        let terminals_b: HashSet<String> = ["x"].iter().map(|s| s.to_string()).collect();
 
         let result =
             compose_with_wfst(&spec_a, &spec_b, &wfsts_a, &wfsts_b, &terminals_a, &terminals_b)
@@ -1516,13 +1516,13 @@ mod tests {
         );
         let wfst_b = builder.build();
 
-        let mut wfsts_a = BTreeMap::new();
+        let mut wfsts_a = HashMap::new();
         wfsts_a.insert("Expr".to_string(), wfst_a);
-        let mut wfsts_b = BTreeMap::new();
+        let mut wfsts_b = HashMap::new();
         wfsts_b.insert("Expr".to_string(), wfst_b);
 
-        let terminals_a: BTreeSet<String> = ["0"].iter().map(|s| s.to_string()).collect();
-        let terminals_b: BTreeSet<String> = ["1"].iter().map(|s| s.to_string()).collect();
+        let terminals_a: HashSet<String> = ["0"].iter().map(|s| s.to_string()).collect();
+        let terminals_b: HashSet<String> = ["1"].iter().map(|s| s.to_string()).collect();
 
         let result =
             compose_with_wfst(&spec_a, &spec_b, &wfsts_a, &wfsts_b, &terminals_a, &terminals_b)

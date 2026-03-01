@@ -1,0 +1,410 @@
+//! Runtime type definitions shared between generated parsers and the PraTTaIL library.
+//!
+//! These types are defined once here and imported by generated code via
+//! `use mettail_prattail::runtime_types::*;`, eliminating ~200 lines of
+//! duplicated definitions from every generated parser.
+//!
+//! ## Generic lex loop
+//!
+//! The `lex_core()` and `lex_weighted_core()` functions factor out the DFA
+//! lex loop into a monomorphizable generic function. Each generated lexer
+//! provides grammar-specific closures for `dfa_next`, `is_accepting`, and
+//! `accept_token`; the compiler monomorphizes away the closure overhead.
+
+use std::fmt;
+
+/// A position in source code. All fields are 0-indexed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position {
+    pub byte_offset: usize,
+    pub line: usize,
+    pub column: usize,
+}
+
+impl Position {
+    pub fn zero() -> Self {
+        Position {
+            byte_offset: 0,
+            line: 0,
+            column: 0,
+        }
+    }
+}
+
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.line + 1, self.column + 1)
+    }
+}
+
+/// A range in source code with beginning and ending positions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Range {
+    pub start: Position,
+    pub end: Position,
+    pub file_id: Option<u32>,
+}
+
+impl Range {
+    pub fn zero() -> Self {
+        Range {
+            start: Position::zero(),
+            end: Position::zero(),
+            file_id: None,
+        }
+    }
+}
+
+impl fmt::Display for Range {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}-{}", self.start, self.end)
+    }
+}
+
+/// Structured parse error with source location.
+#[derive(Debug, Clone)]
+pub enum ParseError {
+    UnexpectedToken {
+        expected: &'static str,
+        found: String,
+        range: Range,
+    },
+    UnexpectedEof {
+        expected: &'static str,
+        range: Range,
+    },
+    LexError {
+        message: String,
+        position: Position,
+    },
+    TrailingTokens {
+        found: String,
+        range: Range,
+    },
+}
+
+impl fmt::Display for ParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ParseError::UnexpectedToken {
+                expected,
+                found,
+                range,
+            } => write!(
+                f,
+                "{}:{}: expected {}, found {}",
+                range.start.line + 1,
+                range.start.column + 1,
+                expected,
+                found
+            ),
+            ParseError::UnexpectedEof { expected, range } => write!(
+                f,
+                "{}:{}: unexpected end of input, expected {}",
+                range.start.line + 1,
+                range.start.column + 1,
+                expected
+            ),
+            ParseError::LexError { message, position } => {
+                write!(f, "{}:{}: {}", position.line + 1, position.column + 1, message)
+            }
+            ParseError::TrailingTokens { found, range } => write!(
+                f,
+                "{}:{}: unexpected {} after parsing",
+                range.start.line + 1,
+                range.start.column + 1,
+                found
+            ),
+        }
+    }
+}
+
+impl ParseError {
+    /// Get the source range where this error occurred.
+    pub fn range(&self) -> Range {
+        match self {
+            ParseError::UnexpectedToken { range, .. } => *range,
+            ParseError::UnexpectedEof { range, .. } => *range,
+            ParseError::LexError { position, .. } => Range {
+                start: *position,
+                end: *position,
+                file_id: None,
+            },
+            ParseError::TrailingTokens { range, .. } => *range,
+        }
+    }
+}
+
+impl std::error::Error for ParseError {}
+
+impl From<String> for ParseError {
+    fn from(message: String) -> Self {
+        ParseError::LexError {
+            message,
+            position: Position::zero(),
+        }
+    }
+}
+
+/// Format a source context snippet with caret pointing to the error.
+pub fn format_error_context(input: &str, range: &Range) -> String {
+    let line_start = input[..range.start.byte_offset]
+        .rfind('\n')
+        .map_or(0, |p| p + 1);
+    let line_end = input[range.start.byte_offset..]
+        .find('\n')
+        .map_or(input.len(), |p| p + range.start.byte_offset);
+    let source_line = &input[line_start..line_end];
+    let caret_col = range.start.column;
+    let caret_len =
+        if range.end.byte_offset > range.start.byte_offset && range.end.line == range.start.line {
+            range.end.byte_offset - range.start.byte_offset
+        } else {
+            1
+        };
+    format!(
+        "{}\n{}{}",
+        source_line,
+        " ".repeat(caret_col),
+        "^".repeat(caret_len)
+    )
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Generic lex loop — monomorphized at each call site via closures
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Core DFA lexing loop, shared across all generated lexers.
+///
+/// Returns `(Vec<(T, Range)>, Position)` where `T` is the grammar's `Token<'a>`
+/// type and `Position` is the final cursor position (for the Eof token).
+/// The generated lex variants (`lex`, `lex_with_file_id`, `lex_weighted`,
+/// etc.) become thin wrappers calling this function with grammar-specific
+/// closures. The compiler monomorphizes each call site, inlining the closures
+/// for zero overhead.
+///
+/// # Parameters
+///
+/// - `input` — the full source string
+/// - `file_id` — optional file identifier for multi-file projects
+/// - `char_class` — 256-byte equivalence class lookup table
+/// - `dfa_next` — `(state, class) -> next_state` (u32::MAX = dead)
+/// - `is_accepting` — `state -> bool` (IS_ACCEPTING bitmap check)
+/// - `accept_token` — `(state, text_slice) -> Option<Token>` (called once per token)
+#[inline(always)]
+pub fn lex_core<'a, T>(
+    input: &'a str,
+    file_id: Option<u32>,
+    char_class: &[u8; 256],
+    dfa_next: impl Fn(u32, u8) -> u32,
+    is_accepting: impl Fn(u32) -> bool,
+    accept_token: impl Fn(u32, &'a str) -> Option<T>,
+) -> Result<(Vec<(T, Range)>, Position), String> {
+    let bytes = input.as_bytes();
+    let mut pos: usize = 0;
+    let mut line: usize = 0;
+    let mut col: usize = 0;
+    let mut tokens: Vec<(T, Range)> = Vec::with_capacity(input.len() / 2);
+
+    while pos < bytes.len() {
+        // Skip whitespace
+        while pos < bytes.len() && is_whitespace(bytes[pos]) {
+            if bytes[pos] == b'\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+
+        let start = pos;
+        let start_line = line;
+        let start_col = col;
+        let mut state: u32 = 0;
+        let mut last_accept: Option<(u32, usize, usize, usize)> = None;
+
+        if is_accepting(0) {
+            last_accept = Some((0, pos, line, col));
+        }
+
+        while pos < bytes.len() {
+            let class = char_class[bytes[pos] as usize];
+            let next = dfa_next(state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            if bytes[pos] == b'\n' {
+                line += 1;
+                col = 0;
+            } else if bytes[pos] & 0xC0 != 0x80 {
+                col += 1;
+            }
+            pos += 1;
+            if is_accepting(state) {
+                last_accept = Some((state, pos, line, col));
+            }
+        }
+
+        match last_accept {
+            Some((accept_state, end, end_line, end_col)) => {
+                pos = end;
+                line = end_line;
+                col = end_col;
+                let text = &input[start..end];
+                if let Some(token) = accept_token(accept_state, text) {
+                    tokens.push((
+                        token,
+                        Range {
+                            start: Position {
+                                byte_offset: start,
+                                line: start_line,
+                                column: start_col,
+                            },
+                            end: Position {
+                                byte_offset: end,
+                                line: end_line,
+                                column: end_col,
+                            },
+                            file_id,
+                        },
+                    ));
+                }
+            }
+            None => {
+                return Err(format!(
+                    "{}:{}: unexpected character '{}'",
+                    line + 1,
+                    col + 1,
+                    bytes[start] as char
+                ));
+            }
+        }
+    }
+
+    let eof_pos = Position {
+        byte_offset: pos,
+        line,
+        column: col,
+    };
+    Ok((tokens, eof_pos))
+}
+
+/// Core DFA lexing loop with weight emission (for WFST-weighted lexing).
+///
+/// Same as `lex_core` but also calls `accept_weight(state) -> f64` to
+/// attach tropical weights to each token. Returns the final cursor position
+/// for the Eof token.
+#[inline(always)]
+pub fn lex_weighted_core<'a, T>(
+    input: &'a str,
+    file_id: Option<u32>,
+    char_class: &[u8; 256],
+    dfa_next: impl Fn(u32, u8) -> u32,
+    is_accepting: impl Fn(u32) -> bool,
+    accept_token: impl Fn(u32, &'a str) -> Option<T>,
+    accept_weight: impl Fn(u32) -> f64,
+) -> Result<(Vec<(T, Range, f64)>, Position), String> {
+    let bytes = input.as_bytes();
+    let mut pos: usize = 0;
+    let mut line: usize = 0;
+    let mut col: usize = 0;
+    let mut tokens: Vec<(T, Range, f64)> = Vec::with_capacity(input.len() / 2);
+
+    while pos < bytes.len() {
+        while pos < bytes.len() && is_whitespace(bytes[pos]) {
+            if bytes[pos] == b'\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+
+        let start = pos;
+        let start_line = line;
+        let start_col = col;
+        let mut state: u32 = 0;
+        let mut last_accept: Option<(u32, usize, usize, usize)> = None;
+
+        if is_accepting(0) {
+            last_accept = Some((0, pos, line, col));
+        }
+
+        while pos < bytes.len() {
+            let class = char_class[bytes[pos] as usize];
+            let next = dfa_next(state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            if bytes[pos] == b'\n' {
+                line += 1;
+                col = 0;
+            } else if bytes[pos] & 0xC0 != 0x80 {
+                col += 1;
+            }
+            pos += 1;
+            if is_accepting(state) {
+                last_accept = Some((state, pos, line, col));
+            }
+        }
+
+        match last_accept {
+            Some((accept_state, end, end_line, end_col)) => {
+                pos = end;
+                line = end_line;
+                col = end_col;
+                let text = &input[start..end];
+                if let Some(token) = accept_token(accept_state, text) {
+                    let weight = accept_weight(accept_state);
+                    tokens.push((
+                        token,
+                        Range {
+                            start: Position {
+                                byte_offset: start,
+                                line: start_line,
+                                column: start_col,
+                            },
+                            end: Position {
+                                byte_offset: end,
+                                line: end_line,
+                                column: end_col,
+                            },
+                            file_id,
+                        },
+                        weight,
+                    ));
+                }
+            }
+            None => {
+                return Err(format!(
+                    "{}:{}: unexpected character '{}'",
+                    line + 1,
+                    col + 1,
+                    bytes[start] as char
+                ));
+            }
+        }
+    }
+
+    let eof_pos = Position {
+        byte_offset: pos,
+        line,
+        column: col,
+    };
+    Ok((tokens, eof_pos))
+}
+
+#[inline(always)]
+pub fn is_whitespace(b: u8) -> bool {
+    matches!(b, b' ' | b'\t' | b'\n' | b'\r')
+}

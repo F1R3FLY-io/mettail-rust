@@ -729,7 +729,7 @@ fn test_incremental_follow_sets_extends_existing() {
     use crate::prediction::{incremental_follow_sets, FollowSetInput};
 
     // Existing FOLLOW(Int) = {Eof, Plus}
-    let mut existing_follow = std::collections::BTreeMap::new();
+    let mut existing_follow = std::collections::HashMap::new();
     let mut int_follow = FirstSet::new();
     int_follow.insert("Eof");
     int_follow.insert("Plus");
@@ -748,7 +748,7 @@ fn test_incremental_follow_sets_extends_existing() {
         ],
     }];
 
-    let first_sets = std::collections::BTreeMap::new();
+    let first_sets = std::collections::HashMap::new();
     let merged = incremental_follow_sets(&existing_follow, &new_inputs, &[], &first_sets);
 
     let int_follow = merged.get("Int").expect("Int FOLLOW");
@@ -761,9 +761,9 @@ fn test_incremental_follow_sets_extends_existing() {
 fn test_merge_terminal_sets() {
     use crate::prediction::merge_terminal_sets;
 
-    let a: std::collections::BTreeSet<String> =
+    let a: std::collections::HashSet<String> =
         ["+", "-", "0"].iter().map(|s| s.to_string()).collect();
-    let b: std::collections::BTreeSet<String> =
+    let b: std::collections::HashSet<String> =
         ["-", "*", "1"].iter().map(|s| s.to_string()).collect();
 
     let merged = merge_terminal_sets(&a, &b);

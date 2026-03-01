@@ -242,8 +242,7 @@ pub fn generate_lexer_string(
     let mut buf = String::with_capacity(estimated_size);
 
     write_token_enum(&mut buf, token_kinds);
-    write_position_and_range_defs(&mut buf);
-    write_parse_error_enum(&mut buf);
+    write_runtime_types_import(&mut buf);
 
     let strategy = if dfa.states.len() <= DIRECT_CODED_THRESHOLD {
         write_direct_coded_lexer(&mut buf, dfa, partition);
@@ -323,101 +322,13 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
     buf.push('}');
 }
 
-/// Write the Position, Range definitions to a string buffer.
-fn write_position_and_range_defs(buf: &mut String) {
-    buf.push_str(
-        "/// A position in source code. All fields are 0-indexed.\n\
-         #[derive(Debug, Clone, Copy, PartialEq, Eq)] \
-         pub struct Position { \
-             pub byte_offset: usize, \
-             pub line: usize, \
-             pub column: usize, \
-         }\n\
-         impl Position { \
-             pub fn zero() -> Self { Position { byte_offset: 0, line: 0, column: 0 } } \
-         }\n\
-         impl ::std::fmt::Display for Position { \
-             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result { \
-                 write!(f, \"{}:{}\", self.line + 1, self.column + 1) \
-             } \
-         }\n\
-         /// A range in source code with beginning and ending positions.\n\
-         #[derive(Debug, Clone, Copy, PartialEq, Eq)] \
-         pub struct Range { \
-             pub start: Position, \
-             pub end: Position, \
-             pub file_id: Option<u32>, \
-         }\n\
-         impl Range { \
-             pub fn zero() -> Self { Range { start: Position::zero(), end: Position::zero(), file_id: None } } \
-         }\n\
-         impl ::std::fmt::Display for Range { \
-             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result { \
-                 write!(f, \"{}-{}\", self.start, self.end) \
-             } \
-         }\n\
-",
-    );
-}
-
-/// Write the ParseError enum definition to a string buffer.
-fn write_parse_error_enum(buf: &mut String) {
-    buf.push_str(
-        "/// Structured parse error with source location.\n\
-         #[derive(Debug, Clone)] \
-         pub enum ParseError { \
-             UnexpectedToken { expected: &'static str, found: String, range: Range }, \
-             UnexpectedEof { expected: &'static str, range: Range }, \
-             LexError { message: String, position: Position }, \
-             TrailingTokens { found: String, range: Range }, \
-         }\n\
-         impl ::std::fmt::Display for ParseError { \
-             fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result { \
-                 match self { \
-                     ParseError::UnexpectedToken { expected, found, range } => { \
-                         write!(f, \"{}:{}: expected {}, found {}\", range.start.line + 1, range.start.column + 1, expected, found) \
-                     } \
-                     ParseError::UnexpectedEof { expected, range } => { \
-                         write!(f, \"{}:{}: unexpected end of input, expected {}\", range.start.line + 1, range.start.column + 1, expected) \
-                     } \
-                     ParseError::LexError { message, position } => { \
-                         write!(f, \"{}:{}: {}\", position.line + 1, position.column + 1, message) \
-                     } \
-                     ParseError::TrailingTokens { found, range } => { \
-                         write!(f, \"{}:{}: unexpected {} after parsing\", range.start.line + 1, range.start.column + 1, found) \
-                     } \
-                 } \
-             } \
-         }\n\
-         impl ParseError { \
-             /// Get the source range where this error occurred.\n\
-             pub fn range(&self) -> Range { \
-                 match self { \
-                     ParseError::UnexpectedToken { range, .. } => *range, \
-                     ParseError::UnexpectedEof { range, .. } => *range, \
-                     ParseError::LexError { position, .. } => Range { start: *position, end: *position, file_id: None }, \
-                     ParseError::TrailingTokens { range, .. } => *range, \
-                 } \
-             } \
-         }\n\
-         impl ::std::error::Error for ParseError {}\n\
-         impl From<String> for ParseError { \
-             fn from(message: String) -> Self { \
-                 ParseError::LexError { message, position: Position::zero() } \
-             } \
-         }\n\
-         /// Format a source context snippet with caret pointing to the error.\n\
-         pub fn format_error_context(input: &str, range: &Range) -> String { \
-             let line_start = input[..range.start.byte_offset].rfind('\\n').map_or(0, |p| p + 1); \
-             let line_end = input[range.start.byte_offset..].find('\\n').map_or(input.len(), |p| p + range.start.byte_offset); \
-             let source_line = &input[line_start..line_end]; \
-             let caret_col = range.start.column; \
-             let caret_len = if range.end.byte_offset > range.start.byte_offset && range.end.line == range.start.line { \
-                 range.end.byte_offset - range.start.byte_offset \
-             } else { 1 }; \
-             format!(\"{}\\n{}{}\", source_line, \" \".repeat(caret_col), \"^\".repeat(caret_len)) \
-         }\n",
-    );
+/// Write `use mettail_prattail::runtime_types::*;` to a string buffer.
+///
+/// This replaces the previously inlined Position/Range/ParseError struct definitions
+/// with a single import from the runtime crate. Generated code uses the shared
+/// definitions (~200 lines removed from each generated parser).
+fn write_runtime_types_import(buf: &mut String) {
+    buf.push_str("use mettail_prattail::runtime_types::*;");
 }
 
 /// Write the equivalence class table as a Rust array literal to a string buffer.
@@ -430,6 +341,53 @@ fn write_class_table(buf: &mut String, partition: &AlphabetPartition) {
         write!(buf, "{}", class).unwrap();
     }
     buf.push_str("];");
+}
+
+/// Write an IS_ACCEPTING check to a string buffer.
+///
+/// For DFAs with ≤128 states: emits a `const IS_ACCEPTING: u128 = 0b...;` bitmap
+/// where bit `i` is set iff state `i` is accepting. The inner lex loop checks
+/// `(IS_ACCEPTING >> state) & 1 != 0` instead of calling `accept_token()`.
+///
+/// For DFAs with >128 states: emits a `static IS_ACCEPTING: [bool; N] = [...];`
+/// array with `IS_ACCEPTING[state as usize]` lookup.
+///
+/// This eliminates the expensive `accept_token()` call (which creates a `&str`
+/// slice and enters a match dispatch) on every character in the DFA inner loop.
+fn write_is_accepting_check(buf: &mut String, dfa: &Dfa) {
+    let n = dfa.states.len();
+    if n <= 128 {
+        let mut bitmap: u128 = 0;
+        for (i, state) in dfa.states.iter().enumerate() {
+            if state.accept.is_some() {
+                bitmap |= 1u128 << i;
+            }
+        }
+        write!(buf, "const IS_ACCEPTING: u128 = {};", bitmap).unwrap();
+        buf.push_str(
+            "#[inline(always)] fn is_accepting_state(state: u32) -> bool { \
+             state < 128 && (IS_ACCEPTING >> state) & 1 != 0 \
+             }",
+        );
+    } else {
+        write!(buf, "static IS_ACCEPTING: [bool; {}] = [", n).unwrap();
+        for (i, state) in dfa.states.iter().enumerate() {
+            if i > 0 {
+                buf.push(',');
+            }
+            if state.accept.is_some() {
+                buf.push_str("true");
+            } else {
+                buf.push_str("false");
+            }
+        }
+        buf.push_str("];");
+        buf.push_str(
+            "#[inline(always)] fn is_accepting_state(state: u32) -> bool { \
+             (state as usize) < IS_ACCEPTING.len() && IS_ACCEPTING[state as usize] \
+             }",
+        );
+    }
 }
 
 /// Write the accept_token match arms to a string buffer.
@@ -516,58 +474,8 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
 
     write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
 
-    buf.push_str(
-        "fn is_whitespace(b: u8) -> bool { matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r') }",
-    );
-
-    // lex() function with line/column tracking — zero-copy: Token<'a> borrows from input
-    buf.push_str(
-        "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String> { \
-         lex_with_file_id(input, None) \
-         }\n\
-         pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range)>, String> { \
-         let bytes = input.as_bytes(); \
-         let mut pos: usize = 0; \
-         let mut line: usize = 0; \
-         let mut col: usize = 0; \
-         let mut tokens: Vec<(Token<'a>, Range)> = Vec::with_capacity(input.len() / 2); \
-         while pos < bytes.len() { \
-         while pos < bytes.len() && is_whitespace(bytes[pos]) { \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } else { col += 1; } \
-         pos += 1; } \
-         if pos >= bytes.len() { break; } \
-         let start = pos; \
-         let start_line = line; \
-         let start_col = col; \
-         let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
-         while pos < bytes.len() { \
-         let class = CHAR_CLASS[bytes[pos] as usize]; \
-         let next = dfa_next(state, class); \
-         if next == u32::MAX { break; } \
-         state = next; \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } \
-         else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
-         pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
-         } \
-         match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
-         pos = end; line = end_line; col = end_col; \
-         let text = &input[start..end]; \
-         if let Some(token) = accept_token(accept_state, text) { \
-         tokens.push((token, Range { \
-         start: Position { byte_offset: start, line: start_line, column: start_col }, \
-         end: Position { byte_offset: end, line: end_line, column: end_col }, \
-         file_id })); } } \
-         None => { return Err(format!(\"{}:{}: unexpected character '{}'\", \
-         line + 1, col + 1, bytes[start] as char)); } \
-         } } \
-         let eof_pos = Position { byte_offset: pos, line, column: col }; \
-         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id })); \
-         Ok(tokens) }",
-    );
+    // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
+    write_is_accepting_check(buf, dfa);
 
     // dfa_next() function
     buf.push_str("fn dfa_next(state: u32, class: u8) -> u32 {");
@@ -579,72 +487,48 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     write_accept_arms(buf, dfa);
     buf.push('}');
 
-    // WFST weight emission: accept_weight() + lex_weighted()
-    {
-        buf.push_str(
-            "/// Get the tropical weight for an accepting DFA state.\n\
-                       /// Lower weight = higher priority. Non-accepting returns infinity.\n\
-                       fn accept_weight(state: u32) -> f64 {",
-        );
-        write_accept_weight_arms(buf, dfa);
-        buf.push('}');
-        write_lex_weighted_function_direct_coded(buf);
-    }
+    // lex()/lex_with_file_id() via lex_core() — DFA loop is in the runtime crate
+    write_lex_via_core(buf);
+
+    // WFST weight emission: accept_weight() + lex_weighted() via lex_weighted_core()
+    buf.push_str(
+        "fn accept_weight(state: u32) -> f64 {",
+    );
+    write_accept_weight_arms(buf, dfa);
+    buf.push('}');
+    write_lex_weighted_via_core(buf);
 }
 
-/// Write the `lex_weighted()` function for direct-coded lexers (inline DFA transitions).
+/// Write `lex()`/`lex_with_file_id()` that delegate to `mettail_prattail::runtime_types::lex_core()`.
 ///
-/// Direct-coded lexers don't use `dfa_next()` — they inline the transition logic.
-/// This function generates the weighted lex variant for the direct-coded path.
-fn write_lex_weighted_function_direct_coded(buf: &mut String) {
+/// The grammar-specific `CHAR_CLASS`, `dfa_next`, `is_accepting_state`, and `accept_token`
+/// are passed as closures. The compiler monomorphizes away the closure overhead.
+/// `lex_core()` returns `(tokens, eof_position)` — the Eof token is appended with zero overhead.
+fn write_lex_via_core(buf: &mut String) {
     buf.push_str(
-        "/// Lex with weight emission: each token carries its tropical weight \
-         /// (lower = higher priority). Requires the `wfst` feature.\n\
-         pub fn lex_weighted<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
+        "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String> { \
+         lex_with_file_id(input, None) \
+         }\n\
+         pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range)>, String> { \
+         let (mut tokens, eof_pos) = mettail_prattail::runtime_types::lex_core( \
+         input, file_id, &CHAR_CLASS, dfa_next, is_accepting_state, accept_token)?; \
+         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id })); \
+         Ok(tokens) }",
+    );
+}
+
+/// Write `lex_weighted()`/`lex_weighted_with_file_id()` that delegate to
+/// `mettail_prattail::runtime_types::lex_weighted_core()`.
+///
+/// `lex_weighted_core()` returns `(tokens, eof_position)` — Eof appended with weight 0.0.
+fn write_lex_weighted_via_core(buf: &mut String) {
+    buf.push_str(
+        "pub fn lex_weighted<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
          lex_weighted_with_file_id(input, None) \
          }\n\
-         /// Lex with weight emission and explicit file ID.\n\
          pub fn lex_weighted_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
-         let bytes = input.as_bytes(); \
-         let mut pos: usize = 0; \
-         let mut line: usize = 0; \
-         let mut col: usize = 0; \
-         let mut tokens: Vec<(Token<'a>, Range, f64)> = Vec::with_capacity(input.len() / 2); \
-         while pos < bytes.len() { \
-         while pos < bytes.len() && is_whitespace(bytes[pos]) { \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } else { col += 1; } \
-         pos += 1; } \
-         if pos >= bytes.len() { break; } \
-         let start = pos; \
-         let start_line = line; \
-         let start_col = col; \
-         let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
-         while pos < bytes.len() { \
-         let class = CHAR_CLASS[bytes[pos] as usize]; \
-         let next = dfa_next(state, class); \
-         if next == u32::MAX { break; } \
-         state = next; \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } \
-         else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
-         pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
-         } \
-         match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
-         pos = end; line = end_line; col = end_col; \
-         let text = &input[start..end]; \
-         if let Some(token) = accept_token(accept_state, text) { \
-         let weight = accept_weight(accept_state); \
-         tokens.push((token, Range { \
-         start: Position { byte_offset: start, line: start_line, column: start_col }, \
-         end: Position { byte_offset: end, line: end_line, column: end_col }, \
-         file_id }, weight)); } } \
-         None => { return Err(format!(\"{}:{}: unexpected character '{}'\", \
-         line + 1, col + 1, bytes[start] as char)); } \
-         } } \
-         let eof_pos = Position { byte_offset: pos, line, column: col }; \
+         let (mut tokens, eof_pos) = mettail_prattail::runtime_types::lex_weighted_core( \
+         input, file_id, &CHAR_CLASS, dfa_next, is_accepting_state, accept_token, accept_weight)?; \
          tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }, 0.0_f64)); \
          Ok(tokens) }",
     );
@@ -715,6 +599,7 @@ pub fn write_lexer_struct(
     );
 
     // next_token() — identical to the inner loop of lex()
+    // Uses is_accepting_state() bitmap in inner loop; accept_token() only once after loop.
     buf.push_str(
         "pub fn next_token(&mut self) -> Result<(Token<'a>, Range), String> { \
          while self.pos < self.bytes.len() && is_whitespace(self.bytes[self.pos]) { \
@@ -729,7 +614,7 @@ pub fn write_lexer_struct(
          let start_col = self.col; \
          let mut state: u32 = 0; \
          let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if accept_token(0, &self.input[start..start]).is_some() { last_accept = Some((0, self.pos, self.line, self.col)); } \
+         if is_accepting_state(0) { last_accept = Some((0, self.pos, self.line, self.col)); } \
          while self.pos < self.bytes.len() { \
          let class = CHAR_CLASS[self.bytes[self.pos] as usize]; \
          let next = dfa_next(state, class); \
@@ -738,7 +623,7 @@ pub fn write_lexer_struct(
          if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } \
          else if self.bytes[self.pos] & 0xC0 != 0x80 { self.col += 1; } \
          self.pos += 1; \
-         if accept_token(state, &self.input[start..self.pos]).is_some() { last_accept = Some((state, self.pos, self.line, self.col)); } \
+         if is_accepting_state(state) { last_accept = Some((state, self.pos, self.line, self.col)); } \
          } \
          match last_accept { \
          Some((accept_state, end, end_line, end_col)) => { \
@@ -757,6 +642,7 @@ pub fn write_lexer_struct(
     );
 
     // next_token_for_category(category_id) — context-aware
+    // Uses is_accepting_state() bitmap in inner loop; accept_token() only once after loop.
     if ambiguity_info.has_ambiguous {
         buf.push_str(
             "pub fn next_token_for_category(&mut self, category_id: u8) -> Result<(Token<'a>, Range), String> { \
@@ -772,7 +658,7 @@ pub fn write_lexer_struct(
              let start_col = self.col; \
              let mut state: u32 = 0; \
              let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-             if accept_token(0, &self.input[start..start]).is_some() { last_accept = Some((0, self.pos, self.line, self.col)); } \
+             if is_accepting_state(0) { last_accept = Some((0, self.pos, self.line, self.col)); } \
              while self.pos < self.bytes.len() { \
              let class = CHAR_CLASS[self.bytes[self.pos] as usize]; \
              let next = dfa_next(state, class); \
@@ -781,7 +667,7 @@ pub fn write_lexer_struct(
              if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } \
              else if self.bytes[self.pos] & 0xC0 != 0x80 { self.col += 1; } \
              self.pos += 1; \
-             if accept_token(state, &self.input[start..self.pos]).is_some() { last_accept = Some((state, self.pos, self.line, self.col)); } \
+             if is_accepting_state(state) { last_accept = Some((state, self.pos, self.line, self.col)); } \
              } \
              match last_accept { \
              Some((accept_state, end, end_line, end_col)) => { \
@@ -1091,13 +977,18 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
     // sort_unstable_by: no temp allocation, ~10% faster than sort_by for small slices
     sparse_rows.sort_unstable_by_key(|row| std::cmp::Reverse(row.1.len()));
 
-    // Greedy offset search
+    // Greedy offset search with occupancy bitmap for O(1) free-slot finding.
+    // The occupied bitmap tracks which slots in the check array are taken,
+    // enabling faster offset searches by skipping known-occupied regions.
     let mut base = vec![0u32; num_states];
     let default = vec![u32::MAX; num_states]; // DEAD_STATE
                                               // Start with a reasonable size, will grow as needed
     let initial_capacity = num_states * 2 + num_classes;
     let mut next = vec![u32::MAX; initial_capacity];
     let mut check = vec![u32::MAX; initial_capacity]; // u32::MAX means "unoccupied"
+    // Occupancy bitmap: bit i set iff check[i] != u32::MAX
+    let occupied_words = (initial_capacity + 63) >> 6;
+    let mut occupied: Vec<u64> = vec![0u64; occupied_words];
     let mut high_water: usize = 0;
 
     for (state_idx, entries) in &sparse_rows {
@@ -1106,7 +997,9 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
             continue;
         }
 
-        // Find smallest offset d where no entries collide
+        // Find smallest offset d where no entries collide.
+        // Use occupancy bitmap to jump past fully-occupied words.
+        let first_class = entries[0].0;
         let mut d: usize = 0;
         'search: loop {
             let needed = d + num_classes;
@@ -1115,13 +1008,26 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
                 let new_len = needed + num_classes;
                 next.resize(new_len, u32::MAX);
                 check.resize(new_len, u32::MAX);
+                let new_occupied_words = (new_len + 63) >> 6;
+                occupied.resize(new_occupied_words, 0u64);
             }
 
-            // Check for collisions
+            // Quick check: if the first entry's slot is occupied, skip immediately
+            let first_idx = d + first_class;
+            let word_idx = first_idx >> 6;
+            let bit_idx = first_idx & 63;
+            if word_idx < occupied.len() && (occupied[word_idx] >> bit_idx) & 1 != 0 {
+                d += 1;
+                continue;
+            }
+
+            // Check for collisions on remaining entries
             let mut collides = false;
-            for &(class_id, _) in entries {
+            for &(class_id, _) in entries.iter().skip(1) {
                 let idx = d + class_id;
-                if check[idx] != u32::MAX {
+                let w = idx >> 6;
+                let b = idx & 63;
+                if w < occupied.len() && (occupied[w] >> b) & 1 != 0 {
                     collides = true;
                     break;
                 }
@@ -1132,12 +1038,16 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
             d += 1;
         }
 
-        // Place this row at offset d
+        // Place this row at offset d and mark occupied bits
         base[*state_idx] = d as u32;
         for &(class_id, target) in entries {
             let idx = d + class_id;
             next[idx] = target;
             check[idx] = *state_idx as u32;
+            // Set occupancy bit
+            let w = idx >> 6;
+            let b = idx & 63;
+            occupied[w] |= 1u64 << b;
             if idx >= high_water {
                 high_water = idx + 1;
             }
@@ -1308,9 +1218,8 @@ fn write_comb_driven_lexer(
 
     write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
 
-    buf.push_str(
-        "fn is_whitespace(b: u8) -> bool { matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r') }",
-    );
+    // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
+    write_is_accepting_check(buf, dfa);
 
     // dfa_next function using comb lookup
     write!(
@@ -1322,25 +1231,19 @@ fn write_comb_driven_lexer(
     )
     .unwrap();
 
-    // lex() function — same structure as table-driven, using dfa_next()
-    write_lex_function_with_dfa_next(buf);
-
     // accept_token() function
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
     write_accept_arms(buf, dfa);
     buf.push('}');
 
-    // WFST weight emission: accept_weight() + lex_weighted()
-    {
-        buf.push_str(
-            "/// Get the tropical weight for an accepting DFA state.\n\
-                       /// Lower weight = higher priority. Non-accepting returns infinity.\n\
-                       fn accept_weight(state: u32) -> f64 {",
-        );
-        write_accept_weight_arms(buf, dfa);
-        buf.push('}');
-        write_lex_weighted_function_with_dfa_next(buf);
-    }
+    // lex()/lex_with_file_id() via lex_core()
+    write_lex_via_core(buf);
+
+    // WFST weight emission: accept_weight() + lex_weighted() via lex_weighted_core()
+    buf.push_str("fn accept_weight(state: u32) -> f64 {");
+    write_accept_weight_arms(buf, dfa);
+    buf.push('}');
+    write_lex_weighted_via_core(buf);
 }
 
 /// Write a complete bitmap-compressed lexer to a string buffer.
@@ -1355,9 +1258,8 @@ fn write_bitmap_driven_lexer(
 
     write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
 
-    buf.push_str(
-        "fn is_whitespace(b: u8) -> bool { matches!(b, b' ' | b'\\t' | b'\\n' | b'\\r') }",
-    );
+    // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
+    write_is_accepting_check(buf, dfa);
 
     // dfa_next function using bitmap+popcount lookup
     buf.push_str(
@@ -1370,139 +1272,19 @@ fn write_bitmap_driven_lexer(
          }",
     );
 
-    // lex() function — same structure, using dfa_next()
-    write_lex_function_with_dfa_next(buf);
-
     // accept_token() function
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
     write_accept_arms(buf, dfa);
     buf.push('}');
 
-    // WFST weight emission: accept_weight() + lex_weighted()
-    {
-        buf.push_str(
-            "/// Get the tropical weight for an accepting DFA state.\n\
-                       /// Lower weight = higher priority. Non-accepting returns infinity.\n\
-                       fn accept_weight(state: u32) -> f64 {",
-        );
-        write_accept_weight_arms(buf, dfa);
-        buf.push('}');
-        write_lex_weighted_function_with_dfa_next(buf);
-    }
-}
+    // lex()/lex_with_file_id() via lex_core()
+    write_lex_via_core(buf);
 
-/// Write the lex() function body that uses a `dfa_next(state, class)` function.
-///
-/// Shared between comb-driven and bitmap-driven lexers (both define `dfa_next`
-/// with the same signature but different lookup strategies).
-fn write_lex_function_with_dfa_next(buf: &mut String) {
-    buf.push_str(
-        "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String> { \
-         lex_with_file_id(input, None) \
-         }\n\
-         pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range)>, String> { \
-         let bytes = input.as_bytes(); \
-         let mut pos: usize = 0; \
-         let mut line: usize = 0; \
-         let mut col: usize = 0; \
-         let mut tokens: Vec<(Token<'a>, Range)> = Vec::with_capacity(input.len() / 2); \
-         while pos < bytes.len() { \
-         while pos < bytes.len() && is_whitespace(bytes[pos]) { \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } else { col += 1; } \
-         pos += 1; } \
-         if pos >= bytes.len() { break; } \
-         let start = pos; \
-         let start_line = line; \
-         let start_col = col; \
-         let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
-         while pos < bytes.len() { \
-         let class = CHAR_CLASS[bytes[pos] as usize]; \
-         let next = dfa_next(state, class); \
-         if next == u32::MAX { break; } \
-         state = next; \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } \
-         else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
-         pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
-         } \
-         match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
-         pos = end; line = end_line; col = end_col; \
-         let text = &input[start..end]; \
-         if let Some(token) = accept_token(accept_state, text) { \
-         tokens.push((token, Range { \
-         start: Position { byte_offset: start, line: start_line, column: start_col }, \
-         end: Position { byte_offset: end, line: end_line, column: end_col }, \
-         file_id })); } } \
-         None => { return Err(format!(\"{}:{}: unexpected character '{}'\", \
-         line + 1, col + 1, bytes[start] as char)); } \
-         } } \
-         let eof_pos = Position { byte_offset: pos, line, column: col }; \
-         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id })); \
-         Ok(tokens) }",
-    );
-}
-
-/// Write the `lex_weighted()` function body that uses `dfa_next(state, class)` and `accept_weight(state)`.
-///
-/// Returns `Vec<(Token<'a>, Range, f64)>` where the `f64` is the tropical weight
-/// (lower = higher priority). Feature-gated: only emitted when `wfst` feature is enabled.
-///
-/// Shared between comb-driven and bitmap-driven lexers.
-fn write_lex_weighted_function_with_dfa_next(buf: &mut String) {
-    buf.push_str(
-        "/// Lex with weight emission: each token carries its tropical weight \
-         /// (lower = higher priority). Requires the `wfst` feature.\n\
-         pub fn lex_weighted<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
-         lex_weighted_with_file_id(input, None) \
-         }\n\
-         /// Lex with weight emission and explicit file ID.\n\
-         pub fn lex_weighted_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range, f64)>, String> { \
-         let bytes = input.as_bytes(); \
-         let mut pos: usize = 0; \
-         let mut line: usize = 0; \
-         let mut col: usize = 0; \
-         let mut tokens: Vec<(Token<'a>, Range, f64)> = Vec::with_capacity(input.len() / 2); \
-         while pos < bytes.len() { \
-         while pos < bytes.len() && is_whitespace(bytes[pos]) { \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } else { col += 1; } \
-         pos += 1; } \
-         if pos >= bytes.len() { break; } \
-         let start = pos; \
-         let start_line = line; \
-         let start_col = col; \
-         let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if let Some(_) = accept_token(0, &input[start..start]) { last_accept = Some((0, pos, line, col)); } \
-         while pos < bytes.len() { \
-         let class = CHAR_CLASS[bytes[pos] as usize]; \
-         let next = dfa_next(state, class); \
-         if next == u32::MAX { break; } \
-         state = next; \
-         if bytes[pos] == b'\\n' { line += 1; col = 0; } \
-         else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
-         pos += 1; \
-         if accept_token(state, &input[start..pos]).is_some() { last_accept = Some((state, pos, line, col)); } \
-         } \
-         match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
-         pos = end; line = end_line; col = end_col; \
-         let text = &input[start..end]; \
-         if let Some(token) = accept_token(accept_state, text) { \
-         let weight = accept_weight(accept_state); \
-         tokens.push((token, Range { \
-         start: Position { byte_offset: start, line: start_line, column: start_col }, \
-         end: Position { byte_offset: end, line: end_line, column: end_col }, \
-         file_id }, weight)); } } \
-         None => { return Err(format!(\"{}:{}: unexpected character '{}'\", \
-         line + 1, col + 1, bytes[start] as char)); } \
-         } } \
-         let eof_pos = Position { byte_offset: pos, line, column: col }; \
-         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }, 0.0_f64)); \
-         Ok(tokens) }",
-    );
+    // WFST weight emission: accept_weight() + lex_weighted() via lex_weighted_core()
+    buf.push_str("fn accept_weight(state: u32) -> f64 {");
+    write_accept_weight_arms(buf, dfa);
+    buf.push('}');
+    write_lex_weighted_via_core(buf);
 }
 
 
