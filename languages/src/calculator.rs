@@ -83,25 +83,6 @@ language! {
         CosFloat . a:Float |- "cos" "(" a ")" : Float ![a.cos()] step;
         ExpFloat . a:Float |- "exp" "(" a ")" : Float ![a.exp()] step;
         LnFloat . a:Float |- "ln" "(" a ")" : Float ![a.ln()] step;
-        // Type casts
-/*
-        IntToFloat . a:Int |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a as f64)] step;
-        BoolToFloat . a:Bool |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(if a { 1.0 } else { 0.0 })] step;
-        StrToFloat . a:Str |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.parse().unwrap_or(0.0))] step;
-        FloatToInt . a:Float |- "int" "(" a ")" : Int ![a.get() as i32] step;
-        BoolToInt . a:Bool |- "int" "(" a ")" : Int ![if a { 1 } else { 0 }] step;
-        StrToInt . a:Str |- "int" "(" a ")" : Int ![a.parse().unwrap_or(0)] step;
-        BoolToStr . a:Bool |- "str" "(" a ")" : Str ![a.to_string()] step;
-        IntToStr . a:Int |- "str" "(" a ")" : Str ![a.to_string()] step;
-        FloatToStr . a:Float |- "str" "(" a ")" : Str ![a.to_string()] step;
-        IntToBool . a:Int |- "bool" "(" a ")" : Bool ![a != 0] step;
-        FloatToBool . a:Float |- "bool" "(" a ")" : Bool ![a.get() != 0.0] step;
-        StrToBool . a:Str |- "bool" "(" a ")" : Bool ![a.parse().unwrap_or(false)] step;
-*/
-        IntId . a:Int |- "int" "(" a ")" : Int ![a] step;
-        FloatId . a:Float |- "float" "(" a ")" : Float ![a] step;
-        BoolId . a:Bool |- "bool" "(" a ")" : Bool ![a] step;
-        StrId . a:Str |- "str" "(" a ")" : Str ![a] step;
         // Proc → concrete type projections (runtime type extraction)
         // These are fold rules: fold_proc reduces ElemList → injection variant before rust_code runs
         ProcToInt . a:Proc |- "int" "(" a ")" : Int ![{
@@ -184,7 +165,6 @@ language! {
                 other => panic!("str(): cannot convert Proc variant to Str: {:?}", other),
             }
         }] fold;
-        ProcToProc . a:Proc |- "proc" "(" a ")" : Proc ![a] fold;
         // Custom operation (PraTTaIL test feature)
         CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
         // List operations (List = Vec<Proc>). Fold/step pass payloads; rust_code returns payload.
@@ -300,31 +280,11 @@ language! {
         CosFloatCong . | S ~> T |- (CosFloat S) ~> (CosFloat T);
         ExpFloatCong . | S ~> T |- (ExpFloat S) ~> (ExpFloat T);
         LnFloatCong . | S ~> T |- (LnFloat S) ~> (LnFloat T);
-        // Type casts
-/*
-        IntToFloatCong . | S ~> T |- (IntToFloat S) ~> (IntToFloat T);
-        BoolToFloatCong . | S ~> T |- (BoolToFloat S) ~> (BoolToFloat T);
-        StrToFloatCong . | S ~> T |- (StrToFloat S) ~> (StrToFloat T);
-        FloatToIntCong . | S ~> T |- (FloatToInt S) ~> (FloatToInt T);
-        BoolToIntCong . | S ~> T |- (BoolToInt S) ~> (BoolToInt T);
-        StrToIntCong . | S ~> T |- (StrToInt S) ~> (StrToInt T);
-        BoolToStrCong . | S ~> T |- (BoolToStr S) ~> (BoolToStr T);
-        IntToStrCong . | S ~> T |- (IntToStr S) ~> (IntToStr T);
-        FloatToStrCong . | S ~> T |- (FloatToStr S) ~> (FloatToStr T);
-        IntToBoolCong . | S ~> T |- (IntToBool S) ~> (IntToBool T);
-        FloatToBoolCong . | S ~> T |- (FloatToBool S) ~> (FloatToBool T);
-        StrToBoolCong . | S ~> T |- (StrToBool S) ~> (StrToBool T);
-*/
-        IntIdCong . | S ~> T |- (IntId S) ~> (IntId T);
-        FloatIdCong . | S ~> T |- (FloatId S) ~> (FloatId T);
-        BoolIdCong . | S ~> T |- (BoolId S) ~> (BoolId T);
-        StrIdCong . | S ~> T |- (StrId S) ~> (StrId T);
         // Proc → concrete type projection congruence
         ProcToIntCong . | S ~> T |- (ProcToInt S) ~> (ProcToInt T);
         ProcToFloatCong . | S ~> T |- (ProcToFloat S) ~> (ProcToFloat T);
         ProcToBoolCong . | S ~> T |- (ProcToBool S) ~> (ProcToBool T);
         ProcToStrCong . | S ~> T |- (ProcToStr S) ~> (ProcToStr T);
-        ProcToProcCong . | S ~> T |- (ProcToProc S) ~> (ProcToProc T);
         // Proc (unified variant) congruence
         ProcIntCong . | S ~> T |- (ProcInt S) ~> (ProcInt T);
         ProcFloatCong . | S ~> T |- (ProcFloat S) ~> (ProcFloat T);

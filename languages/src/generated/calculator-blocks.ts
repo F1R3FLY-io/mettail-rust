@@ -1156,74 +1156,6 @@ const definitions = [
 		colour: "e05196",
 	},
 
-	// Int Id: ...
-	{
-		type: "int_int_id",
-		tooltip: "Int Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Float Id: ...
-	{
-		type: "float_float_id",
-		tooltip: "Float Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
-			},
-		],
-		inputsInline: true,
-		output: "Float",
-		colour: "e05196",
-	},
-
-	// Bool Id: ...
-	{
-		type: "bool_bool_id",
-		tooltip: "Bool Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
-	// Str Id: ...
-	{
-		type: "str_str_id",
-		tooltip: "Str Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
-			},
-		],
-		inputsInline: true,
-		output: "Str",
-		colour: "51e05f",
-	},
-
 	// Proc To Int: ...
 	{
 		type: "int_proc_to_int",
@@ -1290,24 +1222,6 @@ const definitions = [
 		inputsInline: true,
 		output: "Str",
 		colour: "51e05f",
-	},
-
-	// Proc To Proc: ...
-	{
-		type: "proc_proc_to_proc",
-		tooltip: "Proc To Proc: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
 	},
 
 	// Custom Op: ... ...
