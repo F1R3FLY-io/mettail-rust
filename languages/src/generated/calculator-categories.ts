@@ -73,7 +73,8 @@ export const categoryInfo = {
 			"Fact",
 			"ProcToInt",
 			"CustomOp",
-			"LenList"
+			"LenList",
+			"CountBag"
 		],
 		colour: "51b0e0",
 	},

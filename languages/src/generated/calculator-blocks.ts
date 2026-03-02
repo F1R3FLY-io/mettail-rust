@@ -1394,6 +1394,28 @@ const definitions = [
 		inputsInline: true,
 		output: "Bag",
 		colour: "e0d451",
+	},
+
+	// Count Bag: ... ...
+	{
+		type: "int_count_bag",
+		tooltip: "Count Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
 	}
 ];
 
