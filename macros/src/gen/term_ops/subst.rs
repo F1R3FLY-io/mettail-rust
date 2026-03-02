@@ -117,14 +117,25 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
     let impls: Vec<TokenStream> = categories.iter().map(|export| {
         let cat_name = &export.name;
 
+        let variants = collect_category_variants(cat_name, language);
+        let has_var = variants.iter().any(|v| matches!(v, VariantKind::Var { .. }));
+        // Only use cross-category Var resolution (ProcToX, ProcX) when this language has a
+        // ProcToX rule for this category (e.g. Calculator has ProcToInt; RhoCalc does not).
+        let proc_to_label = format!("ProcTo{}", cat_name);
+        let use_cross_lookups = has_var
+            && language.terms.iter().any(|r| r.category == *cat_name && r.label.to_string() == proc_to_label);
+
         // Collect all category fields for cross-category substitution
-        let all_subst_calls: Vec<TokenStream> = categories.iter().map(|cat| {
+        let mut all_subst_calls: Vec<TokenStream> = categories.iter().map(|cat| {
             let field = format_ident!("{}", cat.name.to_string().to_lowercase());
             let method = format_ident!("subst_by_name_{}", cat.name.to_string().to_lowercase());
             quote! {
                 result = result.#method(&env.#field.0);
             }
         }).collect();
+        if has_var {
+            all_subst_calls.push(quote! { result = result.subst_cross_var(env); });
+        }
 
         // Generate subst_by_name methods for each replacement category
         let subst_by_name_methods: Vec<TokenStream> = categories.iter().map(|repl_cat| {
@@ -150,6 +161,25 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
             }
         }).collect();
 
+        let primary_type = &language.types[0].name;
+        // Generate subst_cross_var for every category with Var so recursive calls (e.g. from Int
+        // into Proc fields) have a method. Cross-category lookups only when language has ProcToX.
+        let subst_cross_var_method: Vec<TokenStream> = if has_var {
+            let cross_var_arms = variants.iter().map(|variant| {
+                generate_subst_cross_var_arm(cat_name, variant, language, primary_type, &env_name, use_cross_lookups)
+            }).collect::<Vec<_>>();
+            vec![quote! {
+                /// Resolve variables by name from other categories when not in this category's env.
+                fn subst_cross_var(&self, env: &#env_name) -> Self {
+                    match self {
+                        #(#cross_var_arms),*
+                    }
+                }
+            }]
+        } else {
+            vec![]
+        };
+
         quote! {
             impl #cat_name {
                 /// Substitute all environment variables in this term by name
@@ -172,6 +202,7 @@ pub fn generate_env_substitution(language: &LanguageDef) -> TokenStream {
                 }
 
                 #(#subst_by_name_methods)*
+                #(#subst_cross_var_method)*
 
                 /// Unify FreeVar IDs by pretty_name using the global VAR_CACHE.
                 /// This ensures all variables with the same name have the same FreeVar ID,
@@ -671,6 +702,216 @@ fn generate_subst_by_name_arm(
                 }
             }
         },
+    }
+}
+
+/// Generate one match arm for subst_cross_var: resolve Var from other categories' env when
+/// use_cross_lookups is true (language has ProcToX); otherwise Var arm just returns self.clone().
+fn generate_subst_cross_var_arm(
+    category: &Ident,
+    variant: &VariantKind,
+    language: &LanguageDef,
+    primary_type: &Ident,
+    env_name: &Ident,
+    use_cross_lookups: bool,
+) -> TokenStream {
+    match variant {
+        VariantKind::Var { label } => {
+            let var_label = label;
+            if !use_cross_lookups {
+                return quote! {
+                    #category::#var_label(_) => self.clone()
+                };
+            }
+            // Only consider same category, primary type, and other native non-collection types.
+            let types_to_try: Vec<_> = language
+                .types
+                .iter()
+                .filter(|t| {
+                    t.name == *category
+                        || t.name == *primary_type
+                        || language.get_type(&t.name).map(|lt| lt.native_type.is_some() && lt.collection_kind.is_none()).unwrap_or(false)
+                })
+                .collect();
+            let lookups: Vec<TokenStream> = types_to_try
+                .iter()
+                .map(|t| {
+                    let field = format_ident!("{}", t.name.to_string().to_lowercase());
+                    if t.name == *category {
+                        quote! {
+                            if let Some(v) = env.#field.get(name) { return v.clone(); }
+                        }
+                    } else if t.name == *primary_type {
+                        let projection = format_ident!("ProcTo{}", category);
+                        quote! {
+                            if let Some(v) = env.#field.get(name) {
+                                return #category::#projection(Box::new(v.clone()));
+                            }
+                        }
+                    } else {
+                        let injection = format_ident!("Proc{}", t.name);
+                        let projection = format_ident!("ProcTo{}", category);
+                        quote! {
+                            if let Some(v) = env.#field.get(name) {
+                                return #category::#projection(Box::new(#primary_type::#injection(Box::new(v.clone()))));
+                            }
+                        }
+                    }
+                })
+                .collect();
+            quote! {
+                #category::#var_label(ord_var) => {
+                    let name = match &ord_var.0 {
+                        mettail_runtime::Var::Free(f) => f.pretty_name.as_deref(),
+                        mettail_runtime::Var::Bound(b) => b.pretty_name.as_deref(),
+                        _ => None,
+                    };
+                    if let Some(name) = name {
+                        #(#lookups)*
+                    }
+                    self.clone()
+                }
+            }
+        }
+        VariantKind::Literal { label } => {
+            quote! { #category::#label(_) => self.clone() }
+        }
+        VariantKind::Nullary { label } => {
+            quote! { #category::#label => self.clone() }
+        }
+        VariantKind::Regular { label, fields } => {
+            let field_names: Vec<Ident> =
+                (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
+            let field_substs: Vec<TokenStream> = fields
+                .iter()
+                .zip(field_names.iter())
+                .map(|(field, _name)| {
+                    if field.is_collection {
+                        match field.coll_type.as_ref().unwrap_or(&CollectionType::HashBag) {
+                            CollectionType::HashBag => quote! {
+                                { let mut bag = mettail_runtime::HashBag::new();
+                                  for (elem, count) in #_name.iter() {
+                                      let s = elem.subst_cross_var(env);
+                                      for _ in 0..count { bag.insert(s.clone()); }
+                                  }
+                                  bag }
+                            },
+                            CollectionType::HashSet => {
+                                quote! { #_name.iter().map(|e| e.subst_cross_var(env)).collect() }
+                            },
+                            CollectionType::Vec => {
+                                quote! { #_name.iter().map(|e| e.subst_cross_var(env)).collect() }
+                            },
+                        }
+                    } else {
+                        quote! { Box::new((**#_name).subst_cross_var(env)) }
+                    }
+                })
+                .collect();
+            quote! {
+                #category::#label(#(#field_names),*) => {
+                    #category::#label(#(#field_substs),*)
+                }
+            }
+        }
+        VariantKind::Collection { label, coll_type, .. } => {
+            match coll_type {
+                CollectionType::HashBag => quote! {
+                    #category::#label(bag) => {
+                        let mut new_bag = mettail_runtime::HashBag::new();
+                        for (elem, count) in bag.iter() {
+                            let s = elem.subst_cross_var(env);
+                            for _ in 0..count { new_bag.insert(s.clone()); }
+                        }
+                        #category::#label(new_bag)
+                    }
+                },
+                CollectionType::HashSet => quote! {
+                    #category::#label(elems) => #category::#label(elems.iter().map(|e| e.subst_cross_var(env)).collect())
+                },
+                CollectionType::Vec => quote! {
+                    #category::#label(elems) => #category::#label(elems.iter().map(|e| e.subst_cross_var(env)).collect())
+                },
+            }
+        }
+        VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
+            let field_names: Vec<Ident> =
+                (0..pre_scope_fields.len()).map(|i| format_ident!("f{}", i)).collect();
+            let field_substs: Vec<TokenStream> = pre_scope_fields
+                .iter()
+                .zip(field_names.iter())
+                .map(|(field, name)| {
+                    if field.is_collection {
+                        quote! { #name.iter().map(|e| e.subst_cross_var(env)).collect() }
+                    } else {
+                        quote! { Box::new((**#name).subst_cross_var(env)) }
+                    }
+                })
+                .collect();
+            let need_body = body_cat == category;
+            let body_recurse = if need_body {
+                quote! { let new_body = (**body).subst_cross_var(env); }
+            } else {
+                quote! { let new_body = (**body).clone(); }
+            };
+            let pattern = if field_names.is_empty() {
+                quote! { #category::#label(scope) }
+            } else {
+                quote! { #category::#label(#(#field_names,)* scope) }
+            };
+            let reconstruction = if field_names.is_empty() {
+                quote! { #category::#label(mettail_runtime::Scope::new(binder.clone(), Box::new(new_body))) }
+            } else {
+                quote! { #category::#label(#(#field_substs,)* mettail_runtime::Scope::new(binder.clone(), Box::new(new_body))) }
+            };
+            quote! {
+                #pattern => {
+                    let binder = &scope.inner().unsafe_pattern;
+                    let body = &scope.inner().unsafe_body;
+                    #body_recurse
+                    #reconstruction
+                }
+            }
+        }
+        VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
+            let field_names: Vec<Ident> =
+                (0..pre_scope_fields.len()).map(|i| format_ident!("f{}", i)).collect();
+            let field_substs: Vec<TokenStream> = pre_scope_fields
+                .iter()
+                .zip(field_names.iter())
+                .map(|(field, name)| {
+                    if field.is_collection {
+                        quote! { #name.iter().map(|e| e.subst_cross_var(env)).collect() }
+                    } else {
+                        quote! { Box::new((**#name).subst_cross_var(env)) }
+                    }
+                })
+                .collect();
+            let need_body = body_cat == category;
+            let body_recurse = if need_body {
+                quote! { let new_body = (**body).subst_cross_var(env); }
+            } else {
+                quote! { let new_body = (**body).clone(); }
+            };
+            let pattern = if field_names.is_empty() {
+                quote! { #category::#label(scope) }
+            } else {
+                quote! { #category::#label(#(#field_names,)* scope) }
+            };
+            let reconstruction = if field_names.is_empty() {
+                quote! { #category::#label(mettail_runtime::Scope::new(binders.clone(), Box::new(new_body))) }
+            } else {
+                quote! { #category::#label(#(#field_substs,)* mettail_runtime::Scope::new(binders.clone(), Box::new(new_body))) }
+            };
+            quote! {
+                #pattern => {
+                    let binders = &scope.inner().unsafe_pattern;
+                    let body = &scope.inner().unsafe_body;
+                    #body_recurse
+                    #reconstruction
+                }
+            }
+        }
     }
 }
 

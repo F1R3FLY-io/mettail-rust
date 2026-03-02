@@ -1979,6 +1979,22 @@ fn generate_language_trait_impl_multi(
         })
         .collect();
 
+    // get_env_term: try each category's map and return first match as Box<dyn Term>
+    let get_env_term_arms: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let field = format_ident!("{}", cat.to_string().to_lowercase());
+            let variant = format_ident!("{}", cat);
+            quote! {
+                if let Some(t) = typed_env.#field.get(name) {
+                    return Some(Box::new(#term_name(#inner_enum_name::#variant(t.clone()))));
+                }
+            }
+        })
+        .collect();
+
     // Primary category: first type in the language definition (e.g. Proc for rhocalc, Int for Calculator).
     // Used to prefer the primary category's type when reporting the type of an Ambiguous term.
     let primary_type = &language.types[0].name;
@@ -2212,6 +2228,15 @@ fn generate_language_trait_impl_multi(
                 env.downcast_ref::<#env_name>()
                     .map(|e| e.is_empty())
                     .unwrap_or(true)
+            }
+
+            fn get_env_term(&self, env: &dyn std::any::Any, name: &str) -> Option<Box<dyn mettail_runtime::Term>> {
+                let typed_env = match env.downcast_ref::<#env_name>() {
+                    Some(e) => e,
+                    None => return None,
+                };
+                #(#get_env_term_arms)*
+                None
             }
 
             fn infer_term_type(&self, term: &dyn mettail_runtime::Term) -> mettail_runtime::TermType {

@@ -1156,210 +1156,6 @@ const definitions = [
 		colour: "e05196",
 	},
 
-	// Int To Float: ...
-	{
-		type: "float_int_to_float",
-		tooltip: "Int To Float: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Float",
-		colour: "e05196",
-	},
-
-	// Bool To Float: ...
-	{
-		type: "float_bool_to_float",
-		tooltip: "Bool To Float: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Float",
-		colour: "e05196",
-	},
-
-	// Str To Float: ...
-	{
-		type: "float_str_to_float",
-		tooltip: "Str To Float: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
-			},
-		],
-		inputsInline: true,
-		output: "Float",
-		colour: "e05196",
-	},
-
-	// Float To Int: ...
-	{
-		type: "int_float_to_int",
-		tooltip: "Float To Int: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Bool To Int: ...
-	{
-		type: "int_bool_to_int",
-		tooltip: "Bool To Int: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Str To Int: ...
-	{
-		type: "int_str_to_int",
-		tooltip: "Str To Int: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Bool To Str: ...
-	{
-		type: "str_bool_to_str",
-		tooltip: "Bool To Str: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Str",
-		colour: "51e05f",
-	},
-
-	// Int To Str: ...
-	{
-		type: "str_int_to_str",
-		tooltip: "Int To Str: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Str",
-		colour: "51e05f",
-	},
-
-	// Float To Str: ...
-	{
-		type: "str_float_to_str",
-		tooltip: "Float To Str: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
-			},
-		],
-		inputsInline: true,
-		output: "Str",
-		colour: "51e05f",
-	},
-
-	// Int To Bool: ...
-	{
-		type: "bool_int_to_bool",
-		tooltip: "Int To Bool: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
-	// Float To Bool: ...
-	{
-		type: "bool_float_to_bool",
-		tooltip: "Float To Bool: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
-	// Str To Bool: ...
-	{
-		type: "bool_str_to_bool",
-		tooltip: "Str To Bool: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
 	// Int Id: ...
 	{
 		type: "int_int_id",
@@ -1494,6 +1290,24 @@ const definitions = [
 		inputsInline: true,
 		output: "Str",
 		colour: "51e05f",
+	},
+
+	// Proc To Proc: ...
+	{
+		type: "proc_proc_to_proc",
+		tooltip: "Proc To Proc: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
 	},
 
 	// Custom Op: ... ...

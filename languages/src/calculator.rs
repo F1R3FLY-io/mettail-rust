@@ -84,6 +84,7 @@ language! {
         ExpFloat . a:Float |- "exp" "(" a ")" : Float ![a.exp()] step;
         LnFloat . a:Float |- "ln" "(" a ")" : Float ![a.ln()] step;
         // Type casts
+/*
         IntToFloat . a:Int |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a as f64)] step;
         BoolToFloat . a:Bool |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(if a { 1.0 } else { 0.0 })] step;
         StrToFloat . a:Str |- "float" "(" a ")" : Float ![mettail_runtime::CanonicalFloat64::from(a.parse().unwrap_or(0.0))] step;
@@ -96,6 +97,7 @@ language! {
         IntToBool . a:Int |- "bool" "(" a ")" : Bool ![a != 0] step;
         FloatToBool . a:Float |- "bool" "(" a ")" : Bool ![a.get() != 0.0] step;
         StrToBool . a:Str |- "bool" "(" a ")" : Bool ![a.parse().unwrap_or(false)] step;
+*/
         IntId . a:Int |- "int" "(" a ")" : Int ![a] step;
         FloatId . a:Float |- "float" "(" a ")" : Float ![a] step;
         BoolId . a:Bool |- "bool" "(" a ")" : Bool ![a] step;
@@ -108,6 +110,17 @@ language! {
                 Proc::ProcFloat(f) => f.as_ref().eval().get() as i32,
                 Proc::ProcBool(b) => if b.as_ref().eval() { 1 } else { 0 },
                 Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(0),
+                Proc::ElemList(list, index) => {
+                    let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
+                    let elem = match list.as_ref() { List::ListLit(v) => v.get(idx).cloned().expect("ElemList: index out of bounds"), _ => panic!("int(): ElemList list not a literal") };
+                    match elem {
+                        Proc::ProcInt(i) => i.as_ref().eval(),
+                        Proc::ProcFloat(f) => f.as_ref().eval().get() as i32,
+                        Proc::ProcBool(b) => if b.as_ref().eval() { 1 } else { 0 },
+                        Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(0),
+                        other => panic!("int(): cannot convert list element to Int: {:?}", other),
+                    }
+                }
                 other => panic!("int(): cannot convert Proc variant to Int: {:?}", other),
             }
         }] fold;
@@ -117,6 +130,17 @@ language! {
                 Proc::ProcInt(i) => mettail_runtime::CanonicalFloat64::from(i.as_ref().eval() as f64),
                 Proc::ProcBool(b) => mettail_runtime::CanonicalFloat64::from(if b.as_ref().eval() { 1.0 } else { 0.0 }),
                 Proc::ProcStr(s) => mettail_runtime::CanonicalFloat64::from(s.as_ref().eval().parse::<f64>().unwrap_or(0.0)),
+                Proc::ElemList(list, index) => {
+                    let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
+                    let elem = match list.as_ref() { List::ListLit(v) => v.get(idx).cloned().expect("ElemList: index out of bounds"), _ => panic!("float(): ElemList list not a literal") };
+                    match elem {
+                        Proc::ProcFloat(f) => f.as_ref().eval(),
+                        Proc::ProcInt(i) => mettail_runtime::CanonicalFloat64::from(i.as_ref().eval() as f64),
+                        Proc::ProcBool(b) => mettail_runtime::CanonicalFloat64::from(if b.as_ref().eval() { 1.0 } else { 0.0 }),
+                        Proc::ProcStr(s) => mettail_runtime::CanonicalFloat64::from(s.as_ref().eval().parse::<f64>().unwrap_or(0.0)),
+                        other => panic!("float(): cannot convert list element to Float: {:?}", other),
+                    }
+                }
                 other => panic!("float(): cannot convert Proc variant to Float: {:?}", other),
             }
         }] fold;
@@ -126,6 +150,17 @@ language! {
                 Proc::ProcInt(i) => i.as_ref().eval() != 0,
                 Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
                 Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
+                Proc::ElemList(list, index) => {
+                    let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
+                    let elem = match list.as_ref() { List::ListLit(v) => v.get(idx).cloned().expect("ElemList: index out of bounds"), _ => panic!("bool(): ElemList list not a literal") };
+                    match elem {
+                        Proc::ProcBool(b) => b.as_ref().eval(),
+                        Proc::ProcInt(i) => i.as_ref().eval() != 0,
+                        Proc::ProcFloat(f) => f.as_ref().eval().get() != 0.0,
+                        Proc::ProcStr(s) => s.as_ref().eval().parse().unwrap_or(false),
+                        other => panic!("bool(): cannot convert list element to Bool: {:?}", other),
+                    }
+                }
                 other => panic!("bool(): cannot convert Proc variant to Bool: {:?}", other),
             }
         }] fold;
@@ -135,9 +170,21 @@ language! {
                 Proc::ProcInt(i) => i.as_ref().eval().to_string(),
                 Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
                 Proc::ProcBool(b) => b.as_ref().eval().to_string(),
+                Proc::ElemList(list, index) => {
+                    let idx = match index.as_ref() { Int::NumLit(n) => *n as usize, _ => panic!("ElemList: expected Int literal") };
+                    let elem = match list.as_ref() { List::ListLit(v) => v.get(idx).cloned().expect("ElemList: index out of bounds"), _ => panic!("str(): ElemList list not a literal") };
+                    match elem {
+                        Proc::ProcStr(s) => s.as_ref().eval(),
+                        Proc::ProcInt(i) => i.as_ref().eval().to_string(),
+                        Proc::ProcFloat(f) => f.as_ref().eval().to_string(),
+                        Proc::ProcBool(b) => b.as_ref().eval().to_string(),
+                        other => panic!("str(): cannot convert list element to Str: {:?}", other),
+                    }
+                }
                 other => panic!("str(): cannot convert Proc variant to Str: {:?}", other),
             }
         }] fold;
+        ProcToProc . a:Proc |- "proc" "(" a ")" : Proc ![a] fold;
         // Custom operation (PraTTaIL test feature)
         CustomOp . a:Int, b:Int |- a "~" b : Int ![2 * a + 3 * b] fold;
         // List operations (List = Vec<Proc>). Fold/step pass payloads; rust_code returns payload.
@@ -254,6 +301,7 @@ language! {
         ExpFloatCong . | S ~> T |- (ExpFloat S) ~> (ExpFloat T);
         LnFloatCong . | S ~> T |- (LnFloat S) ~> (LnFloat T);
         // Type casts
+/*
         IntToFloatCong . | S ~> T |- (IntToFloat S) ~> (IntToFloat T);
         BoolToFloatCong . | S ~> T |- (BoolToFloat S) ~> (BoolToFloat T);
         StrToFloatCong . | S ~> T |- (StrToFloat S) ~> (StrToFloat T);
@@ -266,6 +314,7 @@ language! {
         IntToBoolCong . | S ~> T |- (IntToBool S) ~> (IntToBool T);
         FloatToBoolCong . | S ~> T |- (FloatToBool S) ~> (FloatToBool T);
         StrToBoolCong . | S ~> T |- (StrToBool S) ~> (StrToBool T);
+*/
         IntIdCong . | S ~> T |- (IntId S) ~> (IntId T);
         FloatIdCong . | S ~> T |- (FloatId S) ~> (FloatId T);
         BoolIdCong . | S ~> T |- (BoolId S) ~> (BoolId T);
@@ -275,6 +324,7 @@ language! {
         ProcToFloatCong . | S ~> T |- (ProcToFloat S) ~> (ProcToFloat T);
         ProcToBoolCong . | S ~> T |- (ProcToBool S) ~> (ProcToBool T);
         ProcToStrCong . | S ~> T |- (ProcToStr S) ~> (ProcToStr T);
+        ProcToProcCong . | S ~> T |- (ProcToProc S) ~> (ProcToProc T);
         // Proc (unified variant) congruence
         ProcIntCong . | S ~> T |- (ProcInt S) ~> (ProcInt T);
         ProcFloatCong . | S ~> T |- (ProcFloat S) ~> (ProcFloat T);

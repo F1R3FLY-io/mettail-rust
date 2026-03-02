@@ -40,9 +40,6 @@ export const categoryInfo = {
 			"And",
 			"Or",
 			"Xor",
-			"IntToBool",
-			"FloatToBool",
-			"StrToBool",
 			"BoolId",
 			"ProcToBool"
 		],
@@ -59,9 +56,6 @@ export const categoryInfo = {
 			"CosFloat",
 			"ExpFloat",
 			"LnFloat",
-			"IntToFloat",
-			"BoolToFloat",
-			"StrToFloat",
 			"FloatId",
 			"ProcToFloat"
 		],
@@ -79,9 +73,6 @@ export const categoryInfo = {
 			"PowInt",
 			"Neg",
 			"Fact",
-			"FloatToInt",
-			"BoolToInt",
-			"StrToInt",
 			"IntId",
 			"ProcToInt",
 			"CustomOp",
@@ -104,6 +95,7 @@ export const categoryInfo = {
 			"ProcStr",
 			"ProcList",
 			"ProcBag",
+			"ProcToProc",
 			"ElemList"
 		],
 		colour: "208bfe",
@@ -112,9 +104,6 @@ export const categoryInfo = {
 		constructors: [
 			"Concat",
 			"AddStr",
-			"BoolToStr",
-			"IntToStr",
-			"FloatToStr",
 			"StrId",
 			"ProcToStr"
 		],
