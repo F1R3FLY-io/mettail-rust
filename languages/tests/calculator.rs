@@ -641,19 +641,19 @@ fn test_exec_paren_cross_category() {
     );
 }
 
-/// Bare variable `a` in an all-native language (Calculator) should infer as `Int`
-/// (the primary category). Calculator has no non-native categories, so all parsers
+/// Bare variable `a` in Calculator should infer as the primary category.
+/// Calculator's primary category is Proc (first in the types list), so all parsers
 /// are tried unconditionally. The Ambiguous result gets the primary category preference
 /// from `infer_term_type`.
 #[test]
-fn test_bare_variable_type_is_int() {
+fn test_bare_variable_type_is_primary() {
     mettail_runtime::clear_var_cache();
     let lang = calc::CalculatorLanguage;
     let term = lang.parse_term("a").expect("parse 'a'");
     let term_type = lang.infer_term_type(term.as_ref());
-    // Calculator is all-native, so "a" is Ambiguous across all categories;
-    // type should show primary (Int)
-    assert_eq!(format!("{}", term_type), "Int");
+    // Calculator's primary category is Proc (first in the types list);
+    // "a" is Ambiguous across all categories, type shows primary (Proc)
+    assert_eq!(format!("{}", term_type), "Proc");
 }
 
 // --- Nested cast expressions (NFA disambiguation) ---
@@ -686,4 +686,44 @@ fn test_nested_int_float() {
 #[test]
 fn test_nested_float_int_arithmetic() {
     calc_normal_form("sin(3.14) + 3.0 * float(float(10))", "30.001592652916486");
+}
+
+// ── ProcTo* projections from list elements ──
+
+#[test]
+fn test_int_from_list_elem() {
+    calc_normal_form("int(at([3, 2.0, true], 0))", "3");
+}
+
+#[test]
+fn test_float_from_list_elem() {
+    calc_normal_form("float(at([3, 2.0, true], 1))", "2.0");
+}
+
+#[test]
+fn test_bool_from_list_elem() {
+    calc_normal_form("bool(at([3, 2.0, true], 2))", "true");
+}
+
+#[test]
+fn test_str_from_int_list_elem() {
+    calc_normal_form("str(at([3, 2.0, true], 0))", "\"3\"");
+}
+
+// ── Regression: existing casts still work ──
+
+#[test]
+fn test_float_from_int_still_works() {
+    calc_normal_form("float(3)", "3.0");
+}
+
+#[test]
+fn test_int_from_float_still_works() {
+    calc_normal_form("int(3.14)", "3");
+}
+
+#[test]
+fn test_basic_arithmetic_regression() {
+    calc_normal_form("2 + 3", "5");
+    calc_normal_form("1.5 + 2.5", "4.0");
 }

@@ -4,7 +4,7 @@ use quote::quote;
 /// Generate eval() method for native types
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
-use crate::ast::types::TypeExpr;
+use crate::ast::types::{EvalMode, TypeExpr};
 use crate::gen::native::native_type_to_string;
 use crate::gen::{
     generate_literal_label, generate_var_label, is_literal_rule, literal_rule_nonterminal,
@@ -218,17 +218,23 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
                     }
                 };
                 match_arms.push(match_arm);
-                let try_arm = if param_count == 0 {
-                    quote! { #category::#label => Some((#rust_code)), }
-                } else {
-                    quote! {
-                        #category::#label(#(#param_names),*) => {
-                            #(#try_param_bindings)*
-                            Some((#rust_code))
-                        },
-                    }
-                };
-                try_eval_arms.push(try_arm);
+                // For try_eval: skip fold-mode rules whose parameters include non-native types
+                // (they can't be evaluated via try_eval and must go through Ascent fold rules)
+                let skip_try_eval = rule.eval_mode == Some(EvalMode::Fold)
+                    && params.iter().any(|(_, use_eval)| !use_eval);
+                if !skip_try_eval {
+                    let try_arm = if param_count == 0 {
+                        quote! { #category::#label => Some((#rust_code)), }
+                    } else {
+                        quote! {
+                            #category::#label(#(#param_names),*) => {
+                                #(#try_param_bindings)*
+                                Some((#rust_code))
+                            },
+                        }
+                    };
+                    try_eval_arms.push(try_arm);
+                }
             }
             // Handle rules with recursive self-reference and Var (like Assign . Int ::= Var "=" Int)
             // These evaluate to the value of the recursive argument

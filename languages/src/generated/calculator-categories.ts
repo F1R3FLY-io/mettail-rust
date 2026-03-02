@@ -43,7 +43,8 @@ export const categoryInfo = {
 			"IntToBool",
 			"FloatToBool",
 			"StrToBool",
-			"BoolId"
+			"BoolId",
+			"ProcToBool"
 		],
 		colour: "7a51e0",
 	},
@@ -61,7 +62,8 @@ export const categoryInfo = {
 			"IntToFloat",
 			"BoolToFloat",
 			"StrToFloat",
-			"FloatId"
+			"FloatId",
+			"ProcToFloat"
 		],
 		colour: "e05196",
 	},
@@ -81,6 +83,7 @@ export const categoryInfo = {
 			"BoolToInt",
 			"StrToInt",
 			"IntId",
+			"ProcToInt",
 			"CustomOp",
 			"LenList"
 		],
@@ -112,7 +115,8 @@ export const categoryInfo = {
 			"BoolToStr",
 			"IntToStr",
 			"FloatToStr",
-			"StrId"
+			"StrId",
+			"ProcToStr"
 		],
 		colour: "51e05f",
 	}
