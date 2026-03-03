@@ -473,16 +473,35 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
             let name = content.parse::<Ident>()?;
             let name_str = name.to_string();
             // Optional (Param) for collection: ![Vec<Proc>] as List or List(Proc), same for Bag
+            // Optional [ "open", "close", "sep" ] for custom literal delimiters (e.g. Bag in rhocalc to avoid conflict with PPar)
             let collection_kind = if name_str == "List" || name_str == "Bag" {
                 if content.peek(syn::token::Paren) {
                     let _content;
                     syn::parenthesized!(_content in content);
                     let _ = _content.parse::<Ident>()?; // consume e.g. (Proc) for backward compat
                 }
-                Some(if name_str == "List" {
-                    CollectionCategory::List(CollectionCategory::list_defaults())
+                let delimiters: CollectionDelimiters = if content.peek(syn::token::Bracket) {
+                    let bracket_content;
+                    syn::bracketed!(bracket_content in content);
+                    let open: syn::LitStr = bracket_content.parse()?;
+                    let _ = bracket_content.parse::<Token![,]>()?;
+                    let close: syn::LitStr = bracket_content.parse()?;
+                    let _ = bracket_content.parse::<Token![,]>()?;
+                    let sep: syn::LitStr = bracket_content.parse()?;
+                    CollectionDelimiters {
+                        open: open.value(),
+                        close: close.value(),
+                        sep: sep.value(),
+                    }
+                } else if name_str == "List" {
+                    CollectionCategory::list_defaults()
                 } else {
-                    CollectionCategory::Bag(CollectionCategory::bag_defaults())
+                    CollectionCategory::bag_defaults()
+                };
+                Some(if name_str == "List" {
+                    CollectionCategory::List(delimiters)
+                } else {
+                    CollectionCategory::Bag(delimiters)
                 })
             } else {
                 None

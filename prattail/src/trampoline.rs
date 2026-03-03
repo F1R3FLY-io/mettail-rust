@@ -1166,35 +1166,8 @@ fn write_prefix_match_arms(
         .unwrap();
     }
 
-    // ── Cast rule prefix arms ──
-    // Use source_first (not unique_to_source): target's own_first includes these tokens
-    // precisely because of the cast rule, so difference would be empty and we'd miss the arm.
-    for cast_rule in &config.cast_rules {
-        if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
-            for token in &source_first.tokens {
-                let mut arm = String::new();
-                crate::pratt::write_token_pattern_pub(&mut arm, token);
-                write!(
-                    arm,
-                    " => {{ \
-                        let val = parse_{}(tokens, pos, 0)?; \
-                        break 'prefix {}::{}(Box::new(val)); \
-                    }},",
-                    cast_rule.source_category, cat, cast_rule.label,
-                )
-                .unwrap();
-                buf.push_str(&arm);
-            }
-        }
-    }
-
-    // ── Lambda handlers (if primary + has_binders) ──
-    if config.has_binders && config.is_primary {
-        write_lambda_prefix_arm(buf, config, frame_info);
-        write_dollar_prefix_arms(buf, config, frame_info);
-    }
-
-    // ── Variable fallback (with optional lookahead) — only for categories that have a Var variant ──
+    // ── Variable fallback (with optional lookahead) — BEFORE cast arms so Ident is tried first.
+    // Otherwise Token::Ident from cast (e.g. Int variable) would match and consume "a" in "a!(2)".
     if config.has_var {
         let var_label = format!(
             "{}Var",
@@ -1234,16 +1207,55 @@ fn write_prefix_match_arms(
             sorted
         };
 
-        if !lookahead_handlers.is_empty() {
+        // Use prefix_handlers with ident_lookahead, and merge rd_rules fallback so we never miss
+        // ident-start rules (e.g. POutput n "!" "(" q ")" so "{ a!(0) | ... }" parses correctly).
+        let mut ident_lookahead_cases: Vec<(String, String)> = lookahead_handlers
+            .iter()
+            .map(|h| {
+                (
+                    h.ident_lookahead.as_ref().expect("checked above").clone(),
+                    h.parse_fn_name.clone(),
+                )
+            })
+            .collect();
+
+        let rd_fallback: Vec<(String, String)> = rd_rules
+            .iter()
+            .filter(|r| r.category == *cat)
+            .filter(|r| !is_simple_collection(r) && r.prefix_bp.is_none())
+            .filter_map(|r| {
+                let first_nt = matches!(
+                    r.items.first(),
+                    Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
+                );
+                if !first_nt {
+                    return None;
+                }
+                let first_term = r.items.iter().find_map(|i| {
+                    if let RDSyntaxItem::Terminal(t) = i {
+                        Some(t.clone())
+                    } else {
+                        None
+                    }
+                })?;
+                Some((first_term, format!("parse_{}", r.label.to_lowercase())))
+            })
+            .collect();
+
+        let mut seen: std::collections::HashSet<String> =
+            ident_lookahead_cases.iter().map(|(t, _)| t.clone()).collect();
+        for (term, fn_name) in rd_fallback {
+            if seen.insert(term.clone()) {
+                ident_lookahead_cases.push((term, fn_name));
+            }
+        }
+
+        if !ident_lookahead_cases.is_empty() {
             let mut arm = String::from("Token::Ident(name) => { match peek_ahead(tokens, *pos, 1) {");
-            for handler in &lookahead_handlers {
-                let terminal = handler.ident_lookahead.as_ref().expect("checked above");
+            for (terminal, parse_fn_name) in &ident_lookahead_cases {
                 let variant = terminal_to_variant_name(terminal);
-                // For ident-dispatched RD handlers, we still call the standalone function
-                // (these have bounded depth — the nonterminal-first rule dispatch doesn't
-                // deeply nest the same category)
                 write!(arm, "Some(Token::{}) => {{ match {}(tokens, pos) {{ Ok(v) => break 'prefix v, Err(e) => {{ match stack.pop() {{ None => return Err(e),",
-                    variant, handler.parse_fn_name).unwrap();
+                    variant, parse_fn_name).unwrap();
                 // Collection catch on error
                 write_collection_error_catch_inline(&mut arm, config, rd_rules, frame_info);
                 arm.push_str("Some(_) => return Err(e), } } } },");
@@ -1279,6 +1291,34 @@ fn write_prefix_match_arms(
             )
             .unwrap();
         }
+    }
+
+    // ── Cast rule prefix arms ──
+    // Use source_first (not unique_to_source): target's own_first includes these tokens
+    // precisely because of the cast rule, so difference would be empty and we'd miss the arm.
+    for cast_rule in &config.cast_rules {
+        if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
+            for token in &source_first.tokens {
+                let mut arm = String::new();
+                crate::pratt::write_token_pattern_pub(&mut arm, token);
+                write!(
+                    arm,
+                    " => {{ \
+                        let val = parse_{}(tokens, pos, 0)?; \
+                        break 'prefix {}::{}(Box::new(val)); \
+                    }},",
+                    cast_rule.source_category, cat, cast_rule.label,
+                )
+                .unwrap();
+                buf.push_str(&arm);
+            }
+        }
+    }
+
+    // ── Lambda handlers (if primary + has_binders) ──
+    if config.has_binders && config.is_primary {
+        write_lambda_prefix_arm(buf, config, frame_info);
+        write_dollar_prefix_arms(buf, config, frame_info);
     }
 
     // ── Error fallback ──

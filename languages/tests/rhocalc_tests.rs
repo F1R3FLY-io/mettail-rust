@@ -127,6 +127,12 @@ fn multiset_eq(a: &str, b: &str) -> bool {
 mod comm {
     use super::*;
 
+    /// Reproduces REPL load_env parse error: PPar with a!(n) must not reduce "a" to variable.
+    #[test]
+    fn par_with_output_literal() {
+        let _ = parse("{ a!(2) | b!(3) }");
+    }
+
     #[test]
     fn single_channel() {
         assert_reduces_to("{(c?x).{*(x)} | c!(p)}", "p");
