@@ -2,7 +2,7 @@
 
 use crate::{
     binding_power::Associativity, generate_parser, BeamWidthConfig, CategorySpec, DispatchStrategy,
-    LanguageSpec, RuleSpec, SyntaxItemSpec,
+    LanguageSpec, LiteralPatterns, RuleSpec, SyntaxItemSpec,
 };
 
 /// Helper: extract category names from a slice of `CategorySpec`.
@@ -70,6 +70,7 @@ fn calculator_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
+        literal_patterns: LiteralPatterns::default(),
     }
 }
 
@@ -182,6 +183,7 @@ fn test_generate_parser_two_categories() {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
+        literal_patterns: LiteralPatterns::default(),
     };
 
     let code = generate_parser(&spec);
@@ -397,7 +399,7 @@ mod wfst_lexer_weight_tests {
     use crate::automata::{
         codegen::generate_lexer_string,
         minimize::minimize_dfa,
-        nfa::{build_nfa, BuiltinNeeds},
+        nfa::{build_nfa_default, BuiltinNeeds},
         partition::compute_equivalence_classes,
         subset::subset_construction,
         TerminalPattern, TokenKind,
@@ -414,7 +416,7 @@ mod wfst_lexer_weight_tests {
             })
             .collect();
         let token_kinds: Vec<TokenKind> = terminal_specs.iter().map(|(_, k)| k.clone()).collect();
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         let dfa = minimize_dfa(&dfa);
@@ -620,6 +622,7 @@ mod wfst_lexer_weight_tests {
             BeamWidthConfig::Explicit(1.5),
             None,
             DispatchStrategy::Weighted,
+            LiteralPatterns::default(),
         )
     }
 

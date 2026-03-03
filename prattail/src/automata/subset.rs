@@ -168,7 +168,7 @@ fn resolve_accept(nfa: &Nfa, states: &[StateId]) -> (Option<TokenKind>, Tropical
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automata::nfa::{build_nfa, BuiltinNeeds};
+    use crate::automata::nfa::{build_nfa_default, BuiltinNeeds};
     use crate::automata::partition::compute_equivalence_classes;
     use crate::automata::TerminalPattern;
     use crate::automata::TokenKind;
@@ -195,7 +195,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
 
@@ -233,7 +233,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
 

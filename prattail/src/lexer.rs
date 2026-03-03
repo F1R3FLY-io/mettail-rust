@@ -21,6 +21,7 @@ use crate::automata::{
     subset::subset_construction,
     TerminalPattern, TokenKind,
 };
+use crate::LiteralPatterns;
 
 /// Information about a language's grammar needed for lexer generation.
 pub struct LexerInput {
@@ -30,6 +31,8 @@ pub struct LexerInput {
     pub terminals: Vec<TerminalPattern>,
     /// Which built-in patterns are needed.
     pub needs: BuiltinNeeds,
+    /// Configurable literal token patterns for lexer generation.
+    pub literal_patterns: LiteralPatterns,
 }
 
 /// Statistics from the lexer generation pipeline (for diagnostics).
@@ -49,7 +52,7 @@ pub struct LexerStats {
 /// Run the full lexer generation pipeline and return generated Rust code.
 pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     // Step 1: Build NFA from terminal patterns
-    let nfa = build_nfa(&input.terminals, &input.needs);
+    let nfa = build_nfa(&input.terminals, &input.needs, &input.literal_patterns);
     let num_nfa_states = nfa.states.len();
 
     // Step 2: Compute alphabet equivalence classes
@@ -113,7 +116,7 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
 /// `parse::<TokenStream>()` call at the end, avoiding per-component proc_macro2 overhead.
 pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     // Step 1: Build NFA from terminal patterns
-    let nfa = build_nfa(&input.terminals, &input.needs);
+    let nfa = build_nfa(&input.terminals, &input.needs, &input.literal_patterns);
     let num_nfa_states = nfa.states.len();
 
     // Step 2: Compute alphabet equivalence classes
@@ -281,6 +284,7 @@ pub fn extract_terminals(
         language_name,
         terminals: terminal_set.into_iter().collect(),
         needs,
+        literal_patterns: LiteralPatterns::default(),
     }
 }
 

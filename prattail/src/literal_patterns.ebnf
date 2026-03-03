@@ -1,0 +1,22 @@
+(* ── Literal Token Patterns ─────────────────────────────── *)
+(*                                                           *)
+(* Canonical source of truth for built-in literal token      *)
+(* patterns used by the PraTTaIL lexer generator.            *)
+(*                                                           *)
+(* Format: <name> = /regex/ ;                                *)
+(*   - <name>: one of integer, float, string, ident          *)
+(*   - /regex/: PCRE-subset syntax, see automata/regex.rs    *)
+(*   - Each production ends with ;                           *)
+(*                                                           *)
+(* To customize a pattern, edit the regex between / /        *)
+(* delimiters. The regex is compiled directly to a Thompson  *)
+(* NFA fragment with no intermediate AST.                    *)
+(*                                                           *)
+(* Comments support nesting: (* inner (* deeper *) inner *)  *)
+(* and backslash escapes: \(* does not open, \*) won't close *)
+(* ───────────────────────────────────────────────────────── *)
+
+<integer> = /[0-9]+/                                (* i32/i64/u32/u64 *) ;
+<float>   = /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/      (* f32/f64 *) ;
+<string>  = /"([^"\\]|\\.)*"/                       (* str/String *) ;
+<ident>   = /[a-zA-Z_][a-zA-Z0-9_]*/                (* identifiers *) ;

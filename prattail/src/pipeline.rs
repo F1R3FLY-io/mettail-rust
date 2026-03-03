@@ -38,7 +38,7 @@ use crate::recursive::{
 use crate::trampoline::{
     write_trampolined_parser, write_trampolined_parser_recovering, TrampolineConfig,
 };
-use crate::{LanguageSpec, SyntaxItemSpec};
+use crate::{LanguageSpec, LiteralPatterns, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Data bundles — all Send+Sync
@@ -52,6 +52,8 @@ pub struct LexerBundle {
     has_binders: bool,
     /// Category names (needed for dollar terminal generation when has_binders).
     category_names: Vec<String>,
+    /// Configurable literal token patterns for lexer generation.
+    literal_patterns: LiteralPatterns,
 }
 
 /// Category metadata for the parser pipeline. Send+Sync.
@@ -214,6 +216,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         type_infos,
         has_binders,
         category_names: lexer_category_names,
+        literal_patterns: spec.literal_patterns.clone(),
     };
 
     // ── Parser bundle ──
@@ -414,12 +417,13 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
 ///
 /// Runs the full automata pipeline: terminal extraction → NFA → DFA → minimize → codegen.
 fn generate_lexer_code(bundle: &LexerBundle) -> String {
-    let lexer_input = extract_terminals(
+    let mut lexer_input = extract_terminals(
         &bundle.grammar_rules,
         &bundle.type_infos,
         bundle.has_binders,
         &bundle.category_names,
     );
+    lexer_input.literal_patterns = bundle.literal_patterns.clone();
     let (lexer_str, _stats) = generate_lexer_as_string(&lexer_input);
     lexer_str
 }

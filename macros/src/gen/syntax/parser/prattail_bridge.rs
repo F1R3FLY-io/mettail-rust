@@ -17,7 +17,7 @@ use crate::ast::{
 use crate::gen::native::native_type_to_string;
 use mettail_prattail::{
     binding_power::Associativity, recursive::CollectionKind, BeamWidthConfig, CategorySpec,
-    DispatchStrategy, LanguageSpec, RuleSpecInput, SyntaxItemSpec,
+    DispatchStrategy, LanguageSpec, LiteralPatterns, RuleSpecInput, SyntaxItemSpec,
 };
 
 /// Convert a `LanguageDef` to a PraTTaIL `LanguageSpec`.
@@ -83,6 +83,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         beam_width,
         log_semiring_model_path,
         dispatch_strategy,
+        LiteralPatterns::default(),
     )
 }
 

@@ -136,7 +136,7 @@ fn class_matches(class: &CharClass, byte: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::automata::nfa::{build_nfa, BuiltinNeeds};
+    use crate::automata::nfa::{build_nfa_default, BuiltinNeeds};
     use crate::automata::TerminalPattern;
     use crate::automata::TokenKind;
 
@@ -162,7 +162,7 @@ mod tests {
             boolean: false,
         };
 
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
 
         // '+' and '*' should be in different classes

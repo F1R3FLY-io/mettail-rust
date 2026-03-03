@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
 use mettail_prattail::automata::minimize::minimize_dfa;
-use mettail_prattail::automata::nfa::build_nfa;
+use mettail_prattail::automata::nfa::build_nfa_default;
 use mettail_prattail::automata::partition::{compute_equivalence_classes, AlphabetPartition};
 use mettail_prattail::automata::subset::subset_construction;
 use mettail_prattail::automata::{Dfa, Nfa, TokenKind};
@@ -29,7 +29,8 @@ use mettail_prattail::prediction::{
 };
 use mettail_prattail::recursive::{write_rd_handler, CollectionKind, RDRuleInfo, RDSyntaxItem};
 use mettail_prattail::{
-    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, RuleSpec, SyntaxItemSpec,
+    BeamWidthConfig, CategorySpec, DispatchStrategy, LanguageSpec, LiteralPatterns, RuleSpec,
+    SyntaxItemSpec,
 };
 
 // proc_macro2::TokenStream no longer needed — all codegen is string-based
@@ -244,6 +245,7 @@ pub fn minimal_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
+        literal_patterns: LiteralPatterns::default(),
     }
 }
 
@@ -289,6 +291,7 @@ pub fn small_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
+        literal_patterns: LiteralPatterns::default(),
     }
 }
 
@@ -332,6 +335,7 @@ pub fn medium_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
+        literal_patterns: LiteralPatterns::default(),
     }
 }
 
@@ -384,6 +388,7 @@ pub fn complex_spec() -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
+        literal_patterns: LiteralPatterns::default(),
     }
 }
 
@@ -436,6 +441,7 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
         beam_width: BeamWidthConfig::Disabled,
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
+        literal_patterns: LiteralPatterns::default(),
     }
 }
 
@@ -609,7 +615,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
 
     // ── Phase 1b: Automata pipeline ──
 
-    let nfa = build_nfa(&lexer_input.terminals, &lexer_input.needs);
+    let nfa = build_nfa_default(&lexer_input.terminals, &lexer_input.needs);
     let partition = compute_equivalence_classes(&nfa);
     let dfa = subset_construction(&nfa, &partition);
     let min_dfa = minimize_dfa(&dfa);

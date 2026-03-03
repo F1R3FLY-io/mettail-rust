@@ -196,6 +196,44 @@ impl DispatchStrategy {
     }
 }
 
+/// Configurable literal token patterns for lexer generation.
+///
+/// Each field holds a PCRE-subset regex pattern that is compiled to an NFA
+/// fragment via the Thompson construction pipeline. The canonical source of
+/// truth for these patterns is `prattail/src/literal_patterns.ebnf`, which is
+/// loaded at pipeline startup via `parse_literal_patterns_ebnf()`.
+///
+/// `Default` provides the standard patterns (identical to those in the `.ebnf` file):
+/// - integer: `[0-9]+`
+/// - float:   `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`
+/// - string:  `"([^"\\]|\\.)*"`
+/// - ident:   `[a-zA-Z_][a-zA-Z0-9_]*`
+#[derive(Debug, Clone)]
+pub struct LiteralPatterns {
+    /// Integer literal pattern (e.g., `[0-9]+`).
+    pub integer: String,
+    /// Float literal pattern (e.g., `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?`).
+    pub float: String,
+    /// String literal pattern (e.g., `"([^"\\]|\\.)*"`).
+    pub string: String,
+    /// Identifier pattern (e.g., `[a-zA-Z_][a-zA-Z0-9_]*`).
+    pub ident: String,
+}
+
+/// The embedded content of `literal_patterns.ebnf`, compiled into the binary.
+const DEFAULT_LITERAL_PATTERNS_EBNF: &str = include_str!("literal_patterns.ebnf");
+
+/// Default literal patterns, parsed from the embedded `literal_patterns.ebnf` file.
+///
+/// This ensures the `.ebnf` file is the single source of truth — the default
+/// patterns are never duplicated as string constants in Rust code.
+impl Default for LiteralPatterns {
+    fn default() -> Self {
+        automata::regex::parse_literal_patterns_ebnf(DEFAULT_LITERAL_PATTERNS_EBNF)
+            .expect("embedded literal_patterns.ebnf should always be valid")
+    }
+}
+
 /// Language definition input for the parser generator.
 ///
 /// This is a simplified, serializable representation of the grammar,
@@ -218,6 +256,9 @@ pub struct LanguageSpec {
     /// Dispatch strategy: static (FIRST-set ordering), weighted (WFST), or auto.
     /// Default: `DispatchStrategy::Static`.
     pub dispatch_strategy: DispatchStrategy,
+    /// Configurable literal token patterns for the lexer.
+    /// Default: `LiteralPatterns::default()` (standard patterns from `literal_patterns.ebnf`).
+    pub literal_patterns: LiteralPatterns,
 }
 
 /// A category (type) in the language.
@@ -366,6 +407,7 @@ impl LanguageSpec {
             BeamWidthConfig::Disabled,
             None,
             DispatchStrategy::Static,
+            LiteralPatterns::default(),
         )
     }
 
@@ -381,6 +423,7 @@ impl LanguageSpec {
         beam_width: BeamWidthConfig,
         log_semiring_model_path: Option<String>,
         dispatch_strategy: DispatchStrategy,
+        literal_patterns: LiteralPatterns,
     ) -> Self {
         let cat_names: Vec<String> = types.iter().map(|t| t.name.clone()).collect();
         let rules = inputs
@@ -420,6 +463,7 @@ impl LanguageSpec {
             beam_width,
             log_semiring_model_path,
             dispatch_strategy,
+            literal_patterns,
         }
     }
 }

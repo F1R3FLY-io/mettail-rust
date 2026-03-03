@@ -1713,7 +1713,7 @@ mod tests {
     use super::*;
     use crate::automata::{
         minimize::minimize_dfa,
-        nfa::{build_nfa, BuiltinNeeds},
+        nfa::{build_nfa_default, BuiltinNeeds},
         partition::compute_equivalence_classes,
         subset::subset_construction,
         DfaState, TerminalPattern,
@@ -1758,7 +1758,7 @@ mod tests {
                 is_keyword: text.chars().all(|c| c.is_alphanumeric()),
             })
             .collect();
-        let nfa = build_nfa(&terminals, &needs);
+        let nfa = build_nfa_default(&terminals, &needs);
         let partition = compute_equivalence_classes(&nfa);
         let dfa = subset_construction(&nfa, &partition);
         (minimize_dfa(&dfa), partition)

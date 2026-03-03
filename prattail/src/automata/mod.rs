@@ -7,6 +7,7 @@ pub mod codegen;
 pub mod minimize;
 pub mod nfa;
 pub mod partition;
+pub mod regex;
 pub mod semiring;
 pub mod subset;
 
