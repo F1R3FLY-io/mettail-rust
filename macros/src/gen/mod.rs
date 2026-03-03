@@ -20,6 +20,7 @@
 #![allow(clippy::cmp_owned, clippy::single_match)]
 
 pub mod blockly;
+pub mod compose_gen;
 pub mod native;
 pub mod runtime;
 pub mod syntax;
@@ -133,6 +134,7 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
             let parse_fn = format_ident!("parse_{}", cat);
             let parse_fn_recovering = format_ident!("parse_{}_recovering", cat);
 
+            let running_weight_fn = format_ident!("running_weight_{}", cat);
             let wfst_methods = quote! {
                 /// Parse with weight emission: calls `lex_weighted()` to get
                 /// per-token tropical weights, then parses normally.
@@ -152,43 +154,41 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                     let result = #parse_fn(&tokens, &mut pos, 0)?;
                     if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                         return Err(ParseError::TrailingTokens {
-                            found: format!("{:?}", tokens[pos].0),
+                            found: format_token_friendly(&tokens[pos].0),
                             range: tokens[pos].1,
+                            hint: Some(Cow::Borrowed("the parser finished but input remains; check for missing operators or extra tokens")),
                         });
                     }
                     Ok((result, weights))
                 }
-            };
 
-            #[cfg(feature = "context-sensitive-lex")]
-            let context_sensitive_method = {
-                let parse_fn_lazy = format_ident!("parse_{}_lazy", cat);
-                quote! {
-                    /// Parse using context-sensitive lexing via parser-driven dispatch.
-                    ///
-                    /// Uses the composed dispatch table to resolve lexer ambiguities
-                    /// based on parser context (current category), eliminating
-                    /// backtracking. Produces identical results to `parse()` for
-                    /// unambiguous grammars; for ambiguous grammars (keyword/ident
-                    /// overlaps), resolves using WFST-composed weights.
-                    ///
-                    /// Requires the `context-sensitive-lex` feature.
-                    pub fn parse_context_sensitive(input: &str) -> Result<#cat, ParseError> {
-                        let mut adapter = LexerAdapter::new(Lexer::new(input, None));
-                        let result = #parse_fn_lazy(&mut adapter, 0)?;
-                        if !adapter.is_eof() {
-                            return Err(ParseError::TrailingTokens {
-                                found: format!("{:?}", adapter.peek()),
-                                range: *adapter.peek_range(),
-                            });
-                        }
-                        Ok(result)
+                /// B4: Parse with confidence scoring.
+                ///
+                /// Returns `(ast, confidence)` where `confidence` is the accumulated
+                /// tropical weight of dispatch decisions along the parse path.
+                ///
+                /// **Interpretation:**
+                /// - `0.0` — fully deterministic parse (no ambiguity encountered)
+                /// - Low values (< 1.0) — mostly deterministic with minor ambiguity
+                /// - High values (> 2.0) — significant ambiguity encountered
+                ///
+                /// Useful for language servers and IDE integration to flag low-confidence
+                /// parses (e.g., display "ambiguous parse" diagnostics).
+                pub fn parse_with_confidence(input: &str) -> Result<(#cat, f64), ParseError> {
+                    let tokens = lex(input)?;
+                    let mut pos = 0usize;
+                    let result = #parse_fn(&tokens, &mut pos, 0)?;
+                    if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
+                        return Err(ParseError::TrailingTokens {
+                            found: format_token_friendly(&tokens[pos].0),
+                            range: tokens[pos].1,
+                            hint: Some(Cow::Borrowed("the parser finished but input remains; check for missing operators or extra tokens")),
+                        });
                     }
+                    let confidence = #running_weight_fn();
+                    Ok((result, confidence))
                 }
             };
-
-            #[cfg(not(feature = "context-sensitive-lex"))]
-            let context_sensitive_method = quote! {};
 
             quote! {
                 impl #cat {
@@ -215,8 +215,9 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         // Verify all tokens consumed (except EOF)
                         if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                             return Err(ParseError::TrailingTokens {
-                                found: format!("{:?}", tokens[pos].0),
+                                found: format_token_friendly(&tokens[pos].0),
                                 range: tokens[pos].1,
+                                hint: Some(Cow::Borrowed("the parser finished but input remains; check for missing operators or extra tokens")),
                             });
                         }
                         Ok(result)
@@ -254,16 +255,15 @@ fn generate_prattail_category_parse_impls(language: &LanguageDef) -> TokenStream
                         let result = #parse_fn_recovering(&tokens, &mut pos, 0, &mut errors);
                         if pos < tokens.len() && !matches!(tokens[pos].0, Token::Eof) {
                             errors.push(ParseError::TrailingTokens {
-                                found: format!("{:?}", tokens[pos].0),
+                                found: format_token_friendly(&tokens[pos].0),
                                 range: tokens[pos].1,
+                                hint: Some(Cow::Borrowed("the parser finished but input remains; check for missing operators or extra tokens")),
                             });
                         }
                         (result, errors)
                     }
 
                     #wfst_methods
-
-                    #context_sensitive_method
                 }
             }
         })

@@ -30,10 +30,20 @@ pub enum AttributeValue {
 
 /// Top-level theory definition
 /// theory! { name: Foo, params: ..., options { ... }, types { ... }, terms { ... }, equations { ... }, rewrites { ... }, logic { ... } }
+#[derive(Debug, Clone)]
 pub struct LanguageDef {
     pub name: Ident,
     /// Configuration options parsed from `options { ... }` block. Empty if block omitted.
     pub options: HashMap<String, AttributeValue>,
+    /// Languages to fully inherit from (types + terms + equations + rewrites + logic).
+    /// Parsed from `extends: [Base1, Base2]`. Uses `DuplicateStrategy::Error`.
+    pub extends_names: Vec<Ident>,
+    /// Languages to import grammar (types + terms) from.
+    /// Parsed from `includes: [Calc, BoolLogic]`. Uses `DuplicateStrategy::Override`.
+    pub include_names: Vec<Ident>,
+    /// Fragments to mix in (types + terms only, from `language_fragment!`).
+    /// Parsed from `mixins: [ArithOps, BoolOps]`. Uses `DuplicateStrategy::Override`.
+    pub mixin_names: Vec<Ident>,
     pub types: Vec<LangType>,
     pub terms: Vec<GrammarRule>,
     pub equations: Vec<Equation>,
@@ -97,6 +107,7 @@ pub enum Premise {
 /// Equation in unified judgement syntax
 /// Syntax: Name . type_context | prop_context |- lhs = rhs ;
 /// Example: ScopeExtrusion . | x # ...rest |- (PPar {(PNew ^x.P), ...rest}) = (PNew ^x.(PPar {P, ...rest})) ;
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Equation {
     /// Rule name (required)
@@ -156,6 +167,7 @@ pub enum Condition {
 /// Rewrite rule in unified judgement syntax
 /// Syntax: Name . type_context | prop_context |- lhs ~> rhs ;
 /// Example: ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest}) ;
+#[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct RewriteRule {
     /// Rule name (required)
@@ -191,6 +203,7 @@ impl RewriteRule {
 
 /// Export: category name, optionally with native Rust type
 /// types { Elem; Name; ![i32] as Int; }
+#[derive(Debug, Clone)]
 pub struct LangType {
     pub name: Ident,
     /// Optional native Rust type (e.g., `i32` for `![i32] as Int`)
@@ -229,6 +242,40 @@ impl LanguageDef {
     }
 }
 
+/// Parse a bracketed list of identifiers: `[Ident1, Ident2, ...]`
+fn parse_ident_list(input: ParseStream) -> SynResult<Vec<Ident>> {
+    let content;
+    syn::bracketed!(content in input);
+    let mut names = Vec::new();
+    while !content.is_empty() {
+        names.push(content.parse::<Ident>()?);
+        if content.peek(Token![,]) {
+            let _ = content.parse::<Token![,]>()?;
+        }
+    }
+    // Optional trailing comma after the closing bracket
+    if input.peek(Token![,]) {
+        let _ = input.parse::<Token![,]>()?;
+    }
+    Ok(names)
+}
+
+/// Try to parse an optional `keyword: [Ident, ...]` clause.
+/// Returns `Some(vec)` if the next token matches `keyword`, else `None`.
+fn try_parse_keyword_list(input: ParseStream, keyword: &str) -> SynResult<Vec<Ident>> {
+    if input.peek(Ident) {
+        let fork = input.fork();
+        let lookahead = fork.parse::<Ident>()?;
+        if lookahead == keyword {
+            // Consume the keyword
+            let _ = input.parse::<Ident>()?;
+            let _ = input.parse::<Token![:]>()?;
+            return parse_ident_list(input);
+        }
+    }
+    Ok(Vec::new())
+}
+
 // Implement Parse for LanguageDef
 impl Parse for LanguageDef {
     fn parse(input: ParseStream) -> SynResult<Self> {
@@ -252,6 +299,15 @@ impl Parse for LanguageDef {
         } else {
             HashMap::new()
         };
+
+        // Parse: extends: [Base1, Base2] (optional)
+        let extends_names = try_parse_keyword_list(input, "extends")?;
+
+        // Parse: includes: [Calc, BoolLogic] (optional)
+        let include_names = try_parse_keyword_list(input, "includes")?;
+
+        // Parse: mixins: [ArithOps, BoolOps] (optional)
+        let mixin_names = try_parse_keyword_list(input, "mixins")?;
 
         // Parse: types { ... }
         let types = if input.peek(Ident) {
@@ -316,6 +372,9 @@ impl Parse for LanguageDef {
         Ok(LanguageDef {
             name,
             options,
+            extends_names,
+            include_names,
+            mixin_names,
             types,
             terms,
             equations,
@@ -365,6 +424,11 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
     }
 
     Ok(types)
+}
+
+/// Public wrapper for `parse_types` for use by `fragment.rs`.
+pub fn parse_types_public(input: ParseStream) -> SynResult<Vec<LangType>> {
+    parse_types(input)
 }
 
 fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue>> {

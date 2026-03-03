@@ -16,9 +16,14 @@
 //! the focused modules. A future refactor will move definitions to
 //! their respective modules.
 
+pub mod compose;
+pub mod fragment;
 pub mod grammar;
 pub mod language;
+pub mod merge;
 pub mod pattern;
+pub mod registry;
+pub mod token_codec;
 pub mod types;
 
 pub mod tests;

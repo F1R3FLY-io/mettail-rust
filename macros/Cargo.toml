@@ -14,7 +14,6 @@ proc-macro = true
 
 [features]
 ## Propagate features to mettail-prattail.
-context-sensitive-lex = ["mettail-prattail/context-sensitive-lex"]
 wfst-log = ["mettail-prattail/wfst-log"]
 
 [dependencies]

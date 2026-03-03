@@ -69,14 +69,17 @@ fn build_expected_message(category: &str, first_set: &FirstSet) -> String {
 
     items.sort();
 
-    if items.len() <= 3 {
+    if items.len() <= 6 {
+        format!("{} expression (one of: {})", category, items.join(", "))
+    } else if items.len() <= 10 {
+        // Show all items for moderate-length lists
         format!("{} expression (one of: {})", category, items.join(", "))
     } else {
-        // For long lists, show first few and count
+        // For very long lists, show first 6 and count
         format!(
             "{} expression (one of: {}, ... [{} options])",
             category,
-            items[..3].join(", "),
+            items[..6].join(", "),
             items.len()
         )
     }
@@ -113,6 +116,11 @@ pub struct PrattConfig {
     /// FOLLOW set for this category — tokens that can appear after a complete expression.
     /// Used for error messages ("expected one of: ...") and sync point selection.
     pub follow_set: FirstSet,
+    /// LED delegation sources for sum-type categories.
+    ///
+    /// When non-empty, the LED chain falls back to delegating to constituent categories'
+    /// operators when the sum type's own BP tables don't match the current token.
+    pub led_delegation: Vec<LedDelegationSource>,
 }
 
 /// Write the complete Pratt parser for a single category to a string buffer.
@@ -136,7 +144,8 @@ pub fn write_pratt_parser(
     };
 
     // Generate the main Pratt loop
-    let has_led = config.has_infix || config.has_postfix || config.has_mixfix;
+    let has_led = config.has_infix || config.has_postfix || config.has_mixfix
+        || !config.led_delegation.is_empty();
 
     if has_led {
         // Generate helper functions for each operator type
@@ -250,7 +259,21 @@ fn write_led_chain(buf: &mut String, config: &PrattConfig) {
         wrote_first = true;
     }
 
-    if wrote_first {
+    // LED delegation fallback
+    let has_delegation = !config.led_delegation.is_empty();
+    if has_delegation {
+        if wrote_first {
+            buf.push_str(" else ");
+        }
+        write!(
+            buf,
+            "{{ match led_delegate_{cat}(tokens, pos, &lhs) {{ \
+                Some(new_lhs) => {{ lhs = new_lhs; }} \
+                None => {{ break; }} \
+            }} }}",
+        )
+        .unwrap();
+    } else if wrote_first {
         buf.push_str(" else { break; }");
     } else {
         buf.push_str("break;");
@@ -497,8 +520,9 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
                     "0 => Err(nfa_first_err.unwrap_or_else(|| \
                         ParseError::UnexpectedToken {{ \
                             expected: Cow::Borrowed(\"{cat} expression\"), \
-                            found: format!(\"{{:?}}\", &tokens[nfa_saved].0), \
+                            found: format_token_friendly(&tokens[nfa_saved].0), \
                             range: tokens[nfa_saved].1, \
+                            hint: None, \
                         }} \
                     )),",
                 )
@@ -571,23 +595,56 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
         parse_fn,
     ));
 
-    // Add cast rule prefix arms
-    for cast_rule in &config.cast_rules {
-        if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
-            let unique_tokens = source_first.difference(&config.own_first_set);
-            for token in &unique_tokens.tokens {
-                let mut arm = String::new();
-                write_token_pattern(&mut arm, token);
-                write!(
-                    arm,
-                    " => {{ \
-                        let val = parse_{}(tokens, pos, 0)?; \
-                        Ok({}::{}(Box::new(val))) \
-                    }}",
-                    cast_rule.source_category, cat, cast_rule.label,
-                )
-                .unwrap();
-                match_arms.push(arm);
+    // Add cast rule prefix arms (use source_first directly, not difference:
+    // the target's own_first includes cast source tokens precisely because of the
+    // cast rule, so difference would be empty and we'd miss the arm).
+    //
+    // Track tokens already emitted by earlier match_arms AND across cast sources
+    // to prevent duplicate match arms (e.g., Ident in every source's FIRST set).
+    {
+        use std::collections::BTreeSet;
+        let mut cast_handled: BTreeSet<String> = BTreeSet::new();
+
+        // Collect tokens already in match_arms (from RD handlers, native literals, grouping)
+        for arm in &match_arms {
+            if let Some(idx) = arm.find(" => ") {
+                let pattern = &arm[..idx];
+                let variant = pattern
+                    .strip_prefix("Token::")
+                    .unwrap_or(pattern)
+                    .trim_end_matches("(_)")
+                    .trim_end_matches("(v)")
+                    .to_string();
+                cast_handled.insert(variant);
+            }
+        }
+
+        for cast_rule in &config.cast_rules {
+            if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
+                for token in &source_first.tokens {
+                    // Skip Ident — the variable fallback handles identifiers at the
+                    // target category level (prevents hijacking into a single constituent).
+                    if token == "Ident" {
+                        continue;
+                    }
+                    if cast_handled.contains(token) {
+                        continue;
+                    }
+                    cast_handled.insert(token.clone());
+
+                    let mut arm = String::new();
+                    write_token_pattern(&mut arm, token);
+                    write!(
+                        arm,
+                        " => {{ \
+                            let val = parse_{}(tokens, pos, 0)?; \
+                            Ok({}::{}(Box::new(val))) \
+                        }}",
+                        cast_rule.source_category, cat, cast_rule.label,
+                    )
+                    .unwrap();
+                    match_arms.push(arm);
+                }
             }
         }
     }
@@ -654,8 +711,9 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
         "other => {{ \
             Err(ParseError::UnexpectedToken {{ \
                 expected: Cow::Borrowed(\"{expected_escaped}\"), \
-                found: format!(\"{{:?}}\", other), \
+                found: format_token_friendly(other), \
                 range: tokens[*pos].1, \
+                hint: Some(Cow::Borrowed(\"this token cannot start a {cat} expression\")), \
             }}) \
         }}",
     ));
@@ -672,6 +730,7 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
                 return Err(ParseError::UnexpectedEof {{ \
                     expected: Cow::Borrowed(\"{expected_escaped}\"), \
                     range: eof_range, \
+                    hint: None, \
                 }}); \
             }} \
             match &tokens[*pos].0 {{ {arms} }} \
@@ -679,6 +738,51 @@ fn write_prefix_handler(buf: &mut String, config: &PrattConfig, prefix_handlers:
         arms = match_arms.join(","),
     )
     .unwrap();
+}
+
+/// LED delegation info for one constituent of a sum-type category.
+///
+/// When a sum-type category (e.g., `Proc` with cast rules from `Int`, `Float`, `Bool`, `Str`)
+/// parses an expression and the Pratt LED chain encounters a token NOT in the sum type's own
+/// BP tables, the parser delegates to the constituent's operators.
+#[derive(Debug, Clone)]
+pub struct LedDelegationSource {
+    /// Cast label wrapping source INTO sum type (e.g., "CastInt").
+    pub cast_label: String,
+    /// Source category name (e.g., "Int").
+    pub source_category: String,
+    /// Whether source has same-category infix operators.
+    pub has_infix: bool,
+    /// Whether source has postfix operators.
+    pub has_postfix: bool,
+    /// Whether source has mixfix operators.
+    pub has_mixfix: bool,
+    /// Cross-category operators FROM this source.
+    pub cross_cat_ops: Vec<CrossCatLedOp>,
+    /// Label of the projection rule sum_type → source (e.g., "ProcToInt").
+    /// None if no projection exists for this constituent. Used by Phase 2 auto-projection.
+    pub projection_label: Option<String>,
+}
+
+/// A cross-category LED operator from a constituent.
+///
+/// Used by LED delegation to handle operators like `==`, `>`, `<` that operate on a
+/// constituent type but produce a result in a different category. The result is re-wrapped
+/// into the sum type via the `rewrap_label` cast.
+#[derive(Debug, Clone)]
+pub struct CrossCatLedOp {
+    /// Terminal text (e.g., "==").
+    pub terminal: String,
+    /// Result category (e.g., "Bool").
+    pub result_category: String,
+    /// Constructor label (e.g., "EqInt").
+    pub label: String,
+    /// Cast label wrapping result category INTO sum type (e.g., "CastBool").
+    pub rewrap_label: String,
+    /// Left binding power.
+    pub left_bp: u8,
+    /// Right binding power.
+    pub right_bp: u8,
 }
 
 /// A prefix handler for a specific rule.
@@ -711,7 +815,7 @@ pub fn write_parser_helpers(buf: &mut String) {
         ) -> Result<(), ParseError> { \
             if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                return Err(ParseError::UnexpectedEof { expected: Cow::Borrowed(expected), range: eof_range }); \
+                return Err(ParseError::UnexpectedEof { expected: Cow::Borrowed(expected), range: eof_range, hint: None }); \
             } \
             if predicate(&tokens[*pos].0) { \
                 *pos += 1; \
@@ -719,15 +823,16 @@ pub fn write_parser_helpers(buf: &mut String) {
             } else { \
                 Err(ParseError::UnexpectedToken { \
                     expected: Cow::Borrowed(expected), \
-                    found: format!(\"{:?}\", tokens[*pos].0), \
+                    found: format_token_friendly(&tokens[*pos].0), \
                     range: tokens[*pos].1, \
+                    hint: None, \
                 }) \
             } \
         }\n\
         fn expect_ident<'a>(tokens: &[(Token<'a>, Range)], pos: &mut usize) -> Result<String, ParseError> { \
             if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                return Err(ParseError::UnexpectedEof { expected: Cow::Borrowed(\"identifier\"), range: eof_range }); \
+                return Err(ParseError::UnexpectedEof { expected: Cow::Borrowed(\"identifier\"), range: eof_range, hint: None }); \
             } \
             match &tokens[*pos].0 { \
                 Token::Ident(name) => { \
@@ -738,8 +843,9 @@ pub fn write_parser_helpers(buf: &mut String) {
                 other => { \
                     Err(ParseError::UnexpectedToken { \
                         expected: Cow::Borrowed(\"identifier\"), \
-                        found: format!(\"{:?}\", other), \
+                        found: format_token_friendly(other), \
                         range: tokens[*pos].1, \
+                        hint: Some(Cow::Borrowed(\"expected a variable name, not a keyword or operator\")), \
                     }) \
                 } \
             } \
@@ -786,7 +892,7 @@ pub fn write_recovery_helpers(buf: &mut String) {
         ) -> bool { \
             if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                errors.push(ParseError::UnexpectedEof { expected: Cow::Borrowed(expected), range: eof_range }); \
+                errors.push(ParseError::UnexpectedEof { expected: Cow::Borrowed(expected), range: eof_range, hint: None }); \
                 return false; \
             } \
             if predicate(&tokens[*pos].0) { \
@@ -795,8 +901,9 @@ pub fn write_recovery_helpers(buf: &mut String) {
             } else { \
                 errors.push(ParseError::UnexpectedToken { \
                     expected: Cow::Borrowed(expected), \
-                    found: format!(\"{:?}\", tokens[*pos].0), \
+                    found: format_token_friendly(&tokens[*pos].0), \
                     range: tokens[*pos].1, \
+                    hint: None, \
                 }); \
                 false \
             } \
@@ -809,7 +916,7 @@ pub fn write_recovery_helpers(buf: &mut String) {
         ) -> String { \
             if *pos >= tokens.len() { \
                 let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                errors.push(ParseError::UnexpectedEof { expected: Cow::Borrowed(\"identifier\"), range: eof_range }); \
+                errors.push(ParseError::UnexpectedEof { expected: Cow::Borrowed(\"identifier\"), range: eof_range, hint: None }); \
                 return \"__error__\".to_string(); \
             } \
             match &tokens[*pos].0 { \
@@ -821,8 +928,9 @@ pub fn write_recovery_helpers(buf: &mut String) {
                 other => { \
                     errors.push(ParseError::UnexpectedToken { \
                         expected: Cow::Borrowed(\"identifier\"), \
-                        found: format!(\"{:?}\", other), \
+                        found: format_token_friendly(other), \
                         range: tokens[*pos].1, \
+                        hint: Some(Cow::Borrowed(\"expected a variable name, not a keyword or operator\")), \
                     }); \
                     \"__error__\".to_string() \
                 } \
@@ -850,7 +958,8 @@ pub fn write_pratt_parser_recovering(
         format!("parse_{}_recovering", cat)
     };
 
-    let has_led = config.has_infix || config.has_postfix || config.has_mixfix;
+    let has_led = config.has_infix || config.has_postfix || config.has_mixfix
+        || !config.led_delegation.is_empty();
 
     write!(
         buf,
@@ -977,7 +1086,21 @@ fn write_led_chain_recovering(
         wrote_first = true;
     }
 
-    if wrote_first {
+    // LED delegation fallback (recovering)
+    let has_delegation = !config.led_delegation.is_empty();
+    if has_delegation {
+        if wrote_first {
+            buf.push_str(" else ");
+        }
+        write!(
+            buf,
+            "{{ match led_delegate_{cat}(tokens, pos, &lhs) {{ \
+                Some(new_lhs) => {{ lhs = new_lhs; }} \
+                None => {{ break; }} \
+            }} }}",
+        )
+        .unwrap();
+    } else if wrote_first {
         buf.push_str(" else { break; }");
     } else {
         buf.push_str("break;");
@@ -1081,6 +1204,66 @@ pub fn write_mixfix_bp_function_pub(buf: &mut String, cat: &str, bp_table: &Bind
         write!(buf, "Token::{} => Some(({}, {})),", variant, op.left_bp, op.right_bp).unwrap();
     }
     buf.push_str("_ => None } }");
+}
+
+/// Public wrapper: write handle_mixfix function (for trampoline LED delegation codegen).
+///
+/// Generates a standalone `handle_mixfix_{cat}` function that can be called from
+/// LED delegation code. This is needed because the trampoline normally handles mixfix
+/// via frame variants, not standalone functions.
+pub fn write_handle_mixfix_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
+    let parse_fn = format!("parse_{}", cat);
+
+    write!(
+        buf,
+        "fn handle_mixfix_{cat}<'a>(\
+            trigger: &Token<'a>, \
+            lhs: {cat}, \
+            tokens: &[(Token<'a>, Range)], \
+            pos: &mut usize, \
+            r_bp: u8, \
+        ) -> Result<{cat}, ParseError> {{ match trigger {{",
+    )
+    .unwrap();
+
+    for op in bp_table.mixfix_operators_for_category(cat) {
+        let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+        write!(buf, "Token::{} => {{", variant).unwrap();
+
+        let mut param_names: Vec<String> = Vec::new();
+        for (i, part) in op.mixfix_parts.iter().enumerate() {
+            let param_ident = format!("param_{}", part.param_name);
+            let is_last = i == op.mixfix_parts.len() - 1;
+
+            let fn_name = if part.operand_category == *cat {
+                parse_fn.clone()
+            } else {
+                format!("parse_{}", part.operand_category)
+            };
+
+            let bp = if is_last { "r_bp" } else { "0" };
+            write!(buf, "let {} = {}(tokens, pos, {})?;", param_ident, fn_name, bp).unwrap();
+            param_names.push(param_ident);
+
+            if let Some(ref terminal) = part.following_terminal {
+                let sep_variant = crate::automata::codegen::terminal_to_variant_name(terminal);
+                write!(
+                    buf,
+                    "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
+                    sep_variant, terminal,
+                )
+                .unwrap();
+            }
+        }
+
+        write!(buf, "Ok({}::{}(Box::new(lhs)", cat, op.label).unwrap();
+        for p in &param_names {
+            write!(buf, ", Box::new({})", p).unwrap();
+        }
+        buf.push_str("))},");
+    }
+
+    buf.push_str("_ => unreachable!(\"handle_mixfix called with non-mixfix trigger\") } }");
 }
 
 /// Public wrapper: build expected message from FIRST set (for trampoline codegen).

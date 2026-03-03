@@ -70,6 +70,8 @@ pub fn write_category_dispatch(
     prediction_wfst: &crate::wfst::PredictionWfst,
     composed_resolutions: Option<&HashMap<(String, String), (String, f64)>>,
     weight_map: Option<&HashMap<(String, String), f64>>,
+    optimization_gates: &crate::cost_benefit::OptimizationGates,
+    dead_rules: &std::collections::HashSet<String>,
 ) {
     if cross_category_rules.is_empty() && cast_rules.is_empty() {
         return;
@@ -86,10 +88,14 @@ pub fn write_category_dispatch(
     // duplicate match arms when multiple rules share the same source category.
     let mut deterministic_by_token: DeterministicArmMap = DeterministicArmMap::new();
 
-    // Track ambiguous tokens already handled by composed dispatch
-    let mut composed_handled: std::collections::HashSet<String> = std::collections::HashSet::new();
+    // (composed_handled removed: all ambiguous tokens are now grouped by source_category)
 
     for rule in cross_category_rules {
+        // A4: Skip dead cross-category rules when enhanced DCE is enabled
+        if optimization_gates.enhanced_dce && dead_rules.contains(&rule.label) {
+            continue;
+        }
+
         let overlap_key = (rule.source_category.clone(), category.to_string());
         let overlap = overlaps.get(&overlap_key);
         let source_first = first_sets.get(&rule.source_category);
@@ -109,43 +115,13 @@ pub fn write_category_dispatch(
                         .push((rule.label.clone(), op_variant.clone(), rule.operator.clone()));
                 }
 
-                // Ambiguous tokens
+                // Ambiguous tokens — collect all for grouped source-category emission.
+                // Unlike the old composed-dispatch path (which emitted only the
+                // single "winning" rule per token), we group by source_category
+                // and emit an inner operator match so that ALL operators sharing
+                // the same FIRST token are tried.
                 if let Some(overlap) = overlap {
                     for token in &overlap.ambiguous_tokens.tokens {
-                        // Check if composed dispatch has resolved this
-                        if let Some(resolutions) = composed_resolutions {
-                            let key = (category.to_string(), token.clone());
-                            if let Some((winning_rule, weight)) = resolutions.get(&key) {
-                                if !composed_handled.contains(token) {
-                                    composed_handled.insert(token.clone());
-                                    if winning_rule == &rule.label {
-                                        let mut arm = String::new();
-                                        write_token_pattern(&mut arm, token);
-                                        write!(
-                                            arm,
-                                            " => {{ \
-                                                let left = parse_{}(tokens, pos, 0)?; \
-                                                expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
-                                                let right = parse_{}(tokens, pos, 0)?; \
-                                                Ok({}::{}(Box::new(left), Box::new(right))) \
-                                            }}",
-                                            rule.source_category,
-                                            op_variant,
-                                            rule.operator,
-                                            rule.source_category,
-                                            category,
-                                            rule.label,
-                                        )
-                                        .unwrap();
-                                        dispatch_arms.push((arm, *weight));
-                                    }
-                                    /* else: winning rule is own-category — handled by fallback */
-                                }
-                                continue;
-                            }
-                        }
-
-                        // No composed resolution — collect for weight-ordered emission
                         ambiguous_by_token
                             .entry(token.clone())
                             .or_default()
@@ -157,6 +133,13 @@ pub fn write_category_dispatch(
     }
 
     // Emit deterministic arms — one arm per (source_category, token)
+    //
+    // Defense-in-depth: deterministic arms use save/restore with fallback
+    // to parse_Cat_own. When FIRST set classification is correct, the fast
+    // path commits without backtracking (the source parse + operator peek
+    // always succeeds). When it doesn't hold (edge cases), position restores
+    // and own-category parsing handles the token. The save/restore cost is
+    // one pointer copy — negligible.
     for ((source_cat, token), rules) in &deterministic_by_token {
         // Look up weight from complete weight map, composed resolutions, or WFST
         let arm_weight = weight_map
@@ -171,34 +154,51 @@ pub fn write_category_dispatch(
         let mut arm = String::new();
         write_token_pattern(&mut arm, token);
 
+        // C3: Thread parent weight into child category
+        let src_upper = source_cat.to_uppercase();
+
         if rules.len() == 1 {
-            let (label, op_variant, operator) = &rules[0];
+            let (label, op_variant, _operator) = &rules[0];
             write!(
                 arm,
                 " => {{ \
-                    let left = parse_{}(tokens, pos, 0)?; \
-                    expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
-                    let right = parse_{}(tokens, pos, 0)?; \
-                    Ok({}::{}(Box::new(left), Box::new(right))) \
+                    let saved = *pos; \
+                    PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                    if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
+                        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
+                            *pos += 1; \
+                            PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                            let right = parse_{}(tokens, pos, 0)?; \
+                            return Ok({}::{}(Box::new(left), Box::new(right))); \
+                        }} \
+                    }} \
+                    *pos = saved; \
+                    parse_{}_own(tokens, pos, min_bp) \
                 }}",
-                source_cat, op_variant, operator, source_cat, category, label,
+                source_cat, op_variant, source_cat, category, label, category,
             )
             .unwrap();
         } else {
-            write!(arm, " => {{ let left = parse_{}(tokens, pos, 0)?; ", source_cat).unwrap();
-            arm.push_str("if *pos >= tokens.len() { \
-                let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                return Err(ParseError::UnexpectedEof { expected: Cow::Borrowed(\"operator\"), range: eof_range }); \
-            } ");
-            arm.push_str("match &tokens[*pos].0 { ");
+            write!(
+                arm,
+                " => {{ \
+                    let saved = *pos; \
+                    PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                    if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
+                        if *pos < tokens.len() {{ \
+                            match &tokens[*pos].0 {{",
+                source_cat,
+            )
+            .unwrap();
 
             for (label, op_variant, _operator) in rules {
                 write!(
                     arm,
-                    "Token::{} => {{ \
+                    "                Token::{} => {{ \
                         *pos += 1; \
+                        PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
                         let right = parse_{}(tokens, pos, 0)?; \
-                        Ok({}::{}(Box::new(left), Box::new(right))) \
+                        return Ok({}::{}(Box::new(left), Box::new(right))); \
                     }},",
                     op_variant, source_cat, category, label,
                 )
@@ -206,21 +206,21 @@ pub fn write_category_dispatch(
             }
 
             arm.push_str(
-                "other => { \
-                let range = tokens[*pos].1; \
-                Err(ParseError::UnexpectedToken { \
-                    expected: Cow::Borrowed(\"comparison operator\"), \
-                    found: format!(\"{:?}\", other), \
-                    range, \
-                }) \
-            }",
+                "                _ => {} \
+                            } \
+                        } \
+                    } \
+                    *pos = saved;",
             );
-            arm.push_str(" } }");
+            write!(arm, " parse_{}_own(tokens, pos, min_bp) }}", category).unwrap();
         }
         dispatch_arms.push((arm, arm_weight));
     }
 
-    // Emit ambiguous arms (only those NOT resolved by composed dispatch)
+    // Emit ambiguous arms — group by source_category so ALL operators
+    // sharing the same FIRST token and source category are tried.
+    // E.g., for `(Bool, Ident)` with source Int: EqInt(==), GtInt(>), LtInt(<), etc.
+    // are all emitted in an inner operator match after a single parse_Int attempt.
     for (token, mut rules_and_ops) in ambiguous_by_token {
         // Sort rules by WFST weight for this token
         rules_and_ops.sort_by(|(rule_a, _), (rule_b, _)| {
@@ -237,39 +237,93 @@ pub fn write_category_dispatch(
             weight_a.cmp(&weight_b)
         });
 
-        // Emit: first rule gets no save/restore overhead (most likely)
-        if let Some((first_rule, first_op)) = rules_and_ops.first() {
-            let ambig_weight = prediction_wfst.predict(&token)
-                .first()
-                .map(|wa| wa.weight.value())
-                .unwrap_or(f64::INFINITY);
+        // Best weight for arm ordering: prefer composed resolution, else WFST
+        let ambig_weight = composed_resolutions
+            .and_then(|cr| cr.get(&(category.to_string(), token.clone())))
+            .map(|(_, w)| *w)
+            .or_else(|| {
+                prediction_wfst.predict(&token)
+                    .first()
+                    .map(|wa| wa.weight.value())
+            })
+            .unwrap_or(f64::INFINITY);
 
-            let mut arm = String::new();
-            write_token_pattern(&mut arm, &token);
+        // Group rules by source_category, preserving weight order:
+        // the first occurrence of each source_category (from the weight-sorted
+        // rules_and_ops) determines the group's position in the try-order.
+        let mut by_source: Vec<(String, Vec<(&CrossCategoryRule, String)>)> = Vec::new();
+        let mut seen_sources: HashMap<String, usize> = HashMap::new();
+        for (rule, op) in &rules_and_ops {
+            if let Some(&idx) = seen_sources.get(&rule.source_category) {
+                by_source[idx].1.push((*rule, op.clone()));
+            } else {
+                seen_sources.insert(rule.source_category.clone(), by_source.len());
+                by_source.push((rule.source_category.clone(), vec![(*rule, op.clone())]));
+            }
+        }
+
+        let mut arm = String::new();
+        write_token_pattern(&mut arm, &token);
+        arm.push_str(" => {");
+        arm.push_str("let saved = *pos;");
+
+        // C3: Thread parent weight into child category for globally coherent
+        // disambiguation. Before calling parse_SourceCat, set its PARENT_WEIGHT
+        // to the current category's running weight.
+        for (source_cat, source_rules) in &by_source {
+            let source_upper = source_cat.to_uppercase();
+            let cat_lower = category;
+
             write!(
                 arm,
-                " => {{ \
-                    let saved = *pos; \
-                    if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
-                        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
-                            *pos += 1; \
-                            let right = parse_{}(tokens, pos, 0)?; \
-                            return Ok({}::{}(Box::new(left), Box::new(right))); \
-                        }} \
-                    }} \
-                    *pos = saved; \
-                    parse_{}_own(tokens, pos, min_bp) \
-                }}",
-                first_rule.source_category,
-                first_op,
-                first_rule.source_category,
-                category,
-                first_rule.label,
-                category,
+                "PARENT_WEIGHT_{source_upper}.with(|c| c.set(running_weight_{cat_lower}())); \
+                 if let Ok(left) = parse_{}(tokens, pos, 0) {{",
+                source_cat,
             )
             .unwrap();
-            dispatch_arms.push((arm, ambig_weight));
+
+            if source_rules.len() == 1 {
+                // Single operator for this source category — peek check
+                let (rule, op) = &source_rules[0];
+                write!(
+                    arm,
+                    "if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
+                        *pos += 1; \
+                        PARENT_WEIGHT_{source_upper}.with(|c| c.set(running_weight_{cat_lower}())); \
+                        let right = parse_{}(tokens, pos, 0)?; \
+                        return Ok({}::{}(Box::new(left), Box::new(right))); \
+                    }}",
+                    op, source_cat, category, rule.label,
+                )
+                .unwrap();
+            } else {
+                // Multiple operators for this source category — inner match
+                arm.push_str("if *pos < tokens.len() { match &tokens[*pos].0 {");
+                for (rule, op) in source_rules {
+                    write!(
+                        arm,
+                        "Token::{} => {{ \
+                            *pos += 1; \
+                            PARENT_WEIGHT_{source_upper}.with(|c| c.set(running_weight_{cat_lower}())); \
+                            let right = parse_{}(tokens, pos, 0)?; \
+                            return Ok({}::{}(Box::new(left), Box::new(right))); \
+                        }},",
+                        op, source_cat, category, rule.label,
+                    )
+                    .unwrap();
+                }
+                arm.push_str("_ => {} } }");
+            }
+
+            // Close `if let Ok` and restore position for next source_category
+            arm.push_str("} *pos = saved;");
         }
+
+        // Final fallback: no cross-category rule matched — try own parser
+        write!(arm, "parse_{}_own(tokens, pos, min_bp)", category).unwrap();
+        arm.push_str("}");
+
+        dispatch_arms.push((arm, ambig_weight));
     }
 
     // Generate cast rule dispatch
@@ -287,9 +341,13 @@ pub fn write_category_dispatch(
 
                 let mut arm = String::new();
                 write_token_pattern(&mut arm, token);
+                // C3: Thread parent weight into child category for cast calls.
+                let source_upper = rule.source_category.to_uppercase();
+                let cat_lower = category;
                 write!(
                     arm,
                     " => {{ \
+                        PARENT_WEIGHT_{source_upper}.with(|c| c.set(running_weight_{cat_lower}())); \
                         let val = parse_{}(tokens, pos, 0)?; \
                         Ok({}::{}(Box::new(val))) \
                     }}",
@@ -309,35 +367,117 @@ pub fn write_category_dispatch(
     dispatch_arms.sort_by(|(_, wa), (_, wb)|
         wa.partial_cmp(wb).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Fallback always last (INFINITY weight ensures it stays at the end)
-    dispatch_arms.push((
-        format!("_ => parse_{}_own(tokens, pos, min_bp)", category),
-        f64::INFINITY,
-    ));
+    // A2 (Hot/Cold Path Splitting): Partition dispatch arms by weight threshold.
+    // Hot arms (weight < threshold) are inlined in the main dispatch function for
+    // L1 i-cache locality. Cold arms (weight ≥ threshold) are emitted in a separate
+    // #[cold] #[inline(never)] helper to reduce the main function's instruction
+    // footprint. NFA-ambiguous categories have inherently cold arms (weight ≥ 0.5).
+    //
+    // Weight scale:  Direct/Grouping=0.0, Cast/Backtrack=0.5, Lookahead=1.0+, Variable=2.0
+    // Threshold 1.0: Lookahead and Variable paths are cold; Direct/Cast are hot.
+    //
+    // A3: Gated by `optimization_gates.hot_cold_splitting`. When disabled, all arms
+    // are inlined regardless of weight (no split emitted).
+    const COLD_THRESHOLD: f64 = 1.0;
 
-    let arms: Vec<&str> = dispatch_arms.iter().map(|(text, _)| text.as_str()).collect();
+    let cold_start_idx = if optimization_gates.hot_cold_splitting {
+        dispatch_arms
+            .iter()
+            .position(|(_, w)| *w >= COLD_THRESHOLD)
+    } else {
+        None // A3: hot/cold splitting disabled — all arms inline
+    };
 
-    // Generate the wrapping dispatch function
-    write!(
-        buf,
-        "fn parse_{cat}<'a>(\
-            tokens: &[(Token<'a>, Range)], \
-            pos: &mut usize, \
-            min_bp: u8, \
-        ) -> Result<{cat}, ParseError> {{ \
-            if *pos >= tokens.len() {{ \
-                let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
-                return Err(ParseError::UnexpectedEof {{ \
-                    expected: Cow::Borrowed(\"{cat}\"), \
-                    range: eof_range, \
-                }}); \
-            }} \
-            match &tokens[*pos].0 {{ {arms} }} \
-        }}",
-        cat = category,
-        arms = arms.join(","),
-    )
-    .unwrap();
+    // Only split when there are both hot AND cold arms. If all arms are cold
+    // (cold_idx == 0), there's no benefit to splitting — just emit everything inline.
+    let has_split = cold_start_idx
+        .map_or(false, |idx| idx > 0 && idx < dispatch_arms.len());
+
+    if has_split {
+        let cold_idx = cold_start_idx.expect("has_split checked above");
+        let cold_arms: Vec<&str> = dispatch_arms[cold_idx..]
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect();
+
+        // Emit cold helper with fallback
+        write!(
+            buf,
+            "#[cold] #[inline(never)] \
+            fn parse_{cat}_cold<'a>(\
+                tokens: &[(Token<'a>, Range)], \
+                pos: &mut usize, \
+                min_bp: u8, \
+            ) -> Result<{cat}, ParseError> {{ \
+                match &tokens[*pos].0 {{ {cold_arms}, \
+                    _ => parse_{cat}_own(tokens, pos, min_bp) \
+                }} \
+            }}",
+            cat = category,
+            cold_arms = cold_arms.join(","),
+        )
+        .unwrap();
+
+        // Hot arms only + wildcard routing to cold helper
+        let hot_arms: Vec<&str> = dispatch_arms[..cold_idx]
+            .iter()
+            .map(|(text, _)| text.as_str())
+            .collect();
+
+        write!(
+            buf,
+            "fn parse_{cat}<'a>(\
+                tokens: &[(Token<'a>, Range)], \
+                pos: &mut usize, \
+                min_bp: u8, \
+            ) -> Result<{cat}, ParseError> {{ \
+                if *pos >= tokens.len() {{ \
+                    let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
+                    return Err(ParseError::UnexpectedEof {{ \
+                        expected: Cow::Borrowed(\"{cat}\"), \
+                        range: eof_range, \
+                        hint: None, \
+                    }}); \
+                }} \
+                match &tokens[*pos].0 {{ {hot_arms}, \
+                    _ => parse_{cat}_cold(tokens, pos, min_bp) \
+                }} \
+            }}",
+            cat = category,
+            hot_arms = hot_arms.join(","),
+        )
+        .unwrap();
+    } else {
+        // No cold arms — emit all arms inline with fallback (original path)
+        dispatch_arms.push((
+            format!("_ => parse_{}_own(tokens, pos, min_bp)", category),
+            f64::INFINITY,
+        ));
+
+        let arms: Vec<&str> = dispatch_arms.iter().map(|(text, _)| text.as_str()).collect();
+
+        write!(
+            buf,
+            "fn parse_{cat}<'a>(\
+                tokens: &[(Token<'a>, Range)], \
+                pos: &mut usize, \
+                min_bp: u8, \
+            ) -> Result<{cat}, ParseError> {{ \
+                if *pos >= tokens.len() {{ \
+                    let eof_range = tokens.last().map(|(_, r)| *r).unwrap_or(Range::zero()); \
+                    return Err(ParseError::UnexpectedEof {{ \
+                        expected: Cow::Borrowed(\"{cat}\"), \
+                        range: eof_range, \
+                        hint: None, \
+                    }}); \
+                }} \
+                match &tokens[*pos].0 {{ {arms} }} \
+            }}",
+            cat = category,
+            arms = arms.join(","),
+        )
+        .unwrap();
+    }
 }
 
 /// Determine which categories need cross-category dispatch wrappers.

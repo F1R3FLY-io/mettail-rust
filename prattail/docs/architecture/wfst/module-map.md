@@ -38,12 +38,12 @@ semirings — is always compiled.
    │  Tier 0 — default (no features)                              │
    │  Core automata · Pratt parser · RD parser · prediction sets  │
    │  PredictionWfst · TokenLattice · RecoveryWfst                │
-   │  compose · token_id · semirings (5 types)                    │
+   │  compose · token_id · transducer · semirings (6 types)       │
    │                                                              │
    │  ┌────────────────────────────────────────────────────────┐  │
    │  │  --features wfst-log                                   │  │
-   │  │  + LogWeight · ForwardBackward · LogPush               │  │
-   │  │  + TrainedModel · SGD training                         │  │
+   │  │  + LogWeight · EntropyWeight                           │  │
+   │  │  + ForwardBackward · LogPush · TrainedModel · SGD      │  │
    │  └────────────────────────────────────────────────────────┘  │
    └──────────────────────────────────────────────────────────────┘
 ```
@@ -60,7 +60,7 @@ is always present — every grammar receives WFST-weighted dispatch.
 #### `automata/semiring.rs`
 
 Algebraic foundations for weighted parsing. Defines the `Semiring` trait
-and six concrete types:
+and ten concrete types:
 
 - `TropicalWeight` — `(ℝ⁺ ∪ {+∞}, min, +, +∞, 0)` — used for
   dispatch priority ordering and beam-pruning thresholds.
@@ -75,6 +75,15 @@ and six concrete types:
 - `LogWeight` — `(ℝ⁺ ∪ {+∞}, log-sum-exp, +, +∞, 0)` — gated under
   `#[cfg(feature = "wfst-log")]`. Uses numerically stable log-sum-exp to
   avoid floating-point underflow when multiplying small probabilities.
+- `EntropyWeight` — `(ℝ⁺ × ℝ⁺, ⊕_entropy, ⊗_entropy, (∞, ∞), (0, 0))`
+  — gated under `#[cfg(feature = "wfst-log")]`. Expectation semiring
+  that tracks both the negative log-probability and the entropy
+  contribution, enabling computation of the expected path entropy in a
+  single forward pass.
+- `NbestWeight<N>` — `(Vec≤N, N-best ⊕, concatenation ⊗, ∅, {ε})` —
+  always available. Viterbi-N-Best semiring that maintains the top-N
+  shortest paths through the automaton, used for N-best list extraction
+  without a full lattice enumeration.
 
 #### `prediction.rs`
 
@@ -192,6 +201,31 @@ Key types: `CompositionError`, `CompositionSummary`.
 Key functions: `compose_languages()`, `composition_summary()`,
 `compose_many()`.
 
+#### `transducer.rs`
+
+E1 Optimization Transducer Cascade. Defines the `OptimizationPass` trait
+and the `TransducerCascade` composer that chains multiple optimization
+passes over a `PredictionWfst`. Four built-in passes are provided:
+
+- `WeightNormalization` — pushes arc weights toward the initial state so
+  that outgoing weights from each state sum to one (in the tropical
+  sense). Produces a canonical form for comparison and efficient decoding.
+- `DeadStateElimination` — removes states unreachable from the start or
+  from which no final state is reachable. Equivalent to the three-tier
+  dead-rule analysis projected onto the WFST state graph.
+- `StateMinimization` — Hopcroft-style DFA minimization on the weighted
+  automaton, merging bisimilar states to reduce state count.
+- `BeamPruning` — removes transitions whose weight exceeds the beam
+  threshold relative to the best outgoing transition from the same state.
+  Only active when a beam width is configured.
+
+Key types: `OptimizationPass` (trait), `TransducerCascade`,
+`WeightNormalization`, `DeadStateElimination`, `StateMinimization`,
+`BeamPruning`.
+
+Key functions: `TransducerCascade::new()`, `TransducerCascade::push()`,
+`TransducerCascade::apply()`.
+
 ---
 
 ### 2.2 `wfst-log`-Gated Modules
@@ -284,6 +318,10 @@ always-available, `[log]` for `#[cfg(feature = "wfst-log")]`.
                                          └─────────────────────────────────────────────────────
 ```
 
+**Additional dependency (not shown above):** `transducer.rs` imports
+`PredictionWfst` from `wfst.rs` and `TropicalWeight` from `semiring.rs`.
+It is called by `pipeline.rs` after `build_prediction_wfsts()`.
+
 **Additional dependency (not shown above):** `trampoline.rs` calls
 `wfst.rs::PredictionWfst::nfa_alternative_order()` to order NFA merged prefix
 arm alternatives by tropical weight. This dependency flows from the trampoline
@@ -311,6 +349,7 @@ absent from the build.
 | `lattice.rs`            |    ✓    |    ✓     |
 | `recovery.rs`           |    ✓    |    ✓     |
 | `compose.rs`            |    ✓    |    ✓     |
+| `transducer.rs`         |    ✓    |    ✓     |
 | `forward_backward.rs`   |    —    |    ✓     |
 | `log_push.rs`           |    —    |    ✓     |
 | `training.rs`           |    —    |    ✓     |
@@ -334,6 +373,8 @@ pub struct BooleanWeight(pub bool)         // boolean (∨, ∧) weight
 pub struct EditWeight(pub u64)             // edit distance (min, +) weight
 pub struct ProductWeight<S1, S2>(pub S1, pub S2)  // componentwise product
 pub struct LogWeight(pub f64)              // log-probability weight [log]
+pub struct EntropyWeight(pub f64, pub f64) // expectation semiring (neg-log-prob, entropy) [log]
+pub struct NbestWeight<const N: usize>     // Viterbi-N-Best: top-N shortest paths
 ```
 
 `TropicalWeight` provides `new()`, `value()`, `infinity()`,
@@ -431,6 +472,21 @@ pub fn composition_summary(...) -> CompositionSummary
 pub fn compose_many(...) -> Result<LanguageSpec, CompositionError>
 pub fn compose_with_wfst(...)              // WFST-aware composition via weighted union
     -> Result<WfstCompositionResult, CompositionError>
+```
+
+### `transducer.rs`
+
+```
+pub trait OptimizationPass                 // apply(&self, wfst: &mut PredictionWfst)
+pub struct TransducerCascade              // ordered sequence of OptimizationPass
+  ::new() -> Self
+  ::push(pass: Box<dyn OptimizationPass>) -> &mut Self
+  ::apply(&self, wfst: &mut PredictionWfst)
+pub struct WeightNormalization            // push weights toward initial state
+pub struct DeadStateElimination           // remove unreachable / non-co-accessible states
+pub struct StateMinimization              // Hopcroft bisimilarity merge
+pub struct BeamPruning                    // prune transitions beyond beam threshold
+  ::new(beam_width: TropicalWeight) -> Self
 ```
 
 ### `forward_backward.rs` [log]

@@ -1,5 +1,10 @@
 # PraTTaIL: Incremental Lexer and LexerAdapter (Phase 6D)
 
+> **Historical**: This document describes the `context-sensitive-lex` feature which was removed.
+> The always-on WFST architecture now resolves all lexer ambiguities at compile time,
+> making the runtime context-sensitive lexing infrastructure unnecessary.
+> This document is retained for historical reference only.
+
 **Date:** 2026-02-26
 
 ---

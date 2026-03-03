@@ -9,6 +9,8 @@
 //! is_postfix, is_cast, etc.) is performed by PraTTaIL's `classify` module
 //! via `LanguageSpec::new()`.
 
+use std::collections::HashSet;
+
 use crate::ast::{
     grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam},
     language::{AttributeValue, LanguageDef},
@@ -65,14 +67,18 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                 _ => unreachable!("log_semiring_model_path type validated at parse time"),
             });
 
-    LanguageSpec::with_options(
+    let semantic_dependency_groups = collect_semantic_dependency_groups(language);
+
+    let mut spec = LanguageSpec::with_options(
         language.name.to_string(),
         categories,
         inputs,
         beam_width,
         log_semiring_model_path,
         LiteralPatterns::default(),
-    )
+    );
+    spec.semantic_dependency_groups = semantic_dependency_groups;
+    spec
 }
 
 /// Convert a single grammar rule to a PraTTaIL `RuleSpecInput`.
@@ -84,6 +90,16 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
         convert_syntax_pattern(pattern, rule.term_context.as_deref().unwrap_or(&[]), cat_names)
     } else {
         convert_grammar_items(&rule.items, cat_names)
+    };
+
+    // Extract source location from the proc-macro span of the rule label
+    let source_location = {
+        let span = rule.label.span();
+        let start = span.start();
+        Some(mettail_prattail::SourceLocation {
+            line: start.line as u32,
+            column: start.column as u32,
+        })
     };
 
     RuleSpecInput {
@@ -102,6 +118,7 @@ fn convert_rule(rule: &GrammarRule, cat_names: &[String]) -> RuleSpecInput {
             quote::quote! { #expr }
         }),
         eval_mode: rule.eval_mode.as_ref().map(|e| format!("{:?}", e)),
+        source_location,
     }
 }
 
@@ -340,11 +357,11 @@ fn convert_pattern_op(
     }
 }
 
-/// Convert a chained Sep(Map(Zip(...))) pattern into a ZipMapSep syntax item.
+/// Convert a chained Sep(Map(Zip(...))) pattern into composed Sep/Zip/Map items.
 ///
 /// This handles patterns like `*zip(ns,xs).*map(|n,x| n "?" x).*sep(",")`,
-/// converting them into a single `ZipMapSep` item that the RD generator
-/// can handle as a separated list of structured patterns.
+/// converting them into composed `Sep { body: Zip { body: Map { .. } } }`
+/// items that the RD generator can handle as a separated list of structured patterns.
 fn convert_chained_sep(
     source_op: &PatternOp,
     separator: &str,
@@ -397,13 +414,16 @@ fn convert_chained_sep(
                         })
                         .collect();
 
-                    items.push(SyntaxItemSpec::ZipMapSep {
-                        left_name,
-                        right_name,
-                        left_category: left_cat,
-                        right_category: right_cat,
-                        body_items,
+                    items.push(SyntaxItemSpec::Sep {
+                        body: Box::new(SyntaxItemSpec::Zip {
+                            left_name,
+                            right_name,
+                            left_category: left_cat,
+                            right_category: right_cat,
+                            body: Box::new(SyntaxItemSpec::Map { body_items }),
+                        }),
                         separator: separator.to_string(),
+                        kind: CollectionKind::Vec,
                     });
                 },
                 _ => {
@@ -558,6 +578,101 @@ fn find_collection_info(name: &str, context: &[TermParam]) -> (String, Collectio
 
     // Fallback: unknown element type
     ("Unknown".to_string(), CollectionKind::Vec)
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Semantic dependency groups for transitive liveness analysis
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Collect semantic dependency groups from equations, rewrites, and the logic block.
+///
+/// Each group is the set of constructor labels co-referenced by a single equation,
+/// rewrite rule, or the entire logic block. The pipeline uses these groups for
+/// transitive liveness analysis: if any label in a group is parsing-live, all labels
+/// in the group are semantically live (the user's specification references them).
+///
+/// **Extraction strategies:**
+/// - **equations/rewrites**: Structured `Pattern` traversal via `collect_constructor_labels()`
+/// - **logic**: `TokenStream` scanning — intersect `Ident` tokens with known rule labels
+///
+/// The logic block is conservatively treated as a single dependency group because it
+/// stores raw Ascent syntax (`TokenStream`), not structured `Pattern` types.
+pub fn collect_semantic_dependency_groups(language: &LanguageDef) -> Vec<HashSet<String>> {
+    // Collect all known constructor labels from terms for logic block matching.
+    let known_labels: HashSet<String> = language
+        .terms
+        .iter()
+        .map(|rule| rule.label.to_string())
+        .collect();
+
+    let mut groups = Vec::new();
+
+    // Equations: structured Pattern traversal.
+    for eq in &language.equations {
+        let mut labels = HashSet::new();
+        eq.left.collect_constructor_labels(&mut labels);
+        eq.right.collect_constructor_labels(&mut labels);
+        if !labels.is_empty() {
+            groups.push(labels);
+        }
+    }
+
+    // Rewrites: structured Pattern traversal.
+    for rw in &language.rewrites {
+        let mut labels = HashSet::new();
+        rw.left.collect_constructor_labels(&mut labels);
+        rw.right.collect_constructor_labels(&mut labels);
+        if !labels.is_empty() {
+            groups.push(labels);
+        }
+    }
+
+    // Logic block: scan TokenStream for Ident tokens matching known constructor labels.
+    // The logic block stores raw Ascent syntax (TokenStream), not structured Patterns.
+    // Conservative: treats the entire block as one dependency group.
+    if let Some(logic) = &language.logic {
+        let mut labels = HashSet::new();
+        collect_constructor_idents_from_token_stream(
+            &logic.content,
+            &known_labels,
+            &mut labels,
+        );
+        if !labels.is_empty() {
+            groups.push(labels);
+        }
+    }
+
+    groups
+}
+
+/// Recursively scan a `TokenStream` for `Ident` tokens that match known constructor labels.
+///
+/// Handles nested `Group` token trees (delimited by `(...)`, `{...}`, `[...]`).
+/// Constructor labels are typically CamelCase (`PIn`, `PNew`) while Ascent variables
+/// are lowercase (`p0`, `x`), so false positives are negligible.
+fn collect_constructor_idents_from_token_stream(
+    tokens: &proc_macro2::TokenStream,
+    known_labels: &HashSet<String>,
+    labels: &mut HashSet<String>,
+) {
+    for tt in tokens.clone() {
+        match tt {
+            proc_macro2::TokenTree::Ident(ident) => {
+                let s = ident.to_string();
+                if known_labels.contains(&s) {
+                    labels.insert(s);
+                }
+            }
+            proc_macro2::TokenTree::Group(group) => {
+                collect_constructor_idents_from_token_stream(
+                    &group.stream(),
+                    known_labels,
+                    labels,
+                );
+            }
+            _ => {} // Punct, Literal — skip
+        }
+    }
 }
 
 /// Generate the PraTTaIL parser for a language definition.

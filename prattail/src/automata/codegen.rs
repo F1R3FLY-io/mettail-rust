@@ -167,7 +167,7 @@ impl TokenFilter {
 /// Lexer analysis: information about ambiguous DFA states.
 ///
 /// Returned alongside the lexer code string so the parser codegen can
-/// build composed dispatch tables for context-sensitive lexing.
+/// build composed dispatch tables for resolving lexer ambiguities.
 #[derive(Debug, Clone)]
 pub struct LexerAmbiguityInfo {
     /// Whether the DFA has any ambiguous accepting states.
@@ -242,6 +242,7 @@ pub fn generate_lexer_string(
     let mut buf = String::with_capacity(estimated_size);
 
     write_token_enum(&mut buf, token_kinds);
+    write_token_display(&mut buf, token_kinds);
     write_runtime_types_import(&mut buf);
 
     let strategy = if dfa.states.len() <= DIRECT_CODED_THRESHOLD {
@@ -320,6 +321,73 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
     }
 
     buf.push('}');
+}
+
+/// Write a `format_token_friendly()` function alongside the Token enum.
+///
+/// Produces human-readable descriptions for error messages:
+/// - `Token::Eof` → `"end of input"`
+/// - `Token::Ident(s)` → `` "identifier `name`" ``
+/// - `Token::Integer(n)` → `` "integer `42`" ``
+/// - `Token::KwFoo` → `` "`foo`" ``
+/// - `Token::Plus` → `` "`+`" ``
+fn write_token_display(buf: &mut String, token_kinds: &[TokenKind]) {
+    let mut seen = std::collections::HashSet::<String>::new();
+
+    buf.push_str("fn format_token_friendly(token: &Token<'_>) -> String { match token {");
+
+    // Always include Eof and Ident
+    buf.push_str("Token::Eof => \"end of input\".to_string(),");
+    seen.insert("Eof".to_string());
+
+    buf.push_str("Token::Ident(s) => format!(\"identifier `{}`\", s),");
+    seen.insert("Ident".to_string());
+
+    for kind in token_kinds {
+        match kind {
+            TokenKind::Eof | TokenKind::Ident => {},
+            TokenKind::Integer => {
+                if seen.insert("Integer".to_string()) {
+                    buf.push_str("Token::Integer(n) => format!(\"integer `{}`\", n),");
+                }
+            },
+            TokenKind::Float => {
+                if seen.insert("Float".to_string()) {
+                    buf.push_str("Token::Float(f) => format!(\"float `{}`\", f),");
+                }
+            },
+            TokenKind::True | TokenKind::False => {
+                if seen.insert("Boolean".to_string()) {
+                    buf.push_str("Token::Boolean(b) => format!(\"boolean `{}`\", b),");
+                }
+            },
+            TokenKind::StringLit => {
+                if seen.insert("StringLit".to_string()) {
+                    buf.push_str("Token::StringLit(s) => format!(\"string `\\\"{}\\\"`\", s),");
+                }
+            },
+            TokenKind::Fixed(text) => {
+                let variant_name = terminal_to_variant_name(text);
+                if seen.insert(variant_name.clone()) {
+                    // Escape backticks in the text for the format string
+                    let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");
+                    write!(buf, "Token::{} => \"`{}`\".to_string(),", variant_name, escaped).unwrap();
+                }
+            },
+            TokenKind::Dollar => {
+                if seen.insert("Dollar".to_string()) {
+                    buf.push_str("Token::Dollar(s) => format!(\"`${}`\", s),");
+                }
+            },
+            TokenKind::DoubleDollar => {
+                if seen.insert("DoubleDollar".to_string()) {
+                    buf.push_str("Token::DoubleDollar(s) => format!(\"`$${}`\", s),");
+                }
+            },
+        }
+    }
+
+    buf.push_str("} }");
 }
 
 /// Write `use mettail_prattail::runtime_types::*;` to a string buffer.
@@ -498,6 +566,10 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     write_accept_weight_arms(buf, dfa);
     buf.push('}');
     write_lex_weighted_via_core(buf);
+
+    // B3: Lattice-aware lexing with multi-accept alternatives
+    write_accept_alternatives(buf, dfa);
+    write_lex_lattice_via_core(buf);
 }
 
 /// Write `lex()`/`lex_with_file_id()` that delegate to `mettail_prattail::runtime_types::lex_core()`.
@@ -536,311 +608,107 @@ fn write_lex_weighted_via_core(buf: &mut String) {
 }
 
 
-// ══════════════════════════════════════════════════════════════════════════════
-// Incremental Lexer struct + LexerAdapter codegen (Phase 6D)
-// ══════════════════════════════════════════════════════════════════════════════
+/// B3: Write `accept_alternatives()` — returns all valid `(Token, f64)` pairs for a DFA state.
+///
+/// For unambiguous states, returns the single primary token with its weight.
+/// For multi-accept states, returns all alternatives sorted by weight (best first).
+/// Non-accepting states return an empty Vec.
+///
+/// Used by `lex_lattice_core()` to construct `TokenLattice` at ambiguous positions.
+fn write_accept_alternatives(buf: &mut String, dfa: &Dfa) {
+    use std::fmt::Write;
 
-/// Emit per-category expected-token description constants.
-///
-/// Generates `const EXPECTED_<CAT>: &str = "...";` for each category, using
-/// the FIRST set to build a human-readable description of valid tokens.
-/// Used by `next_token_for_category()` and `LexerAdapter` error messages.
-///
-/// Always emitted as part of the context-sensitive lexing infrastructure.
-pub fn write_expected_category_descriptions(
-    buf: &mut String,
-    expected_messages: &[(String, String)],
-) {
-    for (cat_name, msg) in expected_messages {
-        let escaped = msg.replace('\\', "\\\\").replace('"', "\\\"");
-        write!(
-            buf,
-            "const EXPECTED_{}: &str = \"{}\";",
-            cat_name.to_uppercase(),
-            escaped,
-        )
-        .unwrap();
+    buf.push_str("fn accept_alternatives<'a>(state: u32, text: &'a str) -> Vec<(Token<'a>, f64)> {");
+    buf.push_str("match state {");
+
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        if let Some(ref primary_kind) = state.accept {
+            if state.alt_accepts.is_empty() {
+                // Unambiguous: single alternative
+                let primary_variant = token_kind_to_constructor(primary_kind, "text");
+                write!(
+                    buf,
+                    "{}u32 => vec![({}, {:.1}_f64)],",
+                    state_idx,
+                    primary_variant,
+                    state.weight.value()
+                )
+                .unwrap();
+            } else {
+                // Multi-accept: primary + alternatives
+                write!(buf, "{}u32 => vec![", state_idx).unwrap();
+                // Primary first (best weight)
+                let primary_variant = token_kind_to_constructor(primary_kind, "text");
+                write!(buf, "({}, {:.1}_f64),", primary_variant, state.weight.value()).unwrap();
+                // Alternatives
+                for (alt_kind, alt_weight) in &state.alt_accepts {
+                    let alt_variant = token_kind_to_constructor(alt_kind, "text");
+                    write!(buf, "({}, {:.1}_f64),", alt_variant, alt_weight.value()).unwrap();
+                }
+                buf.push_str("],");
+            }
+        }
+    }
+
+    buf.push_str("_ => Vec::new() } }");
+}
+
+/// Convert a TokenKind enum variant to its Rust `Token` constructor expression.
+fn token_kind_to_constructor(kind: &TokenKind, text_var: &str) -> String {
+    match kind {
+        TokenKind::Eof => "Token::Eof".to_string(),
+        TokenKind::Ident => format!("Token::Ident({})", text_var),
+        TokenKind::Integer => format!(
+            "Token::Integer({}.parse::<i64>().expect(\"invalid integer literal\"))",
+            text_var
+        ),
+        TokenKind::Float => format!(
+            "Token::Float({}.parse::<f64>().expect(\"invalid float literal\"))",
+            text_var
+        ),
+        TokenKind::True => "Token::Boolean(true)".to_string(),
+        TokenKind::False => "Token::Boolean(false)".to_string(),
+        TokenKind::StringLit => format!("Token::StringLit(&{}[1..{}.len()-1])", text_var, text_var),
+        TokenKind::Dollar => format!("Token::Dollar(&{}[1..])", text_var),
+        TokenKind::DoubleDollar => format!(
+            "Token::DoubleDollar(&{}[2..{}.len()-1])",
+            text_var, text_var
+        ),
+        TokenKind::Fixed(terminal) => {
+            let variant = terminal_to_variant_name(terminal);
+            format!("Token::{}", variant)
+        }
     }
 }
 
-/// Write the `Lexer<'a>` struct and associated methods to a string buffer.
+/// B3: Write `lex_lattice()`/`lex_lattice_with_file_id()` that delegate to
+/// `mettail_prattail::runtime_types::lex_lattice_core()`.
 ///
-/// The Lexer struct provides incremental (token-at-a-time) lexing, as opposed
-/// to the batch `lex()` function that eagerly tokenizes the entire input.
-///
-/// Two methods:
-/// - `next_token()`: unfiltered, identical to the inner loop of `lex()`
-/// - `next_token_for_category(category_id)`: uses composed dispatch for ambiguous states
-///
-/// Always emitted as part of the context-sensitive lexing infrastructure.
-pub fn write_lexer_struct(
-    buf: &mut String,
-    ambiguity_info: &LexerAmbiguityInfo,
-    category_names: &[String],
-) {
-
+/// Returns `TokenSource<Token, Range>` — either `Linear` (no ambiguity) or
+/// `Lattice` (ambiguous positions detected). The Eof token is appended to the
+/// Linear path; for the Lattice path, Eof is not added (lattice nodes represent
+/// inter-token positions, not tokens themselves).
+fn write_lex_lattice_via_core(buf: &mut String) {
     buf.push_str(
-        "pub struct Lexer<'a> { \
-         input: &'a str, \
-         bytes: &'a [u8], \
-         pos: usize, \
-         line: usize, \
-         col: usize, \
-         file_id: Option<u32>, \
+        "pub fn lex_lattice<'a>(input: &'a str) \
+         -> Result<(mettail_prattail::lattice::TokenSource<Token<'a>, Range>, Range), String> { \
+         lex_lattice_with_file_id(input, None) \
+         }\n\
+         pub fn lex_lattice_with_file_id<'a>(input: &'a str, file_id: Option<u32>) \
+         -> Result<(mettail_prattail::lattice::TokenSource<Token<'a>, Range>, Range), String> { \
+         let (source, eof_pos) = mettail_prattail::runtime_types::lex_lattice_core( \
+         input, file_id, &CHAR_CLASS, dfa_next, is_accepting_state, accept_alternatives)?; \
+         let eof_range = Range { start: eof_pos, end: eof_pos, file_id }; \
+         match source { \
+         mettail_prattail::lattice::TokenSource::Linear(mut tokens) => { \
+             tokens.push((Token::Eof, eof_range)); \
+             Ok((mettail_prattail::lattice::TokenSource::Linear(tokens), eof_range)) \
          } \
-         impl<'a> Lexer<'a> { \
-         pub fn new(input: &'a str, file_id: Option<u32>) -> Self { \
-         Lexer { input, bytes: input.as_bytes(), pos: 0, line: 0, col: 0, file_id } \
-         } \
-         pub fn is_eof(&self) -> bool { self.pos >= self.bytes.len() } \
-         pub fn position(&self) -> Position { \
-         Position { byte_offset: self.pos, line: self.line, column: self.col } \
-         } \
-         ",
-    );
-
-    // next_token() — identical to the inner loop of lex()
-    // Uses is_accepting_state() bitmap in inner loop; accept_token() only once after loop.
-    buf.push_str(
-        "pub fn next_token(&mut self) -> Result<(Token<'a>, Range), String> { \
-         while self.pos < self.bytes.len() && is_whitespace(self.bytes[self.pos]) { \
-         if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } else { self.col += 1; } \
-         self.pos += 1; } \
-         if self.pos >= self.bytes.len() { \
-         let eof_pos = Position { byte_offset: self.pos, line: self.line, column: self.col }; \
-         return Ok((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id: self.file_id })); \
-         } \
-         let start = self.pos; \
-         let start_line = self.line; \
-         let start_col = self.col; \
-         let mut state: u32 = 0; \
-         let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-         if is_accepting_state(0) { last_accept = Some((0, self.pos, self.line, self.col)); } \
-         while self.pos < self.bytes.len() { \
-         let class = CHAR_CLASS[self.bytes[self.pos] as usize]; \
-         let next = dfa_next(state, class); \
-         if next == u32::MAX { break; } \
-         state = next; \
-         if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } \
-         else if self.bytes[self.pos] & 0xC0 != 0x80 { self.col += 1; } \
-         self.pos += 1; \
-         if is_accepting_state(state) { last_accept = Some((state, self.pos, self.line, self.col)); } \
-         } \
-         match last_accept { \
-         Some((accept_state, end, end_line, end_col)) => { \
-         self.pos = end; self.line = end_line; self.col = end_col; \
-         let text = &self.input[start..end]; \
-         match accept_token(accept_state, text) { \
-         Some(token) => Ok((token, Range { \
-         start: Position { byte_offset: start, line: start_line, column: start_col }, \
-         end: Position { byte_offset: end, line: end_line, column: end_col }, \
-         file_id: self.file_id })), \
-         None => Err(format!(\"{}:{}: internal error: accept state without token\", self.line + 1, self.col + 1)) \
-         } } \
-         None => Err(format!(\"{}:{}: unexpected character '{}'\", \
-         start_line + 1, start_col + 1, self.bytes[start] as char)) \
+         lattice => Ok((lattice, eof_range)) \
          } }",
     );
-
-    // next_token_for_category(category_id) — context-aware
-    // Uses is_accepting_state() bitmap in inner loop; accept_token() only once after loop.
-    if ambiguity_info.has_ambiguous {
-        buf.push_str(
-            "pub fn next_token_for_category(&mut self, category_id: u8) -> Result<(Token<'a>, Range), String> { \
-             while self.pos < self.bytes.len() && is_whitespace(self.bytes[self.pos]) { \
-             if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } else { self.col += 1; } \
-             self.pos += 1; } \
-             if self.pos >= self.bytes.len() { \
-             let eof_pos = Position { byte_offset: self.pos, line: self.line, column: self.col }; \
-             return Ok((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id: self.file_id })); \
-             } \
-             let start = self.pos; \
-             let start_line = self.line; \
-             let start_col = self.col; \
-             let mut state: u32 = 0; \
-             let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
-             if is_accepting_state(0) { last_accept = Some((0, self.pos, self.line, self.col)); } \
-             while self.pos < self.bytes.len() { \
-             let class = CHAR_CLASS[self.bytes[self.pos] as usize]; \
-             let next = dfa_next(state, class); \
-             if next == u32::MAX { break; } \
-             state = next; \
-             if self.bytes[self.pos] == b'\\n' { self.line += 1; self.col = 0; } \
-             else if self.bytes[self.pos] & 0xC0 != 0x80 { self.col += 1; } \
-             self.pos += 1; \
-             if is_accepting_state(state) { last_accept = Some((state, self.pos, self.line, self.col)); } \
-             } \
-             match last_accept { \
-             Some((accept_state, end, end_line, end_col)) => { \
-             self.pos = end; self.line = end_line; self.col = end_col; \
-             let text = &self.input[start..end]; \
-             let dispatch = composed_dispatch(category_id, accept_state); \
-             if dispatch.is_empty() { \
-             match accept_token(accept_state, text) { \
-             Some(token) => Ok((token, Range { \
-             start: Position { byte_offset: start, line: start_line, column: start_col }, \
-             end: Position { byte_offset: end, line: end_line, column: end_col }, \
-             file_id: self.file_id })), \
-             None => Err(format!(\"{}:{}: internal error: accept state without token\", self.line + 1, self.col + 1)) \
-             } \
-             } else { \
-             let (kind_id, _rule, _weight) = dispatch[0]; \
-             match accept_token_by_kind(accept_state, text, kind_id) { \
-             Some(token) => Ok((token, Range { \
-             start: Position { byte_offset: start, line: start_line, column: start_col }, \
-             end: Position { byte_offset: end, line: end_line, column: end_col }, \
-             file_id: self.file_id })), \
-             None => match accept_token(accept_state, text) { \
-             Some(token) => Ok((token, Range { \
-             start: Position { byte_offset: start, line: start_line, column: start_col }, \
-             end: Position { byte_offset: end, line: end_line, column: end_col }, \
-             file_id: self.file_id })), \
-             None => Err(format!(\"{}:{}: internal error: accept state without token\", self.line + 1, self.col + 1)) \
-             } } } } \
-             None => Err(format!(\"{}:{}: unexpected character '{}'; expected {}\", \
-             start_line + 1, start_col + 1, self.bytes[start] as char, expected_for_category(category_id))) \
-             } }",
-        );
-    } else {
-        // No ambiguous states — next_token_for_category uses same DFA as next_token
-        // but still provides category-aware error messages
-        buf.push_str(
-            "pub fn next_token_for_category(&mut self, category_id: u8) -> Result<(Token<'a>, Range), String> { \
-             match self.next_token() { \
-             Ok(tok_range) => Ok(tok_range), \
-             Err(msg) => Err(format!(\"{} (expected {})\", msg, expected_for_category(category_id))), \
-             } }",
-        );
-    }
-
-    buf.push_str("} "); // close impl Lexer
-
-    // Emit expected_for_category() at module scope so it's accessible from both
-    // Lexer methods and lazy parser functions.
-    let mut expected_fn = String::from(
-        "fn expected_for_category(category_id: u8) -> &'static str { match category_id { ",
-    );
-    for (i, cat) in category_names.iter().enumerate() {
-        write!(expected_fn, "{} => EXPECTED_{}, ", i, cat.to_uppercase()).unwrap();
-    }
-    expected_fn.push_str("_ => \"token\" } }");
-    buf.push_str(&expected_fn);
-
-    // NOTE: lex() is already emitted by the standard lexer codegen path
-    // (write_direct_coded_lexer / write_compressed_lexer). No duplicate needed.
 }
 
-/// Write the `accept_token_by_kind()` function for ambiguous states.
-///
-/// Given a DFA state and a target kind_id, returns the token constructed
-/// as if that specific token kind was accepted. Handles the mapping from
-/// kind_id back to the appropriate Token constructor.
-pub fn write_accept_token_by_kind(
-    buf: &mut String,
-    variant_map: &TokenVariantMap,
-) {
-
-    buf.push_str(
-        "fn accept_token_by_kind<'a>(state: u32, text: &'a str, kind_id: u8) -> Option<Token<'a>> {",
-    );
-    buf.push_str("match kind_id {");
-
-    // Emit a match arm for each token variant
-    for (name, &id) in &variant_map.name_to_id {
-        write!(buf, "{} => Some(", id).unwrap();
-        match name.as_str() {
-            "Eof" => buf.push_str("Token::Eof"),
-            "Ident" => buf.push_str("Token::Ident(text)"),
-            "Integer" => buf.push_str("Token::Integer(text.parse::<i64>().expect(\"invalid integer literal\"))"),
-            "Float" => buf.push_str("Token::Float(text.parse::<f64>().expect(\"invalid float literal\"))"),
-            "Boolean" => {
-                buf.push_str("if text == \"true\" { Token::Boolean(true) } else { Token::Boolean(false) }");
-            },
-            "StringLit" => buf.push_str("Token::StringLit(&text[1..text.len()-1])"),
-            "Dollar" => buf.push_str("Token::Dollar(&text[1..])"),
-            "DoubleDollar" => buf.push_str("Token::DoubleDollar(&text[2..text.len()-1])"),
-            variant => {
-                write!(buf, "Token::{}", variant).unwrap();
-            },
-        }
-        buf.push_str("),");
-    }
-
-    buf.push_str("_ => accept_token(state, text) } }");
-}
-
-/// Write the `LexerAdapter` struct for parser-driven lexing.
-///
-/// Wraps a `Lexer` with a small token buffer for peek-ahead and
-/// category-aware disambiguation.
-///
-/// Error handling: lex errors are captured and stored. When a lex error occurs,
-/// the adapter stores the error message and reports EOF. The stored error can be
-/// retrieved via `take_error()` for proper error propagation in the parser.
-pub fn write_lexer_adapter(buf: &mut String) {
-    buf.push_str(
-        "pub struct LexerAdapter<'a> { \
-         lexer: Lexer<'a>, \
-         buf: Vec<(Token<'a>, Range)>, \
-         cursor: usize, \
-         category_id: u8, \
-         lex_error: Option<String>, \
-         } \
-         impl<'a> LexerAdapter<'a> { \
-         pub fn new(lexer: Lexer<'a>) -> Self { \
-         LexerAdapter { lexer, buf: Vec::with_capacity(4), cursor: 0, category_id: 0, lex_error: None } \
-         } \
-         pub fn set_category(&mut self, id: u8) { self.category_id = id; } \
-         fn ensure_buffered(&mut self, n: usize) { \
-         while self.buf.len() <= self.cursor + n { \
-         if self.lex_error.is_some() { \
-         let pos = self.lexer.position(); \
-         self.buf.push((Token::Eof, Range { start: pos, end: pos, file_id: None })); \
-         break; \
-         } \
-         let result = if self.category_id > 0 { \
-         self.lexer.next_token_for_category(self.category_id) \
-         } else { \
-         self.lexer.next_token() \
-         }; \
-         match result { \
-         Ok(tok_range) => self.buf.push(tok_range), \
-         Err(msg) => { \
-         self.lex_error = Some(msg); \
-         let pos = self.lexer.position(); \
-         self.buf.push((Token::Eof, Range { start: pos, end: pos, file_id: None })); \
-         break; \
-         } } } } \
-         pub fn peek(&mut self) -> &Token<'a> { \
-         self.ensure_buffered(0); \
-         &self.buf[self.cursor].0 \
-         } \
-         pub fn peek_range(&mut self) -> &Range { \
-         self.ensure_buffered(0); \
-         &self.buf[self.cursor].1 \
-         } \
-         pub fn peek_ahead(&mut self, n: usize) -> Option<&Token<'a>> { \
-         self.ensure_buffered(n); \
-         self.buf.get(self.cursor + n).map(|(t, _)| t) \
-         } \
-         pub fn advance(&mut self) { \
-         self.ensure_buffered(0); \
-         if self.cursor < self.buf.len() { self.cursor += 1; } \
-         if self.cursor > 8 { \
-         self.buf.drain(..self.cursor); \
-         self.cursor = 0; \
-         } } \
-         pub fn is_eof(&mut self) -> bool { \
-         matches!(self.peek(), Token::Eof) \
-         } \
-         pub fn take_error(&mut self) -> Option<String> { \
-         self.lex_error.take() \
-         } \
-         pub fn pos(&self) -> usize { self.cursor } \
-         pub fn set_pos(&mut self, pos: usize) { self.cursor = pos; } \
-         } ",
-    );
-}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Compressed table codegen — comb (row displacement) + bitmap strategies
@@ -1248,6 +1116,10 @@ fn write_comb_driven_lexer(
     write_accept_weight_arms(buf, dfa);
     buf.push('}');
     write_lex_weighted_via_core(buf);
+
+    // B3: Lattice-aware lexing with multi-accept alternatives
+    write_accept_alternatives(buf, dfa);
+    write_lex_lattice_via_core(buf);
 }
 
 /// Write a complete bitmap-compressed lexer to a string buffer.
@@ -1289,6 +1161,10 @@ fn write_bitmap_driven_lexer(
     write_accept_weight_arms(buf, dfa);
     buf.push('}');
     write_lex_weighted_via_core(buf);
+
+    // B3: Lattice-aware lexing with multi-accept alternatives
+    write_accept_alternatives(buf, dfa);
+    write_lex_lattice_via_core(buf);
 }
 
 

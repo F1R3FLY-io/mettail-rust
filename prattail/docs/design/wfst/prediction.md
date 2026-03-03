@@ -26,7 +26,8 @@ automatically -- there is no opt-in feature gate for prediction.
 5. [Weighted Dispatch Codegen](#5-weighted-dispatch-codegen)
 6. [Example: Static vs Weighted Dispatch](#6-example-static-vs-weighted-dispatch)
 7. [Runtime Prediction via Static Embedding](#7-runtime-prediction-via-static-embedding)
-8. [Source Reference](#8-source-reference)
+8. [E1 Optimization Support Methods](#8-e1-optimization-support-methods)
+9. [Source Reference](#9-source-reference)
 
 ---
 
@@ -356,7 +357,52 @@ static TRAINED_MODEL: LazyLock<TrainedModel> = LazyLock::new(|| {
 
 ---
 
-## 8. Source Reference
+## 8. E1 Optimization Support Methods
+
+The E1 transducer cascade (`transducer.rs`) requires introspection and
+mutation methods on `PredictionWfst` that go beyond the query-oriented
+`predict()` / `predict_pruned()` API.  The following methods were added to
+support the four built-in optimization passes:
+
+### `state_count() -> usize`
+
+Returns the total number of states in the WFST, including unreachable
+states.  Used by `StateMinimization` to size partition arrays and by
+`DeadStateElimination` to report compression ratios.
+
+### `reachable_state_count() -> usize`
+
+Returns the number of states reachable from the start state via a forward
+BFS.  Used by `DeadStateElimination` to determine whether unreachable
+states exist before allocating a new state vector.
+
+### `remove_unreachable_states()`
+
+Performs a forward-backward reachability sweep and removes all states that
+are neither reachable from the start state nor co-accessible from a final
+state.  Transitions targeting removed states are deleted; action indices
+are compacted.  This is the core operation of the `DeadStateElimination`
+optimization pass.
+
+### `prune_by_beam(beam_width: TropicalWeight)`
+
+For each state, removes outgoing transitions whose weight exceeds
+`best_outgoing_weight + beam_width`.  Equivalent to the per-state beam
+pruning in `predict_pruned()`, but applied destructively to the WFST
+structure rather than as a runtime filter.  This is the core operation of
+the `BeamPruning` optimization pass.
+
+### `normalize_weights()`
+
+Pushes arc weights toward the initial state using the tropical-semiring
+shortest-distance algorithm.  After normalization, the outgoing transition
+weights from each state represent relative costs from that state to the
+best reachable final state.  This is the core operation of the
+`WeightNormalization` optimization pass.
+
+---
+
+## 9. Source Reference
 
 | Symbol                                 | Location                   |
 |----------------------------------------|----------------------------|
@@ -370,6 +416,11 @@ static TRAINED_MODEL: LazyLock<TrainedModel> = LazyLock::new(|| {
 | `generate_weighted_dispatch`           | `prattail/src/wfst.rs`     |
 | `PredictionWfst::from_flat`            | `prattail/src/wfst.rs`     |
 | `PredictionWfst::with_trained_weights` | `prattail/src/wfst.rs`     |
+| `PredictionWfst::state_count`          | `prattail/src/wfst.rs`     |
+| `PredictionWfst::reachable_state_count`| `prattail/src/wfst.rs`     |
+| `PredictionWfst::remove_unreachable_states` | `prattail/src/wfst.rs` |
+| `PredictionWfst::prune_by_beam`        | `prattail/src/wfst.rs`     |
+| `PredictionWfst::normalize_weights`    | `prattail/src/wfst.rs`     |
 | `emit_prediction_wfst_static`          | `prattail/src/pipeline.rs` |
 | `TrainedModel::from_embedded`          | `prattail/src/training.rs` |
 | `write_category_dispatch_weighted`     | `prattail/src/dispatch.rs` |
@@ -381,3 +432,4 @@ See also:
 - [../../theory/wfst/viterbi-and-forward-backward.md](../../theory/wfst/viterbi-and-forward-backward.md) -- how predicted actions feed the token lattice
 - [../../theory/wfst/semirings.md](../../theory/wfst/semirings.md) -- tropical semiring axioms
 - [error-recovery.md](error-recovery.md) -- WFST recovery construction (uses same token map)
+- [../../theory/wfst/optimization-transducer-cascade.md](../../theory/wfst/optimization-transducer-cascade.md) -- E1 transducer cascade theory

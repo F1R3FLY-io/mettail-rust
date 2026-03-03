@@ -92,9 +92,9 @@ fn test_unexpected_eof_incomplete_addition() {
     let err_debug = format!("{:?}", err);
     // The lexer always emits an Eof token, so the prefix handler sees Token::Eof
     // as an unexpected token rather than hitting the pos >= len check.
-    // Both UnexpectedEof and UnexpectedToken with found="Eof" are acceptable.
+    // Both UnexpectedEof and UnexpectedToken with found="end of input" are acceptable.
     assert!(
-        err_debug.contains("UnexpectedEof") || err_debug.contains("Eof"),
+        err_debug.contains("UnexpectedEof") || err_debug.contains("Eof") || err_debug.contains("end of input"),
         "incomplete expression should report EOF-related error, got: {}",
         err_debug
     );
@@ -110,7 +110,7 @@ fn test_unexpected_eof_empty_input() {
     // Empty input produces a single Eof token; the prefix handler sees
     // Token::Eof as an unexpected token (not pos >= len).
     assert!(
-        err_debug.contains("UnexpectedEof") || err_debug.contains("Eof"),
+        err_debug.contains("UnexpectedEof") || err_debug.contains("Eof") || err_debug.contains("end of input"),
         "empty input should report EOF-related error, got: {}",
         err_debug
     );
@@ -245,7 +245,7 @@ fn test_bool_parse_error() {
     let err_debug = format!("{:?}", err);
     // Same as Int: empty input produces Eof token, seen as UnexpectedToken
     assert!(
-        err_debug.contains("UnexpectedEof") || err_debug.contains("Eof"),
+        err_debug.contains("UnexpectedEof") || err_debug.contains("Eof") || err_debug.contains("end of input"),
         "empty Bool input should report EOF-related error, got: {}",
         err_debug
     );

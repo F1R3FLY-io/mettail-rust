@@ -547,6 +547,199 @@ fn bench_log_semiring(c: &mut Criterion) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Group G: NFA Alternative Ordering & B6 Runtime Queries
+// ══════════════════════════════════════════════════════════════════════════════
+
+fn bench_nfa_queries(c: &mut Criterion) {
+    let specs = named_specs();
+
+    // G1: nfa_alternative_order() — weight-ordered NFA alternative ranking
+    {
+        let mut group = c.benchmark_group("wfst/nfa_queries/alternative_order");
+        configure_group(&mut group);
+
+        for (name, spec) in &specs {
+            let prepared = prepare_wfst(spec);
+            let primary_cat = &prepared.base.categories[0];
+            let wfst: &PredictionWfst = match prepared.prediction_wfsts.get(primary_cat) {
+                Some(w) => w,
+                None => continue,
+            };
+            let sample_tokens = prepared.sample_token_names.clone();
+            let wfst_owned = wfst.clone();
+
+            // Simulate NFA rule labels (use sample token names as proxies)
+            let rule_labels: Vec<String> = sample_tokens
+                .iter()
+                .map(|t| format!("Rule_{}", t))
+                .collect();
+
+            group.bench_with_input(
+                BenchmarkId::from_parameter(name),
+                &(wfst_owned, sample_tokens, rule_labels),
+                |b, (wfst, tokens, labels)| {
+                    let label_refs: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+                    b.iter(|| {
+                        for token_name in tokens {
+                            let _ = wfst.nfa_alternative_order(token_name, &label_refs);
+                        }
+                    });
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // G2: confidence_gap() — A5 NbestWeight confidence gap
+    {
+        let mut group = c.benchmark_group("wfst/nfa_queries/confidence_gap");
+        configure_group(&mut group);
+
+        for (name, spec) in &specs {
+            let prepared = prepare_wfst(spec);
+            let primary_cat = &prepared.base.categories[0];
+            let wfst: &PredictionWfst = match prepared.prediction_wfsts.get(primary_cat) {
+                Some(w) => w,
+                None => continue,
+            };
+            let sample_tokens = prepared.sample_token_names.clone();
+            let wfst_owned = wfst.clone();
+
+            group.bench_with_input(
+                BenchmarkId::from_parameter(name),
+                &(wfst_owned, sample_tokens),
+                |b, (wfst, tokens)| {
+                    b.iter(|| {
+                        for token_name in tokens {
+                            let _ = wfst.confidence_gap(token_name);
+                        }
+                    });
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // G3: valid_continuations() — B6 autocomplete query
+    {
+        let mut group = c.benchmark_group("wfst/nfa_queries/valid_continuations");
+        configure_group(&mut group);
+
+        for (name, spec) in &specs {
+            let prepared = prepare_wfst(spec);
+            let primary_cat = &prepared.base.categories[0];
+            let wfst: &PredictionWfst = match prepared.prediction_wfsts.get(primary_cat) {
+                Some(w) => w,
+                None => continue,
+            };
+            let wfst_owned = wfst.clone();
+
+            group.bench_with_input(
+                BenchmarkId::from_parameter(name),
+                &wfst_owned,
+                |b, wfst| {
+                    b.iter(|| {
+                        let _ = wfst.valid_continuations();
+                    });
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // G4: has_valid_dispatch() — B6 early error detection
+    {
+        let mut group = c.benchmark_group("wfst/nfa_queries/has_valid_dispatch");
+        configure_group(&mut group);
+
+        for (name, spec) in &specs {
+            let prepared = prepare_wfst(spec);
+            let primary_cat = &prepared.base.categories[0];
+            let wfst: &PredictionWfst = match prepared.prediction_wfsts.get(primary_cat) {
+                Some(w) => w,
+                None => continue,
+            };
+            let sample_tokens = prepared.sample_token_names.clone();
+            let wfst_owned = wfst.clone();
+
+            group.bench_with_input(
+                BenchmarkId::from_parameter(name),
+                &(wfst_owned, sample_tokens),
+                |b, (wfst, tokens)| {
+                    b.iter(|| {
+                        for token_name in tokens {
+                            let _ = wfst.has_valid_dispatch(token_name);
+                        }
+                    });
+                },
+            );
+        }
+        group.finish();
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Group H: TransducerCascade Throughput
+// ══════════════════════════════════════════════════════════════════════════════
+
+fn bench_transducer_cascade(c: &mut Criterion) {
+    use mettail_prattail::transducer::TransducerCascade;
+    use std::collections::HashMap;
+
+    let specs = named_specs();
+
+    // H1: Default pipeline (normalize + dead-state elimination + minimize)
+    {
+        let mut group = c.benchmark_group("wfst/cascade/default_pipeline");
+        configure_group(&mut group);
+
+        for (name, spec) in &specs {
+            let prepared = prepare_wfst(spec);
+            let wfsts: HashMap<String, PredictionWfst> =
+                prepared.prediction_wfsts.into_iter().collect();
+
+            group.bench_with_input(
+                BenchmarkId::from_parameter(name),
+                &wfsts,
+                |b, wfsts_orig| {
+                    b.iter(|| {
+                        let mut wfsts = wfsts_orig.clone();
+                        let cascade = TransducerCascade::default_pipeline();
+                        let _ = cascade.run_all(&mut wfsts);
+                    });
+                },
+            );
+        }
+        group.finish();
+    }
+
+    // H2: Pipeline with beam pruning
+    {
+        let mut group = c.benchmark_group("wfst/cascade/with_beam");
+        configure_group(&mut group);
+
+        for (name, spec) in &specs {
+            let prepared = prepare_wfst(spec);
+            let wfsts: HashMap<String, PredictionWfst> =
+                prepared.prediction_wfsts.into_iter().collect();
+
+            group.bench_with_input(
+                BenchmarkId::from_parameter(name),
+                &wfsts,
+                |b, wfsts_orig| {
+                    b.iter(|| {
+                        let mut wfsts = wfsts_orig.clone();
+                        let cascade = TransducerCascade::with_beam(2.0);
+                        let _ = cascade.run_all(&mut wfsts);
+                    });
+                },
+            );
+        }
+        group.finish();
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Group F: Space Measurement
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -688,6 +881,8 @@ criterion_group!(
     bench_prediction,
     bench_recovery,
     bench_lattice,
+    bench_nfa_queries,
+    bench_transducer_cascade,
     bench_space,
 );
 
@@ -699,6 +894,8 @@ criterion_group!(
     bench_recovery,
     bench_lattice,
     bench_log_semiring,
+    bench_nfa_queries,
+    bench_transducer_cascade,
     bench_space,
 );
 

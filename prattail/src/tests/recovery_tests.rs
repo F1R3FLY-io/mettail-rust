@@ -54,6 +54,7 @@ fn calculator_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
         recovery_config: crate::recovery::RecoveryConfig::default(),
+        semantic_dependency_groups: Vec::new(),
     }
 }
 

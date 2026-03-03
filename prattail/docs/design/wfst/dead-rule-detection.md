@@ -1,10 +1,10 @@
-# Three-Tier Dead-Rule Detection
+# Four-Tier Dead-Rule Detection
 
-**Date:** 2026-03-01
+**Date:** 2026-03-02 (Tier 4 added; originally 2026-03-01)
 
 Dead-rule detection identifies grammar rules that can never fire during
 parsing and reports them as compile-time warnings.  This document describes
-PraTTaIL's three-tier detection architecture, its integration with the
+PraTTaIL's four-tier detection architecture, its integration with the
 unified lint layer, correctness properties, and practical results.
 
 ---
@@ -12,12 +12,13 @@ unified lint layer, correctness properties, and practical results.
 ## Table of Contents
 
 1. [Introduction & Motivation](#1-introduction--motivation)
-2. [Three-Tier Architecture](#2-three-tier-architecture)
+2. [Four-Tier Architecture](#2-four-tier-architecture)
 3. [Integration with Unified Lint Layer](#3-integration-with-unified-lint-layer)
 4. [Correctness Properties](#4-correctness-properties)
 5. [Dead Rules Detected in Practice](#5-dead-rules-detected-in-practice)
 6. [Algorithm Complexity](#6-algorithm-complexity)
-7. [References](#7-references)
+7. [Relation to E1 Transducer Cascade](#7-relation-to-e1-transducer-cascade)
+8. [References](#8-references)
 
 ---
 
@@ -63,13 +64,15 @@ The dead-rule warning is analogous to Rust's `#[warn(dead_code)]`:
 
 ---
 
-## 2. Three-Tier Architecture
+## 2. Four-Tier Architecture
 
 ### Decision flow
 
 Every rule in the grammar enters the detection pipeline and is classified
-by exactly one tier.  The tiers execute in order; once a rule is handled by
-a tier, it does not proceed to subsequent tiers.
+by exactly one tier.  Tiers 1–3 execute in order; once a rule is handled by
+a tier, it does not proceed to subsequent tiers.  Tier 4 (semantic liveness)
+runs after all three tiers and can **resurrect** rules that Tiers 1–3 flagged
+as dead.
 
 ```
   Rule
@@ -227,6 +230,73 @@ formal connection.
 the WFST routes every FIRST token to higher-priority alternatives (e.g.,
 `StrLit` for `"..."` and `IntToStr` for `Integer`).
 
+### Tier 4 — Semantic liveness (transitive closure over equations/rewrites/logic)
+
+**Condition**: applies to all rules flagged by Tiers 1–3; may **remove** warnings.
+
+A rule that is syntactically unreachable by parsing may still be semantically
+live because an equation, rewrite, or logic rule constructs or pattern-matches
+terms using that constructor.  Tier 4 computes a transitive closure to
+identify such rules and un-flags them.
+
+**Architecture**: The macros crate has access to equations, rewrites, and the
+logic block.  It extracts **dependency groups** — sets of constructor labels
+co-referenced by each equation/rewrite rule or the entire logic block — and
+passes them as `Vec<HashSet<String>>` via `LanguageSpec.semantic_dependency_groups`
+to the pipeline.
+
+**Extraction strategies**:
+
+| Block type | Strategy | Granularity |
+|-----------|----------|-------------|
+| `equations` | Structured `Pattern` traversal via `collect_constructor_labels()` | Per equation |
+| `rewrites` | Structured `Pattern` traversal via `collect_constructor_labels()` | Per rewrite |
+| `logic` | `TokenStream` scanning — intersect `Ident` tokens with known labels | Entire block |
+
+The logic block is conservatively treated as a single dependency group because
+it stores raw Ascent syntax (`TokenStream`), not structured `Pattern` types.
+
+**Fixed-point closure** (`pipeline.rs:compute_semantic_live_labels()`):
+
+```
+live = { labels not flagged by Tiers 1–3 }  // parsing-live
+
+changed = true
+while changed:
+    changed = false
+    for group in semantic_dependency_groups:
+        if any label in group ∈ live:
+            for label in group:
+                if label ∉ live:
+                    live ← live ∪ { label }
+                    changed = true
+
+// Remove Tier 1–3 warnings for labels in `live`
+warnings.retain(|w| w.rule_label ∉ live)
+```
+
+**Example**:
+
+```
+terms {
+    PIn  . Proc |- "in"  "(" Name "," Proc ")" : Proc;  // Tier 3 dead
+    PNew . Proc |- "new" "(" Name "," Proc ")" : Proc;   // live
+}
+equations {
+    InNew . | x # P |- (PIn N (PNew ^x.P)) = (PNew ^x.(PIn N P));
+}
+```
+
+The equation references both `PIn` and `PNew`.  Since `PNew` is parsing-live,
+the dependency group `{PIn, PNew}` resurrects `PIn`.
+
+**Termination**: The live set is monotonically growing and bounded by the
+finite set of all rule labels.  The fixed-point loop terminates in at most
+|labels| iterations.
+
+**Complexity**: O(G × L × I) where G = groups, L = labels per group,
+I = iterations.  In practice G ≈ 10–50, L ≈ 2–4, I ≈ 2–3 — negligible.
+
 ---
 
 ## 3. Integration with Unified Lint Layer
@@ -325,6 +395,13 @@ dead is provably unreachable:
   begin a parse in the category is checked.  If no token routes to the
   rule, no prefix dispatch can reach it.
 
+- **Tier 4**: A label is only resurrected if it participates in a
+  dependency group that overlaps with the live set.  The transitive
+  closure is monotone (only adds labels, never removes them) and bounded
+  by the finite label set.  Labels referenced only by unreachable
+  equations/rewrites (no live label in the group) remain dead — correctly,
+  since those rules can never fire.
+
 ### Permitted false negatives
 
 The analysis is intentionally conservative.  Known sources of false
@@ -340,6 +417,14 @@ negatives (dead rules not flagged):
   during error recovery (e.g., after token insertion) is not considered
   dead.  Error recovery is best-effort and its paths are not modeled by
   the prediction WFST.
+
+- **Logic block false-negative conservatism** (Tier 4): The `TokenStream`
+  scanning approach for the logic block may match constructor label names
+  that appear as identifiers but are not semantically referenced (e.g., a
+  comment or string that happens to contain the label name).  This can
+  prevent a truly dead rule from being flagged.  In practice, constructor
+  labels are CamelCase while Ascent variables are lowercase, so false
+  matches are negligible.
 
 ### Monotonicity
 
@@ -387,7 +472,7 @@ shadow the cross-category path.
 
 ### Test coverage
 
-13 unit tests in `tests/warning_tests.rs::dead_rule_tests`:
+18 unit tests in `tests/warning_tests.rs::dead_rule_tests`:
 
 | Test | Tier | Validates |
 |------|------|-----------|
@@ -404,6 +489,11 @@ shadow the cross-category path.
 | `test_category_reachable_transitively_via_cast` | 2 | Transitive cast chain makes category reachable |
 | `test_dead_rule_warning_display` | — | Display formatting for all 3 variants |
 | `test_mixed_grammar_dead_rules` | 1,2 | Mixed scenario: 3 dead rules across tiers |
+| `semantic_live_labels_transitive_closure` | 4 | Group `{A,B}` + `{B,C}` → all 3 resurrected |
+| `semantic_live_labels_no_overlap` | 4 | No overlap → no resurrection |
+| `semantic_live_labels_multiple_seeds` | 4 | Multiple parsing-live seeds resurrect distinct groups |
+| `semantic_live_labels_empty_groups` | 4 | Empty groups → result equals parsing-live set |
+| `tier4_resurrects_wfst_unreachable_label` | 3→4 | WFST-unreachable label resurrected by semantic group |
 
 ---
 
@@ -415,6 +505,7 @@ shadow the cross-category path.
 | 2 (reachable set) | O(\|rules\| × \|categories\|) | Fixed-point with at most \|categories\| iterations |
 | 2 (rule check) | O(\|rules\|) | Set membership test per rule |
 | 3 | O(\|rules\| × \|FIRST\| × \|WFST_actions\|) | Bounded by grammar size |
+| 4 | O(\|groups\| × \|labels_per_group\| × \|iterations\|) | Typically O(50 × 4 × 3) — negligible |
 
 The total cost is dominated by Tier 3, which is O(|rules| × |FIRST| ×
 |WFST_actions|).  In practice this is negligible compared to WFST
@@ -428,7 +519,45 @@ construction.
 
 ---
 
-## 7. References
+## 7. Relation to E1 Transducer Cascade
+
+Dead-rule detection (as described in this document) operates at the
+**grammar rule** level: it identifies rules that can never fire during
+parsing.  The E1 optimization transducer cascade (`transducer.rs`)
+includes a complementary analysis at the **WFST state** level via the
+`DeadStateElimination` optimization pass.
+
+`DeadStateElimination` removes WFST states that are unreachable from the
+start state or from which no final state is reachable (non-co-accessible
+states).  It operates on the `PredictionWfst` after construction and
+before codegen, as part of the `TransducerCascade` pipeline:
+
+```
+  TransducerCascade:
+    WeightNormalization → DeadStateElimination → StateMinimization (→ BeamPruning)
+```
+
+The two analyses are complementary, not redundant:
+
+- **Dead-rule detection** (this document): reports rules to the grammar
+  author via W01 lint diagnostics.  Dead rules remain in the grammar for
+  documentation purposes; they are not automatically removed.
+- **DeadStateElimination** (transducer.rs): removes unreachable WFST
+  states to reduce the static data embedded in generated code.  This is a
+  structural optimization that does not produce user-facing diagnostics.
+
+A rule flagged as dead by Tier 3 will typically correspond to WFST states
+that `DeadStateElimination` removes.  However, the converse is not always
+true: `DeadStateElimination` may remove states created during WFST
+construction that do not correspond to any single grammar rule.
+
+See [../../theory/wfst/optimization-transducer-cascade.md](../../theory/wfst/optimization-transducer-cascade.md)
+for the formal theory of the transducer cascade and its convergence
+properties.
+
+---
+
+## 8. References
 
 - Mohri, M. (2009). *Weighted Automata Algorithms.* In: Handbook of
   Weighted Automata. Springer. — Reachability as boolean projection of
@@ -449,11 +578,13 @@ construction.
 
 | Component | File | Lines |
 |-----------|------|-------|
-| `DeadRuleWarning` enum | `pipeline.rs` | 48–96 |
-| `detect_dead_rules()` | `pipeline.rs` | 106–207 |
-| `lint_w01_dead_rule()` | `lint.rs` | 786–832 |
-| `run_lints()` entry point | `lint.rs` | 136–176 |
-| `LintDiagnostic` struct | `lint.rs` | 68–84 |
-| `LintContext` struct | `lint.rs` | 97–126 |
-| `emit_diagnostics()` | `lint.rs` | 179–183 |
-| Unit tests | `tests/warning_tests.rs` | 355–920 |
+| `DeadRuleWarning` enum | `pipeline.rs` | 53–92 |
+| `detect_dead_rules()` (Tiers 1–4) | `pipeline.rs` | 141–275 |
+| `compute_semantic_live_labels()` | `pipeline.rs` | 277–295 |
+| `collect_dead_rule_labels()` | `pipeline.rs` | 601–630 |
+| `lint_w01_dead_rule()` | `lint.rs` | 994–1001 |
+| `LintContext` struct | `lint.rs` | 118–152 |
+| `collect_semantic_dependency_groups()` | `prattail_bridge.rs` | 596–649 |
+| `collect_constructor_labels()` (Pattern) | `pattern.rs` | 225–243 |
+| `collect_constructor_labels()` (PatternTerm) | `pattern.rs` | 163–186 |
+| Unit tests (Tiers 1–4) | `tests/warning_tests.rs` | 355–1045 |

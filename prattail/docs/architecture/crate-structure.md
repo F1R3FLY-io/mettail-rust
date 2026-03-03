@@ -309,7 +309,7 @@ compiled (no feature gate); only the log semiring modules require `wfst-log`.
   `edit_cost()` (EditWeight integration)
 - **`compose.rs`** -- `compose_wfsts()`, WFST product construction for
   combining prediction and lexer transducers
-- **`automata/semiring.rs`** -- `Semiring` trait and six semiring types:
+- **`automata/semiring.rs`** -- `Semiring` trait and ten semiring types:
   - `TropicalWeight` -- `(R+ ∪ {+∞}, min, +, +∞, 0.0)`, default dispatch
   - `CountingWeight` -- `(N, +, ×, 0, 1)`, codegen-time ambiguity detection
   - `BooleanWeight` -- `({0, 1}, ∨, ∧, 0, 1)`, dead-rule detection

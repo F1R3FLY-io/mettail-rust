@@ -1,8 +1,8 @@
-//! Binder and ZipMapSep benchmarks: single binder, multi-binder, channel output.
+//! Binder and Sep(Zip(Map)) benchmarks: single binder, multi-binder, channel output.
 //!
-//! Languages: Ambient (single binder via `new`), RhoCalc (multi-input ZipMapSep)
+//! Languages: Ambient (single binder via `new`), RhoCalc (multi-input Sep(Zip(Map(...))))
 //! Features exercised: single binder (Scope creation, ident capture),
-//! multi-binder, ZipMapSep (parallel dual-vec parsing with closing delimiter guard).
+//! multi-binder, Sep(Zip(Map)) (parallel dual-vec parsing with closing delimiter guard).
 //!
 //! Run with: cargo bench -p mettail-languages --bench bench_binders
 
@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use bench_common::{gen_chained_new, gen_multi_input, gen_nested_output, DEPTH_SIZES, SIZES};
 
-/// ZipMapSep sizes: smaller range since each element involves two parallel vectors.
-const ZIPMAPSEP_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32];
+/// Sep(Zip(Map)) sizes: smaller range since each element involves two parallel vectors.
+const SEP_ZIP_MAP_SIZES: &[usize] = &[1, 2, 4, 8, 16, 32];
 
 fn bench_single_chain(c: &mut Criterion) {
     let mut group = c.benchmark_group("binders/single_chain");
@@ -35,7 +35,7 @@ fn bench_single_chain(c: &mut Criterion) {
 
 fn bench_zipmapsep_width(c: &mut Criterion) {
     let mut group = c.benchmark_group("binders/zipmapsep_width");
-    for &n in ZIPMAPSEP_SIZES {
+    for &n in SEP_ZIP_MAP_SIZES {
         let input = gen_multi_input(n);
         group.throughput(Throughput::Elements(n as u64));
         group.bench_with_input(BenchmarkId::from_parameter(n), &input, |b, input| {

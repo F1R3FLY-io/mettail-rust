@@ -535,42 +535,78 @@ fn generate_simple_binder_case(
 
     let body_field = category_to_field_name(body_cat);
 
-    let scope_construction = if is_multi_binder {
+    if is_multi_binder {
+        // Multi-binder: generate both 1-binder and 2-binder scopes to test
+        // the Vec<Binder> path.
         quote! {
-            let scope = mettail_runtime::Scope::new(vec![binder], Box::new(body));
+            let current_binding_depth = self.vars.len() - self.initial_var_count;
+            let binder_name = format!("x{}", current_binding_depth);
+            let binder2_name = format!("y{}", current_binding_depth);
+            let mut extended_vars = self.vars.clone();
+            extended_vars.push(binder_name.clone());
+            extended_vars.push(binder2_name.clone());
+
+            let mut temp_ctx = GenerationContext::new_with_extended_vars(
+                extended_vars,
+                self.initial_var_count,
+                depth - 1,
+                self.max_collection_width
+            );
+            temp_ctx = temp_ctx.generate_all();
+
+            let mut bodies_with_binder = Vec::new();
+            for d in 0..depth {
+                if let Some(ts) = temp_ctx.#body_field.get(&d) {
+                    bodies_with_binder.extend(ts.clone());
+                }
+            }
+
+            for body in &bodies_with_binder {
+                // 1-binder scope
+                let binder_var = mettail_runtime::get_or_create_var(&binder_name);
+                let binder = mettail_runtime::Binder(binder_var);
+                let scope = mettail_runtime::Scope::new(vec![binder], Box::new(body.clone()));
+                terms.push(#cat_name::#label(scope));
+            }
+
+            for body in &bodies_with_binder {
+                // 2-binder scope
+                let binder_var = mettail_runtime::get_or_create_var(&binder_name);
+                let binder = mettail_runtime::Binder(binder_var);
+                let binder2_var = mettail_runtime::get_or_create_var(&binder2_name);
+                let binder2 = mettail_runtime::Binder(binder2_var);
+                let scope = mettail_runtime::Scope::new(vec![binder, binder2], Box::new(body.clone()));
+                terms.push(#cat_name::#label(scope));
+            }
         }
     } else {
         quote! {
-            let scope = mettail_runtime::Scope::new(binder, Box::new(body));
-        }
-    };
+            let current_binding_depth = self.vars.len() - self.initial_var_count;
+            let binder_name = format!("x{}", current_binding_depth);
+            let mut extended_vars = self.vars.clone();
+            extended_vars.push(binder_name.clone());
 
-    quote! {
-        let current_binding_depth = self.vars.len() - self.initial_var_count;
-        let binder_name = format!("x{}", current_binding_depth);
-        let mut extended_vars = self.vars.clone();
-        extended_vars.push(binder_name.clone());
+            let mut temp_ctx = GenerationContext::new_with_extended_vars(
+                extended_vars,
+                self.initial_var_count,
+                depth - 1,
+                self.max_collection_width
+            );
+            temp_ctx = temp_ctx.generate_all();
 
-        let mut temp_ctx = GenerationContext::new_with_extended_vars(
-            extended_vars,
-            self.initial_var_count,
-            depth - 1,
-            self.max_collection_width
-        );
-        temp_ctx = temp_ctx.generate_all();
-
-        let mut bodies_with_binder = Vec::new();
-        for d in 0..depth {
-            if let Some(ts) = temp_ctx.#body_field.get(&d) {
-                bodies_with_binder.extend(ts.clone());
+            let mut bodies_with_binder = Vec::new();
+            for d in 0..depth {
+                if let Some(ts) = temp_ctx.#body_field.get(&d) {
+                    bodies_with_binder.extend(ts.clone());
+                }
             }
-        }
 
-        for body in bodies_with_binder {
-            let binder_var = mettail_runtime::get_or_create_var(&binder_name);
-            let binder = mettail_runtime::Binder(binder_var);
-            #scope_construction
-            terms.push(#cat_name::#label(scope));
+            for body in bodies_with_binder {
+                let binder_var = mettail_runtime::get_or_create_var(&binder_name);
+                let binder = mettail_runtime::Binder(binder_var);
+                let scope = mettail_runtime::Scope::new(binder, Box::new(body));
+                terms.push(#cat_name::#label(scope));
+            }
         }
     }
 }

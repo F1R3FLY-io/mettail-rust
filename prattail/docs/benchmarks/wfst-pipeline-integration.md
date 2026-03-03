@@ -479,10 +479,12 @@ The always-on context-sensitive lex infrastructure has a measurable cost:
 3. **Bug 3 (dead code)**: ~2,000–4,000 lines of `parse_Cat_lazy()` functions, Lexer
    struct, LexerAdapter, composed dispatch runtime functions, and EXPECTED constants
    were emitted into every generated parser but never called by the standard `parse()`
-   path. Fixed by feature-gating all context-sensitive infrastructure behind
-   `context-sensitive-lex` Cargo feature. The composed dispatch **data** is still
-   computed (needed for deterministic dispatch), but the **runtime infrastructure**
-   is only emitted when the feature is enabled.
+   path. This was originally fixed by feature-gating all context-sensitive
+   infrastructure behind a `context-sensitive-lex` Cargo feature (now removed).
+   The composed dispatch **data** is still computed (needed for deterministic
+   dispatch). The runtime context-sensitive lexing infrastructure has since been
+   removed entirely as the always-on WFST architecture resolves all lexer
+   ambiguities at compile time.
 
 **Baseline**: The "Always-On CSL" column from the previous section (the broken state
 with all three bugs present). This is what the fix is compared against.
@@ -693,8 +695,9 @@ The composed dispatch fix successfully addresses all three bugs:
 1. **Pipeline overhead reduced by 13–30%** vs the broken always-on CSL state. The fixed
    pipeline now adds +6–13% over the original baseline (down from +25–57%).
 
-2. **Dead code eliminated**: Feature-gating lazy parsers behind `context-sensitive-lex`
-   removes ~2,000–4,000 lines of generated code from the standard path.
+2. **Dead code eliminated**: The lazy parser infrastructure (formerly gated behind
+   `context-sensitive-lex`, now removed) was eliminated, removing ~2,000-4,000
+   lines of generated code from the standard path.
 
 3. **Backtracking eliminated**: All ambiguous token dispatch is now deterministic via
    composed resolution maps. No `let saved = *pos` / `*pos = saved` in generated code.
@@ -707,9 +710,9 @@ The composed dispatch fix successfully addresses all three bugs:
    not all paths equally.
 
 5. **Recommendation**: The standard batch path (no features) is now the recommended
-   default. The `context-sensitive-lex` feature should only be enabled for grammars
-   that require incremental lexing or parser-driven token disambiguation. The `wfst`
-   feature remains beneficial for weighted dispatch ordering.
+   default. The `context-sensitive-lex` feature has been removed; the always-on WFST
+   architecture handles all lexer disambiguation at compile time. The `wfst-log`
+   feature remains available for probabilistic weight training.
 
 ---
 
@@ -719,8 +722,9 @@ The composed dispatch fix successfully addresses all three bugs:
 **Change**: `wfst` feature removed entirely -- all WFST-gated code is now always-on.
 Only `wfst-log` (training, forward-backward, n-best, LogWeight) remains feature-gated.
 The `DispatchStrategy` enum is deleted. All grammars get WFST-weighted dispatch.
-Six semirings are available: TropicalWeight, CountingWeight, BooleanWeight, EditWeight,
-and ProductWeight (always-on), plus LogWeight (`wfst-log` only).
+Ten semirings are available: TropicalWeight, CountingWeight, BooleanWeight, EditWeight,
+ProductWeight, ContextWeight, ComplexityWeight (always-on), plus LogWeight, EntropyWeight,
+and NbestWeight (`wfst-log` only).
 
 Four new semirings added: CountingWeight, BooleanWeight, EditWeight, ProductWeight.
 Dead-rule detection via boolean semiring projection. Generic `TokenLattice<T, S, W>`.
@@ -731,7 +735,7 @@ Dead-rule detection via boolean semiring projection. Generic `TokenLattice<T, S,
 |---------------|-------|--------|
 | No features | 644 | All pass |
 | `wfst-log` | 678 | All pass |
-| `context-sensitive-lex` | 585 | All pass |
+| `context-sensitive-lex` | N/A | Feature removed |
 | `--features wfst` | N/A | Feature removed (error: `none of the selected packages contains this feature`) |
 
 ### Verification Checks
@@ -933,7 +937,7 @@ benchmarks (2026-02-27). Sprint 5 was skipped (proven unsound). The optimization
 |---------------|-------|--------|
 | No features (default) | 645 | All pass |
 | `wfst-log` | 679 | All pass |
-| `context-sensitive-lex` | 646 | All pass |
+| `context-sensitive-lex` | N/A | Feature removed |
 
 ### Pipeline Generator: End-to-End (CPU 0)
 

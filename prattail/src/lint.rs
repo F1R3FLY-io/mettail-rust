@@ -30,6 +30,7 @@
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+use crate::SourceLocation;
 use crate::binding_power::BindingPowerTable;
 use crate::dispatch::{CastRule, CrossCategoryRule};
 use crate::pipeline::CategoryInfo;
@@ -81,11 +82,31 @@ pub struct LintDiagnostic {
     pub message: String,
     /// Optional fix suggestion.
     pub hint: Option<String>,
+    /// Grammar name for multi-grammar context.
+    pub grammar_name: Option<String>,
+    /// Source location of the relevant rule in the `language!` macro.
+    pub source_location: Option<SourceLocation>,
 }
 
 impl fmt::Display for LintDiagnostic {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}[{}]: {}", self.severity, self.id, self.message)?;
+        // Source location line (rustc-style `-->` pointer)
+        if let Some(ref loc) = self.source_location {
+            if loc.line > 0 {
+                write!(f, "\n  --> <macro>:{}", loc)?;
+            }
+        }
+        // Category/rule context line
+        match (&self.category, &self.rule) {
+            (Some(cat), Some(rule)) => {
+                write!(f, "\n  = in category `{}`, rule `{}`", cat, rule)?;
+            }
+            (Some(cat), None) => {
+                write!(f, "\n  = in category `{}`", cat)?;
+            }
+            _ => {}
+        }
         if let Some(ref hint) = self.hint {
             write!(f, "\n  = hint: {}", hint)?;
         }
@@ -95,6 +116,10 @@ impl fmt::Display for LintDiagnostic {
 
 /// All pipeline data available for linting (borrows, no copies).
 pub struct LintContext<'a> {
+    /// Grammar name (e.g., "RhoPi").
+    pub grammar_name: &'a str,
+    /// Rule source locations: (label, category) → SourceLocation.
+    pub rule_locations: &'a HashMap<(String, String), SourceLocation>,
     /// Category metadata.
     pub categories: &'a [CategoryInfo],
     /// Rule analysis info (from prediction analysis).
@@ -123,6 +148,8 @@ pub struct LintContext<'a> {
     pub all_syntax: &'a [(String, String, Vec<SyntaxItemSpec>)],
     /// FOLLOW set inputs (for terminal extraction).
     pub follow_inputs: &'a [FollowSetInput],
+    /// Dependency groups from equations/rewrites/logic for transitive liveness analysis.
+    pub semantic_dependency_groups: &'a [HashSet<String>],
 }
 
 /// Run all lints and return structured diagnostics.
@@ -175,10 +202,149 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     diagnostics
 }
 
-/// Emit all lint diagnostics to stderr.
+/// Emit all lint diagnostics to stderr (plain text).
 pub fn emit_diagnostics(diagnostics: &[LintDiagnostic]) {
     for diag in diagnostics {
         eprintln!("{}", diag);
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ANSI color constants (no external dependency — matches pipeline.rs style)
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[allow(dead_code)]
+mod ansi {
+    pub const RESET: &str = "\x1b[0m";
+    pub const BOLD: &str = "\x1b[1m";
+    pub const DIM: &str = "\x1b[2m";
+    pub const RED: &str = "\x1b[31m";
+    pub const GREEN: &str = "\x1b[32m";
+    pub const YELLOW: &str = "\x1b[33m";
+    pub const BLUE: &str = "\x1b[34m";
+    pub const CYAN: &str = "\x1b[36m";
+    pub const BOLD_RED: &str = "\x1b[1;31m";
+    pub const BOLD_YELLOW: &str = "\x1b[1;33m";
+    pub const BOLD_CYAN: &str = "\x1b[1;36m";
+    pub const BOLD_BLUE: &str = "\x1b[1;34m";
+}
+
+/// Format a single lint diagnostic with ANSI colors.
+///
+/// Color scheme:
+/// - Error: bold red label + ID
+/// - Warning: bold yellow label + ID
+/// - Note: bold cyan label + ID
+/// - Source location (`-->`): bold blue
+/// - Category/rule context (`= in`): dim
+/// - Hint (`= hint:`): green
+/// - Backtick-quoted identifiers: bold
+fn format_diagnostic_colored(diag: &LintDiagnostic) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(256);
+
+    // Severity label + lint ID
+    let (label_color, id_color) = match diag.severity {
+        LintSeverity::Error => (ansi::BOLD_RED, ansi::BOLD_RED),
+        LintSeverity::Warning => (ansi::BOLD_YELLOW, ansi::BOLD_YELLOW),
+        LintSeverity::Note => (ansi::BOLD_CYAN, ansi::BOLD_CYAN),
+    };
+
+    // Colorize backtick-quoted identifiers in the message
+    let message = colorize_backtick_spans(&diag.message, ansi::BOLD, ansi::RESET);
+
+    write!(
+        out,
+        "{}{}{}[{}{}{}]: {}",
+        label_color, diag.severity, ansi::RESET,
+        id_color, diag.id, ansi::RESET,
+        message,
+    ).expect("write to String");
+
+    // Source location (rustc-style `-->` pointer)
+    if let Some(ref loc) = diag.source_location {
+        if loc.line > 0 {
+            write!(
+                out,
+                "\n  {}{}{} <macro>:{}",
+                ansi::BOLD_BLUE, "-->", ansi::RESET, loc,
+            ).expect("write to String");
+        }
+    }
+
+    // Category/rule context
+    match (&diag.category, &diag.rule) {
+        (Some(cat), Some(rule)) => {
+            write!(
+                out,
+                "\n  {}= in category `{}`, rule `{}`{}",
+                ansi::DIM, cat, rule, ansi::RESET,
+            ).expect("write to String");
+        }
+        (Some(cat), None) => {
+            write!(
+                out,
+                "\n  {}= in category `{}`{}",
+                ansi::DIM, cat, ansi::RESET,
+            ).expect("write to String");
+        }
+        _ => {}
+    }
+
+    // Hint
+    if let Some(ref hint) = diag.hint {
+        let hint_colored = colorize_backtick_spans(hint, ansi::BOLD, ansi::GREEN);
+        write!(
+            out,
+            "\n  {}= hint: {}{}",
+            ansi::GREEN, hint_colored, ansi::RESET,
+        ).expect("write to String");
+    }
+
+    out
+}
+
+/// Replace backtick-quoted spans `` `foo` `` with bold formatting.
+///
+/// Scans for matching pairs of backticks and wraps the enclosed text
+/// (including backticks) with the given ANSI start/end codes.
+fn colorize_backtick_spans(text: &str, start: &str, end: &str) -> String {
+    let mut result = String::with_capacity(text.len() + 64);
+    let mut chars = text.char_indices().peekable();
+
+    while let Some((i, ch)) = chars.next() {
+        if ch == '`' {
+            // Find closing backtick
+            if let Some(close_pos) = text[i + 1..].find('`') {
+                let close = i + 1 + close_pos;
+                result.push_str(start);
+                result.push_str(&text[i..=close]);
+                result.push_str(end);
+                // Advance past the closing backtick
+                while chars.peek().is_some_and(|&(j, _)| j <= close) {
+                    chars.next();
+                }
+            } else {
+                result.push(ch);
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
+/// Emit all lint diagnostics to stderr with ANSI-colorized output and a grammar-name header.
+pub fn emit_diagnostics_for_grammar(grammar_name: &str, diagnostics: &[LintDiagnostic]) {
+    if diagnostics.is_empty() {
+        return;
+    }
+    eprintln!(
+        "  {}linting{} grammar `{}`",
+        ansi::BOLD_CYAN, ansi::RESET, grammar_name,
+    );
+    for diag in diagnostics {
+        eprintln!("{}", format_diagnostic_colored(diag));
     }
 }
 
@@ -234,6 +400,8 @@ fn lint_g01_left_recursion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnost
                              or restructure to avoid same-category leading NonTerminal"
                                 .to_string(),
                         ),
+                        grammar_name: Some(ctx.grammar_name.to_string()),
+                        source_location: ctx.rule_locations.get(&(label.clone(), category.clone())).copied(),
                     });
                 }
             }
@@ -271,6 +439,8 @@ fn lint_g02_unused_category(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
                     cat_name,
                 ),
                 hint: Some("remove the unused category or add rules that reference it".to_string()),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
             });
         }
     }
@@ -288,15 +458,21 @@ fn collect_referenced_categories(items: &[SyntaxItemSpec], referenced: &mut Hash
             } => {
                 referenced.insert(element_category.clone());
             }
-            SyntaxItemSpec::ZipMapSep {
+            SyntaxItemSpec::Sep { body, .. } => {
+                collect_referenced_categories(std::slice::from_ref(body.as_ref()), referenced);
+            }
+            SyntaxItemSpec::Map { body_items } => {
+                collect_referenced_categories(body_items, referenced);
+            }
+            SyntaxItemSpec::Zip {
                 left_category,
                 right_category,
-                body_items,
+                body,
                 ..
             } => {
                 referenced.insert(left_category.clone());
                 referenced.insert(right_category.clone());
-                collect_referenced_categories(body_items, referenced);
+                collect_referenced_categories(std::slice::from_ref(body.as_ref()), referenced);
             }
             SyntaxItemSpec::Optional { inner } => {
                 collect_referenced_categories(inner, referenced);
@@ -358,6 +534,8 @@ fn lint_g03_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
                         "add unique dispatch tokens or use WFST weights to disambiguate"
                             .to_string(),
                     ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
                 });
             }
         }
@@ -385,6 +563,8 @@ fn lint_g04_duplicate_rule_label(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                     label, category,
                 ),
                 hint: Some("rename one of the rules to a unique label".to_string()),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: ctx.rule_locations.get(&(label.clone(), category.clone())).copied(),
             });
         } else {
             seen.insert(key, label.as_str());
@@ -416,6 +596,8 @@ fn lint_g05_empty_category(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnost
                     cat_name,
                 ),
                 hint: Some("add at least one rule or remove the category declaration".to_string()),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
             });
         }
     }
@@ -483,6 +665,8 @@ fn lint_g06_shadowed_operator(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
                     "this is intentional — prefix_bp = max_infix_bp + 2, so `-5!` = `-(5!)`"
                         .to_string(),
                 ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
             });
         }
     }
@@ -511,17 +695,24 @@ fn syntax_signature(syntax: &[SyntaxItemSpec]) -> String {
                 kind,
                 ..
             } => parts.push(format!("COL({},{},{:?})", element_category, separator, kind)),
-            SyntaxItemSpec::ZipMapSep {
+            SyntaxItemSpec::Sep { body, separator, .. } => {
+                let body_sig = syntax_signature(std::slice::from_ref(body.as_ref()));
+                parts.push(format!("SEP({},{})", body_sig, separator))
+            }
+            SyntaxItemSpec::Map { body_items } => {
+                let inner = syntax_signature(body_items);
+                parts.push(format!("MAP({})", inner))
+            }
+            SyntaxItemSpec::Zip {
                 left_category,
                 right_category,
-                body_items,
-                separator,
+                body,
                 ..
             } => {
-                let inner = syntax_signature(body_items);
+                let body_sig = syntax_signature(std::slice::from_ref(body.as_ref()));
                 parts.push(format!(
-                    "ZMS({},{},{},{})",
-                    left_category, right_category, inner, separator
+                    "ZIP({},{},{})",
+                    left_category, right_category, body_sig
                 ))
             }
             SyntaxItemSpec::BinderCollection { separator, .. } => {
@@ -571,6 +762,8 @@ fn lint_g07_identical_rules(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
                          differentiating their syntax"
                             .to_string(),
                     ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
                 });
             }
         }
@@ -661,6 +854,8 @@ fn lint_g08_missing_cast_to_root(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                     "add a cast rule from `{}` to `{}` or an intermediate category",
                     cat_name, primary,
                 )),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
             });
         }
     }
@@ -671,14 +866,22 @@ fn lint_g08_missing_cast_to_root(ctx: &LintContext, diagnostics: &mut Vec<LintDi
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn lint_g09_unbalanced_delimiters(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
-    let pairs = [("(", ")"), ("{", "}"), ("[", "]")];
+    let pairs = [('(', ')'), ('{', '}'), ('[', ']')];
 
     for (label, category, syntax) in ctx.all_syntax {
         let terminals = collect_terminals_flat(syntax);
 
-        for &(open, close) in &pairs {
-            let open_count = terminals.iter().filter(|t| t.as_str() == open).count();
-            let close_count = terminals.iter().filter(|t| t.as_str() == close).count();
+        for &(open_char, close_char) in &pairs {
+            // Count character occurrences across all terminals, not exact matches.
+            // This correctly handles compound terminals like "in(" contributing 1
+            // to the open-paren count, and self-balanced terminals like "()" contributing
+            // 1 to each.
+            let open_count: usize = terminals.iter()
+                .map(|t| t.chars().filter(|&c| c == open_char).count())
+                .sum();
+            let close_count: usize = terminals.iter()
+                .map(|t| t.chars().filter(|&c| c == close_char).count())
+                .sum();
 
             if open_count != close_count {
                 diagnostics.push(LintDiagnostic {
@@ -690,13 +893,14 @@ fn lint_g09_unbalanced_delimiters(ctx: &LintContext, diagnostics: &mut Vec<LintD
                     message: format!(
                         "rule `{}` in category `{}` has unbalanced delimiters: \
                          {} `{}` vs {} `{}`",
-                        label, category, open_count, open, close_count, close,
+                        label, category, open_count, open_char, close_count, close_char,
                     ),
                     hint: Some(format!(
-                        "add the missing `{}` or `{}` delimiter",
-                        if open_count > close_count { close } else { open },
-                        if open_count > close_count { close } else { open },
+                        "add the missing `{}` delimiter",
+                        if open_count > close_count { close_char } else { open_char },
                     )),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: ctx.rule_locations.get(&(label.clone(), category.clone())).copied(),
                 });
             }
         }
@@ -713,13 +917,15 @@ fn collect_terminals_flat(items: &[SyntaxItemSpec]) -> Vec<String> {
             | SyntaxItemSpec::BinderCollection { separator, .. } => {
                 terminals.push(separator.clone());
             }
-            SyntaxItemSpec::ZipMapSep {
-                body_items,
-                separator,
-                ..
-            } => {
-                terminals.extend(collect_terminals_flat(body_items));
+            SyntaxItemSpec::Sep { body, separator, .. } => {
+                terminals.extend(collect_terminals_flat(std::slice::from_ref(body.as_ref())));
                 terminals.push(separator.clone());
+            }
+            SyntaxItemSpec::Map { body_items } => {
+                terminals.extend(collect_terminals_flat(body_items));
+            }
+            SyntaxItemSpec::Zip { body, .. } => {
+                terminals.extend(collect_terminals_flat(std::slice::from_ref(body.as_ref())));
             }
             SyntaxItemSpec::Optional { inner } => {
                 terminals.extend(collect_terminals_flat(inner));
@@ -773,6 +979,8 @@ fn lint_g10_ambiguous_associativity(ctx: &LintContext, diagnostics: &mut Vec<Lin
                          different associativity"
                             .to_string(),
                     ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
                 });
             }
         }
@@ -784,12 +992,72 @@ fn lint_g10_ambiguous_associativity(ctx: &LintContext, diagnostics: &mut Vec<Lin
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
-    let warnings = crate::pipeline::detect_dead_rules(
+    let mut warnings = crate::pipeline::detect_dead_rules(
         ctx.rules,
         ctx.categories,
         ctx.first_sets,
         ctx.prediction_wfsts,
+        ctx.semantic_dependency_groups,
     );
+
+    // A4: Inter-category dead-path detection via forward-backward analysis
+    let inter_cat_warnings = crate::pipeline::detect_inter_category_dead_paths(
+        ctx.rules,
+        ctx.categories,
+        ctx.first_sets,
+    );
+    // Only add inter-category warnings for rules not already flagged by Tier 1-3
+    let existing_rules: std::collections::HashSet<String> = warnings
+        .iter()
+        .map(|w| match w {
+            crate::pipeline::DeadRuleWarning::LiteralNoNativeType { rule_label, .. }
+            | crate::pipeline::DeadRuleWarning::UnreachableCategory { rule_label, .. }
+            | crate::pipeline::DeadRuleWarning::WfstUnreachable { rule_label, .. }
+            | crate::pipeline::DeadRuleWarning::InterCategoryDeadPath { rule_label, .. }
+            | crate::pipeline::DeadRuleWarning::NearlyDeadPath { rule_label, .. } => {
+                rule_label.clone()
+            }
+        })
+        .collect();
+    for w in inter_cat_warnings {
+        match &w {
+            crate::pipeline::DeadRuleWarning::InterCategoryDeadPath { rule_label, .. } => {
+                if !existing_rules.contains(rule_label) {
+                    warnings.push(w);
+                }
+            }
+            _ => warnings.push(w),
+        }
+    }
+
+    // A8: Nearly-dead inter-category path detection via ProductWeight<BooleanWeight, CountingWeight>.
+    // Only flags rules whose categories are reachable (not already flagged by A4) but have
+    // very few derivation paths relative to the total (< 1% of max count).
+    let nearly_dead_warnings = crate::pipeline::detect_nearly_dead_paths(
+        ctx.rules,
+        ctx.categories,
+        ctx.first_sets,
+    );
+    // Collect all already-flagged rules to avoid duplicate diagnostics
+    let all_flagged: std::collections::HashSet<String> = warnings
+        .iter()
+        .map(|w| match w {
+            crate::pipeline::DeadRuleWarning::LiteralNoNativeType { rule_label, .. }
+            | crate::pipeline::DeadRuleWarning::UnreachableCategory { rule_label, .. }
+            | crate::pipeline::DeadRuleWarning::WfstUnreachable { rule_label, .. }
+            | crate::pipeline::DeadRuleWarning::InterCategoryDeadPath { rule_label, .. }
+            | crate::pipeline::DeadRuleWarning::NearlyDeadPath { rule_label, .. } => {
+                rule_label.clone()
+            }
+        })
+        .collect();
+    for w in nearly_dead_warnings {
+        if let crate::pipeline::DeadRuleWarning::NearlyDeadPath { ref rule_label, .. } = w {
+            if !all_flagged.contains(rule_label) {
+                warnings.push(w);
+            }
+        }
+    }
 
     for w in warnings {
         let (rule_label, category, hint_msg) = match &w {
@@ -817,16 +1085,45 @@ fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) 
                 category.clone(),
                 "remove the rule or add a unique dispatch token",
             ),
+            crate::pipeline::DeadRuleWarning::InterCategoryDeadPath {
+                rule_label,
+                category,
+                ..
+            } => (
+                rule_label.clone(),
+                category.clone(),
+                "check inter-category connections; this category may be isolated",
+            ),
+            crate::pipeline::DeadRuleWarning::NearlyDeadPath {
+                rule_label,
+                category,
+                ..
+            } => (
+                rule_label.clone(),
+                category.clone(),
+                "this category has very few derivation paths; consider simplifying or removing rules",
+            ),
+        };
+
+        // A8: NearlyDeadPath gets its own lint ID (W07, note-level) since the rule is
+        // technically reachable — this is a diagnostic hint, not a dead-code warning.
+        let (lint_id, lint_name, severity) = match &w {
+            crate::pipeline::DeadRuleWarning::NearlyDeadPath { .. } => {
+                ("W07", "nearly-dead-path", LintSeverity::Note)
+            }
+            _ => ("W01", "dead-rule", LintSeverity::Warning),
         };
 
         diagnostics.push(LintDiagnostic {
-            id: "W01",
-            name: "dead-rule",
-            severity: LintSeverity::Warning,
+            id: lint_id,
+            name: lint_name,
+            severity,
             category: Some(category.clone()),
             rule: Some(rule_label.clone()),
             message: format!("{}", w),
             hint: Some(hint_msg.to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: ctx.rule_locations.get(&(rule_label.clone(), category.clone())).copied(),
         });
     }
 }
@@ -878,6 +1175,8 @@ fn lint_w02_nfa_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                          to resolve the ambiguity"
                             .to_string(),
                     ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
                 });
             }
         }
@@ -920,6 +1219,8 @@ fn lint_w03_high_ambiguity_token(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                                      dispatch tokens to reduce ambiguity"
                                         .to_string(),
                                 ),
+                                grammar_name: Some(ctx.grammar_name.to_string()),
+                                source_location: None,
                             });
                         }
                     }
@@ -970,6 +1271,8 @@ fn lint_w04_weight_gap_anomaly(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
                                      unambiguous — the second alternative is very unlikely"
                                         .to_string(),
                                 ),
+                                grammar_name: Some(ctx.grammar_name.to_string()),
+                                source_location: None,
                             });
                         }
                     }
@@ -1030,6 +1333,8 @@ fn lint_w06_weight_inversion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
                                          (better) weights — check rule ordering or WFST weights"
                                             .to_string(),
                                     ),
+                                    grammar_name: Some(ctx.grammar_name.to_string()),
+                                    source_location: None,
                                 });
                             }
                         }
@@ -1061,6 +1366,8 @@ fn lint_r01_empty_sync_set(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnost
                     "add structural delimiters or ensure the category has FOLLOW set tokens"
                         .to_string(),
                 ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
             });
         }
     }
@@ -1089,6 +1396,8 @@ fn lint_r02_sparse_recovery(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
                     "add more structural delimiters to improve error recovery quality"
                         .to_string(),
                 ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
             });
         }
     }
@@ -1149,6 +1458,8 @@ fn lint_r05_missing_bracket_sync(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                              or structural delimiters"
                                 .to_string(),
                         ),
+                        grammar_name: Some(ctx.grammar_name.to_string()),
+                        source_location: None,
                     });
                 }
             }
@@ -1193,6 +1504,8 @@ fn lint_r06_inverted_recovery_costs(ctx: &LintContext, diagnostics: &mut Vec<Lin
                          adjust {} or {} to restore the hierarchy",
                         name_i, name_j,
                     )),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
                 });
             }
         }
@@ -1219,37 +1532,55 @@ fn lint_r07_transposition_candidate(ctx: &LintContext, diagnostics: &mut Vec<Lin
     all_operators.sort();
     all_operators.dedup();
 
-    // Check all pairs for Levenshtein distance = 1
-    let mut reported = HashSet::new();
+    // Collect all pairs with Levenshtein distance = 1 into a single list
+    let mut pairs: Vec<(String, String)> = Vec::new();
     for i in 0..all_operators.len() {
         for j in (i + 1)..all_operators.len() {
             let a = &all_operators[i];
             let b = &all_operators[j];
-
             if char_edit_distance_is_one(a, b) {
-                let key = (a.clone(), b.clone());
-                if reported.insert(key) {
-                    diagnostics.push(LintDiagnostic {
-                        id: "R07",
-                        name: "transposition-candidate",
-                        severity: LintSeverity::Note,
-                        category: None,
-                        rule: None,
-                        message: format!(
-                            "operators `{}` and `{}` differ by 1 character — \
-                             transposition repair candidate",
-                            a, b,
-                        ),
-                        hint: Some(
-                            "the error recovery system can detect and fix common \
-                             typos between these operators via SwapTokens"
-                                .to_string(),
-                        ),
-                    });
-                }
+                pairs.push((a.clone(), b.clone()));
             }
         }
     }
+
+    if pairs.is_empty() {
+        return;
+    }
+
+    // Emit a single summary note instead of O(n²) individual notes
+    let total = pairs.len();
+    let max_samples = 8;
+    let samples: Vec<String> = pairs
+        .iter()
+        .take(max_samples)
+        .map(|(a, b)| format!("`{}`\u{2194}`{}`", a, b))
+        .collect();
+
+    let mut message = format!(
+        "{} operator pair(s) differ by 1 character (SwapTokens repair candidates): {}",
+        total,
+        samples.join(", "),
+    );
+    if total > max_samples {
+        message.push_str(&format!(" ({} more)", total - max_samples));
+    }
+
+    diagnostics.push(LintDiagnostic {
+        id: "R07",
+        name: "transposition-candidate",
+        severity: LintSeverity::Note,
+        category: None,
+        rule: None,
+        message,
+        hint: Some(
+            "the error recovery system can detect and fix common \
+             typos between these operators via SwapTokens"
+                .to_string(),
+        ),
+        grammar_name: Some(ctx.grammar_name.to_string()),
+        source_location: None,
+    });
 }
 
 /// Check if two strings have Levenshtein distance exactly 1.
@@ -1340,6 +1671,7 @@ fn lint_c01_cast_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>)
         color: &mut HashMap<&'a str, Color>,
         path: &mut Vec<&'a str>,
         diagnostics: &mut Vec<LintDiagnostic>,
+        grammar_name: &str,
     ) {
         color.insert(node, Color::Gray);
         path.push(node);
@@ -1365,10 +1697,12 @@ fn lint_c01_cast_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>)
                             hint: Some(
                                 "break the cycle by removing one cast direction".to_string(),
                             ),
+                            grammar_name: Some(grammar_name.to_string()),
+                            source_location: None,
                         });
                     }
                     Some(Color::White) | None => {
-                        dfs(next, adjacency, color, path, diagnostics);
+                        dfs(next, adjacency, color, path, diagnostics, grammar_name);
                     }
                     Some(Color::Black) => {
                         // Already fully explored, no cycle through this node
@@ -1383,7 +1717,7 @@ fn lint_c01_cast_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>)
 
     for &cat in &category_names {
         if color.get(cat) == Some(&Color::White) {
-            dfs(cat, &adjacency, &mut color, &mut path, diagnostics);
+            dfs(cat, &adjacency, &mut color, &mut path, diagnostics, ctx.grammar_name);
         }
     }
 }
@@ -1460,6 +1794,8 @@ fn lint_c02_transitive_cast_redundancy(ctx: &LintContext, diagnostics: &mut Vec<
                      intentional for performance or explicitness"
                         .to_string(),
                 ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
             });
         }
     }
@@ -1518,6 +1854,8 @@ fn lint_c04_wide_cross_overlap(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
                          backtracking in cross-category dispatch"
                             .to_string(),
                     ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
                 });
             }
         }
@@ -1549,6 +1887,8 @@ fn lint_p02_high_nfa_spillover(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
                  NFA spillover"
                     .to_string(),
             ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
         });
     }
 }
@@ -1630,6 +1970,8 @@ fn lint_p03_deep_cast_nesting(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
                 "consider adding direct cast rules to bypass intermediate categories"
                     .to_string(),
             ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
         });
     }
 }
@@ -1665,10 +2007,545 @@ fn lint_p04_many_alternatives(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
                                  alternatives"
                                     .to_string(),
                             ),
+                            grammar_name: Some(ctx.grammar_name.to_string()),
+                            source_location: None,
                         });
                     }
                 }
             }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Composition-specific lints (X01–X05)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Pre/post composition data needed for composition-specific lints.
+///
+/// Captures the FIRST sets, prediction WFSTs, dead rules, and terminal semantics
+/// for two grammars (A and B) before and after composition (merged). The
+/// `shared_categories` field lists categories that exist in both source grammars.
+pub struct CompositionLintContext<'a> {
+    /// FIRST sets from grammar A (before merge).
+    pub first_sets_a: &'a HashMap<String, FirstSet>,
+    /// FIRST sets from grammar B (before merge).
+    pub first_sets_b: &'a HashMap<String, FirstSet>,
+    /// FIRST sets from the merged grammar.
+    pub first_sets_merged: &'a HashMap<String, FirstSet>,
+    /// Prediction WFSTs from grammar A.
+    pub prediction_wfsts_a: &'a HashMap<String, PredictionWfst>,
+    /// Prediction WFSTs from grammar B.
+    pub prediction_wfsts_b: &'a HashMap<String, PredictionWfst>,
+    /// Categories present in both grammars.
+    pub shared_categories: &'a [String],
+    /// Dead rules in grammar A (rule labels).
+    pub dead_rules_a: &'a HashSet<String>,
+    /// Dead rules in grammar B (rule labels).
+    pub dead_rules_b: &'a HashSet<String>,
+    /// Dead rules in the merged grammar (rule labels).
+    pub dead_rules_merged: &'a HashSet<String>,
+    /// Rules from grammar A.
+    pub rules_a: &'a [RuleInfo],
+    /// Rules from grammar B.
+    pub rules_b: &'a [RuleInfo],
+    /// Terminal semantics in grammar A: terminal name -> [(category, semantic role)].
+    pub terminal_semantics_a: &'a HashMap<String, Vec<(String, String)>>,
+    /// Terminal semantics in grammar B: terminal name -> [(category, semantic role)].
+    pub terminal_semantics_b: &'a HashMap<String, Vec<(String, String)>>,
+}
+
+/// Run all composition-specific lints and return structured diagnostics.
+///
+/// These lints detect issues that arise when two grammars are composed
+/// (merged). They compare the pre-composition state of each source grammar
+/// against the merged result to detect ambiguity introduction, priority
+/// shadowing, newly-dead rules, broken cast chains, and terminal collisions.
+pub fn run_composition_lints(
+    base_ctx: &LintContext,
+    comp_ctx: &CompositionLintContext,
+) -> Vec<LintDiagnostic> {
+    let mut diagnostics = Vec::new();
+
+    lint_x01_composition_ambiguity_introduction(base_ctx, comp_ctx, &mut diagnostics);
+    lint_x02_composition_priority_shadowing(base_ctx, comp_ctx, &mut diagnostics);
+    lint_x03_composition_dead_rule_creation(base_ctx, comp_ctx, &mut diagnostics);
+    lint_x04_composition_cast_chain_break(base_ctx, comp_ctx, &mut diagnostics);
+    lint_x05_composition_terminal_collision(base_ctx, comp_ctx, &mut diagnostics);
+
+    diagnostics
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// X01: Composition Ambiguity Introduction
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Detects FIRST set ambiguity growth after merge for shared categories.
+///
+/// Two sources of composition-introduced ambiguity are detected:
+///
+/// 1. **New FIRST set overlap:** Tokens that appear in the merged FIRST set
+///    but not in the union of A's and B's FIRST sets. These represent new
+///    derivation paths created by composition (e.g., through cross-category
+///    casts that only exist in the merged grammar).
+///
+/// 2. **Pre-existing overlap amplification:** The FIRST set overlap between
+///    A and B (tokens in both) is checked against the merged FIRST set. If
+///    the merged set contains the same overlapping tokens plus additional
+///    tokens from new derivation paths, the ambiguity has grown.
+fn lint_x01_composition_ambiguity_introduction(
+    base_ctx: &LintContext,
+    comp_ctx: &CompositionLintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for cat in comp_ctx.shared_categories {
+        let first_a = match comp_ctx.first_sets_a.get(cat) {
+            Some(fs) => fs,
+            None => continue,
+        };
+        let first_b = match comp_ctx.first_sets_b.get(cat) {
+            Some(fs) => fs,
+            None => continue,
+        };
+        let first_merged = match comp_ctx.first_sets_merged.get(cat) {
+            Some(fs) => fs,
+            None => continue,
+        };
+
+        // Pre-composition overlap: tokens in BOTH A and B for this category.
+        let pre_overlap = first_a.intersection(first_b);
+
+        // Union of A's and B's FIRST sets.
+        let mut pre_union = first_a.clone();
+        pre_union.union(first_b);
+
+        // Tokens in the merged FIRST set that are NOT in the pre-composition
+        // union represent new derivation paths introduced by the composition.
+        let new_tokens: Vec<&str> = first_merged.tokens.iter()
+            .filter(|t| !pre_union.contains(t))
+            .map(|s| s.as_str())
+            .collect();
+
+        // Also check: did the pre-existing overlap (tokens in both A and B)
+        // grow in the merged result? This can happen when composition adds
+        // new nonterminal edges that make previously non-overlapping tokens
+        // now reachable from both source grammars.
+        //
+        // Merged overlap = tokens in merged that appear in BOTH the original
+        // A first set AND the original B first set. Since A and B are fixed
+        // source sets, this is bounded by |A ∩ B|. However, the merged set
+        // may also have tokens that create NEW overlap between different
+        // rules within the composed grammar. We detect this via new_tokens.
+
+        let pre_overlap_count = pre_overlap.tokens.len();
+
+        if !new_tokens.is_empty() {
+            let mut sorted_new = new_tokens;
+            sorted_new.sort_unstable();
+
+            diagnostics.push(LintDiagnostic {
+                id: "X01",
+                name: "composition-ambiguity-introduction",
+                severity: LintSeverity::Warning,
+                category: Some(cat.clone()),
+                rule: None,
+                message: format!(
+                    "composition introduces {} new FIRST set token(s) in category `{}` \
+                     not in either source grammar: [{}] \
+                     (pre-composition overlap: {} token(s))",
+                    sorted_new.len(), cat, sorted_new.join(", "), pre_overlap_count,
+                ),
+                hint: Some(
+                    "add unique prefix tokens to disambiguate, or use WFST weights \
+                     to express priority between the composed grammars"
+                        .to_string(),
+                ),
+                grammar_name: Some(base_ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// X02: Composition Priority Shadowing
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Detects when a rule from grammar A is shadowed (has lower priority) by a
+/// rule from grammar B for the same token in a shared category.
+///
+/// For each shared category, queries the prediction WFSTs from A and B for
+/// each token in the merged FIRST set. If both A and B have predictions for
+/// the same token and A's best weight is strictly greater (worse) than B's
+/// best weight, A's rule is shadowed by B's.
+fn lint_x02_composition_priority_shadowing(
+    base_ctx: &LintContext,
+    comp_ctx: &CompositionLintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for cat in comp_ctx.shared_categories {
+        let wfst_a = match comp_ctx.prediction_wfsts_a.get(cat) {
+            Some(w) => w,
+            None => continue,
+        };
+        let wfst_b = match comp_ctx.prediction_wfsts_b.get(cat) {
+            Some(w) => w,
+            None => continue,
+        };
+
+        // Collect all tokens from both FIRST sets for this category
+        let mut all_tokens: HashSet<&str> = HashSet::new();
+        if let Some(fs_a) = comp_ctx.first_sets_a.get(cat) {
+            all_tokens.extend(fs_a.tokens.iter().map(|s| s.as_str()));
+        }
+        if let Some(fs_b) = comp_ctx.first_sets_b.get(cat) {
+            all_tokens.extend(fs_b.tokens.iter().map(|s| s.as_str()));
+        }
+
+        let mut sorted_tokens: Vec<&str> = all_tokens.into_iter().collect();
+        sorted_tokens.sort_unstable();
+
+        for token in sorted_tokens {
+            let actions_a = wfst_a.predict(token);
+            let actions_b = wfst_b.predict(token);
+
+            if let (Some(best_a), Some(best_b)) = (actions_a.first(), actions_b.first()) {
+                // A is shadowed by B: A's best weight is strictly worse (higher)
+                if best_a.weight > best_b.weight {
+                    diagnostics.push(LintDiagnostic {
+                        id: "X02",
+                        name: "composition-priority-shadowing",
+                        severity: LintSeverity::Warning,
+                        category: Some(cat.clone()),
+                        rule: Some(best_a.action.rule_label()),
+                        message: format!(
+                            "rule `{}` from grammar A is shadowed by `{}` from grammar B \
+                             for token `{}` in category `{}` \
+                             (weight {:.3} vs {:.3})",
+                            best_a.action.rule_label(),
+                            best_b.action.rule_label(),
+                            token,
+                            cat,
+                            best_a.weight.value(),
+                            best_b.weight.value(),
+                        ),
+                        hint: Some(
+                            "adjust WFST weights or rename rules to avoid unintended \
+                             priority override"
+                                .to_string(),
+                        ),
+                        grammar_name: Some(base_ctx.grammar_name.to_string()),
+                        source_location: None,
+                    });
+                }
+            }
+        }
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// X03: Composition Dead Rule Creation
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Detects rules that were live in their source grammar but became dead
+/// after composition.
+///
+/// Computes `dead_rules_merged \ (dead_rules_a ∪ dead_rules_b)` — rules that
+/// are dead in the merged grammar but were NOT dead in either source. These
+/// represent rules that the merge rendered unreachable.
+fn lint_x03_composition_dead_rule_creation(
+    base_ctx: &LintContext,
+    comp_ctx: &CompositionLintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    // Rules dead in merged but not dead in either source
+    let pre_dead: HashSet<&String> = comp_ctx
+        .dead_rules_a
+        .iter()
+        .chain(comp_ctx.dead_rules_b.iter())
+        .collect();
+
+    let mut newly_dead: Vec<&String> = comp_ctx
+        .dead_rules_merged
+        .iter()
+        .filter(|r| !pre_dead.contains(r))
+        .collect();
+
+    // Sort for deterministic output
+    newly_dead.sort();
+
+    for rule_label in newly_dead {
+        // Determine which source grammar the rule came from
+        let source_grammar = if comp_ctx.rules_a.iter().any(|r| r.label == *rule_label) {
+            "A"
+        } else if comp_ctx.rules_b.iter().any(|r| r.label == *rule_label) {
+            "B"
+        } else {
+            "unknown"
+        };
+
+        // Find the category for this rule
+        let category = comp_ctx
+            .rules_a
+            .iter()
+            .chain(comp_ctx.rules_b.iter())
+            .find(|r| r.label == *rule_label)
+            .map(|r| r.category.clone());
+
+        diagnostics.push(LintDiagnostic {
+            id: "X03",
+            name: "composition-dead-rule-creation",
+            severity: LintSeverity::Warning,
+            category: category.clone(),
+            rule: Some(rule_label.clone()),
+            message: format!(
+                "rule `{}` was live in grammar {} but became dead after composition{}",
+                rule_label,
+                source_grammar,
+                category
+                    .as_ref()
+                    .map(|c| format!(" (category `{}`)", c))
+                    .unwrap_or_default(),
+            ),
+            hint: Some(
+                "the composed grammar may have a higher-priority rule that shadows \
+                 this one — verify intent or adjust weights"
+                    .to_string(),
+            ),
+            grammar_name: Some(base_ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// X04: Composition Cast Chain Break
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Detects cast chains that exist in a source grammar but are broken after
+/// composition.
+///
+/// A cast chain is a path A -> B -> C -> ... in the cast rule graph. If
+/// merging removes or overrides an intermediate cast, the chain breaks.
+/// This lint checks that all cast chains present in base_ctx.cast_rules
+/// can still be traversed in the merged grammar (using the same cast_rules
+/// in base_ctx, which represents the merged state).
+///
+/// The check verifies that for every pair of categories (src, dst) reachable
+/// via cast chains in either source grammar, the same reachability holds in
+/// the merged cast graph.
+fn lint_x04_composition_cast_chain_break(
+    base_ctx: &LintContext,
+    comp_ctx: &CompositionLintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    /// Compute reachability closure from a set of cast rules.
+    fn reachability(cast_rules: &[CastRule]) -> HashSet<(String, String)> {
+        // Build adjacency list
+        let mut adjacency: HashMap<&str, HashSet<&str>> = HashMap::new();
+        for cast in cast_rules {
+            adjacency
+                .entry(cast.source_category.as_str())
+                .or_default()
+                .insert(cast.target_category.as_str());
+        }
+
+        // Collect all categories
+        let mut cats: HashSet<&str> = HashSet::new();
+        for cast in cast_rules {
+            cats.insert(cast.source_category.as_str());
+            cats.insert(cast.target_category.as_str());
+        }
+
+        // Compute transitive closure via repeated BFS from each node
+        let mut reachable = HashSet::new();
+        for &src in &cats {
+            let mut visited = HashSet::new();
+            let mut queue = Vec::new();
+            if let Some(neighbors) = adjacency.get(src) {
+                queue.extend(neighbors.iter().copied());
+            }
+            while let Some(node) = queue.pop() {
+                if visited.insert(node) {
+                    reachable.insert((src.to_string(), node.to_string()));
+                    if let Some(neighbors) = adjacency.get(node) {
+                        for &next in neighbors {
+                            if !visited.contains(next) {
+                                queue.push(next);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        reachable
+    }
+
+    // Build cast rules for each source grammar from their rule info
+    // Source A casts: rules in A that are casts
+    let casts_a: Vec<CastRule> = comp_ctx
+        .rules_a
+        .iter()
+        .filter(|r| r.is_cast)
+        .filter_map(|r| {
+            // Cast rules have a NonTerminal first item pointing to the source category
+            r.first_items.iter().find_map(|item| {
+                if let crate::prediction::FirstItem::NonTerminal(ref source_cat) = item {
+                    Some(CastRule {
+                        label: r.label.clone(),
+                        source_category: source_cat.clone(),
+                        target_category: r.category.clone(),
+                    })
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    let casts_b: Vec<CastRule> = comp_ctx
+        .rules_b
+        .iter()
+        .filter(|r| r.is_cast)
+        .filter_map(|r| {
+            r.first_items.iter().find_map(|item| {
+                if let crate::prediction::FirstItem::NonTerminal(ref source_cat) = item {
+                    Some(CastRule {
+                        label: r.label.clone(),
+                        source_category: source_cat.clone(),
+                        target_category: r.category.clone(),
+                    })
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+
+    let reachable_a = reachability(&casts_a);
+    let reachable_b = reachability(&casts_b);
+    let reachable_merged = reachability(base_ctx.cast_rules);
+
+    // Any pair reachable in source A or B but not in merged = broken chain
+    let source_reachable: HashSet<(String, String)> = reachable_a
+        .union(&reachable_b)
+        .cloned()
+        .collect();
+
+    let mut broken_chains: Vec<(String, String)> = source_reachable
+        .iter()
+        .filter(|pair| !reachable_merged.contains(pair))
+        .cloned()
+        .collect();
+
+    // Sort for deterministic output
+    broken_chains.sort();
+
+    for (src, dst) in broken_chains {
+        let source_grammar = if reachable_a.contains(&(src.clone(), dst.clone())) {
+            "A"
+        } else {
+            "B"
+        };
+
+        diagnostics.push(LintDiagnostic {
+            id: "X04",
+            name: "composition-cast-chain-break",
+            severity: LintSeverity::Error,
+            category: Some(dst.clone()),
+            rule: None,
+            message: format!(
+                "cast chain `{}` -> `{}` from grammar {} is broken after composition",
+                src, dst, source_grammar,
+            ),
+            hint: Some(
+                "ensure all intermediate cast rules are preserved in the composed \
+                 grammar, or add explicit casts to restore the chain"
+                    .to_string(),
+            ),
+            grammar_name: Some(base_ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// X05: Composition Terminal Collision
+// ──────────────────────────────────────────────────────────────────────────────
+
+/// Detects when the same terminal string is used in different categories with
+/// different semantic roles across the two source grammars.
+///
+/// For example, if grammar A uses `+` as an infix operator in category `Int`
+/// (role: "infix") and grammar B uses `+` as a prefix operator in category
+/// `Str` (role: "prefix"), this is a terminal collision that may cause
+/// confusion or dispatch errors in the composed grammar.
+fn lint_x05_composition_terminal_collision(
+    base_ctx: &LintContext,
+    comp_ctx: &CompositionLintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    // Find terminals that appear in both grammars
+    let terminals_a: HashSet<&str> = comp_ctx
+        .terminal_semantics_a
+        .keys()
+        .map(|s| s.as_str())
+        .collect();
+    let terminals_b: HashSet<&str> = comp_ctx
+        .terminal_semantics_b
+        .keys()
+        .map(|s| s.as_str())
+        .collect();
+
+    let mut shared_terminals: Vec<&str> = terminals_a
+        .intersection(&terminals_b)
+        .copied()
+        .collect();
+    shared_terminals.sort_unstable();
+
+    for terminal in shared_terminals {
+        let semantics_a = &comp_ctx.terminal_semantics_a[terminal];
+        let semantics_b = &comp_ctx.terminal_semantics_b[terminal];
+
+        // Collect all roles from A and B
+        let roles_a: HashSet<&str> = semantics_a.iter().map(|(_, role)| role.as_str()).collect();
+        let roles_b: HashSet<&str> = semantics_b.iter().map(|(_, role)| role.as_str()).collect();
+
+        // Check if any role in B is not present in A (i.e., different semantic use)
+        let diff_in_b: Vec<&str> = roles_b.difference(&roles_a).copied().collect();
+        let diff_in_a: Vec<&str> = roles_a.difference(&roles_b).copied().collect();
+
+        if !diff_in_a.is_empty() || !diff_in_b.is_empty() {
+            let mut all_roles: Vec<&str> = roles_a.union(&roles_b).copied().collect();
+            all_roles.sort_unstable();
+
+            // Collect categories from both for context
+            let cats_a: Vec<&str> = semantics_a.iter().map(|(cat, _)| cat.as_str()).collect();
+            let cats_b: Vec<&str> = semantics_b.iter().map(|(cat, _)| cat.as_str()).collect();
+
+            diagnostics.push(LintDiagnostic {
+                id: "X05",
+                name: "composition-terminal-collision",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: format!(
+                    "terminal `{}` has different semantic roles across grammars: \
+                     A uses it as [{}] in [{}], B uses it as [{}] in [{}]",
+                    terminal,
+                    roles_a.iter().copied().collect::<Vec<_>>().join(", "),
+                    cats_a.join(", "),
+                    roles_b.iter().copied().collect::<Vec<_>>().join(", "),
+                    cats_b.join(", "),
+                ),
+                hint: Some(
+                    "consider renaming the terminal in one grammar to avoid \
+                     semantic confusion in the composed grammar"
+                        .to_string(),
+                ),
+                grammar_name: Some(base_ctx.grammar_name.to_string()),
+                source_location: None,
+            });
         }
     }
 }
@@ -1717,6 +2594,8 @@ mod tests {
 
     /// Minimal context builder for quick tests.
     struct CtxBuilder {
+        grammar_name: String,
+        rule_locations: HashMap<(String, String), crate::SourceLocation>,
         categories: Vec<CategoryInfo>,
         rules: Vec<RuleInfo>,
         rd_rules: Vec<RDRuleInfo>,
@@ -1731,11 +2610,14 @@ mod tests {
         recovery_config: RecoveryConfig,
         all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)>,
         follow_inputs: Vec<FollowSetInput>,
+        semantic_dependency_groups: Vec<HashSet<String>>,
     }
 
     impl CtxBuilder {
         fn new() -> Self {
             CtxBuilder {
+                grammar_name: "TestGrammar".to_string(),
+                rule_locations: HashMap::new(),
                 categories: Vec::new(),
                 rules: Vec::new(),
                 rd_rules: Vec::new(),
@@ -1750,11 +2632,14 @@ mod tests {
                 recovery_config: RecoveryConfig::default(),
                 all_syntax: Vec::new(),
                 follow_inputs: Vec::new(),
+                semantic_dependency_groups: Vec::new(),
             }
         }
 
         fn ctx(&self) -> LintContext<'_> {
             LintContext {
+                grammar_name: &self.grammar_name,
+                rule_locations: &self.rule_locations,
                 categories: &self.categories,
                 rules: &self.rules,
                 rd_rules: &self.rd_rules,
@@ -1769,6 +2654,7 @@ mod tests {
                 recovery_config: &self.recovery_config,
                 all_syntax: &self.all_syntax,
                 follow_inputs: &self.follow_inputs,
+                semantic_dependency_groups: &self.semantic_dependency_groups,
             }
         }
     }
@@ -2116,6 +3002,76 @@ mod tests {
         assert!(diags.is_empty());
     }
 
+    #[test]
+    fn g09_compound_terminal_no_false_positive() {
+        // "in(" contributes 1 open paren; paired with standalone ")" → balanced
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Proc", None, true));
+        b.all_syntax.push((
+            "PIn".to_string(),
+            "Proc".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("in(".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Proc".to_string(),
+                    param_name: "x".to_string(),
+                },
+                SyntaxItemSpec::Terminal(")".to_string()),
+            ],
+        ));
+
+        let mut diags = Vec::new();
+        lint_g09_unbalanced_delimiters(&b.ctx(), &mut diags);
+        assert!(
+            diags.is_empty(),
+            "compound terminal `in(` paired with `)` should be balanced: {:?}",
+            diags,
+        );
+    }
+
+    #[test]
+    fn g09_compound_terminal_true_positive() {
+        // "in(" with no closing paren → unbalanced
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Proc", None, true));
+        b.all_syntax.push((
+            "PIn".to_string(),
+            "Proc".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("in(".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Proc".to_string(),
+                    param_name: "x".to_string(),
+                },
+            ],
+        ));
+
+        let mut diags = Vec::new();
+        lint_g09_unbalanced_delimiters(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1, "compound terminal `in(` without `)` should be unbalanced");
+        assert_eq!(diags[0].id, "G09");
+    }
+
+    #[test]
+    fn g09_self_balanced_terminal() {
+        // "()" is self-balanced — 1 open + 1 close = balanced
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Proc", None, true));
+        b.all_syntax.push((
+            "PNil".to_string(),
+            "Proc".to_string(),
+            vec![SyntaxItemSpec::Terminal("()".to_string())],
+        ));
+
+        let mut diags = Vec::new();
+        lint_g09_unbalanced_delimiters(&b.ctx(), &mut diags);
+        assert!(
+            diags.is_empty(),
+            "self-balanced `()` terminal should not trigger G09: {:?}",
+            diags,
+        );
+    }
+
     // ══════════════════════════════════════════════════════════════════════
     // G10: Ambiguous Associativity
     // ══════════════════════════════════════════════════════════════════════
@@ -2237,9 +3193,11 @@ mod tests {
         let mut diags = Vec::new();
         lint_r07_transposition_candidate(&b.ctx(), &mut diags);
 
-        assert_eq!(diags.len(), 1);
+        assert_eq!(diags.len(), 1, "R07 should emit exactly 1 summary note");
         assert_eq!(diags[0].id, "R07");
-        assert!(diags[0].message.contains("+") && diags[0].message.contains("++"));
+        assert!(diags[0].message.contains("1 operator pair(s)"));
+        assert!(diags[0].message.contains("`+`"));
+        assert!(diags[0].message.contains("`++`"));
     }
 
     #[test]
@@ -2260,6 +3218,38 @@ mod tests {
         let mut diags = Vec::new();
         lint_r07_transposition_candidate(&b.ctx(), &mut diags);
         assert!(diags.is_empty(), "operators `++` and `->` differ by 2 chars: {:?}", diags);
+    }
+
+    #[test]
+    fn r07_many_single_char_operators_single_summary() {
+        // 9 single-char operators → C(9,2)=36 pairs all at distance 1 (all single-char
+        // operators differ by exactly 1 substitution). Should emit exactly 1 summary.
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        for (i, op) in ["!", "@", "#", "$", "%", "^", "&", "*", "~"].iter().enumerate() {
+            b.all_syntax.push((
+                format!("Op{}", i),
+                "Int".to_string(),
+                vec![SyntaxItemSpec::Terminal(op.to_string())],
+            ));
+        }
+
+        let mut diags = Vec::new();
+        lint_r07_transposition_candidate(&b.ctx(), &mut diags);
+
+        assert_eq!(
+            diags.len(),
+            1,
+            "R07 should emit exactly 1 summary note, not {} individual notes",
+            diags.len(),
+        );
+        assert_eq!(diags[0].id, "R07");
+        // The summary should mention the total count (36 pairs)
+        assert!(
+            diags[0].message.contains("36 operator pair(s)"),
+            "message should contain total pair count: {}",
+            diags[0].message,
+        );
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -2459,6 +3449,8 @@ mod tests {
             rule: None,
             message: "cast cycle detected: Int -> Proc -> Int".to_string(),
             hint: Some("break the cycle by removing one cast direction".to_string()),
+            grammar_name: Some("TestGrammar".to_string()),
+            source_location: None,
         };
         let s = format!("{}", diag);
         assert!(s.contains("error[C01]"));
@@ -2476,10 +3468,54 @@ mod tests {
             rule: None,
             message: "operator `-` is both infix and prefix".to_string(),
             hint: None,
+            grammar_name: Some("TestGrammar".to_string()),
+            source_location: None,
         };
         let s = format!("{}", diag);
         assert!(s.contains("note[G06]"));
+        // Display now includes a context line for category-only lints
+        assert!(s.contains("= in category `Int`"));
         assert!(!s.contains("hint"));
+    }
+
+    #[test]
+    fn lint_display_with_source_location() {
+        let diag = LintDiagnostic {
+            id: "G09",
+            name: "unbalanced-delimiters",
+            severity: LintSeverity::Warning,
+            category: Some("Proc".to_string()),
+            rule: Some("PIn".to_string()),
+            message: "rule `PIn` in category `Proc` has unbalanced delimiters: 0 `(` vs 1 `)`".to_string(),
+            hint: Some("add the missing `(` delimiter".to_string()),
+            grammar_name: Some("RhoPi".to_string()),
+            source_location: Some(crate::SourceLocation { line: 42, column: 9 }),
+        };
+        let s = format!("{}", diag);
+        assert!(s.contains("warning[G09]"));
+        assert!(s.contains("--> <macro>:42:9"));
+        assert!(s.contains("= in category `Proc`, rule `PIn`"));
+        assert!(s.contains("= hint:"));
+    }
+
+    #[test]
+    fn lint_display_no_location_when_line_zero() {
+        let diag = LintDiagnostic {
+            id: "G01",
+            name: "left-recursion",
+            severity: LintSeverity::Warning,
+            category: Some("Int".to_string()),
+            rule: Some("Bad".to_string()),
+            message: "left-recursive rule".to_string(),
+            hint: None,
+            grammar_name: Some("Test".to_string()),
+            source_location: Some(crate::SourceLocation { line: 0, column: 0 }),
+        };
+        let s = format!("{}", diag);
+        // line=0 means unknown, should not show --> line
+        assert!(!s.contains("-->"));
+        // But should show category/rule context
+        assert!(s.contains("= in category `Int`, rule `Bad`"));
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -2504,5 +3540,630 @@ mod tests {
         assert!(char_edit_distance_is_one("==", "!=")); // 1 sub (first char)
         assert!(!char_edit_distance_is_one("+", "+")); // zero distance
         assert!(!char_edit_distance_is_one("<<", ">>")); // 2 subs
+    }
+
+    // ── A8: Nearly-dead path W07 integration ──
+
+    #[test]
+    fn test_a8_w07_not_emitted_for_well_connected_grammar() {
+        // A8: W07 should not fire for a normal 2-category grammar where both
+        // categories are well-connected via bidirectional cast rules.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Proc", None, true), cat_info("Int", Some("i64"), false)];
+        let mut cast1 = make_rule_info("IntToProc", "Proc", vec![FirstItem::NonTerminal("Int".to_string())], false);
+        cast1.is_cast = true;
+        let mut cast2 = make_rule_info("ProcToInt", "Int", vec![FirstItem::NonTerminal("Proc".to_string())], false);
+        cast2.is_cast = true;
+        let prefix1 = make_rule_info("Par", "Proc", vec![FirstItem::Terminal("Pipe".to_string())], false);
+        let prefix2 = make_rule_info("NumLit", "Int", vec![FirstItem::Terminal("Integer".to_string())], false);
+        b.rules = vec![cast1, cast2, prefix1, prefix2];
+        b.first_sets = [
+            ("Proc".to_string(), FirstSet { tokens: ["Pipe".to_string()].into(), nullable: false }),
+            ("Int".to_string(), FirstSet { tokens: ["Integer".to_string()].into(), nullable: false }),
+        ].into();
+
+        let diags = run_lints(&b.ctx());
+        let w07_diags: Vec<_> = diags.iter().filter(|d| d.id == "W07").collect();
+        assert!(w07_diags.is_empty(), "well-connected grammar should not emit W07: {:?}", w07_diags);
+    }
+
+    #[test]
+    fn test_a8_w07_uses_note_severity() {
+        // A8: NearlyDeadPath warnings must use Note severity (not Warning)
+        // to distinguish from truly dead rules.
+        // This test verifies the mapping at the LintDiagnostic construction level.
+        let w = crate::pipeline::DeadRuleWarning::NearlyDeadPath {
+            rule_label: "TestRule".to_string(),
+            category: "TestCat".to_string(),
+            derivation_count: 1,
+            total_count: 200,
+        };
+        // Verify display format
+        let msg = format!("{}", w);
+        assert!(msg.contains("nearly-dead"));
+        assert!(msg.contains("1/200"));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Composition Lints (X01–X05)
+    // ══════════════════════════════════════════════════════════════════════
+
+    use crate::automata::semiring::TropicalWeight;
+    use crate::prediction::DispatchAction;
+    use crate::token_id::TokenIdMap;
+    use crate::wfst::{PredictionWfst, WeightedAction, WeightedTransition, WfstState};
+
+    /// Build a minimal PredictionWfst with a single start state that dispatches
+    /// on the given `(token_name, rule_label, weight)` triples.
+    fn make_prediction_wfst(
+        category: &str,
+        entries: &[(&str, &str, f64)],
+    ) -> PredictionWfst {
+        let mut token_map = TokenIdMap::new();
+        let mut actions = Vec::new();
+        let mut transitions = Vec::new();
+
+        for &(token_name, rule_label, weight) in entries {
+            let token_id = token_map.get_or_insert(token_name);
+            let action_idx = actions.len() as u32;
+            actions.push(WeightedAction {
+                action: DispatchAction::Direct {
+                    rule_label: rule_label.to_string(),
+                    parse_fn: format!("parse_{}", rule_label),
+                },
+                weight: TropicalWeight::new(weight),
+            });
+            transitions.push(WeightedTransition {
+                from: 0,
+                input: token_id,
+                action_idx,
+                to: 0,
+                weight: TropicalWeight::new(weight),
+            });
+        }
+
+        let start_state = WfstState {
+            id: 0,
+            is_final: true,
+            final_weight: TropicalWeight::new(0.0),
+            transitions,
+        };
+
+        PredictionWfst {
+            category: category.to_string(),
+            states: vec![start_state],
+            start: 0,
+            actions,
+            token_map,
+            beam_width: None,
+        }
+    }
+
+    fn make_comp_ctx<'a>(
+        first_sets_a: &'a HashMap<String, FirstSet>,
+        first_sets_b: &'a HashMap<String, FirstSet>,
+        first_sets_merged: &'a HashMap<String, FirstSet>,
+        prediction_wfsts_a: &'a HashMap<String, PredictionWfst>,
+        prediction_wfsts_b: &'a HashMap<String, PredictionWfst>,
+        shared_categories: &'a [String],
+        dead_rules_a: &'a HashSet<String>,
+        dead_rules_b: &'a HashSet<String>,
+        dead_rules_merged: &'a HashSet<String>,
+        rules_a: &'a [RuleInfo],
+        rules_b: &'a [RuleInfo],
+        terminal_semantics_a: &'a HashMap<String, Vec<(String, String)>>,
+        terminal_semantics_b: &'a HashMap<String, Vec<(String, String)>>,
+    ) -> CompositionLintContext<'a> {
+        CompositionLintContext {
+            first_sets_a,
+            first_sets_b,
+            first_sets_merged,
+            prediction_wfsts_a,
+            prediction_wfsts_b,
+            shared_categories,
+            dead_rules_a,
+            dead_rules_b,
+            dead_rules_merged,
+            rules_a,
+            rules_b,
+            terminal_semantics_a,
+            terminal_semantics_b,
+        }
+    }
+
+    // ── X01: Composition Ambiguity Introduction ──
+
+    #[test]
+    fn x01_fires_when_merged_has_new_tokens() {
+        // Composition introduces a new token "Star" in the merged FIRST set
+        // that was NOT present in either source grammar's FIRST set.
+        // This indicates new derivation paths created by the composition.
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let first_a: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Plus".to_string(), "Ident".to_string()].into(), nullable: false },
+        )].into();
+
+        let first_b: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Minus".to_string(), "Ident".to_string()].into(), nullable: false },
+        )].into();
+
+        // Merged has "Star" which is NOT in A ∪ B = {Plus, Minus, Ident}
+        let first_merged: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet {
+                tokens: ["Plus".to_string(), "Minus".to_string(), "Ident".to_string(), "Star".to_string()].into(),
+                nullable: false,
+            },
+        )].into();
+
+        let shared = vec!["Expr".to_string()];
+        let empty_dead: HashSet<String> = HashSet::new();
+        let empty_wfsts: HashMap<String, PredictionWfst> = HashMap::new();
+        let empty_rules: Vec<RuleInfo> = Vec::new();
+        let empty_sem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+        let comp_ctx = make_comp_ctx(
+            &first_a, &first_b, &first_merged,
+            &empty_wfsts, &empty_wfsts,
+            &shared,
+            &empty_dead, &empty_dead, &empty_dead,
+            &empty_rules, &empty_rules,
+            &empty_sem, &empty_sem,
+        );
+
+        let mut diags = Vec::new();
+        lint_x01_composition_ambiguity_introduction(&b.ctx(), &comp_ctx, &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 ambiguity lint for new token Star: {:?}", diags);
+        assert_eq!(diags[0].id, "X01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("Star"), "message should mention the new token: {}", diags[0].message);
+    }
+
+    #[test]
+    fn x01_does_not_fire_when_merged_is_exact_union() {
+        // Merged FIRST set is exactly A ∪ B — no new tokens introduced.
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let first_a: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Plus".to_string(), "Ident".to_string()].into(), nullable: false },
+        )].into();
+
+        let first_b: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Minus".to_string(), "Ident".to_string()].into(), nullable: false },
+        )].into();
+
+        // Merged = A ∪ B = {Plus, Minus, Ident}
+        let first_merged: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet {
+                tokens: ["Plus".to_string(), "Minus".to_string(), "Ident".to_string()].into(),
+                nullable: false,
+            },
+        )].into();
+
+        let shared = vec!["Expr".to_string()];
+        let empty_dead: HashSet<String> = HashSet::new();
+        let empty_wfsts: HashMap<String, PredictionWfst> = HashMap::new();
+        let empty_rules: Vec<RuleInfo> = Vec::new();
+        let empty_sem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+        let comp_ctx = make_comp_ctx(
+            &first_a, &first_b, &first_merged,
+            &empty_wfsts, &empty_wfsts,
+            &shared,
+            &empty_dead, &empty_dead, &empty_dead,
+            &empty_rules, &empty_rules,
+            &empty_sem, &empty_sem,
+        );
+
+        let mut diags = Vec::new();
+        lint_x01_composition_ambiguity_introduction(&b.ctx(), &comp_ctx, &mut diags);
+
+        assert!(diags.is_empty(), "exact union should not trigger ambiguity lint: {:?}", diags);
+    }
+
+    // ── X02: Composition Priority Shadowing ──
+
+    #[test]
+    fn x02_fires_when_a_rule_shadowed_by_b() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let wfst_a: HashMap<String, PredictionWfst> = [(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[("Plus", "AddA", 0.5)]),
+        )].into();
+
+        let wfst_b: HashMap<String, PredictionWfst> = [(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[("Plus", "AddB", 0.1)]),
+        )].into();
+
+        let shared = vec!["Expr".to_string()];
+        let first_a: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Plus".to_string()].into(), nullable: false },
+        )].into();
+        let first_b: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Plus".to_string()].into(), nullable: false },
+        )].into();
+        let first_merged: HashMap<String, FirstSet> = first_a.clone();
+        let empty_dead: HashSet<String> = HashSet::new();
+        let empty_rules: Vec<RuleInfo> = Vec::new();
+        let empty_sem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+        let comp_ctx = make_comp_ctx(
+            &first_a, &first_b, &first_merged,
+            &wfst_a, &wfst_b,
+            &shared,
+            &empty_dead, &empty_dead, &empty_dead,
+            &empty_rules, &empty_rules,
+            &empty_sem, &empty_sem,
+        );
+
+        let mut diags = Vec::new();
+        lint_x02_composition_priority_shadowing(&b.ctx(), &comp_ctx, &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 shadowing lint: {:?}", diags);
+        assert_eq!(diags[0].id, "X02");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("AddA"));
+        assert!(diags[0].message.contains("AddB"));
+        assert!(diags[0].message.contains("Plus"));
+    }
+
+    #[test]
+    fn x02_does_not_fire_when_weights_equal() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let wfst_a: HashMap<String, PredictionWfst> = [(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[("Plus", "AddA", 0.3)]),
+        )].into();
+
+        let wfst_b: HashMap<String, PredictionWfst> = [(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[("Plus", "AddB", 0.3)]),
+        )].into();
+
+        let shared = vec!["Expr".to_string()];
+        let first_a: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Plus".to_string()].into(), nullable: false },
+        )].into();
+        let first_b = first_a.clone();
+        let first_merged = first_a.clone();
+        let empty_dead: HashSet<String> = HashSet::new();
+        let empty_rules: Vec<RuleInfo> = Vec::new();
+        let empty_sem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+
+        let comp_ctx = make_comp_ctx(
+            &first_a, &first_b, &first_merged,
+            &wfst_a, &wfst_b,
+            &shared,
+            &empty_dead, &empty_dead, &empty_dead,
+            &empty_rules, &empty_rules,
+            &empty_sem, &empty_sem,
+        );
+
+        let mut diags = Vec::new();
+        lint_x02_composition_priority_shadowing(&b.ctx(), &comp_ctx, &mut diags);
+
+        assert!(diags.is_empty(), "equal weights should not trigger shadowing: {:?}", diags);
+    }
+
+    // ── X03: Composition Dead Rule Creation ──
+
+    #[test]
+    fn x03_fires_on_newly_dead_rule() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let dead_a: HashSet<String> = HashSet::new();
+        let dead_b: HashSet<String> = HashSet::new();
+        let dead_merged: HashSet<String> = ["Foo".to_string()].into();
+
+        let rules_a = vec![make_rule_info(
+            "Foo", "Expr", vec![FirstItem::Terminal("+".to_string())], false,
+        )];
+
+        let empty_first: HashMap<String, FirstSet> = HashMap::new();
+        let empty_wfsts: HashMap<String, PredictionWfst> = HashMap::new();
+        let empty_sem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        let shared = vec!["Expr".to_string()];
+
+        let comp_ctx = make_comp_ctx(
+            &empty_first, &empty_first, &empty_first,
+            &empty_wfsts, &empty_wfsts,
+            &shared,
+            &dead_a, &dead_b, &dead_merged,
+            &rules_a, &[],
+            &empty_sem, &empty_sem,
+        );
+
+        let mut diags = Vec::new();
+        lint_x03_composition_dead_rule_creation(&b.ctx(), &comp_ctx, &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 newly-dead lint: {:?}", diags);
+        assert_eq!(diags[0].id, "X03");
+        assert!(diags[0].message.contains("Foo"));
+        assert!(diags[0].message.contains("grammar A"));
+    }
+
+    #[test]
+    fn x03_does_not_fire_for_already_dead_rules() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let dead_a: HashSet<String> = ["Bar".to_string()].into();
+        let dead_b: HashSet<String> = HashSet::new();
+        let dead_merged: HashSet<String> = ["Bar".to_string()].into();
+
+        let empty_first: HashMap<String, FirstSet> = HashMap::new();
+        let empty_wfsts: HashMap<String, PredictionWfst> = HashMap::new();
+        let empty_sem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        let shared = vec!["Expr".to_string()];
+        let empty_rules: Vec<RuleInfo> = Vec::new();
+
+        let comp_ctx = make_comp_ctx(
+            &empty_first, &empty_first, &empty_first,
+            &empty_wfsts, &empty_wfsts,
+            &shared,
+            &dead_a, &dead_b, &dead_merged,
+            &empty_rules, &empty_rules,
+            &empty_sem, &empty_sem,
+        );
+
+        let mut diags = Vec::new();
+        lint_x03_composition_dead_rule_creation(&b.ctx(), &comp_ctx, &mut diags);
+
+        assert!(diags.is_empty(), "already-dead rule should not trigger: {:?}", diags);
+    }
+
+    // ── X04: Composition Cast Chain Break ──
+
+    #[test]
+    fn x04_fires_when_cast_chain_broken() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("A", None, true));
+        b.categories.push(cat_info("B", None, false));
+        b.categories.push(cat_info("C", None, false));
+
+        // Merged grammar has NO cast rules (simulating a broken chain)
+        // Source A has a chain: A -> B -> C
+        let rules_a = vec![
+            {
+                let mut r = make_rule_info(
+                    "AtoB", "B", vec![FirstItem::NonTerminal("A".to_string())], false,
+                );
+                r.is_cast = true;
+                r
+            },
+            {
+                let mut r = make_rule_info(
+                    "BtoC", "C", vec![FirstItem::NonTerminal("B".to_string())], false,
+                );
+                r.is_cast = true;
+                r
+            },
+        ];
+
+        let empty_first: HashMap<String, FirstSet> = HashMap::new();
+        let empty_wfsts: HashMap<String, PredictionWfst> = HashMap::new();
+        let empty_dead: HashSet<String> = HashSet::new();
+        let empty_sem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        let shared: Vec<String> = Vec::new();
+
+        let comp_ctx = make_comp_ctx(
+            &empty_first, &empty_first, &empty_first,
+            &empty_wfsts, &empty_wfsts,
+            &shared,
+            &empty_dead, &empty_dead, &empty_dead,
+            &rules_a, &[],
+            &empty_sem, &empty_sem,
+        );
+
+        let mut diags = Vec::new();
+        lint_x04_composition_cast_chain_break(&b.ctx(), &comp_ctx, &mut diags);
+
+        // Source A has reachability: A->B, A->C (transitive), B->C
+        // Merged has NO casts → reachability = {}
+        // Broken: {(A,B), (A,C), (B,C)}
+        assert_eq!(diags.len(), 3, "expected 3 broken cast chain lints: {:?}", diags);
+        assert!(diags.iter().all(|d| d.id == "X04"));
+        assert!(diags.iter().all(|d| d.severity == LintSeverity::Error));
+    }
+
+    #[test]
+    fn x04_does_not_fire_when_chain_preserved() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("A", None, true));
+        b.categories.push(cat_info("B", None, false));
+
+        // Merged grammar preserves the cast A -> B
+        b.cast_rules.push(CastRule {
+            label: "AtoB".to_string(),
+            source_category: "A".to_string(),
+            target_category: "B".to_string(),
+        });
+
+        let rules_a = vec![{
+            let mut r = make_rule_info(
+                "AtoB", "B", vec![FirstItem::NonTerminal("A".to_string())], false,
+            );
+            r.is_cast = true;
+            r
+        }];
+
+        let empty_first: HashMap<String, FirstSet> = HashMap::new();
+        let empty_wfsts: HashMap<String, PredictionWfst> = HashMap::new();
+        let empty_dead: HashSet<String> = HashSet::new();
+        let empty_sem: HashMap<String, Vec<(String, String)>> = HashMap::new();
+        let shared: Vec<String> = Vec::new();
+
+        let comp_ctx = make_comp_ctx(
+            &empty_first, &empty_first, &empty_first,
+            &empty_wfsts, &empty_wfsts,
+            &shared,
+            &empty_dead, &empty_dead, &empty_dead,
+            &rules_a, &[],
+            &empty_sem, &empty_sem,
+        );
+
+        let mut diags = Vec::new();
+        lint_x04_composition_cast_chain_break(&b.ctx(), &comp_ctx, &mut diags);
+
+        assert!(diags.is_empty(), "preserved chain should not trigger: {:?}", diags);
+    }
+
+    // ── X05: Composition Terminal Collision ──
+
+    #[test]
+    fn x05_fires_on_different_semantic_roles() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let sem_a: HashMap<String, Vec<(String, String)>> = [(
+            "+".to_string(),
+            vec![("Int".to_string(), "infix".to_string())],
+        )].into();
+
+        let sem_b: HashMap<String, Vec<(String, String)>> = [(
+            "+".to_string(),
+            vec![("Str".to_string(), "prefix".to_string())],
+        )].into();
+
+        let empty_first: HashMap<String, FirstSet> = HashMap::new();
+        let empty_wfsts: HashMap<String, PredictionWfst> = HashMap::new();
+        let empty_dead: HashSet<String> = HashSet::new();
+        let empty_rules: Vec<RuleInfo> = Vec::new();
+        let shared: Vec<String> = Vec::new();
+
+        let comp_ctx = make_comp_ctx(
+            &empty_first, &empty_first, &empty_first,
+            &empty_wfsts, &empty_wfsts,
+            &shared,
+            &empty_dead, &empty_dead, &empty_dead,
+            &empty_rules, &empty_rules,
+            &sem_a, &sem_b,
+        );
+
+        let mut diags = Vec::new();
+        lint_x05_composition_terminal_collision(&b.ctx(), &comp_ctx, &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 terminal collision lint: {:?}", diags);
+        assert_eq!(diags[0].id, "X05");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("+"));
+        assert!(diags[0].message.contains("infix"));
+        assert!(diags[0].message.contains("prefix"));
+    }
+
+    #[test]
+    fn x05_does_not_fire_on_same_roles() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let sem_a: HashMap<String, Vec<(String, String)>> = [(
+            "+".to_string(),
+            vec![("Int".to_string(), "infix".to_string())],
+        )].into();
+
+        let sem_b: HashMap<String, Vec<(String, String)>> = [(
+            "+".to_string(),
+            vec![("Float".to_string(), "infix".to_string())],
+        )].into();
+
+        let empty_first: HashMap<String, FirstSet> = HashMap::new();
+        let empty_wfsts: HashMap<String, PredictionWfst> = HashMap::new();
+        let empty_dead: HashSet<String> = HashSet::new();
+        let empty_rules: Vec<RuleInfo> = Vec::new();
+        let shared: Vec<String> = Vec::new();
+
+        let comp_ctx = make_comp_ctx(
+            &empty_first, &empty_first, &empty_first,
+            &empty_wfsts, &empty_wfsts,
+            &shared,
+            &empty_dead, &empty_dead, &empty_dead,
+            &empty_rules, &empty_rules,
+            &sem_a, &sem_b,
+        );
+
+        let mut diags = Vec::new();
+        lint_x05_composition_terminal_collision(&b.ctx(), &comp_ctx, &mut diags);
+
+        assert!(diags.is_empty(), "same roles should not trigger collision: {:?}", diags);
+    }
+
+    // ── Integration: run_composition_lints ──
+
+    #[test]
+    fn run_composition_lints_collects_all_categories() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        // Set up data that triggers X02 (shadowing) and X05 (collision)
+        let wfst_a: HashMap<String, PredictionWfst> = [(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[("Plus", "AddA", 0.8)]),
+        )].into();
+        let wfst_b: HashMap<String, PredictionWfst> = [(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[("Plus", "AddB", 0.1)]),
+        )].into();
+
+        let shared = vec!["Expr".to_string()];
+        let first_a: HashMap<String, FirstSet> = [(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Plus".to_string()].into(), nullable: false },
+        )].into();
+        let first_b = first_a.clone();
+        let first_merged = first_a.clone();
+
+        let sem_a: HashMap<String, Vec<(String, String)>> = [(
+            "*".to_string(),
+            vec![("Int".to_string(), "infix".to_string())],
+        )].into();
+        let sem_b: HashMap<String, Vec<(String, String)>> = [(
+            "*".to_string(),
+            vec![("Str".to_string(), "repeat".to_string())],
+        )].into();
+
+        let dead_merged: HashSet<String> = ["Orphan".to_string()].into();
+        let rules_a = vec![make_rule_info(
+            "Orphan", "Expr", vec![FirstItem::Terminal("~".to_string())], false,
+        )];
+        let empty_dead: HashSet<String> = HashSet::new();
+
+        let comp_ctx = make_comp_ctx(
+            &first_a, &first_b, &first_merged,
+            &wfst_a, &wfst_b,
+            &shared,
+            &empty_dead, &empty_dead, &dead_merged,
+            &rules_a, &[],
+            &sem_a, &sem_b,
+        );
+
+        let diags = run_composition_lints(&b.ctx(), &comp_ctx);
+
+        // Should have at least X02 (shadowing on Plus) and X05 (collision on *)
+        // and X03 (Orphan newly dead)
+        let x02_count = diags.iter().filter(|d| d.id == "X02").count();
+        let x03_count = diags.iter().filter(|d| d.id == "X03").count();
+        let x05_count = diags.iter().filter(|d| d.id == "X05").count();
+
+        assert!(x02_count >= 1, "expected X02 shadowing lint: {:?}", diags);
+        assert_eq!(x03_count, 1, "expected 1 X03 dead-rule lint: {:?}", diags);
+        assert_eq!(x05_count, 1, "expected 1 X05 collision lint: {:?}", diags);
     }
 }

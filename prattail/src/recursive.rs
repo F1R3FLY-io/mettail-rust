@@ -63,14 +63,23 @@ pub enum RDSyntaxItem {
         separator: String,
         kind: CollectionKind,
     },
-    /// A zip+map+sep pattern operation.
-    ZipMapSep {
+    /// Repeat a body pattern with separator between repetitions.
+    Sep {
+        body: Box<RDSyntaxItem>,
+        separator: String,
+        kind: CollectionKind,
+    },
+    /// Structured body pattern: multiple items forming one logical element.
+    Map {
+        body_items: Vec<RDSyntaxItem>,
+    },
+    /// Parallel dual-accumulator collection.
+    Zip {
         left_name: String,
         right_name: String,
         left_category: String,
         right_category: String,
-        body_items: Vec<RDSyntaxItem>,
-        separator: String,
+        body: Box<RDSyntaxItem>,
     },
     /// A separated list of binder identifiers.
     BinderCollection { param_name: String, separator: String },
@@ -301,118 +310,128 @@ fn write_parse_items(
                     kind: CaptureKind::Collection,
                 });
             },
-            RDSyntaxItem::ZipMapSep {
-                left_name,
-                right_name,
-                left_category: _,
-                right_category: _,
-                body_items,
-                separator,
-            } => {
+            RDSyntaxItem::Sep { body, separator, kind: _ } => {
                 let sep_variant = terminal_to_variant_name(separator);
 
-                // Determine which param (left or right) is a binder
-                let right_is_binder = body_items.iter().any(|item| {
-                    matches!(item, RDSyntaxItem::Binder { param_name, .. } if param_name == right_name)
-                });
-                let left_is_binder = body_items.iter().any(|item| {
-                    matches!(item, RDSyntaxItem::Binder { param_name, .. } if param_name == left_name)
-                });
+                match body.as_ref() {
+                    // Full composition: Sep(Zip(Map(...))) — equivalent to old ZipMapSep
+                    RDSyntaxItem::Zip { left_name, right_name, body: zip_body, .. } => {
+                        match zip_body.as_ref() {
+                            RDSyntaxItem::Map { body_items } => {
+                                write_sep_zip_map_body(
+                                    buf, captures, left_name, right_name, body_items,
+                                    &sep_variant,
+                                );
+                            },
+                            other => {
+                                // Zip body without Map: treat as single element per iteration
+                                write_sep_zip_body(
+                                    buf, captures, left_name, right_name, other,
+                                    &sep_variant,
+                                );
+                            },
+                        }
+                    },
+                    // Sep(Map(...)) — structured single-accumulator repetition
+                    RDSyntaxItem::Map { body_items } => {
+                        write_sep_map_body(buf, captures, body_items, &sep_variant);
+                    },
+                    // Sep(NonTerminal) — simple separated list
+                    RDSyntaxItem::NonTerminal { category, param_name } => {
+                        write!(
+                            buf,
+                            "let mut {param_name} = Vec::new(); \
+                            loop {{ \
+                                match parse_{category}(tokens, pos, 0) {{ \
+                                    Ok(elem) => {{ \
+                                        {param_name}.push(elem); \
+                                        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                            *pos += 1; \
+                                        }} else {{ \
+                                            break; \
+                                        }} \
+                                    }} \
+                                    Err(_) => break, \
+                                }} \
+                            }}",
+                        )
+                        .unwrap();
 
-                write!(
-                    buf,
-                    "let mut {left_name} = Vec::new(); \
-                    let mut {right_name} = Vec::new(); \
-                    loop {{ \
-                        if *pos >= tokens.len() {{ break; }} \
-                        if peek_token(tokens, *pos).map_or(false, |t| {{ \
-                            matches!(t, Token::RParen | Token::RBrace | Token::RBracket | Token::Eof) \
-                        }}) {{ break; }}",
-                )
-                .unwrap();
+                        captures.push(Capture {
+                            name: param_name.clone(),
+                            kind: CaptureKind::Collection,
+                        });
+                    },
+                    // Sep(IdentCapture) — separated ident list
+                    RDSyntaxItem::IdentCapture { param_name } => {
+                        write!(
+                            buf,
+                            "let mut {param_name} = Vec::new(); \
+                            loop {{ \
+                                match expect_ident(tokens, pos) {{ \
+                                    Ok(name) => {{ \
+                                        {param_name}.push(name); \
+                                        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                            *pos += 1; \
+                                        }} else {{ \
+                                            break; \
+                                        }} \
+                                    }} \
+                                    Err(_) => break, \
+                                }} \
+                            }}",
+                        )
+                        .unwrap();
 
-                // Write parsing for each body item
-                for body_item in body_items {
-                    match body_item {
-                        RDSyntaxItem::Terminal(t) => {
-                            let variant = terminal_to_variant_name(t);
-                            write!(
-                                buf,
-                                "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
-                                variant, t,
-                            )
-                            .unwrap();
-                        },
-                        RDSyntaxItem::NonTerminal { category, param_name } => {
-                            if param_name == left_name {
-                                write!(
-                                    buf,
-                                    "let _zms_item = parse_{}(tokens, pos, 0)?; {}.push(_zms_item);",
-                                    category, left_name,
-                                )
-                                .unwrap();
-                            } else if param_name == right_name {
-                                write!(
-                                    buf,
-                                    "let _zms_item = parse_{}(tokens, pos, 0)?; {}.push(_zms_item);",
-                                    category, right_name,
-                                )
-                                .unwrap();
-                            } else {
-                                write!(buf, "let _ = parse_{}(tokens, pos, 0)?;", category,)
-                                    .unwrap();
-                            }
-                        },
-                        RDSyntaxItem::Binder { param_name, .. }
-                        | RDSyntaxItem::IdentCapture { param_name } => {
-                            if param_name == left_name {
-                                write!(
-                                    buf,
-                                    "let _zms_item = expect_ident(tokens, pos)?; {}.push(_zms_item);",
-                                    left_name,
-                                )
-                                .unwrap();
-                            } else if param_name == right_name {
-                                write!(
-                                    buf,
-                                    "let _zms_item = expect_ident(tokens, pos)?; {}.push(_zms_item);",
-                                    right_name,
-                                )
-                                .unwrap();
-                            } else {
-                                buf.push_str("let _ = expect_ident(tokens, pos)?;");
-                            }
-                        },
-                        _ => {},
-                    }
+                        captures.push(Capture {
+                            name: param_name.clone(),
+                            kind: CaptureKind::Ident,
+                        });
+                    },
+                    // Sep(Binder) — separated binder list
+                    RDSyntaxItem::Binder { param_name, .. } => {
+                        write!(
+                            buf,
+                            "let mut {param_name} = Vec::new(); \
+                            loop {{ \
+                                match expect_ident(tokens, pos) {{ \
+                                    Ok(name) => {{ \
+                                        {param_name}.push(name); \
+                                        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+                                            *pos += 1; \
+                                        }} else {{ \
+                                            break; \
+                                        }} \
+                                    }} \
+                                    Err(_) => break, \
+                                }} \
+                            }}",
+                        )
+                        .unwrap();
+
+                        captures.push(Capture {
+                            name: param_name.clone(),
+                            kind: CaptureKind::Binder,
+                        });
+                    },
+                    other => panic!("unsupported Sep body: {:?}", other),
                 }
-
-                write!(
-                    buf,
-                    "if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
-                        *pos += 1; \
-                    }} else {{ \
-                        break; \
-                    }} }}",
-                )
-                .unwrap();
-
-                captures.push(Capture {
-                    name: left_name.clone(),
-                    kind: if left_is_binder {
-                        CaptureKind::Binder
-                    } else {
-                        CaptureKind::Collection
+            },
+            // Standalone Map — inline body items
+            RDSyntaxItem::Map { body_items } => {
+                write_parse_items(buf, body_items, prefix_bp, captures);
+            },
+            // Standalone Zip — dual accumulators without separator
+            RDSyntaxItem::Zip { left_name, right_name, body, .. } => {
+                match body.as_ref() {
+                    RDSyntaxItem::Map { body_items } => {
+                        write_zip_map_body(buf, captures, left_name, right_name, body_items);
                     },
-                });
-                captures.push(Capture {
-                    name: right_name.clone(),
-                    kind: if right_is_binder {
-                        CaptureKind::Binder
-                    } else {
-                        CaptureKind::Collection
+                    _ => {
+                        // Single body item per zip iteration
+                        write_parse_items(buf, std::slice::from_ref(body.as_ref()), prefix_bp, captures);
                     },
-                });
+                }
             },
             RDSyntaxItem::BinderCollection { param_name, separator } => {
                 let sep_variant = terminal_to_variant_name(separator);
@@ -445,6 +464,278 @@ fn write_parse_items(
             },
         }
     }
+}
+
+/// Determine if a body item references a given accumulator name as a binder.
+fn is_binder_in_body(body_items: &[RDSyntaxItem], name: &str) -> bool {
+    body_items
+        .iter()
+        .any(|item| matches!(item, RDSyntaxItem::Binder { param_name, .. } if param_name == name))
+}
+
+/// Write the dual-accumulator separated loop for Sep(Zip(Map(...))).
+///
+/// This is the core codegen for the composed Sep(Zip(Map(body_items))) pattern,
+/// producing identical code to the old monolithic ZipMapSep variant.
+fn write_sep_zip_map_body(
+    buf: &mut String,
+    captures: &mut Vec<Capture>,
+    left_name: &str,
+    right_name: &str,
+    body_items: &[RDSyntaxItem],
+    sep_variant: &str,
+) {
+    let left_is_binder = is_binder_in_body(body_items, left_name);
+    let right_is_binder = is_binder_in_body(body_items, right_name);
+
+    write!(
+        buf,
+        "let mut {left_name} = Vec::new(); \
+        let mut {right_name} = Vec::new(); \
+        loop {{ \
+            if *pos >= tokens.len() {{ break; }} \
+            if peek_token(tokens, *pos).map_or(false, |t| {{ \
+                matches!(t, Token::RParen | Token::RBrace | Token::RBracket | Token::Eof) \
+            }}) {{ break; }}",
+    )
+    .unwrap();
+
+    write_zip_body_items(buf, body_items, left_name, right_name);
+
+    write!(
+        buf,
+        "if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+            *pos += 1; \
+        }} else {{ \
+            break; \
+        }} }}",
+    )
+    .unwrap();
+
+    captures.push(Capture {
+        name: left_name.to_string(),
+        kind: if left_is_binder { CaptureKind::Binder } else { CaptureKind::Collection },
+    });
+    captures.push(Capture {
+        name: right_name.to_string(),
+        kind: if right_is_binder { CaptureKind::Binder } else { CaptureKind::Collection },
+    });
+}
+
+/// Write the body-item parsing inside a Zip loop, pushing to left/right accumulators.
+fn write_zip_body_items(
+    buf: &mut String,
+    body_items: &[RDSyntaxItem],
+    left_name: &str,
+    right_name: &str,
+) {
+    for body_item in body_items {
+        match body_item {
+            RDSyntaxItem::Terminal(t) => {
+                let variant = terminal_to_variant_name(t);
+                write!(
+                    buf,
+                    "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
+                    variant, t,
+                )
+                .unwrap();
+            },
+            RDSyntaxItem::NonTerminal { category, param_name } => {
+                if param_name == left_name {
+                    write!(
+                        buf,
+                        "let _zms_item = parse_{}(tokens, pos, 0)?; {}.push(_zms_item);",
+                        category, left_name,
+                    )
+                    .unwrap();
+                } else if param_name == right_name {
+                    write!(
+                        buf,
+                        "let _zms_item = parse_{}(tokens, pos, 0)?; {}.push(_zms_item);",
+                        category, right_name,
+                    )
+                    .unwrap();
+                } else {
+                    write!(buf, "let _ = parse_{}(tokens, pos, 0)?;", category).unwrap();
+                }
+            },
+            RDSyntaxItem::Binder { param_name, .. }
+            | RDSyntaxItem::IdentCapture { param_name } => {
+                if param_name == left_name {
+                    write!(
+                        buf,
+                        "let _zms_item = expect_ident(tokens, pos)?; {}.push(_zms_item);",
+                        left_name,
+                    )
+                    .unwrap();
+                } else if param_name == right_name {
+                    write!(
+                        buf,
+                        "let _zms_item = expect_ident(tokens, pos)?; {}.push(_zms_item);",
+                        right_name,
+                    )
+                    .unwrap();
+                } else {
+                    buf.push_str("let _ = expect_ident(tokens, pos)?;");
+                }
+            },
+            _ => {},
+        }
+    }
+}
+
+/// Write Sep(Zip(body)) where body is not a Map — single body item per iteration.
+fn write_sep_zip_body(
+    buf: &mut String,
+    captures: &mut Vec<Capture>,
+    left_name: &str,
+    right_name: &str,
+    body: &RDSyntaxItem,
+    sep_variant: &str,
+) {
+    let is_binder = matches!(body, RDSyntaxItem::Binder { .. });
+
+    write!(
+        buf,
+        "let mut {left_name} = Vec::new(); \
+        let mut {right_name} = Vec::new(); \
+        loop {{ \
+            if *pos >= tokens.len() {{ break; }} \
+            if peek_token(tokens, *pos).map_or(false, |t| {{ \
+                matches!(t, Token::RParen | Token::RBrace | Token::RBracket | Token::Eof) \
+            }}) {{ break; }}",
+    )
+    .unwrap();
+
+    // Parse single body item
+    write_zip_body_items(buf, std::slice::from_ref(body), left_name, right_name);
+
+    write!(
+        buf,
+        "if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+            *pos += 1; \
+        }} else {{ \
+            break; \
+        }} }}",
+    )
+    .unwrap();
+
+    captures.push(Capture {
+        name: left_name.to_string(),
+        kind: if is_binder { CaptureKind::Binder } else { CaptureKind::Collection },
+    });
+    captures.push(Capture {
+        name: right_name.to_string(),
+        kind: CaptureKind::Collection,
+    });
+}
+
+/// Write Sep(Map(body_items)) — structured single-accumulator repetition.
+fn write_sep_map_body(
+    buf: &mut String,
+    captures: &mut Vec<Capture>,
+    body_items: &[RDSyntaxItem],
+    sep_variant: &str,
+) {
+    // Collect all NonTerminal param_names from body as separate accumulators
+    let nt_params: Vec<(String, String)> = body_items
+        .iter()
+        .filter_map(|item| match item {
+            RDSyntaxItem::NonTerminal { category, param_name } => {
+                Some((param_name.clone(), category.clone()))
+            },
+            _ => None,
+        })
+        .collect();
+
+    // Declare accumulators
+    for (name, _) in &nt_params {
+        write!(buf, "let mut {name} = Vec::new(); ").unwrap();
+    }
+
+    write!(
+        buf,
+        "loop {{ \
+            if *pos >= tokens.len() {{ break; }} \
+            if peek_token(tokens, *pos).map_or(false, |t| {{ \
+                matches!(t, Token::RParen | Token::RBrace | Token::RBracket | Token::Eof) \
+            }}) {{ break; }}",
+    )
+    .unwrap();
+
+    // Parse each body item
+    for item in body_items {
+        match item {
+            RDSyntaxItem::Terminal(t) => {
+                let variant = terminal_to_variant_name(t);
+                write!(
+                    buf,
+                    "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
+                    variant, t,
+                )
+                .unwrap();
+            },
+            RDSyntaxItem::NonTerminal { category, param_name } => {
+                write!(
+                    buf,
+                    "let _sep_item = parse_{}(tokens, pos, 0)?; {}.push(_sep_item);",
+                    category, param_name,
+                )
+                .unwrap();
+            },
+            RDSyntaxItem::IdentCapture { param_name } => {
+                write!(
+                    buf,
+                    "let _sep_item = expect_ident(tokens, pos)?; /* map ident: {} */ ",
+                    param_name,
+                )
+                .unwrap();
+            },
+            _ => {},
+        }
+    }
+
+    write!(
+        buf,
+        "if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{sep_variant})) {{ \
+            *pos += 1; \
+        }} else {{ \
+            break; \
+        }} }}",
+    )
+    .unwrap();
+
+    for (name, _) in &nt_params {
+        captures.push(Capture {
+            name: name.clone(),
+            kind: CaptureKind::Collection,
+        });
+    }
+}
+
+/// Write standalone Zip(Map(body_items)) — dual accumulators without separator.
+fn write_zip_map_body(
+    buf: &mut String,
+    captures: &mut Vec<Capture>,
+    left_name: &str,
+    right_name: &str,
+    body_items: &[RDSyntaxItem],
+) {
+    let left_is_binder = is_binder_in_body(body_items, left_name);
+    let right_is_binder = is_binder_in_body(body_items, right_name);
+
+    write!(buf, "let mut {left_name} = Vec::new(); let mut {right_name} = Vec::new(); ").unwrap();
+
+    write_zip_body_items(buf, body_items, left_name, right_name);
+
+    captures.push(Capture {
+        name: left_name.to_string(),
+        kind: if left_is_binder { CaptureKind::Binder } else { CaptureKind::Collection },
+    });
+    captures.push(Capture {
+        name: right_name.to_string(),
+        kind: if right_is_binder { CaptureKind::Binder } else { CaptureKind::Collection },
+    });
 }
 
 /// Write a constructor argument string for a capture.
@@ -783,8 +1074,9 @@ pub fn write_lambda_handlers(
                 _ => {{ \
                     Err(ParseError::UnexpectedToken {{ \
                         expected: Cow::Borrowed(\"identifier or '['\"), \
-                        found: format!(\"{{:?}}\", tokens[*pos].0), \
+                        found: format_token_friendly(&tokens[*pos].0), \
                         range: tokens[*pos].1, \
+                        hint: Some(Cow::Borrowed(\"expected a variable name or binder list\")), \
                     }}) \
                 }} \
             }} \

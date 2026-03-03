@@ -50,14 +50,22 @@ pub mod trampoline;
 pub mod wfst;
 
 pub mod compose;
+pub mod composition_optimize;
+pub mod composition_verify;
+pub mod cost_benefit;
 pub mod lattice;
 pub mod lint;
+pub mod prefix_trie;
 pub mod recovery;
 pub mod runtime_types;
+pub mod transducer;
 
-// ── Log semiring modules (feature = "wfst-log", implies "wfst") ────────────
-#[cfg(feature = "wfst-log")]
+// ── Forward-backward analysis (always-on — generic over any semiring) ──────
+// The core algorithm is semiring-generic and used by A4 (BooleanWeight).
+// LogWeight-specific tests are feature-gated within the module itself.
 pub mod forward_backward;
+
+// ── Log semiring modules (feature = "wfst-log") ────────────────────────────
 #[cfg(feature = "wfst-log")]
 pub mod log_push;
 #[cfg(feature = "wfst-log")]
@@ -69,10 +77,31 @@ pub mod grammar_gen;
 #[cfg(test)]
 mod tests;
 
+use std::collections::HashSet;
+use std::fmt;
+
 use proc_macro2::TokenStream;
 
 use binding_power::Associativity;
 use recursive::CollectionKind;
+
+/// Source location for a grammar rule, extracted from proc-macro span data.
+///
+/// Used to provide rustc-style source pointers in lint diagnostics.
+/// When span data is unavailable (e.g., in unit tests), use `SourceLocation::default()`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct SourceLocation {
+    /// 1-based line number (0 = unknown).
+    pub line: u32,
+    /// 0-based column number.
+    pub column: u32,
+}
+
+impl fmt::Display for SourceLocation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.line, self.column)
+    }
+}
 
 /// Configuration for beam-width pruning in WFST prediction/recovery.
 ///
@@ -186,6 +215,15 @@ pub struct LanguageSpec {
     /// Configuration for error recovery costs and thresholds.
     /// Default: `RecoveryConfig::default()` (matches hardcoded constants).
     pub recovery_config: recovery::RecoveryConfig,
+    /// Dependency groups from equations, rewrites, and the logic block.
+    ///
+    /// Each group is the set of constructor labels co-referenced by a single
+    /// equation/rewrite rule or the entire logic block. Used for transitive
+    /// liveness analysis in dead-rule detection: if any label in a group is
+    /// parsing-live, all labels in the group are semantically live.
+    ///
+    /// Default: empty (backward compatible — no semantic info available).
+    pub semantic_dependency_groups: Vec<HashSet<String>>,
 }
 
 /// A category (type) in the language.
@@ -250,6 +288,9 @@ pub struct RuleSpec {
     pub rust_code: Option<TokenStream>,
     /// Eval mode.
     pub eval_mode: Option<String>,
+    /// Source location of the rule label in the `language!` macro invocation.
+    /// Extracted from proc-macro span data; `None` when unavailable.
+    pub source_location: Option<SourceLocation>,
 }
 
 /// A syntax item in a rule.
@@ -274,17 +315,32 @@ pub enum SyntaxItemSpec {
         separator: String,
         kind: CollectionKind,
     },
-    /// A zip+map+sep pattern operation.
-    ///
-    /// Represents a separated list where each element is a structured pattern
-    /// from a zip+map chain. E.g., `#zip(ns,xs).#map(|n,x| n "?" x).#sep(",")`.
-    ZipMapSep {
+    /// Repeat a body pattern with separator between repetitions.
+    /// Nullable (0 iterations). The body can be any SyntaxItemSpec:
+    /// - NonTerminal → simple separated list
+    /// - Map → structured separated list (single accumulator)
+    /// - Zip { body: Map { .. } } → dual-accumulator structured list
+    Sep {
+        body: Box<SyntaxItemSpec>,
+        separator: String,
+        kind: CollectionKind,
+    },
+    /// Structured body pattern: multiple items forming one logical element.
+    /// When inside Sep, represents the template for each iteration.
+    /// When standalone, equivalent to an inline sequence of items.
+    Map {
+        body_items: Vec<SyntaxItemSpec>,
+    },
+    /// Parallel dual-accumulator collection. Each iteration of the body
+    /// produces values for both left and right accumulators in lockstep.
+    /// The body is typically a Map whose items reference the accumulator
+    /// names via their param_name fields.
+    Zip {
         left_name: String,
         right_name: String,
         left_category: String,
         right_category: String,
-        body_items: Vec<SyntaxItemSpec>,
-        separator: String,
+        body: Box<SyntaxItemSpec>,
     },
     /// A separated list of binder identifiers (e.g., `xs.*sep(",")` where `xs`
     /// is a multi-abstraction binder). Parsed as comma-separated idents, collected
@@ -318,6 +374,9 @@ pub struct RuleSpecInput {
     pub rust_code: Option<TokenStream>,
     /// Eval mode.
     pub eval_mode: Option<String>,
+    /// Source location of the rule label in the `language!` macro invocation.
+    /// Extracted from proc-macro span data; `None` when unavailable.
+    pub source_location: Option<SourceLocation>,
 }
 
 impl LanguageSpec {
@@ -378,6 +437,7 @@ impl LanguageSpec {
                     has_rust_code: input.has_rust_code,
                     rust_code: input.rust_code,
                     eval_mode: input.eval_mode,
+                    source_location: input.source_location,
                 }
             })
             .collect();
@@ -389,6 +449,7 @@ impl LanguageSpec {
             log_semiring_model_path,
             literal_patterns,
             recovery_config: recovery::RecoveryConfig::default(),
+            semantic_dependency_groups: Vec::new(),
         }
     }
 }
@@ -430,6 +491,7 @@ impl RuleSpec {
             has_rust_code: false,
             rust_code: None,
             eval_mode: None,
+            source_location: None,
         }
     }
 }

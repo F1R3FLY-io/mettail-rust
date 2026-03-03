@@ -63,6 +63,7 @@ fn base_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>) -> RuleSp
         has_rust_code: false,
         rust_code: None,
         eval_mode: None,
+        source_location: None,
     }
 }
 
@@ -246,6 +247,7 @@ pub fn minimal_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
+        semantic_dependency_groups: Vec::new(),
     }
 }
 
@@ -292,6 +294,7 @@ pub fn small_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
+        semantic_dependency_groups: Vec::new(),
     }
 }
 
@@ -336,6 +339,7 @@ pub fn medium_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
+        semantic_dependency_groups: Vec::new(),
     }
 }
 
@@ -389,6 +393,7 @@ pub fn complex_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
+        semantic_dependency_groups: Vec::new(),
     }
 }
 
@@ -442,6 +447,7 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
+        semantic_dependency_groups: Vec::new(),
     }
 }
 
@@ -510,9 +516,15 @@ fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
             SyntaxItemSpec::Collection { separator, .. } => {
                 terminals.push(separator.clone());
             },
-            SyntaxItemSpec::ZipMapSep { body_items, separator, .. } => {
-                terminals.extend(collect_terminals_recursive(body_items));
+            SyntaxItemSpec::Sep { body, separator, .. } => {
+                terminals.extend(collect_terminals_recursive(std::slice::from_ref(body.as_ref())));
                 terminals.push(separator.clone());
+            },
+            SyntaxItemSpec::Map { body_items } => {
+                terminals.extend(collect_terminals_recursive(body_items));
+            },
+            SyntaxItemSpec::Zip { body, .. } => {
+                terminals.extend(collect_terminals_recursive(std::slice::from_ref(body.as_ref())));
             },
             SyntaxItemSpec::Optional { inner } => {
                 terminals.extend(collect_terminals_recursive(inner));
@@ -551,20 +563,22 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
             separator: separator.clone(),
             kind: *kind,
         },
-        SyntaxItemSpec::ZipMapSep {
-            left_name,
-            right_name,
-            left_category,
-            right_category,
-            body_items,
-            separator,
-        } => RDSyntaxItem::ZipMapSep {
-            left_name: left_name.clone(),
-            right_name: right_name.clone(),
-            left_category: left_category.clone(),
-            right_category: right_category.clone(),
-            body_items: body_items.iter().map(convert_syntax_item_to_rd).collect(),
+        SyntaxItemSpec::Sep { body, separator, kind } => RDSyntaxItem::Sep {
+            body: Box::new(convert_syntax_item_to_rd(body)),
             separator: separator.clone(),
+            kind: *kind,
+        },
+        SyntaxItemSpec::Map { body_items } => RDSyntaxItem::Map {
+            body_items: body_items.iter().map(convert_syntax_item_to_rd).collect(),
+        },
+        SyntaxItemSpec::Zip { left_name, right_name, left_category, right_category, body } => {
+            RDSyntaxItem::Zip {
+                left_name: left_name.clone(),
+                right_name: right_name.clone(),
+                left_category: left_category.clone(),
+                right_category: right_category.clone(),
+                body: Box::new(convert_syntax_item_to_rd(body)),
+            }
         },
         SyntaxItemSpec::BinderCollection { param_name, separator } => {
             RDSyntaxItem::BinderCollection {
@@ -700,7 +714,9 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
                     SyntaxItemSpec::Binder { .. } => FirstItem::Ident,
                     SyntaxItemSpec::BinderCollection { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Collection { .. } => FirstItem::Ident,
-                    SyntaxItemSpec::ZipMapSep { .. } => FirstItem::Ident,
+                    SyntaxItemSpec::Sep { .. } => FirstItem::Ident,
+                    SyntaxItemSpec::Map { .. } => FirstItem::Ident,
+                    SyntaxItemSpec::Zip { .. } => FirstItem::Ident,
                     SyntaxItemSpec::Optional { .. } => FirstItem::Ident,
                 })
                 .collect(),
@@ -861,6 +877,7 @@ pub fn prepare(spec: &LanguageSpec) -> PreparedSpec {
             own_first_set: own_first,
             all_first_sets: first_sets.clone(),
             follow_set: mettail_prattail::prediction::FirstSet::new(),
+            led_delegation: Vec::new(),
         };
 
         let cat_handlers: Vec<PrefixHandler> = prefix_handlers

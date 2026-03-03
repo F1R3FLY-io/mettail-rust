@@ -562,7 +562,7 @@ added:
 - **Frame kind propagation** (thread-local Cell for depth + FrameKind)
 - **Cascade prevention** (cascade_window suppresses phantom errors)
 - **ParseError::RecoveryApplied** (human-readable descriptions with token names)
-- **Lattice-aware recovery** (context-sensitive-lex feature)
+- **Lattice-aware recovery** (removed; was `context-sensitive-lex` feature)
 - **Trained recovery weights** (wfst-log feature, SGD training loop)
 
 See:

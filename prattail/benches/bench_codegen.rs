@@ -123,6 +123,8 @@ fn bench_dispatch(c: &mut Criterion) {
                                 prediction_wfst,
                                 None,
                                 None,
+                                &mettail_prattail::cost_benefit::OptimizationGates::all_enabled(),
+                                &std::collections::HashSet::new(),
                             );
                         }
                     }

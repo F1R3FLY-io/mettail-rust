@@ -201,7 +201,7 @@ pub fn gen_chained_new(depth: usize) -> String {
     result
 }
 
-/// RhoCalc multi-input ZipMapSep: "(x0?a0, x1?a1, ..., xN?aN).{0}"
+/// RhoCalc multi-input Sep(Zip(Map)): "(x0?a0, x1?a1, ..., xN?aN).{0}"
 pub fn gen_multi_input(n: usize) -> String {
     if n == 0 {
         return "{}".to_string();

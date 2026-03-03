@@ -480,9 +480,10 @@ typical recovery lattice with 20 nodes and N = 5, the limit is
 
 ### 8.1 Feature Gate
 
-Alternative path extraction is gated under
-`#[cfg(feature = "context-sensitive-lex")]` because it is only useful
-when the lexer produces true multi-path lattices.
+Alternative path extraction was formerly gated under the now-removed
+`context-sensitive-lex` feature because it was only useful when the
+lexer produced true multi-path lattices. This function has been removed
+along with the feature.
 
 ### 8.2 Difference from N-Best
 
@@ -567,7 +568,7 @@ Both conversion functions are free functions rather than methods on
 | `linear_to_lattice_generic()` | always                | Multi-semiring testing                 |
 | `sort_edges_by_weight()`    | always (needs `W: Ord`) | Edge ordering                          |
 | `n_best_paths()`            | `wfst-log`              | Probabilistic N-best extraction        |
-| `alternative_paths()`       | `context-sensitive-lex` | Lattice-aware error recovery           |
+| `alternative_paths()`       | removed (was `context-sensitive-lex`) | Lattice-aware error recovery (removed) |
 
 ---
 
@@ -655,7 +656,7 @@ and Viterbi extraction).
 - [Token Lattice Theory](../../theory/wfst/token-lattices.md) — Formal definitions, proofs, complexity
 - [Token Lattice Architecture](../../architecture/wfst/token-lattices.md) — Pipeline integration points
 - [Error Recovery Design](error-recovery.md) — Repair lattices, viterbi_multi_step, lattice_recovery
-- [Semirings Overview](../../theory/wfst/semirings.md) — Semiring axioms, six concrete types
+- [Semirings Overview](../../theory/wfst/semirings.md) — Semiring axioms, all ten concrete types
 - [Per-Semiring Theory](../../theory/wfst/semirings/) — Detailed theory for each weight type
 - [Per-Semiring Design](semirings/) — Implementation details for each weight type
 - [Viterbi and Forward-Backward](../../theory/wfst/viterbi-and-forward-backward.md) — Algorithm details

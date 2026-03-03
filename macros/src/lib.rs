@@ -16,7 +16,9 @@ use proc_macro::TokenStream;
 use proc_macro_error::{abort, proc_macro_error};
 use syn::parse_macro_input;
 
+use ast::compose::ComposeDef;
 use ast::language::LanguageDef;
+use ast::merge::{apply_extends, apply_includes, apply_mixins};
 use ast::validation::validate_language;
 use gen::{
     generate_all, generate_blockly_definitions, generate_language_impl, generate_metadata,
@@ -27,7 +29,32 @@ use logic::{generate_ascent_source, rules::generate_freshness_functions};
 #[proc_macro]
 #[proc_macro_error]
 pub fn language(input: TokenStream) -> TokenStream {
-    let language_def = parse_macro_input!(input as LanguageDef);
+    // Clone input BEFORE parse_macro_input! consumes it.
+    // The clone is safe within the same invocation's bridge session.
+    let input_for_registry: proc_macro2::TokenStream = input.clone().into();
+    let mut language_def = parse_macro_input!(input as LanguageDef);
+    let lang_name = language_def.name.to_string();
+
+    // Store binary-encoded input tokens in registry (no bridge types retained).
+    // MUST happen before any processing so consuming grammars get the full
+    // unprocessed rule set.
+    ast::registry::register_language(&lang_name, &input_for_registry);
+
+    // Apply composition clauses in order:
+    // 1. extends — full inheritance (Error on duplicate labels)
+    // 2. includes — grammar-only import (Override: local rules win)
+    // 3. mixins — fragment import (Override: local rules win)
+    if let Err(msg) = apply_extends(&mut language_def) {
+        abort!(language_def.name.span(), "extends error:\n{}", msg);
+    }
+
+    if let Err(msg) = apply_includes(&mut language_def) {
+        abort!(language_def.name.span(), "includes error:\n{}", msg);
+    }
+
+    if let Err(msg) = apply_mixins(&mut language_def) {
+        abort!(language_def.name.span(), "mixins error:\n{}", msg);
+    }
 
     if let Err(e) = validate_language(&language_def) {
         let span = e.span();
@@ -77,4 +104,65 @@ pub fn language(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(combined)
+}
+
+/// Define a reusable grammar fragment (types + terms only, no equations/rewrites/logic).
+///
+/// Fragments are stored in the in-process registry and can be mixed into
+/// `language!` definitions via `mixins: [FragmentName]`.
+///
+/// ```ignore
+/// language_fragment! {
+///     name: ArithOps,
+///     types { ![i32] as Int },
+///     terms {
+///         NumLit . |- Integer : Int;
+///         Add . a:Int, b:Int |- a "+" b : Int ![ a + b ] fold;
+///     }
+/// }
+/// ```
+#[proc_macro]
+#[proc_macro_error]
+pub fn language_fragment(input: TokenStream) -> TokenStream {
+    // Clone input BEFORE parse_macro_input! consumes it.
+    let input_for_registry: proc_macro2::TokenStream = input.clone().into();
+    let fragment_def = parse_macro_input!(input as ast::fragment::FragmentDef);
+
+    // Validate: all category references in terms exist in types
+    if let Err(msg) = ast::fragment::validate_fragment(&fragment_def) {
+        abort!(fragment_def.name.span(), "{}", msg);
+    }
+
+    let frag_name = fragment_def.name.to_string();
+    ast::registry::register_fragment(&frag_name, &input_for_registry);
+
+    // Fragments generate NO code — the consuming language! generates everything
+    TokenStream::new()
+}
+
+/// Compose independently defined languages into a single unified language.
+///
+/// The composed language delegates all operations (parsing, ascent, env, etc.)
+/// to the constituent sub-languages. Parsing tries each sub-language in
+/// declaration order and returns the first success.
+///
+/// ```ignore
+/// compose_languages! {
+///     name: Combined,
+///     languages: [calculator::Calculator, rhocalc::RhoCalc],
+/// }
+/// ```
+///
+/// This generates:
+/// - `CombinedTermInner` enum with one variant per sub-language
+/// - `CombinedTerm` wrapper implementing `mettail_runtime::Term`
+/// - `CombinedEnv` struct with per-sub-language environments
+/// - `CombinedMetadata` aggregating sub-language metadata
+/// - `CombinedLanguage` struct implementing `mettail_runtime::Language`
+#[proc_macro]
+#[proc_macro_error]
+pub fn compose_languages(input: TokenStream) -> TokenStream {
+    let def = parse_macro_input!(input as ComposeDef);
+    let code = gen::compose_gen::generate_composed_language(&def);
+    TokenStream::from(code)
 }

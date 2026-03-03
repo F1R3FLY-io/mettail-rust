@@ -11,6 +11,30 @@ use rustyline::{DefaultEditor, Result as RustyResult};
 use std::any::Any;
 use std::time::Instant;
 
+/// Extract the term portion from a REPL command line.
+///
+/// Commands like `exec 2 ! 3` or `step x + y` pass only the term part (`2 ! 3` / `x + y`)
+/// to the parser. Parse error positions are relative to this substring, so the error display
+/// must use the term input (not the full command line) for correct caret positioning.
+fn extract_parsed_input(line: &str) -> &str {
+    // Commands that strip a prefix before parsing
+    for prefix in &["exec ", "step "] {
+        if let Some(rest) = line.strip_prefix(prefix) {
+            return rest.trim();
+        }
+    }
+    // Assignment: "name = term" — parser sees the term part
+    if let Some(eq_pos) = line.find('=') {
+        let before = &line[..eq_pos];
+        // Only treat as assignment if before '=' is a simple identifier
+        if before.trim().chars().all(|c| c.is_alphanumeric() || c == '_') {
+            return line[eq_pos + 1..].trim();
+        }
+    }
+    // Fallback: use the whole line (query mode, etc.)
+    line
+}
+
 /// Replace whole-word occurrences of env-bound identifiers in the input with their display form.
 /// This allows `x && true` to work when `x = true`, even though the grammar requires `bool:x` for
 /// Bool variables (only Int gets bare Ident to avoid reduce-reduce conflicts).
@@ -109,9 +133,19 @@ impl Repl {
 
                     if let Err(e) = self.handle_command(line) {
                         let error_str = format!("{}", e);
-                        let display =
-                            crate::pretty::format_parse_error_with_context(line, &error_str);
-                        eprintln!("{} {}", "Error:".red().bold(), display);
+                        // Attempt rich display (works for ParseError strings with L:C: prefix);
+                        // falls back to plain "Error: message" for non-parse errors.
+                        if crate::pretty::is_parse_error(&error_str) {
+                            // Extract the term portion that was actually parsed (after
+                            // command prefix like "exec " or "step "). Parser error positions
+                            // are relative to this substring, not the full command line.
+                            let term_input = extract_parsed_input(line);
+                            let display =
+                                crate::pretty::format_parse_error_with_context(term_input, &error_str);
+                            eprintln!("{}", display);
+                        } else {
+                            eprintln!("{} {}", "Error:".red().bold(), error_str);
+                        }
                     }
                 },
                 Err(ReadlineError::Interrupted) => {

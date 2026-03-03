@@ -9,8 +9,9 @@ edition = "2021"
 
 [features]
 ## Propagate features through macros to mettail-prattail.
-context-sensitive-lex = ["mettail-macros/context-sensitive-lex"]
 wfst-log = ["mettail-macros/wfst-log", "mettail-prattail/wfst-log"]
+## Test-only language for LED delegation testing. Not for application use.
+led-test = []
 
 [dependencies]
 mettail-macros = { path = "../macros" }

@@ -86,6 +86,54 @@ changes *what is optimized* without changing the algorithm.
 
 ---
 
+## 1.5 What Is a Token Lattice, Intuitively?
+
+### The Subway Map Analogy
+
+A token lattice is like a subway map between two stations (start and end
+of input). Each route represents a different tokenization of the input
+string. Some routes are express (fewer stops = fewer tokens, e.g.,
+`ShrAssign` as one token) and some are local (more stops = more tokens,
+e.g., `Gt Gt Eq` as three). Each route has a travel time (weight).
+Viterbi finds the fastest route.
+
+### Core Insight
+
+A token lattice represents **all possible readings** of an input string
+simultaneously in a single data structure. Instead of trying each
+tokenization sequentially (which could be exponential in the number of
+ambiguous positions), the lattice encodes them all at once and lets
+Viterbi extract the winner in a single O(V + E) pass.
+
+### Subway Map for `>>=`
+
+```
+Station 0         Station 1         Station 2         Station 3
+(before >)        (between > >)     (between > =)     (after =)
+    ●─── Gt(1.0) ───●─── Gt(1.0) ───●─── Eq(0.0) ───●
+    │                │               ▲                 │
+    │                └── GtEq(0.5) ──┘                 │
+    │                                                  │
+    ├──── GtGt(0.0) ─── ● ╌╌╌ Eq(0.0) ╌╌╌╌╌╌╌╌╌╌╌╌╌─┤
+    │                    2                              │
+    │                                                  │
+    └───────────── ShrAssign(0.0) ─────────────────────┘
+
+Express:  ShrAssign          (1 token, cost 0.0)
+Local:    Gt + Gt + Eq       (3 tokens, cost 2.0)
+Mixed:    GtGt + Eq          (2 tokens, cost 0.0)
+Mixed:    Gt + GtEq          (2 tokens, cost 1.5)
+```
+
+Four different tokenizations are encoded simultaneously. Viterbi
+processes stations 0 through 3 left-to-right, computing the cheapest
+arrival at each. The express route `ShrAssign` (cost 0.0) ties with
+`GtGt + Eq` (cost 0.0); both win over the local routes. The parser
+receives whichever tied path is encountered first in edge iteration
+order.
+
+---
+
 ## 2. Definitions and Notation
 
 ### 2.1 Semiring Recap
@@ -370,6 +418,28 @@ traces:
 The Num12 alternative (weight 2.0) is correctly rejected because the
 canonical tokenization has lower total weight.
 
+#### Wavefront Propagation Visual
+
+The same computation visualized as a left-to-right wavefront:
+
+```
+Step 0:       Step 1:       Step 2:       Step 3:       Step 4:
+▓░░░░         ▓▓░░░         ▓▓▓░░         ▓▓▓▓░         ▓▓▓▓▓
+0 1 2 3 4     0 1 2 3 4     0 1 2 3 4     0 1 2 3 4     0 1 2 3 4
+^               ^               ^               ^               ^
+α[0]=0.0      α[1]=0.0      α[2]=0.0      α[3]=0.0      α[4]=0.0
+              Int(0.0)      Plus(0.0)     Int(0.0)      Eof(0.0)
+                            Num12: 2.0
+                            rejected!
+
+▓ = finalized    ░ = pending
+```
+
+At step 2, node 2 receives two contributions: the canonical path
+(0→1→2 via Int+Plus, cost 0.0) and the alternative (0→2 via Num12,
+cost 2.0). The ⊕ = min operation selects 0.0, finalizing node 2 and
+effectively discarding the Num12 hypothesis.
+
 ### 5.6 Generic Viterbi
 
 PraTTaIL provides `viterbi_generic<W: Semiring + Ord>()`, which runs
@@ -608,6 +678,70 @@ where Z = α[f] is the partition function (total log-probability of all
 s→f paths). Edges with high posterior are important for the final parse;
 edges with low posterior can be pruned or down-weighted during training.
 
+#### Worked Example: Arc Posteriors for the `>>` Lattice
+
+Consider the 3-node lattice from §2.3:
+
+```
+Edges:
+  A: 0→2 GtGt (w=0.0)
+  B: 0→1 Gt   (w=1.0)
+  C: 1→2 Gt   (w=1.0)
+```
+
+Under LogWeight (⊕ = log-sum-exp, ⊗ = addition):
+
+```
+Forward scores:
+  α[0] = 0.0
+  α[1] = α[0] + w(B) = 0.0 + 1.0 = 1.0
+  α[2] = logsumexp(α[0] + w(A), α[1] + w(C))
+       = logsumexp(0.0, 2.0)
+       = −ln(e⁻⁰·⁰ + e⁻²·⁰)
+       = −ln(1.0 + 0.135)
+       ≈ −ln(1.135) ≈ −0.127
+
+  (Using the convention where logsumexp(a,b) = −ln(e⁻ᵃ + e⁻ᵇ).)
+  So α[2] ≈ −0.127.
+
+Backward scores:
+  β[2] = 0.0
+  β[1] = w(C) + β[2] = 1.0 + 0.0 = 1.0
+  β[0] = logsumexp(w(A) + β[2], w(B) + β[1])
+       = logsumexp(0.0, 2.0) ≈ −0.127
+
+Identity check: α[2] = β[0] ≈ −0.127  ✓
+
+Partition function: Z = α[2] ≈ −0.127
+
+Edge scores (α[u] + w(e) + β[v]):
+  score(A) = α[0] + w(A) + β[2] = 0.0 + 0.0 + 0.0 = 0.0
+  score(B) = α[0] + w(B) + β[1] = 0.0 + 1.0 + 1.0 = 2.0
+  score(C) = α[1] + w(C) + β[2] = 1.0 + 1.0 + 0.0 = 2.0
+
+Arc posteriors:
+  P(A) = exp(−score(A)) / exp(−Z)
+       = exp(−0.0) / exp(0.127)
+       = 1.0 / 1.135
+       ≈ 0.881
+
+  P(B) = exp(−2.0) / exp(0.127)
+       = 0.135 / 1.135
+       ≈ 0.119
+
+  P(C) = exp(−2.0) / exp(0.127) ≈ 0.119
+
+Check: paths GtGt and Gt+Gt partition the probability:
+  P(path GtGt) = P(A)    ≈ 0.881
+  P(path Gt+Gt) = P(B) = P(C) ≈ 0.119
+  Total ≈ 1.0  ✓
+```
+
+**Interpretation:** The `GtGt` path carries ~88% of probability mass;
+the `Gt Gt` path carries ~12%. The parser strongly prefers the
+single-token reading. During weight training, gradient updates would
+reinforce whichever reading matches the oracle parse.
+
 ---
 
 ## 9. Relationship to Classical NLP Lattices
@@ -640,7 +774,25 @@ word segmentation and POS tagging in morphologically rich languages
 POS tag. PraTTaIL's lattice edges carry both a token variant and a span,
 with the semiring weight encoding preference strength.
 
-### 9.4 Disambiguation of Terminology
+### 9.4 Feature Comparison Table
+
+| Feature | PraTTaIL Lattice | Speech Word Lattice | Chinese Segmentation | Morphological |
+|:--------|:----------------:|:-------------------:|:--------------------:|:-------------:|
+| Nodes | char positions | time points | char positions | char positions |
+| Edges | token hypotheses | word hypotheses | word hypotheses | morpheme + POS |
+| Weight | dispatch priority | acoustic + LM | learned model | joint probability |
+| Typical size | 5–50 nodes | 100–10K nodes | 10–200 nodes | 10–100 nodes |
+| Ambiguity source | operator overlap | acoustic confusion | no whitespace | morphological richness |
+| Resolution | Viterbi (tropical) | Viterbi (tropical) | Viterbi (learned) | joint CRF |
+| Semirings available | 10 types | typically 1–2 | 1 | 1 |
+| Training | wfst-log (planned) | EM / discriminative | discriminative | CRF |
+
+PraTTaIL's lattice is distinguished by its multi-semiring framework:
+the same lattice structure supports ten different semiring types, each
+providing a different optimization objective. Speech and NLP lattices
+typically use one or two fixed weight types.
+
+### 9.5 Disambiguation of Terminology
 
 The word "lattice" in this document refers to a **graph-theoretic
 lattice** — a weighted directed acyclic graph with a designated start
@@ -703,7 +855,7 @@ distinct name (e.g., `PartialOrderLattice`) to avoid confusion.
 
 ## 12. Cross-References
 
-- [Semirings](semirings.md) — Semiring axioms, all six concrete types
+- [Semirings](semirings.md) — Semiring axioms, all ten concrete types
 - [Weighted Automata](weighted-automata.md) — WFST structure, string weight
 - [Viterbi and Forward-Backward](viterbi-and-forward-backward.md) — Full algorithm details
 - [Token Lattice Design](../../design/wfst/token-lattices.md) — Implementation decisions

@@ -63,7 +63,9 @@ We verify all eight semiring axioms. Let a = 2, b = 3, c = 5.
 a ⊕ (b ⊕ c)  =  2 + (3 + 5)  =  2 + 8  =  10   ✓
 ```
 
-Natural number addition is associative.
+Natural number addition is associative. *Parsing interpretation:* the
+total derivation count at a dispatch point does not depend on the order in
+which the parser discovers competing rules.
 
 ### (A2) Commutativity of ⊕
 
@@ -72,7 +74,8 @@ a ⊕ b  =  2 + 3  =  5
 b ⊕ a  =  3 + 2  =  5   ✓
 ```
 
-Natural number addition is commutative.
+Natural number addition is commutative. *Parsing interpretation:*
+rule ordering in the grammar file does not affect the ambiguity count.
 
 ### (A3) ⊕ Identity
 
@@ -82,7 +85,8 @@ a ⊕ 0̄  =  2 + 0  =  2  =  a   ✓
 ```
 
 Zero is the additive identity: a path count plus zero dead-rule
-paths equals the original count.
+paths equals the original count. *Parsing interpretation:* an unreachable
+alternative contributes nothing to the total derivation count.
 
 ### (M1) Associativity of ⊗
 
@@ -91,7 +95,9 @@ paths equals the original count.
 a ⊗ (b ⊗ c)  =  2 × (3 × 5)  =  2 × 15  =  30   ✓
 ```
 
-Natural number multiplication is associative.
+Natural number multiplication is associative. *Parsing interpretation:*
+grouping a three-segment parse as `(A·B)·C` or `A·(B·C)` produces the same
+combinatorial derivation count.
 
 ### (M2) ⊗ Identity
 
@@ -101,7 +107,9 @@ a ⊗ 1̄  =  2 × 1  =  2  =  a   ✓
 ```
 
 One is the multiplicative identity: one derivation of a prefix
-combined with a known count of suffixes yields that same count.
+combined with a known count of suffixes yields that same count. *Parsing
+interpretation:* a deterministic prefix (exactly one derivation) does not
+multiply the suffix count — it passes through unchanged.
 
 ### (D1) Left Distributivity
 
@@ -110,7 +118,9 @@ a ⊗ (b ⊕ c)  =  2 × (3 + 5)  =  2 × 8  =  16
 (a ⊗ b) ⊕ (a ⊗ c)  =  (2 × 3) + (2 × 5)  =  6 + 10  =  16   ✓
 ```
 
-Standard distributivity of multiplication over addition.
+Standard distributivity of multiplication over addition. *Parsing
+interpretation:* factoring a shared prefix preserves the total derivation
+count: 2 prefix-ways × (3 + 5) suffix-ways = 6 + 10 = 16 total.
 
 ### (D2) Right Distributivity
 
@@ -119,7 +129,8 @@ Standard distributivity of multiplication over addition.
 (a ⊗ c) ⊕ (b ⊗ c)  =  (2 × 5) + (3 × 5)  =  10 + 15  =  25   ✓
 ```
 
-Symmetric to (D1).
+Symmetric to (D1). *Parsing interpretation:* shared suffixes can also be
+factored without changing the total count.
 
 ### (Z) Zero Annihilation
 
@@ -129,9 +140,14 @@ a ⊗ 0̄  =  2 × 0  =  0  =  0̄   ✓
 ```
 
 If any segment along a derivation path is impossible (zero
-derivations), the entire path has zero derivations.
+derivations), the entire path has zero derivations. *Parsing interpretation:*
+a dead cross-category cast (zero derivations) kills all paths through it —
+no finite count of suffix derivations can rescue an impossible prefix.
 
 All eight axioms are satisfied. C is a valid semiring.
+
+> For the parsing-specific interpretation of these axioms, see
+> [§4 Why Each Axiom Matters for Parsing](../semirings.md#4-why-each-axiom-matters-for-parsing).
 
 ---
 
@@ -279,6 +295,29 @@ warning and uses the composed dispatch table (tropical weights)
 to resolve the ambiguity deterministically. When `count = 0`,
 the token is not in the category's FIRST set and can be flagged
 as a dead rule for that token.
+
+### Ambiguity Detection Pseudocode
+
+The following pseudocode describes how CountingWeight drives ambiguity
+detection inside `compute_composed_dispatch()`:
+
+```
+FUNCTION detect_ambiguity(composed_table, categories):
+    FOR (category, token) IN composed_table.keys():
+        entries := composed_table[(category, token)]
+        count := CountingWeight::zero()        // 0 derivations
+
+        FOR entry IN entries:
+            count := count ⊕ CountingWeight::one()     // count += 1
+
+        MATCH count.count():
+            0 => emit_dead_rule_warning(category, token)
+            1 => // unambiguous — direct dispatch, no action needed
+            n => emit_ambiguity_warning(category, token, n)
+                 // resolve via tropical weights:
+                 winner := entries.min_by(|e| e.tropical_weight)
+                 emit_resolution_note(winner)
+```
 
 ### Code Path
 

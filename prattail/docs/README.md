@@ -56,6 +56,12 @@ adds probabilistic training via the log semiring.
 | EditWeight | always | [theory/wfst/semirings/edit-weight.md](theory/wfst/semirings/edit-weight.md) |
 | ProductWeight | always | [theory/wfst/semirings/product-weight.md](theory/wfst/semirings/product-weight.md) |
 | LogWeight | wfst-log | [theory/wfst/semirings/log-weight.md](theory/wfst/semirings/log-weight.md) |
+| EntropyWeight | wfst-log | [theory/wfst/semirings/entropy-weight.md](theory/wfst/semirings/entropy-weight.md) |
+| NbestWeight | always | [theory/wfst/semirings/nbest-weight.md](theory/wfst/semirings/nbest-weight.md) |
+
+**Theory — Optimization:**
+
+- [Optimization Transducer Cascade](theory/wfst/optimization-transducer-cascade.md) — E1 transducer cascade theory: OptimizationPass trait, composition, convergence
 
 **Architecture:**
 
@@ -85,6 +91,8 @@ adds probabilistic training via the log semiring.
 | EditWeight | [design/wfst/semirings/edit-weight.md](design/wfst/semirings/edit-weight.md) |
 | ProductWeight | [design/wfst/semirings/product-weight.md](design/wfst/semirings/product-weight.md) |
 | LogWeight | [design/wfst/semirings/log-weight.md](design/wfst/semirings/log-weight.md) |
+| EntropyWeight | [design/wfst/semirings/entropy-weight.md](design/wfst/semirings/entropy-weight.md) |
+| NbestWeight | [design/wfst/semirings/nbest-weight.md](design/wfst/semirings/nbest-weight.md) |
 
 **Usage:**
 
@@ -115,5 +123,5 @@ adds probabilistic training via the log semiring.
 - [Parse Performance](benchmarks/parse-performance.md) — PraTTaIL vs LALRPOP benchmarks
 - [Optimization Ledger](benchmarks/optimization-ledger.md) — Scientific record of all optimization experiments
 - [WFST Pipeline Benchmarks](benchmarks/wfst-pipeline-integration.md) — Always-on WFST performance impact
-- [Semiring Overview](theory/wfst/semirings.md) — Six semirings for weighted parsing
+- [Semiring Overview](theory/wfst/semirings.md) — Eight semirings for weighted parsing
 - [Feature Gates](usage/wfst/feature-gates.md) — Two-tier feature model

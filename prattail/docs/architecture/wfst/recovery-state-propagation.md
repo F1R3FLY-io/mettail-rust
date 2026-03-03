@@ -495,11 +495,15 @@ static RECOVERY_TOKEN_NAMES_Int: &[&str] = &[
 
 ---
 
-## 9. Lattice-Aware Recovery (context-sensitive-lex)
+## 9. Lattice-Aware Recovery (Removed)
 
-When the `context-sensitive-lex` feature is enabled, the lexer produces
-a `TokenLattice` with multiple tokenization paths. The recovery system
-can exploit alternative tokenizations.
+> **Note:** The `context-sensitive-lex` feature has been removed. The always-on
+> WFST architecture now resolves all lexer ambiguities at compile time. This
+> section is retained for historical reference.
+
+When the now-removed `context-sensitive-lex` feature was enabled, the
+lexer produced a `TokenLattice` with multiple tokenization paths. The
+recovery system could exploit alternative tokenizations.
 
 ### 9.1 alternative_paths()
 

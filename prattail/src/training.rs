@@ -350,6 +350,165 @@ impl TrainedModel {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// B5: Online weight training from spillover signals
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// B5: Accumulated spillover training signal.
+///
+/// Bridges the C1 `WeightCorrection` events to the `RuleWeights` training
+/// infrastructure. Each correction represents a case where the WFST's
+/// prediction weight ordering was wrong: the parser's primary (weight-best)
+/// alternative was rejected in favor of a spilled alternative.
+///
+/// # Signal interpretation
+///
+/// - `primary_weight` → the WFST weight of the rejected primary alternative.
+/// - `selected_weight` → the WFST weight of the accepted (spilled) alternative.
+/// - `weight_delta()` → how much the prediction was off.
+///
+/// The training signal: for rules associated with the *selected* weight,
+/// decrease their weight (make more probable); for rules associated with
+/// the *primary* weight, increase their weight (make less probable).
+#[derive(Debug, Clone, Default)]
+pub struct SpilloverTrainer {
+    /// Category → accumulated correction signals.
+    corrections: HashMap<String, Vec<crate::wfst::WeightCorrection>>,
+    /// Learning rate for spillover-based weight updates (default 0.05).
+    learning_rate: f64,
+    /// Maximum per-rule weight adjustment per update pass (default 0.5).
+    max_adjustment: f64,
+}
+
+impl SpilloverTrainer {
+    /// Create a new spillover trainer with default parameters.
+    pub fn new() -> Self {
+        SpilloverTrainer {
+            corrections: HashMap::new(),
+            learning_rate: 0.05,
+            max_adjustment: 0.5,
+        }
+    }
+
+    /// Create with custom learning rate and max adjustment.
+    pub fn with_params(learning_rate: f64, max_adjustment: f64) -> Self {
+        SpilloverTrainer {
+            corrections: HashMap::new(),
+            learning_rate,
+            max_adjustment,
+        }
+    }
+
+    /// Ingest weight corrections from a single parse.
+    ///
+    /// Call after `Language::drain_weight_corrections()` returns non-empty.
+    pub fn add_corrections(&mut self, corrections: Vec<crate::wfst::WeightCorrection>) {
+        for c in corrections {
+            self.corrections
+                .entry(c.category.to_string())
+                .or_default()
+                .push(c);
+        }
+    }
+
+    /// Number of accumulated corrections across all categories.
+    pub fn num_corrections(&self) -> usize {
+        self.corrections.values().map(|v| v.len()).sum()
+    }
+
+    /// Number of corrections for a specific category.
+    pub fn num_corrections_for(&self, category: &str) -> usize {
+        self.corrections.get(category).map_or(0, |v| v.len())
+    }
+
+    /// Compute aggregate weight adjustment recommendation per category.
+    ///
+    /// Returns a map from category name to `(primary_adjustment, selected_adjustment)`:
+    /// - `primary_adjustment > 0`: increase primary weight (penalize misprediction).
+    /// - `selected_adjustment < 0`: decrease selected weight (reinforce correct choice).
+    ///
+    /// The adjustments are averaged over all corrections for the category and
+    /// clamped to `[-max_adjustment, +max_adjustment]`.
+    pub fn compute_adjustments(&self) -> HashMap<String, (f64, f64)> {
+        let mut result = HashMap::new();
+
+        for (category, corrections) in &self.corrections {
+            if corrections.is_empty() {
+                continue;
+            }
+
+            let n = corrections.len() as f64;
+            let avg_primary_adj: f64 = corrections
+                .iter()
+                .map(|c| c.primary_adjustment(self.learning_rate, self.max_adjustment))
+                .sum::<f64>()
+                / n;
+            let avg_selected_adj: f64 = corrections
+                .iter()
+                .map(|c| -(c.primary_adjustment(self.learning_rate, self.max_adjustment)))
+                .sum::<f64>()
+                / n;
+
+            result.insert(
+                category.clone(),
+                (
+                    avg_primary_adj.min(self.max_adjustment),
+                    avg_selected_adj.max(-self.max_adjustment),
+                ),
+            );
+        }
+
+        result
+    }
+
+    /// Apply accumulated corrections to a `RuleWeights` instance.
+    ///
+    /// For each correction:
+    /// - Rules with weight near `primary_weight` get a penalty (weight increases).
+    /// - Rules with weight near `selected_weight` get a bonus (weight decreases).
+    ///
+    /// The matching uses a weight tolerance of ±0.1 to handle floating-point
+    /// imprecision in weight propagation.
+    ///
+    /// Returns the number of weight updates applied.
+    pub fn apply_to_rule_weights(&self, rule_weights: &mut RuleWeights) -> usize {
+        let tolerance = 0.1;
+        let mut updates = 0;
+
+        for corrections in self.corrections.values() {
+            for correction in corrections {
+                let adj = correction.primary_adjustment(self.learning_rate, self.max_adjustment);
+                if adj < 1e-10 {
+                    continue; // No correction needed
+                }
+
+                // Penalize rules matching primary weight
+                for (label, weight) in rule_weights.weights.iter_mut() {
+                    let w = weight.value();
+                    if (w - correction.primary_weight).abs() < tolerance {
+                        *weight = LogWeight::new((w + adj).max(0.0));
+                        updates += 1;
+                    }
+                    // Reinforce rules matching selected weight (decrease their weight = increase probability)
+                    if (w - correction.selected_weight).abs() < tolerance {
+                        *weight = LogWeight::new((w - adj).max(0.0));
+                        updates += 1;
+                    }
+                    // Suppress unused variable warning for label
+                    let _ = label;
+                }
+            }
+        }
+
+        updates
+    }
+
+    /// Clear all accumulated corrections.
+    pub fn clear(&mut self) {
+        self.corrections.clear();
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Recovery weight training (Sprint 12)
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -820,5 +979,96 @@ mod tests {
         assert!((config.substitute_cost - 1.5).abs() < 1e-9);
         assert!((config.insert_cost - 2.0).abs() < 1e-9);
         assert!((config.swap_cost - 1.25).abs() < 1e-9);
+    }
+
+    // ── B5: Spillover trainer tests ──
+
+    fn sample_correction(primary: f64, selected: f64) -> crate::wfst::WeightCorrection {
+        crate::wfst::WeightCorrection {
+            category: "TestGrammar",
+            primary_weight: primary,
+            selected_weight: selected,
+            alternatives_considered: 3,
+        }
+    }
+
+    #[test]
+    fn test_b5_spillover_trainer_new() {
+        let trainer = SpilloverTrainer::new();
+        assert_eq!(trainer.num_corrections(), 0);
+        assert!(trainer.compute_adjustments().is_empty());
+    }
+
+    #[test]
+    fn test_b5_add_corrections() {
+        let mut trainer = SpilloverTrainer::new();
+        trainer.add_corrections(vec![
+            sample_correction(0.0, 1.5),
+            sample_correction(0.0, 2.0),
+        ]);
+        assert_eq!(trainer.num_corrections(), 2);
+        assert_eq!(trainer.num_corrections_for("TestGrammar"), 2);
+        assert_eq!(trainer.num_corrections_for("Other"), 0);
+    }
+
+    #[test]
+    fn test_b5_compute_adjustments_positive_delta() {
+        // B5: When selected weight > primary weight, primary should be penalized.
+        let mut trainer = SpilloverTrainer::with_params(0.1, 1.0);
+        trainer.add_corrections(vec![sample_correction(0.0, 2.0)]);
+        let adj = trainer.compute_adjustments();
+        let (primary_adj, selected_adj) = adj.get("TestGrammar").expect("should have TestGrammar");
+        assert!(*primary_adj > 0.0, "primary should be penalized: {}", primary_adj);
+        assert!(*selected_adj < 0.0, "selected should be reinforced: {}", selected_adj);
+    }
+
+    #[test]
+    fn test_b5_compute_adjustments_zero_delta() {
+        // B5: Zero delta → zero adjustment (correction was a no-op).
+        let mut trainer = SpilloverTrainer::with_params(0.1, 1.0);
+        trainer.add_corrections(vec![sample_correction(1.0, 1.0)]);
+        let adj = trainer.compute_adjustments();
+        let (primary_adj, selected_adj) = adj.get("TestGrammar").expect("should have TestGrammar");
+        assert!(primary_adj.abs() < 1e-10, "zero delta should produce zero adjustment");
+        assert!(selected_adj.abs() < 1e-10, "zero delta should produce zero adjustment");
+    }
+
+    #[test]
+    fn test_b5_apply_to_rule_weights() {
+        // B5: Applying corrections should shift rule weights.
+        let labels = vec!["DirectRule".to_string(), "CastRule".to_string()];
+        let mut rw = RuleWeights::uniform(&labels);
+        // Set up weights matching typical dispatch: Direct=0.0, Cast=0.5
+        rw.set("DirectRule", LogWeight::new(0.0));
+        rw.set("CastRule", LogWeight::new(0.5));
+
+        let mut trainer = SpilloverTrainer::with_params(0.1, 0.5);
+        // Correction: primary at 0.0 was wrong, selected at 0.5 was right
+        trainer.add_corrections(vec![sample_correction(0.0, 0.5)]);
+
+        let updates = trainer.apply_to_rule_weights(&mut rw);
+        assert!(updates > 0, "should have applied at least one update");
+
+        // DirectRule (matching primary=0.0) should have increased weight
+        assert!(
+            rw.get("DirectRule").value() > 0.0,
+            "DirectRule weight should increase (penalized): {}",
+            rw.get("DirectRule").value()
+        );
+        // CastRule (matching selected=0.5) should have decreased weight
+        assert!(
+            rw.get("CastRule").value() < 0.5,
+            "CastRule weight should decrease (reinforced): {}",
+            rw.get("CastRule").value()
+        );
+    }
+
+    #[test]
+    fn test_b5_clear_corrections() {
+        let mut trainer = SpilloverTrainer::new();
+        trainer.add_corrections(vec![sample_correction(0.0, 1.0)]);
+        assert_eq!(trainer.num_corrections(), 1);
+        trainer.clear();
+        assert_eq!(trainer.num_corrections(), 0);
     }
 }

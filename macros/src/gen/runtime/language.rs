@@ -126,6 +126,8 @@ fn generate_term_wrapper(name: &syn::Ident, primary_type: &syn::Ident) -> TokenS
 fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> TokenStream {
     let term_name = format_ident!("{}Term", name);
     let inner_enum_name = format_ident!("{}TermInner", name);
+    // C1: Grammar name as a string literal for WeightCorrection category field
+    let name_str_lit = LitStr::new(&name.to_string(), name.span());
 
     let enum_variants: Vec<TokenStream> = language
         .types
@@ -298,7 +300,32 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                             .filter(|(_, a)| a.is_accepting())
                             .collect();
                         match accepting.len() {
-                            1 => accepting[0].1.clone(),
+                            1 => {
+                                /* C1: Single accepting alternative — if the weight-best was NOT this
+                                   one, record a weight correction (the WFST's predicted best was wrong). */
+                                let weights = AMBIGUOUS_WEIGHTS.with(|cell| cell.take());
+                                if weights.len() == n_alts && flat.len() == n_alts {
+                                    let accepted_idx = accepting[0].0;
+                                    let primary_idx = weights.iter()
+                                        .enumerate()
+                                        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                                        .map(|(i, _)| i)
+                                        .unwrap_or(0);
+                                    if accepted_idx != primary_idx {
+                                        WEIGHT_CORRECTIONS.with(|cell| {
+                                            let mut corrections = cell.take();
+                                            corrections.push(mettail_prattail::wfst::WeightCorrection {
+                                                category: #name_str_lit,
+                                                primary_weight: weights[primary_idx],
+                                                selected_weight: weights[accepted_idx],
+                                                alternatives_considered: n_alts,
+                                            });
+                                            cell.set(corrections);
+                                        });
+                                    }
+                                }
+                                accepting[0].1.clone()
+                            }
                             n if n > 1 => {
                                 /* Multiple accepting alternatives — use WFST weights as
                                    tiebreaker. Lowest tropical weight = most likely.
@@ -313,6 +340,27 @@ fn generate_term_wrapper_multi(name: &syn::Ident, language: &LanguageDef) -> Tok
                                         })
                                         .map(|(i, _)| *i)
                                         .expect("accepting non-empty");
+
+                                    /* C1: Record correction if weight-best overall was NOT the
+                                       weight-best among accepting alternatives. */
+                                    let overall_primary_idx = weights.iter()
+                                        .enumerate()
+                                        .min_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+                                        .map(|(i, _)| i)
+                                        .unwrap_or(0);
+                                    if best_idx != overall_primary_idx {
+                                        WEIGHT_CORRECTIONS.with(|cell| {
+                                            let mut corrections = cell.take();
+                                            corrections.push(mettail_prattail::wfst::WeightCorrection {
+                                                category: #name_str_lit,
+                                                primary_weight: weights[overall_primary_idx],
+                                                selected_weight: weights[best_idx],
+                                                alternatives_considered: n_alts,
+                                            });
+                                            cell.set(corrections);
+                                        });
+                                    }
+
                                     flat.into_iter().nth(best_idx).expect("valid index")
                                 } else {
                                     /* Weights unavailable or length mismatch — return first accepting */
@@ -483,6 +531,10 @@ fn generate_language_struct(
 
     // Generate custom relation extraction code
     let custom_relation_extraction = generate_custom_relation_extraction(language);
+
+    // B6: Per-category WFST accessor identifiers
+    let b6_prediction_fn = format_ident!("prediction_wfst_{}", primary_lower);
+    let b6_prediction_static = format_ident!("PREDICTION_{}", primary_type);
 
     let parse_preserving_vars_body = quote! {
         #primary_type::parse(input).map(#term_name)
@@ -680,6 +732,20 @@ fn generate_language_struct(
                 seen: &mut std::collections::HashSet<std::string::String>,
             ) {
                 Self::collect_all_vars_impl(root_term, term, result, seen);
+            }
+
+            // ── B6: Runtime WFST query accessor ──
+
+            /// B6: Access the prediction WFST for the primary category.
+            ///
+            /// Returns a reference to the lazily-initialized WFST.
+            /// Use for incremental parsing queries:
+            /// - `valid_continuations()`: list valid next tokens (autocomplete)
+            /// - `has_valid_dispatch(token)`: early error detection
+            /// - `parse_progress(state)`: progress estimation
+            #[allow(non_snake_case)]
+            pub fn #b6_prediction_fn() -> &'static mettail_prattail::wfst::PredictionWfst {
+                &*#b6_prediction_static
             }
         }
 
@@ -1133,24 +1199,51 @@ fn generate_language_struct_multi(
                             cell.set(0.5); /* reset for next parse */
                             w
                         }));
-                        /* Drain NFA prefix spillover and replay with forced prefix.
-                           When the NFA merged arm produces N>1 successes, the best
-                           (weight-lowest) is returned normally and the remaining N-1
-                           are spilled here. Each spilled alternative is replayed through
-                           the full parser (prefix + infix loop) via forced-prefix override
-                           so it gets correct infix context (e.g., float(x) + 1.0).
-                           The position and WFST weight are carried alongside the prefix
-                           value. */
+                        /* F3: Lazy spillover — demand-driven replay.
+                           When the primary result is accepting (concrete/ground), skip
+                           replay entirely: a ground term is semantically unambiguous, so
+                           no alternative can produce a better result.
+                           Only trigger forced-prefix replay when the primary is NOT
+                           accepting (contains free variables that need resolution). */
                         let spilled: Vec<(#cat, usize, f64)> = #spill_name.with(|cell| cell.take());
-                        for (alt_prefix, alt_pos, alt_weight) in spilled {
-                            #forced_name.with(|cell| cell.set(Some((alt_prefix, alt_pos, alt_weight))));
-                            if let Ok(alt_term) = #cat::parse(input) {
-                                successes.push(#inner_enum_name::#variant(alt_term));
-                                success_weights.push(alt_weight);
+                        let primary_is_accepting = successes.last()
+                            .map_or(false, |s| s.is_accepting());
+                        if !primary_is_accepting {
+                            /* F3: Demand-driven replay with weight threshold and
+                               acceptance short-circuit. The spill buffer is weight-sorted
+                               (ascending) by the push site, so:
+                               1. Threshold pruning: once alt_weight > primary + SLACK,
+                                  all remaining are worse — break early.
+                               2. Short-circuit: the first accepting replay is the
+                                  weight-best accepting candidate — no further replay needed. */
+                            let primary_w = #primary_weight_name.with(|cell| cell.get());
+                            const REPLAY_WEIGHT_SLACK: f64 = 2.0;
+                            let weight_threshold = primary_w + REPLAY_WEIGHT_SLACK;
+                            for (alt_prefix, alt_pos, alt_weight) in spilled {
+                                /* F3: Threshold pruning — buffer is weight-sorted ascending,
+                                   so once we exceed the threshold, all remaining are worse. */
+                                if alt_weight > weight_threshold {
+                                    break;
+                                }
+                                #forced_name.with(|cell| cell.set(Some((alt_prefix, alt_pos, alt_weight))));
+                                if let Ok(alt_term) = #cat::parse(input) {
+                                    let wrapped = #inner_enum_name::#variant(alt_term);
+                                    let alt_accepting = wrapped.is_accepting();
+                                    successes.push(wrapped);
+                                    success_weights.push(alt_weight);
+                                    /* F3: Demand-driven short-circuit — if this alternative is
+                                       accepting, it's the weight-best accepting one (spill buffer
+                                       is weight-sorted). No further replay needed. */
+                                    if alt_accepting {
+                                        #spill_name.with(|cell| { cell.take(); });
+                                        break;
+                                    }
+                                }
+                                /* Clear any nested spillover from forced-prefix replay */
+                                #spill_name.with(|cell| { cell.take(); });
                             }
-                            /* Clear any nested spillover from forced-prefix replay */
-                            #spill_name.with(|cell| { cell.take(); });
                         }
+                        /* else: F3 skipped replay — primary is ground, N-1 alternatives discarded */
                     },
                     Err(e) => {
                         /* Clear spillover on error to prevent leaking across categories */
@@ -1293,6 +1386,32 @@ fn generate_language_struct_multi(
             quote! {
                 pub fn #fn_name(term: &#cat) -> mettail_runtime::TermType {
                     #type_impl
+                }
+            }
+        })
+        .collect();
+
+    // B6: Per-category WFST query accessors for incremental parsing.
+    // Generates `prediction_wfst_<cat>()` methods that return a reference to the
+    // per-category PREDICTION_Cat static, enabling runtime queries for autocomplete,
+    // early error detection, and progress estimation.
+    let per_cat_wfst_accessors: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat = &t.name;
+            let fn_name = format_ident!("prediction_wfst_{}", cat.to_string().to_lowercase());
+            let prediction_name = format_ident!("PREDICTION_{}", cat);
+            quote! {
+                /// B6: Access the prediction WFST for this category.
+                ///
+                /// Returns a reference to the lazily-initialized per-category WFST.
+                /// Use for incremental parsing queries:
+                /// - `valid_continuations()`: list valid next tokens (autocomplete)
+                /// - `has_valid_dispatch(token)`: early error detection
+                /// - `parse_progress(state)`: progress estimation
+                pub fn #fn_name() -> &'static mettail_prattail::wfst::PredictionWfst {
+                    &*#prediction_name
                 }
             }
         })
@@ -1532,6 +1651,16 @@ fn generate_language_struct_multi(
             /// use weights as tiebreaker when multiple alternatives are accepting.
             static AMBIGUOUS_WEIGHTS: std::cell::Cell<Vec<f64>> =
                 std::cell::Cell::new(Vec::new());
+
+            /// C1: Accumulated weight corrections from semantic disambiguation.
+            /// When `from_alternatives` selects a non-weight-best alternative
+            /// (because only it was accepting or because semantic tiebreaking
+            /// overrode the WFST ordering), a `WeightCorrection` is recorded.
+            ///
+            /// Drain via `drain_weight_corrections()` after each parse to
+            /// collect feedback for offline weight training.
+            static WEIGHT_CORRECTIONS: std::cell::Cell<Vec<mettail_prattail::wfst::WeightCorrection>> =
+                std::cell::Cell::new(Vec::new());
         }
 
         impl #language_name {
@@ -1568,6 +1697,26 @@ fn generate_language_struct_multi(
                 }
             }
 
+            /// C1: Drain accumulated weight corrections from semantic disambiguation.
+            ///
+            /// Returns all `WeightCorrection` events recorded since the last drain.
+            /// Call after each `parse()` to collect feedback for weight training:
+            ///
+            /// ```ignore
+            /// let term = MyLanguage::parse("input")?;
+            /// let corrections = MyLanguage::drain_weight_corrections();
+            /// for c in &corrections {
+            ///     eprintln!("WFST correction in {}: primary_w={}, selected_w={}, delta={}",
+            ///               c.category, c.primary_weight, c.selected_weight, c.weight_delta());
+            /// }
+            /// ```
+            ///
+            /// The returned vec is empty when the WFST's weight ordering was correct
+            /// for all disambiguation decisions in the most recent parse.
+            pub fn drain_weight_corrections() -> Vec<mettail_prattail::wfst::WeightCorrection> {
+                WEIGHT_CORRECTIONS.with(|cell| cell.take())
+            }
+
             /// Run Ascent on a typed term (seeds the relation for the term's category).
             /// For Ambiguous terms, evaluates only the first alternative by declaration
             /// order. All alternatives that reach Stage C are valid parses, so evaluating
@@ -1602,6 +1751,10 @@ fn generate_language_struct_multi(
             }
 
             #(#per_cat_type_infer_fns)*
+
+            // ── B6: Runtime WFST query accessors ──
+
+            #(#per_cat_wfst_accessors)*
         }
 
         // Variable collection implementation with proper term traversal (per-category)

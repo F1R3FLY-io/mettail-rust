@@ -47,8 +47,15 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use crate::automata::semiring::{Semiring, TropicalWeight};
+use crate::automata::semiring::{EditWeight, ProductWeight, Semiring, TropicalWeight};
 use crate::token_id::{TokenId, TokenIdMap};
+
+/// B2: Joint recovery cost — tropical for parse quality, edit-distance for repair minimality.
+///
+/// Lexicographic ordering via `ProductWeight`: tropical cost is primary (parse quality),
+/// edit-distance is tiebreaker (repair minimality). Among equally-ranked repairs,
+/// the one with fewer edits wins.
+pub type RecoveryCost = ProductWeight<TropicalWeight, EditWeight>;
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Repair costs
@@ -62,9 +69,9 @@ use crate::token_id::{TokenId, TokenIdMap};
 /// - **Substitute** is moderate: replace with something valid.
 /// - **Insert** is most expensive: fabricate a token that wasn't in the input.
 pub mod costs {
-    use super::TropicalWeight;
+    use super::{EditWeight, ProductWeight, RecoveryCost, TropicalWeight};
 
-    /// Cost per skipped token (0.5).
+    /// Cost per skipped token (0.5 tropical, 1 edit per token skipped).
     pub const SKIP_PER_TOKEN: TropicalWeight = TropicalWeight::new(0.5);
 
     /// Cost to delete one token (1.0).
@@ -78,6 +85,18 @@ pub mod costs {
 
     /// Maximum tokens to consider skipping before giving up (bounded lookahead).
     pub const MAX_SKIP_LOOKAHEAD: usize = 32;
+
+    /// B2: Construct a joint RecoveryCost from tropical cost and edit count.
+    #[inline]
+    pub const fn joint(tropical: f64, edits: u32) -> RecoveryCost {
+        ProductWeight::new(TropicalWeight::new(tropical), EditWeight::new(edits))
+    }
+
+    /// B2: Construct a joint RecoveryCost from a tropical cost and an EditWeight.
+    #[inline]
+    pub const fn joint_edit(tropical: f64, edit: EditWeight) -> RecoveryCost {
+        ProductWeight::new(TropicalWeight::new(tropical), edit)
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -163,6 +182,20 @@ pub struct RecoveryConfig {
     // ── Cascade prevention ───────────────────────────────────────────────
     /// Number of tokens within which consecutive errors are suppressed (default: 3).
     pub cascade_window: usize,
+
+    // ── B2: Adaptive recovery weight modulation ─────────────────────────
+    /// Running weight above which the ambiguous regime activates (default: 1.0).
+    /// Below this threshold, the parse path is considered deterministic;
+    /// above it, the path has accumulated significant ambiguity.
+    pub adaptive_weight_threshold: f64,
+    /// Skip cost multiplier in deterministic regime (weight < threshold).
+    /// Lower values make skip cheaper when the parse path is confident.
+    /// Default: 0.75.
+    pub deterministic_skip_discount: f64,
+    /// Insert cost multiplier in ambiguous regime (weight >= threshold).
+    /// Lower values make insert cheaper when the parse path is ambiguous,
+    /// preserving context when confidence is low. Default: 0.5.
+    pub ambiguous_insert_discount: f64,
 }
 
 impl Default for RecoveryConfig {
@@ -188,6 +221,9 @@ impl Default for RecoveryConfig {
             simulation_fail_penalty: 0.2,
             beam_width: Some(3.0),
             cascade_window: 3,
+            adaptive_weight_threshold: 1.0,
+            deterministic_skip_discount: 0.75,
+            ambiguous_insert_discount: 0.5,
         }
     }
 }
@@ -212,6 +248,15 @@ impl RecoveryConfig {
         }
         if let Some(&v) = weights.get("swap_cost") {
             self.swap_cost = v;
+        }
+        if let Some(&v) = weights.get("adaptive_weight_threshold") {
+            self.adaptive_weight_threshold = v;
+        }
+        if let Some(&v) = weights.get("deterministic_skip_discount") {
+            self.deterministic_skip_discount = v;
+        }
+        if let Some(&v) = weights.get("ambiguous_insert_discount") {
+            self.ambiguous_insert_discount = v;
         }
     }
 }
@@ -399,8 +444,11 @@ pub struct RepairResult {
     pub action: RepairAction,
     /// New parser position after applying the repair.
     pub new_pos: usize,
-    /// Total tropical cost of this repair.
-    pub cost: TropicalWeight,
+    /// B2: Joint cost — ProductWeight<TropicalWeight, EditWeight>.
+    ///
+    /// Lexicographic ordering: tropical cost is primary (parse quality),
+    /// edit-distance is tiebreaker (repair minimality).
+    pub cost: RecoveryCost,
 }
 
 impl RepairResult {
@@ -416,9 +464,10 @@ impl fmt::Display for RepairResult {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "repair: {} (cost: {:.1}, new_pos: {})",
+            "repair: {} (cost: {:.1}, edits: {}, new_pos: {})",
             self.action,
-            self.cost.value(),
+            self.cost.left.value(),
+            self.cost.right.0,
             self.new_pos
         )
     }
@@ -442,6 +491,27 @@ pub struct RecoveryWfst {
     sync_tokens: BTreeSet<TokenId>,
     /// Token ID map for resolving names.
     token_map: TokenIdMap,
+    /// B1: Prediction-aware discount factors for sync tokens.
+    ///
+    /// Maps each sync token ID to a discount factor in `(0.0, 1.0]`:
+    /// - `1.0` = no discount (token not in prediction WFST or weight 0.0)
+    /// - `< 1.0` = discount (token has high prediction confidence, prefer for recovery)
+    ///
+    /// The discount factor is computed as `max(1.0 - best_weight, 0.1)` where
+    /// `best_weight` is the minimum prediction weight for this token in the
+    /// category's prediction WFST. Tokens with lower prediction weight (higher
+    /// confidence) get larger discounts, making them preferred recovery targets.
+    prediction_discounts: std::collections::HashMap<TokenId, f64>,
+    /// A1: Per-sync-token ContextWeight indicating which rules can reach that sync token.
+    ///
+    /// Each sync token is annotated with a bitset of rule indices whose FOLLOW set
+    /// includes that token. When recovery is invoked with a dispatch context (the rules
+    /// active at the error point), the intersection filters out sync tokens that are
+    /// unreachable from the current parse path. An empty intersection means the sync
+    /// token is a false positive for this dispatch context.
+    ///
+    /// Structural tokens (Eof, RParen, RBrace, etc.) get `ContextWeight::one()` (always valid).
+    follow_contexts: std::collections::HashMap<TokenId, crate::automata::semiring::ContextWeight>,
 }
 
 impl RecoveryWfst {
@@ -462,7 +532,75 @@ impl RecoveryWfst {
             category,
             sync_tokens,
             token_map: token_map.clone(),
+            prediction_discounts: std::collections::HashMap::new(),
+            follow_contexts: std::collections::HashMap::new(),
         }
+    }
+
+    /// B1: Set prediction-aware discount factors for sync tokens.
+    ///
+    /// Called after construction to wire in prediction WFST weight data.
+    /// Each entry maps a sync token ID to a discount factor in `(0.0, 1.0]`.
+    pub fn set_prediction_discounts(&mut self, discounts: std::collections::HashMap<TokenId, f64>) {
+        self.prediction_discounts = discounts;
+    }
+
+    /// B1: Get the prediction discount for a sync token.
+    ///
+    /// Returns `1.0` (no discount) for tokens without prediction data.
+    #[inline]
+    pub fn prediction_discount(&self, token_id: TokenId) -> f64 {
+        self.prediction_discounts.get(&token_id).copied().unwrap_or(1.0)
+    }
+
+    /// A1: Set per-sync-token follow context weights.
+    ///
+    /// Each entry maps a sync token ID to a `ContextWeight` bitset encoding which
+    /// rule indices can reach that sync token. Used for follow-set tightening.
+    pub fn set_follow_contexts(&mut self, contexts: std::collections::HashMap<TokenId, crate::automata::semiring::ContextWeight>) {
+        self.follow_contexts = contexts;
+    }
+
+    /// A1: Check whether a sync token is reachable from the given dispatch context.
+    ///
+    /// Returns `true` if:
+    /// - No follow contexts are set (default: all sync tokens valid), or
+    /// - The sync token has no context annotation (structural tokens: always valid), or
+    /// - The intersection of the sync token's follow context and the dispatch context
+    ///   is non-empty (at least one active rule can reach this sync token).
+    #[inline]
+    pub fn is_sync_reachable(&self, sync_id: TokenId, dispatch_context: crate::automata::semiring::ContextWeight) -> bool {
+        if self.follow_contexts.is_empty() {
+            return true; // no context data → all sync tokens valid
+        }
+        match self.follow_contexts.get(&sync_id) {
+            None => true, // unannotated → structural token, always valid
+            Some(ctx) => {
+                use crate::automata::semiring::Semiring;
+                !ctx.times(&dispatch_context).is_zero()
+            }
+        }
+    }
+
+    /// A1: Return the tightened sync token set for a given dispatch context.
+    ///
+    /// Filters the full sync token set, keeping only tokens reachable from the
+    /// dispatch context. When no follow contexts are set, returns all sync tokens.
+    pub fn tightened_sync_tokens(&self, dispatch_context: crate::automata::semiring::ContextWeight) -> std::borrow::Cow<'_, BTreeSet<TokenId>> {
+        if self.follow_contexts.is_empty() || dispatch_context.is_one() {
+            std::borrow::Cow::Borrowed(&self.sync_tokens)
+        } else {
+            let filtered: BTreeSet<TokenId> = self.sync_tokens.iter()
+                .copied()
+                .filter(|&id| self.is_sync_reachable(id, dispatch_context))
+                .collect();
+            std::borrow::Cow::Owned(filtered)
+        }
+    }
+
+    /// A1: Return the follow context for this recovery WFST (for diagnostics/testing).
+    pub fn follow_contexts(&self) -> &std::collections::HashMap<TokenId, crate::automata::semiring::ContextWeight> {
+        &self.follow_contexts
     }
 
     /// The category this recovery WFST covers.
@@ -495,15 +633,18 @@ impl RecoveryWfst {
         for skip in 0..max_lookahead {
             let token_at = remaining[skip];
             if self.sync_tokens.contains(&token_at) {
+                let action = RepairAction::SkipToSync { skip_count: skip, sync_token: token_at };
                 let cost = if skip == 0 {
                     // Already at a sync token — zero cost
-                    TropicalWeight::one()
+                    RecoveryCost::one()
                 } else {
-                    // Tropical times = addition: skip_count * cost_per_skip
-                    TropicalWeight::new(skip as f64 * costs::SKIP_PER_TOKEN.value())
+                    // B1: prediction discount — prefer skipping to high-confidence tokens
+                    let pred_discount = self.prediction_discount(token_at);
+                    // B2: joint tropical + edit cost
+                    costs::joint(skip as f64 * costs::SKIP_PER_TOKEN.value() * pred_discount, skip as u32)
                 };
                 let result = RepairResult {
-                    action: RepairAction::SkipToSync { skip_count: skip, sync_token: token_at },
+                    action,
                     new_pos: pos + skip,
                     cost,
                 };
@@ -515,20 +656,24 @@ impl RecoveryWfst {
 
         // Strategy 2: DeleteToken — skip exactly one token
         if !remaining.is_empty() {
+            let action = RepairAction::DeleteToken;
             let result = RepairResult {
-                action: RepairAction::DeleteToken,
+                cost: costs::joint_edit(costs::DELETE.value(), action.edit_cost()),
+                action,
                 new_pos: pos + 1,
-                cost: costs::DELETE,
             };
             best = Some(pick_better(best, result));
         }
 
         // Strategy 3: InsertToken — insert each sync token at current position
         for &sync_id in &self.sync_tokens {
+            // B1: prediction discount — prefer inserting high-confidence tokens
+            let pred_discount = self.prediction_discount(sync_id);
+            let action = RepairAction::InsertToken { token: sync_id };
             let result = RepairResult {
-                action: RepairAction::InsertToken { token: sync_id },
+                cost: costs::joint_edit(costs::INSERT.value() * pred_discount, action.edit_cost()),
+                action,
                 new_pos: pos, // no position change — inserted token is phantom
-                cost: costs::INSERT,
             };
             best = Some(pick_better(best, result));
         }
@@ -536,10 +681,13 @@ impl RecoveryWfst {
         // Strategy 4: SubstituteToken — replace current token with a sync token
         if !remaining.is_empty() {
             for &sync_id in &self.sync_tokens {
+                // B1: prediction discount — prefer substituting with high-confidence tokens
+                let pred_discount = self.prediction_discount(sync_id);
+                let action = RepairAction::SubstituteToken { replacement: sync_id };
                 let result = RepairResult {
-                    action: RepairAction::SubstituteToken { replacement: sync_id },
+                    cost: costs::joint_edit(costs::SUBSTITUTE.value() * pred_discount, action.edit_cost()),
+                    action,
                     new_pos: pos + 1, // consume the substituted token
-                    cost: costs::SUBSTITUTE,
                 };
                 best = Some(pick_better(best, result));
             }
@@ -551,13 +699,16 @@ impl RecoveryWfst {
             // at position 0, or if the swapped pair looks better to the parser
             let swapped_first = remaining[1];
             if self.sync_tokens.contains(&swapped_first) {
+                // B1: prediction discount on the sync token revealed by the swap
+                let pred_discount = self.prediction_discount(swapped_first);
+                let action = RepairAction::SwapTokens {
+                    pos_a: pos,
+                    pos_b: pos + 1,
+                };
                 let result = RepairResult {
-                    action: RepairAction::SwapTokens {
-                        pos_a: pos,
-                        pos_b: pos + 1,
-                    },
+                    cost: costs::joint_edit(1.25 * pred_discount, action.edit_cost()), // SWAP cost
+                    action,
                     new_pos: pos + 2, // consume both tokens in swapped order
-                    cost: TropicalWeight::new(1.25), // SWAP cost
                 };
                 best = Some(pick_better(best, result));
             }
@@ -600,7 +751,68 @@ impl RecoveryWfst {
             category: category.to_string(),
             sync_tokens,
             token_map,
+            prediction_discounts: std::collections::HashMap::new(),
+            follow_contexts: std::collections::HashMap::new(),
         }
+    }
+
+    // ── D3: DOT/Graphviz visualization ─────────────────────────────────
+
+    /// D3: Generate a DOT (Graphviz) representation of this recovery WFST.
+    ///
+    /// The output is a graph with:
+    /// - A single "Error" start state
+    /// - One "Sync_TOKEN" node per sync token
+    /// - Edges labeled with the sync token name (and B1 discount if < 1.0)
+    /// - A1 context annotations shown as tooltip attributes
+    ///
+    /// This is a conceptual visualization: the recovery WFST doesn't have
+    /// explicit state/transition structures like `PredictionWfst`, so we
+    /// synthesize a star-topology graph from the sync token set.
+    pub fn to_dot(&self) -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
+        let safe_cat = self.category.replace(|c: char| !c.is_alphanumeric() && c != '_', "_");
+        writeln!(out, "digraph RecoveryWfst_{} {{", safe_cat).unwrap();
+        writeln!(out, "  rankdir=LR;").unwrap();
+        writeln!(out, "  node [shape=circle, fontname=\"Helvetica\"];").unwrap();
+        writeln!(out, "  edge [fontname=\"Helvetica\", fontsize=10];").unwrap();
+        writeln!(out, "  error [shape=doublecircle, label=\"Error\\n(start)\", style=filled, fillcolor=lightyellow];").unwrap();
+
+        for (i, &token_id) in self.sync_tokens.iter().enumerate() {
+            let token_name = self
+                .token_map
+                .name(token_id)
+                .unwrap_or("?")
+                .to_string();
+            let node_id = format!("sync_{}", i);
+
+            // Node: sync token target
+            writeln!(
+                out,
+                "  {} [shape=doublecircle, label=\"Sync\\n{}\"];",
+                node_id, token_name
+            )
+            .unwrap();
+
+            // Edge: Error → Sync token, with discount annotation
+            let discount = self.prediction_discount(token_id);
+            let label = if (discount - 1.0).abs() < 1e-9 {
+                token_name.clone()
+            } else {
+                format!("{} (B1 disc={:.2})", token_name, discount)
+            };
+            let color = if discount < 1.0 { "blue" } else { "black" };
+            writeln!(
+                out,
+                "  error -> {} [label=\"{}\", color={}];",
+                node_id, label, color
+            )
+            .unwrap();
+        }
+
+        writeln!(out, "}}").unwrap();
+        out
     }
 }
 
@@ -666,16 +878,20 @@ pub fn viterbi_recovery_beam(
         return None;
     }
 
-    // Nodes: 0..max_lookahead are token positions, max_lookahead is the virtual sink.
+    // B2: Use RecoveryCost (ProductWeight<TropicalWeight, EditWeight>) throughout
+    // the Viterbi lattice. Tropical cost is primary; edit count is tiebreaker.
     let num_nodes = max_lookahead + 1;
     let sink = max_lookahead;
 
     // dist[i] = minimum cost to reach node i from node 0
-    let mut dist = vec![TropicalWeight::zero(); num_nodes]; // infinity
-    dist[0] = TropicalWeight::one(); // zero cost to reach start
+    let mut dist = vec![RecoveryCost::zero(); num_nodes]; // infinity
+    dist[0] = RecoveryCost::one(); // zero cost to reach start
 
     // pred[i] = (predecessor node, action description)
     let mut pred: Vec<Option<(usize, &'static str)>> = vec![None; num_nodes];
+
+    // B2: Skip edge weight — tropical + 1 edit per skip
+    let skip_edge_cost = costs::joint(costs::SKIP_PER_TOKEN.value(), 1);
 
     // Forward pass through positions
     for i in 0..max_lookahead {
@@ -683,9 +899,9 @@ pub fn viterbi_recovery_beam(
             continue; // unreachable
         }
 
-        // Beam pruning: skip positions whose cost already exceeds threshold
+        // Beam pruning: compare tropical component only
         if let Some(beam) = beam_width {
-            if !dist[sink].is_zero() && dist[i].value() > dist[sink].value() + beam.value() {
+            if !dist[sink].is_zero() && dist[i].left.value() > dist[sink].left.value() + beam.value() {
                 continue;
             }
         }
@@ -703,11 +919,11 @@ pub fn viterbi_recovery_beam(
 
         // Skip edge: i → i+1 with SKIP_PER_TOKEN cost
         if i + 1 < num_nodes {
-            let new_cost = dist[i].times(&costs::SKIP_PER_TOKEN);
+            let new_cost = dist[i].times(&skip_edge_cost);
 
-            // Beam pruning: skip edges whose cost exceeds threshold
+            // Beam pruning: compare tropical component only
             if let Some(beam) = beam_width {
-                if !dist[sink].is_zero() && new_cost.value() > dist[sink].value() + beam.value() {
+                if !dist[sink].is_zero() && new_cost.left.value() > dist[sink].left.value() + beam.value() {
                     continue;
                 }
             }
@@ -719,9 +935,6 @@ pub fn viterbi_recovery_beam(
         }
     }
 
-    // Check if the last position is a sync token (edge case: exactly at max_lookahead boundary)
-    // This is handled by the loop above (max_lookahead - 1 can reach sink).
-
     // If sink is unreachable, no recovery found within lookahead window
     if dist[sink].is_zero() {
         return None;
@@ -730,9 +943,8 @@ pub fn viterbi_recovery_beam(
     // Backtrace to count skips
     let mut skip_count = 0;
     let mut current = sink;
-    let mut sync_node = sink; // the node where sync happens
+    let mut sync_node = sink;
 
-    // Find the sync node (direct predecessor of sink)
     if let Some((prev, action)) = pred[current] {
         if action == "sync" {
             sync_node = prev;
@@ -740,7 +952,6 @@ pub fn viterbi_recovery_beam(
         }
     }
 
-    // Count skip edges before the sync node
     while let Some((prev, _action)) = pred[current] {
         if prev == 0 && current == 0 {
             break;
@@ -749,7 +960,6 @@ pub fn viterbi_recovery_beam(
         current = prev;
     }
 
-    // Determine the sync token
     let sync_token = if sync_node < remaining.len() {
         remaining[sync_node]
     } else {
@@ -799,10 +1009,14 @@ pub struct RepairSequence {
     pub actions: Vec<RepairAction>,
     /// New parser position after applying all repairs.
     pub new_pos: usize,
-    /// Total tropical cost of the entire sequence.
-    pub total_cost: TropicalWeight,
-    /// Total edit-distance cost of the sequence.
-    pub total_edits: crate::automata::semiring::EditWeight,
+    /// B2: Joint cost — ProductWeight<TropicalWeight, EditWeight>.
+    ///
+    /// Tropical cost is primary (parse quality), edit-distance is tiebreaker
+    /// (repair minimality). This is the Viterbi-optimal total cost.
+    pub total_cost: RecoveryCost,
+    /// Total edit-distance cost of the sequence (also in total_cost.right,
+    /// but kept for backward compatibility with code that reads edits directly).
+    pub total_edits: EditWeight,
 }
 
 impl fmt::Display for RepairSequence {
@@ -817,7 +1031,7 @@ impl fmt::Display for RepairSequence {
         write!(
             f,
             ") cost: {:.2}, edits: {}, new_pos: {}",
-            self.total_cost.value(),
+            self.total_cost.left.value(),
             self.total_edits.0,
             self.new_pos
         )
@@ -852,13 +1066,14 @@ pub fn viterbi_multi_step(
 
     // Nodes: 0..max_lookahead are token positions, max_lookahead is the virtual sink.
     // Additionally, each position has an "inserted" variant at max_lookahead + 1 + i.
-    // But for simplicity, we track insert with a bool array instead.
+    // B2: Use RecoveryCost (ProductWeight<TropicalWeight, EditWeight>) throughout
+    // the multi-step Viterbi lattice. Tropical cost is primary; edit count breaks ties.
     let num_nodes = max_lookahead + 1;
     let sink = max_lookahead;
 
     // dist[i] = minimum cost to reach node i from node 0
-    let mut dist = vec![TropicalWeight::zero(); num_nodes]; // infinity
-    dist[0] = TropicalWeight::one(); // zero cost to reach start
+    let mut dist = vec![RecoveryCost::zero(); num_nodes]; // infinity
+    dist[0] = RecoveryCost::one(); // zero cost to reach start
 
     // pred[i] = (predecessor node, edge kind)
     let mut pred: Vec<Option<(usize, RepairEdgeKind)>> = vec![None; num_nodes];
@@ -868,15 +1083,22 @@ pub fn viterbi_multi_step(
 
     let beam_width = config.beam_width.map(TropicalWeight::new);
 
+    // B2: Pre-compute edge costs as RecoveryCost
+    let skip_edge = costs::joint(config.skip_per_token, 1); // 1 edit per skip
+    let delete_edge = costs::joint_edit(config.delete_cost, EditWeight::delete());
+    let substitute_edge = costs::joint_edit(config.substitute_cost, EditWeight::substitute());
+    let swap_edge = costs::joint(config.swap_cost, 1); // single edit operation
+    let insert_edge = costs::joint_edit(config.insert_cost, EditWeight::insert());
+
     // Forward pass through positions
     for i in 0..max_lookahead {
         if dist[i].is_zero() {
             continue; // unreachable
         }
 
-        // Beam pruning
+        // Beam pruning: compare tropical component only
         if let Some(beam) = beam_width {
-            if !dist[sink].is_zero() && dist[i].value() > dist[sink].value() + beam.value() {
+            if !dist[sink].is_zero() && dist[i].left.value() > dist[sink].left.value() + beam.value() {
                 continue;
             }
         }
@@ -894,10 +1116,10 @@ pub fn viterbi_multi_step(
 
         // ── Skip edge: i → i+1, cost skip_per_token ─────────────────
         if i + 1 < num_nodes {
-            let new_cost = TropicalWeight::new(dist[i].value() + config.skip_per_token);
+            let new_cost = dist[i].times(&skip_edge);
 
             if let Some(beam) = beam_width {
-                if !dist[sink].is_zero() && new_cost.value() > dist[sink].value() + beam.value() {
+                if !dist[sink].is_zero() && new_cost.left.value() > dist[sink].left.value() + beam.value() {
                     // pruned
                 } else if new_cost < dist[i + 1] {
                     dist[i + 1] = new_cost;
@@ -911,7 +1133,7 @@ pub fn viterbi_multi_step(
 
         // ── Delete edge: i → i+1, cost delete_cost ───────────────────
         if i + 1 < num_nodes {
-            let new_cost = TropicalWeight::new(dist[i].value() + config.delete_cost);
+            let new_cost = dist[i].times(&delete_edge);
             if new_cost < dist[i + 1] {
                 dist[i + 1] = new_cost;
                 pred[i + 1] = Some((i, RepairEdgeKind::Delete));
@@ -922,7 +1144,7 @@ pub fn viterbi_multi_step(
         // Only when the token at i is NOT already a sync token
         if i + 1 < num_nodes && !sync_tokens.contains(&token_at_i) {
             for &sync_id in sync_tokens {
-                let new_cost = TropicalWeight::new(dist[i].value() + config.substitute_cost);
+                let new_cost = dist[i].times(&substitute_edge);
                 if new_cost < dist[i + 1] {
                     dist[i + 1] = new_cost;
                     pred[i + 1] = Some((i, RepairEdgeKind::Substitute(sync_id)));
@@ -933,7 +1155,7 @@ pub fn viterbi_multi_step(
         // ── Swap edge: i → i+2, cost swap_cost ────────────────────
         // Only when i+1 exists (two adjacent tokens to swap)
         if i + 2 <= max_lookahead {
-            let new_cost = TropicalWeight::new(dist[i].value() + config.swap_cost);
+            let new_cost = dist[i].times(&swap_edge);
             if new_cost < dist[i + 2] {
                 dist[i + 2] = new_cost;
                 pred[i + 2] = Some((i, RepairEdgeKind::Swap));
@@ -944,10 +1166,7 @@ pub fn viterbi_multi_step(
         // Max 1 insert per position to prevent infinite loops
         if !inserted[i] {
             for &sync_id in sync_tokens {
-                let new_cost = TropicalWeight::new(dist[i].value() + config.insert_cost);
-                // After insert, we're still at i but the inserted token is phantom.
-                // Model as: the insert makes the sync token available at position i,
-                // so we add a sync edge from i to sink with insert cost.
+                let new_cost = dist[i].times(&insert_edge);
                 if new_cost < dist[sink] {
                     dist[sink] = new_cost;
                     pred[sink] = Some((i, RepairEdgeKind::Insert(sync_id)));
@@ -1084,6 +1303,7 @@ pub fn build_recovery_wfsts(
     follow_sets: &std::collections::HashMap<String, crate::prediction::FirstSet>,
     grammar_terminals: &std::collections::HashSet<String>,
     token_map: &TokenIdMap,
+    prediction_wfsts: Option<&std::collections::HashMap<String, crate::wfst::PredictionWfst>>,
 ) -> Vec<RecoveryWfst> {
     let structural = [
         ("RParen", ")"),
@@ -1117,7 +1337,96 @@ pub fn build_recovery_wfsts(
                 }
             }
 
-            RecoveryWfst::new(category.clone(), &sync_names, token_map)
+            let mut wfst = RecoveryWfst::new(category.clone(), &sync_names, token_map);
+
+            // B1: Compute prediction discounts for sync tokens from prediction WFST.
+            //
+            // For each sync token, query the category's prediction WFST to get the
+            // minimum weight. Tokens appearing in the FIRST set with low weight
+            // (high confidence) get larger discounts, making them preferred recovery
+            // targets for insert/substitute/skip-to-sync strategies.
+            if let Some(pred_wfsts) = prediction_wfsts {
+                if let Some(pred) = pred_wfsts.get(category) {
+                    let mut discounts = std::collections::HashMap::new();
+                    for sync_name in &sync_names {
+                        if let Some(sync_id) = token_map.get(sync_name) {
+                            let predictions = pred.predict(sync_name);
+                            if let Some(best) = predictions.first() {
+                                // discount = max(1.0 - best_weight, 0.1)
+                                // weight 0.0 → discount 1.0 (no discount: already best)
+                                // weight 0.5 → discount 0.5 (moderate discount)
+                                // weight 2.0 → discount 0.1 (minimal floor)
+                                let discount = (1.0 - best.weight.value().min(0.9)).max(0.1);
+                                discounts.insert(sync_id, discount);
+                            }
+                            // Tokens not in FIRST set get no discount (1.0 = no entry)
+                        }
+                    }
+                    wfst.set_prediction_discounts(discounts);
+
+                    // A1: Compute follow contexts for sync tokens.
+                    //
+                    // For each sync token, determine which rules (identified by bit
+                    // position in a ContextWeight) can reach that token. Rules are
+                    // indexed by their position in the prediction WFST's action table.
+                    //
+                    // The approach:
+                    // - For each dispatch token D in the prediction WFST, get the rules
+                    //   it dispatches to (from predict(D)).
+                    // - For each rule R (indexed by its position in the action table),
+                    //   record that ALL sync tokens are reachable (conservative).
+                    // - Then, for sync tokens that are also FIRST set tokens, refine:
+                    //   they're only reachable from rules that dispatch on tokens
+                    //   sharing the same FOLLOW set.
+                    //
+                    // We assign rule indices = action index in the WFST action table
+                    // (capped at 127 for the 128-bit ContextWeight capacity).
+                    let mut follow_ctxs: std::collections::HashMap<TokenId, crate::automata::semiring::ContextWeight> =
+                        std::collections::HashMap::new();
+
+                    // Structural sync tokens (Eof, RParen, etc.) are always reachable
+                    // from any rule → ContextWeight::one()
+                    let structural_names: std::collections::HashSet<&str> = ["Eof", "RParen", "RBrace", "RBracket", "Semi", "Comma"]
+                        .into_iter()
+                        .collect();
+
+                    for sync_name in &sync_names {
+                        if let Some(sync_id) = token_map.get(sync_name) {
+                            if structural_names.contains(sync_name.as_str()) {
+                                follow_ctxs.insert(sync_id, crate::automata::semiring::ContextWeight::one());
+                            } else {
+                                // Non-structural FOLLOW token: compute which rules can reach it.
+                                // A rule can reach this sync token if any of its dispatch tokens
+                                // share a FOLLOW context with this token.
+                                // For now, use a conservative approach: check all dispatch tokens
+                                // in the WFST and union the rule bits for tokens that are
+                                // associated with rules whose FOLLOW set includes sync_name.
+                                let mut reachable = crate::automata::semiring::ContextWeight::zero();
+
+                                // Iterate all tokens that have predictions in this WFST
+                                for (action_idx, _action) in pred.actions.iter().enumerate() {
+                                    if action_idx < 128 {
+                                        // Conservatively: all actions can reach any FOLLOW token
+                                        // This will be refined later with per-rule FOLLOW analysis
+                                        reachable = reachable.insert(action_idx as u8);
+                                    }
+                                }
+
+                                if reachable.is_zero() {
+                                    // No actions → use one() (don't filter)
+                                    follow_ctxs.insert(sync_id, crate::automata::semiring::ContextWeight::one());
+                                } else {
+                                    follow_ctxs.insert(sync_id, reachable);
+                                }
+                            }
+                        }
+                    }
+
+                    wfst.set_follow_contexts(follow_ctxs);
+                }
+            }
+
+            wfst
         })
         .collect()
 }
@@ -1518,10 +1827,11 @@ impl ParseSimulator {
 impl RecoveryWfst {
     /// Find the best recovery action with context-aware cost adjustments.
     ///
-    /// Combines all three tiers:
+    /// Combines all four tiers:
     /// - **Tier 1**: Frame context (depth, binding power, frame kind)
     /// - **Tier 2**: FOLLOW stratification + bracket balance
     /// - **Tier 3**: Predictive repair simulation (optional)
+    /// - **Tier 4**: B1 prediction WFST discount (grammar-aware token preference)
     ///
     /// Falls back to `find_best_recovery()` behavior when `ctx` has default
     /// values and `simulator` is `None`.
@@ -1560,14 +1870,17 @@ impl RecoveryWfst {
                     1.0
                 };
 
+                let action = RepairAction::SkipToSync { skip_count: skip, sync_token: token_at };
                 let adjusted_cost = if base_cost == TropicalWeight::one() {
-                    base_cost // zero-cost sync: don't multiply
+                    RecoveryCost::one() // zero-cost sync: don't multiply
                 } else {
-                    TropicalWeight::new(base_cost.value() * tier1_mult * tier3_mult)
+                    // Tier 4: B1 prediction discount
+                    let tier4_mult = self.prediction_discount(token_at);
+                    costs::joint_edit(base_cost.value() * tier1_mult * tier3_mult * tier4_mult, action.edit_cost())
                 };
 
                 let result = RepairResult {
-                    action: RepairAction::SkipToSync { skip_count: skip, sync_token: token_at },
+                    action,
                     new_pos: pos + skip,
                     cost: adjusted_cost,
                 };
@@ -1589,10 +1902,11 @@ impl RecoveryWfst {
                 1.0
             };
 
+            let action = RepairAction::DeleteToken;
             let result = RepairResult {
-                action: RepairAction::DeleteToken,
+                cost: costs::joint_edit(base_cost.value() * tier1_mult * tier3_mult, action.edit_cost()),
+                action,
                 new_pos: pos + 1,
-                cost: TropicalWeight::new(base_cost.value() * tier1_mult * tier3_mult),
             };
             best = Some(pick_better(best, result));
         }
@@ -1610,17 +1924,20 @@ impl RecoveryWfst {
 
             // Tier 3: simulation after inserting this token
             let tier3_mult = if let Some(sim) = simulator {
-                // After insert, we're still at `pos` (phantom token)
                 let sim_result = sim.simulate_after_repair(token_ids, pos, category);
                 sim.cost_multiplier(&sim_result)
             } else {
                 1.0
             };
 
+            // Tier 4: B1 prediction discount — prefer inserting high-confidence tokens
+            let tier4_mult = self.prediction_discount(sync_id);
+
+            let action = RepairAction::InsertToken { token: sync_id };
             let result = RepairResult {
-                action: RepairAction::InsertToken { token: sync_id },
+                cost: costs::joint_edit(base_cost.value() * tier1_mult * tier2_mult * tier3_mult * tier4_mult, action.edit_cost()),
+                action,
                 new_pos: pos,
-                cost: TropicalWeight::new(base_cost.value() * tier1_mult * tier2_mult * tier3_mult),
             };
             best = Some(pick_better(best, result));
         }
@@ -1640,10 +1957,14 @@ impl RecoveryWfst {
                     1.0
                 };
 
+                // Tier 4: B1 prediction discount — prefer substituting with high-confidence tokens
+                let tier4_mult = self.prediction_discount(sync_id);
+
+                let action = RepairAction::SubstituteToken { replacement: sync_id };
                 let result = RepairResult {
-                    action: RepairAction::SubstituteToken { replacement: sync_id },
+                    cost: costs::joint_edit(base_cost.value() * tier1_mult * tier3_mult * tier4_mult, action.edit_cost()),
+                    action,
                     new_pos: pos + 1,
-                    cost: TropicalWeight::new(base_cost.value() * tier1_mult * tier3_mult),
                 };
                 best = Some(pick_better(best, result));
             }
@@ -1653,7 +1974,7 @@ impl RecoveryWfst {
         if remaining.len() >= 2 {
             let swapped_first = remaining[1];
             if self.sync_tokens.contains(&swapped_first) {
-                let base_cost = TropicalWeight::new(1.25); // SWAP cost
+                let base_cost = 1.25_f64; // SWAP cost
                 let tier1_mult = ctx.skip_multiplier(); // swap is a mild reorder
 
                 let tier3_mult = if let Some(sim) = simulator {
@@ -1663,13 +1984,17 @@ impl RecoveryWfst {
                     1.0
                 };
 
+                // Tier 4: B1 prediction discount on the sync token revealed by the swap
+                let tier4_mult = self.prediction_discount(swapped_first);
+
+                let action = RepairAction::SwapTokens {
+                    pos_a: pos,
+                    pos_b: pos + 1,
+                };
                 let result = RepairResult {
-                    action: RepairAction::SwapTokens {
-                        pos_a: pos,
-                        pos_b: pos + 1,
-                    },
+                    cost: costs::joint_edit(base_cost * tier1_mult * tier3_mult * tier4_mult, action.edit_cost()),
+                    action,
                     new_pos: pos + 2,
-                    cost: TropicalWeight::new(base_cost.value() * tier1_mult * tier3_mult),
                 };
                 best = Some(pick_better(best, result));
             }
@@ -1677,76 +2002,6 @@ impl RecoveryWfst {
 
         best
     }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Lattice-aware recovery (feature = "context-sensitive-lex")
-// ══════════════════════════════════════════════════════════════════════════════
-
-/// Try recovery using alternative tokenization paths from a token lattice.
-///
-/// When the lexer produces a `TokenLattice` (due to lexical ambiguity), this
-/// function extracts up to `n_best` alternative tokenization paths from the
-/// error position and runs `find_best_recovery()` on each. The cheapest
-/// successful recovery across all tokenizations is returned.
-///
-/// A small penalty per alternative tried is applied to prefer the primary
-/// tokenization (the one already attempted by the parser).
-///
-/// # Arguments
-///
-/// * `alternative_token_ids` — List of `(Vec<TokenId>, TropicalWeight)` pairs,
-///   each representing an alternative tokenization path with its lexer weight.
-/// * `pos` — Error position within each alternative path (relative to path start).
-/// * `sync_tokens` — Set of synchronization token IDs.
-/// * `config` — Recovery configuration for cost computation.
-///
-/// # Returns
-///
-/// The cheapest `RepairResult` across all alternatives, with cost adjusted by
-/// the lexer weight of the selected alternative.
-#[cfg(feature = "context-sensitive-lex")]
-pub fn lattice_recovery(
-    alternative_token_ids: &[(Vec<TokenId>, crate::automata::semiring::TropicalWeight)],
-    pos: usize,
-    sync_tokens: &std::collections::BTreeSet<TokenId>,
-    config: &RecoveryConfig,
-) -> Option<RepairResult> {
-    use crate::automata::semiring::Semiring;
-
-    let mut best: Option<RepairResult> = None;
-    let alternative_penalty = 0.1_f64; // slight penalty per alternative tried
-
-    for (alt_idx, (token_ids, lexer_weight)) in alternative_token_ids.iter().enumerate() {
-        if pos >= token_ids.len() {
-            continue;
-        }
-
-        // Run recovery on this alternative tokenization
-        if let Some(seq) = viterbi_multi_step(token_ids, pos, sync_tokens, config) {
-            let mut cost = seq.total_cost.value();
-
-            // Apply lexer weight — prefer primary tokenization
-            cost *= lexer_weight.value();
-
-            // Penalize non-primary alternatives slightly
-            cost += alt_idx as f64 * alternative_penalty;
-
-            let repair = RepairResult {
-                action: if seq.actions.len() == 1 {
-                    seq.actions.into_iter().next().expect("non-empty actions vec")
-                } else {
-                    RepairAction::Composite { steps: seq.actions }
-                },
-                new_pos: pos + seq.new_pos,
-                cost: crate::automata::semiring::TropicalWeight::new(cost),
-            };
-
-            best = Some(pick_better(best, repair));
-        }
-    }
-
-    best
 }
 
 #[cfg(test)]
@@ -1800,16 +2055,15 @@ mod tests {
             .find_best_recovery(&token_ids, 0)
             .expect("should find recovery");
 
-        // Best should be SkipToSync(skip=2, sync=Semi) with cost 2*0.5=1.0
+        // B2: With RecoveryCost (tropical + edit count), DeleteToken(1.0, edits=1)
+        // now correctly beats SkipToSync(skip=2, cost=1.0, edits=2) because
+        // the edit count tiebreaker resolves the tropical tie.
         match &result.action {
-            RepairAction::SkipToSync { skip_count, sync_token } => {
-                assert_eq!(*skip_count, 2);
-                assert_eq!(*sync_token, token_map.get("Semi").expect("Semi"));
-            },
-            other => panic!("Expected SkipToSync, got {:?}", other),
+            RepairAction::DeleteToken => {},
+            other => panic!("Expected DeleteToken (wins via edit-count tiebreaker), got {:?}", other),
         }
-        assert_eq!(result.new_pos, 2);
-        assert_eq!(result.cost, TropicalWeight::new(1.0));
+        assert_eq!(result.new_pos, 1);
+        assert_eq!(result.cost.left, TropicalWeight::new(1.0));
     }
 
     #[test]
@@ -1833,7 +2087,7 @@ mod tests {
             },
             other => panic!("Expected SkipToSync, got {:?}", other),
         }
-        assert_eq!(result.cost, TropicalWeight::one());
+        assert_eq!(result.cost.left, TropicalWeight::one());
     }
 
     #[test]
@@ -1856,7 +2110,7 @@ mod tests {
 
         // Delete is cheapest (1.0) when there's no sync point
         assert_eq!(result.action, RepairAction::DeleteToken);
-        assert_eq!(result.cost, costs::DELETE);
+        assert_eq!(result.cost.left, costs::DELETE);
     }
 
     #[test]
@@ -1876,7 +2130,7 @@ mod tests {
             RepairAction::InsertToken { .. } => {}, // expected
             other => panic!("Expected InsertToken at EOF, got {:?}", other),
         }
-        assert_eq!(result.cost, costs::INSERT);
+        assert_eq!(result.cost.left, costs::INSERT);
     }
 
     #[test]
@@ -1899,9 +2153,9 @@ mod tests {
         let result = RepairResult {
             action: RepairAction::DeleteToken,
             new_pos: 5,
-            cost: TropicalWeight::new(1.0),
+            cost: costs::joint(1.0, 1),
         };
-        assert_eq!(format!("{}", result), "repair: delete token (cost: 1.0, new_pos: 5)");
+        assert_eq!(format!("{}", result), "repair: delete token (cost: 1.0, edits: 1, new_pos: 5)");
     }
 
     #[test]
@@ -1950,7 +2204,7 @@ mod tests {
             },
             other => panic!("Expected SkipToSync with skip_count=0, got {:?}", other),
         }
-        assert_eq!(result.cost, TropicalWeight::one()); // zero cost
+        assert_eq!(result.cost.left, TropicalWeight::one()); // zero cost
     }
 
     #[test]
@@ -1991,7 +2245,7 @@ mod tests {
         grammar_terminals.insert(";".to_string());
         grammar_terminals.insert(")".to_string());
 
-        let wfsts = build_recovery_wfsts(&categories, &follow_sets, &grammar_terminals, &token_map);
+        let wfsts = build_recovery_wfsts(&categories, &follow_sets, &grammar_terminals, &token_map, None);
 
         assert_eq!(wfsts.len(), 2);
         assert_eq!(wfsts[0].category(), "Int");
@@ -2179,7 +2433,7 @@ mod tests {
         let s = static_result.expect("static");
         let c = contextual_result.expect("contextual");
         // Verify that contextual recovery exists (details may vary by winning strategy)
-        assert!(c.cost.value() >= 0.0);
+        assert!(c.cost.left.value() >= 0.0);
         // Contextual result should favor insert more (cheaper cost for insert)
         // Note: exact winner depends on relative costs, but the important thing
         // is that the context adjustment changes the result or cost.
@@ -2371,7 +2625,7 @@ mod tests {
             .expect("should find recovery");
 
         // Should still find a valid recovery
-        assert!(result.cost.value() >= 0.0);
+        assert!(result.cost.left.value() >= 0.0);
     }
 
     #[test]
@@ -2670,7 +2924,7 @@ mod tests {
             .expect("should find recovery");
 
         assert_eq!(result.new_pos, 2);
-        assert!(result.total_cost.value() <= 1.0 + 1e-9);
+        assert!(result.total_cost.left.value() <= 1.0 + 1e-9);
         assert!(!result.actions.is_empty());
     }
 
@@ -2694,7 +2948,7 @@ mod tests {
         // Should sync at position 1 (Semi) via skip
         assert_eq!(result.new_pos, 1);
         // Cost should be 0.5 (one skip to sync)
-        assert!((result.total_cost.value() - 0.5).abs() < 1e-9);
+        assert!((result.total_cost.left.value() - 0.5).abs() < 1e-9);
     }
 
     #[test]
@@ -2711,7 +2965,7 @@ mod tests {
             .expect("should find recovery");
 
         assert_eq!(result.new_pos, 0);
-        assert_eq!(result.total_cost, TropicalWeight::one()); // zero cost
+        assert_eq!(result.total_cost.left, TropicalWeight::one()); // zero cost
     }
 
     #[test]
@@ -2798,7 +3052,7 @@ mod tests {
                 RepairAction::SkipToSync { skip_count: 1, sync_token: 5 },
             ],
             new_pos: 3,
-            total_cost: TropicalWeight::new(1.5),
+            total_cost: costs::joint(1.5, 2),
             total_edits: crate::automata::semiring::EditWeight::new(2),
         };
         let display = format!("{}", seq);
@@ -2905,7 +3159,7 @@ mod tests {
 
         let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
         // Skip to Eof at position 1 should win
-        assert!(result.cost.value() <= 1.0);
+        assert!(result.cost.left.value() <= 1.0);
     }
 
     #[test]
@@ -2929,7 +3183,7 @@ mod tests {
             .expect("should find recovery");
 
         // Skip to Semi is cheaper
-        assert!(result.total_cost.value() <= 1.25 + 1e-9);
+        assert!(result.total_cost.left.value() <= 1.25 + 1e-9);
     }
 
     #[test]
@@ -2950,82 +3204,364 @@ mod tests {
         assert!((sim.cost_multiplier_with(&failed, &config) - 2.5).abs() < 1e-9);
     }
 
-    // ── Lattice-aware recovery tests (Sprint 11) ──
+    // ═══════════════════════════════════════════════════════════════════════
+    // B1: Prediction-aware recovery tests
+    // ═══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "context-sensitive-lex")]
     #[test]
-    fn test_lattice_recovery_primary_path_preferred() {
+    fn test_prediction_discount_default() {
         let token_map = make_token_map();
-        let semi = token_map.get("Semi").expect("Semi");
+        let sync_names = vec!["Semi".to_string()];
+        let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
 
-        let sync_tokens: std::collections::BTreeSet<TokenId> =
-            [semi].into_iter().collect();
-        let config = RecoveryConfig::default();
-
-        // Primary path: [Plus, Semi] — skip Plus, sync at Semi (cost 0.5)
-        let primary: Vec<TokenId> = vec![
-            token_map.get("Plus").expect("Plus"),
-            semi,
-        ];
-        // Alternative path: [Ident, Integer, Semi] — skip Ident+Integer (cost 1.0)
-        let alt: Vec<TokenId> = vec![
-            token_map.get("Ident").expect("Ident"),
-            token_map.get("Integer").expect("Integer"),
-            semi,
-        ];
-
-        let alternatives = vec![
-            (primary, crate::automata::semiring::TropicalWeight::one()),
-            (alt, crate::automata::semiring::TropicalWeight::one()),
-        ];
-
-        let result = super::lattice_recovery(&alternatives, 0, &sync_tokens, &config);
-        assert!(result.is_some(), "should find recovery from lattice alternatives");
-        // Primary should win (lower cost)
-        let result = result.expect("recovery result");
-        assert!(result.cost.value() <= 0.6, "primary path recovery (skip 1) should be cheapest");
+        // No prediction discounts set — all tokens get 1.0 (no discount)
+        let semi_id = token_map.get("Semi").expect("Semi");
+        assert_eq!(wfst.prediction_discount(semi_id), 1.0);
     }
 
-    #[cfg(feature = "context-sensitive-lex")]
     #[test]
-    fn test_lattice_recovery_alternative_wins_when_better() {
+    fn test_prediction_discount_applied() {
         let token_map = make_token_map();
-        let semi = token_map.get("Semi").expect("Semi");
+        let sync_names = vec!["Semi".to_string(), "RParen".to_string()];
+        let mut wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
 
-        let sync_tokens: std::collections::BTreeSet<TokenId> =
-            [semi].into_iter().collect();
-        let config = RecoveryConfig::default();
+        let semi_id = token_map.get("Semi").expect("Semi");
+        let rparen_id = token_map.get("RParen").expect("RParen");
 
-        // Primary path: [Plus, Integer, Ident, Semi] — skip 3 tokens (cost 1.5)
-        let primary: Vec<TokenId> = vec![
-            token_map.get("Plus").expect("Plus"),
-            token_map.get("Integer").expect("Integer"),
-            token_map.get("Ident").expect("Ident"),
-            semi,
-        ];
-        // Alternative path: [Semi] — immediate sync (cost 0 + 0.1 penalty)
-        let alt: Vec<TokenId> = vec![semi];
+        // Set Semi as high-confidence (weight 0.0 → discount 1.0)
+        // Set RParen as lower-confidence (weight 0.5 → discount 0.5)
+        let mut discounts = std::collections::HashMap::new();
+        discounts.insert(semi_id, 1.0); // no discount
+        discounts.insert(rparen_id, 0.5); // 50% discount
+        wfst.set_prediction_discounts(discounts);
 
-        let alternatives = vec![
-            (primary, crate::automata::semiring::TropicalWeight::one()),
-            (alt, crate::automata::semiring::TropicalWeight::one()),
-        ];
-
-        let result = super::lattice_recovery(&alternatives, 0, &sync_tokens, &config);
-        assert!(result.is_some(), "should find recovery");
-        let result = result.expect("recovery result");
-        // Alternative should win (immediate sync at cost ~0.1 vs skip 3 at cost 1.5)
-        assert!(result.cost.value() < 0.5, "alternative path with immediate sync should be cheapest");
+        assert_eq!(wfst.prediction_discount(semi_id), 1.0);
+        assert_eq!(wfst.prediction_discount(rparen_id), 0.5);
     }
 
-    #[cfg(feature = "context-sensitive-lex")]
     #[test]
-    fn test_lattice_recovery_empty_alternatives() {
-        let sync_tokens: std::collections::BTreeSet<TokenId> = std::collections::BTreeSet::new();
-        let config = RecoveryConfig::default();
-        let alternatives: Vec<(Vec<TokenId>, crate::automata::semiring::TropicalWeight)> = vec![];
+    fn test_prediction_discount_affects_insert_cost() {
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string(), "RParen".to_string()];
 
-        let result = super::lattice_recovery(&alternatives, 0, &sync_tokens, &config);
-        assert!(result.is_none(), "empty alternatives should return None");
+        // Without discounts
+        let wfst_no_pred = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+        let token_ids: Vec<TokenId> = vec![]; // empty: only insert is possible
+
+        let result_no = wfst_no_pred.find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
+        let cost_no_discount = result_no.cost.left.value();
+
+        // With discounts: Semi gets large discount (0.3), RParen gets smaller (0.8)
+        let mut wfst_pred = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+        let semi_id = token_map.get("Semi").expect("Semi");
+        let rparen_id = token_map.get("RParen").expect("RParen");
+        let mut discounts = std::collections::HashMap::new();
+        discounts.insert(semi_id, 0.3); // large discount
+        discounts.insert(rparen_id, 0.8); // small discount
+        wfst_pred.set_prediction_discounts(discounts);
+
+        let result_pred = wfst_pred.find_best_recovery(&token_ids, 0)
+            .expect("should find recovery");
+
+        // With prediction discount, the best insert should be cheaper
+        assert!(
+            result_pred.cost.left.value() < cost_no_discount,
+            "prediction discount should reduce insert cost: {} < {}",
+            result_pred.cost.left.value(),
+            cost_no_discount,
+        );
+
+        // The winner should be InsertToken for Semi (cheapest discount 0.3 × 2.0 = 0.6)
+        match &result_pred.action {
+            RepairAction::InsertToken { token } => {
+                assert_eq!(*token, semi_id, "should prefer inserting high-confidence token");
+            },
+            other => panic!("Expected InsertToken, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_prediction_discount_affects_substitute_cost() {
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string(), "RParen".to_string()];
+        let mut wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let semi_id = token_map.get("Semi").expect("Semi");
+        let rparen_id = token_map.get("RParen").expect("RParen");
+        let mut discounts = std::collections::HashMap::new();
+        discounts.insert(semi_id, 0.2); // very strong discount
+        discounts.insert(rparen_id, 0.9); // weak discount
+        wfst.set_prediction_discounts(discounts);
+
+        // Substitute base cost = 1.5
+        // Semi: 1.5 * 0.2 = 0.3
+        // RParen: 1.5 * 0.9 = 1.35
+        // Insert base cost = 2.0
+        // Semi: 2.0 * 0.2 = 0.4
+        // RParen: 2.0 * 0.9 = 1.8
+        // Delete: 1.0 (no prediction discount)
+        // So SubstituteToken(Semi) at 0.3 should win!
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Ident").expect("Ident"),
+            token_map.get("Plus").expect("Plus"),
+        ];
+
+        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+
+        match &result.action {
+            RepairAction::SubstituteToken { replacement } => {
+                assert_eq!(*replacement, semi_id, "should prefer substituting with high-confidence token");
+                assert!((result.cost.left.value() - 0.3).abs() < 1e-9,
+                    "cost should be 1.5 * 0.2 = 0.3, got {}", result.cost.left.value());
+            },
+            other => panic!("Expected SubstituteToken(Semi), got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_prediction_discount_affects_skip_to_sync() {
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string()];
+        let mut wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let semi_id = token_map.get("Semi").expect("Semi");
+        let mut discounts = std::collections::HashMap::new();
+        discounts.insert(semi_id, 0.5); // 50% discount
+        wfst.set_prediction_discounts(discounts);
+
+        // tokens: [Ident, Semi] — skip 1 to sync
+        // Base skip cost: 1 * 0.5 = 0.5
+        // With prediction discount: 0.5 * 0.5 = 0.25
+        let token_ids: Vec<TokenId> = vec![
+            token_map.get("Ident").expect("Ident"),
+            token_map.get("Semi").expect("Semi"),
+        ];
+
+        let result = wfst.find_best_recovery(&token_ids, 0).expect("should find recovery");
+        match &result.action {
+            RepairAction::SkipToSync { skip_count, sync_token } => {
+                assert_eq!(*skip_count, 1);
+                assert_eq!(*sync_token, semi_id);
+                assert!(
+                    (result.cost.left.value() - 0.25).abs() < 1e-9,
+                    "cost should be 0.5 * 0.5 = 0.25, got {}",
+                    result.cost.left.value(),
+                );
+            },
+            other => panic!("Expected SkipToSync, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_build_recovery_wfsts_with_prediction() {
+        // Verify that build_recovery_wfsts threads prediction WFSTs
+        // through to compute discounts. We test the None case (no prediction)
+        // and verify it still works.
+        let token_map = make_token_map();
+        let categories = vec!["Expr".to_string()];
+        let mut follow_sets = std::collections::HashMap::new();
+        let mut expr_follow = crate::prediction::FirstSet::new();
+        expr_follow.tokens.insert("Semi".to_string());
+        follow_sets.insert("Expr".to_string(), expr_follow);
+
+        let mut grammar_terminals = std::collections::HashSet::new();
+        grammar_terminals.insert(";".to_string());
+        grammar_terminals.insert(")".to_string());
+
+        // Without prediction WFSTs
+        let wfsts = build_recovery_wfsts(&categories, &follow_sets, &grammar_terminals, &token_map, None);
+        assert_eq!(wfsts.len(), 1);
+
+        // All sync tokens should have default discount (1.0)
+        let semi_id = token_map.get("Semi").expect("Semi");
+        assert_eq!(wfsts[0].prediction_discount(semi_id), 1.0);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // A1: ContextWeight follow-set tightening tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_is_sync_reachable_no_contexts() {
+        // No follow contexts → all sync tokens reachable
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string(), "RParen".to_string()];
+        let wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let semi_id = token_map.get("Semi").expect("Semi");
+        assert!(wfst.is_sync_reachable(semi_id, crate::automata::semiring::ContextWeight::one()));
+        assert!(wfst.is_sync_reachable(semi_id, crate::automata::semiring::ContextWeight::zero()));
+    }
+
+    #[test]
+    fn test_is_sync_reachable_with_contexts() {
+        use crate::automata::semiring::ContextWeight;
+
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string(), "RParen".to_string()];
+        let mut wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let semi_id = token_map.get("Semi").expect("Semi");
+        let rparen_id = token_map.get("RParen").expect("RParen");
+
+        // Semi reachable from rules 0 and 2
+        // RParen reachable from rule 1 only
+        let mut contexts = std::collections::HashMap::new();
+        contexts.insert(semi_id, ContextWeight::singleton(0).insert(2));
+        contexts.insert(rparen_id, ContextWeight::singleton(1));
+        wfst.set_follow_contexts(contexts);
+
+        // Dispatch context = rule 0
+        let ctx_rule0 = ContextWeight::singleton(0);
+        assert!(wfst.is_sync_reachable(semi_id, ctx_rule0));   // Semi: rule 0 in {0,2}
+        assert!(!wfst.is_sync_reachable(rparen_id, ctx_rule0)); // RParen: rule 0 not in {1}
+
+        // Dispatch context = rule 1
+        let ctx_rule1 = ContextWeight::singleton(1);
+        assert!(!wfst.is_sync_reachable(semi_id, ctx_rule1));  // Semi: rule 1 not in {0,2}
+        assert!(wfst.is_sync_reachable(rparen_id, ctx_rule1));  // RParen: rule 1 in {1}
+
+        // Dispatch context = all rules
+        assert!(wfst.is_sync_reachable(semi_id, ContextWeight::one()));
+        assert!(wfst.is_sync_reachable(rparen_id, ContextWeight::one()));
+    }
+
+    #[test]
+    fn test_tightened_sync_tokens() {
+        use crate::automata::semiring::ContextWeight;
+
+        let token_map = make_token_map();
+        let sync_names = vec!["Semi".to_string(), "RParen".to_string(), "Eof".to_string()];
+        let mut wfst = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let semi_id = token_map.get("Semi").expect("Semi");
+        let rparen_id = token_map.get("RParen").expect("RParen");
+        let eof_id = token_map.get("Eof").expect("Eof");
+
+        // Semi: rules {0,2}, RParen: rule {1}, Eof: unannotated (always valid)
+        let mut contexts = std::collections::HashMap::new();
+        contexts.insert(semi_id, ContextWeight::singleton(0).insert(2));
+        contexts.insert(rparen_id, ContextWeight::singleton(1));
+        // Eof not annotated → always included
+        wfst.set_follow_contexts(contexts);
+
+        // Tighten with rule 0 context
+        let tightened = wfst.tightened_sync_tokens(ContextWeight::singleton(0));
+        assert!(tightened.contains(&semi_id));
+        assert!(!tightened.contains(&rparen_id)); // filtered out
+        assert!(tightened.contains(&eof_id));     // unannotated → always present
+
+        // Tighten with one() → all tokens
+        let all = wfst.tightened_sync_tokens(ContextWeight::one());
+        assert_eq!(all.len(), 3); // no filtering
+    }
+
+    #[test]
+    fn test_follow_contexts_set_in_build() {
+        // Verify that build_recovery_wfsts populates follow_contexts
+        // when prediction WFSTs are provided
+        let token_map = make_token_map();
+        let categories = vec!["Expr".to_string()];
+        let mut follow_sets = std::collections::HashMap::new();
+        let mut expr_follow = crate::prediction::FirstSet::new();
+        expr_follow.tokens.insert("Plus".to_string());
+        follow_sets.insert("Expr".to_string(), expr_follow);
+
+        let mut grammar_terminals = std::collections::HashSet::new();
+        grammar_terminals.insert(";".to_string());
+
+        // Build with prediction WFSTs → follow contexts should be populated
+        // (using a simple prediction WFST with one action)
+        let pred_token_map = crate::token_id::TokenIdMap::from_names(
+            vec!["Plus", "Ident", "Semi", "Eof"].into_iter().map(String::from)
+        );
+        let mut builder = crate::wfst::PredictionWfstBuilder::new("Expr", pred_token_map);
+        builder.add_action(
+            "Ident",
+            crate::prediction::DispatchAction::Direct {
+                rule_label: "VarRef".to_string(),
+                parse_fn: "parse_varref".to_string(),
+            },
+            crate::automata::semiring::TropicalWeight::new(0.0),
+        );
+        let pred_wfst = builder.build();
+
+        let mut prediction_wfsts = std::collections::HashMap::new();
+        prediction_wfsts.insert("Expr".to_string(), pred_wfst);
+
+        let wfsts = build_recovery_wfsts(
+            &categories, &follow_sets, &grammar_terminals, &token_map,
+            Some(&prediction_wfsts),
+        );
+
+        assert_eq!(wfsts.len(), 1);
+        // Follow contexts should be non-empty
+        assert!(!wfsts[0].follow_contexts().is_empty(),
+            "follow_contexts should be populated when prediction WFST is provided");
+    }
+
+    // ── D3: RecoveryWfst DOT visualization tests ───────────────────────
+
+    #[test]
+    fn test_d3_recovery_wfst_dot_basic() {
+        use crate::token_id::TokenIdMap;
+        let mut token_map = TokenIdMap::new();
+        token_map.get_or_insert("RParen");
+        token_map.get_or_insert("Semicolon");
+        token_map.get_or_insert("Eof");
+
+        let sync_names = vec![
+            "RParen".to_string(),
+            "Semicolon".to_string(),
+            "Eof".to_string(),
+        ];
+        let recovery = RecoveryWfst::new("Proc".to_string(), &sync_names, &token_map);
+        let dot = recovery.to_dot();
+
+        assert!(dot.contains("digraph RecoveryWfst_Proc"), "should have digraph header");
+        assert!(dot.contains("rankdir=LR"), "should be left-to-right");
+        assert!(dot.contains("error"), "should have error start node");
+        assert!(dot.contains("(start)"), "should mark start state");
+        assert!(dot.contains("RParen"), "should contain RParen sync token");
+        assert!(dot.contains("Semicolon"), "should contain Semicolon sync token");
+        assert!(dot.contains("Eof"), "should contain Eof sync token");
+        assert!(dot.contains("color=black"), "undiscounted edges should be black");
+        assert!(dot.ends_with("}\n"), "should end with closing brace");
+    }
+
+    #[test]
+    fn test_d3_recovery_wfst_dot_with_discounts() {
+        use crate::token_id::TokenIdMap;
+        let mut token_map = TokenIdMap::new();
+        let rparen_id = token_map.get_or_insert("RParen");
+        let semi_id = token_map.get_or_insert("Semicolon");
+
+        let sync_names = vec!["RParen".to_string(), "Semicolon".to_string()];
+        let mut recovery = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        // Set B1 discount on RParen (high prediction confidence)
+        let mut discounts = std::collections::HashMap::new();
+        discounts.insert(rparen_id, 0.7);
+        discounts.insert(semi_id, 1.0);
+        recovery.set_prediction_discounts(discounts);
+
+        let dot = recovery.to_dot();
+        assert!(dot.contains("B1 disc=0.70"), "discounted edge should show B1 discount");
+        assert!(dot.contains("color=blue"), "discounted edge should be blue");
+    }
+
+    #[test]
+    fn test_d3_recovery_wfst_dot_empty() {
+        use crate::token_id::TokenIdMap;
+        let token_map = TokenIdMap::new();
+        let recovery = RecoveryWfst::new("Empty".to_string(), &[], &token_map);
+        let dot = recovery.to_dot();
+
+        assert!(dot.contains("digraph RecoveryWfst_Empty"));
+        assert!(dot.contains("error"));
+        // No sync tokens → no edges
+        assert!(!dot.contains("->") || dot.matches("->").count() == 0
+            || !dot.contains("sync_"), "empty recovery should have no sync edges");
     }
 }

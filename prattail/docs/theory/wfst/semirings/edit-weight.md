@@ -134,6 +134,9 @@ min(a + b, a + c) = a + b = RHS.
 
 All semiring axioms hold.  QED.
 
+> For the parsing-specific interpretation of these axioms, see
+> [§4 Why Each Axiom Matters for Parsing](../semirings.md#4-why-each-axiom-matters-for-parsing).
+
 ---
 
 ## 4. Key Properties

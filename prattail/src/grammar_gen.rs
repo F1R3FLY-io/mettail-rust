@@ -133,9 +133,11 @@ fn has_nonterminal(item: &SyntaxItemSpec, cat_names: &[String]) -> bool {
     match item {
         SyntaxItemSpec::NonTerminal { category, .. } => cat_names.contains(category),
         SyntaxItemSpec::Collection { element_category, .. } => cat_names.contains(element_category),
-        SyntaxItemSpec::ZipMapSep { body_items, .. } => {
+        SyntaxItemSpec::Sep { body, .. } => has_nonterminal(body.as_ref(), cat_names),
+        SyntaxItemSpec::Map { body_items } => {
             body_items.iter().any(|bi| has_nonterminal(bi, cat_names))
         },
+        SyntaxItemSpec::Zip { body, .. } => has_nonterminal(body.as_ref(), cat_names),
         SyntaxItemSpec::Optional { inner } => inner.iter().any(|i| has_nonterminal(i, cat_names)),
         SyntaxItemSpec::Terminal(_)
         | SyntaxItemSpec::IdentCapture { .. }
@@ -377,39 +379,46 @@ fn syntax_item_strategy(
                 .boxed()
         },
 
-        SyntaxItemSpec::ZipMapSep { body_items, separator, .. } => {
-            // Generate each body element then join with separator
+        SyntaxItemSpec::Sep { body, separator, .. } => {
+            // Generate 1-3 copies of the body pattern joined by separator
+            let body_strat = syntax_item_strategy(body.as_ref(), rules_by_cat, cat_names, inner, current_cat);
+            let sep = separator.clone();
+            prop::collection::vec(body_strat, 1..=3)
+                .prop_map(move |v| v.join(&format!(" {} ", sep)))
+                .boxed()
+        },
+
+        SyntaxItemSpec::Map { body_items } => {
+            // Generate each body item and join them together
             let body_strat: Vec<BoxedStrategy<String>> = body_items
                 .iter()
                 .map(|bi| syntax_item_strategy(bi, rules_by_cat, cat_names, inner, current_cat))
                 .collect();
 
-            let sep = separator.clone();
             if body_strat.is_empty() {
                 Just(fallback_ident()).boxed()
             } else {
-                // Generate 1-3 copies of the body pattern
-                let body_vec_strat: BoxedStrategy<String> =
-                    body_strat
-                        .into_iter()
-                        .fold(Just(String::new()).boxed(), |acc, next| {
-                            (acc, next)
-                                .prop_map(
-                                    |(a, b)| {
-                                        if a.is_empty() {
-                                            b
-                                        } else {
-                                            smart_join(&a, &b)
-                                        }
-                                    },
-                                )
-                                .boxed()
-                        });
-
-                prop::collection::vec(body_vec_strat, 1..=3)
-                    .prop_map(move |v| v.join(&format!(" {} ", sep)))
-                    .boxed()
+                body_strat
+                    .into_iter()
+                    .fold(Just(String::new()).boxed(), |acc, next| {
+                        (acc, next)
+                            .prop_map(
+                                |(a, b)| {
+                                    if a.is_empty() {
+                                        b
+                                    } else {
+                                        smart_join(&a, &b)
+                                    }
+                                },
+                            )
+                            .boxed()
+                    })
             }
+        },
+
+        SyntaxItemSpec::Zip { body, .. } => {
+            // Zip delegates to its body for generation
+            syntax_item_strategy(body.as_ref(), rules_by_cat, cat_names, inner, current_cat)
         },
 
         SyntaxItemSpec::Optional { inner: opt_items } => {
@@ -651,6 +660,7 @@ mod tests {
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
+            semantic_dependency_groups: Vec::new(),
         }
     }
 

@@ -833,3 +833,120 @@ fn test_nfa_spillover_unambiguous_float_int_literal() {
 fn test_nfa_spillover_unambiguous_float_int_literal_in_expr() {
     calc_normal_form("float(3) + 1.0", "4.0");
 }
+
+// ── Bug B: Ambiguous dispatch must try ALL operators, not just first ──
+//
+// When a FIRST token (e.g. Ident) is ambiguous between the target category
+// (Bool) and multiple source categories (Int, Float, Str, Bool), ALL
+// cross-category operators sharing that FIRST token must be tried. Previously
+// only the first operator (by WFST weight) was emitted, so `x >= 1` failed
+// while `x == 1` worked.
+
+/// Variable-operand comparisons: Ident tokens hit the ambiguous dispatch path.
+/// These test that ALL comparison operators are tried (not just ==).
+#[test]
+fn test_ambiguous_dispatch_gteq_int() {
+    // x >= 1 was the motivating failure — must parse via GtEqInt
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let result = lang.parse_term("x >= 1");
+    assert!(result.is_ok(), "x >= 1 should parse: {:?}", result);
+}
+
+#[test]
+fn test_ambiguous_dispatch_gt_int() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let result = lang.parse_term("x > 1");
+    assert!(result.is_ok(), "x > 1 should parse: {:?}", result);
+}
+
+#[test]
+fn test_ambiguous_dispatch_lt_int() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let result = lang.parse_term("x < 1");
+    assert!(result.is_ok(), "x < 1 should parse: {:?}", result);
+}
+
+#[test]
+fn test_ambiguous_dispatch_lteq_int() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let result = lang.parse_term("x <= 1");
+    assert!(result.is_ok(), "x <= 1 should parse: {:?}", result);
+}
+
+#[test]
+fn test_ambiguous_dispatch_ne_int() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let result = lang.parse_term("x != 1");
+    assert!(result.is_ok(), "x != 1 should parse: {:?}", result);
+}
+
+#[test]
+fn test_ambiguous_dispatch_eq_int_regression() {
+    // x == 1 should still work (regression check — was working before)
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let result = lang.parse_term("x == 1");
+    assert!(result.is_ok(), "x == 1 should parse: {:?}", result);
+}
+
+#[test]
+fn test_ambiguous_dispatch_eq_ident_both_sides() {
+    // Both sides are Ident (ambiguous)
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let result = lang.parse_term("x == y");
+    assert!(result.is_ok(), "x == y should parse: {:?}", result);
+}
+
+/// Parenthesized variable comparisons go through the LParen grouping path
+/// which re-enters the dispatch.
+#[test]
+fn test_ambiguous_dispatch_paren_gteq() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let result = lang.parse_term("(x >= 1)");
+    assert!(result.is_ok(), "(x >= 1) should parse: {:?}", result);
+}
+
+/// Full end-to-end: x >= 1 with x bound to 3 → true
+#[test]
+fn test_ambiguous_dispatch_gteq_env() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    let val = lang.parse_term_for_env("3").expect("parse 3");
+    lang.add_to_env(env.as_mut(), "x", val.as_ref()).expect("add x");
+    let term = lang.parse_term_for_env("x >= 1").expect("parse x >= 1");
+    let substituted = lang.substitute_env(term.as_ref(), env.as_ref()).expect("sub");
+    let results = lang.run_ascent(substituted.as_ref()).expect("ascent");
+    let displays: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(
+        displays.contains(&"true".to_string()),
+        "expected \"true\" for x >= 1 with x=3, got: {:?}",
+        displays
+    );
+}
+
+/// Full end-to-end: x > 1 with x bound to 0 → false
+#[test]
+fn test_ambiguous_dispatch_gt_env() {
+    mettail_runtime::clear_var_cache();
+    let lang = calc::CalculatorLanguage;
+    let mut env = lang.create_env();
+    let val = lang.parse_term_for_env("0").expect("parse 0");
+    lang.add_to_env(env.as_mut(), "x", val.as_ref()).expect("add x");
+    let term = lang.parse_term_for_env("x > 1").expect("parse x > 1");
+    let substituted = lang.substitute_env(term.as_ref(), env.as_ref()).expect("sub");
+    let results = lang.run_ascent(substituted.as_ref()).expect("ascent");
+    let displays: Vec<String> = results.normal_forms().iter().map(|nf| nf.display.clone()).collect();
+    assert!(
+        displays.contains(&"false".to_string()),
+        "expected \"false\" for x > 1 with x=0, got: {:?}",
+        displays
+    );
+}

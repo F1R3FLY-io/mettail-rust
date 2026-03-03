@@ -203,7 +203,7 @@ pub fn extract_terminals(
     };
 
     // Always include structural delimiters — the Pratt parser uses ( ) for grouping
-    // and the ZipMapSep handler checks for closing delimiters
+    // and the Sep handler checks for closing delimiters
     for text in &["(", ")", "{", "}", "[", "]", ","] {
         terminal_set.insert(TerminalPattern {
             text: text.to_string(),

@@ -40,7 +40,7 @@ For design rationale, see
 9. [Generated Code Anatomy](#9-generated-code-anatomy)
    - 9.1 [Lexer Entry Point](#91-lexer-entry-point)
    - 9.2 [Currently Always Linear](#92-currently-always-linear)
-   - 9.3 [Future Context-Sensitive Lexing](#93-future-context-sensitive-lexing)
+   - 9.3 [Context-Sensitive Lexing (Removed)](#93-context-sensitive-lexing-removed)
 10. [Data Flow Summary](#10-data-flow-summary)
 11. [Source Map](#11-source-map)
 12. [Cross-References](#12-cross-references)
@@ -106,7 +106,7 @@ over them). This document maps every edge in that dependency graph.
   │  │ alternative_paths‡│ └───────────┘ │ SGD weight updates   │        │
   │  └──────────────────┘                └──────────────────────┘        │
   │                                                                     │
-  │  † = wfst-log gated    ‡ = context-sensitive-lex gated              │
+  │  † = wfst-log gated    ‡ = removed (was context-sensitive-lex)       │
   └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -154,13 +154,11 @@ At runtime, `TokenSource` is the primary abstraction:
    Linear, Viterbi on Lattice).
 4. The **parser** (`parse_Cat()`) consumes `Vec<(Token<'a>, Range)>`.
 
-The Lattice variant is activated only when:
-
-- `context-sensitive-lex` is enabled AND
-- The lexer detects actual lexical ambiguity (multiple tokens at one
-  position)
-
-For all current grammars, the Linear path is always taken.
+The Lattice variant was historically activated when the now-removed
+`context-sensitive-lex` feature was enabled and the lexer detected
+actual lexical ambiguity (multiple tokens at one position). Since the
+feature has been removed, the Linear path is always taken for all
+grammars.
 
 ---
 
@@ -224,8 +222,9 @@ in `lattice.rs`, but operates on fixed-size arrays instead of
 
 ### 4.3 lattice_recovery()
 
-`lattice_recovery()` (`recovery.rs`:1685, feature `context-sensitive-lex`)
-bridges token lattices and error recovery:
+`lattice_recovery()` (`recovery.rs`:1685, formerly gated behind the
+now-removed `context-sensitive-lex` feature) bridged token lattices and
+error recovery:
 
 1. Receives alternative tokenization paths `(Vec<TokenId>, TropicalWeight)`
    from `alternative_paths()` in `lattice.rs`
@@ -461,13 +460,14 @@ Since `from_weighted()` currently always produces `Linear`, and
 `resolve()` on `Linear` is identity, the lattice machinery has **zero
 runtime overhead** for all current grammars.
 
-### 9.3 Future Context-Sensitive Lexing
+### 9.3 Context-Sensitive Lexing (Removed)
 
-When `context-sensitive-lex` is enabled, `from_weighted()` will be
-extended to detect multi-token positions and construct `Lattice` variants.
-The `resolve()` call will then run Viterbi to extract the best
-tokenization. The parser entry point code does not change — only the
-internal behavior of `from_weighted()` changes.
+The `context-sensitive-lex` feature has been removed. It would have
+extended `from_weighted()` to detect multi-token positions and construct
+`Lattice` variants. The always-on WFST architecture now resolves all
+lexer ambiguities at compile time, making runtime context-sensitive
+lexing unnecessary. The `from_weighted()` function always produces the
+`Linear` variant.
 
 ---
 
@@ -517,7 +517,7 @@ internal behavior of `from_weighted()` changes.
   │       ├── Linear (always, currently)                                │
   │       │   └── resolve() → identity → Vec<(Token, Range)>           │
   │       │                                                             │
-  │       └── Lattice (future: context-sensitive-lex)                   │
+  │       └── Lattice (removed: was context-sensitive-lex)               │
   │           └── resolve() → viterbi_best_path() → Vec<(Token, Range)>│
   │                                                                     │
   │       ▼                                                             │
@@ -535,7 +535,7 @@ internal behavior of `from_weighted()` changes.
   │                   │                                                 │
   │                   └── RepairResult → continue parsing               │
   │                                                                     │
-  │  ‡ = context-sensitive-lex only                                     │
+  │  ‡ = removed (was context-sensitive-lex)                              │
   └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -554,7 +554,7 @@ internal behavior of `from_weighted()` changes.
 | Implicit repair lattice             | `src/recovery.rs`           | `viterbi_multi_step()` (816) |
 | Lattice-aware recovery              | `src/recovery.rs`           | `lattice_recovery()` (1685) |
 | RepairAction edit cost              | `src/recovery.rs`           | `RepairAction::edit_cost()` |
-| Semiring trait + 6 impls            | `src/automata/semiring.rs`  | `Semiring` (36)             |
+| Semiring trait + 10 impls           | `src/automata/semiring.rs`  | `Semiring` (36)             |
 | Forward-backward scores             | `src/forward_backward.rs`   | `forward()`, `backward()`  |
 | Training (parse lattice, planned)   | `src/training.rs`           | (line 133, planned)         |
 | lex_weighted() codegen              | `src/automata/codegen.rs`   | `write_lex_weighted_via_core()` (525) |

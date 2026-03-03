@@ -157,6 +157,9 @@ Right-distributivity (D2) follows symmetrically.
 In the extended reals with our convention, adding any finite value to +inf
 yields +inf. In probability space: 0 * p = 0, which maps to -ln(0) = +inf. QED
 
+> For the parsing-specific interpretation of these axioms, see
+> [§4 Why Each Axiom Matters for Parsing](../semirings.md#4-why-each-axiom-matters-for-parsing).
+
 ---
 
 ## 4. Key Properties

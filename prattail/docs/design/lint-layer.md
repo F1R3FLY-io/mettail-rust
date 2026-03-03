@@ -4,6 +4,9 @@
 
 The lint layer (`prattail/src/lint.rs`) provides unified compile-time diagnostics for PraTTaIL grammars. It consolidates previously scattered `eprintln!` warnings into a single structured system with 23 lints across 5 categories.
 
+For detailed per-lint documentation with examples and resolution guidance, see the
+[Diagnostic Reference](../diagnostics/README.md).
+
 ## Architecture
 
 ```text
@@ -25,33 +28,52 @@ All lint data is borrowed from existing pipeline computations via `LintContext` 
 ```rust
 pub enum LintSeverity { Note, Warning, Error }
 
+pub struct SourceLocation { pub line: u32, pub column: u32 }
+
 pub struct LintDiagnostic {
-    pub id: &'static str,        // "G04", "W01", "C01"
-    pub name: &'static str,      // "dead-rule", "cast-cycle"
+    pub id: &'static str,                      // "G04", "W01", "C01"
+    pub name: &'static str,                    // "dead-rule", "cast-cycle"
     pub severity: LintSeverity,
     pub category: Option<String>,
     pub rule: Option<String>,
     pub message: String,
     pub hint: Option<String>,
+    pub grammar_name: Option<String>,          // e.g., "RhoPi"
+    pub source_location: Option<SourceLocation>, // proc-macro span data
 }
 
-pub struct LintContext<'a> { /* borrows all pipeline data */ }
+pub struct LintContext<'a> {
+    pub grammar_name: &'a str,
+    pub rule_locations: &'a HashMap<(String, String), SourceLocation>,
+    /* + borrows all pipeline data */
+}
 ```
 
 ## Display Format
 
-Rust-compiler-style diagnostics to stderr:
+Rust-compiler-style diagnostics to stderr. Diagnostics are grouped under a grammar-name header:
 
 ```
+  linting grammar `RhoPi`
+warning[G09]: rule `PIn` in category `Proc` has unbalanced delimiters: 0 `(` vs 1 `)`
+  --> <macro>:42:9
+  = in category `Proc`, rule `PIn`
+  = hint: add the missing `(` delimiter
+
 error[C01]: cast cycle detected: Int -> Proc -> Int
   = hint: break the cycle by removing one cast direction
 
 warning[W01]: rule `FloatToStr` in category `Str` is unreachable (dead code)
+  = in category `Str`, rule `FloatToStr`
   = hint: remove the rule or add a unique dispatch token
 
-note[G06]: operator `-` is both infix and prefix in category `Int`
-  = hint: this is intentional — prefix_bp = max_infix_bp + 2
+note[R07]: 36 operator pair(s) differ by 1 character (SwapTokens repair candidates): `!`↔`*`, `!`↔`+`, ... (28 more)
+  = hint: the error recovery system can detect and fix common typos between these operators via SwapTokens
 ```
+
+- Source location line (`-->`) shown when `line > 0` (real proc-macro span data available)
+- Category/rule context line shown when category and/or rule are present
+- Pipeline info messages (E1, D1, A5) are prefixed with grammar name: `info[RhoPi]: D1 ...`
 
 ## Semiring Selection
 

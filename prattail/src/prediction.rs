@@ -339,7 +339,7 @@ pub fn compute_follow_sets_from_inputs(
 ///
 /// Also handles:
 /// - Collections: FOLLOW(element_cat) += {separator, closing_delimiter}
-/// - ZipMapSep: propagates through body items
+/// - Sep/Map/Zip: propagates through body items
 /// - Optional groups: propagates through inner items
 ///
 /// Convenience wrapper around `compute_follow_sets_from_inputs()`.
@@ -398,7 +398,7 @@ fn propagate_follow_from_items(
                     changed |= copy_follow(follow_sets, rule_category, element_category);
                 }
             },
-            crate::SyntaxItemSpec::ZipMapSep { body_items, separator, .. } => {
+            crate::SyntaxItemSpec::Sep { body, separator, .. } => {
                 // Compute the "tail" tokens after a body iteration:
                 // either the separator (another iteration) or the closing delimiter
                 let (suffix_first, _) = first_of_suffix(suffix, first_sets);
@@ -406,7 +406,15 @@ fn propagate_follow_from_items(
                 body_tail.insert(&terminal_to_variant_name(separator));
                 body_tail.union(&suffix_first);
 
+                // Propagate through the body (which may be Zip(Map(...)) or Map(...))
+                let body_slice = std::slice::from_ref(body.as_ref());
+                changed |= propagate_follow_through_items(
+                    body_slice, rule_category, first_sets, follow_sets, &body_tail,
+                );
+            },
+            crate::SyntaxItemSpec::Map { body_items } => {
                 // Walk body items and compute FOLLOW for nonterminals within
+                let (suffix_first, suffix_nullable) = first_of_suffix(suffix, first_sets);
                 for j in 0..body_items.len() {
                     if let crate::SyntaxItemSpec::NonTerminal { category, .. } = &body_items[j] {
                         let body_suffix = &body_items[j + 1..];
@@ -414,7 +422,26 @@ fn propagate_follow_from_items(
                             first_of_suffix(body_suffix, first_sets);
                         changed |= add_first_to_follow(follow_sets, category, &body_suffix_first);
                         if body_suffix_nullable {
-                            changed |= add_first_to_follow(follow_sets, category, &body_tail);
+                            changed |= add_first_to_follow(follow_sets, category, &suffix_first);
+                            if suffix_nullable {
+                                changed |= copy_follow(follow_sets, rule_category, category);
+                            }
+                        }
+                    }
+                }
+            },
+            crate::SyntaxItemSpec::Zip { body, .. } => {
+                // Zip delegates to its body
+                let body_slice = std::slice::from_ref(body.as_ref());
+                let (suffix_first, suffix_nullable) = first_of_suffix(suffix, first_sets);
+                changed |= propagate_follow_through_items(
+                    body_slice, rule_category, first_sets, follow_sets, &suffix_first,
+                );
+                if suffix_nullable {
+                    // If suffix is nullable, body NTs also inherit rule FOLLOW
+                    for item in body_slice {
+                        if let crate::SyntaxItemSpec::NonTerminal { category, .. } = item {
+                            changed |= copy_follow(follow_sets, rule_category, category);
                         }
                     }
                 }
@@ -442,6 +469,47 @@ fn propagate_follow_from_items(
             },
             // Terminal, IdentCapture, Binder — no category-level FOLLOW propagation
             _ => {},
+        }
+    }
+    changed
+}
+
+/// Propagate FOLLOW through a sequence of syntax items, given a "tail" FOLLOW set.
+///
+/// For each nonterminal in `items`, its FOLLOW is extended with the FIRST of the
+/// remaining items in the sequence. If the remaining items are nullable, the
+/// tail set is also added.
+fn propagate_follow_through_items(
+    items: &[crate::SyntaxItemSpec],
+    rule_category: &str,
+    first_sets: &HashMap<String, FirstSet>,
+    follow_sets: &mut HashMap<String, FirstSet>,
+    tail: &FirstSet,
+) -> bool {
+    let mut changed = false;
+    for j in 0..items.len() {
+        if let crate::SyntaxItemSpec::NonTerminal { category, .. } = &items[j] {
+            let body_suffix = &items[j + 1..];
+            let (body_suffix_first, body_suffix_nullable) =
+                first_of_suffix(body_suffix, first_sets);
+            changed |= add_first_to_follow(follow_sets, category, &body_suffix_first);
+            if body_suffix_nullable {
+                changed |= add_first_to_follow(follow_sets, category, tail);
+            }
+        } else if let crate::SyntaxItemSpec::Map { body_items } = &items[j] {
+            // Recurse into Map body_items with the same tail
+            changed |= propagate_follow_through_items(
+                body_items, rule_category, first_sets, follow_sets, tail,
+            );
+        } else if let crate::SyntaxItemSpec::Zip { body, .. } = &items[j] {
+            // Recurse into Zip body
+            changed |= propagate_follow_through_items(
+                std::slice::from_ref(body.as_ref()),
+                rule_category,
+                first_sets,
+                follow_sets,
+                tail,
+            );
         }
     }
     changed
@@ -499,11 +567,22 @@ fn first_of_suffix(
                 }
                 // Collections can be empty (0 elements), so nullable — continue
             },
-            crate::SyntaxItemSpec::ZipMapSep { body_items, .. } => {
-                // FIRST = FIRST of first body item
-                let (body_first, _) = first_of_suffix(body_items, first_sets);
+            crate::SyntaxItemSpec::Sep { body, .. } => {
+                // FIRST = FIRST of body; Sep is nullable (0 iterations)
+                let (body_first, _) = first_of_suffix(std::slice::from_ref(body.as_ref()), first_sets);
                 result.union(&body_first);
-                // ZipMapSep can be empty (0 iterations), so nullable — continue
+            },
+            crate::SyntaxItemSpec::Map { body_items } => {
+                // FIRST = FIRST of body_items sequence
+                let (map_first, _) = first_of_suffix(body_items, first_sets);
+                result.union(&map_first);
+                // Map is not inherently nullable unless its body_items are
+                // For FIRST computation, we continue to be safe
+            },
+            crate::SyntaxItemSpec::Zip { body, .. } => {
+                // FIRST = FIRST of body; Zip delegates to body
+                let (body_first, _) = first_of_suffix(std::slice::from_ref(body.as_ref()), first_sets);
+                result.union(&body_first);
             },
             crate::SyntaxItemSpec::Optional { inner } => {
                 // FIRST of Optional = FIRST of inner items
@@ -1117,15 +1196,21 @@ fn collect_referenced_categories(
             crate::SyntaxItemSpec::Collection { element_category, .. } => {
                 referenced.insert(element_category.clone());
             },
-            crate::SyntaxItemSpec::ZipMapSep {
+            crate::SyntaxItemSpec::Sep { body, .. } => {
+                collect_referenced_categories(std::slice::from_ref(body.as_ref()), referenced);
+            },
+            crate::SyntaxItemSpec::Map { body_items } => {
+                collect_referenced_categories(body_items, referenced);
+            },
+            crate::SyntaxItemSpec::Zip {
                 left_category,
                 right_category,
-                body_items,
+                body,
                 ..
             } => {
                 referenced.insert(left_category.clone());
                 referenced.insert(right_category.clone());
-                collect_referenced_categories(body_items, referenced);
+                collect_referenced_categories(std::slice::from_ref(body.as_ref()), referenced);
             },
             crate::SyntaxItemSpec::Optional { inner } => {
                 collect_referenced_categories(inner, referenced);
@@ -1666,54 +1751,6 @@ fn token_kind_to_variant_name(kind: &super::automata::TokenKind) -> String {
     }
 }
 
-/// Emit composed dispatch table as a generated Rust function.
-///
-/// Produces:
-/// ```text
-/// fn composed_dispatch(category_id: u8, dfa_state: u32) -> &'static [(u8, &'static str, f64)] { ... }
-/// ```
-pub fn emit_composed_dispatch_table(
-    buf: &mut String,
-    table: &HashMap<(String, u32), Vec<ComposedEntry>>,
-    categories: &[String],
-) {
-    use std::fmt::Write;
-
-    // Map category names to IDs
-    let cat_to_id: HashMap<&str, u8> = categories
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.as_str(), i as u8))
-        .collect();
-
-    // Category ID constants
-    for (name, &id) in &cat_to_id {
-        write!(buf, "const CATEGORY_ID_{}: u8 = {};", name.to_uppercase(), id).unwrap();
-    }
-
-    // Static dispatch table entries
-    buf.push_str(
-        "fn composed_dispatch(category_id: u8, dfa_state: u32) -> &'static [(u8, &'static str, f64)] {",
-    );
-    buf.push_str("match (category_id, dfa_state) {");
-
-    for ((category, state_id), entries) in table {
-        let cat_id = cat_to_id.get(category.as_str()).copied().unwrap_or(255);
-        write!(buf, "({}, {}) => &[", cat_id, state_id).unwrap();
-        for entry in entries {
-            write!(
-                buf,
-                "({}, \"{}\", {:.6}),",
-                entry.token_kind_id, entry.rule_label, entry.weight
-            )
-            .unwrap();
-        }
-        buf.push_str("],");
-    }
-
-    buf.push_str("_ => &[] } }");
-}
-
 /// Build a resolution map from composed dispatch entries for use in standard batch dispatch.
 ///
 /// For each `(category, ambiguous_token_variant)` pair in the composed dispatch table,
@@ -2010,42 +2047,6 @@ mod composed_dispatch_tests {
         let var_specificity = compute_rule_specificity(&var_rule);
         // 0.5 * 0.5 (Ident counts as 0.5 nonterminal) = 0.25
         assert!((var_specificity - 0.25).abs() < 1e-10);
-    }
-
-    #[test]
-    fn test_emit_composed_dispatch_table() {
-        let mut table = HashMap::new();
-        table.insert(
-            ("Proc".to_string(), 7),
-            vec![
-                ComposedEntry {
-                    token_kind_id: 3,
-                    token_variant_name: "KwError".to_string(),
-                    rule_label: "CompareProc".to_string(),
-                    weight: 0.29,
-                },
-                ComposedEntry {
-                    token_kind_id: 1,
-                    token_variant_name: "Ident".to_string(),
-                    rule_label: "VarProc".to_string(),
-                    weight: 10.0,
-                },
-            ],
-        );
-
-        let categories = vec!["Proc".to_string(), "Int".to_string()];
-        let mut buf = String::new();
-        emit_composed_dispatch_table(&mut buf, &table, &categories);
-
-        assert!(buf.contains("CATEGORY_ID_PROC"));
-        assert!(buf.contains("composed_dispatch"));
-        assert!(buf.contains("CompareProc"));
-        assert!(buf.contains("VarProc"));
-
-        // Verify it parses as valid Rust tokens
-        let _ts: proc_macro2::TokenStream = buf
-            .parse()
-            .expect("composed dispatch table should be valid Rust");
     }
 
     /// Test that NonTerminal rules are matched via FIRST-set lookup (not hardcoded to "Ident").

@@ -275,6 +275,7 @@ fn make_rule(label: &str, category: &str, syntax: Vec<SyntaxItemSpec>, is_infix:
         has_rust_code: false,
         rust_code: None,
         eval_mode: None,
+        source_location: None,
     }
 }
 
@@ -556,33 +557,38 @@ fn test_follow_sets_multi_position_rule() {
 }
 
 #[test]
-fn test_follow_sets_zipmapsep() {
-    // Grammar: Proc has a ZipMapSep pattern with body [Name "?" Proc] and sep ","
+fn test_follow_sets_sep_zip_map() {
+    // Grammar: Proc has a Sep(Zip(Map(...))) pattern with body [Name "?" Proc] and sep ","
     // Inside body: FOLLOW(Name) includes Question
-    //              FOLLOW(Proc) includes Comma (separator) and whatever follows ZMS
+    //              FOLLOW(Proc) includes Comma (separator) and whatever follows Sep
     let rules = vec![make_rule(
         "PInput",
         "Proc",
         vec![
             SyntaxItemSpec::Terminal("for".to_string()),
             SyntaxItemSpec::Terminal("(".to_string()),
-            SyntaxItemSpec::ZipMapSep {
-                left_name: "ns".to_string(),
-                right_name: "xs".to_string(),
-                left_category: "Name".to_string(),
-                right_category: "Proc".to_string(),
-                body_items: vec![
-                    SyntaxItemSpec::NonTerminal {
-                        category: "Name".to_string(),
-                        param_name: "n".to_string(),
-                    },
-                    SyntaxItemSpec::Terminal("?".to_string()),
-                    SyntaxItemSpec::NonTerminal {
-                        category: "Proc".to_string(),
-                        param_name: "x".to_string(),
-                    },
-                ],
+            SyntaxItemSpec::Sep {
+                body: Box::new(SyntaxItemSpec::Zip {
+                    left_name: "ns".to_string(),
+                    right_name: "xs".to_string(),
+                    left_category: "Name".to_string(),
+                    right_category: "Proc".to_string(),
+                    body: Box::new(SyntaxItemSpec::Map {
+                        body_items: vec![
+                            SyntaxItemSpec::NonTerminal {
+                                category: "Name".to_string(),
+                                param_name: "n".to_string(),
+                            },
+                            SyntaxItemSpec::Terminal("?".to_string()),
+                            SyntaxItemSpec::NonTerminal {
+                                category: "Proc".to_string(),
+                                param_name: "x".to_string(),
+                            },
+                        ],
+                    }),
+                }),
                 separator: ",".to_string(),
+                kind: CollectionKind::Vec,
             },
             SyntaxItemSpec::Terminal(")".to_string()),
         ],
@@ -607,11 +613,11 @@ fn test_follow_sets_zipmapsep() {
     // After Proc in body, either separator "," or closing ")" follows
     assert!(
         proc_follow.contains("Comma"),
-        "FOLLOW(Proc) should contain Comma (ZipMapSep separator)"
+        "FOLLOW(Proc) should contain Comma (Sep separator)"
     );
     assert!(
         proc_follow.contains("RParen"),
-        "FOLLOW(Proc) should contain RParen (closing delimiter after ZipMapSep)"
+        "FOLLOW(Proc) should contain RParen (closing delimiter after Sep)"
     );
 }
 

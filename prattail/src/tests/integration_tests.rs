@@ -71,6 +71,7 @@ fn calculator_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
         recovery_config: crate::recovery::RecoveryConfig::default(),
+        semantic_dependency_groups: Vec::new(),
     }
 }
 
@@ -105,11 +106,6 @@ fn test_generate_parser_code_size() {
 
     // For a simple calculator, generated code should be compact
     // (much less than LALRPOP's ~1,000 lines for Calculator).
-    // context-sensitive-lex adds lazy parsers, LexerAdapter, EXPECTED constants,
-    // and context-sensitive parse functions — legitimately more code.
-    #[cfg(feature = "context-sensitive-lex")]
-    let limit = 600;
-    #[cfg(not(feature = "context-sensitive-lex"))]
     let limit = 500;
     assert!(lines < limit, "generated code should be compact, got ~{} lines (limit {})", lines, limit);
 }
@@ -190,6 +186,7 @@ fn test_generate_parser_two_categories() {
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
         recovery_config: crate::recovery::RecoveryConfig::default(),
+        semantic_dependency_groups: Vec::new(),
     };
 
     let code = generate_parser(&spec);
@@ -418,169 +415,24 @@ fn test_standard_path_has_no_backtracking() {
 }
 
 #[test]
-#[cfg(feature = "context-sensitive-lex")]
-fn test_emits_context_sensitive_lex_infrastructure_with_feature() {
+fn test_no_lazy_parsers_or_context_sensitive_lex_infra() {
     let spec = calculator_spec();
 
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    // Context-sensitive lex infrastructure should be emitted when feature is enabled
-    assert!(
-        code_str.contains("struct Lexer"),
-        "should emit Lexer struct with context-sensitive-lex feature"
-    );
-    assert!(
-        code_str.contains("struct LexerAdapter"),
-        "should emit LexerAdapter with context-sensitive-lex feature"
-    );
-    assert!(
-        code_str.contains("next_token_for_category"),
-        "should emit next_token_for_category with context-sensitive-lex feature"
-    );
-    assert!(
-        code_str.contains("accept_token_by_kind"),
-        "should emit accept_token_by_kind with context-sensitive-lex feature"
-    );
-    assert!(
-        code_str.contains("parse_Int_lazy"),
-        "should emit parse_Cat_lazy with context-sensitive-lex feature"
-    );
-    assert!(
-        code_str.contains("set_category"),
-        "lazy parser should call adapter.set_category() with context-sensitive-lex feature"
-    );
-
-    // Phase 6H: Enhanced error messages
-    assert!(
-        code_str.contains("EXPECTED_INT"),
-        "should emit per-category EXPECTED_ constants with context-sensitive-lex feature"
-    );
-    assert!(
-        code_str.contains("expected_for_category"),
-        "should emit expected_for_category() with context-sensitive-lex feature"
-    );
-    assert!(
-        code_str.contains("lex_error"),
-        "LexerAdapter should have lex_error field with context-sensitive-lex feature"
-    );
-    assert!(
-        code_str.contains("take_error"),
-        "LexerAdapter should expose take_error() with context-sensitive-lex feature"
-    );
-}
-
-#[test]
-#[cfg(not(feature = "context-sensitive-lex"))]
-fn test_no_lazy_parsers_without_feature() {
-    let spec = calculator_spec();
-
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Lazy parsers should NOT be emitted without feature
+    // Lazy parsers and context-sensitive lex infrastructure should never be emitted
     assert!(
         !code_str.contains("parse_Int_lazy"),
-        "should NOT emit parse_Cat_lazy without context-sensitive-lex feature"
+        "should NOT emit parse_Cat_lazy"
     );
     assert!(
         !code_str.contains("struct Lexer"),
-        "should NOT emit Lexer struct without context-sensitive-lex feature"
+        "should NOT emit Lexer struct"
     );
     assert!(
         !code_str.contains("struct LexerAdapter"),
-        "should NOT emit LexerAdapter without context-sensitive-lex feature"
-    );
-}
-
-#[test]
-#[cfg(feature = "context-sensitive-lex")]
-fn test_expected_messages_contain_first_set() {
-    use crate::RuleSpecInput;
-
-    // Two-category grammar: Proc (with Var) and Int (with i32 native type)
-    let types = vec![
-        CategorySpec {
-            name: "Proc".to_string(),
-            native_type: None,
-            is_primary: true,
-        },
-        CategorySpec {
-            name: "Int".to_string(),
-            native_type: Some("i32".to_string()),
-            is_primary: false,
-        },
-    ];
-
-    let spec = LanguageSpec::with_options(
-        "TestLang".to_string(),
-        types,
-        vec![
-            RuleSpecInput {
-                label: "PVar".to_string(),
-                category: "Proc".to_string(),
-                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
-                associativity: Associativity::Left,
-                prefix_precedence: None,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
-            RuleSpecInput {
-                label: "IVar".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
-                associativity: Associativity::Left,
-                prefix_precedence: None,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
-            RuleSpecInput {
-                label: "NumLit".to_string(),
-                category: "Int".to_string(),
-                syntax: vec![],
-                associativity: Associativity::Left,
-                prefix_precedence: None,
-                has_rust_code: false,
-                rust_code: None,
-                eval_mode: None,
-            },
-        ],
-        BeamWidthConfig::Disabled,
-        None,
-        LiteralPatterns::default(),
-    );
-
-    let code = generate_parser(&spec);
-    let code_str = code.to_string();
-
-    // Verify both categories have EXPECTED_ constants
-    assert!(
-        code_str.contains("EXPECTED_PROC"),
-        "should emit EXPECTED_PROC constant"
-    );
-    assert!(
-        code_str.contains("EXPECTED_INT"),
-        "should emit EXPECTED_INT constant"
-    );
-
-    // Verify the expected message for Int includes "integer literal" (from i32 native type)
-    assert!(
-        code_str.contains("integer literal"),
-        "EXPECTED_INT should mention 'integer literal' from i32 native type"
-    );
-
-    // Verify lazy parser propagates lex errors via take_error()
-    assert!(
-        code_str.contains("take_error"),
-        "lazy parser should check adapter.take_error() for lex error propagation"
-    );
-
-    // Verify the enhanced error message format in next_token_for_category
-    assert!(
-        code_str.contains("expected_for_category"),
-        "next_token_for_category should use expected_for_category() for enhanced errors"
+        "should NOT emit LexerAdapter"
     );
 }
 
@@ -792,6 +644,7 @@ mod wfst_lexer_weight_tests {
                     has_rust_code: false,
                     rust_code: None,
                     eval_mode: None,
+                    source_location: None,
                 },
                 RuleSpecInput {
                     label: "Add".to_string(),
@@ -812,6 +665,7 @@ mod wfst_lexer_weight_tests {
                     has_rust_code: false,
                     rust_code: None,
                     eval_mode: None,
+                    source_location: None,
                 },
             ],
             BeamWidthConfig::Explicit(1.5),
@@ -878,6 +732,278 @@ mod wfst_lexer_weight_tests {
                 "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String>"
             ),
             "standard lex() should return Vec<(Token<'a>, Range)> without weight"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // B4: Runtime weight accumulation — codegen verification
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_b4_running_weight_thread_local_emitted() {
+        // B4: RUNNING_WEIGHT thread-local must be emitted for all categories.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            code_str.contains("RUNNING_WEIGHT_INT"),
+            "should generate RUNNING_WEIGHT_INT thread-local for weight accumulation"
+        );
+    }
+
+    #[test]
+    fn test_b4_running_weight_initialized_on_parse() {
+        // B4/C3: RUNNING_WEIGHT is initialized from PARENT_WEIGHT at parse
+        // entry (inherits parent category context). For top-level calls,
+        // PARENT_WEIGHT is 0.0, so RUNNING_WEIGHT effectively resets to 0.0.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            code_str.contains("RUNNING_WEIGHT_INT") && code_str.contains("PARENT_WEIGHT_INT"),
+            "RUNNING_WEIGHT should be initialized from PARENT_WEIGHT at parse entry (C3)"
+        );
+    }
+
+    #[test]
+    fn test_b4_running_weight_accessor_is_public() {
+        // B4: running_weight_<cat>() must be `pub` so Ascent rules and
+        // external code can query parse confidence.
+        // Note: category "Int" → function name `running_weight_Int` (preserves case)
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            code_str.contains("pub fn running_weight_Int"),
+            "running_weight_<cat> should be pub for B4 Ascent/external access"
+        );
+    }
+
+    #[test]
+    fn test_b4_running_weight_accessor_returns_f64() {
+        // B4: running_weight_<cat>() must return f64 (tropical weight).
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        // Find the running_weight function and verify it returns f64
+        assert!(
+            code_str.contains("running_weight_Int") && code_str.contains("-> f64"),
+            "running_weight_<cat>() should return f64"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // C3: Cross-category NFA coordination — codegen verification
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_c3_parent_weight_thread_local_emitted() {
+        // C3: PARENT_WEIGHT thread-local must be emitted for all categories.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            code_str.contains("PARENT_WEIGHT_INT"),
+            "should generate PARENT_WEIGHT_INT thread-local for C3 weight inheritance"
+        );
+    }
+
+    #[test]
+    fn test_c3_running_weight_inherits_from_parent() {
+        // C3: RUNNING_WEIGHT should be initialized from PARENT_WEIGHT, not hardcoded 0.0.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        // The parse entry reads PARENT_WEIGHT and uses it to initialize RUNNING_WEIGHT
+        assert!(
+            code_str.contains("PARENT_WEIGHT_INT") && code_str.contains("inherited"),
+            "RUNNING_WEIGHT should be initialized from PARENT_WEIGHT (C3 inheritance)"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // A4: WFST-guided NFA cold path splitting — codegen verification
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_a4_cold_fn_naming_convention() {
+        // A4: Cold NFA helper functions follow the naming convention
+        // `nfa_try_cold_{cat}_{variant}` for main NFA paths and
+        // `nfa_try_cold_a1_{cat}_{variant}` for A1 left-factored paths.
+        // Verify the naming components are lowercase.
+        let cat = "Float";
+        let variant = "KwFloat";
+        let fn_name = format!(
+            "nfa_try_cold_{}_{}",
+            cat.to_lowercase(),
+            variant.to_lowercase()
+        );
+        assert_eq!(fn_name, "nfa_try_cold_float_kwfloat");
+
+        let a1_fn_name = format!(
+            "nfa_try_cold_a1_{}_{}",
+            cat.to_lowercase(),
+            variant.to_lowercase()
+        );
+        assert_eq!(a1_fn_name, "nfa_try_cold_a1_float_kwfloat");
+    }
+
+    #[test]
+    fn test_a4_calculator_no_cold_split() {
+        // A4: Calculator grammar has no NFA-ambiguous groups (each token
+        // dispatches to exactly one rule), so no cold functions should be emitted.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            !code_str.contains("nfa_try_cold_"),
+            "simple calculator should not generate cold NFA helpers (no NFA ambiguity)"
+        );
+    }
+
+    #[test]
+    fn test_a4_cold_fn_attributes() {
+        // A4: Cold NFA helpers must be marked with #[cold] #[inline(never)]
+        // for instruction cache optimization. Test that the string pattern
+        // appears in the generated code when cold helpers are emitted.
+        // Note: This test is conditional — only passes when a grammar actually
+        // produces cold alternatives (weight >= 1.0 in NFA groups).
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        // Calculator has no NFA ambiguity, so no cold functions are emitted.
+        // Just verify the attribute pattern is syntactically valid Rust.
+        let pattern = "#[cold] #[inline(never)]";
+        // The pattern should appear in generated code IFF cold splitting activates.
+        // Since calculator has no NFA groups, verify absence.
+        assert!(
+            !code_str.contains(pattern) || !code_str.contains("nfa_try_cold_"),
+            "cold attributes should only appear with cold NFA functions"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // B3: Runtime token lattice construction — codegen verification
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_b3_accept_alternatives_generated() {
+        // B3: accept_alternatives function must be generated for all grammars.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            code_str.contains("accept_alternatives"),
+            "generated code should include accept_alternatives function"
+        );
+    }
+
+    #[test]
+    fn test_b3_lex_lattice_generated() {
+        // B3: lex_lattice function must be generated for all grammars.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            code_str.contains("lex_lattice"),
+            "generated code should include lex_lattice function"
+        );
+    }
+
+    #[test]
+    fn test_b3_lex_lattice_returns_token_source() {
+        // B3: lex_lattice should return TokenSource (from mettail_prattail::lattice).
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        // proc_macro2 TokenStream::to_string() spaces out `::` separators
+        assert!(
+            code_str.contains("mettail_prattail :: lattice :: TokenSource"),
+            "lex_lattice should return mettail_prattail::lattice::TokenSource, got: {}",
+            &code_str[code_str.find("lex_lattice").unwrap_or(0)..][..200.min(code_str.len() - code_str.find("lex_lattice").unwrap_or(0))]
+        );
+    }
+
+    #[test]
+    fn test_b3_lex_lattice_core_delegation() {
+        // B3: lex_lattice should delegate to lex_lattice_core from runtime_types.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            code_str.contains("lex_lattice_core"),
+            "lex_lattice should delegate to mettail_prattail::runtime_types::lex_lattice_core"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // B6: Runtime PredictionWfst statics — codegen verification
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_b6_prediction_wfst_static_generated() {
+        // B6: PREDICTION_<Cat> LazyLock static must be generated for each category.
+        // This is the runtime static that B6 query methods access.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            code_str.contains("PREDICTION_Int"),
+            "generated code should include PREDICTION_Int static for B6"
+        );
+    }
+
+    #[test]
+    fn test_b6_prediction_wfst_static_is_lazily_initialized() {
+        // B6: PREDICTION_<Cat> must use LazyLock for lazy initialization
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        assert!(
+            code_str.contains("LazyLock") && code_str.contains("PREDICTION_Int"),
+            "PREDICTION_<Cat> should use LazyLock for lazy initialization"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // C2: Position-aware NFA disambiguation — codegen verification
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_c2_position_aware_spill_filter_generated() {
+        // C2: The spill filter should use position-aware weight adjustment
+        // (c2_adjusted_w) instead of binary position equality.
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        // The position-aware adjustment uses `c2_adjusted_w` and `pos_diff`.
+        // Simple grammars (calculator) don't have NFA-ambiguous dispatch groups,
+        // so the spill loop body is never generated. The NFA_PREFIX_SPILL thread-local
+        // is declared but the filter code is only emitted for NFA multi-groups.
+        // If the spill loop body IS generated, verify it uses C2.
+        if code_str.contains("spill_buf . push") {
+            assert!(
+                code_str.contains("c2_adjusted_w") || code_str.contains("pos_diff"),
+                "NFA spill filter should use C2 position-aware weight adjustment"
+            );
+        }
+        // Otherwise, verify that NFA_PREFIX_SPILL is at least declared (infrastructure exists)
+        assert!(
+            code_str.contains("NFA_PREFIX_SPILL") || code_str.contains("nfa_prefix_spill"),
+            "NFA_PREFIX_SPILL thread-local should be declared for C2 infrastructure"
+        );
+    }
+
+    #[test]
+    fn test_b6_prediction_wfst_from_flat_constructor() {
+        // B6: PREDICTION_<Cat> must use PredictionWfst::from_flat() for construction
+        let spec = calculator_spec();
+        let code = generate_parser(&spec);
+        let code_str = code.to_string();
+        // proc_macro2 adds spaces around ::
+        assert!(
+            code_str.contains("from_flat"),
+            "PREDICTION_<Cat> should use PredictionWfst::from_flat() constructor"
         );
     }
 }

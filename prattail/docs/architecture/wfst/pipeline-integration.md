@@ -80,7 +80,9 @@ output is written to the output buffer. The overall sequence is:
   │       │                                                              │
   │       ├─ a. build_dispatch_action_tables()   (prediction.rs)        │
   │       ├─ b. build_prediction_wfsts()         (wfst.rs)              │
-  │       ├─ c. apply beam width config          (pipeline.rs)          │
+  │       ├─ c. TransducerCascade optimization    (transducer.rs)       │
+  │       │       WeightNormalization → DeadStateElimination            │
+  │       │       → StateMinimization (→ BeamPruning if configured)     │
   │       ├─ d. TokenIdMap::from_names()         (token_id.rs)          │
   │       ├─ e. build_recovery_wfsts()           (recovery.rs)          │
   │       ├─ f. dead-rule detection              (BooleanWeight)        │
@@ -159,20 +161,34 @@ table. The initial state represents the start of a prefix; each arc
 transitions to a state corresponding to one or more rules that could match
 that token prefix.
 
-### Step 5c — apply beam width
+### Step 5c — E1 TransducerCascade optimization
 
 ```
   Inputs:
+    prediction_wfsts     (mutable)         — per-category PredictionWfst
     bundle.beam_width    BeamWidthConfig    — Disabled | Explicit(f64) | Auto
-    prediction_wfsts     (mutable)
+
+  Process (pipeline.rs, after build_prediction_wfsts()):
+    cascade = TransducerCascade::new()
+    cascade.push(WeightNormalization)
+    cascade.push(DeadStateElimination)
+    cascade.push(StateMinimization)
+    if beam_width != Disabled:
+        cascade.push(BeamPruning::new(beam_width))
+    for each wfst in prediction_wfsts.values_mut():
+        cascade.apply(&mut wfst)
 
   Effect:
-    For each PredictionWfst: wfst.set_beam_width(Some(TropicalWeight))
-    if BeamWidthConfig is not Disabled.
+    Each PredictionWfst is normalized, pruned of dead states, minimized,
+    and optionally beam-pruned in a single composed pass. This replaces
+    the previous standalone beam-width application block (B3 minimization)
+    with a composable, extensible optimization pipeline.
 ```
 
-Beam pruning discards prediction paths whose total cost exceeds
-`beam_width` times the cost of the best surviving path. `Auto` mode
+The `TransducerCascade` applies each `OptimizationPass` in sequence.
+Passes are idempotent and composable: running the cascade twice produces
+the same result as running it once. `BeamPruning` is appended only when
+a beam width is configured (`Explicit(f64)` or `Auto`). `Auto` mode
 requires `wfst-log` and a `log_semiring_model_path` option.
 
 ### Step 5d — TokenIdMap::from_names
@@ -366,6 +382,9 @@ the pipeline together with the WFST-specific fields added by each step.
          │
          ▼ build_prediction_wfsts()
   prediction_wfsts             ← BTreeMap<category, PredictionWfst>
+         │
+         ▼ TransducerCascade::apply() (E1: normalize → dead-state elim → minimize → beam)
+  prediction_wfsts             ← optimized in-place
          │
          ▼ TokenIdMap::from_names()
   token_id_map                 ← compact u16 token identifiers
@@ -655,7 +674,10 @@ source location.
 | `resolve_dispatch_winners()` | `prediction.rs` |
 | `build_prediction_wfsts()` | `wfst.rs` |
 | `generate_weighted_dispatch()` | `wfst.rs` |
-| Beam width application | `pipeline.rs` |
+| E1 TransducerCascade application | `pipeline.rs` + `transducer.rs` |
+| `OptimizationPass` trait | `transducer.rs` |
+| `TransducerCascade` | `transducer.rs` |
+| `WeightNormalization` / `DeadStateElimination` / `StateMinimization` / `BeamPruning` | `transducer.rs` |
 | `TokenIdMap::from_names()` | `token_id.rs` |
 | `build_recovery_wfsts()` | `recovery.rs` |
 | `write_category_dispatch_weighted()` | `dispatch.rs` |

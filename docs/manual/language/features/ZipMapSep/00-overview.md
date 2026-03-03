@@ -1,18 +1,18 @@
-# ZipMapSep — Overview
+# Sep / Map / Zip — Composable Pattern Operations
 
-ZipMapSep is a three-stage metasyntax for parsing **pairwise-structured
-patterns** — separated lists where each element contains a structured pair of
-sub-terms.  The three stages are:
+Sep, Map, and Zip are three composable `SyntaxItemSpec` variants that replace
+the old monolithic `ZipMapSep`. Each is an independent operation that can be
+used standalone or in composition:
 
-| Stage                    | Syntax                                    | Purpose               |
-|--------------------------|-------------------------------------------|-----------------------|
-| `*zip(a, b)`             | Pair two parameter lists element-wise     | `a₁↔b₁`, `a₂↔b₂`, ... |
-| `*map(\|x, y\| pattern)` | Apply a syntax template to each pair      | `x "?" y` → `n?x`     |
-| `*sep(delim)`            | Separate mapped elements with a delimiter | `n?x, m?y`            |
+| Variant  | Purpose                                                      |
+|----------|--------------------------------------------------------------|
+| `Sep`    | Repeat a body pattern with a separator between repetitions   |
+| `Map`    | Structured body template: multiple items forming one element |
+| `Zip`    | Dual-accumulator: left and right collections in lockstep     |
 
 ## Motivating Example
 
-RhoCalc's `PInputs` rule uses ZipMapSep to parse channel-variable pairs:
+RhoCalc's `PInputs` rule uses `Sep(Zip(Map(...)))` to parse channel-variable pairs:
 
 ```text
 PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
@@ -48,6 +48,41 @@ The three stages unpack as:
                   n₁ "?" x₁ ","  n₂ "?" x₂ ","  n₃ "?" x₃
 ```
 
+## Composed Representation
+
+The DSL `PatternOp::Sep { source: Map { source: Zip { ... } } }` is converted
+by the bridge into a composed `SyntaxItemSpec` tree:
+
+```rust
+SyntaxItemSpec::Sep {
+    body: Box::new(SyntaxItemSpec::Zip {
+        left_name: "ns",
+        right_name: "xs",
+        left_category: "Name",
+        right_category: "Name",
+        body: Box::new(SyntaxItemSpec::Map {
+            body_items: [NonTerminal("Name", "n"), Terminal("?"), Binder("x", "Name")],
+        }),
+    }),
+    separator: ",",
+    kind: CollectionKind::Vec,
+}
+```
+
+## New Composition Capabilities
+
+The decomposition enables compositions that were not previously possible:
+
+| Composition            | Use Case                                       |
+|------------------------|-------------------------------------------------|
+| `Sep(Zip(Map(...)))`   | Dual-accumulator structured list (PInputs)      |
+| `Sep(Map(...))`        | Single-accumulator structured list              |
+| `Sep(NonTerminal)`     | Simple separated list                           |
+| `Sep(IdentCapture)`    | Separated identifier list                       |
+| `Sep(Binder)`          | Separated binder list                           |
+| `Map(...)` standalone  | Inline sequence of items                        |
+| `Zip(Map(...))` standalone | Dual accumulators without separator          |
+
 ## Pipeline Diagram
 
 ```text
@@ -67,13 +102,9 @@ The three stages unpack as:
       separator: "," }
             │
             ▼
-    SyntaxItemSpec::ZipMapSep {             prattail/src/lib.rs
-      left_name: "ns",
-      right_name: "xs",
-      left_category: "Name",
-      right_category: "Name",
-      body_items: [NonTerminal, Terminal,
-                   Binder],
+    SyntaxItemSpec::Sep {                   prattail/src/lib.rs
+      body: Zip { ...,
+        body: Map { body_items } },
       separator: "," }
             │
             ▼
@@ -105,7 +136,7 @@ The three stages unpack as:
 
 ## Related Features
 
-ZipMapSep combines with:
+Sep/Map/Zip combines with:
 - [Multi-binders](../binders/02-multi-binders.md) — `^[xs]` provides the
   right-side bound variables
 - [Collections](../collections/00-overview.md) — the left side `ns:Vec(Name)`
@@ -113,12 +144,12 @@ ZipMapSep combines with:
 
 ## Source Files
 
-| File                                              | Role                                                    |
-|---------------------------------------------------|---------------------------------------------------------|
-| `macros/src/ast/grammar.rs`                       | `PatternOp::Sep`, `PatternOp::Map`, `PatternOp::Zip`    |
-| `macros/src/gen/syntax/parser/prattail_bridge.rs` | `convert_chained_sep()`, parameter mapping              |
-| `prattail/src/lib.rs`                             | `SyntaxItemSpec::ZipMapSep` variant                     |
-| `prattail/src/classify.rs`                        | `has_binder_recursive()` (recurses into body_items)     |
-| `prattail/src/recursive.rs`                       | `RDSyntaxItem::ZipMapSep`, standalone function codegen  |
-| `prattail/src/trampoline.rs`                      | `has_zipmapsep()`, `should_use_standalone_fn()` routing |
-| `macros/src/logic/categories.rs`                  | `generate_collection_plus_binding_deconstruction()`     |
+| File                                              | Role                                                      |
+|---------------------------------------------------|-----------------------------------------------------------|
+| `macros/src/ast/grammar.rs`                       | `PatternOp::Sep`, `PatternOp::Map`, `PatternOp::Zip`      |
+| `macros/src/gen/syntax/parser/prattail_bridge.rs` | `convert_chained_sep()`, parameter mapping                 |
+| `prattail/src/lib.rs`                             | `SyntaxItemSpec::Sep`, `Map`, `Zip` variants               |
+| `prattail/src/classify.rs`                        | `has_binder_recursive()` (recurses into Sep/Map/Zip)       |
+| `prattail/src/recursive.rs`                       | `RDSyntaxItem::Sep/Map/Zip`, codegen helpers               |
+| `prattail/src/trampoline.rs`                      | `has_complex_sep()`, `should_use_standalone_fn()` routing  |
+| `macros/src/logic/categories.rs`                  | `generate_collection_plus_binding_deconstruction()`        |

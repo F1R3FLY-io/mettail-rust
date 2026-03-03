@@ -266,7 +266,18 @@ fn generate_random_depth_d(
         });
 
         if is_multi_binder {
-            // TODO: Implement proper random generation for multi-binder constructors
+            // Handle multi-binder constructors (e.g., ^[x,y].body).
+            // Skip if rule also has collections — that combination requires
+            // Collection+MultiBinder codegen (not yet implemented).
+            let has_collections = rule
+                .items
+                .iter()
+                .any(|item| matches!(item, GrammarItem::Collection { .. }));
+            if !rule.bindings.is_empty() && !has_collections {
+                constructor_cases.push(
+                    generate_random_multi_binder_constructor(cat_name, rule, language),
+                );
+            }
             continue;
         }
 
@@ -528,6 +539,114 @@ fn generate_random_binder_constructor(
     } else {
         // Multiple args - simplified
         generate_random_binder_with_multiple_args(cat_name, label, &other_args, body_cat, language)
+    }
+}
+
+/// Generate random multi-binder constructor (e.g., ^[x,y].body)
+///
+/// Generates 1-3 random binder names, creates `Vec<Binder>`, and wraps with
+/// `Scope::new(binders, Box::new(body))`.
+fn generate_random_multi_binder_constructor(
+    cat_name: &Ident,
+    rule: &GrammarRule,
+    language: &LanguageDef,
+) -> TokenStream {
+    let label = &rule.label;
+
+    let (binder_idx, body_indices) = &rule.bindings[0];
+    let body_idx = body_indices[0];
+
+    // Find body category
+    let body_cat = match &rule.items[body_idx] {
+        GrammarItem::NonTerminal(cat) => cat,
+        _ => panic!("Body should be NonTerminal"),
+    };
+
+    if !is_lang_type(body_cat, language) {
+        return quote! {};
+    }
+
+    // Find non-body, non-binder arguments
+    let other_args: Vec<(usize, Ident)> = rule
+        .items
+        .iter()
+        .enumerate()
+        .filter_map(|(i, item)| {
+            if i == *binder_idx || i == body_idx {
+                None
+            } else {
+                match item {
+                    GrammarItem::NonTerminal(cat) => Some((i, cat.clone())),
+                    _ => None,
+                }
+            }
+        })
+        .collect();
+
+    // Generate multi-binder scope construction
+    let scope_construction = quote! {
+        // Generate 1-3 binder names
+        let num_binders = rng.gen_range(1usize..=3);
+        let mut binder_names = Vec::with_capacity(num_binders);
+        let mut extended_vars = vars.to_vec();
+        for j in 0..num_binders {
+            let binder_name = format!("x{}_{}", binding_depth, j);
+            extended_vars.push(binder_name.clone());
+            binder_names.push(binder_name);
+        }
+
+        let body = #body_cat::generate_random_at_depth_internal(
+            &extended_vars,
+            depth - 1,
+            max_collection_width,
+            rng,
+            binding_depth + num_binders,
+        );
+
+        let binders: Vec<mettail_runtime::Binder<String>> = binder_names
+            .into_iter()
+            .map(|s| mettail_runtime::Binder(mettail_runtime::get_or_create_var(&s)))
+            .collect();
+        let scope = mettail_runtime::Scope::new(binders, Box::new(body));
+    };
+
+    if other_args.is_empty() {
+        // Simple multi-binder: just body
+        quote! {
+            #scope_construction
+            #cat_name::#label(scope)
+        }
+    } else if other_args.len() == 1 {
+        let arg_cat = &other_args[0].1;
+        if !is_lang_type(arg_cat, language) {
+            return quote! {};
+        }
+        quote! {
+            let d1 = rng.gen_range(0..depth);
+            let d2 = if d1 == depth - 1 {
+                rng.gen_range(0..depth)
+            } else {
+                depth - 1
+            };
+            let arg1 = #arg_cat::generate_random_at_depth_internal(vars, d1, max_collection_width, rng, binding_depth);
+            #scope_construction
+            #cat_name::#label(Box::new(arg1), scope)
+        }
+    } else {
+        // Multiple args: simplified
+        let arg_generations: Vec<TokenStream> = other_args.iter().map(|(_, cat)| {
+            if !is_lang_type(cat, language) {
+                return quote! { panic!("Non-exported category") };
+            }
+            quote! {
+                Box::new(#cat::generate_random_at_depth_internal(vars, depth - 1, max_collection_width, rng, binding_depth))
+            }
+        }).collect();
+
+        quote! {
+            #scope_construction
+            #cat_name::#label(#(#arg_generations,)* scope)
+        }
     }
 }
 

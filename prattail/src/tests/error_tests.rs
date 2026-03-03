@@ -57,6 +57,7 @@ fn calculator_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         literal_patterns: LiteralPatterns::default(),
         recovery_config: crate::recovery::RecoveryConfig::default(),
+        semantic_dependency_groups: Vec::new(),
     }
 }
 
@@ -163,6 +164,7 @@ fn test_parse_error_range_accessor() {
         expected: Cow::Borrowed("test"),
         found: "x".to_string(),
         range: Range::zero(),
+        hint: None,
     };
     assert_eq!(err.range(), Range::zero());
 }
@@ -310,18 +312,13 @@ fn test_multi_category_emits_cast_suggestions() {
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    // Cast suggestions array should appear in the generated code.
+    // Cast suggestions should appear in the generated code as match arms
+    // that map token variants to source category names for missing cast hints.
     // The Int prefix handler should mention Bool tokens as potential cast sources,
     // and vice versa.
     assert!(
-        code_str.contains("cast_suggestions"),
-        "multi-category code should contain cast_suggestions lookup"
-    );
-
-    // The hint should reference the concept of a cast rule
-    assert!(
         code_str.contains("cast rule exists"),
-        "cast suggestion hint should mention 'cast rule exists'"
+        "multi-category code should contain cast rule hint text"
     );
 }
 
@@ -332,10 +329,10 @@ fn test_single_category_no_cast_suggestions() {
     let code = generate_parser(&spec);
     let code_str = code.to_string();
 
-    // Should NOT contain cast_suggestions (only one category, no casts possible)
+    // Should NOT contain cast rule hints (only one category, no casts possible)
     assert!(
-        !code_str.contains("cast_suggestions"),
-        "single-category code should not contain cast_suggestions"
+        !code_str.contains("cast rule exists"),
+        "single-category code should not contain cast rule hint text"
     );
 }
 

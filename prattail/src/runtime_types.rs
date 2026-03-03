@@ -67,16 +67,22 @@ impl fmt::Display for Range {
 /// The `expected` field uses `Cow<'static, str>` so that the common case
 /// (static string from generated code) is zero-alloc, while cast-rule
 /// diagnostics can append dynamic hints at no cost on the happy path.
+///
+/// The optional `hint` field provides contextual fix suggestions (e.g.,
+/// "did you forget `)`?"). When `None`, no hint is shown — this is the
+/// common case for generated code, keeping it zero-alloc on the happy path.
 #[derive(Debug, Clone)]
 pub enum ParseError {
     UnexpectedToken {
         expected: Cow<'static, str>,
         found: String,
         range: Range,
+        hint: Option<Cow<'static, str>>,
     },
     UnexpectedEof {
         expected: Cow<'static, str>,
         range: Range,
+        hint: Option<Cow<'static, str>>,
     },
     LexError {
         message: String,
@@ -85,6 +91,7 @@ pub enum ParseError {
     TrailingTokens {
         found: String,
         range: Range,
+        hint: Option<Cow<'static, str>>,
     },
     /// A recovery action was applied to continue parsing past an error.
     ///
@@ -104,31 +111,50 @@ impl fmt::Display for ParseError {
                 expected,
                 found,
                 range,
-            } => write!(
-                f,
-                "{}:{}: expected {}, found {}",
-                range.start.line + 1,
-                range.start.column + 1,
-                expected,
-                found
-            ),
-            ParseError::UnexpectedEof { expected, range } => write!(
-                f,
-                "{}:{}: unexpected end of input, expected {}",
-                range.start.line + 1,
-                range.start.column + 1,
-                expected
-            ),
+                hint,
+            } => {
+                write!(
+                    f,
+                    "{}:{}: expected {}, found {}",
+                    range.start.line + 1,
+                    range.start.column + 1,
+                    expected,
+                    found
+                )?;
+                if let Some(h) = hint {
+                    write!(f, "\n  = hint: {}", h)?;
+                }
+                Ok(())
+            },
+            ParseError::UnexpectedEof { expected, range, hint } => {
+                write!(
+                    f,
+                    "{}:{}: unexpected end of input, expected {}",
+                    range.start.line + 1,
+                    range.start.column + 1,
+                    expected
+                )?;
+                if let Some(h) = hint {
+                    write!(f, "\n  = hint: {}", h)?;
+                }
+                Ok(())
+            },
             ParseError::LexError { message, position } => {
                 write!(f, "{}:{}: {}", position.line + 1, position.column + 1, message)
             }
-            ParseError::TrailingTokens { found, range } => write!(
-                f,
-                "{}:{}: unexpected {} after parsing",
-                range.start.line + 1,
-                range.start.column + 1,
-                found
-            ),
+            ParseError::TrailingTokens { found, range, hint } => {
+                write!(
+                    f,
+                    "{}:{}: unexpected {} after parsing",
+                    range.start.line + 1,
+                    range.start.column + 1,
+                    found
+                )?;
+                if let Some(h) = hint {
+                    write!(f, "\n  = hint: {}", h)?;
+                }
+                Ok(())
+            },
             ParseError::RecoveryApplied {
                 original_error,
                 repair_description,
@@ -296,12 +322,19 @@ pub fn lex_core<'a, T>(
                 }
             }
             None => {
-                return Err(format!(
-                    "{}:{}: unexpected character '{}'",
-                    line + 1,
-                    col + 1,
-                    bytes[start] as char
-                ));
+                let ch = bytes[start] as char;
+                let msg = if ch.is_ascii() {
+                    format!(
+                        "{}:{}: unexpected character '{}'",
+                        line + 1, col + 1, ch,
+                    )
+                } else {
+                    format!(
+                        "{}:{}: unexpected byte 0x{:02X}",
+                        line + 1, col + 1, bytes[start],
+                    )
+                };
+                return Err(msg);
             }
         }
     }
@@ -406,12 +439,19 @@ pub fn lex_weighted_core<'a, T>(
                 }
             }
             None => {
-                return Err(format!(
-                    "{}:{}: unexpected character '{}'",
-                    line + 1,
-                    col + 1,
-                    bytes[start] as char
-                ));
+                let ch = bytes[start] as char;
+                let msg = if ch.is_ascii() {
+                    format!(
+                        "{}:{}: unexpected character '{}'",
+                        line + 1, col + 1, ch,
+                    )
+                } else {
+                    format!(
+                        "{}:{}: unexpected byte 0x{:02X}",
+                        line + 1, col + 1, bytes[start],
+                    )
+                };
+                return Err(msg);
             }
         }
     }
@@ -422,6 +462,176 @@ pub fn lex_weighted_core<'a, T>(
         column: col,
     };
     Ok((tokens, eof_pos))
+}
+
+/// B3: Generic DFA lex loop that produces a `TokenSource` with lattice construction
+/// for ambiguous accepting states.
+///
+/// Same DFA walk as `lex_weighted_core`, but at multi-accept states, emits ALL
+/// alternative tokenizations as lattice edges. When no ambiguity is detected
+/// (all accept states are unambiguous), returns `TokenSource::Linear` — zero
+/// overhead vs the non-lattice path.
+///
+/// The `accept_alternatives` callback returns `(token, weight)` pairs for all
+/// valid tokenizations at a given DFA accept state. For unambiguous states, it
+/// returns a single-element slice. For multi-accept states, it returns all
+/// alternatives sorted by weight (best first).
+///
+/// Generic over `T` (token type) and dispatched via closures so the compiler
+/// monomorphizes away all closure overhead.
+pub fn lex_lattice_core<'a, T: Clone>(
+    input: &'a str,
+    file_id: Option<u32>,
+    char_class: &[u8; 256],
+    dfa_next: impl Fn(u32, u8) -> u32,
+    is_accepting: impl Fn(u32) -> bool,
+    accept_alternatives: impl Fn(u32, &'a str) -> Vec<(T, f64)>,
+) -> Result<(crate::lattice::TokenSource<T, Range>, Position), String> {
+    use crate::automata::semiring::TropicalWeight;
+    use crate::lattice::{TokenLattice, TokenSource};
+
+    let bytes = input.as_bytes();
+    let mut pos: usize = 0;
+    let mut line: usize = 0;
+    let mut col: usize = 0;
+    // Collect tokens with position tracking; detect ambiguity
+    let mut linear_tokens: Vec<(T, Range)> = Vec::with_capacity(input.len() / 2);
+    let mut has_ambiguity = false;
+    // For lattice construction (lazy: only populated if ambiguity detected)
+    struct TokenAlts<T> {
+        range: Range,
+        alternatives: Vec<(T, f64)>,
+    }
+    let mut token_alts: Vec<TokenAlts<T>> = Vec::new();
+
+    while pos < bytes.len() {
+        while pos < bytes.len() && is_whitespace(bytes[pos]) {
+            if bytes[pos] == b'\n' {
+                line += 1;
+                col = 0;
+            } else {
+                col += 1;
+            }
+            pos += 1;
+        }
+        if pos >= bytes.len() {
+            break;
+        }
+
+        let start = pos;
+        let start_line = line;
+        let start_col = col;
+        let mut state: u32 = 0;
+        let mut last_accept: Option<(u32, usize, usize, usize)> = None;
+
+        if is_accepting(0) {
+            last_accept = Some((0, pos, line, col));
+        }
+
+        while pos < bytes.len() {
+            let class = char_class[bytes[pos] as usize];
+            let next = dfa_next(state, class);
+            if next == u32::MAX {
+                break;
+            }
+            state = next;
+            if bytes[pos] == b'\n' {
+                line += 1;
+                col = 0;
+            } else if bytes[pos] & 0xC0 != 0x80 {
+                col += 1;
+            }
+            pos += 1;
+            if is_accepting(state) {
+                last_accept = Some((state, pos, line, col));
+            }
+        }
+
+        match last_accept {
+            Some((accept_state, end, end_line, end_col)) => {
+                pos = end;
+                line = end_line;
+                col = end_col;
+                let text = &input[start..end];
+                let alts = accept_alternatives(accept_state, text);
+                if alts.is_empty() {
+                    // No token produced (e.g., whitespace-only state) — skip
+                    continue;
+                }
+                let range = Range {
+                    start: Position {
+                        byte_offset: start,
+                        line: start_line,
+                        column: start_col,
+                    },
+                    end: Position {
+                        byte_offset: end,
+                        line: end_line,
+                        column: end_col,
+                    },
+                    file_id,
+                };
+                if alts.len() > 1 {
+                    has_ambiguity = true;
+                }
+                // Always record for lattice construction (lazy)
+                if !has_ambiguity && alts.len() == 1 {
+                    linear_tokens.push((alts[0].0.clone(), range));
+                }
+                token_alts.push(TokenAlts {
+                    range,
+                    alternatives: alts,
+                });
+            }
+            None => {
+                let ch = bytes[start] as char;
+                let msg = if ch.is_ascii() {
+                    format!(
+                        "{}:{}: unexpected character '{}'",
+                        line + 1, col + 1, ch,
+                    )
+                } else {
+                    format!(
+                        "{}:{}: unexpected byte 0x{:02X}",
+                        line + 1, col + 1, bytes[start],
+                    )
+                };
+                return Err(msg);
+            }
+        }
+    }
+
+    let eof_pos = Position {
+        byte_offset: pos,
+        line,
+        column: col,
+    };
+
+    if !has_ambiguity {
+        // Fast path: no lexical ambiguity detected — return linear
+        Ok((TokenSource::Linear(linear_tokens), eof_pos))
+    } else {
+        // Slow path: construct a lattice with branching at ambiguous positions.
+        // Node layout: node i = position before token i; node N = after last token.
+        // Each token_alts[i] produces edges from node i to node i+1 (one per alternative).
+        let num_nodes = token_alts.len() + 1;
+        let mut lattice: TokenLattice<T, Range> = TokenLattice::with_capacity(num_nodes);
+        lattice.ensure_nodes(num_nodes);
+
+        for (i, ta) in token_alts.iter().enumerate() {
+            for (token, weight) in &ta.alternatives {
+                lattice.add_edge(
+                    i,
+                    i + 1,
+                    token.clone(),
+                    ta.range,
+                    TropicalWeight::new(*weight),
+                );
+            }
+        }
+
+        Ok((TokenSource::Lattice(lattice), eof_pos))
+    }
 }
 
 #[inline(always)]

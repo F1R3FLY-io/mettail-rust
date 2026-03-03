@@ -141,6 +141,12 @@ impl<T: Clone, S: Clone> TokenSource<T, S> {
     /// let source = TokenSource::from_weighted(weighted);
     /// let tokens = source.resolve()?;
     /// ```
+    /// B3: Construct from weighted triples. When all weights are finite and
+    /// non-ambiguous, returns `Linear` with weights stripped. This is the
+    /// backward-compatible path — `lex_weighted()` output goes through here.
+    ///
+    /// For full lattice construction with multi-accept alternatives, use
+    /// `lex_lattice()` which calls `lex_lattice_core()` directly.
     pub fn from_weighted(tokens: Vec<(T, S, f64)>) -> Self {
         let stripped: Vec<(T, S)> = tokens.into_iter().map(|(t, s, _w)| (t, s)).collect();
         TokenSource::Linear(stripped)
@@ -689,101 +695,6 @@ pub fn n_best_paths<T: Clone, S: Clone>(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// Alternative path extraction for lattice-aware recovery
-// ══════════════════════════════════════════════════════════════════════════════
-
-/// Extract up to `n_best` alternative tokenization paths from the lattice
-/// starting at `start_node`.
-///
-/// This is used for lattice-aware error recovery: when parsing fails at a
-/// position that has multiple tokenizations in the lattice, we try recovery
-/// on each alternative.
-///
-/// Returns paths sorted by weight (ascending), primary tokenization first.
-/// Each path is a `Vec<(T, S)>` of tokens from `start_node` to the final node.
-///
-/// Feature-gated: requires `context-sensitive-lex` since lattices are only
-/// produced by the context-sensitive lexer.
-#[cfg(feature = "context-sensitive-lex")]
-pub fn alternative_paths<T: Clone, S: Clone>(
-    lattice: &TokenLattice<T, S>,
-    start_node: usize,
-    final_node: usize,
-    n_best: usize,
-) -> Vec<(Vec<(T, S)>, TropicalWeight)> {
-    use std::collections::BinaryHeap;
-
-    if n_best == 0 || start_node >= lattice.num_nodes() || final_node >= lattice.num_nodes() {
-        return Vec::new();
-    }
-
-    #[derive(Clone)]
-    struct PathState<T, S> {
-        weight: TropicalWeight,
-        node: usize,
-        tokens: Vec<(T, S)>,
-    }
-
-    impl<T, S> PartialEq for PathState<T, S> {
-        fn eq(&self, other: &Self) -> bool {
-            self.weight == other.weight
-        }
-    }
-    impl<T, S> Eq for PathState<T, S> {}
-    impl<T, S> PartialOrd for PathState<T, S> {
-        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-    impl<T, S> Ord for PathState<T, S> {
-        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            // Reverse for min-heap
-            other.weight.cmp(&self.weight)
-        }
-    }
-
-    let mut heap: BinaryHeap<PathState<T, S>> = BinaryHeap::new();
-    let mut results: Vec<(Vec<(T, S)>, TropicalWeight)> = Vec::with_capacity(n_best);
-
-    heap.push(PathState {
-        weight: TropicalWeight::one(),
-        node: start_node,
-        tokens: Vec::new(),
-    });
-
-    let max_explored = n_best * lattice.num_nodes() * 4;
-    let mut explored = 0;
-
-    while let Some(state) = heap.pop() {
-        explored += 1;
-        if explored > max_explored {
-            break;
-        }
-
-        if state.node == final_node {
-            results.push((state.tokens, state.weight));
-            if results.len() >= n_best {
-                break;
-            }
-            continue;
-        }
-
-        for edge in lattice.edges_from(state.node) {
-            let new_weight = state.weight.times(&edge.weight);
-            let mut new_tokens = state.tokens.clone();
-            new_tokens.push(edge.token_span.clone());
-
-            heap.push(PathState {
-                weight: new_weight,
-                node: edge.target,
-                tokens: new_tokens,
-            });
-        }
-    }
-
-    results
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1236,88 +1147,81 @@ mod tests {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════════════
-    // Alternative path extraction (feature = "context-sensitive-lex")
-    // ═══════════════════════════════════════════════════════════════════════
+    // ══════════════════════════════════════════════════════════════════════
+    // B3: Runtime token lattice construction tests
+    // ══════════════════════════════════════════════════════════════════════
 
-    #[cfg(feature = "context-sensitive-lex")]
-    mod alternative_paths_tests {
-        use super::super::*;
+    #[test]
+    fn test_b3_from_weighted_linear_path() {
+        // B3: from_weighted with unambiguous tokens returns Linear.
+        let tokens: Vec<(String, (usize, usize), f64)> = vec![
+            ("a".to_string(), (0, 1), 0.0),
+            ("b".to_string(), (1, 2), 0.5),
+        ];
+        let source = TokenSource::from_weighted(tokens);
+        assert!(source.is_linear(), "unambiguous tokens should produce Linear");
+        let resolved = source.resolve().expect("resolve should succeed");
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0].0, "a");
+        assert_eq!(resolved[1].0, "b");
+    }
 
-        type TestToken = String;
-        type TestSpan = (usize, usize);
+    #[test]
+    fn test_b3_token_source_resolve_lattice() {
+        // B3: TokenSource::Lattice resolves via Viterbi to best path.
+        let mut lattice: TokenLattice<String, (usize, usize)> = TokenLattice::with_capacity(3);
+        lattice.ensure_nodes(3);
+        // Position 0→1: two alternatives (keyword vs ident)
+        lattice.add_edge(0, 1, "kw_in".to_string(), (0, 2), TropicalWeight::new(0.0));
+        lattice.add_edge(0, 1, "ident_in".to_string(), (0, 2), TropicalWeight::new(1.0));
+        // Position 1→2: unambiguous
+        lattice.add_edge(1, 2, "eof".to_string(), (2, 2), TropicalWeight::one());
 
-        #[test]
-        fn test_alternative_paths_single_path() {
-            // Chain: 0 →(1.0)→ 1 →(2.0)→ 2
-            let mut lattice: TokenLattice<TestToken, TestSpan> = TokenLattice::new();
-            lattice.add_edge(0, 1, "a".to_string(), (0, 1), TropicalWeight::new(1.0));
-            lattice.add_edge(1, 2, "b".to_string(), (1, 2), TropicalWeight::new(2.0));
+        let source: TokenSource<String, (usize, usize)> = TokenSource::Lattice(lattice);
+        assert!(source.is_lattice(), "should be Lattice");
+        let resolved = source.resolve().expect("resolve should succeed");
+        assert_eq!(resolved.len(), 2);
+        // Viterbi selects kw_in (weight 0.0 < 1.0)
+        assert_eq!(resolved[0].0, "kw_in");
+    }
 
-            let paths = alternative_paths(&lattice, 0, 2, 5);
-            assert_eq!(paths.len(), 1, "single path should yield 1 result");
-            assert_eq!(paths[0].0.len(), 2, "path should have 2 tokens");
-            assert_eq!(paths[0].0[0].0, "a");
-            assert_eq!(paths[0].0[1].0, "b");
-        }
+    #[test]
+    fn test_b3_token_source_resolve_beam() {
+        // B3: resolve_beam with a narrow beam prunes high-weight alternatives.
+        let mut lattice: TokenLattice<String, (usize, usize)> = TokenLattice::with_capacity(3);
+        lattice.ensure_nodes(3);
+        // Two alternatives at position 0→1
+        lattice.add_edge(0, 1, "best".to_string(), (0, 1), TropicalWeight::new(0.0));
+        lattice.add_edge(0, 1, "worst".to_string(), (0, 1), TropicalWeight::new(5.0));
+        // Continuation
+        lattice.add_edge(1, 2, "end".to_string(), (1, 2), TropicalWeight::one());
 
-        #[test]
-        fn test_alternative_paths_diamond() {
-            // Diamond: 0 →(1.0)→ 1 →(1.0)→ 3
-            //          0 →(2.0)→ 2 →(1.0)→ 3
-            let mut lattice: TokenLattice<TestToken, TestSpan> = TokenLattice::new();
-            lattice.ensure_nodes(4);
-            lattice.add_edge(0, 1, "a".to_string(), (0, 1), TropicalWeight::new(1.0));
-            lattice.add_edge(0, 2, "b".to_string(), (0, 1), TropicalWeight::new(2.0));
-            lattice.add_edge(1, 3, "c".to_string(), (1, 2), TropicalWeight::new(1.0));
-            lattice.add_edge(2, 3, "d".to_string(), (1, 2), TropicalWeight::new(1.0));
+        let source: TokenSource<String, (usize, usize)> = TokenSource::Lattice(lattice);
+        let resolved = source
+            .resolve_beam(Some(TropicalWeight::new(1.0)))
+            .expect("resolve_beam should succeed");
+        // Should select "best" (weight 0.0), "worst" (5.0) is beyond beam (0.0 + 1.0 = 1.0)
+        assert_eq!(resolved[0].0, "best");
+    }
 
-            let paths = alternative_paths(&lattice, 0, 3, 5);
-            assert_eq!(paths.len(), 2, "diamond should yield 2 paths");
-            // First path should be cheaper (a→c, weight 1.0)
-            assert!(
-                paths[0].1 <= paths[1].1,
-                "paths should be sorted by weight"
-            );
-        }
+    #[test]
+    fn test_b3_lattice_construction_from_alternatives() {
+        // B3: Verify lattice DAG structure from multi-accept alternatives.
+        let mut lattice: TokenLattice<String, (usize, usize)> = TokenLattice::with_capacity(4);
+        lattice.ensure_nodes(4);
+        // 3 tokens, position 1 is ambiguous (2 alternatives)
+        lattice.add_edge(0, 1, "a".to_string(), (0, 1), TropicalWeight::new(0.0));
+        lattice.add_edge(1, 2, "kw".to_string(), (1, 3), TropicalWeight::new(0.0));
+        lattice.add_edge(1, 2, "id".to_string(), (1, 3), TropicalWeight::new(1.0));
+        lattice.add_edge(2, 3, "b".to_string(), (3, 4), TropicalWeight::new(0.0));
 
-        #[test]
-        fn test_alternative_paths_from_midpoint() {
-            // Chain: 0 → 1 → 2 → 3, extract from node 1 to 3
-            let mut lattice: TokenLattice<TestToken, TestSpan> = TokenLattice::new();
-            lattice.ensure_nodes(4);
-            lattice.add_edge(0, 1, "a".to_string(), (0, 1), TropicalWeight::new(1.0));
-            lattice.add_edge(1, 2, "b".to_string(), (1, 2), TropicalWeight::new(1.0));
-            lattice.add_edge(2, 3, "c".to_string(), (2, 3), TropicalWeight::new(1.0));
-
-            let paths = alternative_paths(&lattice, 1, 3, 5);
-            assert_eq!(paths.len(), 1, "should find 1 path from node 1 to 3");
-            assert_eq!(paths[0].0.len(), 2, "path should have 2 tokens (b, c)");
-            assert_eq!(paths[0].0[0].0, "b");
-            assert_eq!(paths[0].0[1].0, "c");
-        }
-
-        #[test]
-        fn test_alternative_paths_empty() {
-            let lattice: TokenLattice<TestToken, TestSpan> = TokenLattice::new();
-            let paths = alternative_paths(&lattice, 0, 5, 3);
-            assert!(paths.is_empty(), "empty lattice should yield no paths");
-        }
-
-        #[test]
-        fn test_alternative_paths_n_limit() {
-            // Create a lattice with 4 parallel paths
-            let mut lattice: TokenLattice<TestToken, TestSpan> = TokenLattice::new();
-            lattice.ensure_nodes(3);
-            for i in 0..4 {
-                let w = TropicalWeight::new(1.0 + i as f64);
-                lattice.add_edge(0, 1, format!("alt{}", i), (0, 1), w);
-            }
-            lattice.add_edge(1, 2, "end".to_string(), (1, 2), TropicalWeight::one());
-
-            // Request only 2 best
-            let paths = alternative_paths(&lattice, 0, 2, 2);
-            assert_eq!(paths.len(), 2, "should return exactly 2 paths");
-        }
+        assert_eq!(lattice.num_nodes(), 4);
+        assert_eq!(lattice.num_edges(), 4);
+        // Node 1 has 2 outgoing edges (ambiguous)
+        assert_eq!(lattice.edges_from(1).len(), 2);
+        // Viterbi selects kw (0.0 + 0.0 + 0.0 = 0.0 < 0.0 + 1.0 + 0.0 = 1.0)
+        let path = viterbi_best_path(&lattice, 3).expect("should find path");
+        assert_eq!(path.tokens.len(), 3);
+        assert_eq!(path.tokens[1].0, "kw");
     }
 }

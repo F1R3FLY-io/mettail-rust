@@ -293,19 +293,17 @@ multiplier fields remain at their configured values.
 
 ---
 
-## 5. Lattice Recovery (context-sensitive-lex)
+## 5. Lattice Recovery (Removed)
 
-When the `context-sensitive-lex` feature is enabled, the lexer may
-produce multiple tokenization paths for ambiguous input. The recovery
-system can evaluate repairs on each alternative tokenization.
+> **Note:** The `context-sensitive-lex` feature has been removed. The always-on
+> WFST architecture now resolves all lexer ambiguities at compile time, making
+> runtime lattice recovery unnecessary. This section is retained for historical
+> reference.
 
-### 5.1 When It Activates
-
-Lattice recovery activates when:
-1. The `context-sensitive-lex` feature is enabled.
-2. The lexer produces a `TokenLattice` (multiple paths).
-3. Recovery on the primary tokenization fails or produces a high-cost
-   repair.
+Lattice recovery was previously activated when the now-removed
+`context-sensitive-lex` feature was enabled, the lexer produced a
+`TokenLattice` (multiple paths), and recovery on the primary
+tokenization failed or produced a high-cost repair.
 
 ### 5.2 How Alternatives Affect Recovery
 

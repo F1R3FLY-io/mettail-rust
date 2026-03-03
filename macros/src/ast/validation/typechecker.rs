@@ -5,7 +5,6 @@ use crate::ast::{
     language::{Equation, LanguageDef},
     pattern::{Pattern, PatternTerm},
 };
-use proc_macro2::Span;
 use std::collections::HashMap;
 
 /// Type checker for MeTTaIL languages
@@ -222,7 +221,7 @@ impl TypeChecker {
                 expected: left_type,
                 found: right_type,
                 context: "equation".to_string(),
-                span: Span::call_site(), // TODO: Get span from equation
+                span: eq.name.span(),
             });
         }
 
@@ -259,7 +258,7 @@ impl TypeChecker {
                 expected: left_type,
                 found: right_type,
                 context: "rewrite rule".to_string(),
-                span: Span::call_site(), // TODO: Get span from rewrite rule
+                span: rw.name.span(),
             });
         }
 

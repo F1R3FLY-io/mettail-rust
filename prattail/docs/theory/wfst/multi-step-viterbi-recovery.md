@@ -57,6 +57,75 @@ find the globally optimal repair sequence.
 
 ---
 
+## 1.5 Why Multi-Step Beats Single-Step, Intuitively
+
+### GPS Rerouting Analogy
+
+Single-step recovery is like a GPS that only looks one block ahead when
+rerouting. If there is a road closure (parse error), it picks the
+cheapest immediate turn — without checking whether that street
+dead-ends two blocks later. Multi-step recovery is like a GPS that
+evaluates all possible detour routes to the next highway on-ramp (sync
+point) and picks the cheapest _complete_ reroute.
+
+### Concrete "What Goes Wrong Without Multi-Step"
+
+```
+Input:     let x = (1 + );
+Error at:  ")" — unexpected, expected expression
+
+Single-step (looks one action ahead):
+  Delete ")" (cost 1.0) → cheapest single action
+  But now "(" is unmatched → second error at ";"!
+  Result: cascading errors
+
+Multi-step (evaluates full path to sync point ";"):
+  Path A: Insert "0" before ")" → "(1 + 0)" → valid!
+          Cost: 2.0, but reaches ";" in a valid parse state
+  Path B: Delete ")" → "(1 + " → still invalid at ";"
+          Cost: 1.0, but fails simulation → penalized
+  Winner: Insert "0" (higher raw cost, but actually works)
+```
+
+Single-step picks the cheapest _single action_ without considering
+whether it leads to a valid parse state. Multi-step evaluates the full
+_sequence_ of repairs needed to reach a sync point where parsing can
+resume.
+
+### Key Insight
+
+Multi-step Viterbi searches the entire repair space simultaneously.
+Just as Viterbi on a token lattice finds the globally cheapest
+tokenization, Viterbi on a repair lattice finds the globally cheapest
+repair _sequence_. The search is exhaustive (over all paths to SINK)
+but efficient (O(L × |S|) via the DAG property).
+
+### Pipeline Context
+
+Where `viterbi_multi_step()` fits in the error recovery flow:
+
+```
+parse_Cat() encounters error at position P
+     │
+     ▼
+find_best_recovery()          ← single-step (Tiers 1-3)
+     │
+     ▼
+viterbi_multi_step()          ← multi-step (THIS algorithm)
+     │
+     ▼
+RepairSequence { actions, total_cost, new_pos }
+     │
+     ▼
+Apply repairs, continue parsing
+```
+
+The multi-step search runs _after_ single-step recovery, providing a
+globally optimal alternative when the greedy single-step choice would
+cause cascading errors.
+
+---
+
 ## 2. The Repair Lattice
 
 ### 2.1 Nodes
@@ -119,7 +188,36 @@ this as an *i* → SINK edge (inserting a sync token at position *i*
 directly reaches synchronization). The guard `inserted[i]` prevents
 multiple inserts at the same position.
 
-### 2.4 Repair Lattice Diagram
+### 2.4 Simple 3-Node Introductory Example
+
+Before the full 5-node diagram, consider a minimal repair lattice.
+Tokens: `[a, ;]`, sync_tokens = {`;`}, error at position 0:
+
+```
+  ┌────────┐  skip(0.5)   ┌────────┐
+  │  [0]   │─────────────►│  [1]   │
+  │  "a"   │  delete(1.0) │  ";"   │
+  │        │─────────────►│        │
+  └────┬───┘              └────┬───┘
+       │                       │
+       │  insert(2.0)         │  sync(0.0)
+       │                       │
+       └──────────► SINK ◄─────┘
+```
+
+Three paths reach SINK:
+
+```
+Path 1: skip "a" (0.5) → sync at ";" (0.0) = 0.5   ← winner
+Path 2: delete "a" (1.0) → sync at ";" (0.0) = 1.0
+Path 3: insert ";" at pos 0 (2.0) = 2.0
+```
+
+Viterbi picks: skip `a`, sync at `;` (total cost 0.5). The algorithm
+processes nodes 0 and 1 in order, relaxing edges to determine that
+skipping to the sync point is cheaper than deleting or inserting.
+
+### 2.5 Repair Lattice Diagram
 
 Five-node example with all edge types. Tokens: `[a, b, c, d, ;]`,
 sync_tokens = {`;`}.
@@ -358,6 +456,61 @@ function viterbi_multi_step(token_ids, pos, sync_tokens, config):
     return backtrace(pred, SINK, pos, token_ids, dist[SINK])
 ```
 
+### 4.5 Forward Pass Visual Walkthrough
+
+Step-by-step α propagation for the 5-node example from §2.5. Tokens:
+`[a, b, c, d, ;]`, sync_tokens = {`;`}, with default costs (c_skip=0.5,
+c_delete=1.0, c_swap=1.25, c_insert=2.0).
+
+```
+Step 0: Process node 0 ("a")
+  α: [0.0, ∞, ∞, ∞, ∞, SINK=∞]
+      ▓    ░   ░   ░   ░   ░
+  Relax:
+    0→1 skip(0.5):   α[1] = min(∞, 0.0+0.5) = 0.5
+    0→1 delete(1.0): α[1] = min(0.5, 0.0+1.0) = 0.5 (no change)
+    0→2 swap(1.25):  α[2] = min(∞, 0.0+1.25) = 1.25
+    0→SINK ins(2.0): α[SINK] = min(∞, 0.0+2.0) = 2.0
+
+Step 1: Process node 1 ("b")
+  α: [0.0, 0.5, 1.25, ∞, ∞, SINK=2.0]
+      ▓    ▓    ░     ░   ░   ░
+  Relax:
+    1→2 skip(0.5):   α[2] = min(1.25, 0.5+0.5) = 1.0
+    1→2 delete(1.0): α[2] = min(1.0, 0.5+1.0) = 1.0 (no change)
+    1→3 swap(1.25):  α[3] = min(∞, 0.5+1.25) = 1.75
+
+Step 2: Process node 2 ("c")
+  α: [0.0, 0.5, 1.0, 1.75, ∞, SINK=2.0]
+      ▓    ▓    ▓    ░     ░   ░
+  Relax:
+    2→3 skip(0.5):   α[3] = min(1.75, 1.0+0.5) = 1.5
+    2→3 delete(1.0): α[3] = min(1.5, 1.0+1.0) = 1.5 (no change)
+    2→4 swap(1.25):  α[4] = min(∞, 1.0+1.25) = 2.25
+
+Step 3: Process node 3 ("d")
+  α: [0.0, 0.5, 1.0, 1.5, 2.25, SINK=2.0]
+      ▓    ▓    ▓    ▓    ░      ░
+  Relax:
+    3→4 skip(0.5):   α[4] = min(2.25, 1.5+0.5) = 2.0
+    3→4 delete(1.0): α[4] = min(2.0, 1.5+1.0) = 2.0 (no change)
+
+Step 4: Process node 4 (";", sync token!)
+  α: [0.0, 0.5, 1.0, 1.5, 2.0, SINK=2.0]
+      ▓    ▓    ▓    ▓    ▓     ░
+  Sync edge: 4→SINK cost 0.0
+    α[SINK] = min(2.0, 2.0+0.0) = 2.0 (unchanged)
+
+Final: α[SINK] = 2.0
+Backtrace: SINK ← 4 (sync) ← 3 (skip) ← 2 (skip) ← 1 (skip) ← 0 (skip)
+Result: SkipToSync { skip_count: 4, sync_token: ";" }
+```
+
+The wavefront propagates left-to-right (▓ = finalized, ░ = pending).
+Each step finalizes one node and relaxes its outgoing edges. The
+backtrace follows `pred` pointers from SINK back to node 0, revealing
+that pure skip is the optimal repair sequence.
+
 ---
 
 ## 5. Backtrace and Sequence Reconstruction
@@ -581,6 +734,45 @@ These can be composed into a `ProductWeight⟨TropicalWeight, EditWeight⟩`
 for joint optimization. Lexicographic ordering (tropical first, edit
 second) ensures that the minimum-cost repair is preferred, with ties
 broken by minimum edit distance.
+
+#### Worked Example: ProductWeight Comparison
+
+```
+RepairSequence for "let x = (1 + );"
+
+  Option A: actions = [Insert("0")]
+    TropicalWeight: 2.0
+    EditWeight:     1
+    ProductWeight:  (2.0, 1)
+
+  Option B: actions = [Delete(")"), Insert(")")]
+    TropicalWeight: 1.0 + 2.0 = 3.0
+    EditWeight:     1 + 1 = 2
+    ProductWeight:  (3.0, 2)
+
+  Option C: actions = [Skip(")"), Skip(";")]
+    TropicalWeight: 0.5 + 0.5 = 1.0
+    EditWeight:     1 + 1 = 2
+    ProductWeight:  (1.0, 2)
+
+  Lexicographic comparison:
+    (1.0, 2) < (2.0, 1) < (3.0, 2)
+    Winner: Option C — cheapest tropical cost
+
+  But if Option C fails simulation (no valid parse continuation):
+    Effective cost: (1.0 × 1.2, 2) = (1.2, 2)
+    Comparison: (1.2, 2) < (2.0, 1)
+    Winner still: Option C
+
+  If Option A has simulation success (× 0.5):
+    Effective cost: (2.0 × 0.5, 1) = (1.0, 1)
+    Comparison: (1.0, 1) < (1.2, 2)
+    Winner: Option A — Insert "0" (simulation-validated)
+```
+
+The ProductWeight composition reveals that simulation context can
+reverse the raw cost ordering, which is exactly why multi-step search
+considers all paths rather than committing to the cheapest single action.
 
 ---
 

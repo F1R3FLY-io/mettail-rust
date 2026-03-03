@@ -789,16 +789,17 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
             };
             format!("{{ {} / \"{}\" }}  (* {} *)", element_category, separator, kind_str)
         },
-        SyntaxItemSpec::ZipMapSep {
-            left_name: _,
-            right_name: _,
-            left_category: _,
-            right_category: _,
-            body_items,
-            separator,
-        } => {
-            let body: Vec<String> = body_items.iter().map(format_syntax_item).collect();
-            format!("{{ {} / \"{}\" }}", body.join(" "), separator)
+        SyntaxItemSpec::Sep { body, separator, .. } => {
+            let body_str = format_syntax_item(body.as_ref());
+            format!("{{ {} / \"{}\" }}", body_str, separator)
+        },
+        SyntaxItemSpec::Map { body_items } => {
+            let items: Vec<String> = body_items.iter().map(format_syntax_item).collect();
+            items.join(" ")
+        },
+        SyntaxItemSpec::Zip { body, .. } => {
+            // Zip is transparent — delegate to body
+            format_syntax_item(body.as_ref())
         },
         SyntaxItemSpec::BinderCollection { param_name, separator } => {
             format!("{{ ^{} / \"{}\" }}", param_name, separator)
@@ -1090,6 +1091,7 @@ mod tests {
             has_rust_code: false,
             rust_code: None,
             eval_mode: None,
+            source_location: None,
         }
     }
 
@@ -1276,6 +1278,7 @@ mod tests {
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
+            semantic_dependency_groups: Vec::new(),
         }
     }
 
@@ -1464,6 +1467,7 @@ mod tests {
             .collect();
 
         ParserBundle {
+            grammar_name: spec.name.clone(),
             categories,
             bp_table,
             rule_infos,
@@ -1475,6 +1479,8 @@ mod tests {
             beam_width: crate::BeamWidthConfig::Disabled,
             recovery_config: crate::recovery::RecoveryConfig::default(),
             all_syntax,
+            rule_locations: std::collections::HashMap::new(),
+            semantic_dependency_groups: Vec::new(),
         }
     }
 
@@ -1550,20 +1556,22 @@ mod tests {
                 separator: separator.clone(),
                 kind: *kind,
             },
-            SyntaxItemSpec::ZipMapSep {
-                left_name,
-                right_name,
-                left_category,
-                right_category,
-                body_items,
-                separator,
-            } => RDSyntaxItem::ZipMapSep {
-                left_name: left_name.clone(),
-                right_name: right_name.clone(),
-                left_category: left_category.clone(),
-                right_category: right_category.clone(),
-                body_items: body_items.iter().map(convert_syntax_item).collect(),
+            SyntaxItemSpec::Sep { body, separator, kind } => RDSyntaxItem::Sep {
+                body: Box::new(convert_syntax_item(body)),
                 separator: separator.clone(),
+                kind: *kind,
+            },
+            SyntaxItemSpec::Map { body_items } => RDSyntaxItem::Map {
+                body_items: body_items.iter().map(convert_syntax_item).collect(),
+            },
+            SyntaxItemSpec::Zip { left_name, right_name, left_category, right_category, body } => {
+                RDSyntaxItem::Zip {
+                    left_name: left_name.clone(),
+                    right_name: right_name.clone(),
+                    left_category: left_category.clone(),
+                    right_category: right_category.clone(),
+                    body: Box::new(convert_syntax_item(body)),
+                }
             },
             SyntaxItemSpec::BinderCollection { param_name, separator } => {
                 RDSyntaxItem::BinderCollection {
@@ -1682,6 +1690,7 @@ mod tests {
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
+            semantic_dependency_groups: Vec::new(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1754,6 +1763,7 @@ mod tests {
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
+            semantic_dependency_groups: Vec::new(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1819,6 +1829,7 @@ mod tests {
             log_semiring_model_path: None,
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
+            semantic_dependency_groups: Vec::new(),
         };
 
         let bundle = build_bundle(&spec);

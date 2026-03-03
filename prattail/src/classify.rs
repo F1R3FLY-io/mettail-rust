@@ -79,7 +79,7 @@ pub fn classify_rule(
     }
 }
 
-/// Check for binders recursively, including inside `ZipMapSep::body_items`
+/// Check for binders recursively, including inside `Sep`/`Map`/`Zip` bodies
 /// and `Optional::inner`.
 ///
 /// When `check_multi` is true, looks for `Binder { is_multi: true }`.
@@ -88,8 +88,12 @@ fn has_binder_recursive(syntax: &[SyntaxItemSpec], check_multi: bool) -> bool {
     syntax.iter().any(|item| match item {
         SyntaxItemSpec::Binder { is_multi, .. } => *is_multi == check_multi,
         SyntaxItemSpec::BinderCollection { .. } => check_multi,
-        SyntaxItemSpec::ZipMapSep { body_items, .. } => {
-            has_binder_recursive(body_items, check_multi)
+        SyntaxItemSpec::Sep { body, .. } => {
+            has_binder_recursive(std::slice::from_ref(body.as_ref()), check_multi)
+        },
+        SyntaxItemSpec::Map { body_items } => has_binder_recursive(body_items, check_multi),
+        SyntaxItemSpec::Zip { body, .. } => {
+            has_binder_recursive(std::slice::from_ref(body.as_ref()), check_multi)
         },
         SyntaxItemSpec::Optional { inner } => has_binder_recursive(inner, check_multi),
         _ => false,
@@ -418,28 +422,33 @@ mod tests {
     }
 
     #[test]
-    fn test_multi_binder_in_zipmapsep() {
-        // PInputs-like rule: binder nested inside ZipMapSep body_items.
+    fn test_multi_binder_in_sep_zip_map() {
+        // PInputs-like rule: binder nested inside Sep(Zip(Map(...))).
         let syntax = vec![
             SyntaxItemSpec::Terminal("(".to_string()),
-            SyntaxItemSpec::ZipMapSep {
-                left_name: "ns".to_string(),
-                right_name: "xs".to_string(),
-                left_category: "Name".to_string(),
-                right_category: "Name".to_string(),
-                body_items: vec![
-                    SyntaxItemSpec::NonTerminal {
-                        category: "Name".to_string(),
-                        param_name: "n".to_string(),
-                    },
-                    SyntaxItemSpec::Terminal("?".to_string()),
-                    SyntaxItemSpec::Binder {
-                        param_name: "x".to_string(),
-                        category: "Name".to_string(),
-                        is_multi: true,
-                    },
-                ],
+            SyntaxItemSpec::Sep {
+                body: Box::new(SyntaxItemSpec::Zip {
+                    left_name: "ns".to_string(),
+                    right_name: "xs".to_string(),
+                    left_category: "Name".to_string(),
+                    right_category: "Name".to_string(),
+                    body: Box::new(SyntaxItemSpec::Map {
+                        body_items: vec![
+                            SyntaxItemSpec::NonTerminal {
+                                category: "Name".to_string(),
+                                param_name: "n".to_string(),
+                            },
+                            SyntaxItemSpec::Terminal("?".to_string()),
+                            SyntaxItemSpec::Binder {
+                                param_name: "x".to_string(),
+                                category: "Name".to_string(),
+                                is_multi: true,
+                            },
+                        ],
+                    }),
+                }),
                 separator: ",".to_string(),
+                kind: CollectionKind::Vec,
             },
             SyntaxItemSpec::Terminal(")".to_string()),
             SyntaxItemSpec::Terminal(".".to_string()),
@@ -451,7 +460,7 @@ mod tests {
             SyntaxItemSpec::Terminal("}".to_string()),
         ];
         let c = classify_rule(&syntax, "Proc", &cat_names());
-        assert!(c.has_multi_binder, "should detect multi-binder inside ZipMapSep");
+        assert!(c.has_multi_binder, "should detect multi-binder inside Sep(Zip(Map(...)))");
         assert!(!c.has_binder, "multi-binder present — has_binder should be false");
     }
 

@@ -160,6 +160,9 @@ Right-distributivity (D2) follows symmetrically.
 
 The symmetric case (a1, a2) ⊗ 0 = 0 follows identically.
 
+> For the parsing-specific interpretation of these axioms, see
+> [§4 Why Each Axiom Matters for Parsing](../semirings.md#4-why-each-axiom-matters-for-parsing).
+
 ---
 
 ## 4. Key Properties
@@ -667,7 +670,38 @@ component flags whether the choice was unique.
 
 ---
 
-## 14. Source Reference & See Also
+## 14. Composition Catalog
+
+The following table lists all ProductWeight instantiations that have been
+realized in PraTTaIL's codebase or test suite, along with their use cases
+and pipeline stages:
+
+| Composition | Use Case | Pipeline Stage | Idempotent? |
+|:------------|:---------|:---------------|:-----------:|
+| `ProductWeight<TropicalWeight, CountingWeight>` | Best parse + uniqueness detection. The tropical component selects the winner; the counting component flags whether the choice was unique (`count > 1` → ambiguous). | Composed dispatch (stage 4), lint analysis (stage 7) | No (Counting) |
+| `ProductWeight<TropicalWeight, EditWeight>` | Best parse + minimum repair distance. Enables error-tolerant parsing where the parser simultaneously optimizes priority and edit cost. | Error recovery WFST (stage 9), Viterbi recovery | Yes |
+| `ProductWeight<TropicalWeight, TropicalWeight>` | Cost-benefit scoring. Left component = dispatch priority, right component = estimated recovery cost. Used in cost-benefit analysis (D1). | Cost-benefit analysis (stage 12) | Yes |
+| `ProductWeight<TropicalWeight, ComplexityWeight>` | Dispatch priority + lookahead budget. Among equal-priority paths, prefer the one requiring less lookahead. Used in B1 selection and composed dispatch. | Composed dispatch (stage 4), codegen ordering (stage 8) | Yes |
+| `ProductWeight<TropicalWeight, ContextWeight>` | Dispatch priority + rule-set tracking. Identifies which specific rules compete at each dispatch point while maintaining priority ordering. | Ambiguity diagnosis, NFA spillover decisions | Yes |
+| `ProductWeight<TropicalWeight, EntropyWeight>` | Dispatch priority + uncertainty measurement. Tested in the semiring test suite for multi-objective forward-backward analysis. | Forward-backward (stage 11, `wfst-log`) | No (Entropy) |
+
+### 14.1 Choosing the Left Component
+
+The left component dominates the lexicographic ordering and therefore drives
+Viterbi path selection. In all practical PraTTaIL compositions, the left
+component is TropicalWeight because dispatch priority is always the primary
+objective. The right component provides secondary information (count,
+complexity, edit distance, context, entropy) that is either used for
+diagnostics or as a tiebreaker.
+
+**Guideline**: if you need Viterbi compatibility, the left component must
+have `zero()` as its largest Ord element (true for Tropical, Edit,
+Complexity; false for Counting). See Section 9 for the Viterbi compatibility
+analysis.
+
+---
+
+## 15. Source Reference & See Also
 
 ### Source
 

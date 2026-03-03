@@ -26,6 +26,7 @@
 use std::fmt::Write;
 
 use crate::automata::codegen::terminal_to_variant_name;
+use crate::automata::semiring::ComplexityWeight;
 use crate::binding_power::BindingPowerTable;
 use crate::dispatch::CastRule;
 use crate::pratt::PrefixHandler;
@@ -39,20 +40,20 @@ use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 /// Check if a rule is a "simple collection" — one that can be trampolined
 /// as a CollectionElem frame with element-by-element parsing.
 ///
-/// Complex collections (ZipMapSep rules with binders like PInputs) are handled
+/// Complex collections (Sep rules with binders like PInputs) are handled
 /// by standalone parse functions and should NOT have CollectionElem frames generated.
 fn is_simple_collection(rule: &RDRuleInfo) -> bool {
-    rule.is_collection && !rule.has_binder && !rule.has_multi_binder && !has_zipmapsep(rule)
+    rule.is_collection && !rule.has_binder && !rule.has_multi_binder && !has_complex_sep(rule)
 }
 
-/// Check if a rule has any ZipMapSep syntax items.
+/// Check if a rule has any Sep syntax items.
 ///
-/// ZipMapSep rules are too complex for trampoline splitting and must use
+/// Sep rules are too complex for trampoline splitting and must use
 /// their standalone parse functions.
-fn has_zipmapsep(rule: &RDRuleInfo) -> bool {
+fn has_complex_sep(rule: &RDRuleInfo) -> bool {
     rule.items
         .iter()
-        .any(|item| matches!(item, RDSyntaxItem::ZipMapSep { .. }))
+        .any(|item| matches!(item, RDSyntaxItem::Sep { .. }))
 }
 
 /// Check if a rule should be trampolined (inlined/split) or dispatched to
@@ -60,10 +61,10 @@ fn has_zipmapsep(rule: &RDRuleInfo) -> bool {
 ///
 /// Returns true if the rule should use its standalone parse function and NOT
 /// be trampolined. This includes:
-/// - Rules with ZipMapSep items (complex parsing logic)
+/// - Rules with Sep items (complex parsing logic)
 /// - Rules with multi-binder items (complex binder handling)
 fn should_use_standalone_fn(rule: &RDRuleInfo) -> bool {
-    has_zipmapsep(rule) || rule.has_multi_binder
+    has_complex_sep(rule) || rule.has_multi_binder
 }
 
 /// Group terminal-first RD rules by their dispatch token variant.
@@ -115,6 +116,178 @@ fn group_rd_by_dispatch_token<'a>(
     groups
 }
 
+/// A2: Compute the disambiguation complexity of an NFA-ambiguous rule group.
+///
+/// Uses `ComplexityWeight` (bottleneck semiring: ⊕ = min, ⊗ = max) to represent
+/// the worst-case backtrack depth × alternative count for the group. The result
+/// indicates how much work the NFA try-all must do to resolve this ambiguity:
+///
+/// - `ComplexityWeight::deterministic()` (0) — no ambiguity (single rule)
+/// - `ComplexityWeight::single_lookahead()` (1) — trivial: 2 alternatives, 1 item each
+/// - Higher values — more complex disambiguation requiring deeper backtracks
+///
+/// The cost-benefit framework uses this to selectively enable B1 (multi-token
+/// lookahead) only for groups whose complexity exceeds a threshold, avoiding
+/// unnecessary lookahead codegen overhead for simple groups.
+fn compute_group_complexity(rules: &[&RDRuleInfo]) -> ComplexityWeight {
+    if rules.len() < 2 {
+        return ComplexityWeight::deterministic();
+    }
+    // Complexity = number of alternatives × max backtrack depth.
+    // Backtrack depth for each rule is the number of syntax items that must be
+    // parsed and potentially rolled back (non-terminal items are most expensive).
+    let max_depth = rules
+        .iter()
+        .map(|r| {
+            r.items
+                .iter()
+                .filter(|item| matches!(item, RDSyntaxItem::NonTerminal { .. }))
+                .count() as u32
+                + 1 // at least 1 for the prefix parse itself
+        })
+        .max()
+        .unwrap_or(1);
+    ComplexityWeight::new(rules.len() as u32 * max_depth)
+}
+
+/// A2: Threshold for enabling B1 (multi-token lookahead) per NFA group.
+///
+/// Groups with `ComplexityWeight <= COMPLEXITY_THRESHOLD` use NFA try-all directly
+/// (fast enough for simple groups). Groups exceeding the threshold get B1 lookahead
+/// to avoid expensive try-all for deeply ambiguous groups.
+///
+/// Value 2: groups with just 2 alternatives and no non-terminal backtrack (e.g.,
+/// two keyword-only rules) use NFA try-all. Groups with 3+ alternatives or
+/// non-terminal backtracks get B1.
+const COMPLEXITY_THRESHOLD: u32 = 2;
+
+/// A4: WFST weight threshold for NFA cold path splitting.
+///
+/// NFA try-all alternatives with WFST weight ≥ this threshold are extracted into
+/// `#[cold] #[inline(never)]` helper functions, reducing the main parse function's
+/// instruction footprint and improving L1 i-cache locality on the hot (low-weight)
+/// path.
+///
+/// Matches dispatch.rs `COLD_THRESHOLD` for consistency:
+/// - Weight < 1.0: hot path (Direct=0.0, Cast=0.5) — inlined in main function
+/// - Weight ≥ 1.0: cold path (Lookahead=1.0+, Variable=2.0) — in `#[cold]` helper
+const NFA_COLD_THRESHOLD: f64 = 1.0;
+
+/// B1: Analyze whether an NFA-merged rule group can be disambiguated by
+/// peeking at the second token instead of trying all alternatives.
+///
+/// Returns `Some(map)` where map is `second_token_variant → &RDRuleInfo` when
+/// every rule in the group has a distinct second terminal. Returns `None` when:
+/// - Fewer than 2 rules (no ambiguity to resolve)
+/// - Any rule lacks a second terminal (e.g., single-token rule, or second item
+///   is a NonTerminal/IdentCapture)
+/// - Two rules share the same second terminal (ambiguity persists at depth 2)
+/// B1 result: maps second-token variant → rule index within the group.
+/// Only produced when every rule has a distinct second item that is a terminal.
+struct TwoTokenLookahead {
+    /// second_variant → index into the original inlineable slice
+    groups: std::collections::BTreeMap<String, usize>,
+}
+
+fn second_token_lookahead(
+    rules: &[&RDRuleInfo],
+) -> Option<TwoTokenLookahead> {
+    if rules.len() < 2 {
+        return None;
+    }
+
+    // For each rule, extract the *second* syntax item (items[1]).
+    // The first item (items[0]) is the shared dispatch token.
+    // B1 requires that items[1] is a Terminal and is distinct across rules.
+    let mut groups: std::collections::BTreeMap<String, Vec<usize>> =
+        std::collections::BTreeMap::new();
+
+    for (idx, rule) in rules.iter().enumerate() {
+        // Must have at least 2 items
+        if rule.items.len() < 2 {
+            return None;
+        }
+
+        // items[1] must be a terminal
+        match &rule.items[1] {
+            RDSyntaxItem::Terminal(t) => {
+                let variant = terminal_to_variant_name(t);
+                groups.entry(variant).or_default().push(idx);
+            },
+            _ => {
+                // Second item is not a terminal → can't use 2-token lookahead
+                return None;
+            },
+        }
+    }
+
+    // Check that each second-token variant maps to exactly one rule
+    if groups.values().all(|indices| indices.len() == 1) {
+        Some(TwoTokenLookahead {
+            groups: groups
+                .into_iter()
+                .map(|(k, v)| (k, v[0]))
+                .collect(),
+        })
+    } else {
+        None // Some second-token variants are shared → ambiguity persists
+    }
+}
+
+/// A1: Compute the longest shared terminal prefix among rules (starting from
+/// items[1], since items[0] is the shared dispatch token).
+///
+/// Returns the shared terminal strings. For example, if all rules start with
+/// `"float" "(" ...`, items[0]="float" is the dispatch token, items[1]="(" is
+/// the shared prefix. The returned vec would be `["("]`.
+///
+/// Returns empty vec when:
+/// - Fewer than 2 rules
+/// - Any rule's items[1..] starts with a non-terminal
+/// - The items[1..] diverge immediately (no shared prefix)
+fn compute_shared_terminal_prefix(rules: &[&RDRuleInfo]) -> Vec<String> {
+    if rules.len() < 2 {
+        return Vec::new();
+    }
+
+    // Find the minimum rule length (excluding items[0] which is the dispatch token)
+    let min_suffix_len = rules
+        .iter()
+        .map(|r| r.items.len().saturating_sub(1))
+        .min()
+        .unwrap_or(0);
+
+    if min_suffix_len == 0 {
+        return Vec::new();
+    }
+
+    let mut shared = Vec::new();
+
+    // Walk items[1..] in lockstep across all rules
+    for offset in 0..min_suffix_len {
+        let item_idx = offset + 1; // items[0] is dispatch token
+
+        // Get the terminal at this position in the first rule
+        let first_terminal = match &rules[0].items[item_idx] {
+            RDSyntaxItem::Terminal(t) => t.clone(),
+            _ => break, // Non-terminal → stop sharing
+        };
+
+        // Check all other rules have the same terminal at this position
+        let all_same = rules[1..].iter().all(|rule| {
+            matches!(&rule.items[item_idx], RDSyntaxItem::Terminal(t) if *t == first_terminal)
+        });
+
+        if all_same {
+            shared.push(first_terminal);
+        } else {
+            break; // Divergence point found
+        }
+    }
+
+    shared
+}
+
 /// Public wrapper for `group_rd_by_dispatch_token` — used by the pipeline
 /// for ambiguity warning diagnostics.
 pub fn group_rd_by_dispatch_token_pub<'a>(
@@ -150,6 +323,106 @@ pub fn categories_needing_nfa_spillover(
     result
 }
 
+/// Generate the `_ =>` match arm for NFA result selection.
+///
+/// Shared between the A1 left-factored path and the regular NFA try-all path.
+/// When `config.needs_nfa_spillover` is true, includes:
+/// - C2: Position-aware weight adjustment (longest-match preference)
+/// - F1: Beam pruning (prune alternatives beyond beam width)
+/// - B4: Adaptive beam (runtime RUNNING_WEIGHT widens beam)
+///
+/// **Important**: F3 lazy spillover (`nfa_weights[0] > 0.0` gate) is intentionally
+/// NOT applied here. NFA-ambiguous dispatch points always need all alternatives
+/// for semantic disambiguation.
+///
+/// When `needs_nfa_spillover` is false, simply takes the first result without spillover.
+fn format_nfa_result_selection_arm(cat_upper: &str, config: &TrampolineConfig) -> String {
+    if config.needs_nfa_spillover {
+        let adaptive_beam = config.optimization_gates.adaptive_recovery;
+        let beam_threshold = if config.optimization_gates.spillover_pruning {
+            config
+                .prediction_wfst
+                .as_ref()
+                .and_then(|wfst| wfst.beam_width())
+                .map(|bw| bw.value())
+        } else {
+            None
+        };
+        let position_penalty = crate::wfst::POSITION_WEIGHT_PENALTY;
+        let spill_filter = if let Some(beam) = beam_threshold {
+            if adaptive_beam {
+                // B4 + C2: Runtime-adaptive beam with position-aware weight adjustment.
+                format!(
+                    "{{ let adaptive_slack = RUNNING_WEIGHT_{cat_upper}.with(|c| c.get()); \
+                    let pos_diff = (alt_pos as isize - nfa_positions[0] as isize).unsigned_abs(); \
+                    let c2_adjusted_w = alt_w + pos_diff as f64 * {position_penalty:?}; \
+                    if c2_adjusted_w <= nfa_weights[0] + {beam:?} + adaptive_slack {{ \
+                        spill_buf.push((alt, alt_pos, c2_adjusted_w)); \
+                    }} }}"
+                )
+            } else {
+                // C2: Static beam with position-aware weight adjustment.
+                format!(
+                    "{{ let pos_diff = (alt_pos as isize - nfa_positions[0] as isize).unsigned_abs(); \
+                    let c2_adjusted_w = alt_w + pos_diff as f64 * {position_penalty:?}; \
+                    if c2_adjusted_w <= nfa_weights[0] + {beam:?} {{ \
+                        spill_buf.push((alt, alt_pos, c2_adjusted_w)); \
+                    }} }}"
+                )
+            }
+        } else {
+            // C2: No beam — spill all alternatives with position-adjusted weights.
+            format!(
+                "{{ let pos_diff = (alt_pos as isize - nfa_positions[0] as isize).unsigned_abs(); \
+                let c2_adjusted_w = alt_w + pos_diff as f64 * {position_penalty:?}; \
+                spill_buf.push((alt, alt_pos, c2_adjusted_w)); \
+                }}"
+            )
+        };
+        // NFA-ambiguous dispatch points always spill alternatives — never gate on
+        // F3 lazy spillover (nfa_weights[0] > 0.0) here. NFA-ambiguous points have
+        // multiple valid parse trees by definition, and semantic disambiguation
+        // (Ascent / from_alternatives) needs all alternatives to select the correct
+        // one. Skipping spillover would break disambiguation for patterns like
+        // `float(x)` where the cast alternative is needed even though the primary
+        // parse has weight 0.0.
+        let spill_block = format!(
+            "NFA_PREFIX_SPILL_{cat_upper}.with(|cell| {{ \
+                let mut spill_buf = cell.take(); \
+                for ((alt, &alt_pos), &alt_w) in iter.zip(nfa_positions[1..].iter()).zip(nfa_weights[1..].iter()) {{ \
+                    {spill_filter} \
+                }} \
+                /* F3: Weight-order for demand-driven replay (ascending = best first). \
+                   Enables short-circuit and threshold pruning at the drain site. */ \
+                spill_buf.sort_by(|a, b| a.2.partial_cmp(&b.2).unwrap_or(std::cmp::Ordering::Equal)); \
+                cell.set(spill_buf); \
+            }});",
+        );
+        let lazy_spill = format!(
+            "let mut iter = nfa_results.into_iter(); \
+            let best = iter.next().expect(\"nfa_results non-empty\"); \
+            {} break 'prefix best;",
+            spill_block,
+        );
+        format!(
+            "_ => {{ \
+                *pos = nfa_positions[0]; \
+                NFA_PRIMARY_WEIGHT_{cat_upper}.with(|cell| cell.set(nfa_weights[0])); \
+                RUNNING_WEIGHT_{cat_upper}.with(|cell| cell.set(cell.get() + nfa_weights[0])); \
+                {lazy_spill} \
+            }},"
+        )
+    } else {
+        format!(
+            "_ => {{ \
+                *pos = nfa_positions[0]; \
+                RUNNING_WEIGHT_{cat_upper}.with(|cell| cell.set(cell.get() + nfa_weights[0])); \
+                break 'prefix nfa_results.into_iter().next().expect(\"nfa_results non-empty\"); \
+            }},"
+        )
+    }
+}
+
 /// Write an NFA-style merged prefix arm for multiple rules sharing the same dispatch token.
 ///
 /// For each alternative, saves `*pos`, tries the rule's parse path, and if successful,
@@ -161,6 +434,7 @@ pub fn categories_needing_nfa_spillover(
 /// save/restore NFA because they require pushing frames. They are emitted with a diagnostic.
 fn write_nfa_merged_prefix_arm(
     buf: &mut String,
+    cold_fns: &mut String,
     variant: &str,
     inlineable: &[&RDRuleInfo],
     frame_pushing: &[&RDRuleInfo],
@@ -204,6 +478,289 @@ fn write_nfa_merged_prefix_arm(
         return;
     }
 
+    // ── A1: Left-factoring via shared prefix ────────────────────────────
+    // Before trying NFA try-all, check if rules share a common prefix of
+    // terminals (beyond the dispatch token). Walk shared terminals once without
+    // save/restore, then NFA try-all only over the remaining (divergent) items.
+    // This reduces code size and avoids redundant token matching.
+    // A3: Gated by `optimization_gates.left_factoring`.
+    if config.optimization_gates.left_factoring && frame_pushing.is_empty() && inlineable.len() >= 2 {
+        let shared_terminal_prefix = compute_shared_terminal_prefix(inlineable);
+        // shared_terminal_prefix starts from items[1] (items[0] is dispatch token).
+        // If ≥ 1 shared terminal beyond the dispatch token, left-factor.
+        if !shared_terminal_prefix.is_empty() {
+            write!(buf, "Token::{} => {{", variant).unwrap();
+            // Consume the dispatch token
+            buf.push_str("*pos += 1;");
+
+            // Walk the shared terminal prefix
+            for terminal in &shared_terminal_prefix {
+                let shared_variant = terminal_to_variant_name(terminal);
+                write!(
+                    buf,
+                    "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
+                    shared_variant, terminal,
+                )
+                .unwrap();
+            }
+
+            // Now do NFA try-all over the divergent suffixes
+            // The number of items to skip = 1 (dispatch token) + shared_prefix_len
+            let skip_count = 1 + shared_terminal_prefix.len();
+
+            buf.push_str("let nfa_saved = *pos;");
+            write!(buf, "let mut nfa_results: Vec<{}> = Vec::new();", cat).unwrap();
+            buf.push_str("let mut nfa_positions: Vec<usize> = Vec::new();");
+            buf.push_str("let mut nfa_weights: Vec<f64> = Vec::new();");
+            buf.push_str("let mut nfa_first_err: Option<ParseError> = None;");
+
+            // Use WFST weight ordering if available, otherwise equal weights
+            let a1_ordered: Vec<(&RDRuleInfo, f64)> =
+                if let Some(ref wfst) = config.prediction_wfst {
+                    let labels: Vec<&str> =
+                        inlineable.iter().map(|r| r.label.as_str()).collect();
+                    let ordered = wfst.nfa_alternative_order(variant, &labels);
+                    ordered
+                        .iter()
+                        .map(|(i, w)| (inlineable[*i], w.0))
+                        .collect()
+                } else {
+                    inlineable.iter().map(|r| (*r, 0.5_f64)).collect()
+                };
+
+            // A4: Partition A1 alternatives into hot/cold (same threshold as main NFA path)
+            let a1_cold_idx = if config.optimization_gates.hot_cold_splitting {
+                a1_ordered.iter().position(|(_, w)| *w >= NFA_COLD_THRESHOLD)
+            } else {
+                None
+            };
+            let has_a1_cold = a1_cold_idx
+                .map_or(false, |idx| idx > 0 && idx < a1_ordered.len());
+
+            let (a1_hot, a1_cold): (&[(&RDRuleInfo, f64)], &[(&RDRuleInfo, f64)]) = if has_a1_cold {
+                let idx = a1_cold_idx.expect("has_a1_cold checked");
+                (&a1_ordered[..idx], &a1_ordered[idx..])
+            } else {
+                (&a1_ordered[..], &[][..])
+            };
+
+            // Emit A1 cold helper if needed
+            let a1_cold_fn_name = if has_a1_cold {
+                let fn_name = format!(
+                    "nfa_try_cold_a1_{}_{}",
+                    cat.to_lowercase(),
+                    variant.to_lowercase()
+                );
+                write!(
+                    cold_fns,
+                    "#[cold] #[inline(never)] \
+                    fn {fn_name}<'a>(\
+                        tokens: &[(Token<'a>, Range)], \
+                        pos: &mut usize, \
+                        nfa_saved: usize, \
+                        nfa_results: &mut Vec<{cat}>, \
+                        nfa_positions: &mut Vec<usize>, \
+                        nfa_weights: &mut Vec<f64>, \
+                        nfa_first_err: &mut Option<ParseError>, \
+                    ) {{",
+                )
+                .unwrap();
+
+                for (rd_rule, weight) in a1_cold {
+                    cold_fns.push_str("*pos = nfa_saved;");
+                    let segments = split_rd_handler(rd_rule);
+                    if segments.is_empty() {
+                        continue;
+                    }
+                    let remaining_items: Vec<_> = segments[0]
+                        .inline_items
+                        .iter()
+                        .skip(skip_count)
+                        .cloned()
+                        .collect();
+                    write!(cold_fns, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
+                    if !remaining_items.is_empty() {
+                        write_inline_items(cold_fns, &remaining_items, false);
+                    }
+                    write_nfa_inline_constructor(cold_fns, rd_rule, &segments);
+                    cold_fns.push_str("})() {");
+                    write!(cold_fns, "Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); nfa_weights.push({weight:?}); }},").unwrap();
+                    cold_fns.push_str("Err(e) => { if nfa_first_err.is_none() { *nfa_first_err = Some(e); } },");
+                    cold_fns.push('}');
+                }
+                cold_fns.push('}'); // close function
+                Some(fn_name)
+            } else {
+                None
+            };
+
+            // Try hot alternatives inline
+            for (rd_rule, weight) in a1_hot {
+                buf.push_str("*pos = nfa_saved;");
+                let segments = split_rd_handler(rd_rule);
+                if segments.is_empty() {
+                    continue;
+                }
+                // Emit inline items starting after the shared prefix
+                let remaining_items: Vec<_> = segments[0]
+                    .inline_items
+                    .iter()
+                    .skip(skip_count)
+                    .cloned()
+                    .collect();
+
+                write!(buf, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
+                if !remaining_items.is_empty() {
+                    write_inline_items(buf, &remaining_items, false);
+                }
+                write_nfa_inline_constructor(buf, rd_rule, &segments);
+                buf.push_str("})() {");
+                write!(buf, "Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); nfa_weights.push({weight:?}); }},").unwrap();
+                buf.push_str("Err(e) => { if nfa_first_err.is_none() { nfa_first_err = Some(e); } },");
+                buf.push('}');
+            }
+
+            // A4: Call A1 cold helper if hot alternatives all failed
+            if let Some(ref fn_name) = a1_cold_fn_name {
+                write!(
+                    buf,
+                    "if nfa_results.is_empty() {{ \
+                        {fn_name}(tokens, pos, nfa_saved, &mut nfa_results, \
+                         &mut nfa_positions, &mut nfa_weights, &mut nfa_first_err); \
+                    }}",
+                )
+                .unwrap();
+            }
+
+            // Result selection — shared with regular NFA path via helper.
+            // When needs_nfa_spillover, spills non-primary alternatives for
+            // semantic disambiguation (e.g., float(x) cast rules).
+            buf.push_str("match nfa_results.len() {");
+            write!(
+                buf,
+                "0 => {{ return Err(nfa_first_err.unwrap_or_else(|| \
+                    ParseError::UnexpectedToken {{ \
+                        expected: Cow::Borrowed(\"{cat} expression\"), \
+                        found: format_token_friendly(&tokens[nfa_saved].0), \
+                        range: tokens[nfa_saved].1, \
+                        hint: None, \
+                    }} \
+                )); }},",
+            )
+            .unwrap();
+            let cat_upper = cat.to_uppercase();
+            buf.push_str(&format_nfa_result_selection_arm(&cat_upper, config));
+            buf.push('}'); // close match nfa_results.len()
+
+            buf.push_str("},"); // close outer arm
+            return; // A1 handled this arm
+        }
+    }
+
+    // ── B1: Two-token lookahead check ──────────────────────────────────
+    // If all rules in this group have distinct second terminals, emit a
+    // nested match on tokens[*pos + 1] instead of the NFA try-all loop.
+    // This replaces full save/restore + prefix parse with a single array
+    // bounds check + pattern match.
+    // A3: Gated by `optimization_gates.multi_token_lookahead`.
+    // A2: Additionally gated by ComplexityWeight — only emit B1 for groups
+    // whose disambiguation complexity exceeds COMPLEXITY_THRESHOLD. Simple
+    // groups (2 alternatives, no non-terminal backtracks) are fast enough
+    // with NFA try-all and don't benefit from the extra code.
+    let group_complexity = compute_group_complexity(inlineable);
+    if config.optimization_gates.multi_token_lookahead
+        && group_complexity.value() > COMPLEXITY_THRESHOLD
+        && frame_pushing.is_empty()
+        && !config.needs_nfa_spillover
+    {
+        if let Some(lookahead) = second_token_lookahead(inlineable) {
+            write!(buf, "Token::{} => {{", variant).unwrap();
+            // Advance past the first token (already matched by the dispatch)
+            buf.push_str("*pos += 1;");
+            // Peek at the second token for disambiguation
+            buf.push_str("if *pos < tokens.len() { match &tokens[*pos].0 {");
+
+            for (second_variant, rule_idx) in &lookahead.groups {
+                let rd_rule = inlineable[*rule_idx];
+                let segments = split_rd_handler(rd_rule);
+                if segments.is_empty() {
+                    continue;
+                }
+
+                write!(buf, "Token::{} => {{", second_variant).unwrap();
+                // Consume the second token
+                buf.push_str("*pos += 1;");
+
+                // Write remaining inline items (skip the first two items which are
+                // both terminals already consumed above). items[0] = first terminal
+                // (dispatch token), items[1] = second terminal (lookahead token).
+                let remaining_items: Vec<_> = segments[0]
+                    .inline_items
+                    .iter()
+                    .skip(2)
+                    .cloned()
+                    .collect();
+                if !remaining_items.is_empty() {
+                    write_inline_items(buf, &remaining_items, false);
+                }
+
+                if let Some(ref nt) = segments[0].nonterminal {
+                    write!(
+                        buf,
+                        "stack.push({}::{} {{",
+                        frame_info.enum_name, segments[0].frame_variant
+                    )
+                    .unwrap();
+                    write!(buf, "saved_bp: cur_bp,").unwrap();
+                    for capture in &segments[0].accumulated_captures {
+                        match capture {
+                            SegmentCapture::Ident { name }
+                            | SegmentCapture::Binder { name }
+                            | SegmentCapture::NonTerminal { name, .. } => {
+                                write!(buf, "{},", name).unwrap();
+                            },
+                            _ => {},
+                        }
+                    }
+                    buf.push_str("});");
+                    write!(buf, "cur_bp = {};", nt.bp).unwrap();
+                    buf.push_str("continue 'drive;");
+                } else {
+                    write_nfa_inline_constructor(buf, rd_rule, &segments);
+                }
+                buf.push_str("},"); // close second-token arm
+            }
+
+            // Fallback: second token doesn't match any expected variant.
+            // Restore position to before the first token and error.
+            write!(
+                buf,
+                "_ => {{ *pos -= 1; return Err(ParseError::UnexpectedToken {{ \
+                    expected: Cow::Borrowed(\"{cat} expression after {variant}\"), \
+                    found: format_token_friendly(&tokens[*pos].0), \
+                    range: tokens[*pos].1, \
+                    hint: None, \
+                }}); }},",
+            )
+            .unwrap();
+
+            buf.push_str("} } else {"); // close match, close if, else
+            // Only first token available — no second token to peek at
+            write!(
+                buf,
+                "*pos -= 1; return Err(ParseError::UnexpectedEof {{ \
+                    expected: Cow::Borrowed(\"{cat} expression\"), \
+                    range: tokens[tokens.len() - 1].1, \
+                    hint: None, \
+                }});",
+            )
+            .unwrap();
+            buf.push_str("}"); // close else
+            buf.push_str("},"); // close outer arm
+            return; // B1 handled this arm — skip NFA try-all
+        }
+    }
+
     write!(buf, "Token::{} => {{", variant).unwrap();
 
     // NFA try-all: save position, try each alternative, collect successes
@@ -241,8 +798,130 @@ fn write_nfa_merged_prefix_arm(
         inlineable.iter().map(|r| (*r, 0.5_f64)).collect()
     };
 
-    // Try each inlineable alternative (WFST-ordered: weight-best first)
-    for (rd_rule, weight) in &ordered_inlineable {
+    // ── A4: Hot/cold NFA path splitting ──────────────────────────────────
+    // Partition alternatives into hot (weight < NFA_COLD_THRESHOLD) and cold
+    // (weight ≥ NFA_COLD_THRESHOLD). Cold alternatives are extracted into a
+    // #[cold] #[inline(never)] helper function to reduce the main parse
+    // function's instruction footprint and improve L1 i-cache locality.
+    // Only split when there are BOTH hot AND cold alternatives (like dispatch.rs).
+    // A3: Gated by `optimization_gates.hot_cold_splitting`.
+    let cold_split_idx = if config.optimization_gates.hot_cold_splitting {
+        ordered_inlineable
+            .iter()
+            .position(|(_, w)| *w >= NFA_COLD_THRESHOLD)
+    } else {
+        None // A3: hot/cold splitting disabled — all alternatives inline
+    };
+    let has_cold_split = cold_split_idx
+        .map_or(false, |idx| idx > 0 && idx < ordered_inlineable.len());
+
+    let (hot_alts, cold_alts): (&[(&RDRuleInfo, f64)], &[(&RDRuleInfo, f64)]) = if has_cold_split {
+        let idx = cold_split_idx.expect("has_cold_split checked above");
+        (&ordered_inlineable[..idx], &ordered_inlineable[idx..])
+    } else {
+        (&ordered_inlineable[..], &[][..])
+    };
+
+    // If there are cold alternatives, emit a #[cold] helper function.
+    // The helper tries each cold alternative with the same save/restore pattern
+    // and appends results to the caller's vectors.
+    let cold_fn_name = if has_cold_split {
+        let fn_name = format!(
+            "nfa_try_cold_{}_{}",
+            cat.to_lowercase(),
+            variant.to_lowercase()
+        );
+        write!(
+            cold_fns,
+            "#[cold] #[inline(never)] \
+            fn {fn_name}<'a>(\
+                tokens: &[(Token<'a>, Range)], \
+                pos: &mut usize, \
+                nfa_saved: usize, \
+                nfa_results: &mut Vec<{cat}>, \
+                nfa_positions: &mut Vec<usize>, \
+                nfa_weights: &mut Vec<f64>, \
+                nfa_first_err: &mut Option<ParseError>, \
+            ) {{",
+        )
+        .unwrap();
+
+        for (rd_rule, weight) in cold_alts {
+            cold_fns.push_str("*pos = nfa_saved;");
+            if should_use_standalone_fn(rd_rule) {
+                let standalone_fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
+                write!(
+                    cold_fns,
+                    "match {standalone_fn_name}(tokens, pos) {{ \
+                        Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); nfa_weights.push({weight:?}); }}, \
+                        Err(e) => {{ if nfa_first_err.is_none() {{ *nfa_first_err = Some(e); }} }}, \
+                    }}",
+                )
+                .unwrap();
+            } else {
+                let segments = split_rd_handler(rd_rule);
+                if segments.is_empty() {
+                    continue;
+                }
+                write!(cold_fns, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
+                write_inline_items(cold_fns, &segments[0].inline_items, true);
+                write_nfa_inline_constructor(cold_fns, rd_rule, &segments);
+                cold_fns.push_str("})() {");
+                write!(cold_fns, "Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); nfa_weights.push({weight:?}); }},").unwrap();
+                cold_fns.push_str("Err(e) => { if nfa_first_err.is_none() { *nfa_first_err = Some(e); } },");
+                cold_fns.push('}');
+            }
+        }
+
+        cold_fns.push('}'); // close function
+        Some(fn_name)
+    } else {
+        None
+    };
+
+    // F2 (Early Termination): When the first alternative has weight 0.0
+    // (deterministic, unambiguous) and succeeds, no other alternative can have
+    // lower weight (0.0 is the tropical identity for ⊗). Skip remaining tries.
+    // This is a compile-time decision: the early-exit guard is only emitted when
+    // the first alternative's weight is exactly 0.0 and there are >1 alternatives.
+    // F2 is only safe when the category does NOT need NFA spillover.
+    // When spillover is needed, disambiguation (from_alternatives) requires
+    // all alternatives — even if the first is weight-0.0 — because the primary
+    // result may not be ground (e.g., float(x) where x is a free variable).
+    //
+    // A5 (NbestWeight Confidence): Extends F2 with a more principled check using
+    // NbestWeight<2>: if the confidence gap between the best and second-best
+    // alternatives exceeds a threshold, treat the first as deterministic even
+    // when its weight is nonzero. This covers cases where the best alternative
+    // is so much better than the runner-up that trying both is wasteful.
+    // The threshold (1.0) means the second-best must be ≥10x less likely
+    // (in log-probability space) than the best.
+    //
+    // A3: Both F2 and A5 are gated by `optimization_gates`.
+    // Note: F2/A5 checks use the full ordered_inlineable for gap calculations
+    // but the conditional only wraps hot alternatives (cold are in the helper).
+    let first_is_deterministic = ordered_inlineable.len() > 1
+        && !config.needs_nfa_spillover
+        && {
+            let f2_pass = config.optimization_gates.early_termination
+                && ordered_inlineable.first().map_or(false, |(_, w)| *w == 0.0);
+
+            // A5: NbestWeight<2> confidence gap check — more principled than F2's weight==0.0
+            let a5_pass = config.optimization_gates.ambiguity_targeting
+                && ordered_inlineable.len() >= 2
+                && {
+                    let best_weight = ordered_inlineable[0].1;
+                    let second_weight = ordered_inlineable[1].1;
+                    let confidence_gap = second_weight - best_weight;
+                    // Threshold: gap > 1.0 means second-best is ≥10x less likely
+                    confidence_gap > 1.0
+                };
+
+            f2_pass || a5_pass
+        };
+
+    // Try hot alternatives inline (WFST-ordered: weight-best first)
+    for (idx, (rd_rule, weight)) in hot_alts.iter().enumerate() {
         buf.push_str("*pos = nfa_saved;");
 
         if should_use_standalone_fn(rd_rule) {
@@ -274,6 +953,44 @@ fn write_nfa_merged_prefix_arm(
             buf.push_str("Err(e) => { if nfa_first_err.is_none() { nfa_first_err = Some(e); } },");
             buf.push('}');
         }
+
+        // F2: After the first (weight-0.0) alternative succeeds, skip the rest.
+        // Weight 0.0 is the tropical zero-cost identity — no other alternative
+        // can produce a lower weight, making further tries redundant.
+        // Remaining alternatives are wrapped in `if nfa_results.is_empty() { ... }`
+        if idx == 0 && first_is_deterministic {
+            buf.push_str("if nfa_results.is_empty() {");
+        }
+    }
+
+    // A4: Call cold helper function for high-weight alternatives.
+    // When spillover is needed, all alternatives must be tried (for semantic
+    // disambiguation). When not, only call cold path if hot alternatives failed.
+    if let Some(ref fn_name) = cold_fn_name {
+        if config.needs_nfa_spillover {
+            // Unconditional: spillover needs all alternatives for from_alternatives
+            write!(
+                buf,
+                "{fn_name}(tokens, pos, nfa_saved, &mut nfa_results, \
+                 &mut nfa_positions, &mut nfa_weights, &mut nfa_first_err);",
+            )
+            .unwrap();
+        } else {
+            // Only when hot alternatives all failed (cold can't beat hot by weight order)
+            write!(
+                buf,
+                "if nfa_results.is_empty() {{ \
+                    {fn_name}(tokens, pos, nfa_saved, &mut nfa_results, \
+                     &mut nfa_positions, &mut nfa_weights, &mut nfa_first_err); \
+                }}",
+            )
+            .unwrap();
+        }
+    }
+
+    // Close the F2 early-termination conditional block if it was opened
+    if first_is_deterministic {
+        buf.push_str("} /* F2: deterministic hit (w=0.0) — remaining alternatives skipped if first succeeded */");
     }
 
     // Result selection
@@ -287,30 +1004,72 @@ fn write_nfa_merged_prefix_arm(
         buf.push_str("0 => {");
         buf.push_str("*pos = nfa_saved;");
         if !segments.is_empty() {
-            write_inline_items(buf, &segments[0].inline_items, true);
-            if let Some(ref nt) = segments[0].nonterminal {
-                write!(
-                    buf,
-                    "stack.push({}::{} {{",
-                    frame_info.enum_name, segments[0].frame_variant
-                )
-                .unwrap();
-                write!(buf, "saved_bp: cur_bp,").unwrap();
-                for capture in &segments[0].accumulated_captures {
-                    match capture {
-                        SegmentCapture::Ident { name }
-                        | SegmentCapture::Binder { name }
-                        | SegmentCapture::NonTerminal { name, .. } => {
-                            write!(buf, "{},", name).unwrap();
-                        },
-                        _ => {},
+            if config.needs_dispatch && segments[0].nonterminal.is_some() {
+                // ── Dispatch-aware fallback ──────────────────────────────────
+                // When this category has a dispatch wrapper (parse_Cat), the
+                // same-category nonterminal must route through it so that
+                // cross-category rules are available. The trampoline's
+                // continue 'drive only runs parse_Cat_own, missing dispatch.
+                //
+                // Solution: inline all segments with direct dispatch wrapper
+                // calls for same-category nonterminals. Cast nesting depth is
+                // bounded (1-2 levels) so stack overflow is not a concern.
+
+                // Segment 0: consume prefix terminals
+                write_inline_items(buf, &segments[0].inline_items, true);
+
+                // Call dispatch wrapper for same-category nonterminal
+                if let Some(ref nt) = segments[0].nonterminal {
+                    write!(
+                        buf,
+                        "let {} = parse_{}(tokens, pos, {})?;",
+                        nt.param_name, cat, nt.bp,
+                    )
+                    .unwrap();
+                }
+
+                // Remaining segments: consume inline items + nonterminals
+                for seg in &segments[1..] {
+                    write_inline_items(buf, &seg.inline_items, false);
+                    if let Some(ref nt) = seg.nonterminal {
+                        write!(
+                            buf,
+                            "let {} = parse_{}(tokens, pos, {})?;",
+                            nt.param_name, cat, nt.bp,
+                        )
+                        .unwrap();
                     }
                 }
-                buf.push_str("});");
-                write!(buf, "cur_bp = {};", nt.bp).unwrap();
-                buf.push_str("continue 'drive;");
-            } else {
+
+                // Build constructor (uses captures bound above)
                 write_rd_constructor_inline(buf, rd_rule, &segments);
+            } else {
+                // Original: push frame + continue 'drive (stack-safe)
+                write_inline_items(buf, &segments[0].inline_items, true);
+                if let Some(ref nt) = segments[0].nonterminal {
+                    write!(
+                        buf,
+                        "stack.push({}::{} {{",
+                        frame_info.enum_name, segments[0].frame_variant
+                    )
+                    .unwrap();
+                    write!(buf, "saved_bp: cur_bp,").unwrap();
+                    for capture in &segments[0].accumulated_captures {
+                        match capture {
+                            SegmentCapture::Ident { name }
+                            | SegmentCapture::Binder { name }
+                            | SegmentCapture::NonTerminal { name, .. } => {
+                                write!(buf, "{},", name).unwrap();
+                            },
+                            _ => {},
+                        }
+                    }
+                    buf.push_str("});");
+                    write!(buf, "cur_bp = {};", nt.bp).unwrap();
+                    buf.push_str("continue 'drive;");
+                } else {
+                    write_rd_constructor_inline(buf, rd_rule, &segments);
+                }
             }
         }
         buf.push_str("},");
@@ -320,8 +1079,9 @@ fn write_nfa_merged_prefix_arm(
             "0 => {{ return Err(nfa_first_err.unwrap_or_else(|| \
                 ParseError::UnexpectedToken {{ \
                     expected: Cow::Borrowed(\"{cat} expression\"), \
-                    found: format!(\"{{:?}}\", &tokens[nfa_saved].0), \
+                    found: format_token_friendly(&tokens[nfa_saved].0), \
                     range: tokens[nfa_saved].1, \
+                    hint: None, \
                 }} \
             )); }},",
         )
@@ -330,30 +1090,30 @@ fn write_nfa_merged_prefix_arm(
 
     // One or more successes — take the best (first by WFST weight order),
     // spill remaining alternatives for forced-prefix replay.
-    if config.needs_nfa_spillover {
+    //
+    // F1 (Spillover Pruning): Only spill alternatives within beam of the
+    // primary result's weight. Alternatives with weight > best + beam cannot
+    // win disambiguation, so replaying them is wasted work. The beam width
+    // is embedded as a compile-time literal from the PredictionWfst. When no
+    // beam is configured, all position-matching alternatives are spilled.
+    // A3: Beam-based pruning gated by `optimization_gates.spillover_pruning`.
+    //
+    // B4 (Adaptive NFA Beam): When `adaptive_recovery` gate is enabled,
+    // the runtime RUNNING_WEIGHT modulates the beam width. Accumulated
+    // ambiguity from prior dispatches widens the beam (additive slack),
+    // preserving more alternatives for disambiguation when the parse has
+    // already been through ambiguous territory.
+    //
+    // NOTE: We never skip spillover entirely at NFA-ambiguous points,
+    // even when running weight is 0.0. NFA-ambiguous points have multiple
+    // valid parse trees by definition, and semantic disambiguation (Ascent)
+    // needs all alternatives to select the correct one. Skipping spillover
+    // would break semantic disambiguation for patterns like `float(x)` where
+    // the cast alternative is needed even though the primary parse has
+    // weight 0.0.
+    {
         let cat_upper = cat.to_uppercase();
-        write!(
-            buf,
-            "_ => {{ \
-                *pos = nfa_positions[0]; \
-                let mut iter = nfa_results.into_iter(); \
-                let best = iter.next().expect(\"nfa_results non-empty\"); \
-                NFA_PRIMARY_WEIGHT_{cat_upper}.with(|cell| cell.set(nfa_weights[0])); \
-                NFA_PREFIX_SPILL_{cat_upper}.with(|cell| {{ \
-                    let mut spill_buf = cell.take(); \
-                    for ((alt, &alt_pos), &alt_w) in iter.zip(nfa_positions[1..].iter()).zip(nfa_weights[1..].iter()) {{ \
-                        if alt_pos == nfa_positions[0] {{ \
-                            spill_buf.push((alt, alt_pos, alt_w)); \
-                        }} \
-                    }} \
-                    cell.set(spill_buf); \
-                }}); \
-                break 'prefix best; \
-            }},",
-        )
-        .unwrap();
-    } else {
-        buf.push_str("_ => { *pos = nfa_positions[0]; break 'prefix nfa_results.into_iter().next().expect(\"nfa_results non-empty\"); },");
+        buf.push_str(&format_nfa_result_selection_arm(&cat_upper, config));
     }
     buf.push('}'); // close match nfa_results.len()
 
@@ -579,7 +1339,10 @@ pub fn split_rd_handler(rule: &RDRuleInfo) -> Vec<HandlerSegment> {
                 current_inline.push(item.clone());
                 accumulated_captures.push(SegmentCapture::Binder { name: param_name.clone() });
             },
-            RDSyntaxItem::ZipMapSep { .. } | RDSyntaxItem::Optional { .. } => {
+            RDSyntaxItem::Sep { .. }
+            | RDSyntaxItem::Map { .. }
+            | RDSyntaxItem::Zip { .. }
+            | RDSyntaxItem::Optional { .. } => {
                 // These complex items are kept as inline for now
                 // The trampoline will handle them as-is (they have bounded depth)
                 current_inline.push(item.clone());
@@ -675,6 +1438,27 @@ pub struct TrampolineConfig {
     /// to suggest missing cast rules (e.g., `"Hint: 'at' is a Proc expression,
     /// but no Proc → Float cast rule exists"`).
     pub cast_suggestions: Vec<(String, String)>,
+    /// A3: Optimization gates derived from cost-benefit analysis.
+    ///
+    /// Controls which compile-time optimizations are emitted for this category.
+    /// When a gate is `false`, the codegen uses the unoptimized fallback path.
+    pub optimization_gates: crate::cost_benefit::OptimizationGates,
+    /// A4: Dead rule labels identified by `collect_dead_rule_labels()`.
+    ///
+    /// When `optimization_gates.enhanced_dce` is true and a rule's label is in
+    /// this set, its codegen is suppressed (dispatch arm, NFA alternative, etc.).
+    /// The lint layer still reports W01 warnings independently.
+    pub dead_rules: std::collections::HashSet<String>,
+    /// Complete weight map from composed dispatch: `(category, token) → weight`.
+    ///
+    /// Includes both composed (ambiguous) and specificity (deterministic) weights.
+    /// Used for ident-lookahead handler sorting (priority over raw WFST prediction).
+    pub complete_weight_map: Option<std::collections::HashMap<(String, String), f64>>,
+    /// LED delegation sources for sum-type categories.
+    ///
+    /// When non-empty, the LED chain falls back to delegating to constituent categories'
+    /// operators when the sum type's own BP tables don't match the current token.
+    pub led_delegation: Vec<crate::pratt::LedDelegationSource>,
 }
 
 /// Write the Frame enum declaration for a category.
@@ -753,7 +1537,7 @@ pub fn write_frame_enum(
             continue;
         }
         // Skip unary prefix (handled above), collection rules (handled separately),
-        // and rules dispatched to standalone functions (ZipMapSep, multi-binder)
+        // and rules dispatched to standalone functions (Sep, multi-binder)
         if rd_rule.prefix_bp.is_some()
             || is_simple_collection(rd_rule)
             || should_use_standalone_fn(rd_rule)
@@ -962,6 +1746,33 @@ pub fn write_frame_enum(
 
 /// Write the complete trampolined parser for a single category.
 ///
+/// Look up the composed or WFST weight for an ident-lookahead prefix handler.
+///
+/// Priority order:
+/// 1. `complete_weight_map` — composed dispatch weight (lexer × parser interaction)
+/// 2. `prediction_wfst` — raw WFST prediction weight (tropical shortest path)
+/// 3. `f64::INFINITY` — unknown weight (sorted last)
+fn handler_weight(handler: &PrefixHandler, config: &TrampolineConfig) -> f64 {
+    if let Some(tok) = handler.ident_lookahead.as_ref() {
+        let variant = terminal_to_variant_name(tok);
+
+        // Prefer composed weight map (accounts for lexer × parser interaction)
+        if let Some(ref wm) = config.complete_weight_map {
+            if let Some(&w) = wm.get(&(config.category.clone(), variant.clone())) {
+                return w;
+            }
+        }
+
+        // Fallback: raw WFST prediction weight
+        if let Some(ref wfst) = config.prediction_wfst {
+            if let Some(wa) = wfst.predict(&variant).first() {
+                return wa.weight.value();
+            }
+        }
+    }
+    f64::INFINITY
+}
+
 /// Generates:
 /// 1. Helper functions (bp lookup, make_infix/postfix/mixfix) — same as before
 /// 2. Frame enum (`Frame_Cat` — no lifetime, `'static`)
@@ -982,22 +1793,26 @@ pub fn write_trampolined_parser(
         format!("parse_{}", cat)
     };
 
-    let has_led = config.has_infix || config.has_postfix || config.has_mixfix;
+    let has_delegation = !config.led_delegation.is_empty();
+    let has_led = config.has_infix || config.has_postfix || config.has_mixfix || has_delegation;
 
     // ── 1. Generate helper functions (same as pratt.rs) ──
 
-    if has_led {
-        if config.has_infix {
-            crate::pratt::write_bp_function_pub(buf, cat, bp_table);
-            crate::pratt::write_make_infix_pub(buf, cat, bp_table);
-        }
-        if config.has_postfix {
-            crate::pratt::write_postfix_bp_function_pub(buf, cat, bp_table);
-            crate::pratt::write_make_postfix_pub(buf, cat, bp_table);
-        }
-        if config.has_mixfix {
-            crate::pratt::write_mixfix_bp_function_pub(buf, cat, bp_table);
-        }
+    if config.has_infix {
+        crate::pratt::write_bp_function_pub(buf, cat, bp_table);
+        crate::pratt::write_make_infix_pub(buf, cat, bp_table);
+    }
+    if config.has_postfix {
+        crate::pratt::write_postfix_bp_function_pub(buf, cat, bp_table);
+        crate::pratt::write_make_postfix_pub(buf, cat, bp_table);
+    }
+    if config.has_mixfix {
+        crate::pratt::write_mixfix_bp_function_pub(buf, cat, bp_table);
+    }
+
+    // ── 1a. Generate LED delegation functions (sum-type categories) ──
+    if has_delegation {
+        write_led_delegation_fns(buf, config, bp_table);
     }
 
     // ── 2. Generate Frame enum ──
@@ -1006,7 +1821,7 @@ pub fn write_trampolined_parser(
     // ── 3. Generate thread-local frame stack pool ──
     // Each category gets its own thread-local Vec<Frame_Cat> that retains capacity
     // across parse calls. Uses Cell (not RefCell) with take/set pattern to support
-    // re-entrant calls from standalone parse functions (ZipMapSep, multi-binder,
+    // re-entrant calls from standalone parse functions (Sep, multi-binder,
     // ident-lookahead rules). Nested calls gracefully get a fresh Vec.
     let cat_upper = cat.to_uppercase();
     write!(
@@ -1089,6 +1904,19 @@ pub fn write_trampolined_parser(
     // the prefix) and its WFST tropical weight (f64) for weight-aware disambiguation.
     // NFA_PRIMARY_WEIGHT stores the weight of the best (returned) NFA result so
     // parse_preserving_vars can assign it to the primary success entry.
+    //
+    // B2 (Adaptive Recovery): RUNNING_WEIGHT accumulates the tropical weight of
+    // dispatch decisions along the parse path. Higher accumulated weight indicates
+    // a less confident (more ambiguous) parse, which recovery uses to select
+    // repair strategy: high weight → prefer insert (keep context); low weight →
+    // prefer skip (context was deterministic). Zero overhead on happy path (single
+    // Cell::set per dispatch decision, only Cell::get on error).
+    // C3: PARENT_WEIGHT stores the accumulated weight from a parent category's
+    // parse context. When category B is invoked from category A's dispatch
+    // (e.g., via a cast rule), A sets PARENT_WEIGHT_B = RUNNING_WEIGHT_A before
+    // calling parse_B. B then inherits this as its initial RUNNING_WEIGHT,
+    // making NFA disambiguation globally coherent across categories.
+    // For top-level calls, PARENT_WEIGHT is 0.0 (no parent context).
     write!(
         buf,
         "thread_local! {{ \
@@ -1098,6 +1926,28 @@ pub fn write_trampolined_parser(
                 std::cell::Cell::new(None); \
             static NFA_PRIMARY_WEIGHT_{cat_upper}: std::cell::Cell<f64> = \
                 std::cell::Cell::new(0.5); \
+            static RUNNING_WEIGHT_{cat_upper}: std::cell::Cell<f64> = \
+                std::cell::Cell::new(0.0); \
+            static PARENT_WEIGHT_{cat_upper}: std::cell::Cell<f64> = \
+                std::cell::Cell::new(0.0); \
+        }}",
+    )
+    .unwrap();
+
+    // B2/B4: Public accessor for accumulated dispatch weight. Recovery, diagnostic,
+    // and Ascent rules can call `running_weight_<cat>()` to read the accumulated
+    // confidence. Returns 0.0 for fully deterministic paths, higher values for
+    // ambiguous paths.
+    //
+    // B4 (Confidence Scoring): After a successful parse, the final value of
+    // `running_weight_<cat>()` is the total ambiguity encountered. Downstream
+    // consumers (e.g. language servers) can use this as a parse confidence metric.
+    // B4 (Parse Quality Metrics): Made public so Ascent rules and external code
+    // can query parse quality at any point during or after parsing.
+    write!(
+        buf,
+        "#[inline] pub fn running_weight_{cat}() -> f64 {{ \
+            RUNNING_WEIGHT_{cat_upper}.with(|cell| cell.get()) \
         }}",
     )
     .unwrap();
@@ -1109,6 +1959,10 @@ pub fn write_trampolined_parser(
     // the largest capacity) survives in the pool.
     // Heuristic preallocation: nesting depth ≤ tokens/2 (each nesting event
     // consumes ≥2 tokens: operator + operand).
+    // C3: Initialize RUNNING_WEIGHT from PARENT_WEIGHT (inherited from parent
+    // category's parse context). For top-level calls, PARENT_WEIGHT is 0.0.
+    // After reading, reset PARENT_WEIGHT to 0.0 so it doesn't leak into
+    // subsequent independent calls.
     write!(
         buf,
         "fn {parse_fn}<'a>(\
@@ -1116,6 +1970,12 @@ pub fn write_trampolined_parser(
             pos: &mut usize, \
             min_bp: u8, \
         ) -> Result<{cat}, ParseError> {{ \
+            RUNNING_WEIGHT_{cat_upper}.with(|cell| {{ \
+                let inherited = PARENT_WEIGHT_{cat_upper}.with(|p| {{ \
+                    let v = p.get(); p.set(0.0); v \
+                }}); \
+                cell.set(inherited); \
+            }}); \
             FRAME_POOL_{cat_upper}.with(|cell| {{ \
                 let mut stack = cell.take(); \
                 let needed = tokens.len() / 2; \
@@ -1131,12 +1991,21 @@ pub fn write_trampolined_parser(
     .unwrap();
 
     // ── 5. Generate the inner trampolined parse function (_impl) ──
-    write_trampoline_body(buf, config, bp_table, prefix_handlers, rd_rules, &frame_info, &parse_fn);
+    // A4: Cold NFA helper functions are generated during prefix arm codegen and
+    // emitted as sibling functions at the same scope level as `_impl`. The body is
+    // written to a temporary buffer so cold helpers can be placed before `_impl`
+    // in the final output (they need to be visible at the call site).
+    let mut cold_fns = String::new();
+    let mut body_buf = String::new();
+    write_trampoline_body(&mut body_buf, &mut cold_fns, config, bp_table, prefix_handlers, rd_rules, &frame_info, &parse_fn);
+    buf.push_str(&cold_fns);
+    buf.push_str(&body_buf);
 }
 
 /// Write the monolithic trampolined parser function body.
 fn write_trampoline_body(
     buf: &mut String,
+    cold_fns: &mut String,
     config: &TrampolineConfig,
     bp_table: &BindingPowerTable,
     prefix_handlers: &[PrefixHandler],
@@ -1188,7 +2057,7 @@ fn write_trampoline_body(
     }
 
     // ═══ Phase A: Prefix dispatch ═══
-    write_prefix_phase(buf, config, prefix_handlers, rd_rules, frame_info, &expected_escaped);
+    write_prefix_phase(buf, cold_fns, config, prefix_handlers, rd_rules, frame_info, &expected_escaped);
 
     // ═══ Phase B: Infix loop + continuation unwinding ═══
     buf.push_str("'unwind: loop {");
@@ -1211,6 +2080,7 @@ fn write_trampoline_body(
 /// Produces a value (break 'prefix) or pushes a frame and continues 'drive.
 fn write_prefix_phase(
     buf: &mut String,
+    cold_fns: &mut String,
     config: &TrampolineConfig,
     prefix_handlers: &[PrefixHandler],
     rd_rules: &[RDRuleInfo],
@@ -1233,6 +2103,7 @@ fn write_prefix_phase(
                 None => return Err(ParseError::UnexpectedEof {{ \
                     expected: Cow::Borrowed(\"{expected_escaped}\"), \
                     range: eof_range, \
+                    hint: None, \
                 }}),",
     )
     .unwrap();
@@ -1245,6 +2116,7 @@ fn write_prefix_phase(
         "Some(_) => return Err(ParseError::UnexpectedEof {{ \
             expected: Cow::Borrowed(\"{expected_escaped}\"), \
             range: eof_range, \
+            hint: None, \
         }}), \
         }} \
         }}",
@@ -1280,7 +2152,7 @@ fn write_prefix_phase(
 
     // Generate match arms (same code in both paths — WFST ordering affects
     // cross-category dispatch backtracking order, not prefix match semantics)
-    write_prefix_match_arms(buf, config, prefix_handlers, rd_rules, frame_info, expected_escaped);
+    write_prefix_match_arms(buf, cold_fns, config, prefix_handlers, rd_rules, frame_info, expected_escaped);
 
     buf.push_str("} };"); // close match and 'prefix block
 }
@@ -1288,6 +2160,7 @@ fn write_prefix_phase(
 /// Write the prefix match arms.
 fn write_prefix_match_arms(
     buf: &mut String,
+    cold_fns: &mut String,
     config: &TrampolineConfig,
     prefix_handlers: &[PrefixHandler],
     rd_rules: &[RDRuleInfo],
@@ -1304,17 +2177,127 @@ fn write_prefix_match_arms(
 
     // ── Terminal-first RD handlers (non-collection, non-unary-prefix) ──
     // These are split into segments and inlined, OR dispatched to standalone functions
-    // for complex rules (ZipMapSep, multi-binder).
+    // for complex rules (Sep, multi-binder).
     //
     // NFA disambiguation: group rules by dispatch token. When multiple rules
     // share the same token (e.g., FloatId and IntToFloat both start with "float"),
     // emit a single merged arm that tries all alternatives NFA-style.
-    let rd_by_token = group_rd_by_dispatch_token(rd_rules, cat);
+    let rd_by_token_raw = group_rd_by_dispatch_token(rd_rules, cat);
+
+    // A4: Filter dead rules when enhanced DCE is enabled.
+    // Dead rules are removed from each dispatch group. If a group becomes empty
+    // after filtering, the entire dispatch arm is suppressed.
+    let rd_by_token: std::collections::BTreeMap<String, Vec<&RDRuleInfo>> =
+        if config.optimization_gates.enhanced_dce && !config.dead_rules.is_empty() {
+            rd_by_token_raw
+                .into_iter()
+                .filter_map(|(variant, rules)| {
+                    let live: Vec<&RDRuleInfo> = rules
+                        .into_iter()
+                        .filter(|r| !config.dead_rules.contains(&r.label))
+                        .collect();
+                    if live.is_empty() {
+                        None
+                    } else {
+                        Some((variant, live))
+                    }
+                })
+                .collect()
+        } else {
+            rd_by_token_raw
+        };
+
+    // Track whether LParen has been handled by an RD rule arm so we can
+    // suppress the later grouping handler and avoid duplicate match arms.
+    let mut lparen_handled = false;
 
     for (variant, rules) in &rd_by_token {
         if rules.len() == 1 {
             // Singleton: emit the original single-rule arm
             let rd_rule = rules[0];
+
+            // ── LParen conflict resolution ──
+            // When an RD rule dispatches on LParen (e.g., PInputs in RhoCalc),
+            // it would preempt the grouping handler. For standalone or fully-inline
+            // rules, emit an NFA-style arm that tries the RD rule first with save/
+            // restore and falls back to grouping on failure.
+            //
+            // For frame-pushing rules (same-category nonterminal, e.g., Lambda's
+            // App), the rule IS the LParen handler — closures can't contain break/
+            // continue, so we emit normally. In such languages LParen means the RD
+            // rule, not grouping.
+            if variant == "LParen" {
+                let is_frame_pushing = if should_use_standalone_fn(rd_rule) {
+                    false
+                } else {
+                    let segs = split_rd_handler(rd_rule);
+                    !segs.is_empty() && segs[0].nonterminal.is_some()
+                };
+
+                if is_frame_pushing {
+                    // Frame-pushing rule at LParen: emit normally (no grouping
+                    // fallback possible with trampoline frames). The RD rule owns
+                    // LParen for this category.
+                    lparen_handled = true;
+                    // Fall through to the normal singleton emission below
+                } else {
+                    // Standalone or fully-inline rule at LParen: save/restore +
+                    // grouping fallback.
+                    lparen_handled = true;
+                    write!(buf, "Token::LParen => {{").unwrap();
+                    buf.push_str("let saved = *pos;");
+
+                    if should_use_standalone_fn(rd_rule) {
+                        let fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
+                        write!(
+                            buf,
+                            "if let Ok(result) = {}(tokens, pos) {{ \
+                                break 'prefix result; \
+                            }}",
+                            fn_name,
+                        )
+                        .unwrap();
+                    } else {
+                        // Fully inline (no frame-pushing nonterminal): wrap in closure
+                        let segments = split_rd_handler(rd_rule);
+                        if !segments.is_empty() {
+                            write!(buf, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
+                            write_inline_items(buf, &segments[0].inline_items, true);
+                            write_rd_constructor_inline(buf, rd_rule, &segments);
+                            buf.push_str("})() {");
+                            buf.push_str("Ok(v) => { break 'prefix v; },");
+                            buf.push_str("Err(_) => {},");
+                            buf.push_str("}");
+                        }
+                    }
+
+                    // Grouping fallback: restore position, emit grouping logic
+                    buf.push_str("*pos = saved;");
+                    if config.needs_dispatch {
+                        write!(
+                            buf,
+                            "*pos += 1; \
+                            let expr = parse_{}(tokens, pos, 0)?; \
+                            expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
+                            break 'prefix expr;",
+                            cat,
+                        )
+                        .unwrap();
+                    } else {
+                        write!(
+                            buf,
+                            "*pos += 1; \
+                            stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
+                            cur_bp = 0; \
+                            continue 'drive;",
+                            frame_info.enum_name,
+                        )
+                        .unwrap();
+                    }
+                    buf.push_str("},");
+                    continue;
+                }
+            }
 
             if should_use_standalone_fn(rd_rule) {
                 let fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
@@ -1393,8 +2376,12 @@ fn write_prefix_match_arms(
                 }
             }
 
+            if variant == "LParen" {
+                lparen_handled = true;
+            }
             write_nfa_merged_prefix_arm(
                 buf,
+                cold_fns,
                 variant,
                 &inlineable,
                 &frame_pushing,
@@ -1408,6 +2395,10 @@ fn write_prefix_match_arms(
     // ── Unary prefix operators ──
     for rd_rule in rd_rules {
         if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
+            continue;
+        }
+        // A4: Skip dead unary prefix rules
+        if config.optimization_gates.enhanced_dce && config.dead_rules.contains(&rd_rule.label) {
             continue;
         }
         // Pattern: [Terminal, NonTerminal(same_category)]
@@ -1431,6 +2422,10 @@ fn write_prefix_match_arms(
     // ── Collection rules ──
     for rd_rule in rd_rules {
         if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
+            continue;
+        }
+        // A4: Skip dead collection rules
+        if config.optimization_gates.enhanced_dce && config.dead_rules.contains(&rd_rule.label) {
             continue;
         }
 
@@ -1490,49 +2485,123 @@ fn write_prefix_match_arms(
     //
     // When `needs_dispatch` is false, we use the continuation-stack
     // approach (GroupClose frame + continue 'drive) for full stack-safety.
-    if config.needs_dispatch {
-        write!(
-            buf,
-            "Token::LParen => {{ \
-                *pos += 1; \
-                let expr = parse_{}(tokens, pos, 0)?; \
-                expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
-                break 'prefix expr; \
-            }},",
-            cat,
-        )
-        .unwrap();
-    } else {
-        write!(
-            buf,
-            "Token::LParen => {{ \
-                *pos += 1; \
-                stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
-                cur_bp = 0; \
-                continue 'drive; \
-            }},",
-            frame_info.enum_name,
-        )
-        .unwrap();
+    //
+    // Skip if LParen was already handled by an RD rule arm above
+    // (either with save/restore + grouping fallback for standalone/inline
+    // rules, or as a frame-pushing rule that owns LParen).
+    if !lparen_handled {
+        if config.needs_dispatch {
+            write!(
+                buf,
+                "Token::LParen => {{ \
+                    *pos += 1; \
+                    let expr = parse_{}(tokens, pos, 0)?; \
+                    expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
+                    break 'prefix expr; \
+                }},",
+                cat,
+            )
+            .unwrap();
+        } else {
+            write!(
+                buf,
+                "Token::LParen => {{ \
+                    *pos += 1; \
+                    stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
+                    cur_bp = 0; \
+                    continue 'drive; \
+                }},",
+                frame_info.enum_name,
+            )
+            .unwrap();
+        }
     }
 
     // ── Cast rule prefix arms ──
-    for cast_rule in &config.cast_rules {
-        if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
-            let unique_tokens = source_first.difference(&config.own_first_set);
-            for token in &unique_tokens.tokens {
-                let mut arm = String::new();
-                crate::pratt::write_token_pattern_pub(&mut arm, token);
-                write!(
-                    arm,
-                    " => {{ \
-                        let val = parse_{}(tokens, pos, 0)?; \
-                        break 'prefix {}::{}(Box::new(val)); \
-                    }},",
-                    cast_rule.source_category, cat, cast_rule.label,
-                )
-                .unwrap();
-                buf.push_str(&arm);
+    // Use source_first directly (not difference): the target's own_first includes
+    // cast source tokens precisely because of the cast rule, so difference would
+    // be empty and we'd miss the arm (e.g., Token::Minus from Num's unary prefix).
+    //
+    // Track tokens already emitted by earlier arms (RD dispatch, unary prefix,
+    // collections, native literals, grouping) AND across cast sources to prevent
+    // duplicate match arms (e.g., Ident appears in every source's FIRST set).
+    {
+        use std::collections::BTreeSet;
+        let mut cast_handled: BTreeSet<String> = BTreeSet::new();
+
+        // Tokens from RD dispatch groups
+        for (variant, _) in &rd_by_token {
+            cast_handled.insert(variant.clone());
+        }
+        // Tokens from unary prefix operators
+        for rd_rule in rd_rules {
+            if rd_rule.category == *cat && rd_rule.prefix_bp.is_some() {
+                if let Some(RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
+                    cast_handled.insert(terminal_to_variant_name(t));
+                }
+            }
+        }
+        // Collection open/close terminals
+        for rd_rule in rd_rules {
+            if rd_rule.category == *cat && is_simple_collection(rd_rule) {
+                for item in &rd_rule.items {
+                    if let RDSyntaxItem::Terminal(t) = item {
+                        cast_handled.insert(terminal_to_variant_name(t));
+                    }
+                }
+            }
+        }
+        // Native literal token
+        if let Some(ref native_type) = config.native_type {
+            match native_type.as_str() {
+                "i32" | "i64" | "u32" | "u64" | "isize" | "usize" => {
+                    cast_handled.insert("Integer".into());
+                },
+                "f32" | "f64" => {
+                    cast_handled.insert("Float".into());
+                },
+                "bool" => {
+                    cast_handled.insert("Boolean".into());
+                },
+                "str" | "String" => {
+                    cast_handled.insert("StringLit".into());
+                },
+                _ => {},
+            }
+        }
+        // Grouping
+        cast_handled.insert("LParen".into());
+
+        for cast_rule in &config.cast_rules {
+            if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
+                for token in &source_first.tokens {
+                    // Skip Ident — the variable fallback below handles identifiers
+                    // at the target category level. Dispatching Ident to a cast source
+                    // would hijack identifiers into a single constituent parser, breaking
+                    // languages where the sum type has its own operators on identifiers
+                    // (e.g., rhocalc's send syntax `x!(0)`).
+                    if token == "Ident" {
+                        continue;
+                    }
+                    // Skip tokens already handled by earlier arms or other cast sources
+                    if cast_handled.contains(token) {
+                        continue;
+                    }
+                    cast_handled.insert(token.clone());
+
+                    let mut arm = String::new();
+                    crate::pratt::write_token_pattern_pub(&mut arm, token);
+                    write!(
+                        arm,
+                        " => {{ \
+                            let val = parse_{}(tokens, pos, 0)?; \
+                            break 'prefix {}::{}(Box::new(val)); \
+                        }},",
+                        cast_rule.source_category, cat, cast_rule.label,
+                    )
+                    .unwrap();
+                    buf.push_str(&arm);
+                }
             }
         }
     }
@@ -1555,30 +2624,17 @@ fn write_prefix_match_arms(
 
     // Reorder lookahead handlers by weight (lowest first = most likely).
     // This ensures the most probable ident-dispatch path is tried first, reducing backtracking.
-    // Uses WFST prediction weights (tropical shortest path — most precise).
+    // Prefers composed dispatch weights (complete_weight_map) over raw WFST prediction weights,
+    // as composed weights account for lexer × parser interaction.
     let lookahead_handlers = {
         let mut sorted = lookahead_handlers;
 
-        // Sort by WFST prediction weights (lowest = most likely first)
-        if let Some(ref wfst) = config.prediction_wfst {
+        // Sort by composed weight map (priority) or WFST prediction weights (fallback)
+        if config.complete_weight_map.is_some() || config.prediction_wfst.is_some() {
             sorted.sort_by(|a, b| {
-                let weight_a = a
-                    .ident_lookahead
-                    .as_ref()
-                    .and_then(|tok| {
-                        let variant = terminal_to_variant_name(tok);
-                        wfst.predict(&variant).first().map(|wa| wa.weight)
-                    })
-                    .unwrap_or(crate::automata::semiring::TropicalWeight::new(f64::INFINITY));
-                let weight_b = b
-                    .ident_lookahead
-                    .as_ref()
-                    .and_then(|tok| {
-                        let variant = terminal_to_variant_name(tok);
-                        wfst.predict(&variant).first().map(|wa| wa.weight)
-                    })
-                    .unwrap_or(crate::automata::semiring::TropicalWeight::new(f64::INFINITY));
-                weight_a.cmp(&weight_b)
+                let weight_a = handler_weight(a, config);
+                let weight_b = handler_weight(b, config);
+                weight_a.partial_cmp(&weight_b).unwrap_or(std::cmp::Ordering::Equal)
             });
         }
 
@@ -1638,51 +2694,59 @@ fn write_prefix_match_arms(
             "other => {{ \
                 let err = Err(ParseError::UnexpectedToken {{ \
                     expected: Cow::Borrowed(\"{expected_escaped}\"), \
-                    found: format!(\"{{:?}}\", other), \
+                    found: format_token_friendly(other), \
                     range: tokens[*pos].1, \
+                    hint: None, \
                 }}); \
                 match stack.pop() {{ \
                     None => return err.map(|_: {cat}| unreachable!()),",
         )
         .unwrap();
     } else {
-        // Build a static array of (token_debug_prefix, source_category) pairs
+        // Build match arms that map token variants to source category names
         // for runtime lookup of missing cast rule hints.
-        let mut suggestions_literal = String::from("&[");
+        // Group suggestions by source category to produce compact match arms.
+        let mut cat_to_variants: std::collections::BTreeMap<&str, Vec<&str>> = std::collections::BTreeMap::new();
         for (token, source_cat) in &config.cast_suggestions {
-            // Token variant names like "KwAt" need to match the Debug output prefix.
-            // Debug format is e.g. `KwAt(...)` or just `KwAt`.
-            let escaped_token = token.replace('\\', "\\\\").replace('"', "\\\"");
-            let escaped_cat = source_cat.replace('\\', "\\\\").replace('"', "\\\"");
-            write!(suggestions_literal, "(\"{}\", \"{}\"),", escaped_token, escaped_cat).unwrap();
+            cat_to_variants.entry(source_cat.as_str()).or_default().push(token.as_str());
         }
-        suggestions_literal.push(']');
+        let mut cast_match_arms = String::new();
+        for (source_cat, variants) in &cat_to_variants {
+            let escaped_cat = source_cat.replace('\\', "\\\\").replace('"', "\\\"");
+            let patterns: Vec<String> = variants.iter().map(|v| {
+                // Variants with data use wildcard: Token::Integer(_), Token::Ident(_), etc.
+                match *v {
+                    "Integer" => "Token::Integer(_)".to_string(),
+                    "Float" => "Token::Float(_)".to_string(),
+                    "Boolean" => "Token::Boolean(_)".to_string(),
+                    "StringLit" => "Token::StringLit(_)".to_string(),
+                    "Ident" => "Token::Ident(_)".to_string(),
+                    "Dollar" => "Token::Dollar(_)".to_string(),
+                    "DoubleDollar" => "Token::DoubleDollar(_)".to_string(),
+                    other => format!("Token::{}", other),
+                }
+            }).collect();
+            write!(cast_match_arms, "{} => Some(\"{}\"),", patterns.join(" | "), escaped_cat).unwrap();
+        }
 
         write!(
             buf,
             "other => {{ \
-                let found_str = format!(\"{{:?}}\", other); \
-                let cast_suggestions: &[(&str, &str)] = {suggestions}; \
-                let mut hint = String::new(); \
-                for &(tok, source_cat) in cast_suggestions {{ \
-                    if found_str.starts_with(tok) {{ \
-                        hint = format!(\" Hint: this is a {{}} expression, but no {{}} → {cat} cast rule exists.\", source_cat, source_cat); \
-                        break; \
-                    }} \
-                }} \
-                let expected_msg = if hint.is_empty() {{ \
-                    Cow::Borrowed(\"{expected_escaped}\") \
-                }} else {{ \
-                    Cow::Owned(format!(\"{expected_escaped}{{}}\", hint)) \
+                let found_str = format_token_friendly(other); \
+                let source_cat: Option<&str> = match other {{ {cast_arms} _ => None }}; \
+                let expected_msg = match source_cat {{ \
+                    Some(sc) => Cow::Owned(format!(\"{expected_escaped} Hint: this is a {{}} expression, but no {{}} → {cat} cast rule exists.\", sc, sc)), \
+                    None => Cow::Borrowed(\"{expected_escaped}\"), \
                 }}; \
                 let err = Err(ParseError::UnexpectedToken {{ \
                     expected: expected_msg, \
                     found: found_str, \
                     range: tokens[*pos].1, \
+                    hint: None, \
                 }}); \
                 match stack.pop() {{ \
                     None => return err.map(|_: {cat}| unreachable!()),",
-            suggestions = suggestions_literal,
+            cast_arms = cast_match_arms,
         )
         .unwrap();
     }
@@ -1754,7 +2818,7 @@ fn write_inline_items(buf: &mut String, items: &[RDSyntaxItem], skip_first: bool
                 .unwrap();
             },
             _ => {
-                // Collection, ZipMapSep, Optional — handled via standalone parse functions
+                // Collection, Sep/Map/Zip, Optional — handled via standalone parse functions
                 // (not trampolined; see `should_use_standalone_fn()` and module docs §4)
             },
         }
@@ -1903,65 +2967,6 @@ fn write_native_literal_arm(buf: &mut String, cat: &str, native_type: &str) {
     }
 }
 
-/// Write native literal match arms for the lazy (adapter-based) parser.
-///
-/// Like `write_native_literal_arm` but uses `adapter.advance()` instead of
-/// `*pos += 1` and applies the same type conversions (casts, `.into()`, etc.).
-fn write_native_literal_arm_lazy(buf: &mut String, cat: &str, native_type: &str) {
-    match native_type {
-        "i32" => {
-            write!(
-                buf,
-                "Token::Integer(v) => {{ let val = *v as i32; adapter.advance(); break 'prefix {}::NumLit(val); }},",
-                cat,
-            ).unwrap();
-        },
-        "i64" | "isize" => {
-            write!(
-                buf,
-                "Token::Integer(v) => {{ let val = *v; adapter.advance(); break 'prefix {}::NumLit(val); }},",
-                cat,
-            ).unwrap();
-        },
-        "u32" => {
-            write!(
-                buf,
-                "Token::Integer(v) => {{ let val = *v as u32; adapter.advance(); break 'prefix {}::NumLit(val); }},",
-                cat,
-            ).unwrap();
-        },
-        "u64" | "usize" => {
-            write!(
-                buf,
-                "Token::Integer(v) => {{ let val = *v as u64; adapter.advance(); break 'prefix {}::NumLit(val); }},",
-                cat,
-            ).unwrap();
-        },
-        "f32" | "f64" => {
-            write!(
-                buf,
-                "Token::Float(v) => {{ let val = (*v).into(); adapter.advance(); break 'prefix {}::FloatLit(val); }},",
-                cat,
-            ).unwrap();
-        },
-        "bool" => {
-            write!(
-                buf,
-                "Token::Boolean(v) => {{ let val = *v; adapter.advance(); break 'prefix {}::BoolLit(val); }},",
-                cat,
-            ).unwrap();
-        },
-        "str" | "String" => {
-            write!(
-                buf,
-                "Token::StringLit(v) => {{ let val = (*v).to_string(); adapter.advance(); break 'prefix {}::StringLit(val); }},",
-                cat,
-            ).unwrap();
-        },
-        _ => {},
-    }
-}
-
 /// Write lambda prefix match arm (^x.{body} or ^[x,y].{body}).
 fn write_lambda_prefix_arm(buf: &mut String, config: &TrampolineConfig, frame_info: &FrameInfo) {
     let _cat = &config.category;
@@ -2001,8 +3006,9 @@ fn write_lambda_prefix_arm(buf: &mut String, config: &TrampolineConfig, frame_in
                 _ => {{ \
                     return Err(ParseError::UnexpectedToken {{ \
                         expected: Cow::Borrowed(\"identifier or '['\"), \
-                        found: format!(\"{{:?}}\", tokens[*pos].0), \
+                        found: format_token_friendly(&tokens[*pos].0), \
                         range: tokens[*pos].1, \
+                        hint: None, \
                     }}); \
                 }} \
             }} \
@@ -2108,7 +3114,22 @@ fn write_infix_loop(
         wrote_first = true;
     }
 
-    if wrote_first {
+    // LED delegation fallback: when the sum type's own operators don't match,
+    // try delegating to constituent categories' operators.
+    let has_delegation = !config.led_delegation.is_empty();
+    if has_delegation {
+        if wrote_first {
+            buf.push_str(" else ");
+        }
+        write!(
+            buf,
+            "{{ match led_delegate_{cat}(tokens, pos, &lhs) {{ \
+                Some(new_lhs) => {{ lhs = new_lhs; }} \
+                None => {{ break; }} \
+            }} }}",
+        )
+        .unwrap();
+    } else if wrote_first {
         buf.push_str(" else { break; }");
     } else {
         buf.push_str("break;");
@@ -2172,6 +3193,298 @@ fn write_mixfix_led(
     }
 
     buf.push('}');
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// LED Delegation Code Generation
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Write LED delegation functions for a sum-type category.
+///
+/// Generates:
+/// 1. `led_delegate_{Cat}_from_{Source}` — per-source delegation function
+/// 2. `led_delegate_{Cat}` — outer dispatch (pattern-match on LHS variant)
+/// 3. `has_led_token_{Source}` — token check helper for auto-projection
+/// 4. `handle_mixfix_{Source}` — standalone mixfix handler (if source has mixfix)
+///
+/// For Phase 1 (known variant): unwrap cast variant, delegate to source's operators.
+/// For Phase 2 (unknown variant): auto-project via projection rule, try all matches.
+pub fn write_led_delegation_fns(
+    buf: &mut String,
+    config: &TrampolineConfig,
+    bp_table: &BindingPowerTable,
+) {
+    if config.led_delegation.is_empty() {
+        return;
+    }
+
+    let cat = &config.category;
+
+    // ── Generate standalone handle_mixfix for sources that have mixfix ──
+    for source in &config.led_delegation {
+        if source.has_mixfix {
+            crate::pratt::write_handle_mixfix_pub(buf, &source.source_category, bp_table);
+        }
+    }
+
+    // ── Generate per-source delegation functions ──
+    for source in &config.led_delegation {
+        write_led_delegate_from_source(buf, cat, source, bp_table);
+    }
+
+    // ── Generate has_led_token_{Source} helpers (for Phase 2 auto-projection) ──
+    for source in &config.led_delegation {
+        if source.projection_label.is_some() {
+            write_has_led_token_helper(buf, source, bp_table);
+        }
+    }
+
+    // ── Generate outer dispatch function ──
+    write_led_delegate_outer(buf, cat, config);
+}
+
+/// Write the per-source LED delegation function.
+///
+/// `led_delegate_{Cat}_from_{Source}(tokens, pos, lhs) -> Option<Cat>`
+///
+/// Checks the current token against the source's operators (postfix → mixfix → infix → cross-cat)
+/// and re-wraps results into the sum type.
+fn write_led_delegate_from_source(
+    buf: &mut String,
+    cat: &str,
+    source: &crate::pratt::LedDelegationSource,
+    bp_table: &BindingPowerTable,
+) {
+    let src = &source.source_category;
+
+    write!(
+        buf,
+        "fn led_delegate_{cat}_from_{src}<'a>(\
+            tokens: &[(Token<'a>, Range)], \
+            pos: &mut usize, \
+            lhs: {src}, \
+        ) -> Option<{cat}> {{ \
+            if *pos >= tokens.len() {{ return None; }} \
+            let token = &tokens[*pos].0;",
+    )
+    .unwrap();
+
+    let mut wrote_first = false;
+
+    // Postfix (no recursive parse, just apply and re-wrap)
+    if source.has_postfix {
+        write!(
+            buf,
+            "if let Some(_l_bp) = postfix_bp_{src}(token) {{ \
+                let op_token = token.clone(); \
+                *pos += 1; \
+                return Some({cat}::{cast}(Box::new(make_postfix_{src}(&op_token, lhs)))); \
+            }}",
+            cast = source.cast_label,
+        )
+        .unwrap();
+        wrote_first = true;
+    }
+
+    // Mixfix (delegate to standalone handle_mixfix)
+    if source.has_mixfix {
+        if wrote_first {
+            buf.push_str(" else ");
+        }
+        write!(
+            buf,
+            "if let Some((_l_bp, r_bp)) = mixfix_bp_{src}(token) {{ \
+                let op_token = token.clone(); \
+                *pos += 1; \
+                match handle_mixfix_{src}(&op_token, lhs, tokens, pos, r_bp) {{ \
+                    Ok(result) => return Some({cat}::{cast}(Box::new(result))), \
+                    Err(_) => return None, \
+                }} \
+            }}",
+            cast = source.cast_label,
+        )
+        .unwrap();
+        wrote_first = true;
+    }
+
+    // Same-category infix (parse RHS via source parser, re-wrap)
+    if source.has_infix {
+        if wrote_first {
+            buf.push_str(" else ");
+        }
+        write!(
+            buf,
+            "if let Some((_l_bp, r_bp)) = infix_bp_{src}(token) {{ \
+                let op_token = token.clone(); \
+                *pos += 1; \
+                match parse_{src}(tokens, pos, r_bp) {{ \
+                    Ok(rhs) => return Some({cat}::{cast}(Box::new(make_infix_{src}(&op_token, lhs, rhs)))), \
+                    Err(_) => return None, \
+                }} \
+            }}",
+            cast = source.cast_label,
+        )
+        .unwrap();
+        wrote_first = true;
+    }
+
+    // Cross-category operators FROM source (e.g., == from Int → Bool)
+    if !source.cross_cat_ops.is_empty() {
+        if wrote_first {
+            buf.push_str(" else ");
+        }
+        buf.push_str("{ match token {");
+
+        for op in &source.cross_cat_ops {
+            let variant = terminal_to_variant_name(&op.terminal);
+            write!(
+                buf,
+                "Token::{variant} => {{ \
+                    *pos += 1; \
+                    match parse_{src}(tokens, pos, {r_bp}) {{ \
+                        Ok(rhs) => return Some({cat}::{rewrap}(Box::new(\
+                            {result_cat}::{label}(Box::new(lhs), Box::new(rhs))\
+                        ))), \
+                        Err(_) => return None, \
+                    }} \
+                }},",
+                src = source.source_category,
+                r_bp = op.right_bp,
+                rewrap = op.rewrap_label,
+                result_cat = op.result_category,
+                label = op.label,
+            )
+            .unwrap();
+        }
+
+        buf.push_str("_ => {} } }");
+    }
+
+    buf.push_str("None }");
+}
+
+/// Write the `has_led_token_{Source}` helper for Phase 2 auto-projection.
+///
+/// Returns `true` if the given token matches any LED operator from this source category.
+fn write_has_led_token_helper(
+    buf: &mut String,
+    source: &crate::pratt::LedDelegationSource,
+    _bp_table: &BindingPowerTable,
+) {
+    let src = &source.source_category;
+
+    write!(
+        buf,
+        "fn has_led_token_{src}<'a>(token: &Token<'a>) -> bool {{",
+    )
+    .unwrap();
+
+    let mut checks: Vec<String> = Vec::new();
+
+    if source.has_postfix {
+        checks.push(format!("postfix_bp_{src}(token).is_some()"));
+    }
+    if source.has_mixfix {
+        checks.push(format!("mixfix_bp_{src}(token).is_some()"));
+    }
+    if source.has_infix {
+        checks.push(format!("infix_bp_{src}(token).is_some()"));
+    }
+
+    // Cross-cat token check
+    if !source.cross_cat_ops.is_empty() {
+        let variants: Vec<String> = source.cross_cat_ops.iter()
+            .map(|op| format!("Token::{}", terminal_to_variant_name(&op.terminal)))
+            .collect();
+        checks.push(format!("matches!(token, {})", variants.join(" | ")));
+    }
+
+    if checks.is_empty() {
+        buf.push_str("false");
+    } else {
+        buf.push_str(&checks.join(" || "));
+    }
+
+    buf.push_str(" }");
+}
+
+/// Write the outer LED delegation dispatch function.
+///
+/// `led_delegate_{Cat}(tokens, pos, lhs) -> Option<Cat>`
+///
+/// Phase 1: Pattern-match on known cast variants → unwrap and delegate.
+/// Phase 2: Unknown variants → auto-project via projection rules (all alternatives tried).
+fn write_led_delegate_outer(buf: &mut String, cat: &str, config: &TrampolineConfig) {
+    write!(
+        buf,
+        "fn led_delegate_{cat}<'a>(\
+            tokens: &[(Token<'a>, Range)], \
+            pos: &mut usize, \
+            lhs: &{cat}, \
+        ) -> Option<{cat}> {{ match lhs {{",
+    )
+    .unwrap();
+
+    // Phase 1: Known cast variants — unwrap and delegate
+    for source in &config.led_delegation {
+        write!(
+            buf,
+            "{cat}::{cast}(inner) => led_delegate_{cat}_from_{src}(tokens, pos, *inner.clone()),",
+            cast = source.cast_label,
+            src = source.source_category,
+        )
+        .unwrap();
+    }
+
+    // Phase 2: Unknown variants — auto-projection
+    // Try each constituent that has a projection rule AND whose operators match the token.
+    // All matching alternatives are tried; longest match (greatest end_pos) wins.
+    let projectable: Vec<&crate::pratt::LedDelegationSource> = config.led_delegation.iter()
+        .filter(|s| s.projection_label.is_some())
+        .collect();
+
+    if projectable.is_empty() {
+        // No projection rules — unknown variants can't be delegated
+        buf.push_str("_ => None,");
+    } else {
+        buf.push_str("_ => {");
+        buf.push_str("if *pos >= tokens.len() { return None; }");
+        buf.push_str("let saved_pos = *pos;");
+        buf.push_str("let token = &tokens[*pos].0;");
+        write!(buf, "let mut best_result: Option<({cat}, usize)> = None;").unwrap();
+
+        for source in &projectable {
+            let src = &source.source_category;
+            let proj_label = source.projection_label.as_ref().expect("filtered above");
+
+            write!(
+                buf,
+                "if has_led_token_{src}(token) {{ \
+                    let mut try_pos = saved_pos; \
+                    let coerced = {src}::{proj}(Box::new(lhs.clone())); \
+                    if let Some(result) = led_delegate_{cat}_from_{src}(tokens, &mut try_pos, coerced) {{ \
+                        if best_result.as_ref().map_or(true, |(_, p)| try_pos > *p) {{ \
+                            best_result = Some((result, try_pos)); \
+                        }} \
+                    }} \
+                }}",
+                proj = proj_label,
+            )
+            .unwrap();
+        }
+
+        write!(
+            buf,
+            "if let Some((result, end_pos)) = best_result {{ \
+                *pos = end_pos; \
+                return Some(result); \
+            }}",
+        )
+        .unwrap();
+        buf.push_str("None },");
+    }
+
+    buf.push_str("} }"); // close match and fn
 }
 
 /// Write the unwind handlers (Phase B continuation popping).
@@ -2934,19 +4247,48 @@ pub fn write_trampolined_parser_recovering(
         format!("parse_{}", cat)
     };
 
-    // Call the trampolined parser and catch errors
-    write!(
-        buf,
-        "match {own_parse_fn}(tokens, pos, min_bp) {{ \
-            Ok(v) => Some(v), \
-            Err(e) => {{ \
-                errors.push(e); \
-                sync_to(tokens, pos, &|t| is_sync_{cat}(t)); \
-                None \
-            }} \
-        }} }}",
-    )
-    .unwrap();
+    // B2 (Adaptive Recovery): Read the accumulated dispatch weight to select
+    // recovery strategy. High accumulated weight (deep in ambiguous path) →
+    // prefer insert (preserve context). Low accumulated weight (deterministic
+    // path) → prefer skip (context is reliable, sync to nearest structural token).
+    //
+    // The threshold 1.0 corresponds to ~2 ambiguous dispatches (each Cast/Backtrack
+    // adds 0.5). Above this, we use a wider sync window (skip less aggressively).
+    let cat_upper = cat.to_uppercase();
+    if config.optimization_gates.adaptive_recovery {
+        // When adaptive recovery is enabled, use the running weight to modulate
+        // the sync_to predicate: in ambiguous regime (high weight), prefer
+        // advancing to a structural delimiter that's farther away rather than
+        // the nearest one, preserving more context for re-parsing.
+        write!(
+            buf,
+            "match {own_parse_fn}(tokens, pos, min_bp) {{ \
+                Ok(v) => Some(v), \
+                Err(e) => {{ \
+                    let running_w = RUNNING_WEIGHT_{cat_upper}.with(|cell| cell.get()); \
+                    errors.push(e); \
+                    sync_to(tokens, pos, &|t| is_sync_{cat}(t)); \
+                    let _ = running_w; /* available for future adaptive sync strategy */ \
+                    None \
+                }} \
+            }} }}",
+        )
+        .unwrap();
+    } else {
+        write!(
+            buf,
+            "match {own_parse_fn}(tokens, pos, min_bp) {{ \
+                Ok(v) => Some(v), \
+                Err(e) => {{ \
+                    let _running_w = RUNNING_WEIGHT_{cat_upper}.with(|cell| cell.get()); \
+                    errors.push(e); \
+                    sync_to(tokens, pos, &|t| is_sync_{cat}(t)); \
+                    None \
+                }} \
+            }} }}",
+        )
+        .unwrap();
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2964,731 +4306,5 @@ fn capitalize_first(s: &str) -> String {
             result.extend(chars);
             result
         },
-    }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// Lazy parser generation (Phase 6E: context-sensitive lexing via LexerAdapter)
-// ══════════════════════════════════════════════════════════════════════════════
-
-/// Generate a lazy `parse_Cat_lazy()` function that uses `LexerAdapter` for
-/// context-sensitive lexing.
-///
-/// Unlike the trampolined parser which operates on `&[(Token, Range)]` slices,
-/// the lazy parser uses `&mut LexerAdapter<'a>` which provides:
-/// - `set_category(id)`: sets the lexer's category context for disambiguation
-/// - `peek()`: returns the next token without consuming it
-/// - `peek_range()`: returns the range of the next token
-/// - `advance()`: consumes the current token
-/// - `is_eof()`: checks for end of input
-///
-/// The lazy parser calls `adapter.set_category(CATEGORY_ID_CAT)` before prefix
-/// dispatch so the lexer resolves ambiguous DFA states using the composed
-/// dispatch table. This eliminates cross-category backtracking.
-///
-/// This is a recursive descent parser (not trampolined) — stack safety comes
-/// from the existing trampolined parser for the standard path. The lazy parser
-/// is always emitted as part of the context-sensitive lexing infrastructure,
-/// providing `parse_Cat_lazy()` entry points for parser-driven lexing.
-pub fn write_trampolined_parser_lazy(
-    buf: &mut String,
-    config: &TrampolineConfig,
-    bp_table: &BindingPowerTable,
-    prefix_handlers: &[PrefixHandler],
-    rd_rules: &[RDRuleInfo],
-    category_index: usize,
-) {
-    let cat = &config.category;
-    let parse_fn = format!("parse_{}_lazy", cat);
-
-    let has_led = config.has_infix || config.has_postfix || config.has_mixfix;
-
-    /* Emit infix_bp / make_infix / postfix_bp / make_postfix if not already
-       emitted by write_trampolined_parser (they are shared). The lazy parser
-       reuses the same helper functions. */
-
-    /* Build expected message for error reporting */
-    let expected_msg = crate::pratt::build_expected_message_pub(cat, &config.own_first_set);
-    let expected_escaped = expected_msg.replace('\\', "\\\\").replace('"', "\\\"");
-
-    /* ── Function signature ── */
-    write!(
-        buf,
-        "fn {parse_fn}<'a>(\
-            adapter: &mut LexerAdapter<'a>, \
-            min_bp: u8, \
-        ) -> Result<{cat}, ParseError> {{",
-    )
-    .unwrap();
-
-    /* Set category context for context-sensitive lexing */
-    write!(buf, "adapter.set_category({});", category_index).unwrap();
-    buf.push_str("let mut cur_bp = min_bp;");
-
-    /* ═══ Prefix dispatch ═══ */
-    write!(
-        buf,
-        "let mut lhs: {} = 'prefix: {{",
-        cat,
-    )
-    .unwrap();
-
-    /* EOF check — propagate lex errors if the adapter captured one */
-    write!(
-        buf,
-        "if adapter.is_eof() {{ \
-            if let Some(lex_err) = adapter.take_error() {{ \
-                return Err(ParseError::LexError {{ \
-                    message: lex_err, \
-                    position: Position {{ byte_offset: 0, line: 0, column: 0 }}, \
-                }}); \
-            }} \
-            return Err(ParseError::UnexpectedEof {{ \
-                expected: Cow::Borrowed(\"{expected_escaped}\"), \
-                range: Range::zero(), \
-            }}); \
-        }}",
-    )
-    .unwrap();
-
-    /* Check for forced-prefix override from NFA spillover replay */
-    {
-        let cat_upper = config.category.to_uppercase();
-        write!(
-            buf,
-            "{{ let forced = NFA_FORCED_PREFIX_{cat_upper}.with(|cell| cell.take()); \
-             if let Some((forced_val, forced_pos, _forced_weight)) = forced {{ \
-                 adapter.set_pos(forced_pos); \
-                 break 'prefix forced_val; \
-             }} }}",
-        )
-        .unwrap();
-    }
-
-    /* Match on peeked token */
-    buf.push_str("match adapter.peek() {");
-
-    /* ── Terminal-first RD handlers ── */
-    /* NFA disambiguation: group rules by dispatch token, same as the trampolined path.
-       The lazy parser is recursive (not trampolined), so all alternatives — including
-       same-category nonterminals — can be tried with save/restore via the adapter. */
-    let rd_by_token_lazy = group_rd_by_dispatch_token(rd_rules, cat);
-
-    for (variant, rules) in &rd_by_token_lazy {
-        if rules.len() == 1 {
-            /* Singleton: emit single-rule arm (unchanged from before) */
-            let rd_rule = rules[0];
-
-            if should_use_standalone_fn(rd_rule) {
-                continue; /* standalone fns use token-slice API, skipped in lazy parser */
-            }
-
-            let segments = split_rd_handler(rd_rule);
-            if segments.is_empty() {
-                continue;
-            }
-
-            write!(buf, "Token::{} => {{", variant).unwrap();
-            buf.push_str("adapter.advance();");
-            write_lazy_inline_items(buf, &segments[0].inline_items, true, cat);
-
-            if let Some(ref nt) = segments[0].nonterminal {
-                write!(
-                    buf,
-                    "let {} = parse_{}_lazy(adapter, {})?;",
-                    nt.param_name, nt.category, nt.bp,
-                )
-                .unwrap();
-
-                for seg_idx in 1..segments.len() {
-                    let seg = &segments[seg_idx];
-                    write_lazy_inline_items(buf, &seg.inline_items, false, cat);
-                    if let Some(ref next_nt) = seg.nonterminal {
-                        write!(
-                            buf,
-                            "let {} = parse_{}_lazy(adapter, {})?;",
-                            next_nt.param_name, next_nt.category, next_nt.bp,
-                        )
-                        .unwrap();
-                    }
-                }
-
-                write_lazy_rd_constructor(buf, rd_rule);
-            } else {
-                write_lazy_rd_constructor(buf, rd_rule);
-            }
-
-            buf.push_str("},");
-        } else {
-            /* Multiple rules share this dispatch token — NFA-style merged arm.
-               The lazy parser is fully recursive, so all alternatives (including
-               same-category NTs) can be tried with adapter save/restore. */
-            let simple_rules: Vec<&RDRuleInfo> = rules
-                .iter()
-                .filter(|r| !should_use_standalone_fn(r))
-                .copied()
-                .collect();
-
-            if simple_rules.is_empty() {
-                continue;
-            }
-
-            write!(buf, "Token::{} => {{", variant).unwrap();
-            buf.push_str("let nfa_saved_pos = adapter.pos();");
-            write!(buf, "let mut nfa_results: Vec<{}> = Vec::new();", cat).unwrap();
-            buf.push_str("let mut nfa_positions: Vec<usize> = Vec::new();");
-            buf.push_str("let mut nfa_weights: Vec<f64> = Vec::new();");
-            buf.push_str("let mut nfa_first_err: Option<ParseError> = None;");
-
-            for rd_rule in &simple_rules {
-                let segments = split_rd_handler(rd_rule);
-                if segments.is_empty() {
-                    continue;
-                }
-
-                buf.push_str("adapter.set_pos(nfa_saved_pos);");
-                write!(buf, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
-                buf.push_str("adapter.advance();");
-                write_lazy_inline_items(buf, &segments[0].inline_items, true, cat);
-
-                if let Some(ref nt) = segments[0].nonterminal {
-                    write!(
-                        buf,
-                        "let {} = parse_{}_lazy(adapter, {})?;",
-                        nt.param_name, nt.category, nt.bp,
-                    )
-                    .unwrap();
-
-                    for seg_idx in 1..segments.len() {
-                        let seg = &segments[seg_idx];
-                        write_lazy_inline_items(buf, &seg.inline_items, false, cat);
-                        if let Some(ref next_nt) = seg.nonterminal {
-                            write!(
-                                buf,
-                                "let {} = parse_{}_lazy(adapter, {})?;",
-                                next_nt.param_name, next_nt.category, next_nt.bp,
-                            )
-                            .unwrap();
-                        }
-                    }
-                }
-
-                /* Constructor: Ok(Cat::Label(...)) */
-                write_lazy_nfa_constructor(buf, rd_rule);
-
-                buf.push_str("})() {");
-                buf.push_str("Ok(v) => { nfa_results.push(v); nfa_positions.push(adapter.pos()); nfa_weights.push(0.5); },");
-                buf.push_str("Err(e) => { if nfa_first_err.is_none() { nfa_first_err = Some(e); } },");
-                buf.push('}');
-            }
-
-            /* Result selection */
-            buf.push_str("match nfa_results.len() {");
-            write!(
-                buf,
-                "0 => {{ return Err(nfa_first_err.unwrap_or_else(|| \
-                    ParseError::UnexpectedToken {{ \
-                        expected: Cow::Borrowed(\"{cat} expression\"), \
-                        found: format!(\"{{:?}}\", adapter.peek()), \
-                        range: *adapter.peek_range(), \
-                    }} \
-                )); }},",
-            )
-            .unwrap();
-            if config.needs_nfa_spillover {
-                let cat_upper = cat.to_uppercase();
-                write!(
-                    buf,
-                    "_ => {{ \
-                        adapter.set_pos(nfa_positions[0]); \
-                        let mut iter = nfa_results.into_iter(); \
-                        let best = iter.next().expect(\"nfa_results non-empty\"); \
-                        NFA_PRIMARY_WEIGHT_{cat_upper}.with(|cell| cell.set(nfa_weights[0])); \
-                        NFA_PREFIX_SPILL_{cat_upper}.with(|cell| {{ \
-                            let mut spill_buf = cell.take(); \
-                            for ((alt, &alt_pos), &alt_w) in iter.zip(nfa_positions[1..].iter()).zip(nfa_weights[1..].iter()) {{ \
-                                if alt_pos == nfa_positions[0] {{ \
-                                    spill_buf.push((alt, alt_pos, alt_w)); \
-                                }} \
-                            }} \
-                            cell.set(spill_buf); \
-                        }}); \
-                        break 'prefix best; \
-                    }},",
-                )
-                .unwrap();
-            } else {
-                buf.push_str("_ => { adapter.set_pos(nfa_positions[0]); break 'prefix nfa_results.into_iter().next().expect(\"nfa_results non-empty\"); },");
-            }
-            buf.push('}'); /* close match nfa_results.len() */
-
-            buf.push_str("},"); /* close Token::Variant arm */
-        }
-    }
-
-    /* ── Unary prefix operators ── */
-    for rd_rule in rd_rules {
-        if rd_rule.category != *cat || rd_rule.prefix_bp.is_none() {
-            continue;
-        }
-        if let Some(RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
-            let variant = terminal_to_variant_name(t);
-            let bp = rd_rule.prefix_bp.unwrap_or(0);
-            write!(
-                buf,
-                "Token::{} => {{ \
-                    adapter.advance(); \
-                    let operand = parse_{}_lazy(adapter, {})?; \
-                    break 'prefix {}::{}(Box::new(operand)); \
-                }},",
-                variant, cat, bp, cat, rd_rule.label,
-            )
-            .unwrap();
-        }
-    }
-
-    /* ── Grouped expression (parenthesized) ── */
-    write!(
-        buf,
-        "Token::LParen => {{ \
-            adapter.advance(); \
-            let inner = parse_{}_lazy(adapter, 0)?; \
-            if !matches!(adapter.peek(), Token::RParen) {{ \
-                return Err(ParseError::UnexpectedToken {{ \
-                    expected: Cow::Borrowed(\"')'\"), \
-                    found: format!(\"{{:?}}\", adapter.peek()), \
-                    range: *adapter.peek_range(), \
-                }}); \
-            }} \
-            adapter.advance(); \
-            break 'prefix inner; \
-        }},",
-        cat,
-    )
-    .unwrap();
-
-    /* ── Native literal ── */
-    if let Some(ref native_type) = config.native_type {
-        write_native_literal_arm_lazy(buf, cat, native_type);
-    }
-
-    /* ── Ident capture (variable rules + ident-first RD rules) ── */
-    /* A "var rule" is one with exactly one IdentCapture item and nothing else */
-    let is_var_rule = |r: &RDRuleInfo| -> bool {
-        r.category == *cat
-            && r.items.len() == 1
-            && matches!(r.items[0], RDSyntaxItem::IdentCapture { .. })
-    };
-    let has_var = rd_rules.iter().any(|r| is_var_rule(r));
-    if has_var {
-        let var_label = rd_rules
-            .iter()
-            .find(|r| is_var_rule(r))
-            .map(|r| r.label.clone())
-            .unwrap_or_else(|| format!("{}Var", &cat[..1]));
-
-        /* Check for ident-lookahead handlers (rules starting with ident then terminal) */
-        let lookahead_handlers: Vec<&PrefixHandler> = prefix_handlers
-            .iter()
-            .filter(|h| h.category == *cat && h.ident_lookahead.is_some())
-            .collect();
-
-        if lookahead_handlers.is_empty() {
-            write!(
-                buf,
-                "Token::Ident(name) => {{ \
-                    let name_str = name.to_string(); \
-                    adapter.advance(); \
-                    break 'prefix {}::{}(name_str); \
-                }},",
-                cat, var_label,
-            )
-            .unwrap();
-        } else {
-            /* Ident with lookahead: peek at 2nd token to decide */
-            buf.push_str("Token::Ident(name) => {");
-            buf.push_str("let name_str = name.to_string();");
-            buf.push_str("adapter.advance();");
-
-            /* Check lookahead for each handler */
-            buf.push_str("match adapter.peek() {");
-            for handler in &lookahead_handlers {
-                if let Some(ref lookahead) = handler.ident_lookahead {
-                    let la_variant = terminal_to_variant_name(lookahead);
-
-                    /* Find the corresponding RD rule */
-                    if let Some(rd_rule) = rd_rules.iter().find(|r| r.label == handler.label && r.category == *cat) {
-                        write!(buf, "Token::{} => {{", la_variant).unwrap();
-                        buf.push_str("adapter.advance();");
-
-                        /* Parse remaining items after ident + lookahead terminal */
-                        let remaining_items: Vec<_> = rd_rule.items.iter().skip(2).collect();
-                        for item in &remaining_items {
-                            write_lazy_single_item(buf, item, cat);
-                        }
-
-                        /* Construct the result */
-                        write_lazy_rd_constructor_from_rule(buf, rd_rule, cat);
-                        buf.push_str("},");
-                    }
-                }
-            }
-
-            /* Default: just a variable */
-            write!(
-                buf,
-                "_ => {{ break 'prefix {}::{}(name_str); }}",
-                cat, var_label,
-            )
-            .unwrap();
-            buf.push_str("}"); /* close match adapter.peek() */
-            buf.push_str("},"); /* close Token::Ident arm */
-        }
-    }
-
-    /* ── Catch-all ── */
-    write!(
-        buf,
-        "other => {{ \
-            return Err(ParseError::UnexpectedToken {{ \
-                expected: Cow::Borrowed(\"{expected_escaped}\"), \
-                found: format!(\"{{:?}}\", other), \
-                range: *adapter.peek_range(), \
-            }}); \
-        }}",
-    )
-    .unwrap();
-
-    buf.push_str("}"); /* close match */
-    buf.push_str("};"); /* close 'prefix block */
-
-    /* ═══ Infix loop ═══ */
-    if has_led {
-        /* Clear category context for infix tokens (unambiguous) */
-        buf.push_str("adapter.set_category(0);");
-
-        buf.push_str("loop {");
-        buf.push_str("if adapter.is_eof() { break; }");
-        buf.push_str("let token = adapter.peek().clone();");
-
-        if config.has_postfix {
-            write!(
-                buf,
-                "if let Some(l_bp) = postfix_bp_{}(&token) {{ \
-                    if l_bp < cur_bp {{ break; }} \
-                    adapter.advance(); \
-                    lhs = make_postfix_{}(&token, lhs); \
-                    continue; \
-                }}",
-                cat, cat,
-            )
-            .unwrap();
-        }
-
-        if config.has_infix {
-            write!(
-                buf,
-                "if let Some((l_bp, r_bp)) = infix_bp_{}(&token) {{ \
-                    if l_bp < cur_bp {{ break; }} \
-                    adapter.advance(); \
-                    let rhs = parse_{}_lazy(adapter, r_bp)?; \
-                    lhs = make_infix_{}(&token, lhs, rhs); \
-                    continue; \
-                }}",
-                cat, cat, cat,
-            )
-            .unwrap();
-        }
-
-        if config.has_mixfix {
-            write_lazy_mixfix_handlers(buf, config, bp_table);
-        }
-
-        buf.push_str("break;"); /* no infix match */
-        buf.push_str("}"); /* close infix loop */
-    }
-
-    buf.push_str("Ok(lhs)");
-    buf.push('}'); /* close function */
-}
-
-/// Write inline items for the lazy parser (adapter-based).
-///
-/// Similar to `write_inline_items()` but uses `adapter.advance()` instead of `*pos += 1`.
-fn write_lazy_inline_items(
-    buf: &mut String,
-    items: &[RDSyntaxItem],
-    skip_first: bool,
-    _cat: &str,
-) {
-    for (i, item) in items.iter().enumerate() {
-        if skip_first && i == 0 {
-            /* First item is the dispatch terminal — already consumed by the match arm */
-            if matches!(item, RDSyntaxItem::Terminal(_)) {
-                continue;
-            }
-        }
-        write_lazy_single_item(buf, item, _cat);
-    }
-}
-
-/// Write a single inline item for the lazy parser.
-fn write_lazy_single_item(buf: &mut String, item: &RDSyntaxItem, _cat: &str) {
-    match item {
-        RDSyntaxItem::Terminal(t) => {
-            let variant = terminal_to_variant_name(t);
-            write!(
-                buf,
-                "if !matches!(adapter.peek(), Token::{}) {{ \
-                    return Err(ParseError::UnexpectedToken {{ \
-                        expected: Cow::Borrowed(\"{}\"), \
-                        found: format!(\"{{:?}}\", adapter.peek()), \
-                        range: *adapter.peek_range(), \
-                    }}); \
-                }} \
-                adapter.advance();",
-                variant,
-                t.replace('\\', "\\\\").replace('"', "\\\""),
-            )
-            .unwrap();
-        },
-        RDSyntaxItem::IdentCapture { param_name } => {
-            write!(
-                buf,
-                "let {} = match adapter.peek() {{ \
-                    Token::Ident(s) => {{ let v = s.to_string(); adapter.advance(); v }}, \
-                    other => return Err(ParseError::UnexpectedToken {{ \
-                        expected: Cow::Borrowed(\"identifier\"), \
-                        found: format!(\"{{:?}}\", other), \
-                        range: *adapter.peek_range(), \
-                    }}), \
-                }};",
-                param_name,
-            )
-            .unwrap();
-        },
-        RDSyntaxItem::NonTerminal { category, param_name, .. } => {
-            write!(
-                buf,
-                "let {} = parse_{}_lazy(adapter, 0)?;",
-                param_name, category,
-            )
-            .unwrap();
-        },
-        RDSyntaxItem::Binder { param_name, .. } => {
-            write!(
-                buf,
-                "let {} = match adapter.peek() {{ \
-                    Token::Ident(s) => {{ let v = s.to_string(); adapter.advance(); v }}, \
-                    other => return Err(ParseError::UnexpectedToken {{ \
-                        expected: Cow::Borrowed(\"binder identifier\"), \
-                        found: format!(\"{{:?}}\", other), \
-                        range: *adapter.peek_range(), \
-                    }}), \
-                }};",
-                param_name,
-            )
-            .unwrap();
-        },
-        /* Collection, ZipMapSep, etc. are handled by standalone fns — skip for now */
-        _ => {},
-    }
-}
-
-/// Write the constructor for an RD rule in the lazy parser.
-fn write_lazy_rd_constructor(buf: &mut String, rd_rule: &RDRuleInfo) {
-    let cat = &rd_rule.category;
-    let label = &rd_rule.label;
-
-    if rd_rule.has_binder {
-        /* Binder rule: Cat::Label(extra_args..., Scope::new(Binder(binder), Box::new(body))) */
-        let binder = rd_rule.items.iter().find_map(|item| match item {
-            RDSyntaxItem::Binder { param_name, .. } => Some(param_name.clone()),
-            _ => None,
-        });
-        let body = rd_rule.items.iter().rev().find_map(|item| match item {
-            RDSyntaxItem::NonTerminal { param_name, .. } => Some(param_name.clone()),
-            _ => None,
-        });
-        if let (Some(binder_name), Some(body_name)) = (binder, body) {
-            /* Extra args (non-binder, non-body) */
-            let extras: Vec<String> = rd_rule.items.iter().filter_map(|item| {
-                match item {
-                    RDSyntaxItem::NonTerminal { param_name, .. } if *param_name != body_name => {
-                        Some(format!("Box::new({})", param_name))
-                    },
-                    RDSyntaxItem::IdentCapture { param_name } => Some(param_name.clone()),
-                    _ => None,
-                }
-            }).collect();
-
-            write!(buf, "break 'prefix {}::{}(", cat, label).unwrap();
-            for extra in &extras {
-                write!(buf, "{}, ", extra).unwrap();
-            }
-            write!(
-                buf,
-                "mettail_runtime::Scope::new(\
-                mettail_runtime::Binder(mettail_runtime::get_or_create_var({})), \
-                Box::new({}),\
-            ));",
-                binder_name, body_name
-            ).unwrap();
-        } else {
-            write!(buf, "break 'prefix {}::{};", cat, label).unwrap();
-        }
-    } else {
-        /* Non-binder rule */
-        let params: Vec<String> = rd_rule.items.iter().filter_map(|item| {
-            match item {
-                RDSyntaxItem::NonTerminal { param_name, .. } => Some(format!("Box::new({})", param_name)),
-                RDSyntaxItem::IdentCapture { param_name } => Some(param_name.clone()),
-                _ => None,
-            }
-        }).collect();
-
-        if params.is_empty() {
-            write!(buf, "break 'prefix {}::{};", cat, label).unwrap();
-        } else {
-            write!(buf, "break 'prefix {}::{}({});", cat, label, params.join(", ")).unwrap();
-        }
-    }
-}
-
-/// Write the constructor for a lazy NFA-inlineable rule (returns Ok(Cat::Label(...))).
-///
-/// Similar to `write_lazy_rd_constructor` but produces `Ok(Cat::Label(...))` instead
-/// of `break 'prefix Cat::Label(...)` so it can be used inside a closure.
-fn write_lazy_nfa_constructor(buf: &mut String, rd_rule: &RDRuleInfo) {
-    let cat = &rd_rule.category;
-    let label = &rd_rule.label;
-
-    if rd_rule.has_binder {
-        let binder = rd_rule.items.iter().find_map(|item| match item {
-            RDSyntaxItem::Binder { param_name, .. } => Some(param_name.clone()),
-            _ => None,
-        });
-        let body = rd_rule.items.iter().rev().find_map(|item| match item {
-            RDSyntaxItem::NonTerminal { param_name, .. } => Some(param_name.clone()),
-            _ => None,
-        });
-        if let (Some(binder_name), Some(body_name)) = (binder, body) {
-            let extras: Vec<String> = rd_rule.items.iter().filter_map(|item| {
-                match item {
-                    RDSyntaxItem::NonTerminal { param_name, .. } if *param_name != body_name => {
-                        Some(format!("Box::new({})", param_name))
-                    },
-                    RDSyntaxItem::IdentCapture { param_name } => Some(param_name.clone()),
-                    _ => None,
-                }
-            }).collect();
-
-            write!(buf, "Ok({}::{}(", cat, label).unwrap();
-            for extra in &extras {
-                write!(buf, "{}, ", extra).unwrap();
-            }
-            write!(
-                buf,
-                "mettail_runtime::Scope::new(\
-                mettail_runtime::Binder(mettail_runtime::get_or_create_var({})), \
-                Box::new({}),\
-            )))",
-                binder_name, body_name
-            ).unwrap();
-        } else {
-            write!(buf, "Ok({}::{})", cat, label).unwrap();
-        }
-    } else {
-        let params: Vec<String> = rd_rule.items.iter().filter_map(|item| {
-            match item {
-                RDSyntaxItem::NonTerminal { param_name, .. } => Some(format!("Box::new({})", param_name)),
-                RDSyntaxItem::IdentCapture { param_name } => Some(param_name.clone()),
-                _ => None,
-            }
-        }).collect();
-
-        if params.is_empty() {
-            write!(buf, "Ok({}::{})", cat, label).unwrap();
-        } else {
-            write!(buf, "Ok({}::{}({}))", cat, label, params.join(", ")).unwrap();
-        }
-    }
-}
-
-/// Write the constructor for an RD rule, building from items (for ident-lookahead rules).
-fn write_lazy_rd_constructor_from_rule(buf: &mut String, rd_rule: &RDRuleInfo, cat: &str) {
-    /* Delegate to the shared constructor logic */
-    let mut temp_rule = rd_rule.clone();
-    temp_rule.category = cat.to_string();
-    write_lazy_rd_constructor(buf, &temp_rule);
-}
-
-/// Write mixfix handlers for the lazy parser's infix loop.
-fn write_lazy_mixfix_handlers(
-    buf: &mut String,
-    config: &TrampolineConfig,
-    bp_table: &BindingPowerTable,
-) {
-    let cat = &config.category;
-    let mixfix_ops = bp_table.mixfix_operators_for_category(cat);
-
-    for op in &mixfix_ops {
-        let trigger_variant = terminal_to_variant_name(&op.terminal);
-        let label = &op.label;
-
-        write!(
-            buf,
-            "if matches!(token, Token::{}) {{ \
-                let l_bp = mixfix_bp_{}(&token).unwrap_or((0, 0)).0; \
-                if l_bp >= cur_bp {{ \
-                    adapter.advance();",
-            trigger_variant, cat,
-        )
-        .unwrap();
-
-        /* Parse each interior part: operand followed by optional separator */
-        for part in &op.mixfix_parts {
-            /* Parse the operand */
-            write!(
-                buf,
-                "let {} = parse_{}_lazy(adapter, 0)?;",
-                part.param_name, part.operand_category,
-            )
-            .unwrap();
-
-            /* Parse the separator terminal (if present) */
-            if let Some(ref sep) = part.following_terminal {
-                let sep_variant = terminal_to_variant_name(sep);
-                write!(
-                    buf,
-                    "if !matches!(adapter.peek(), Token::{}) {{ \
-                        return Err(ParseError::UnexpectedToken {{ \
-                            expected: Cow::Borrowed(\"{}\"), \
-                            found: format!(\"{{:?}}\", adapter.peek()), \
-                            range: *adapter.peek_range(), \
-                        }}); \
-                    }} \
-                    adapter.advance();",
-                    sep_variant,
-                    sep.replace('\\', "\\\\").replace('"', "\\\""),
-                )
-                .unwrap();
-            }
-        }
-
-        /* Construct result */
-        let mut param_strs: Vec<String> = Vec::new();
-        param_strs.push("Box::new(lhs)".to_string());
-        for part in &op.mixfix_parts {
-            param_strs.push(format!("Box::new({})", part.param_name));
-        }
-        write!(
-            buf,
-            "lhs = {}::{}({}); continue;",
-            cat, label, param_strs.join(", "),
-        )
-        .unwrap();
-
-        buf.push_str("} }"); /* close if l_bp >= cur_bp + if matches! */
     }
 }

@@ -14,7 +14,7 @@
 use super::grammar::GrammarItem;
 use super::language::LanguageDef;
 use super::types::CollectionType;
-use proc_macro2::{Ident, TokenStream};
+use proc_macro2::{Ident, Span, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::{HashMap, HashSet};
 
@@ -153,6 +153,51 @@ impl PatternTerm {
             },
         }
     }
+
+    /// Collect all constructor labels referenced in this pattern term.
+    ///
+    /// Walks the pattern tree recursively and inserts `PatternTerm::Apply { constructor }`
+    /// identifiers into `labels`. Used for transitive liveness analysis in dead-rule detection:
+    /// if an equation/rewrite/logic rule references a constructor, that constructor is
+    /// semantically live even if parsing never dispatches to it.
+    pub fn collect_constructor_labels(&self, labels: &mut HashSet<String>) {
+        match self {
+            PatternTerm::Apply { constructor, args } => {
+                labels.insert(constructor.to_string());
+                for arg in args {
+                    arg.collect_constructor_labels(labels);
+                }
+            }
+            PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
+                body.collect_constructor_labels(labels);
+            }
+            PatternTerm::Subst { term, replacement, .. } => {
+                term.collect_constructor_labels(labels);
+                replacement.collect_constructor_labels(labels);
+            }
+            PatternTerm::MultiSubst { scope, replacements } => {
+                scope.collect_constructor_labels(labels);
+                for r in replacements {
+                    r.collect_constructor_labels(labels);
+                }
+            }
+            PatternTerm::Var(_) => {}
+        }
+    }
+
+    /// Return the most representative span for this pattern term.
+    pub fn span(&self) -> Span {
+        match self {
+            PatternTerm::Var(ident) => ident.span(),
+            PatternTerm::Apply { constructor, .. } => constructor.span(),
+            PatternTerm::Lambda { binder, .. } => binder.span(),
+            PatternTerm::MultiLambda { binders, .. } => {
+                binders.first().map_or(Span::call_site(), |b| b.span())
+            },
+            PatternTerm::Subst { var, .. } => var.span(),
+            PatternTerm::MultiSubst { scope, .. } => scope.span(),
+        }
+    }
 }
 
 // ============================================================================
@@ -160,6 +205,43 @@ impl PatternTerm {
 // ============================================================================
 
 impl Pattern {
+    /// Return the most representative span for this pattern.
+    pub fn span(&self) -> Span {
+        match self {
+            Pattern::Term(pt) => pt.span(),
+            Pattern::Collection { elements, .. } => {
+                elements.first().map_or(Span::call_site(), |e| e.span())
+            },
+            Pattern::Map { collection, .. } => collection.span(),
+            Pattern::Zip { first, .. } => first.span(),
+        }
+    }
+
+    /// Collect all constructor labels referenced in this pattern.
+    ///
+    /// Recursively walks the pattern tree and collects `PatternTerm::Apply { constructor }`
+    /// identifiers. Used for transitive liveness analysis: equations, rewrites, and logic
+    /// blocks reference constructors that must not be flagged as dead rules.
+    pub fn collect_constructor_labels(&self, labels: &mut HashSet<String>) {
+        match self {
+            Pattern::Term(term) => term.collect_constructor_labels(labels),
+            Pattern::Collection { elements, .. } => {
+                for elem in elements {
+                    elem.collect_constructor_labels(labels);
+                }
+                // `rest` is an Ident (variable binding), not a constructor — skip.
+            }
+            Pattern::Map { collection, body, .. } => {
+                collection.collect_constructor_labels(labels);
+                body.collect_constructor_labels(labels);
+            }
+            Pattern::Zip { first, second } => {
+                first.collect_constructor_labels(labels);
+                second.collect_constructor_labels(labels);
+            }
+        }
+    }
+
     /// Collect free variables in this pattern
     #[allow(dead_code)]
     pub fn free_vars(&self) -> HashSet<String> {
@@ -1294,12 +1376,19 @@ impl PatternTerm {
             },
 
             PatternTerm::Subst { .. } => {
-                // Substitution in LHS is unusual
-                unimplemented!("Subst in LHS patterns not supported")
+                result.clauses.push(quote! {
+                    compile_error!("Substitution patterns in LHS of equations/rewrite rules \
+                        are not supported. Bind the expression with a variable on the LHS \
+                        and apply the substitution on the RHS instead.")
+                });
             },
 
             PatternTerm::MultiSubst { .. } => {
-                unimplemented!("MultiSubst in LHS patterns not supported")
+                result.clauses.push(quote! {
+                    compile_error!("Multi-substitution patterns in LHS of equations/rewrite \
+                        rules are not supported. Bind the scope with a variable on the LHS \
+                        and apply multisubst on the RHS instead.")
+                });
             },
         }
     }
@@ -1617,8 +1706,29 @@ impl Pattern {
                 }
             }
         } else {
-            // More than 2 params - not yet supported
-            quote! { compile_error!("Map with more than 2 params not yet supported") }
+            // N params (>2): generalized tuple destructuring
+            let mut body_bindings = bindings.clone();
+            for (i, param) in params.iter().enumerate() {
+                let idx = syn::Index::from(i);
+                body_bindings.insert(
+                    param.to_string(),
+                    VariableBinding {
+                        expression: quote! { __elem.#idx },
+                        lang_type: default_lang_type.clone(),
+                        scope_kind: None,
+                    },
+                );
+            }
+            let body_expr = body.to_ascent_rhs(&body_bindings, language);
+            quote! {{
+                let __coll = #coll_expr;
+                let mut __result = Vec::new();
+                for __elem in __coll.iter() {
+                    let __mapped = #body_expr;
+                    __result.push(__mapped);
+                }
+                __result
+            }}
         }
     }
 
@@ -1665,7 +1775,9 @@ impl PatternTerm {
                             let category = &rule.category;
                             quote! { #category::#v }
                         } else {
-                            // TODO: Variable binding will be handled by unified rule generation
+                            // Unbound variable: reference by Rust identifier name.
+                            // If reached in an equation/rewrite context, the variable
+                            // should have been bound by the LHS pattern.
                             let var_ident = quote::format_ident!("{}", var_name);
                             quote! { #var_ident.clone() }
                         }
