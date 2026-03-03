@@ -222,6 +222,42 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Proc List: ...
+	{
+		type: "proc_proc_list",
+		tooltip: "Proc List: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Bag: ...
+	{
+		type: "proc_proc_bag",
+		tooltip: "Proc Bag: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Add: ... ...
 	{
 		type: "proc_add",
@@ -450,6 +486,183 @@ const definitions = [
 		previousStatement: "Proc",
 		nextStatement: "Proc",
 		colour: "208bfe",
+	},
+
+	// Concat List: ... ...
+	{
+		type: "proc_concat_list",
+		tooltip: "Concat List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Len List: ...
+	{
+		type: "int_len_list",
+		tooltip: "Len List: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Elem List: ... ...
+	{
+		type: "proc_elem_list",
+		tooltip: "Elem List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Delete List: ... ...
+	{
+		type: "proc_delete_list",
+		tooltip: "Delete List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Union Bag: ... ...
+	{
+		type: "proc_union_bag",
+		tooltip: "Union Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Remove Bag: ... ...
+	{
+		type: "proc_remove_bag",
+		tooltip: "Remove Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Diff Bag: ... ...
+	{
+		type: "proc_diff_bag",
+		tooltip: "Diff Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Count Bag: ... ...
+	{
+		type: "int_count_bag",
+		tooltip: "Count Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "BODY",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
 	},
 
 	// Not: ...

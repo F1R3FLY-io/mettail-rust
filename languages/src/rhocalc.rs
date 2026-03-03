@@ -16,6 +16,8 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
+        ![Vec<Proc>] as List
+        ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
     },
 
     terms {
@@ -47,6 +49,8 @@ language! {
         CastFloat . k:Float |- k : Proc;
         CastBool . k:Bool |- k : Proc;
         CastStr . s:Str |- s : Proc;
+        ProcList . l:List |- l : Proc;
+        ProcBag . b:Bag |- b : Proc;
 
         // and invoke any methods on them
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
@@ -162,6 +166,66 @@ language! {
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
+            }}
+        ] fold;
+
+        // List operations: take Proc, match ProcList/ListLit in semantic (like arithmetic)
+        ConcatList . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::ProcList(la), Proc::ProcList(lb)) => match (la.as_ref(), lb.as_ref()) {
+                    (List::ListLit(va), List::ListLit(vb)) => { let mut o = va.clone(); o.extend(vb.iter().cloned()); Proc::ProcList(Box::new(List::ListLit(o))) },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        LenList . a:Proc |- "length" "(" a ")" : Int ![
+            { match &a { Proc::ProcList(l) => match l.as_ref() { List::ListLit(v) => v.len() as i64, _ => panic!("length: expected list literal") }, _ => panic!("length: expected ProcList") } }
+        ] fold;
+        ElemList . a:Proc, i:Proc |- "at" "(" a "," i ")" : Proc ![
+            { match (&a, &i) {
+                (Proc::ProcList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) { (List::ListLit(v), Int::NumLit(n)) => v.get(*n as usize).cloned().expect("at: index out of bounds"), _ => Proc::Err },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        DeleteList . a:Proc, i:Proc |- "delete" "(" a "," i ")" : Proc ![
+            { match (&a, &i) {
+                (Proc::ProcList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) {
+                    (List::ListLit(v), Int::NumLit(n)) => { let idx = *n as usize; let mut vec = v.clone(); if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx); Proc::ProcList(Box::new(List::ListLit(vec))) },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        // Bag operations: take Proc, match ProcBag/BagLit in semantic (like arithmetic)
+        UnionBag . a:Proc, b:Proc |- "union" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::ProcBag(ba), Proc::ProcBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
+                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::ProcBag(Box::new(Bag::BagLit(ha.union(hb)))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        RemoveBag . a:Proc, e:Proc |- "remove" "(" a "," e ")" : Proc ![
+            { match &a {
+                Proc::ProcBag(b) => match b.as_ref() { Bag::BagLit(h) => Proc::ProcBag(Box::new(Bag::BagLit(h.remove_one(&e)))), _ => Proc::Err },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        DiffBag . a:Proc, b:Proc |- "diff" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::ProcBag(ba), Proc::ProcBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
+                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::ProcBag(Box::new(Bag::BagLit(ha.diff(hb)))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        CountBag . b:Proc, e:Proc |- "count" "(" b "," e ")" : Int ![
+            { match &b {
+                Proc::ProcBag(bag) => match bag.as_ref() { Bag::BagLit(h) => mettail_runtime::HashBag::count(h, &e) as i64, _ => panic!("count: expected bag literal") }, _ => panic!("count: expected ProcBag")
             }}
         ] fold;
 
