@@ -472,11 +472,13 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
             let _ = content.parse::<Token![as]>()?;
             let name = content.parse::<Ident>()?;
             let name_str = name.to_string();
-            // Optional (Param) for collection: ![Vec<Proc>] as List(Proc) or ![HashBag<Proc>] as Bag(Proc)
-            let collection_kind = if (name_str == "List" || name_str == "Bag") && content.peek(syn::token::Paren) {
-                let _content;
-                syn::parenthesized!(_content in content);
-                let _ = _content.parse::<Ident>()?; // element type param, e.g. Proc
+            // Optional (Param) for collection: ![Vec<Proc>] as List or List(Proc), same for Bag
+            let collection_kind = if name_str == "List" || name_str == "Bag" {
+                if content.peek(syn::token::Paren) {
+                    let _content;
+                    syn::parenthesized!(_content in content);
+                    let _ = _content.parse::<Ident>()?; // consume e.g. (Proc) for backward compat
+                }
                 Some(if name_str == "List" {
                     CollectionCategory::List(CollectionCategory::list_defaults())
                 } else {

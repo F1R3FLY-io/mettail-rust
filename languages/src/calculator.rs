@@ -14,8 +14,8 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
-        ![Vec<Proc>] as List(Proc)
-        ![mettail_runtime::HashBag<Proc>] as Bag(Proc)
+        ![Vec<Proc>] as List
+        ![mettail_runtime::HashBag<Proc>] as Bag
     },
     terms {
         // Injection into Proc (unified variant) so List/Bag elements are Proc
