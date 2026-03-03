@@ -2523,6 +2523,25 @@ rw_proc(lhs.clone(), rhs) <--
     rw_proc((** body).clone(), body_rewritten),
     let rhs = Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
 
+rw_int(lhs.clone(), match (lhs, vi) {
+    (Int::LenList(_), 0usize) => Int::LenList(Box::new(t.clone())),
+    (Int::CountBag(_, x1), 1usize) => Int::CountBag(Box::new(t.clone()), x1.clone()),
+    (Int::CountBag(x0, _), 2usize) => Int::CountBag(x0.clone(), Box::new(t.clone())),
+    _ => unreachable!(),
+}) <--
+    int(lhs),
+    for (field_val, vi) in { std::thread_local! { static POOL_INT_SCONG_PROC : std::cell::Cell < Vec < (Proc, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_INT_SCONG_PROC.with(| p | p.take()); buf.clear(); match lhs {
+        Int::CountBag(x0, x1) => {
+            buf.push(((** x0).clone(), 1usize));
+            buf.push(((** x1).clone(), 2usize));
+        },
+        Int::LenList(x0) => {
+            buf.push(((** x0).clone(), 0usize));
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_INT_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    rw_proc(field_val, t);
+
 rw_proc(lhs.clone(), match (lhs, vi) {
     (Proc::Add(_, x1), 0usize) => Proc::Add(Box::new(t.clone()), x1.clone()),
     (Proc::Add(x0, _), 1usize) => Proc::Add(x0.clone(), Box::new(t.clone())),
@@ -2552,10 +2571,22 @@ rw_proc(lhs.clone(), match (lhs, vi) {
     (Proc::ConcatStr(_, x1), 25usize) => Proc::ConcatStr(Box::new(t.clone()), x1.clone()),
     (Proc::ConcatStr(x0, _), 26usize) => Proc::ConcatStr(x0.clone(), Box::new(t.clone())),
     (Proc::Len(_), 27usize) => Proc::Len(Box::new(t.clone())),
-    (Proc::ToInt(_), 28usize) => Proc::ToInt(Box::new(t.clone())),
-    (Proc::ToFloat(_), 29usize) => Proc::ToFloat(Box::new(t.clone())),
-    (Proc::ToBool(_), 30usize) => Proc::ToBool(Box::new(t.clone())),
-    (Proc::ToStr(_), 31usize) => Proc::ToStr(Box::new(t.clone())),
+    (Proc::ConcatList(_, x1), 28usize) => Proc::ConcatList(Box::new(t.clone()), x1.clone()),
+    (Proc::ConcatList(x0, _), 29usize) => Proc::ConcatList(x0.clone(), Box::new(t.clone())),
+    (Proc::ElemList(_, x1), 30usize) => Proc::ElemList(Box::new(t.clone()), x1.clone()),
+    (Proc::ElemList(x0, _), 31usize) => Proc::ElemList(x0.clone(), Box::new(t.clone())),
+    (Proc::DeleteList(_, x1), 32usize) => Proc::DeleteList(Box::new(t.clone()), x1.clone()),
+    (Proc::DeleteList(x0, _), 33usize) => Proc::DeleteList(x0.clone(), Box::new(t.clone())),
+    (Proc::UnionBag(_, x1), 34usize) => Proc::UnionBag(Box::new(t.clone()), x1.clone()),
+    (Proc::UnionBag(x0, _), 35usize) => Proc::UnionBag(x0.clone(), Box::new(t.clone())),
+    (Proc::RemoveBag(_, x1), 36usize) => Proc::RemoveBag(Box::new(t.clone()), x1.clone()),
+    (Proc::RemoveBag(x0, _), 37usize) => Proc::RemoveBag(x0.clone(), Box::new(t.clone())),
+    (Proc::DiffBag(_, x1), 38usize) => Proc::DiffBag(Box::new(t.clone()), x1.clone()),
+    (Proc::DiffBag(x0, _), 39usize) => Proc::DiffBag(x0.clone(), Box::new(t.clone())),
+    (Proc::ToInt(_), 40usize) => Proc::ToInt(Box::new(t.clone())),
+    (Proc::ToFloat(_), 41usize) => Proc::ToFloat(Box::new(t.clone())),
+    (Proc::ToBool(_), 42usize) => Proc::ToBool(Box::new(t.clone())),
+    (Proc::ToStr(_), 43usize) => Proc::ToStr(Box::new(t.clone())),
     _ => unreachable!(),
 }) <--
     proc(lhs),
@@ -2568,13 +2599,29 @@ rw_proc(lhs.clone(), match (lhs, vi) {
             buf.push(((** x0).clone(), 21usize));
             buf.push(((** x1).clone(), 22usize));
         },
+        Proc::ConcatList(x0, x1) => {
+            buf.push(((** x0).clone(), 28usize));
+            buf.push(((** x1).clone(), 29usize));
+        },
         Proc::ConcatStr(x0, x1) => {
             buf.push(((** x0).clone(), 25usize));
             buf.push(((** x1).clone(), 26usize));
         },
+        Proc::DeleteList(x0, x1) => {
+            buf.push(((** x0).clone(), 32usize));
+            buf.push(((** x1).clone(), 33usize));
+        },
+        Proc::DiffBag(x0, x1) => {
+            buf.push(((** x0).clone(), 38usize));
+            buf.push(((** x1).clone(), 39usize));
+        },
         Proc::Div(x0, x1) => {
             buf.push(((** x0).clone(), 6usize));
             buf.push(((** x1).clone(), 7usize));
+        },
+        Proc::ElemList(x0, x1) => {
+            buf.push(((** x0).clone(), 30usize));
+            buf.push(((** x1).clone(), 31usize));
         },
         Proc::Eq(x0, x1) => {
             buf.push(((** x0).clone(), 8usize));
@@ -2614,21 +2661,29 @@ rw_proc(lhs.clone(), match (lhs, vi) {
             buf.push(((** x0).clone(), 23usize));
             buf.push(((** x1).clone(), 24usize));
         },
+        Proc::RemoveBag(x0, x1) => {
+            buf.push(((** x0).clone(), 36usize));
+            buf.push(((** x1).clone(), 37usize));
+        },
         Proc::Sub(x0, x1) => {
             buf.push(((** x0).clone(), 2usize));
             buf.push(((** x1).clone(), 3usize));
         },
         Proc::ToBool(x0) => {
-            buf.push(((** x0).clone(), 30usize));
+            buf.push(((** x0).clone(), 42usize));
         },
         Proc::ToFloat(x0) => {
-            buf.push(((** x0).clone(), 29usize));
+            buf.push(((** x0).clone(), 41usize));
         },
         Proc::ToInt(x0) => {
-            buf.push(((** x0).clone(), 28usize));
+            buf.push(((** x0).clone(), 40usize));
         },
         Proc::ToStr(x0) => {
-            buf.push(((** x0).clone(), 31usize));
+            buf.push(((** x0).clone(), 43usize));
+        },
+        Proc::UnionBag(x0, x1) => {
+            buf.push(((** x0).clone(), 34usize));
+            buf.push(((** x1).clone(), 35usize));
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),

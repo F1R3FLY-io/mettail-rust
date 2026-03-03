@@ -418,6 +418,22 @@ language! {
         ConcatStrCongR . | S ~> T |- (ConcatStr X S) ~> (ConcatStr X T);
         LenCong . | S ~> T |- (Len S) ~> (Len T);
 
+        ConcatListCongL . | S ~> T |- (ConcatList S X) ~> (ConcatList T X);
+        ConcatListCongR . | S ~> T |- (ConcatList X S) ~> (ConcatList X T);
+        LenListCong . | S ~> T |- (LenList S) ~> (LenList T);
+        ElemListCongL . | S ~> T |- (ElemList S X) ~> (ElemList T X);
+        ElemListCongR . | S ~> T |- (ElemList X S) ~> (ElemList X T);
+        DeleteListCongL . | S ~> T |- (DeleteList S X) ~> (DeleteList T X);
+        DeleteListCongR . | S ~> T |- (DeleteList X S) ~> (DeleteList X T);
+        UnionBagCongL . | S ~> T |- (UnionBag S X) ~> (UnionBag T X);
+        UnionBagCongR . | S ~> T |- (UnionBag X S) ~> (UnionBag X T);
+        RemoveBagCongL . | S ~> T |- (RemoveBag S X) ~> (RemoveBag T X);
+        RemoveBagCongR . | S ~> T |- (RemoveBag X S) ~> (RemoveBag X T);
+        DiffBagCongL . | S ~> T |- (DiffBag S X) ~> (DiffBag T X);
+        DiffBagCongR . | S ~> T |- (DiffBag X S) ~> (DiffBag X T);
+        CountBagCongL . | S ~> T |- (CountBag S X) ~> (CountBag T X);
+        CountBagCongR . | S ~> T |- (CountBag X S) ~> (CountBag X T);
+
         ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
         ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
         ToBoolCong . | S ~> T |- (ToBool S) ~> (ToBool T);
