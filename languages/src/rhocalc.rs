@@ -57,6 +57,10 @@ language! {
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() + *b.clone())),
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() + *b.clone())),
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
+                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))),
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }}
         ] fold;
@@ -179,9 +183,6 @@ language! {
                 _ => Proc::Err,
             }}
         ] fold;
-        LenList . a:Proc |- "length" "(" a ")" : Int ![
-            { match &a { Proc::ProcList(l) => match l.as_ref() { List::ListLit(v) => v.len() as i64, _ => panic!("length: expected list literal") }, _ => panic!("length: expected ProcList") } }
-        ] fold;
         ElemList . a:Proc, i:Proc |- "at" "(" a "," i ")" : Proc ![
             { match (&a, &i) {
                 (Proc::ProcList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) { (List::ListLit(v), Int::NumLit(n)) => v.get(*n as usize).cloned().expect("at: index out of bounds"), _ => Proc::Err },
@@ -259,20 +260,14 @@ language! {
             }}
         ] fold;
 
-        ConcatStr . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
-                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
         Len . p:Proc |- "len" "(" p ")" : Proc ![
             { match &p {
                 Proc::CastStr(inner) => match &**inner {
                     Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))),
+                    _ => Proc::Err,
+                },
+                Proc::ProcList(l) => match l.as_ref() {
+                    List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -414,13 +409,10 @@ language! {
         OrCongL . | S ~> T |- (Or S X) ~> (Or T X);
         OrCongR . | S ~> T |- (Or X S) ~> (Or X T);
 
-        ConcatStrCongL . | S ~> T |- (ConcatStr S X) ~> (ConcatStr T X);
-        ConcatStrCongR . | S ~> T |- (ConcatStr X S) ~> (ConcatStr X T);
         LenCong . | S ~> T |- (Len S) ~> (Len T);
 
         ConcatListCongL . | S ~> T |- (ConcatList S X) ~> (ConcatList T X);
         ConcatListCongR . | S ~> T |- (ConcatList X S) ~> (ConcatList X T);
-        LenListCong . | S ~> T |- (LenList S) ~> (LenList T);
         ElemListCongL . | S ~> T |- (ElemList S X) ~> (ElemList T X);
         ElemListCongR . | S ~> T |- (ElemList X S) ~> (ElemList X T);
         DeleteListCongL . | S ~> T |- (DeleteList S X) ~> (DeleteList T X);

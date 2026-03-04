@@ -4,7 +4,6 @@
 export const categoryInfo = {
 	Int: {
 		constructors: [
-			"LenList",
 			"CountBag"
 		],
 		colour: "51b0e0",
@@ -49,7 +48,6 @@ export const categoryInfo = {
 			"Not",
 			"And",
 			"Or",
-			"ConcatStr",
 			"Len",
 			"ToInt",
 			"ToFloat",

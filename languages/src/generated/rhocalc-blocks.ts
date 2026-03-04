@@ -511,23 +511,6 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Len List: ...
-	{
-		type: "int_len_list",
-		tooltip: "Len List: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
 	// Elem List: ... ...
 	{
 		type: "proc_elem_list",
@@ -710,29 +693,6 @@ const definitions = [
 	{
 		type: "proc_or",
 		tooltip: "Or: ... ...",
-		message0: "%1 %2",
-		args0: [
-			{
-				type: "input_value",
-				name: "BODY",
-				check: "Proc",
-			},
-			{
-				type: "input_value",
-				name: "MESSAGE",
-				check: "Proc",
-			},
-		],
-		inputsInline: true,
-		previousStatement: "Proc",
-		nextStatement: "Proc",
-		colour: "208bfe",
-	},
-
-	// Concat Str: ... ...
-	{
-		type: "proc_concat_str",
-		tooltip: "Concat Str: ... ...",
 		message0: "%1 %2",
 		args0: [
 			{
