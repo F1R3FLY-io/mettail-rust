@@ -127,7 +127,7 @@ name(sub.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_NAME_NAME.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-proc(c1.clone()) <--
+proc(c1.clone().normalize()) <--
     proc(c0),
     rw_proc(c0, c1);
 
