@@ -25,6 +25,7 @@ pub fn generate_language_impl(
     language: &LanguageDef,
     raw_ascent_content: &TokenStream,
     core_raw_ascent_content: Option<&TokenStream>,
+    pre_stratum_content: Option<&TokenStream>,
 ) -> TokenStream {
     let name = &language.name;
     let name_str = name.to_string();
@@ -47,6 +48,7 @@ pub fn generate_language_impl(
                 language,
                 raw_ascent_content,
                 core_raw_ascent_content,
+                pre_stratum_content,
             ),
             generate_language_trait_impl_multi(name, &name_str, &name_lower, language),
         )
@@ -60,6 +62,7 @@ pub fn generate_language_impl(
                 &name_lower,
                 language,
                 raw_ascent_content,
+                pre_stratum_content,
             ),
             generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language),
         )
@@ -507,6 +510,7 @@ fn generate_language_struct(
     _name_lower: &str,
     language: &LanguageDef,
     raw_ascent_content: &TokenStream,
+    pre_stratum_content: Option<&TokenStream>,
 ) -> TokenStream {
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
@@ -540,11 +544,65 @@ fn generate_language_struct(
         #primary_type::parse(input).map(#term_name)
     };
 
+    // Sprint 5: Generate pre-stratum struct if ground HOL step rules exist
+    let pre_stratum_struct_name = format_ident!("{}AscentProgPreStratum", name);
+    let pre_stratum_struct_def = pre_stratum_content.map(|content| {
+        quote! {
+            ascent::ascent! {
+                struct #pre_stratum_struct_name;
+                #content
+            }
+        }
+    });
+
+    // Sprint 5: Generate pre-stratum phase for run_ascent_typed
+    let pre_stratum_phase = if pre_stratum_content.is_some() {
+        quote! {
+            // Phase 1: Pre-stratum — evaluate ground HOL step rules + deconstruction.
+            // Converges in O(depth) iterations. Results seed the main fixpoint.
+            let mut pre = #pre_stratum_struct_name::default();
+            pre.#primary_relation.push((initial.clone(),));
+            pre.step_term.push((initial.clone(),));
+            pre.run();
+
+            // Collect ground rewrite results from pre-stratum
+            let ground_rw: Vec<(#primary_type, #primary_type)> = pre.#rw_relation
+                .iter()
+                .map(|(s, t)| (s.clone(), t.clone()))
+                .collect();
+            let ground_terms: Vec<#primary_type> = pre.#primary_relation
+                .iter()
+                .map(|(t,)| t.clone())
+                .collect();
+
+            // Phase 2: Main fixpoint seeded with ground results
+            let mut prog = #prog_struct_name::default();
+            prog.#primary_relation.push((initial.clone(),));
+            prog.step_term.push((initial.clone(),));
+            for t in &ground_terms {
+                prog.#primary_relation.push((t.clone(),));
+            }
+            for (s, t) in &ground_rw {
+                prog.#rw_relation.push((s.clone(), t.clone()));
+            }
+            prog.run();
+        }
+    } else {
+        quote! {
+            let mut prog = #prog_struct_name::default();
+            prog.#primary_relation.push((initial.clone(),));
+            prog.step_term.push((initial.clone(),));
+            prog.run();
+        }
+    };
+
     quote! {
         ascent::ascent! {
             struct #prog_struct_name;
             #raw_ascent_content
         }
+
+        #pre_stratum_struct_def
 
         /// Language implementation struct
         ///
@@ -565,12 +623,13 @@ fn generate_language_struct(
 
             /// Run Ascent on a typed term (seeds with term as-is so step-by-step rewrites are visible)
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
+                // Sprint B (R1): Clear term equality cache to prevent stale entries
+                // from a previous evaluation affecting this fixpoint computation.
+                mettail_runtime::clear_term_eq_cache();
+
                 let initial = term.0.clone();
 
-                let mut prog = #prog_struct_name::default();
-                prog.#primary_relation.push((initial.clone(),));
-                prog.step_term.push((initial.clone(),));
-                prog.run();
+                #pre_stratum_phase
 
                 // Extract results
                 let all_terms: Vec<#primary_type> = prog.#primary_relation
@@ -1153,6 +1212,7 @@ fn generate_language_struct_multi(
     language: &LanguageDef,
     raw_ascent_content: &TokenStream,
     core_raw_ascent_content: Option<&TokenStream>,
+    pre_stratum_content: Option<&TokenStream>,
 ) -> TokenStream {
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
@@ -1453,6 +1513,79 @@ fn generate_language_struct_multi(
         }
     });
 
+    // Sprint 5: Generate pre-stratum struct if ground HOL step rules exist
+    let pre_stratum_struct_name = format_ident!("{}AscentProgPreStratum", name);
+    let pre_stratum_struct_def = pre_stratum_content.map(|content| {
+        quote! {
+            ascent::ascent! {
+                struct #pre_stratum_struct_name;
+                #content
+            }
+        }
+    });
+
+    // Sprint 5: Generate pre-stratum run + seed blocks (used in run_ascent_typed)
+    let (pre_stratum_block, seed_from_pre_stratum) = if pre_stratum_content.is_some() {
+        // Pre-stratum seed arms: same as main but targeting `pre` variable
+        let pre_seed_arms: Vec<TokenStream> = language
+            .types
+            .iter()
+            .map(|t| {
+                let cat = &t.name;
+                let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
+                let variant = format_ident!("{}", cat);
+                let seed_step = primary_type_for_step
+                    .map(|pt| {
+                        if pt == cat {
+                            quote! { pre.step_term.push((initial.clone(),)); }
+                        } else {
+                            quote! {}
+                        }
+                    })
+                    .unwrap_or_default();
+                quote! {
+                    #inner_enum_name::#variant(inner) => {
+                        let initial = inner.clone();
+                        pre.#cat_lower.push((initial.clone(),));
+                        #seed_step
+                    }
+                }
+            })
+            .collect();
+
+        let block = quote! {
+            let mut pre = #pre_stratum_struct_name::default();
+            match &term.0 {
+                #(#pre_seed_arms)*
+                #inner_enum_name::Ambiguous(_) => {},
+            }
+            pre.run();
+        };
+
+        // Seed main struct from pre-stratum results (all categories)
+        let seed_lines: Vec<TokenStream> = language
+            .types
+            .iter()
+            .map(|t| {
+                let cat_lower = format_ident!("{}", t.name.to_string().to_lowercase());
+                let rw_rel = format_ident!("rw_{}", t.name.to_string().to_lowercase());
+                quote! {
+                    for (t,) in pre.#cat_lower.iter() {
+                        prog.#cat_lower.push((t.clone(),));
+                    }
+                    for (s, t) in pre.#rw_rel.iter() {
+                        prog.#rw_rel.push((s.clone(), t.clone()));
+                    }
+                }
+            })
+            .collect();
+        let seed = quote! { #(#seed_lines)* };
+
+        (block, seed)
+    } else {
+        (quote! {}, quote! {})
+    };
+
     // Build dispatcher: core-category inputs use the core struct (if available),
     // non-core inputs use the full struct.
     let core_prog_name = format_ident!("{}AscentProgCore", name);
@@ -1580,11 +1713,13 @@ fn generate_language_struct_multi(
                 }
                 // Core categories: use the smaller core struct (fewer SCC rules)
                 #(#core_variant_patterns)|* => {
+                    #pre_stratum_block
                     let mut prog = #core_prog_name::default();
                     match &term.0 {
                         #(#core_seed_arms)*
                         _ => unreachable!(),
                     }
+                    #seed_from_pre_stratum
                     prog.run();
                     match &term.0 {
                         #(#core_extract_arms)*
@@ -1593,11 +1728,13 @@ fn generate_language_struct_multi(
                 }
                 // Non-core categories: use the full struct (all rules)
                 _ => {
+                    #pre_stratum_block
                     let mut prog = #prog_struct_name::default();
                     match &term.0 {
                         #(#seed_arms)*
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
                     }
+                    #seed_from_pre_stratum
                     prog.run();
                     match &term.0 {
                         #(#extract_arms)*
@@ -1616,11 +1753,13 @@ fn generate_language_struct_multi(
                     Self::run_ascent_typed(&sub_term)
                 }
                 _ => {
+                    #pre_stratum_block
                     let mut prog = #prog_struct_name::default();
                     match &term.0 {
                         #(#seed_arms)*
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
                     }
+                    #seed_from_pre_stratum
                     prog.run();
                     match &term.0 {
                         #(#extract_arms)*
@@ -1633,6 +1772,8 @@ fn generate_language_struct_multi(
 
     // Optionally emit the core struct definition
     let core_struct_output = core_struct_def.unwrap_or_default();
+    // Optionally emit the pre-stratum struct definition (Sprint 5)
+    let pre_stratum_struct_output = pre_stratum_struct_def.unwrap_or_default();
 
     quote! {
         ascent::ascent! {
@@ -1641,6 +1782,8 @@ fn generate_language_struct_multi(
         }
 
         #core_struct_output
+
+        #pre_stratum_struct_output
 
         /// Language implementation struct (multi-category: one parser/relation per type).
         pub struct #language_name;
@@ -1726,6 +1869,10 @@ fn generate_language_struct_multi(
             /// a smaller Ascent struct with fewer rules, reducing fixpoint iteration cost.
             /// Non-core inputs (e.g., Float, Bool, Str) fall back to the full struct.
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
+                // Sprint B (R1): Clear term equality cache to prevent stale entries
+                // from a previous evaluation affecting this fixpoint computation.
+                mettail_runtime::clear_term_eq_cache();
+
                 #run_ascent_body
             }
 

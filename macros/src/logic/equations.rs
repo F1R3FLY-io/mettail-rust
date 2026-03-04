@@ -24,7 +24,14 @@ use syn::Ident;
 /// 3. User-defined equations
 ///
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
-pub fn generate_equation_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> TokenStream {
+/// When `analysis` is `Some`, dead constructors are skipped in congruence rules (Sprint 1 DCE).
+/// When `subsumed_equations` is non-empty, subsumed equations are eliminated (Sprint A N10 DCE).
+pub fn generate_equation_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+    analysis: Option<&mettail_prattail::PipelineAnalysis>,
+    subsumed_equations: &std::collections::HashSet<usize>,
+) -> TokenStream {
     let mut rules = Vec::new();
 
     // 1. Add reflexivity for eq relations
@@ -32,14 +39,27 @@ pub fn generate_equation_rules(language: &LanguageDef, cat_filter: CategoryFilte
 
     // 2. Add demand-driven congruence rules for all constructors
     // These only equate terms that already exist, not synthesize new ones
-    rules.extend(generate_congruence_rules(language, cat_filter));
+    rules.extend(generate_congruence_rules(language, cat_filter, analysis));
 
-    // 3. Generate user-defined equation rules using unified approach
-    rules.extend(unified_rules::generate_equation_rules(language, cat_filter));
+    // 3. Generate user-defined equation rules using unified approach,
+    //    filtering out subsumed equations (Sprint A N10 DCE)
+    rules.extend(unified_rules::generate_equation_rules(language, cat_filter, subsumed_equations));
 
     quote! {
         #(#rules)*
     }
+}
+
+/// Generate only reflexivity rules (public for pre-stratum use).
+///
+/// The pre-stratum needs reflexivity to initialize the eq relations but does not
+/// need congruence or user-defined equation rules.
+pub fn generate_equation_rules_reflexivity_only(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+) -> TokenStream {
+    let rules = generate_reflexivity_rules(language, cat_filter);
+    quote! { #(#rules)* }
 }
 
 /// Generate reflexivity rules: eq_cat(t, t) for all t in cat
@@ -77,6 +97,7 @@ fn generate_reflexivity_rules(
 fn generate_congruence_rules(
     language: &LanguageDef,
     cat_filter: CategoryFilter,
+    analysis: Option<&mettail_prattail::PipelineAnalysis>,
 ) -> Vec<TokenStream> {
     // Group constructors by (category, ordered field types)
     // Key: (category_str, vec of field_type_str)
@@ -89,6 +110,13 @@ fn generate_congruence_rules(
         // Skip categories not in the filter
         if !in_cat_filter(&grammar_rule.category, cat_filter) {
             continue;
+        }
+
+        // Sprint 1 DCE: skip dead constructors — their congruence rules can never fire
+        if let Some(ref a) = analysis {
+            if a.dead_rule_labels.contains(&grammar_rule.label.to_string()) {
+                continue;
+            }
         }
 
         // Skip binders (alpha-equivalence is complex)
@@ -131,9 +159,27 @@ fn generate_congruence_rules(
         groups.entry(key).or_default().push(grammar_rule);
     }
 
-    // Generate one consolidated rule per group
+    // Generate one consolidated rule per group.
+    // Sprint 3: sort constructors within each group by WFST weight (lower = more frequent first)
+    // for better branch prediction in the match arms.
     let mut rules = Vec::with_capacity(groups.len());
     for (pool_counter, ((cat_str, field_type_strs), constructors)) in groups.iter().enumerate() {
+        // Weight-sorted constructors: most frequent (lowest weight) first
+        let mut sorted_constructors: Vec<&&GrammarRule> = constructors.iter().collect();
+        if let Some(ref a) = analysis {
+            sorted_constructors.sort_by(|a_rule, b_rule| {
+                let a_weight = a.constructor_weights
+                    .get(&a_rule.label.to_string())
+                    .copied()
+                    .unwrap_or(f64::INFINITY);
+                let b_weight = a.constructor_weights
+                    .get(&b_rule.label.to_string())
+                    .copied()
+                    .unwrap_or(f64::INFINITY);
+                a_weight.total_cmp(&b_weight)
+            });
+        }
+        let constructors = &sorted_constructors;
         let category = format_ident!("{}", cat_str);
         let rn = relation_names(&category);
         let cat_rel = &rn.cat_lower;
@@ -174,14 +220,45 @@ fn generate_congruence_rules(
         // For-binding: (s_f0, s_f1, ..., t_f0, t_f1, ...)
         let for_bindings: Vec<&Ident> = s_fields.iter().chain(t_fields.iter()).collect();
 
-        // Equality checks for corresponding field pairs
-        let eq_checks: Vec<TokenStream> = field_type_strs
+        // Sprint 4: Equality checks for corresponding field pairs, ordered by
+        // category diversity (most diverse first → fail-fast in semi-naive evaluation).
+        //
+        // Higher category weight (from WFST analysis) → more diverse → check first.
+        // Rationale: categories with many constructors produce many distinct terms,
+        // making equality checks more likely to fail early, pruning the join.
+        //
+        // Note: The O(|cat|²) cross-product from `cat(s), cat(t)` is inherent in
+        // Ascent's evaluation model — the pool filters same-constructor pairs AFTER
+        // the cross-product is formed. This reordering optimizes the constant factor
+        // by failing non-matching pairs faster in the eq_checks.
+        let mut eq_check_pairs: Vec<(usize, String)> = field_type_strs
             .iter()
             .enumerate()
+            .map(|(i, ft_str)| (i, ft_str.clone()))
+            .collect();
+
+        // Sort by category weight descending (highest weight = most diverse = check first)
+        if let Some(ref a) = analysis {
+            eq_check_pairs.sort_by(|(_, ft_a), (_, ft_b)| {
+                let w_a = a.category_weights
+                    .get(ft_a)
+                    .copied()
+                    .unwrap_or(0.0);
+                let w_b = a.category_weights
+                    .get(ft_b)
+                    .copied()
+                    .unwrap_or(0.0);
+                // Higher weight first (descending) → more diverse → fail-fast
+                w_b.total_cmp(&w_a)
+            });
+        }
+
+        let eq_checks: Vec<TokenStream> = eq_check_pairs
+            .iter()
             .map(|(i, ft_str)| {
                 let eq_arg_rel = format_ident!("eq_{}", ft_str.to_lowercase());
-                let sf = &s_fields[i];
-                let tf = &t_fields[i];
+                let sf = &s_fields[*i];
+                let tf = &t_fields[*i];
                 quote! { #eq_arg_rel(#sf, #tf) }
             })
             .collect();

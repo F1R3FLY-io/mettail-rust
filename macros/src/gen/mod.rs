@@ -38,9 +38,9 @@ use syn::Ident;
 pub use blockly::{generate_blockly_definitions, write_blockly_blocks, write_blockly_categories};
 pub use runtime::language::generate_language_impl;
 pub use runtime::metadata::generate_metadata;
-pub use syntax::parser::prattail_bridge::generate_prattail_parser;
+pub use syntax::parser::prattail_bridge::generate_prattail_parser_with_analysis;
 
-/// Generate all AST-related code for a language definition
+/// Generate all AST-related code for a language definition.
 ///
 /// This is the main entry point for code generation. It produces:
 /// - Enum definitions for all language types
@@ -50,7 +50,10 @@ pub use syntax::parser::prattail_bridge::generate_prattail_parser;
 /// - Term generation utilities
 /// - Native type evaluation
 /// - Variable inference for parsing
-pub fn generate_all(language: &LanguageDef) -> TokenStream {
+///
+/// Returns `(code, PipelineAnalysis)` where the analysis captures WFST-derived
+/// data from the PraTTaIL pipeline for downstream Ascent codegen optimization.
+pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::PipelineAnalysis) {
     use native::eval::generate_eval_method;
     use runtime::environment::generate_environments;
     use syntax::display::generate_display;
@@ -74,17 +77,20 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
     let is_ground_impl = generate_is_ground_methods(language);
     let var_inference_impl = generate_var_category_inference(language);
 
-    // Parser code: PraTTaIL (inline)
-    let parser_code = {
-        let prattail_parser = generate_prattail_parser(language);
+    // Parser code: PraTTaIL (inline) — also captures pipeline analysis
+    let (parser_code, pipeline_analysis) = {
+        let (prattail_parser, analysis) = generate_prattail_parser_with_analysis(language);
         let category_parse_impls = generate_prattail_category_parse_impls(language);
-        quote! {
-            #prattail_parser
-            #category_parse_impls
-        }
+        (
+            quote! {
+                #prattail_parser
+                #category_parse_impls
+            },
+            analysis,
+        )
     };
 
-    quote! {
+    let code = quote! {
         #ast_enums
 
         #flatten_helpers
@@ -110,7 +116,9 @@ pub fn generate_all(language: &LanguageDef) -> TokenStream {
         #var_inference_impl
 
         #parser_code
-    }
+    };
+
+    (code, pipeline_analysis)
 }
 
 /// Generate `impl Cat` parse methods for each language type using PraTTaIL's inline

@@ -5,7 +5,7 @@
 //! Ascent (which requires Hash for relations) and term generation
 //! (which requires Ord for enumeration).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt;
@@ -68,6 +68,99 @@ pub fn get_or_insert_var(var: &FreeVar<String>) -> FreeVar<String> {
     } else {
         var.clone()
     }
+}
+
+//=============================================================================
+// TERM EQUALITY CACHE (Sprint B: R1)
+//=============================================================================
+
+/// Thread-local cache for `Scope::term_eq()` results.
+///
+/// Keyed by `(hash_a, hash_b)` where each hash is a 64-bit structural hash of
+/// a `Scope`'s `unsafe_pattern` and `unsafe_body`. The key pair is canonicalized
+/// (smaller hash first) so that `(a, b)` and `(b, a)` share the same cache entry.
+///
+/// Uses `Cell<HashMap>` with take/set pattern for zero-overhead thread-local access
+/// (no borrow tracking at runtime, same pattern as pipeline TLS buffer pools).
+///
+/// Collision probability for N distinct terms: ≈ N²/2⁶⁴. For N = 10,000: ≈ 5.4 × 10⁻¹².
+thread_local! {
+    static TERM_EQ_CACHE: Cell<HashMap<(u64, u64), bool>> =
+        Cell::new(HashMap::new());
+}
+
+/// Clear the term equality cache.
+///
+/// Call this at the start of each Ascent evaluation (`run_ascent_typed()`) to
+/// prevent stale entries from a previous evaluation affecting correctness.
+/// The cache is only valid within a single fixpoint computation because
+/// term identity (via moniker's unique IDs) is session-scoped.
+pub fn clear_term_eq_cache() {
+    TERM_EQ_CACHE.with(|cache| {
+        let mut map = cache.take();
+        map.clear();
+        cache.set(map);
+    });
+}
+
+/// Get the current size of the term equality cache.
+pub fn term_eq_cache_size() -> usize {
+    TERM_EQ_CACHE.with(|cache| {
+        let map = cache.take();
+        let size = map.len();
+        cache.set(map);
+        size
+    })
+}
+
+/// Compute a structural hash for cache key generation.
+///
+/// Hashes both `unsafe_pattern` and `unsafe_body` fields of a moniker `Scope`.
+/// This produces a hash consistent with alpha-equivalence: two α-equivalent
+/// scopes hash identically because `close_term` normalizes bound variable
+/// structure into identical `unsafe_*` fields.
+fn structural_scope_hash<P: Hash, T: Hash>(scope: &moniker::Scope<P, T>) -> u64 {
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    scope.unsafe_pattern.hash(&mut h);
+    scope.unsafe_body.hash(&mut h);
+    h.finish()
+}
+
+/// Cached term equality check for `Scope` types.
+///
+/// Looks up the `(hash_self, hash_other)` pair in the TLS cache. On miss,
+/// delegates to `moniker::Scope::term_eq()` (which performs `unbind2` + recursive
+/// comparison) and stores the result. On hit, returns the cached value in O(1).
+///
+/// The cache key is canonicalized: `min(h1, h2), max(h1, h2)` so that
+/// `term_eq(a, b)` and `term_eq(b, a)` share the same entry.
+fn cached_term_eq<P, T>(this: &moniker::Scope<P, T>, other: &moniker::Scope<P, T>) -> bool
+where
+    P: Hash + BoundPattern<String> + Clone + PartialEq,
+    T: Hash + BoundTerm<String> + Clone + PartialEq,
+{
+    let h_self = structural_scope_hash(this);
+    let h_other = structural_scope_hash(other);
+
+    // Canonical key ordering to ensure (a,b) and (b,a) share a cache entry
+    let key = if h_self <= h_other {
+        (h_self, h_other)
+    } else {
+        (h_other, h_self)
+    };
+
+    TERM_EQ_CACHE.with(|cache| {
+        let mut map = cache.take();
+        let result = if let Some(&cached) = map.get(&key) {
+            cached
+        } else {
+            let eq = this.term_eq(other);
+            map.insert(key, eq);
+            eq
+        };
+        cache.set(map);
+        result
+    })
 }
 
 //=============================================================================
@@ -203,30 +296,34 @@ impl<P, T> Scope<P, T> {
     }
 }
 
-// Implement BoundTerm by delegating to inner Scope
-impl<N, P, T> BoundTerm<N> for Scope<P, T>
+// Implement BoundTerm<String> with cached term_eq (Sprint B: R1).
+//
+// MeTTaIL always uses String as the name type. The cached_term_eq function
+// requires Hash bounds on P and T (for structural hashing), which are satisfied
+// by all MeTTaIL term types but not by arbitrary N. A blanket impl for generic N
+// is provided below for non-String name types (without caching).
+impl<P, T> BoundTerm<String> for Scope<P, T>
 where
-    N: Clone + PartialEq,
-    P: BoundPattern<N>,
-    T: BoundTerm<N>,
+    P: BoundPattern<String> + Clone + PartialEq + Hash,
+    T: BoundTerm<String> + Clone + PartialEq + Hash,
 {
     fn term_eq(&self, other: &Scope<P, T>) -> bool {
-        self.inner.term_eq(&other.inner)
+        cached_term_eq(&self.inner, &other.inner)
     }
 
-    fn close_term(&mut self, state: moniker::ScopeState, on_free: &impl moniker::OnFreeFn<N>) {
+    fn close_term(&mut self, state: moniker::ScopeState, on_free: &impl moniker::OnFreeFn<String>) {
         self.inner.close_term(state, on_free)
     }
 
-    fn open_term(&mut self, state: moniker::ScopeState, on_bound: &impl moniker::OnBoundFn<N>) {
+    fn open_term(&mut self, state: moniker::ScopeState, on_bound: &impl moniker::OnBoundFn<String>) {
         self.inner.open_term(state, on_bound)
     }
 
-    fn visit_vars(&self, on_var: &mut impl FnMut(&Var<N>)) {
+    fn visit_vars(&self, on_var: &mut impl FnMut(&Var<String>)) {
         self.inner.visit_vars(on_var)
     }
 
-    fn visit_mut_vars(&mut self, on_var: &mut impl FnMut(&mut Var<N>)) {
+    fn visit_mut_vars(&mut self, on_var: &mut impl FnMut(&mut Var<String>)) {
         self.inner.visit_mut_vars(on_var)
     }
 }

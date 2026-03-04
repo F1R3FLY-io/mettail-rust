@@ -1470,18 +1470,18 @@ rw_bool(s.clone(), t) <--
 
 rw_bool(s.clone(), t) <--
     bool(s),
-    if let Bool::EqBool(left, right) = s,
-    if let Bool::BoolLit(a_ref) = left.as_ref(),
-    if let Bool::BoolLit(b_ref) = right.as_ref(),
+    if let Bool::EqStr(left, right) = s,
+    if let Str::StringLit(a_ref) = left.as_ref(),
+    if let Str::StringLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
     let t = Bool::BoolLit((a == b));
 
 rw_bool(s.clone(), t) <--
     bool(s),
-    if let Bool::EqStr(left, right) = s,
-    if let Str::StringLit(a_ref) = left.as_ref(),
-    if let Str::StringLit(b_ref) = right.as_ref(),
+    if let Bool::EqBool(left, right) = s,
+    if let Bool::BoolLit(a_ref) = left.as_ref(),
+    if let Bool::BoolLit(b_ref) = right.as_ref(),
     let a = a_ref.clone(),
     let b = b_ref.clone(),
     let t = Bool::BoolLit((a == b));
@@ -1743,13 +1743,6 @@ rw_int(orig.clone(), t) <--
     let s = s_ref.clone(),
     let t = Int::NumLit((s.len() as i32));
 
-rw_int(orig.clone(), t) <--
-    int(orig),
-    if let Int::Fact(inner) = orig,
-    if let Int::NumLit(s_ref) = inner.as_ref(),
-    let a = s_ref.clone(),
-    let t = Int::NumLit(({ (1 ..= a.max(0)).product::< i32 > () }));
-
 rw_float(orig.clone(), t) <--
     float(orig),
     if let Float::SinFloat(inner) = orig,
@@ -1785,6 +1778,34 @@ rw_float(orig.clone(), t) <--
     let a = s_ref.clone(),
     let t = Float::FloatLit((mettail_runtime::CanonicalFloat64::from(a as f64)));
 
+rw_int(orig.clone(), t) <--
+    int(orig),
+    if let Int::FloatToInt(inner) = orig,
+    if let Float::FloatLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Int::NumLit((a.get() as i32));
+
+rw_str(orig.clone(), t) <--
+    str(orig),
+    if let Str::BoolToStr(inner) = orig,
+    if let Bool::BoolLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Str::StringLit((a.to_string()));
+
+rw_bool(orig.clone(), t) <--
+    bool(orig),
+    if let Bool::IntToBool(inner) = orig,
+    if let Int::NumLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Bool::BoolLit((a != 0));
+
+rw_int(orig.clone(), t) <--
+    int(orig),
+    if let Int::Fact(inner) = orig,
+    if let Int::NumLit(s_ref) = inner.as_ref(),
+    let a = s_ref.clone(),
+    let t = Int::NumLit(({ (1 ..= a.max(0)).product::< i32 > () }));
+
 rw_float(orig.clone(), t) <--
     float(orig),
     if let Float::BoolToFloat(inner) = orig,
@@ -1798,13 +1819,6 @@ rw_float(orig.clone(), t) <--
     if let Str::StringLit(s_ref) = inner.as_ref(),
     let a = s_ref.clone(),
     let t = Float::FloatLit((mettail_runtime::CanonicalFloat64::from(a.parse().unwrap_or(0.0))));
-
-rw_int(orig.clone(), t) <--
-    int(orig),
-    if let Int::FloatToInt(inner) = orig,
-    if let Float::FloatLit(s_ref) = inner.as_ref(),
-    let a = s_ref.clone(),
-    let t = Int::NumLit((a.get() as i32));
 
 rw_int(orig.clone(), t) <--
     int(orig),
@@ -1822,13 +1836,6 @@ rw_int(orig.clone(), t) <--
 
 rw_str(orig.clone(), t) <--
     str(orig),
-    if let Str::BoolToStr(inner) = orig,
-    if let Bool::BoolLit(s_ref) = inner.as_ref(),
-    let a = s_ref.clone(),
-    let t = Str::StringLit((a.to_string()));
-
-rw_str(orig.clone(), t) <--
-    str(orig),
     if let Str::IntToStr(inner) = orig,
     if let Int::NumLit(s_ref) = inner.as_ref(),
     let a = s_ref.clone(),
@@ -1840,13 +1847,6 @@ rw_str(orig.clone(), t) <--
     if let Float::FloatLit(s_ref) = inner.as_ref(),
     let a = s_ref.clone(),
     let t = Str::StringLit((a.to_string()));
-
-rw_bool(orig.clone(), t) <--
-    bool(orig),
-    if let Bool::IntToBool(inner) = orig,
-    if let Int::NumLit(s_ref) = inner.as_ref(),
-    let a = s_ref.clone(),
-    let t = Bool::BoolLit((a != 0));
 
 rw_bool(orig.clone(), t) <--
     bool(orig),

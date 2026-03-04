@@ -77,7 +77,7 @@ pub mod grammar_gen;
 #[cfg(test)]
 mod tests;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 
 use proc_macro2::TokenStream;
@@ -500,6 +500,62 @@ impl RuleSpec {
 pub use recovery::{RecoveryConfig, ParseSimulator, SimulationResult};
 pub use lint::{LintDiagnostic, LintSeverity, LintContext};
 
+/// Analysis data produced by the PraTTaIL pipeline during parser generation.
+///
+/// Captures WFST-derived analysis that would otherwise be discarded after
+/// codegen. This data bridges the PraTTaIL pipeline (parser generation) to
+/// the macros crate (Ascent codegen), enabling optimizations such as:
+/// - Dead-code elimination of Ascent rules referencing dead constructors
+/// - WFST-weight-guided rule ordering for cache locality
+/// - Isomorphic WFST detection for template instantiation
+///
+/// Constructed by [`generate_parser_with_analysis()`] and consumed by the
+/// macros crate's `generate_ascent_source()`.
+#[derive(Debug, Clone, Default)]
+pub struct PipelineAnalysis {
+    /// Labels of dead rules detected by the 4-tier WFST analysis.
+    ///
+    /// Includes Tier 1 (LiteralNoNativeType) and Tier 2 (UnreachableCategory)
+    /// rules from [`pipeline::collect_dead_rule_labels()`]. Tier 3/4 are excluded
+    /// due to false-positive risk (see `collect_dead_rule_labels` doc).
+    pub dead_rule_labels: HashSet<String>,
+
+    /// Categories where ALL rules are dead (fully unreachable).
+    ///
+    /// A category is unreachable if every rule belonging to it appears in
+    /// `dead_rule_labels`. Ascent codegen can skip generating relations and
+    /// rules for these categories entirely.
+    pub unreachable_categories: HashSet<String>,
+
+    /// Per-constructor tropical weight from WFST dispatch (lower = more frequent).
+    ///
+    /// Populated from `PredictionWfst` actions. Used for:
+    /// - Rule ordering (Sprint 3): frequent constructors first for cache locality
+    /// - Match arm ordering (Sprint 4): better branch prediction in congruence pools
+    /// - Variable selectivity (Sprint 7): constructor frequency as selectivity proxy
+    pub constructor_weights: HashMap<String, f64>,
+
+    /// Per-category mean tropical weight across all dispatch actions.
+    ///
+    /// Used for coarse category-level ordering decisions. Lower weight indicates
+    /// a category whose constructors are dispatched to more frequently.
+    pub category_weights: HashMap<String, f64>,
+
+    /// Groups of categories with alpha-equivalent WFSTs (De Bruijn canonicalized).
+    ///
+    /// Only groups with >= 2 members are included. Categories in the same group
+    /// have identical WFST structure (states, transitions, weights) differing only
+    /// in action labels. Enables template instantiation (Sprint 8).
+    pub isomorphic_groups: Vec<Vec<String>>,
+
+    /// Per-group De Bruijn action map: `(group_index, de_bruijn_idx)` -> `Vec<(category, rule_label)>`.
+    ///
+    /// Maps each De Bruijn-canonicalized action index within an isomorphic group
+    /// to the concrete `(category_name, constructor_label)` pairs across group members.
+    /// Used by Sprint 8 for `macro_rules!` template parameter generation.
+    pub isomorphic_action_maps: Vec<HashMap<u32, Vec<(String, String)>>>,
+}
+
 /// Generate a complete parser for a language specification.
 ///
 /// This is the main entry point. Returns a `TokenStream` containing:
@@ -520,4 +576,20 @@ pub use lint::{LintDiagnostic, LintSeverity, LintContext};
 #[inline]
 pub fn generate_parser(spec: &LanguageSpec) -> TokenStream {
     pipeline::run_pipeline(spec)
+}
+
+/// Generate a complete parser along with pipeline analysis data.
+///
+/// Like [`generate_parser()`], but additionally returns a [`PipelineAnalysis`]
+/// capturing WFST-derived analysis data (dead rules, constructor weights,
+/// category weights, isomorphic groups) that would otherwise be discarded
+/// after codegen.
+///
+/// The macros crate uses this analysis to optimize Ascent codegen:
+/// - Dead-code elimination (Sprint 1)
+/// - WFST-weight-guided rule ordering (Sprint 3)
+/// - Isomorphic WFST template instantiation (Sprint 8)
+#[inline]
+pub fn generate_parser_with_analysis(spec: &LanguageSpec) -> (TokenStream, PipelineAnalysis) {
+    pipeline::run_pipeline_with_analysis(spec)
 }

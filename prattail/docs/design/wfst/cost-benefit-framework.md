@@ -594,4 +594,4 @@ corpus of grammars.
 - `semirings/product-weight.md` -- ProductWeight design and Viterbi integration
 - `semirings/tropical-weight.md` -- TropicalWeight semiring definition
 - `lint-layer.md` -- Unified lint layer (runs immediately before D1)
-- `dead-rule-detection.md` -- Three-tier dead-rule analysis (used by A4:EnhancedDCE)
+- `dead-rule-detection.md` -- Four-tier dead-rule analysis (used by A4:EnhancedDCE)

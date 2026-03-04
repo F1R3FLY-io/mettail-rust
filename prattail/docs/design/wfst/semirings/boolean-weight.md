@@ -9,7 +9,7 @@ receive a compile-time warning.
 
 ## 1. Role in Pipeline
 
-BooleanWeight underpins dead-rule detection via a three-tier analysis in
+BooleanWeight underpins dead-rule detection via a four-tier analysis in
 `detect_dead_rules()` (`pipeline.rs:106–207`).  Each grammar rule is
 classified by exactly one tier: literal rules (tier 1), same-category
 infix/var rules (tier 2), and prefix/cast/cross-category rules (tier 3).
@@ -19,7 +19,7 @@ prediction WFST.
 
 | Stage | File | Lines | Description |
 |-------|------|-------|-------------|
-| Three-tier dead-rule analysis | `pipeline.rs` | 106–207 | `detect_dead_rules()` returns `Vec<DeadRuleWarning>` |
+| Four-tier dead-rule analysis | `pipeline.rs` | 106–207 | `detect_dead_rules()` returns `Vec<DeadRuleWarning>` |
 | W01 lint wrapper | `lint.rs` | 786–832 | `lint_w01_dead_rule()` maps warnings to `LintDiagnostic` |
 | Type definition | `semiring.rs` | 283–363 | BooleanWeight struct, Semiring impl |
 
@@ -66,7 +66,7 @@ then computing `plus` (disjunction) across all transitions.
 
 ## 3. Current Implementation
 
-Dead-rule detection uses a three-tier algorithm in `detect_dead_rules()`
+Dead-rule detection uses a four-tier algorithm in `detect_dead_rules()`
 (`pipeline.rs:106–207`):
 
 ```
@@ -102,7 +102,7 @@ Warnings are surfaced via the unified lint layer: `lint_w01_dead_rule()` in
 
 ## 4. Coverage by Tier
 
-The three-tier system covers **all** rule types — no rule is excluded from
+The four-tier system covers **all** rule types — no rule is excluded from
 detection.  Each tier handles a specific subset:
 
 | Tier | Rule Types Covered | Detection Method |
@@ -112,7 +112,7 @@ detection.  Each tier handles a specific subset:
 | **3** | Prefix, cast (`is_cast`), cross-category (`is_cross_category`) | WFST: any FIRST token dispatches to rule? |
 
 This replaces the previous single-pass implementation that skipped 5 rule
-types (infix, var, literal, cross-category, cast).  The three-tier design
+types (infix, var, literal, cross-category, cast).  The four-tier design
 eliminates those exclusions: literal rules are handled structurally (tier 1),
 infix/var rules are handled via category reachability (tier 2), and cast and
 cross-category rules are handled via WFST dispatch queries (tier 3).
@@ -181,7 +181,7 @@ Boolean  <--project--  Tropical  --embed-->  Log
 ## 7. Source Reference & See Also
 
 - **Type definition**: `semiring.rs:283–363`
-- **`detect_dead_rules()` (three-tier)**: `pipeline.rs:106–207`
+- **`detect_dead_rules()` (four-tier)**: `pipeline.rs:106–207`
 - **`DeadRuleWarning` enum**: `pipeline.rs:48–96`
 - **`lint_w01_dead_rule()`**: `lint.rs:786–832`
 - **`run_lints()` entry point**: `lint.rs:136–176`

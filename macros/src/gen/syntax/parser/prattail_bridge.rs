@@ -677,9 +677,21 @@ fn collect_constructor_idents_from_token_stream(
 
 /// Generate the PraTTaIL parser for a language definition.
 ///
-/// This is the main entry point for PraTTaIL parser generation.
-/// Returns a TokenStream containing the complete parser code.
+/// This is the backward-compatible entry point that discards pipeline analysis.
+/// Prefer [`generate_prattail_parser_with_analysis()`] when analysis data is needed.
+#[allow(dead_code)]
 pub fn generate_prattail_parser(language: &LanguageDef) -> proc_macro2::TokenStream {
+    generate_prattail_parser_with_analysis(language).0
+}
+
+/// Generate the PraTTaIL parser along with pipeline analysis data.
+///
+/// Returns `(TokenStream, PipelineAnalysis)` where the analysis captures
+/// WFST-derived data (dead rules, constructor weights, category weights)
+/// for downstream optimization by the Ascent codegen.
+pub fn generate_prattail_parser_with_analysis(
+    language: &LanguageDef,
+) -> (proc_macro2::TokenStream, mettail_prattail::PipelineAnalysis) {
     let spec = language_def_to_spec(language);
-    mettail_prattail::generate_parser(&spec)
+    mettail_prattail::generate_parser_with_analysis(&spec)
 }

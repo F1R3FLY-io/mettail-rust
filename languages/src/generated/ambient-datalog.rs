@@ -428,9 +428,9 @@ rw_proc(s_orig.clone(), t) <--
     if & s_f0_e1 != & s_f0_e0,
     if let Proc::PAmb(ref s_f0_e1_f0, ref s_f0_e1_f1) = s_f0_e1,
     let s_f0_e1_f0_deref = &** s_f0_e1_f0,
+    eq_name(s_f0_e0_f1_deref_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
     let s_f0_e1_f1_deref = &** s_f0_e1_f1,
     let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag.remove(& s_f0_e1); bag },
-    eq_name(s_f0_e0_f1_deref_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
     let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_e0_f1_deref_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = mettail_runtime::HashBag::new(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = (s_f0_e0_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f1_deref_f0_e0_f1_deref.clone()).clone()); bag })))); Proc::insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone()); bag })))); bag })).normalize();
 
 rw_proc(s_orig.clone(), t) <--
@@ -447,12 +447,12 @@ rw_proc(s_orig.clone(), t) <--
     for (s_f1_deref_f0_e0_f1_deref_f0_e0, _count_1) in s_f1_deref_f0_e0_f1_deref_f0.iter(),
     if let Proc::POut(ref s_f1_deref_f0_e0_f1_deref_f0_e0_f0, ref s_f1_deref_f0_e0_f1_deref_f0_e0_f1) = s_f1_deref_f0_e0_f1_deref_f0_e0,
     let s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref = &** s_f1_deref_f0_e0_f1_deref_f0_e0_f0,
+    eq_name(s_f0_deref.clone(), s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref.clone()),
     let s_f1_deref_f0_e0_f1_deref_f0_e0_f1_deref = &** s_f1_deref_f0_e0_f1_deref_f0_e0_f1,
     let s_f1_deref_f0_e0_f1_deref_f0_rest = { let mut bag = s_f1_deref_f0_e0_f1_deref_f0.clone(); bag.remove(& s_f1_deref_f0_e0_f1_deref_f0_e0); bag },
     for (s_f1_deref_f0_e1, _count_2) in s_f1_deref_f0.iter(),
     if & s_f1_deref_f0_e1 != & s_f1_deref_f0_e0,
     let s_f1_deref_f0_rest = { let mut bag = s_f1_deref_f0.clone(); bag.remove(& s_f1_deref_f0_e0); bag.remove(& s_f1_deref_f0_e1); bag },
-    eq_name(s_f0_deref.clone(), s_f1_deref_f0_e0_f1_deref_f0_e0_f0_deref.clone()),
     let t = (Proc::PPar({ let mut bag = (s_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f1_deref_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = (s_f1_deref_f0_e0_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f1_deref_f0_e0_f1_deref_f0_e0_f1_deref.clone()).clone()); bag })))); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_e1.clone()).clone()))); bag })).normalize();
 
 rw_proc(s_orig.clone(), t) <--
@@ -466,9 +466,9 @@ rw_proc(s_orig.clone(), t) <--
     if & s_f0_e1 != & s_f0_e0,
     if let Proc::PAmb(ref s_f0_e1_f0, ref s_f0_e1_f1) = s_f0_e1,
     let s_f0_e1_f0_deref = &** s_f0_e1_f0,
+    eq_name(s_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
     let s_f0_e1_f1_deref = &** s_f0_e1_f1,
     let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag.remove(& s_f0_e1); bag },
-    eq_name(s_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
     let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f1_deref.clone()).clone()); Proc::insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone()); bag })).normalize();
 
 rw_proc(parent.clone(), result) <--

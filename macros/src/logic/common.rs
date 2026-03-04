@@ -5,11 +5,11 @@
 
 use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::LanguageDef;
-use crate::ast::types::TypeExpr;
+use crate::ast::types::{EvalMode, TypeExpr};
 use crate::gen::{generate_literal_label, is_literal_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use syn::Ident;
 
 /// Pre-computed relation names for a category.
@@ -479,4 +479,109 @@ pub fn generate_tls_pool_iter(
             iter_buf
         }.into_iter()
     }
+}
+
+// =============================================================================
+// Ground Rule Classification for Pre-Stratum Optimization
+// =============================================================================
+
+/// Classification of rewrite rules into evaluation strata.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RewriteStratum {
+    /// Safe for pre-stratum: matches only literal arguments, produces a literal result.
+    /// Converges in O(depth) iterations when combined with deconstruction.
+    Ground,
+    /// Must be in main SCC: depends on recursive Ascent relations.
+    Recursive,
+    /// Skip entirely: dead constructor detected by WFST analysis (Sprint 1 DCE).
+    Dead,
+}
+
+/// Classify HOL step rules into evaluation strata.
+///
+/// A HOL step rule is **Ground** if:
+/// 1. It has `rust_code` (HOL evaluation body)
+/// 2. It is step-mode (not fold)
+/// 3. It has ≥1 NonTerminal child
+/// 4. All NonTerminal children are destructured to literal patterns
+///    (checked by verifying the rule has `term_context` with Simple params
+///    whose types resolve to categories with native types and literal labels)
+/// 5. Its constructor label is not dead (from WFST 4-tier analysis)
+///
+/// Ground rules produce only literal results (`Cat::LitLabel(f(a, b, ...))`)
+/// and cannot trigger further recursive term creation, making them safe to
+/// evaluate in a pre-stratum before the main fixpoint.
+///
+/// Returns a map from constructor label to stratum classification.
+pub fn classify_rewrite_strata(
+    language: &LanguageDef,
+    analysis: Option<&mettail_prattail::PipelineAnalysis>,
+) -> HashMap<String, RewriteStratum> {
+    let mut strata = HashMap::new();
+
+    for rule in &language.terms {
+        let label = rule.label.to_string();
+
+        // Dead rule check (Sprint 1 DCE)
+        if let Some(ref a) = analysis {
+            if a.dead_rule_labels.contains(&label) {
+                strata.insert(label, RewriteStratum::Dead);
+                continue;
+            }
+        }
+
+        // Only HOL step rules (rust_code present, not fold mode) are candidates
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if rule.eval_mode == Some(EvalMode::Fold) {
+            continue;
+        }
+
+        let category = &rule.category;
+
+        // Must have NonTerminal children
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .count();
+        if non_terminal_count == 0 {
+            continue;
+        }
+
+        // Must have a native type on the result category
+        if native_type_for(language, category).is_none() {
+            strata.insert(label, RewriteStratum::Recursive);
+            continue;
+        }
+
+        // Check that all NonTerminal arguments resolve to literal-bearing categories
+        let all_args_literal = if let Some(ref term_ctx) = rule.term_context {
+            term_ctx.iter().all(|param| match param {
+                TermParam::Simple { ty, .. } => {
+                    if let TypeExpr::Base(arg_cat) = ty {
+                        literal_label_for(language, arg_cat).is_some()
+                    } else {
+                        false
+                    }
+                },
+                _ => false, // Binders/multi-abstractions are not ground
+            })
+        } else {
+            // Old syntax: check that all NonTerminal items point to literal-bearing cats
+            rule.items.iter().all(|item| match item {
+                GrammarItem::NonTerminal(cat) => literal_label_for(language, cat).is_some(),
+                _ => true, // Terminals don't affect groundness
+            })
+        };
+
+        if all_args_literal {
+            strata.insert(label, RewriteStratum::Ground);
+        } else {
+            strata.insert(label, RewriteStratum::Recursive);
+        }
+    }
+
+    strata
 }

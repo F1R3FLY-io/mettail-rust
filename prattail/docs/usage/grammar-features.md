@@ -7,10 +7,15 @@
 ## Table of Contents
 
 1. [Language Declaration](#1-language-declaration)
+   1. [Language Composition Clauses](#11-language-composition-clauses)
+   2. [Language Fragments](#12-language-fragments)
+   3. [Composed Languages](#13-composed-languages)
 2. [Type Declarations](#2-type-declarations)
 3. [Term Rules Overview](#3-term-rules-overview)
 4. [Prefix Rules](#4-prefix-rules)
 5. [Infix Rules](#5-infix-rules)
+   1. [Postfix Operators](#51-postfix-operators)
+   2. [Mixfix (N-ary) Operators](#52-mixfix-n-ary-operators)
 6. [Structural Rules](#6-structural-rules)
 7. [Binder Rules](#7-binder-rules)
 8. [Collection Rules](#8-collection-rules)
@@ -39,6 +44,217 @@ language! {
 
 The `name` field determines the name used in generated code comments and diagnostic
 messages. It must be a valid Rust identifier.
+
+### 1.1 Language Composition Clauses
+
+PraTTaIL supports three composition clauses that allow languages to inherit, import,
+or mix in definitions from other languages and fragments. These clauses appear
+immediately after `name:` and before the `types` block.
+
+#### `extends: [Base1, Base2]` -- Full Inheritance
+
+Full inheritance merges **all** sections from the base language(s): types, terms,
+equations, rewrites, and logic. Duplicate labels trigger a compile-time error
+(`DuplicateStrategy::Error`), so extending languages must not redeclare any rule
+already present in the base.
+
+```rust
+language! {
+    name: ExtMath,
+    extends: [BaseMath],
+    types {
+    },  // inherits BaseMath's types
+    terms {
+    },  // inherits BaseMath's terms + equations + rewrites + logic
+    equations {
+    },
+    rewrites {
+    },
+}
+```
+
+In this example, `ExtMath` inherits every type, term rule, equation, and rewrite rule
+from `BaseMath`. Additional types, terms, equations, and rewrites can be declared in
+the respective blocks alongside the inherited ones.
+
+#### `includes: [Calc, BoolLogic]` -- Grammar-Only Import
+
+Grammar-only import merges **types and terms only** from the referenced language(s).
+Equations, rewrites, and logic blocks are NOT imported -- the including language must
+provide its own. Duplicate labels are resolved by override
+(`DuplicateStrategy::Override`), allowing the including language to shadow imported
+rules by redeclaring them with the same label.
+
+```rust
+language! {
+    name: ImportedMath,
+    includes: [BaseMath],
+    types {
+    },
+    terms {
+        Div . a:Num, b:Num |- a "/" b : Num ![a / b] fold;
+    },
+    equations {
+    },
+    rewrites {
+        // Must provide rewrites for ALL rules (imported + local)
+        AddCongL . | S ~> T |- (Add S R) ~> (Add T R);
+        AddCongR . | S ~> T |- (Add L S) ~> (Add L T);
+        SubCongL . | S ~> T |- (Sub S R) ~> (Sub T R);
+        SubCongR . | S ~> T |- (Sub L S) ~> (Sub L T);
+        DivCongL . | S ~> T |- (Div S R) ~> (Div T R);
+        DivCongR . | S ~> T |- (Div L S) ~> (Div L T);
+    },
+}
+```
+
+Here, `ImportedMath` imports the `Num` type and `Add`/`Sub` term rules from
+`BaseMath`, adds its own `Div` rule, and provides a complete set of rewrites
+covering all three rules.
+
+#### `mixins: [ArithOps, BoolOps]` -- Fragment Import
+
+Fragment import pulls definitions from `language_fragment!` declarations (see
+Section 1.2). Like `includes:`, it merges **types and terms only**, using
+`DuplicateStrategy::Override`. The key difference is the source: `mixins:` imports
+from fragments (which generate no code on their own), while `includes:` imports from
+full `language!` definitions.
+
+```rust
+language! {
+    name: MixedMath,
+    mixins: [IntArithFragment, BoolOpsFragment],
+    types {
+    },
+    terms {
+        Neg . a:Int |- "-" a : Int ![(-a)] fold;
+    },
+    equations {
+    },
+    rewrites {
+        AddIntCongL . | S ~> T |- (AddInt S R) ~> (AddInt T R);
+        AddIntCongR . | S ~> T |- (AddInt L S) ~> (AddInt L T);
+        // ... rewrites for all imported + local rules ...
+    },
+}
+```
+
+#### Composition Clause Comparison
+
+| Clause     | Merges Types | Merges Terms | Merges Equations | Merges Rewrites | Merges Logic | On Duplicate       |
+|------------|:------------:|:------------:|:----------------:|:---------------:|:------------:|--------------------|
+| `extends`  | Yes          | Yes          | Yes              | Yes             | Yes          | Error (no overlap) |
+| `includes` | Yes          | Yes          | No               | No              | No           | Override (shadow)  |
+| `mixins`   | Yes          | Yes          | No               | No              | No           | Override (shadow)  |
+
+### 1.2 Language Fragments
+
+Language fragments define reusable grammar building blocks that exist only in the
+macro registry. They generate **no code** -- no parser, no AST enum, no Ascent
+program. They serve purely as libraries of type and term definitions that can be
+pulled into full languages via `mixins: [...]`.
+
+#### Syntax
+
+```rust
+use mettail_macros::language_fragment;
+
+language_fragment! {
+    name: FragmentName,
+    types {
+        // Type declarations (same syntax as language! types)
+    },
+    terms {
+        // Term rules (same syntax as language! terms)
+    }
+}
+```
+
+#### Example
+
+```rust
+language_fragment! {
+    name: IntArithFragment,
+    types {
+        ![i32] as Int
+    },
+    terms {
+        AddInt . a:Int, b:Int |- a "+" b : Int ![a + b] fold;
+        SubInt . a:Int, b:Int |- a "-" b : Int ![a - b] fold;
+        MulInt . a:Int, b:Int |- a "*" b : Int ![a * b] fold;
+    }
+}
+
+language_fragment! {
+    name: BoolOpsFragment,
+    types {
+        ![bool] as Bool
+    },
+    terms {
+        And . a:Bool, b:Bool |- a "and" b : Bool ![a && b] step;
+        Or  . a:Bool, b:Bool |- a "or" b  : Bool ![a || b] step;
+        Not . a:Bool |- "not" a : Bool ![!a] step;
+    }
+}
+```
+
+These fragments can then be consumed by any number of languages:
+
+```rust
+language! {
+    name: MixedMath,
+    mixins: [IntArithFragment, BoolOpsFragment],
+    // ...
+}
+```
+
+### 1.3 Composed Languages
+
+The `compose_languages!` macro creates a **delegation wrapper** that combines
+multiple independently-defined languages into a single unified language. Unlike
+`extends` or `includes`, composition does not merge grammars -- each sub-language
+retains its own parser, AST, and Ascent program. The composed language delegates
+parsing to each sub-language in declaration order, returning the first successful
+parse result.
+
+#### Syntax
+
+```rust
+use mettail_macros::compose_languages;
+
+compose_languages! {
+    name: ComposedName,
+    languages: [crate::path::to::Language1, crate::path::to::Language2],
+}
+```
+
+#### Generated Types
+
+The macro generates:
+
+- `{Name}TermInner` -- an enum wrapping each sub-language's term type
+- `{Name}Term` -- a wrapper type implementing the `Term` trait
+- `{Name}Env` -- a combined environment type
+- `{Name}Language` -- a struct implementing the `Language` trait via delegation
+
+#### Parsing Behavior
+
+The composed language tries each sub-language's parser in declaration order. The
+first sub-language that successfully parses the input wins. If all sub-languages
+fail, the error from the last attempt is returned.
+
+#### Example
+
+```rust
+compose_languages! {
+    name: CalcLambda,
+    languages: [crate::calculator::Calculator, crate::lambda::Lambda],
+}
+```
+
+This creates `CalcLambda` which can parse both calculator expressions (`1 + 2 * 3`)
+and lambda expressions (`^x.{x}`), delegating to the `Calculator` parser first and
+falling back to `Lambda` if that fails.
 
 ---
 
@@ -103,7 +319,7 @@ Label . params |- syntax_pattern : ResultCategory [optional_annotations];
 ```
 Add . a:Int, b:Int |- a "+" b : Int ![a + b] step;
 ^^^   ^^^^^^^^^^^^    ^^^^^^^^   ^^^  ^^^^^^^  ^^^^
- │         │              │       │      │       │
+ |         |              |       |      |       |
 Label   Parameters    Syntax   Result  HOL    Eval
                       Pattern  Cat.    code   mode
 ```
@@ -201,9 +417,9 @@ category. This ensures they bind tighter than any infix operator.
 3. The rule is not cross-category (operand and result are the same sort)
 
 Rules that do **not** qualify:
-- `PDrop . n:Name |- "*" "(" n ")" : Proc` — has delimiters (3+ syntax items)
-- `Len . s:Str |- "|" s "|" : Int` — cross-category (Str operand, Int result)
-- `NQuote . p:Proc |- "@" "(" p ")" : Name` — has delimiters and is cross-category
+- `PDrop . n:Name |- "*" "(" n ")" : Proc` -- has delimiters (3+ syntax items)
+- `Len . s:Str |- "|" s "|" : Int` -- cross-category (Str operand, Int result)
+- `NQuote . p:Proc |- "@" "(" p ")" : Name` -- has delimiters and is cross-category
 
 ---
 
@@ -247,12 +463,130 @@ terms {
 By default, all infix operators are **left-associative**:
 - `1 + 2 + 3` parses as `(1 + 2) + 3`
 
-Right-associativity can be specified via the `associativity` field on `RuleSpec`:
-- `1 ^ 2 ^ 3` would parse as `1 ^ (2 ^ 3)` with right-associativity
+Right-associativity is specified with the `right` keyword at the end of the rule,
+after the eval mode annotation (if present):
 
-The binding power pairs encode this:
-- Left-assoc: `(2n, 2n+1)` -- left side binds tighter
-- Right-assoc: `(2n+1, 2n)` -- right side binds tighter
+```rust
+Pow . a:Int, b:Int |- a "^" b : Int right;
+Pow . a:Int, b:Int |- a "^" b : Int ![a.pow(b as u32)] step right;
+```
+
+With right-associativity:
+- `1 ^ 2 ^ 3` parses as `1 ^ (2 ^ 3)` (i.e., `Pow(1, Pow(2, 3))`)
+
+The `right` keyword can be combined with eval mode and `prefix(N)` annotations:
+
+```
+Label . params |- syntax : Cat ![code] mode right prefix(N);
+```
+
+#### Binding Power Encoding
+
+The binding power (BP) pairs encode associativity:
+- Left-associative: `(2n, 2n+1)` -- the left side binds tighter, so the right
+  operand recurses at a higher minimum BP than the left saw
+- Right-associative: `(2n+1, 2n)` -- the right side binds tighter, so the right
+  operand recurses at the same level as the left, allowing right nesting
+
+#### Parsing Example
+
+Given `1 ^ 2 ^ 3` with `Pow` declared as right-associative:
+
+1. Parse `1` as a literal
+2. See `^` with BP `(2n+1, 2n)` -- left_bp = 2n+1
+3. The current min_bp (0) < left_bp (2n+1), so consume `^`
+4. Recurse for right operand with min_bp = 2n (right_bp)
+5. Parse `2`, see another `^` with left_bp = 2n+1
+6. Current min_bp (2n) < left_bp (2n+1), so consume `^`
+7. Recurse again, parse `3`
+8. Result: `Pow(1, Pow(2, 3))`
+
+### 5.1 Postfix Operators
+
+Postfix operators have exactly the syntax pattern `NonTerminal(same_category) Terminal`,
+where the operand category matches the result category. They bind tighter than both
+infix and prefix operators.
+
+#### Syntax
+
+```rust
+Fact . a:Int |- a "!" : Int;
+```
+
+This parses expressions like `3!`, producing `Int::Fact(Box::new(NumLit(3)))`.
+
+#### Classification Criteria
+
+A rule is classified as postfix when:
+1. Its syntax has exactly 2 items: `[NonTerminal, Terminal]`
+2. The nonterminal's category matches the result category
+
+Note that postfix classification implies infix classification internally -- postfix
+operators are handled in the Pratt infix loop, consuming the trailing terminal after
+the left operand has been parsed.
+
+#### Binding Power Assignment
+
+Postfix operators use a **two-pass BP analysis** to ensure they bind tighter than
+all other operator types:
+
+1. **First pass**: All non-postfix operators (regular infix and mixfix) are assigned
+   BPs starting at `(2, 3)`, incrementing by 2 per operator
+2. **Gap**: Unary prefix operators receive `max_non_postfix_bp + 2`
+3. **Second pass**: Postfix operators start at `max_non_postfix_bp + 4`, incrementing
+   by 2 for each additional postfix operator
+
+This produces the binding hierarchy: **infix < prefix < postfix**.
+
+#### Parsing Examples
+
+| Expression | Parse Tree                          | Notes                                     |
+|------------|-------------------------------------|--------------------------------------------|
+| `3!`       | `Fact(NumLit(3))`                   | Simple postfix application                 |
+| `3! + 5`   | `Add(Fact(NumLit(3)), NumLit(5))`   | Postfix binds tighter than infix `+`       |
+| `-3!`      | `Neg(Fact(NumLit(3)))`              | Postfix binds tighter than prefix `-`      |
+| `3! * 2!`  | `Mul(Fact(NumLit(3)), Fact(NumLit(2)))` | Both operands get postfix applied first |
+
+### 5.2 Mixfix (N-ary) Operators
+
+Mixfix operators have 3 or more syntax items with at least 2 terminals and at least
+2 nonterminals. The classic example is the ternary conditional `a ? b : c`.
+
+#### Syntax
+
+```rust
+Tern . cond:Int, a:Int, b:Int |- cond "?" a ":" b : Int;
+```
+
+The first terminal (`"?"`) is the **trigger terminal** -- it is the operator token
+matched in the Pratt infix loop. Subsequent terminal-nonterminal pairs are stored as
+`MixfixPart` structures:
+
+```
+cond "?" a ":" b
+     ^^^       -- trigger terminal
+         ^ ^^^ -- MixfixPart { operand: "a", separator: Some(":") }
+              ^ -- MixfixPart { operand: "b", separator: None }
+```
+
+#### Precedence
+
+Mixfix operators are assigned BPs alongside regular infix operators in declaration
+order. They receive the **lowest precedence** by default (if declared before infix
+operators). Middle operands (between the trigger and the last terminal) are parsed
+at `min_bp = 0`, resetting precedence like grouping parentheses. The final operand
+is parsed at the operator's `right_bp`.
+
+#### Parsing Example
+
+Given `x > 0 ? x : -x` with `Tern` as a mixfix operator and `Gt` as a comparison:
+
+1. Parse `x > 0` as `Gt(Var("x"), NumLit(0))` (higher-precedence comparison)
+2. See `?` trigger -- matches `Tern` mixfix with its left_bp
+3. Parse middle operand `x` at `min_bp = 0` (full reset)
+4. Expect `:` separator
+5. Parse final operand `-x` at `right_bp`
+6. Result: `Tern(Gt(Var("x"), NumLit(0)), Var("x"), Neg(Var("x")))`
 
 ---
 
@@ -375,10 +709,15 @@ The generated parser creates the collection, then loops:
 ## 9. Pattern Operations
 
 Pattern operations (`#` or `*` prefixed) control how collections are parsed.
+The Sep/Map/Zip system uses composable primitives that can be combined freely,
+replacing the earlier monolithic `ZipMapSep` approach.
 
-### `#sep(separator)` / `*sep(separator)`
+### `*sep(separator)` -- Separated Lists
 
-Parses a separator-delimited list.
+Repeats a body pattern with a separator between repetitions. Nullable (0 iterations
+are valid). The body can be any `SyntaxItemSpec`: a `NonTerminal` (simple separated
+list), a `Map` (structured separated list with a single accumulator), or a
+`Zip { body: Map { .. } }` (dual-accumulator structured list).
 
 ```rust
 PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
@@ -389,9 +728,29 @@ PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
 Input: `{ P1 | P2 | P3 }`
 Result: `HashBag { P1, P2, P3 }`
 
-### `#zip(a, b)` / `*zip(a, b)`
+#### Standalone Sep with NonTerminal
 
-Pairs elements from two parallel sequences.
+The simplest form: a separated list of a single nonterminal category.
+
+```rust
+// Separate process list by pipe
+PPar . ps:HashBag(Proc) |- "{" ps.*sep("|") "}" : Proc;
+```
+
+#### Sep with Map
+
+A separated list where each element is a structured multi-item pattern.
+
+```rust
+// Each element is a name followed by "!" and a process
+Outputs . ns:Vec(Name), qs:Vec(Proc)
+|- ns.*map(|n| n "!" q).*sep(",") : Proc;
+```
+
+### `*zip(a, b)` -- Dual-Accumulator Collection
+
+Pairs elements from two parallel sequences. Each iteration produces values for
+both the left and right accumulators in lockstep.
 
 ```rust
 PInputs . ns:Vec(Name), ^[xs].p:[Name* -> Proc]
@@ -402,9 +761,14 @@ This parses pairs like `n1 ? x1 , n2 ? x2 , ...` and collects:
 - `ns` = `[n1, n2, ...]` (names)
 - `xs` = `[x1, x2, ...]` (binder variables)
 
-### `#map(|params| body)` / `*map(|params| body)`
+#### Standalone Zip
 
-Applies a pattern template to each element (or each pair from `#zip`).
+When used without `Sep`, `Zip` collects a dual-accumulator sequence without
+separators.
+
+### `*map(|params| body)` -- Element-Level Pattern
+
+Applies a pattern template to each element (or each pair from `*zip`).
 
 ```rust
 *zip(ns,xs).*map(|n,x| n "?" x).*sep(",")
@@ -415,7 +779,12 @@ Applies a pattern template to each element (or each pair from `#zip`).
 The body `n "?" x` means: for each iteration, parse a `Name`, expect `?`, then
 parse an identifier (which becomes a binder variable).
 
-### `#opt(pattern)` / `*opt(pattern)`
+#### Standalone Map
+
+When used without `Sep` or `Zip`, `Map` defines a structured inline sequence of
+items forming one logical element.
+
+### `#opt(pattern)` / `*opt(pattern)` -- Optional Sub-Pattern
 
 Makes a sub-pattern optional. If parsing fails, the position is restored.
 
@@ -437,10 +806,25 @@ if opt_result.is_err() {
 }
 ```
 
-### `#var`
+### `#var` -- Variable Reference
 
 References a variable position in the pattern (for BNFC-style patterns).
 Variables are always identifiers.
+
+### Composition Table
+
+The following table shows which combinations of outer and inner pattern operations
+are valid:
+
+| Outer | Inner        | Valid | Example                                         |
+|-------|--------------|:-----:|--------------------------------------------------|
+| Sep   | NonTerminal  | Yes   | `ps.*sep("\|")`                                  |
+| Sep   | Map          | Yes   | `ns.*map(\|n\| n "!" q).*sep(",")`               |
+| Sep   | Zip          | Yes   | `*zip(ns,xs).*sep(",")`                          |
+| Sep   | Zip(Map)     | Yes   | `*zip(ns,xs).*map(\|n,x\| n "?" x).*sep(",")` |
+| Zip   | Map          | Yes   | `*zip(ns,xs).*map(\|n,x\| n "?" x)`             |
+| Map   | (standalone) | Yes   | Element-level structured pattern                 |
+| Zip   | (standalone) | Yes   | Dual-accumulator collection without separator    |
 
 ---
 
@@ -476,8 +860,8 @@ FIRST(Int)  = {Integer, Ident}
 FIRST(Bool) = {KwTrue, KwFalse, KwNot, Ident}
 
 For "Eq . a:Int, b:Int |- a '==' b : Bool":
-  Token "Integer" is unique to Int → deterministic cross-category path
-  Token "Ident" is in both → needs backtracking
+  Token "Integer" is unique to Int -> deterministic cross-category path
+  Token "Ident" is in both -> needs backtracking
 ```
 
 For unambiguous tokens, the generated code directly parses the source category:
@@ -628,10 +1012,10 @@ pub trait Language: Send + Sync {
 Each generated language overrides this method to perform:
 
 1. **Beta-reduction of single applications:**
-   `ApplyDom(LamDom(scope), arg)` → `body[binder := arg].normalize()`
+   `ApplyDom(LamDom(scope), arg)` -> `body[binder := arg].normalize()`
 
 2. **Beta-reduction of multi-applications:**
-   `MApplyDom(MLamDom(scope), [arg1, arg2, ...])` → `body[binders := args].normalize()`
+   `MApplyDom(MLamDom(scope), [arg1, arg2, ...])` -> `body[binders := args].normalize()`
 
 3. **Recursive normalization** of all sub-terms.
 
@@ -674,12 +1058,12 @@ causes the normalizer to return the un-reduced term.
 | `$proc(^x.{x}, {})`           | `VarCategory::Proc` | `LamProc`      | `{}`                                                                      |
 | `$name(^loc.{loc!(init)}, n)` | `VarCategory::Name` | `LamName`      | `n!(init)`                                                                |
 | `$int(^x.{x + 1}, 5)`         | `VarCategory::Int`  | `LamInt`       | `6`                                                                       |
-| `$proc(^x.{*(x)}, {})`        | `VarCategory::Name` | `LamName`      | `*(x)` (no reduction — `ApplyProc` expects `LamProc` but finds `LamName`) |
+| `$proc(^x.{*(x)}, {})`        | `VarCategory::Name` | `LamName`      | `*(x)` (no reduction -- `ApplyProc` expects `LamProc` but finds `LamName`) |
 
 Note: In the last case, `x` appears in `*(x)` which uses `x` as a
 `Name` (the drop operator `*` takes a Name argument). The inference
 correctly creates `LamName`, but the dollar prefix `$proc` creates
-`ApplyProc` — the domain mismatch prevents reduction. The correct
+`ApplyProc` -- the domain mismatch prevents reduction. The correct
 invocation would be `$name(^x.{*(x)}, n)` which creates `ApplyName`
 matching `LamName`.
 
@@ -804,26 +1188,36 @@ The `S` and `T` variables are bound by the premise.
 
 ## Complete Grammar Feature Summary
 
-| Feature            | Syntax                                      | Module                      |
-|--------------------|---------------------------------------------|-----------------------------|
-| Type declaration   | `types { Cat }` or `types { ![T] as Cat }`  | lib.rs                      |
-| Infix operator     | `a OP b : Cat`                              | binding_power.rs + pratt.rs |
-| Unary prefix op    | `OP a : Cat` (same-category, tight binding) | recursive.rs (prefix_bp)    |
-| Structural prefix  | `OP "(" a ")" : Cat`                        | recursive.rs                |
-| Unit constructor   | `|- "token" : Cat`                          | recursive.rs                |
-| Structural rule    | `|- term1 "op" term2 : Cat`                 | recursive.rs                |
-| Single binder      | `^x.p:[Type -> Type]`                       | recursive.rs                |
-| Multi-binder       | `^[xs].p:[Type* -> Type]`                   | recursive.rs                |
-| HashBag collection | `ps:HashBag(Cat)`                           | recursive.rs                |
-| HashSet collection | `ps:HashSet(Cat)`                           | recursive.rs                |
-| Vec collection     | `ns:Vec(Cat)`                               | recursive.rs                |
-| Separator list     | `*sep("delim")`                             | recursive.rs                |
-| Zip+Map+Sep        | `*zip(a,b).*map(\|x,y\| ...) .*sep(",")`    | recursive.rs                |
-| Optional           | `#opt(...)`                                 | recursive.rs                |
-| Cross-category     | `a:CatA, b:CatA \|- a OP b : CatB`          | dispatch.rs                 |
-| Cast               | `k:CatA \|- k : CatB`                       | dispatch.rs                 |
-| Lambda             | `^x.{body}` (auto-generated)                | pratt.rs + recursive.rs     |
-| Application        | `$type(lam, arg)` (auto-generated)          | pratt.rs                    |
-| HOL native         | `![rust_expr] mode`                         | recursive.rs                |
-| Equation           | `\|- lhs = rhs`                             | (macro crate)               |
-| Rewrite            | `\| premise \|- lhs ~> rhs`                 | (macro crate)               |
+| Feature              | Syntax                                       | Module                      |
+|----------------------|----------------------------------------------|-----------------------------|
+| Type declaration     | `types { Cat }` or `types { ![T] as Cat }`   | lib.rs                      |
+| Infix operator       | `a OP b : Cat`                               | binding_power.rs + pratt.rs |
+| Right-assoc infix    | `a OP b : Cat right`                         | binding_power.rs + pratt.rs |
+| Unary prefix op      | `OP a : Cat` (same-category, tight binding)  | recursive.rs (prefix_bp)    |
+| Postfix operator     | `a OP : Cat` (same-category, tightest)       | binding_power.rs + pratt.rs |
+| Mixfix operator      | `a OP1 b OP2 c : Cat` (3+ items, 2+ terms)  | binding_power.rs + pratt.rs |
+| Structural prefix    | `OP "(" a ")" : Cat`                         | recursive.rs                |
+| Unit constructor     | `\|- "token" : Cat`                          | recursive.rs                |
+| Structural rule      | `\|- term1 "op" term2 : Cat`                 | recursive.rs                |
+| Single binder        | `^x.p:[Type -> Type]`                        | recursive.rs                |
+| Multi-binder         | `^[xs].p:[Type* -> Type]`                    | recursive.rs                |
+| HashBag collection   | `ps:HashBag(Cat)`                            | recursive.rs                |
+| HashSet collection   | `ps:HashSet(Cat)`                            | recursive.rs                |
+| Vec collection       | `ns:Vec(Cat)`                                | recursive.rs                |
+| Separator list       | `*sep("delim")`                              | recursive.rs                |
+| Map pattern          | `*map(\|x\| ...)`                            | recursive.rs                |
+| Zip collection       | `*zip(a,b)`                                  | recursive.rs                |
+| Zip+Map+Sep          | `*zip(a,b).*map(\|x,y\| ...).*sep(",")`     | recursive.rs                |
+| Optional             | `#opt(...)`                                  | recursive.rs                |
+| Cross-category       | `a:CatA, b:CatA \|- a OP b : CatB`          | dispatch.rs                 |
+| Cast                 | `k:CatA \|- k : CatB`                       | dispatch.rs                 |
+| Lambda               | `^x.{body}` (auto-generated)                | pratt.rs + recursive.rs     |
+| Application          | `$type(lam, arg)` (auto-generated)           | pratt.rs                    |
+| HOL native           | `![rust_expr] mode`                          | recursive.rs                |
+| Equation             | `\|- lhs = rhs`                              | (macro crate)               |
+| Rewrite              | `\| premise \|- lhs ~> rhs`                  | (macro crate)               |
+| `extends`            | `extends: [Base1, Base2]`                    | merge.rs + registry.rs      |
+| `includes`           | `includes: [Lang1, Lang2]`                   | merge.rs + registry.rs      |
+| `mixins`             | `mixins: [Frag1, Frag2]`                     | merge.rs + registry.rs      |
+| `language_fragment!` | `language_fragment! { name: F, ... }`        | fragment.rs + registry.rs   |
+| `compose_languages!` | `compose_languages! { name: C, ... }`        | compose.rs + compose_gen.rs |

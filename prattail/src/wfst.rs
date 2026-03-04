@@ -135,6 +135,89 @@ impl StateSignature {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Sprint 8: Canonical WFST structure for alpha-equivalence / isomorphism detection
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// The shape of a dispatch action, erasing category-specific names.
+///
+/// Two actions with the same shape but different names (e.g., `Direct { rule_label: "AddInt" }`
+/// vs `Direct { rule_label: "AddFloat" }`) are considered alpha-equivalent. The shape
+/// preserves structural properties that affect codegen (e.g., `needs_backtrack`, alternative
+/// count) while erasing concrete identifiers.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum CanonicalActionShape {
+    Direct,
+    Lookahead {
+        alternative_count: usize,
+        has_fallback: bool,
+    },
+    CrossCategory {
+        needs_backtrack: bool,
+    },
+    Cast,
+    Grouping,
+    Variable,
+}
+
+impl CanonicalActionShape {
+    /// Extract the shape from a concrete `DispatchAction`.
+    pub fn from_action(action: &crate::prediction::DispatchAction) -> Self {
+        match action {
+            crate::prediction::DispatchAction::Direct { .. } => CanonicalActionShape::Direct,
+            crate::prediction::DispatchAction::Lookahead {
+                alternatives,
+                fallback,
+            } => CanonicalActionShape::Lookahead {
+                alternative_count: alternatives.len(),
+                has_fallback: fallback.is_some(),
+            },
+            crate::prediction::DispatchAction::CrossCategory {
+                needs_backtrack, ..
+            } => CanonicalActionShape::CrossCategory {
+                needs_backtrack: *needs_backtrack,
+            },
+            crate::prediction::DispatchAction::Cast { .. } => CanonicalActionShape::Cast,
+            crate::prediction::DispatchAction::Grouping { .. } => CanonicalActionShape::Grouping,
+            crate::prediction::DispatchAction::Variable { .. } => CanonicalActionShape::Variable,
+        }
+    }
+}
+
+/// A canonicalized state in a WFST, with De Bruijn action indices.
+///
+/// Action indices are replaced with encounter-order De Bruijn indices so that
+/// two WFSTs with the same topology but different action tables produce identical
+/// canonical states. This enables hash-based grouping of isomorphic WFSTs.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CanonicalState {
+    pub is_final: bool,
+    pub final_weight_bits: u64,
+    /// Sorted transitions: `(token_id, de_bruijn_action_index, target_state, weight_bits)`
+    pub transitions: Vec<(TokenId, u32, WfstStateId, u64)>,
+}
+
+/// De Bruijn-canonicalized WFST structure for alpha-equivalence detection.
+///
+/// Two `PredictionWfst` instances are **alpha-equivalent** (isomorphic) if they
+/// have identical `CanonicalWfstStructure` values. This means:
+/// - Same state count, same state accepting status/weights
+/// - Same transition topology (same tokens lead to same states with same weights)
+/// - Same action *shapes* at each De Bruijn position (Direct vs Lookahead vs Cast etc.)
+/// - Only the concrete names (rule labels, category names) differ
+///
+/// The De Bruijn canonicalization walks transitions in deterministic order
+/// (state 0 first, sorted by token_id within each state) and replaces each
+/// unique `action_idx` with a sequential index (0, 1, 2, ...).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CanonicalWfstStructure {
+    pub states: Vec<CanonicalState>,
+    pub start: WfstStateId,
+    /// Action shapes in De Bruijn order. `action_shapes[i]` is the shape of
+    /// the action at De Bruijn index `i`.
+    pub action_shapes: Vec<CanonicalActionShape>,
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // PredictionWfst — per-category prediction
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -167,6 +250,81 @@ pub struct PredictionWfst {
 }
 
 impl PredictionWfst {
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sprint 8: Canonical structure for isomorphism detection
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Compute the De Bruijn-canonicalized structure of this WFST.
+    ///
+    /// Walks states in ID order starting from state 0. For each transition
+    /// encountered (sorted by token_id within each state), replaces the
+    /// concrete `action_idx` with a sequential De Bruijn index. Two WFSTs
+    /// with identical topology but different action tables produce identical
+    /// canonical structures.
+    ///
+    /// The action shapes (Direct/Lookahead/CrossCategory/Cast/Grouping/Variable)
+    /// are also recorded to ensure isomorphic WFSTs have compatible codegen
+    /// requirements.
+    pub fn canonical_structure(&self) -> CanonicalWfstStructure {
+        let mut action_debruijn: HashMap<u32, u32> = HashMap::new();
+        let mut next_debruijn: u32 = 0;
+        let mut action_shapes: Vec<CanonicalActionShape> = Vec::new();
+
+        let states: Vec<CanonicalState> = self
+            .states
+            .iter()
+            .map(|state| {
+                let mut transitions: Vec<(TokenId, u32, WfstStateId, u64)> = state
+                    .transitions
+                    .iter()
+                    .map(|t| {
+                        let db_idx = *action_debruijn.entry(t.action_idx).or_insert_with(|| {
+                            let idx = next_debruijn;
+                            next_debruijn += 1;
+                            // Record the action shape at this De Bruijn index
+                            if let Some(wa) = self.actions.get(t.action_idx as usize) {
+                                action_shapes
+                                    .push(CanonicalActionShape::from_action(&wa.action));
+                            }
+                            idx
+                        });
+                        (t.input, db_idx, t.to, t.weight.value().to_bits())
+                    })
+                    .collect();
+                transitions.sort();
+
+                CanonicalState {
+                    is_final: state.is_final,
+                    final_weight_bits: state.final_weight.value().to_bits(),
+                    transitions,
+                }
+            })
+            .collect();
+
+        CanonicalWfstStructure {
+            states,
+            start: self.start,
+            action_shapes,
+        }
+    }
+
+    /// Compute a hash of the canonical WFST structure.
+    ///
+    /// Two WFSTs with the same canonical hash are candidates for isomorphism.
+    /// (Hash collisions are possible but unlikely; use `canonical_structure()`
+    /// equality for definitive comparison.)
+    pub fn canonical_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let canonical = self.canonical_structure();
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        canonical.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Prediction queries
+    // ══════════════════════════════════════════════════════════════════════════
+
     /// Query the prediction WFST for a token, returning weighted actions
     /// sorted by weight (lowest first = most likely).
     ///
@@ -2732,5 +2890,162 @@ mod tests {
         let dot = wfst.to_dot();
 
         assert!(dot.contains("[2.50]"), "weight should be formatted as [2.50], got:\n{}", dot);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sprint 8: Canonical structure & isomorphism tests
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Helper: build a WFST with the given token→action mapping.
+    fn build_test_wfst(
+        category: &str,
+        token_actions: &[(&str, &str, &str, f64)], // (token, rule_label, parse_fn, weight)
+    ) -> PredictionWfst {
+        let token_names: Vec<String> = token_actions.iter().map(|(t, _, _, _)| t.to_string()).collect();
+        let token_map = TokenIdMap::from_names(token_names.into_iter());
+        let mut builder = PredictionWfstBuilder::new(category, token_map);
+        for (tok, label, parse_fn, weight) in token_actions {
+            builder.add_action(
+                tok,
+                DispatchAction::Direct {
+                    rule_label: label.to_string(),
+                    parse_fn: parse_fn.to_string(),
+                },
+                TropicalWeight::new(*weight),
+            );
+        }
+        builder.build()
+    }
+
+    #[test]
+    fn test_canonical_structure_same_topology_different_labels() {
+        // Two WFSTs with identical topology but different action labels
+        // should produce identical canonical structures.
+        let wfst_int = build_test_wfst("Int", &[
+            ("Plus", "AddInt", "parse_add_int", 0.0),
+            ("Minus", "SubInt", "parse_sub_int", 0.0),
+            ("Ident", "VarInt", "parse_var_int", 1.0),
+        ]);
+        let wfst_float = build_test_wfst("Float", &[
+            ("Plus", "AddFloat", "parse_add_float", 0.0),
+            ("Minus", "SubFloat", "parse_sub_float", 0.0),
+            ("Ident", "VarFloat", "parse_var_float", 1.0),
+        ]);
+
+        let canon_int = wfst_int.canonical_structure();
+        let canon_float = wfst_float.canonical_structure();
+
+        assert_eq!(canon_int, canon_float, "Isomorphic WFSTs should have equal canonical structures");
+        assert_eq!(
+            wfst_int.canonical_hash(),
+            wfst_float.canonical_hash(),
+            "Isomorphic WFSTs should have equal canonical hashes"
+        );
+    }
+
+    #[test]
+    fn test_canonical_structure_different_topology() {
+        // Two WFSTs with different topologies should have different canonical structures.
+        let wfst_a = build_test_wfst("A", &[
+            ("Plus", "Add", "pa", 0.0),
+            ("Minus", "Sub", "ps", 0.0),
+        ]);
+        let wfst_b = build_test_wfst("B", &[
+            ("Plus", "Add", "pa", 0.0),
+            ("Star", "Mul", "pm", 0.0), // Different token
+        ]);
+
+        let canon_a = wfst_a.canonical_structure();
+        let canon_b = wfst_b.canonical_structure();
+
+        assert_ne!(canon_a, canon_b, "Different topologies should produce different canonical structures");
+    }
+
+    #[test]
+    fn test_canonical_structure_different_weights() {
+        // Same tokens and actions but different weights → different canonical structures.
+        let wfst_a = build_test_wfst("A", &[
+            ("Plus", "Add", "pa", 0.0),
+        ]);
+        let wfst_b = build_test_wfst("B", &[
+            ("Plus", "Add", "pa", 1.0), // Different weight
+        ]);
+
+        let canon_a = wfst_a.canonical_structure();
+        let canon_b = wfst_b.canonical_structure();
+
+        assert_ne!(canon_a, canon_b, "Different weights should produce different canonical structures");
+    }
+
+    #[test]
+    fn test_canonical_structure_debruijn_indexing() {
+        // Verify De Bruijn indices are assigned in encounter order.
+        let wfst = build_test_wfst("Test", &[
+            ("Plus", "Add", "pa", 0.0),
+            ("Minus", "Sub", "ps", 0.5),
+            ("Star", "Mul", "pm", 1.0),
+        ]);
+
+        let canonical = wfst.canonical_structure();
+
+        // Action shapes should all be Direct
+        assert_eq!(canonical.action_shapes.len(), 3);
+        for shape in &canonical.action_shapes {
+            assert_eq!(*shape, CanonicalActionShape::Direct);
+        }
+
+        // Start state transitions should use De Bruijn indices 0, 1, 2
+        let start = &canonical.states[0];
+        let db_indices: Vec<u32> = start.transitions.iter().map(|(_, db, _, _)| *db).collect();
+        // After sorting by token_id, the De Bruijn indices should cover {0, 1, 2}
+        let mut sorted_indices = db_indices.clone();
+        sorted_indices.sort();
+        sorted_indices.dedup();
+        assert_eq!(sorted_indices, vec![0, 1, 2], "De Bruijn indices should be 0, 1, 2");
+    }
+
+    #[test]
+    fn test_canonical_structure_action_shape_mismatch() {
+        // Two WFSTs with same topology but different action shapes are NOT isomorphic.
+        let token_map = TokenIdMap::from_names(vec!["X".to_string()].into_iter());
+
+        let mut builder_a = PredictionWfstBuilder::new("A", token_map.clone());
+        builder_a.add_action(
+            "X",
+            DispatchAction::Direct {
+                rule_label: "RuleA".to_string(),
+                parse_fn: "parse_a".to_string(),
+            },
+            TropicalWeight::new(0.0),
+        );
+        let wfst_a = builder_a.build();
+
+        let mut builder_b = PredictionWfstBuilder::new("B", token_map);
+        builder_b.add_action(
+            "X",
+            DispatchAction::Variable { category: "B".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        let wfst_b = builder_b.build();
+
+        let canon_a = wfst_a.canonical_structure();
+        let canon_b = wfst_b.canonical_structure();
+
+        assert_ne!(
+            canon_a, canon_b,
+            "WFSTs with different action shapes should not be isomorphic"
+        );
+    }
+
+    #[test]
+    fn test_canonical_hash_deterministic() {
+        // Same WFST should always produce the same hash.
+        let wfst = build_test_wfst("Test", &[
+            ("A", "R1", "p1", 0.0),
+            ("B", "R2", "p2", 1.0),
+        ]);
+        let h1 = wfst.canonical_hash();
+        let h2 = wfst.canonical_hash();
+        assert_eq!(h1, h2, "Canonical hash should be deterministic");
     }
 }

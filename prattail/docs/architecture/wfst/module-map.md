@@ -211,7 +211,7 @@ passes over a `PredictionWfst`. Four built-in passes are provided:
   that outgoing weights from each state sum to one (in the tropical
   sense). Produces a canonical form for comparison and efficient decoding.
 - `DeadStateElimination` — removes states unreachable from the start or
-  from which no final state is reachable. Equivalent to the three-tier
+  from which no final state is reachable. Equivalent to the four-tier
   dead-rule analysis projected onto the WFST state graph.
 - `StateMinimization` — Hopcroft-style DFA minimization on the weighted
   automaton, merging bisimilar states to reduce state count.

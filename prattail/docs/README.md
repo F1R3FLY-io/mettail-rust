@@ -77,7 +77,7 @@ adds probabilistic training via the log semiring.
 - [Extended Recovery Strategies](design/wfst/extended-recovery-strategies.md) — New repair actions, multi-step Viterbi, cross-category recovery
 - [RecoveryConfig](design/wfst/recovery-config.md) — Tunable recovery parameters and trained weights
 - [Grammar Composition](design/wfst/grammar-composition.md) — Language union, WFST-aware merging
-- [Dead-Rule Detection](design/wfst/dead-rule-detection.md) — Three-tier analysis: literal, category-reachability, WFST dispatch
+- [Dead-Rule Detection](design/wfst/dead-rule-detection.md) — Four-tier analysis: literal, category-reachability, WFST dispatch, semantic liveness
 - [Weight Training](design/wfst/weight-training.md) — LogWeight SGD, forward-backward, trained models (`wfst-log`)
 - [Token Lattices](design/wfst/token-lattices.md) — Two-path abstraction, generic semiring parametrization, algorithm trade-offs
 
@@ -101,6 +101,26 @@ adds probabilistic training via the log semiring.
 - [Training Guide](usage/wfst/training-guide.md) — Corpus preparation, SGD training, model serialization (`wfst-log`)
 - [Recovery Tuning Guide](usage/wfst/recovery-tuning.md) — Parameter tuning, diagnostics interpretation, trained weights
 
+### Language Unification
+
+PraTTaIL supports five mechanisms for composing and unifying grammars.
+For a comprehensive guide with examples, diagrams, and decision flowcharts:
+
+- [Unification Overview](usage/language/unification/00-overview.md) — Taxonomy, comparison table, decision flowchart, pipeline diagram
+- [extends](usage/language/unification/01-extends.md) — Full language inheritance (types + terms + equations + rewrites + logic)
+- [includes](usage/language/unification/02-includes.md) — Grammar-only import (types + terms, own semantics)
+- [mixins](usage/language/unification/03-mixins.md) — Fragment import via `language_fragment!`
+- [compose_languages!](usage/language/unification/04-compose.md) — Runtime delegation (no grammar merge)
+- [Spec-level composition](usage/language/unification/05-spec-level-composition.md) — Programmatic `compose_languages()` API
+- [Cross-category dispatch](usage/language/unification/06-cross-category.md) — Implicit unification via FIRST set overlap
+- [Cast rules](usage/language/unification/07-cast-rules.md) — Category embeddings and type coercion
+- [Best practices](usage/language/unification/08-best-practices.md) — Decision tree, anti-patterns, migration guide
+
+### Diagnostics
+
+- [Diagnostics Catalog](diagnostics/README.md) — All 23 lint diagnostics (G, W, R, C, P categories)
+- [Lint Layer Design](design/wfst/lint-layer.md) — Unified lint architecture, `LintContext`, `run_lints()`
+
 ---
 
 ## Documentation by Category
@@ -110,8 +130,9 @@ adds probabilistic training via the log semiring.
 | [architecture/](architecture/) | Crate structure, data flow, generated code anatomy, WFST module map |
 | [benchmarks/](benchmarks/)     | Parse performance comparison, optimization ledger           |
 | [design/](design/)             | Pipeline, engines, generators, disambiguation, WFST design  |
+| [diagnostics/](diagnostics/)   | Per-lint documentation, runtime error catalog               |
 | [theory/](theory/)             | Formal foundations: automata, prediction, Pratt, semirings   |
-| [usage/](usage/)               | Quick start, grammar features, EBNF dump, troubleshooting, WFST config |
+| [usage/](usage/)               | Quick start, grammar features, language unification, EBNF dump, troubleshooting, WFST config |
 
 ---
 

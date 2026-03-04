@@ -2,8 +2,8 @@
 
 **Date:** 2026-03-01
 
-Inter-category dead-code elimination (A4) extends PraTTaIL's three-tier
-dead-rule detection with a fourth tier that reasons about the full
+Inter-category dead-code elimination (A4) extends PraTTaIL's four-tier
+dead-rule detection with an additional analysis that reasons about the full
 inter-category dispatch graph.  Where Tiers 1--3 analyze each category in
 isolation, Tier 4 builds a `BooleanWeight` WFST over the inter-category
 connections and applies the forward-backward algorithm to identify
@@ -32,7 +32,7 @@ intra-category FIRST-set status.
 
 ### Per-category blindness
 
-The existing three-tier dead-rule detection (`pipeline.rs:detect_dead_rules`)
+The existing four-tier dead-rule detection (`pipeline.rs:detect_dead_rules`)
 analyzes each category in isolation:
 
 | Tier | Scope | What it finds |
@@ -252,7 +252,7 @@ The direction field in the warning distinguishes three cases:
 ## 5. Extension of Existing Detection
 
 Tier 4 is strictly additive.  It does not modify or replace the existing
-three tiers.
+Tiers 1–3.
 
 ### Decision flow with Tier 4
 

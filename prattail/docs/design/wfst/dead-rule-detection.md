@@ -49,7 +49,7 @@ PraTTaIL's detection is **conservative**: it may miss some dead rules
 (false negatives), but it will never flag a live rule as dead (no false
 positives).  This design choice mirrors Rust's `#[warn(dead_code)]` lint,
 where the compiler accepts silent dead code over noisy false alarms.  The
-three-tier structure progressively widens coverage while maintaining this
+four-tier structure progressively widens coverage while maintaining this
 conservatism.
 
 ### Relation to compiler warnings
@@ -71,7 +71,7 @@ The dead-rule warning is analogous to Rust's `#[warn(dead_code)]`:
 Every rule in the grammar enters the detection pipeline and is classified
 by exactly one tier.  Tiers 1–3 execute in order; once a rule is handled by
 a tier, it does not proceed to subsequent tiers.  Tier 4 (semantic liveness)
-runs after all three tiers and can **resurrect** rules that Tiers 1–3 flagged
+runs after Tiers 1–3 and can **resurrect** rules that those tiers flagged
 as dead.
 
 ```

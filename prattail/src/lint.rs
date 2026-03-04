@@ -171,6 +171,7 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_g05_empty_category(ctx, &mut diagnostics);
     lint_g06_shadowed_operator(ctx, &mut diagnostics);
     lint_g07_identical_rules(ctx, &mut diagnostics);
+    lint_g24_alpha_equivalent_rules(ctx, &mut diagnostics);
     lint_g08_missing_cast_to_root(ctx, &mut diagnostics);
     lint_g09_unbalanced_delimiters(ctx, &mut diagnostics);
     lint_g10_ambiguous_associativity(ctx, &mut diagnostics);
@@ -766,6 +767,240 @@ fn lint_g07_identical_rules(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
                     source_location: None,
                 });
             }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G24: Alpha-Equivalent Rules (Sprint C: C1)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// De Bruijn encoding environment for canonical variable renaming.
+///
+/// Variables are assigned sequential slots in encounter order. The first
+/// occurrence of a variable gets tag `0xC0` (NewVar), subsequent occurrences
+/// get tag `0x80 | slot` (VarRef). Two rules with different variable names
+/// but identical structure produce identical byte sequences.
+struct DebruijnEnv {
+    var_slots: HashMap<String, u8>,
+    next_slot: u8,
+}
+
+impl DebruijnEnv {
+    fn new() -> Self {
+        Self {
+            var_slots: HashMap::new(),
+            next_slot: 0,
+        }
+    }
+
+    /// Resolve a variable name to its De Bruijn encoding byte.
+    ///
+    /// - First occurrence: emits `0xC0` (NewVar) and assigns a slot
+    /// - Subsequent occurrences: emits `0x80 | slot` (VarRef)
+    fn resolve(&mut self, name: &str) -> u8 {
+        if let Some(&slot) = self.var_slots.get(name) {
+            // VarRef: seen before at this slot
+            0x80 | slot
+        } else {
+            // NewVar: first encounter — assign next sequential slot.
+            // The slot index is implicit from encounter order, making
+            // the encoding independent of the concrete variable name.
+            let slot = self.next_slot;
+            self.next_slot = self.next_slot.saturating_add(1);
+            self.var_slots.insert(name.to_string(), slot);
+            0xC0
+        }
+    }
+}
+
+/// Encode a `SyntaxItemSpec` sequence to De Bruijn canonical bytes.
+///
+/// Two syntax sequences that differ only in variable naming (α-equivalent)
+/// produce identical byte sequences. Terminals and category names are
+/// encoded literally; variable references use De Bruijn encounter-order slots.
+///
+/// Tag layout (compatible with but independent of `pattern_codec.rs`):
+/// - `0xC0` — NewVar (first occurrence of a variable)
+/// - `0x80 | slot` — VarRef (subsequent reference to variable at slot)
+/// - `0x01` — NonTerminal tag
+/// - `0x02` — Binder tag
+/// - `0x03` — Collection tag
+/// - `0x04` — IdentCapture tag
+/// - `0x05` — Sep tag
+/// - `0x06` — Map tag
+/// - `0x07` — Zip tag
+/// - `0x08` — BinderCollection tag
+/// - `0x09` — Optional tag
+/// - `0x0A` — Terminal tag
+/// - `0x0B` — End tag (closes Optional/Map/Sep)
+fn syntax_item_debruijn_bytes(items: &[SyntaxItemSpec]) -> Vec<u8> {
+    let mut env = DebruijnEnv::new();
+    let mut buf = Vec::with_capacity(items.len() * 4);
+    for item in items {
+        encode_syntax_item(item, &mut env, &mut buf);
+    }
+    buf
+}
+
+/// Encode a single `SyntaxItemSpec` into the De Bruijn byte buffer.
+fn encode_syntax_item(item: &SyntaxItemSpec, env: &mut DebruijnEnv, buf: &mut Vec<u8>) {
+    match item {
+        SyntaxItemSpec::Terminal(token) => {
+            buf.push(0x0A); // Terminal tag
+            let bytes = token.as_bytes();
+            buf.push(bytes.len() as u8);
+            buf.extend_from_slice(bytes);
+        }
+        SyntaxItemSpec::NonTerminal { category, param_name } => {
+            // Variable reference for the param_name (De Bruijn encoded)
+            buf.push(env.resolve(param_name));
+            buf.push(0x01); // NonTerminal tag
+            let cat_bytes = category.as_bytes();
+            buf.push(cat_bytes.len() as u8);
+            buf.extend_from_slice(cat_bytes);
+        }
+        SyntaxItemSpec::IdentCapture { param_name } => {
+            buf.push(env.resolve(param_name));
+            buf.push(0x04); // IdentCapture tag
+        }
+        SyntaxItemSpec::Binder { param_name, category, is_multi } => {
+            buf.push(env.resolve(param_name));
+            buf.push(0x02); // Binder tag
+            buf.push(if *is_multi { 1 } else { 0 });
+            let cat_bytes = category.as_bytes();
+            buf.push(cat_bytes.len() as u8);
+            buf.extend_from_slice(cat_bytes);
+        }
+        SyntaxItemSpec::Collection { param_name, element_category, separator, kind } => {
+            buf.push(env.resolve(param_name));
+            buf.push(0x03); // Collection tag
+            let cat_bytes = element_category.as_bytes();
+            buf.push(cat_bytes.len() as u8);
+            buf.extend_from_slice(cat_bytes);
+            let sep_bytes = separator.as_bytes();
+            buf.push(sep_bytes.len() as u8);
+            buf.extend_from_slice(sep_bytes);
+            buf.push(*kind as u8);
+        }
+        SyntaxItemSpec::Sep { body, separator, kind } => {
+            buf.push(0x05); // Sep tag
+            let sep_bytes = separator.as_bytes();
+            buf.push(sep_bytes.len() as u8);
+            buf.extend_from_slice(sep_bytes);
+            buf.push(*kind as u8);
+            encode_syntax_item(body, env, buf);
+            buf.push(0x0B); // End tag
+        }
+        SyntaxItemSpec::Map { body_items } => {
+            buf.push(0x06); // Map tag
+            for sub in body_items {
+                encode_syntax_item(sub, env, buf);
+            }
+            buf.push(0x0B); // End tag
+        }
+        SyntaxItemSpec::Zip { left_name, right_name, left_category, right_category, body } => {
+            buf.push(env.resolve(left_name));
+            buf.push(env.resolve(right_name));
+            buf.push(0x07); // Zip tag
+            let lc = left_category.as_bytes();
+            buf.push(lc.len() as u8);
+            buf.extend_from_slice(lc);
+            let rc = right_category.as_bytes();
+            buf.push(rc.len() as u8);
+            buf.extend_from_slice(rc);
+            encode_syntax_item(body, env, buf);
+            buf.push(0x0B); // End tag
+        }
+        SyntaxItemSpec::BinderCollection { param_name, separator } => {
+            buf.push(env.resolve(param_name));
+            buf.push(0x08); // BinderCollection tag
+            let sep_bytes = separator.as_bytes();
+            buf.push(sep_bytes.len() as u8);
+            buf.extend_from_slice(sep_bytes);
+        }
+        SyntaxItemSpec::Optional { inner } => {
+            buf.push(0x09); // Optional tag
+            for sub in inner {
+                encode_syntax_item(sub, env, buf);
+            }
+            buf.push(0x0B); // End tag
+        }
+    }
+}
+
+/// G24: Alpha-equivalent grammar rules.
+///
+/// Detects rules within the same category whose syntax item sequences are
+/// identical up to variable renaming (α-equivalence). Uses De Bruijn
+/// encounter-order encoding so that `rule A: x "+" y` and `rule B: a "+" b`
+/// produce identical byte sequences, even though G07's string signatures differ.
+///
+/// Runs after G07 to avoid double-reporting: any pair already flagged by G07
+/// (exact string match) is excluded from G24 results.
+fn lint_g24_alpha_equivalent_rules(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let category_names: Vec<String> = ctx.categories.iter().map(|c| c.name.clone()).collect();
+
+    for cat in &category_names {
+        let cat_syntax: Vec<(&str, &[SyntaxItemSpec])> = ctx
+            .all_syntax
+            .iter()
+            .filter(|(_, c, _)| c == cat)
+            .map(|(label, _, syntax)| (label.as_str(), syntax.as_slice()))
+            .collect();
+
+        // Group by De Bruijn bytes
+        let mut debruijn_groups: HashMap<Vec<u8>, Vec<&str>> = HashMap::new();
+        for (label, syntax) in &cat_syntax {
+            let bytes = syntax_item_debruijn_bytes(syntax);
+            debruijn_groups.entry(bytes).or_default().push(label);
+        }
+
+        for (_, labels) in &debruijn_groups {
+            if labels.len() < 2 {
+                continue;
+            }
+
+            // Check if this group has identical string signatures — if so,
+            // G07 already reports it. G24 only fires for groups where the
+            // De Bruijn bytes match but the string signatures differ (true
+            // α-equivalence that G07 misses: different variable names, same structure).
+            let sigs: HashSet<String> = labels
+                .iter()
+                .map(|label| {
+                    let syntax = cat_syntax
+                        .iter()
+                        .find(|(l, _)| l == label)
+                        .map(|(_, s)| *s)
+                        .expect("label must exist in cat_syntax");
+                    syntax_signature(syntax)
+                })
+                .collect();
+            if sigs.len() == 1 {
+                // All have identical string signatures → G07 covers this
+                continue;
+            }
+
+            diagnostics.push(LintDiagnostic {
+                id: "G24",
+                name: "alpha-equivalent-rules",
+                severity: LintSeverity::Warning,
+                category: Some(cat.clone()),
+                rule: None,
+                message: format!(
+                    "rules [{}] in category `{}` are α-equivalent \
+                     (identical up to variable renaming)",
+                    labels.join(", "),
+                    cat,
+                ),
+                hint: Some(
+                    "these rules differ only in variable names — consider merging \
+                     or differentiating their syntax structure"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
         }
     }
 }
@@ -4165,5 +4400,225 @@ mod tests {
         assert!(x02_count >= 1, "expected X02 shadowing lint: {:?}", diags);
         assert_eq!(x03_count, 1, "expected 1 X03 dead-rule lint: {:?}", diags);
         assert_eq!(x05_count, 1, "expected 1 X05 collision lint: {:?}", diags);
+    }
+
+    // ── G24: Alpha-Equivalent Rules ──
+
+    #[test]
+    fn test_g24_variable_renamed_rules_deferred_to_g07() {
+        // Two rules with different variable names but identical structure:
+        //   AddA: x "+" y   (uses vars x, y)
+        //   AddB: a "+" b   (uses vars a, b)
+        // G07's syntax_signature drops param_names, so these have identical
+        // signatures → G07 catches them. G24 should NOT double-report.
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.all_syntax.push((
+            "AddA".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+                SyntaxItemSpec::Terminal("+".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "y".to_string() },
+            ],
+        ));
+        b.all_syntax.push((
+            "AddB".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "a".to_string() },
+                SyntaxItemSpec::Terminal("+".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "b".to_string() },
+            ],
+        ));
+        let mut diagnostics = Vec::new();
+        lint_g24_alpha_equivalent_rules(&b.ctx(), &mut diagnostics);
+        assert!(diagnostics.is_empty(), "G07 covers these; G24 should not double-report");
+    }
+
+    #[test]
+    fn test_g24_g07_false_positive_different_binding_structure() {
+        // G07 incorrectly groups these because it drops param_names:
+        //   SelfEq: x "==" x   (same variable used twice — requires both sides identical)
+        //   AnyEq:  a "==" b   (different variables — accepts any two sides)
+        // G07 signature for both: NT(Expr)|T(==)|NT(Expr) → groups them as "identical"
+        // G24 De Bruijn encoding distinguishes them:
+        //   SelfEq: [NewVar, ..., VarRef(0), ...]
+        //   AnyEq:  [NewVar, ..., NewVar, ...]
+        // So G24 should NOT report these as α-equivalent (they genuinely differ).
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.all_syntax.push((
+            "SelfEq".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+                SyntaxItemSpec::Terminal("==".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+            ],
+        ));
+        b.all_syntax.push((
+            "AnyEq".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "a".to_string() },
+                SyntaxItemSpec::Terminal("==".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "b".to_string() },
+            ],
+        ));
+        let mut diagnostics = Vec::new();
+        lint_g24_alpha_equivalent_rules(&b.ctx(), &mut diagnostics);
+        assert!(
+            diagnostics.is_empty(),
+            "SelfEq and AnyEq have different binding structure; G24 should not group them"
+        );
+    }
+
+    #[test]
+    fn test_g24_structurally_different_rules_not_flagged() {
+        // Two rules with different structure — G24 should NOT fire.
+        //   Add: x "+" y     (binary infix)
+        //   Neg: "-" x       (unary prefix)
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.all_syntax.push((
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+                SyntaxItemSpec::Terminal("+".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "y".to_string() },
+            ],
+        ));
+        b.all_syntax.push((
+            "Neg".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("-".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+            ],
+        ));
+        let mut diagnostics = Vec::new();
+        lint_g24_alpha_equivalent_rules(&b.ctx(), &mut diagnostics);
+        assert!(diagnostics.is_empty(), "no G24 for structurally different rules");
+    }
+
+    #[test]
+    fn test_g24_same_vars_different_structure_not_flagged() {
+        // Two rules with same variable names but different structure — G24 should NOT fire.
+        //   Pair: x "," y
+        //   Add:  x "+" y
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.all_syntax.push((
+            "Pair".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+                SyntaxItemSpec::Terminal(",".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "y".to_string() },
+            ],
+        ));
+        b.all_syntax.push((
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+                SyntaxItemSpec::Terminal("+".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "y".to_string() },
+            ],
+        ));
+        let mut diagnostics = Vec::new();
+        lint_g24_alpha_equivalent_rules(&b.ctx(), &mut diagnostics);
+        assert!(diagnostics.is_empty(), "no G24 for rules with different terminals");
+    }
+
+    #[test]
+    fn test_g24_exact_duplicates_deferred_to_g07() {
+        // Two rules with IDENTICAL syntax (including variable names) — G07 territory.
+        // G24 should NOT fire because sigs.len() == 1 (exact match).
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        let syntax = vec![
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+            SyntaxItemSpec::Terminal("+".to_string()),
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "y".to_string() },
+        ];
+        b.all_syntax.push(("Add1".to_string(), "Expr".to_string(), syntax.clone()));
+        b.all_syntax.push(("Add2".to_string(), "Expr".to_string(), syntax));
+        let mut diagnostics = Vec::new();
+        lint_g24_alpha_equivalent_rules(&b.ctx(), &mut diagnostics);
+        assert!(diagnostics.is_empty(), "exact duplicates should be left to G07, not G24");
+    }
+
+    #[test]
+    fn test_debruijn_encoding_alpha_equivalence() {
+        // Direct test of the De Bruijn encoding: α-equivalent syntax items
+        // must produce identical byte sequences.
+        let syntax_a = vec![
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+            SyntaxItemSpec::Terminal("+".to_string()),
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "y".to_string() },
+        ];
+        let syntax_b = vec![
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "a".to_string() },
+            SyntaxItemSpec::Terminal("+".to_string()),
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "b".to_string() },
+        ];
+        assert_eq!(
+            syntax_item_debruijn_bytes(&syntax_a),
+            syntax_item_debruijn_bytes(&syntax_b),
+            "α-equivalent syntax must produce identical De Bruijn bytes"
+        );
+    }
+
+    #[test]
+    fn test_debruijn_encoding_different_structure() {
+        // Structurally different syntax items must produce DIFFERENT byte sequences.
+        let syntax_a = vec![
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+            SyntaxItemSpec::Terminal("+".to_string()),
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "y".to_string() },
+        ];
+        let syntax_b = vec![
+            SyntaxItemSpec::Terminal("-".to_string()),
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+        ];
+        assert_ne!(
+            syntax_item_debruijn_bytes(&syntax_a),
+            syntax_item_debruijn_bytes(&syntax_b),
+            "structurally different syntax must produce different De Bruijn bytes"
+        );
+    }
+
+    #[test]
+    fn test_debruijn_var_reuse_same_slot() {
+        // When the same variable appears twice, both references should use the same slot.
+        // x "?" x   vs   a "?" a   should be identical
+        let syntax_a = vec![
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+            SyntaxItemSpec::Terminal("?".to_string()),
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+        ];
+        let syntax_b = vec![
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "a".to_string() },
+            SyntaxItemSpec::Terminal("?".to_string()),
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "a".to_string() },
+        ];
+        let bytes_a = syntax_item_debruijn_bytes(&syntax_a);
+        let bytes_b = syntax_item_debruijn_bytes(&syntax_b);
+        assert_eq!(bytes_a, bytes_b, "same-var-reuse must produce identical bytes");
+
+        // x "?" y  should differ from  x "?" x  (different binding structure)
+        let syntax_c = vec![
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "x".to_string() },
+            SyntaxItemSpec::Terminal("?".to_string()),
+            SyntaxItemSpec::NonTerminal { category: "Expr".to_string(), param_name: "y".to_string() },
+        ];
+        assert_ne!(
+            bytes_a,
+            syntax_item_debruijn_bytes(&syntax_c),
+            "different binding structure must produce different bytes"
+        );
     }
 }

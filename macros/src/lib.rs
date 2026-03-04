@@ -62,17 +62,19 @@ pub fn language(input: TokenStream) -> TokenStream {
         abort!(span, "{}", msg);
     }
 
-    // Generate the Rust AST types and operations
-    let ast_code = generate_all(&language_def);
+    // Generate the Rust AST types and operations (also captures WFST pipeline analysis)
+    let (ast_code, pipeline_analysis) = generate_all(&language_def);
 
     // Generate freshness functions (needed by Ascent rewrite clauses)
     let freshness_fns = generate_freshness_functions(&language_def);
 
     // Generate Ascent datalog source (includes rewrites as Ascent clauses)
-    let ascent_output = generate_ascent_source(&language_def);
+    // Thread pipeline analysis for WFST-informed optimizations (DCE, rule ordering, etc.)
+    let ascent_output = generate_ascent_source(&language_def, Some(&pipeline_analysis));
     let ascent_code = ascent_output.full_output;
     let raw_ascent_content = ascent_output.raw_content;
     let core_raw_ascent_content = ascent_output.core_raw_content;
+    let pre_stratum_content = ascent_output.pre_stratum_content;
 
     // Generate metadata for REPL introspection
     let metadata_code = generate_metadata(&language_def);
@@ -80,10 +82,12 @@ pub fn language(input: TokenStream) -> TokenStream {
     // Generate language implementation struct (Term wrapper + Language struct)
     // Pass raw Ascent content for direct inclusion in ascent! { struct Foo; ... }
     // Also pass core content for SCC-split struct (if available)
+    // Also pass pre-stratum content for ground rewrite pre-computation (Sprint 5)
     let language_code = generate_language_impl(
         &language_def,
         &raw_ascent_content,
         core_raw_ascent_content.as_ref(),
+        pre_stratum_content.as_ref(),
     );
 
     // Generate Blockly block definitions

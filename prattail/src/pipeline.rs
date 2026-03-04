@@ -747,6 +747,18 @@ impl PipelineState {
 /// 2. Runs lexer and parser codegen in parallel via `rayon::join`
 /// 3. Concatenates results and parses into a single `TokenStream`
 pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
+    run_pipeline_with_analysis(spec).0
+}
+
+/// Run the full pipeline and return both the generated `TokenStream` and
+/// a [`PipelineAnalysis`] capturing WFST-derived data for downstream
+/// optimization (Ascent DCE, rule ordering, isomorphic WFST detection).
+///
+/// The analysis is populated during the Generate phase, where FIRST sets,
+/// prediction WFSTs, dead-rule labels, and constructor weights are already
+/// computed. This function captures that data before it would otherwise
+/// be discarded.
+pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::PipelineAnalysis) {
     let (lexer_bundle, parser_bundle) = extract_from_spec(spec);
 
     // NOTE: Grammar warnings (G01-G03) and WFST warnings (W01, W02) are now handled
@@ -759,13 +771,25 @@ pub fn run_pipeline(spec: &LanguageSpec) -> TokenStream {
         crate::ebnf::write_ebnf_output(&ebnf, &spec.name, &dump_target);
     }
 
-    let mut state = PipelineState::Ready { lexer_bundle, parser_bundle };
-    loop {
-        state = state.advance();
-        if let PipelineState::Complete(ts) = state {
-            return ts;
-        }
-    }
+    // Run lexer codegen
+    let (lexer_code, variant_map, ambiguity_info) =
+        generate_lexer_code_with_map(&lexer_bundle);
+
+    // Run parser codegen with analysis capture
+    let (parser_code, analysis) = generate_parser_code_with_analysis(
+        &parser_bundle,
+        &variant_map,
+        &ambiguity_info,
+    );
+
+    // Finalize: concatenate and parse into TokenStream
+    let mut combined = lexer_code;
+    combined.push_str(&parser_code);
+    let ts = combined
+        .parse::<TokenStream>()
+        .expect("PraTTaIL pipeline: generated code failed to parse as TokenStream");
+
+    (ts, analysis)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1058,6 +1082,18 @@ fn generate_parser_code_with_context(
     variant_map: &TokenVariantMap,
     ambiguity_info: &LexerAmbiguityInfo,
 ) -> String {
+    generate_parser_code(bundle, variant_map, ambiguity_info).0
+}
+
+/// Generate parser code with lexer context AND capture pipeline analysis data.
+///
+/// Returns both the generated code string and a [`PipelineAnalysis`] populated
+/// from the pipeline's internal WFST data (dead rules, constructor weights, etc.).
+fn generate_parser_code_with_analysis(
+    bundle: &ParserBundle,
+    variant_map: &TokenVariantMap,
+    ambiguity_info: &LexerAmbiguityInfo,
+) -> (String, crate::PipelineAnalysis) {
     generate_parser_code(bundle, variant_map, ambiguity_info)
 }
 
@@ -1068,11 +1104,15 @@ fn generate_parser_code_with_context(
 /// When `variant_map` and `ambiguity_info` are provided, computes the composed
 /// dispatch table once and uses it to emit deterministic match arms in standard
 /// batch dispatch (no backtracking).
+///
+/// Returns `(code_string, PipelineAnalysis)` where the analysis captures
+/// WFST-derived data (dead rules, constructor weights, category weights)
+/// for downstream optimization by the Ascent codegen in the macros crate.
 fn generate_parser_code(
     bundle: &ParserBundle,
     variant_map: &TokenVariantMap,
     ambiguity_info: &LexerAmbiguityInfo,
-) -> String {
+) -> (String, crate::PipelineAnalysis) {
     let category_names: Vec<String> = bundle.categories.iter().map(|c| c.name.clone()).collect();
     let primary_category = category_names.first().map(|s| s.as_str()).unwrap_or("");
 
@@ -1536,32 +1576,33 @@ fn generate_parser_code(
         gates
     };
 
-    // ── A4: Dead-rule collection for codegen suppression ─────────────────
-    // When the enhanced_dce gate is enabled, collect dead rule labels from
-    // all three tiers of dead-rule analysis. These labels are threaded into
-    // dispatch and trampoline configs to suppress codegen for unreachable rules.
+    // ── A4: Dead-rule collection ─────────────────────────────────────────
+    // Always compute dead rule labels for PipelineAnalysis export (consumed
+    // by Ascent DCE in Sprint 1). When the enhanced_dce gate is also enabled,
+    // these labels are additionally threaded into dispatch and trampoline
+    // configs to suppress parser codegen for unreachable rules.
     // The lint layer still emits W01 warnings independently.
+    let all_dead_rule_labels = collect_dead_rule_labels(
+        &bundle.rule_infos,
+        &bundle.categories,
+        &first_sets,
+        &prediction_wfsts,
+        &bundle.semantic_dependency_groups,
+    );
     let dead_rules: HashSet<String> = if optimization_gates.enhanced_dce {
-        let labels = collect_dead_rule_labels(
-            &bundle.rule_infos,
-            &bundle.categories,
-            &first_sets,
-            &prediction_wfsts,
-            &bundle.semantic_dependency_groups,
-        );
-        if !labels.is_empty() {
+        if !all_dead_rule_labels.is_empty() {
             eprintln!(
                 "  \x1b[36minfo\x1b[0m[{}]: A4 enhanced DCE: suppressing codegen for {} dead rule(s): [{}]",
                 bundle.grammar_name,
-                labels.len(),
+                all_dead_rule_labels.len(),
                 {
-                    let mut sorted: Vec<&str> = labels.iter().map(|s| s.as_str()).collect();
+                    let mut sorted: Vec<&str> = all_dead_rule_labels.iter().map(|s| s.as_str()).collect();
                     sorted.sort_unstable();
                     sorted.join(", ")
                 },
             );
         }
-        labels
+        all_dead_rule_labels.clone()
     } else {
         HashSet::new()
     };
@@ -1953,7 +1994,188 @@ fn generate_parser_code(
         }
     }
 
-    buf
+    // ── Build PipelineAnalysis from computed data ──────────────────────────
+    // Uses all_dead_rule_labels (unconditionally computed) rather than
+    // dead_rules (gated by enhanced_dce) so Ascent DCE always has full data.
+    let analysis = build_pipeline_analysis(
+        &all_dead_rule_labels,
+        &prediction_wfsts,
+        &bundle.categories,
+        &bundle.rule_infos,
+    );
+
+    (buf, analysis)
+}
+
+/// Build a [`PipelineAnalysis`] from the data computed during parser code generation.
+///
+/// Extracts constructor weights from prediction WFSTs, computes category-level
+/// averages, and identifies fully unreachable categories. Isomorphic group
+/// detection is deferred to Sprint 8.
+fn build_pipeline_analysis(
+    dead_rules: &HashSet<String>,
+    prediction_wfsts: &HashMap<String, PredictionWfst>,
+    categories: &[CategoryInfo],
+    rule_infos: &[RuleInfo],
+) -> crate::PipelineAnalysis {
+    let mut constructor_weights = HashMap::new();
+    let mut category_weights = HashMap::new();
+
+    // Extract per-constructor weights from each category's PredictionWfst.
+    // Each WeightedAction in the WFST's action table maps a dispatch decision
+    // (constructor rule label) to a tropical weight (lower = more frequent).
+    for (cat_name, wfst) in prediction_wfsts {
+        let mut cat_total_weight = 0.0_f64;
+        let mut cat_action_count = 0_usize;
+
+        for action in &wfst.actions {
+            let label = action.action.rule_label();
+            let weight = action.weight.value();
+            // Use the minimum weight if a constructor appears in multiple categories.
+            // Minimum weight = highest frequency = most useful for ordering.
+            let entry = constructor_weights.entry(label).or_insert(f64::INFINITY);
+            if weight < *entry {
+                *entry = weight;
+            }
+            cat_total_weight += weight;
+            cat_action_count += 1;
+        }
+
+        if cat_action_count > 0 {
+            category_weights.insert(
+                cat_name.clone(),
+                cat_total_weight / cat_action_count as f64,
+            );
+        }
+    }
+
+    // Determine unreachable categories: categories where ALL rules are dead.
+    let mut unreachable_categories = HashSet::new();
+    for cat in categories {
+        let all_dead = rule_infos
+            .iter()
+            .filter(|r| r.category == cat.name)
+            .all(|r| dead_rules.contains(&r.label));
+        // Only mark as unreachable if the category actually has rules
+        let has_rules = rule_infos.iter().any(|r| r.category == cat.name);
+        if has_rules && all_dead {
+            unreachable_categories.insert(cat.name.clone());
+        }
+    }
+
+    // Sprint 8: Detect isomorphic WFST groups using De Bruijn canonicalization.
+    let isomorphic_groups =
+        group_isomorphic_wfsts(prediction_wfsts);
+    let isomorphic_action_maps =
+        build_isomorphic_action_maps(prediction_wfsts, &isomorphic_groups);
+
+    crate::PipelineAnalysis {
+        dead_rule_labels: dead_rules.clone(),
+        unreachable_categories,
+        constructor_weights,
+        category_weights,
+        isomorphic_groups,
+        isomorphic_action_maps,
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Sprint 8: Isomorphic WFST detection
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Group categories whose PredictionWFSTs are alpha-equivalent (isomorphic).
+///
+/// Two WFSTs are alpha-equivalent if they have identical De Bruijn-canonicalized
+/// structure: same states, same transitions, same weights, same action shapes —
+/// but potentially different action labels (rule names, category names).
+///
+/// Only returns groups with ≥2 members. Categories within each group are sorted
+/// alphabetically for deterministic output.
+fn group_isomorphic_wfsts(
+    prediction_wfsts: &HashMap<String, PredictionWfst>,
+) -> Vec<Vec<String>> {
+    use crate::wfst::CanonicalWfstStructure;
+
+    // Compute canonical structure for each category's WFST
+    let mut canonical_groups: HashMap<CanonicalWfstStructure, Vec<String>> = HashMap::new();
+
+    for (cat_name, wfst) in prediction_wfsts {
+        let canonical = wfst.canonical_structure();
+        canonical_groups
+            .entry(canonical)
+            .or_default()
+            .push(cat_name.clone());
+    }
+
+    // Keep only groups with ≥2 members, sort members for deterministic output
+    let mut groups: Vec<Vec<String>> = canonical_groups
+        .into_values()
+        .filter(|group| group.len() >= 2)
+        .map(|mut group| {
+            group.sort();
+            group
+        })
+        .collect();
+
+    // Sort groups by first member for deterministic ordering
+    groups.sort_by(|a, b| a[0].cmp(&b[0]));
+    groups
+}
+
+/// Build per-group De Bruijn action maps.
+///
+/// For each isomorphic group, maps De Bruijn action index → `Vec<(category, rule_label)>`.
+/// This records which concrete action label in each category corresponds to each
+/// De Bruijn position, enabling template instantiation to substitute the correct names.
+fn build_isomorphic_action_maps(
+    prediction_wfsts: &HashMap<String, PredictionWfst>,
+    isomorphic_groups: &[Vec<String>],
+) -> Vec<HashMap<u32, Vec<(String, String)>>> {
+    isomorphic_groups
+        .iter()
+        .map(|group| {
+            let mut action_map: HashMap<u32, Vec<(String, String)>> = HashMap::new();
+
+            for cat_name in group {
+                if let Some(wfst) = prediction_wfsts.get(cat_name) {
+                    // Re-compute the De Bruijn mapping for this WFST
+                    let mut action_debruijn: HashMap<u32, u32> = HashMap::new();
+                    let mut next_debruijn: u32 = 0;
+
+                    for state in &wfst.states {
+                        let mut sorted_trans: Vec<_> = state.transitions.iter().collect();
+                        sorted_trans.sort_by_key(|t| (t.input, t.action_idx));
+
+                        for t in sorted_trans {
+                            let db_idx =
+                                *action_debruijn.entry(t.action_idx).or_insert_with(|| {
+                                    let idx = next_debruijn;
+                                    next_debruijn += 1;
+                                    idx
+                                });
+
+                            // Record this category's concrete label at this De Bruijn position
+                            if let Some(wa) = wfst.actions.get(t.action_idx as usize) {
+                                let label = wa.action.rule_label();
+                                action_map
+                                    .entry(db_idx)
+                                    .or_default()
+                                    .push((cat_name.clone(), label));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Deduplicate: each (category, label) pair should appear only once per De Bruijn index
+            for entries in action_map.values_mut() {
+                entries.sort();
+                entries.dedup();
+            }
+
+            action_map
+        })
+        .collect()
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

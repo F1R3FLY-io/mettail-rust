@@ -26,6 +26,39 @@ All composition functionality is always compiled and available -- there is
 no feature gate for grammar composition. Every grammar processed by the
 PraTTaIL pipeline receives WFST-weighted composition automatically.
 
+### Composition Levels
+
+PraTTaIL supports grammar composition at three distinct levels:
+
+- **LanguageDef-level** (`macros/src/ast/merge.rs`) — Raw AST merge before
+  validation.  Used by the `extends:`, `includes:`, and `mixins:` clauses in
+  the `language!` macro.  Operates on `LanguageDef` (the full, denormalized AST)
+  and produces a merged `LanguageDef` that flows through the full pipeline exactly
+  once.
+
+- **LanguageSpec-level** (`prattail/src/compose.rs`) — Classified spec merge.
+  Used by the programmatic API (`compose_languages()`, `compose_many()`,
+  `compose_with_wfst()`).  Operates on `LanguageSpec` (the classified, validated
+  representation) and produces a merged `LanguageSpec`.
+
+- **Delegation-level** (`compose_languages!` macro → `macros/src/gen/compose_gen.rs`)
+  — No merge at all.  Each sub-language retains its own parser and Ascent program.
+  The generated wrapper tries each sub-language in declaration order and delegates
+  all method calls by matching on the inner variant.
+
+See [../../usage/language/unification/00-overview.md](../../usage/language/unification/00-overview.md)
+for the comprehensive unification guide covering all five mechanisms.
+
+### Mechanism Comparison
+
+| Mechanism | Level | Merges | New Parser? | Duplicate Strategy | Source |
+|-----------|-------|--------|-------------|-------------------|--------|
+| `extends:` | LanguageDef | types+terms+eqs+rw+logic | Yes (merged) | Error | `macros/src/ast/merge.rs` |
+| `includes:` | LanguageDef | types+terms only | Yes (merged) | Override | `macros/src/ast/merge.rs` |
+| `mixins:` | LanguageDef | types+terms only | Yes (merged) | Override | `macros/src/ast/merge.rs` |
+| `compose_languages!` | Delegation | None (delegation) | No (per-sub-lang) | N/A | `macros/src/gen/compose_gen.rs` |
+| `compose_languages()` | LanguageSpec | types+terms | Yes (merged) | Error | `prattail/src/compose.rs` |
+
 ---
 
 ## Table of Contents
@@ -484,3 +517,18 @@ Test count: 19 (in `prattail/src/compose.rs` `#[cfg(test)]` module; 13 core + 6 
 See also:
 - [prediction.md](prediction.md) -- after composition, each merged category gets a prediction WFST
 - [../../design/architecture-overview.md](../../design/architecture-overview.md) -- PraTTaIL pipeline where `generate_parser()` is called
+
+### Unification Guide
+
+For a comprehensive, pedagogical treatment of all composition mechanisms with
+examples, diagrams, and decision flowcharts, see:
+
+- [Unification Overview](../../usage/language/unification/00-overview.md)
+- [extends](../../usage/language/unification/01-extends.md)
+- [includes](../../usage/language/unification/02-includes.md)
+- [mixins](../../usage/language/unification/03-mixins.md)
+- [compose_languages!](../../usage/language/unification/04-compose.md)
+- [Spec-level composition](../../usage/language/unification/05-spec-level-composition.md)
+- [Cross-category dispatch](../../usage/language/unification/06-cross-category.md)
+- [Cast rules](../../usage/language/unification/07-cast-rules.md)
+- [Best practices](../../usage/language/unification/08-best-practices.md)

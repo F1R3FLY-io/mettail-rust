@@ -12,12 +12,13 @@
 pub mod ambient;
 pub mod calculator;
 pub mod lambda;
-#[cfg(feature = "led-test")]
+#[cfg(feature = "test-languages")]
 pub mod led_test;
 pub mod rhocalc;
 
 // Composition test languages — module order matters for proc-macro registry population.
 // fragments and base_lang must compile before their consumers.
+#[cfg(feature = "test-languages")]
 pub mod composition;
 
 // Re-export eqrel for the generated Ascent code

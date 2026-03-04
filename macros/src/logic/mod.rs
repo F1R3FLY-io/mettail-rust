@@ -21,13 +21,17 @@ use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::types::{EvalMode, TypeExpr};
 use crate::{ast::language::LanguageDef, logic::rules::generate_base_rewrites};
 use common::{in_cat_filter, CategoryFilter};
+use std::collections::{BTreeSet, HashSet};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
+mod bloom_filter;
 mod categories;
 pub mod common;
 mod equations;
 pub mod helpers;
+mod pattern_codec;
+pub mod pattern_trie;
 mod relations;
 mod writer;
 
@@ -53,18 +57,41 @@ pub struct AscentSourceOutput {
     /// Only `Some` for multi-category languages where core != full.
     /// Used for SCC splitting: the core struct has fewer rules in its fixpoint loop.
     pub core_raw_content: Option<TokenStream>,
+    /// Pre-stratum content: ground HOL step rules + deconstruction + category expansion.
+    /// Evaluated in a separate Ascent struct before the main fixpoint, converging
+    /// in O(depth) iterations. Only `Some` when ground HOL step rules exist.
+    /// The main fixpoint is then seeded with the pre-stratum's results.
+    pub pre_stratum_content: Option<TokenStream>,
 }
 
-/// Main entry point: Generate complete Ascent source for a theory
-pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
+/// Main entry point: Generate complete Ascent source for a theory.
+///
+/// When `analysis` is provided, WFST-derived data (dead rules, constructor
+/// weights, category weights) is used to optimize generated Ascent code:
+/// - Dead-code elimination of rules referencing dead constructors (Sprint 1)
+/// - WFST-weight-guided rule ordering for cache locality (Sprint 3)
+/// - Constructor-weight-based match arm ordering (Sprint 4)
+///
+/// When `analysis` is `None`, all rules are generated unconditionally
+/// (backward compatible behavior).
+pub fn generate_ascent_source(
+    language: &LanguageDef,
+    analysis: Option<&mettail_prattail::PipelineAnalysis>,
+) -> AscentSourceOutput {
     let theory_name = language.name.to_string().to_lowercase();
     let source_name = format_ident!("{}_source", theory_name);
+
+    // Sprint A (N10): Compute subsumed equation set for DCE.
+    // Only equations are eligible for subsumption elimination because equations
+    // are symmetric (LHS ≡ RHS), so RHS subsumption is automatic.
+    // Rewrite subsumption would require separate RHS analysis (deferred).
+    let subsumed_equations = compute_subsumed_equations(language);
 
     let helper_fns = helpers::generate_helper_functions(language);
     let relations = generate_relations(language);
     let category_rules = generate_category_rules(language, None);
-    let equation_rules = generate_equation_rules(language, None);
-    let rewrite_rules = generate_rewrite_rules(language, None);
+    let equation_rules = generate_equation_rules(language, None, analysis, &subsumed_equations);
+    let rewrite_rules = generate_rewrite_rules(language, None, analysis);
     let custom_logic = language
         .logic
         .as_ref()
@@ -86,8 +113,8 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
     // Generate core content if this is a multi-category language with non-trivial core
     let core_raw_content = common::compute_core_categories(language).map(|core_cats| {
         let core_category_rules = generate_category_rules(language, Some(&core_cats));
-        let core_equation_rules = generate_equation_rules(language, Some(&core_cats));
-        let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats));
+        let core_equation_rules = generate_equation_rules(language, Some(&core_cats), analysis, &subsumed_equations);
+        let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats), analysis);
 
         quote! {
             #relations
@@ -128,11 +155,189 @@ pub fn generate_ascent_source(language: &LanguageDef) -> AscentSourceOutput {
         eprintln!("Warning: Failed to write Ascent Datalog file: {}", e);
     }
 
+    // Sprint 6: Pattern trie analysis for fine-grained dependency stratification
+    // Build the PatternIndex from equations and rewrites, then compute:
+    // - Fine-grained dependency groups (connected components by constructor label)
+    // - Alpha-equivalent LHS pattern groups (same De Bruijn bytes → shared matching code)
+    // - Subsumption warnings (general pattern subsumes specific pattern)
+    if !language.equations.is_empty() || !language.rewrites.is_empty() {
+        let pattern_index = pattern_trie::PatternIndex::build(language);
+        let dep_groups = pattern_trie::compute_fine_dependency_groups(&pattern_index);
+        let alpha_groups = pattern_trie::find_alpha_equivalent_groups(&pattern_index);
+        let subsumptions = pattern_trie::detect_subsumption(&pattern_index);
+
+        // Emit diagnostics to stderr (compile-time warnings)
+        if !subsumptions.is_empty() {
+            for sub in &subsumptions {
+                let general_name = rule_id_name(sub.general, language);
+                let specific_name = rule_id_name(sub.specific, language);
+                let eliminated = if let (
+                    pattern_trie::RuleId::Equation(_),
+                    pattern_trie::RuleId::Equation(i),
+                ) = (sub.general, sub.specific) {
+                    subsumed_equations.contains(&i)
+                } else {
+                    false
+                };
+                if eliminated {
+                    eprintln!(
+                        "note: equation '{}' eliminated — subsumed by more general equation '{}'",
+                        specific_name, general_name,
+                    );
+                } else {
+                    eprintln!(
+                        "warning: rule '{}' may be subsumed by more general rule '{}' \
+                         (both LHS patterns match the same terms, but '{}' is more general)",
+                        specific_name, general_name, general_name,
+                    );
+                }
+            }
+        }
+
+        if !alpha_groups.is_empty() {
+            let group_count = alpha_groups.len();
+            let total_rules: usize = alpha_groups.iter().map(|g| g.len()).sum();
+            eprintln!(
+                "note: {} alpha-equivalent LHS pattern group(s) detected ({} rules total) \
+                 — these rules share identical matching structure",
+                group_count, total_rules,
+            );
+        }
+
+        // Log dependency group analysis
+        let independent = dep_groups.iter().filter(|g| g.len() == 1).count();
+        if dep_groups.len() > 1 {
+            eprintln!(
+                "note: {} fine-grained dependency group(s) detected ({} independent, {} cross-group)",
+                dep_groups.len(),
+                independent,
+                dep_groups.len() - independent,
+            );
+        }
+
+        // Sprint 6g/6h Extension Point: Multi-stratum codegen
+        //
+        // The dependency groups above identify rules that can be evaluated
+        // independently. When a grammar has large independent groups (≥3 rules
+        // each), generating separate Ascent structs per group and chaining them
+        // (pre-stratum → per-group strata → main fixpoint) would reduce the
+        // main SCC's working set.
+        //
+        // Currently deferred because:
+        // 1. Each additional `ascent!` struct adds ~5-10s compilation time
+        // 2. The grammars tested so far have mostly single-rule independent
+        //    groups (25/66 in RhoCalc), where the compilation overhead
+        //    would exceed runtime savings
+        // 3. The pre-stratum (Sprint 5) already handles the highest-impact
+        //    case (ground HOL step rules)
+        //
+        // Activation condition: when a grammar has ≥2 independent groups
+        // with ≥5 rules each, generate per-group Ascent strata using
+        // `generate_stratified_content()` and `group_categories()`.
+        //
+        // Implementation plan (see Sprint 6g/6h in the plan):
+        // 1. For each independent group ≥5 rules:
+        //    a. Compute the group's category set via group_categories()
+        //    b. Generate relations for those categories only
+        //    c. Generate category rules filtered to those categories
+        //    d. Generate equation/rewrite rules for only the group's rules
+        //    e. Emit as a separate AscentSourceOutput.stratum_contents entry
+        // 2. In language.rs, generate per-stratum Ascent structs
+        // 3. Chain: pre-stratum → per-group strata → main fixpoint
+        let _ = &dep_groups;
+        let _ = &alpha_groups;
+    }
+
+    // Sprint 8: Log isomorphic WFST groups if detected
+    if let Some(ref a) = analysis {
+        if !a.isomorphic_groups.is_empty() {
+            let total_cats: usize = a.isomorphic_groups.iter().map(|g| g.len()).sum();
+            eprintln!(
+                "note: {} isomorphic WFST group(s) detected ({} categories total) \
+                 — these categories share identical dispatch topology",
+                a.isomorphic_groups.len(),
+                total_cats,
+            );
+            for (i, group) in a.isomorphic_groups.iter().enumerate() {
+                eprintln!(
+                    "  group {}: [{}]",
+                    i,
+                    group.join(", "),
+                );
+            }
+        }
+    }
+
+    // Sprint 5: Generate pre-stratum content if ground HOL step rules exist.
+    // The pre-stratum evaluates ground rewrites in O(depth) iterations before
+    // the main fixpoint, reducing SCC iteration count.
+    let pre_stratum_content = generate_pre_stratum_content(language, analysis);
+
     AscentSourceOutput {
         full_output,
         raw_content,
         core_raw_content,
+        pre_stratum_content,
     }
+}
+
+/// Get a human-readable name for a RuleId.
+fn rule_id_name(id: pattern_trie::RuleId, language: &LanguageDef) -> String {
+    match id {
+        pattern_trie::RuleId::Equation(i) => {
+            language.equations.get(i)
+                .map(|eq| eq.name.to_string())
+                .unwrap_or_else(|| format!("equation[{}]", i))
+        }
+        pattern_trie::RuleId::Rewrite(i) => {
+            language.rewrites.get(i)
+                .map(|rw| rw.name.to_string())
+                .unwrap_or_else(|| format!("rewrite[{}]", i))
+        }
+    }
+}
+
+/// Compute the set of equation indices that are subsumed by more general equations.
+///
+/// A subsumed equation's LHS pattern matches a strict subset of terms matched by
+/// the general equation. Since equations are symmetric (LHS ≡ RHS), the general
+/// equation fires for ALL terms the subsumed equation would match and produces
+/// the SAME derived `eq_cat` facts. Therefore, removing the subsumed equation
+/// does not change the fixpoint.
+///
+/// Only equations are eligible — rewrite subsumption requires separate RHS
+/// analysis because rewrites are directional (deferred to future sprint).
+///
+/// Returns a `HashSet<usize>` of equation indices into `language.equations`.
+fn compute_subsumed_equations(language: &LanguageDef) -> HashSet<usize> {
+    if language.equations.is_empty() && language.rewrites.is_empty() {
+        return HashSet::new();
+    }
+
+    let pattern_index = pattern_trie::PatternIndex::build(language);
+    let subsumptions = pattern_trie::detect_subsumption(&pattern_index);
+
+    let mut subsumed = HashSet::new();
+    for pair in &subsumptions {
+        // Only eliminate subsumed equations (not rewrites).
+        // The general rule must also be an equation for correctness:
+        // equation symmetry guarantees RHS subsumption is automatic.
+        if let (
+            pattern_trie::RuleId::Equation(_),
+            pattern_trie::RuleId::Equation(specific_idx),
+        ) = (pair.general, pair.specific) {
+            subsumed.insert(specific_idx);
+        }
+    }
+
+    if !subsumed.is_empty() {
+        eprintln!(
+            "note: {} subsumed equation(s) eliminated from Ascent codegen",
+            subsumed.len(),
+        );
+    }
+
+    subsumed
 }
 
 /// Format Ascent source for display and file output
@@ -209,7 +414,12 @@ fn format_ascent_source(
 /// where rewrites propagate by writing `if S => T then ...` rules.
 ///
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
-pub fn generate_rewrite_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> TokenStream {
+/// When `analysis` is `Some`, dead constructors are skipped (Sprint 1 DCE).
+pub fn generate_rewrite_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+    analysis: Option<&mettail_prattail::PipelineAnalysis>,
+) -> TokenStream {
     let mut rules = Vec::new();
 
     // Generate base rewrite clauses (no premise)
@@ -217,7 +427,7 @@ pub fn generate_rewrite_rules(language: &LanguageDef, cat_filter: CategoryFilter
     rules.extend(base_rewrite_clauses);
 
     // Generate small-step rules for HOL rust_code (step mode)
-    let hol_step_rules = generate_hol_step_rules(language, cat_filter);
+    let hol_step_rules = generate_hol_step_rules(language, cat_filter, analysis);
     rules.extend(hol_step_rules);
 
     // Generate big-step fold rules (one rewrite per fold-mode constructor)
@@ -250,16 +460,309 @@ pub fn generate_rewrite_rules(language: &LanguageDef, cat_filter: CategoryFilter
     }
 }
 
+/// Generate pre-stratum content for ground HOL step rule optimization.
+///
+/// The pre-stratum evaluates provably-ground HOL step rules (matching only literal
+/// arguments and producing only literal results) in a separate Ascent struct before
+/// the main fixpoint. This converges in O(depth) iterations because:
+/// - Deconstruction discovers all sub-terms of the initial term
+/// - Ground step rules fire on sub-terms with literal children
+/// - Category expansion adds newly created literals to the term set
+/// - No recursive rules (equations, congruence, user rewrites) are present
+///
+/// Returns `None` if no ground HOL step rules exist (nothing to pre-compute).
+///
+/// The main fixpoint retains all rules (including ground ones) for correctness
+/// with new terms created by congruence and user-defined rewrites during fixpoint.
+fn generate_pre_stratum_content(
+    language: &LanguageDef,
+    analysis: Option<&mettail_prattail::PipelineAnalysis>,
+) -> Option<TokenStream> {
+    let strata = common::classify_rewrite_strata(language, analysis);
+
+    // Check if any ground rules exist
+    let has_ground = strata
+        .values()
+        .any(|s| *s == common::RewriteStratum::Ground);
+    if !has_ground {
+        return None;
+    }
+
+    // Collect categories involved in ground rules (for filtering)
+    let mut ground_categories = BTreeSet::new();
+    for rule in &language.terms {
+        let label = rule.label.to_string();
+        if strata.get(&label) == Some(&common::RewriteStratum::Ground) {
+            ground_categories.insert(rule.category.to_string());
+            // Also include argument categories for cross-category rules
+            if let Some(ref ctx) = rule.term_context {
+                for param in ctx {
+                    if let TermParam::Simple { ty, .. } = param {
+                        if let crate::ast::types::TypeExpr::Base(cat) = ty {
+                            ground_categories.insert(cat.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Relations: same as full struct (Ascent requires matching declarations)
+    let relations = generate_relations(language);
+
+    // Category deconstruction rules: discover sub-terms of the initial term
+    let category_rules = generate_category_rules(language, None);
+
+    // Ground HOL step rules only
+    let ground_hol_rules = generate_ground_hol_step_rules(language, None, analysis, &strata);
+
+    // Category expansion: cat(c1) <-- cat(c0), rw_cat(c0, c1)
+    // This adds newly created literals to the term set so further ground rules can fire.
+    let mut expansion_rules = Vec::new();
+    for lang_type in &language.types {
+        let rn = common::relation_names(&lang_type.name);
+        let cat_lower = &rn.cat_lower;
+        let rw_rel = &rn.rw_rel;
+        expansion_rules.push(quote! {
+            #cat_lower(c1.clone()) <-- #cat_lower(c0), #rw_rel(c0, c1);
+        });
+    }
+    let expansion = quote! { #(#expansion_rules)* };
+
+    // Reflexivity rules for eq relations (needed because some rules may reference eq_*)
+    let reflexivity = equations::generate_equation_rules_reflexivity_only(language, None);
+
+    Some(quote! {
+        #relations
+
+        #category_rules
+
+        #reflexivity
+
+        #ground_hol_rules
+
+        #expansion
+    })
+}
+
+/// Generate only ground HOL step rules (used by pre-stratum).
+///
+/// Filters `generate_hol_step_rules` to include only rules classified as Ground
+/// by `classify_rewrite_strata`. The output is a subset of what `generate_hol_step_rules`
+/// produces, maintaining identical rule structure.
+fn generate_ground_hol_step_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+    analysis: Option<&mettail_prattail::PipelineAnalysis>,
+    strata: &std::collections::HashMap<String, common::RewriteStratum>,
+) -> TokenStream {
+    let mut rules = Vec::new();
+
+    for rule in &language.terms {
+        let label = rule.label.to_string();
+
+        // Only include ground rules
+        if strata.get(&label) != Some(&common::RewriteStratum::Ground) {
+            continue;
+        }
+
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if rule.eval_mode == Some(EvalMode::Fold) {
+            continue;
+        }
+        // Sprint 1 DCE: skip dead rules
+        if let Some(ref a) = analysis {
+            if a.dead_rule_labels.contains(&label) {
+                continue;
+            }
+        }
+
+        let non_terminal_count = rule
+            .items
+            .iter()
+            .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+            .count();
+        if non_terminal_count == 0 {
+            continue;
+        }
+
+        let category = &rule.category;
+        if !in_cat_filter(category, cat_filter) {
+            continue;
+        }
+        if common::native_type_for(language, category).is_none() {
+            continue;
+        }
+
+        let rn = common::relation_names(category);
+        let rw_rel = &rn.rw_rel;
+        let cat_rel = &rn.cat_lower;
+        let rule_label = &rule.label;
+        let result_lit_label = common::literal_label_for(language, category)
+            .expect("native category must have literal label");
+        let rust_code = &rule.rust_code.as_ref().expect("checked above").code;
+
+        match non_terminal_count {
+            2 => {
+                let arg_labels = if let Some(ref term_ctx) = rule.term_context {
+                    let simple: Vec<_> = term_ctx
+                        .iter()
+                        .filter_map(|p| match p {
+                            TermParam::Simple { ty, .. } => Some(ty),
+                            _ => None,
+                        })
+                        .collect();
+                    if let (Some(TypeExpr::Base(left_ty)), Some(TypeExpr::Base(right_ty))) =
+                        (simple.first(), simple.get(1))
+                    {
+                        let left_lit = common::literal_label_for(language, left_ty);
+                        let right_lit = common::literal_label_for(language, right_ty);
+                        match (left_lit, right_lit) {
+                            (Some(ll), Some(rl)) => Some((left_ty.clone(), ll, right_ty.clone(), rl)),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let (left_cat, left_lit_label, right_cat, right_lit_label) = match arg_labels {
+                    Some((lc, ll, rc, rl)) => (lc, ll, rc, rl),
+                    None => (
+                        category.clone(),
+                        result_lit_label.clone(),
+                        category.clone(),
+                        result_lit_label.clone(),
+                    ),
+                };
+
+                rules.push(quote! {
+                    #rw_rel(s.clone(), t) <--
+                        #cat_rel(s),
+                        if let #category::#rule_label(left, right) = s,
+                        if let #left_cat::#left_lit_label(a_ref) = left.as_ref(),
+                        if let #right_cat::#right_lit_label(b_ref) = right.as_ref(),
+                        let a = a_ref.clone(),
+                        let b = b_ref.clone(),
+                        let t = #category::#result_lit_label((#rust_code));
+                });
+            },
+            1 => {
+                let Some(ref term_context) = rule.term_context else { continue };
+                let [TermParam::Simple { name: param_name, ty: ref param_ty }] =
+                    term_context.as_slice()
+                else { continue };
+                let TypeExpr::Base(arg_category) = param_ty else { continue };
+                let Some(arg_lit_label) = common::literal_label_for(language, arg_category) else { continue };
+
+                let term_var = format_ident!("orig");
+                rules.push(quote! {
+                    #rw_rel(#term_var.clone(), t) <--
+                        #cat_rel(#term_var),
+                        if let #category::#rule_label(inner) = #term_var,
+                        if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
+                        let #param_name = s_ref.clone(),
+                        let t = #category::#result_lit_label((#rust_code));
+                });
+            },
+            _ => {
+                let Some(ref term_context) = rule.term_context else { continue };
+                let simple_params: Vec<_> = term_context
+                    .iter()
+                    .filter_map(|p| match p {
+                        TermParam::Simple { name, ty } => {
+                            if let TypeExpr::Base(base_ty) = ty {
+                                Some((name.clone(), base_ty.clone()))
+                            } else {
+                                None
+                            }
+                        },
+                        _ => None,
+                    })
+                    .collect();
+                if simple_params.len() != non_terminal_count { continue }
+
+                let mut arg_infos = Vec::with_capacity(simple_params.len());
+                let mut all_resolved = true;
+                for (param_name, arg_cat) in &simple_params {
+                    if let Some(lit_label) = common::literal_label_for(language, arg_cat) {
+                        arg_infos.push((param_name.clone(), arg_cat.clone(), lit_label));
+                    } else {
+                        all_resolved = false;
+                        break;
+                    }
+                }
+                if !all_resolved { continue }
+
+                let field_names: Vec<Ident> = (0..arg_infos.len())
+                    .map(|i| format_ident!("f{}", i))
+                    .collect();
+                let ref_names: Vec<Ident> = (0..arg_infos.len())
+                    .map(|i| format_ident!("r{}", i))
+                    .collect();
+
+                let destructure_fields: Vec<TokenStream> = arg_infos
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, arg_cat, lit_label))| {
+                        let fi = &field_names[i];
+                        let ri = &ref_names[i];
+                        quote! {
+                            if let #arg_cat::#lit_label(#ri) = #fi.as_ref(),
+                        }
+                    })
+                    .collect();
+
+                let let_bindings: Vec<TokenStream> = arg_infos
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (param_name, _, _))| {
+                        let ri = &ref_names[i];
+                        quote! {
+                            let #param_name = #ri.clone(),
+                        }
+                    })
+                    .collect();
+
+                rules.push(quote! {
+                    #rw_rel(__src.clone(), __dst) <--
+                        #cat_rel(__src),
+                        if let #category::#rule_label(#(#field_names),*) = __src,
+                        #(#destructure_fields)*
+                        #(#let_bindings)*
+                        let __dst = #category::#result_lit_label((#rust_code));
+                });
+            },
+        }
+    }
+
+    quote! { #(#rules)* }
+}
+
 /// Generate small-step rewrite rules for terms that have HOL rust_code (step mode).
 /// e.g. Up (NumLit a) (NumLit b) => NumLit(2*a + 3*b) when Up has ![2*a + 3*b]
-fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> Vec<TokenStream> {
+///
+/// When `analysis` is `Some`, skips rules whose constructor label is dead
+/// (detected by WFST 4-tier analysis). Dead HOL step rules can never fire
+/// because the parser will never produce the dead constructor.
+fn generate_hol_step_rules(
+    language: &LanguageDef,
+    cat_filter: CategoryFilter,
+    analysis: Option<&mettail_prattail::PipelineAnalysis>,
+) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
     // Unified single-pass iteration over language.terms with arity dispatch.
     // Collected into separate vecs to preserve output ordering (binary, unary, N-ary).
-    let mut binary_rust_rules = Vec::new();
-    let mut unary_rust_rules = Vec::new();
-    let mut nary_rust_rules = Vec::new();
+    // Sprint 3: Each vec stores (weight, rule) tuples for weight-based sorting.
+    // Lower weight = more frequent constructor = should be evaluated first.
+    let mut binary_rust_rules: Vec<(f64, TokenStream)> = Vec::new();
+    let mut unary_rust_rules: Vec<(f64, TokenStream)> = Vec::new();
+    let mut nary_rust_rules: Vec<(f64, TokenStream)> = Vec::new();
 
     for rule in &language.terms {
         if rule.rust_code.is_none() {
@@ -268,6 +771,12 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
         // Skip fold-mode: they use big-step rules instead
         if rule.eval_mode == Some(EvalMode::Fold) {
             continue;
+        }
+        // Sprint 1 DCE: skip rules whose constructor label is dead
+        if let Some(ref a) = analysis {
+            if a.dead_rule_labels.contains(&rule.label.to_string()) {
+                continue;
+            }
         }
         let non_terminal_count = rule
             .items
@@ -293,6 +802,11 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
         let result_lit_label = common::literal_label_for(language, category)
             .expect("native category must have literal label");
         let rust_code = &rule.rust_code.as_ref().unwrap().code;
+
+        // Sprint 3: look up constructor weight for sorting (lower = more frequent = first)
+        let rule_weight = analysis
+            .and_then(|a| a.constructor_weights.get(&rule.label.to_string()).copied())
+            .unwrap_or(f64::INFINITY);
 
         match non_terminal_count {
             2 => {
@@ -335,7 +849,7 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
                     ),
                 };
 
-                binary_rust_rules.push(quote! {
+                binary_rust_rules.push((rule_weight, quote! {
                     #rw_rel(s.clone(), t) <--
                         #cat_rel(s),
                         if let #category::#label(left, right) = s,
@@ -344,7 +858,7 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
                         let a = a_ref.clone(),
                         let b = b_ref.clone(),
                         let t = #category::#result_lit_label((#rust_code));
-                });
+                }));
             },
             1 => {
                 // Unary step rule (e.g. Len . s:Str |- "|" s "|" : Int ![s.len() as i32] step)
@@ -365,14 +879,14 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
                 // Use a different name for the term so the param (e.g. s) can be bound
                 // for rust_code without shadowing
                 let term_var = format_ident!("orig");
-                unary_rust_rules.push(quote! {
+                unary_rust_rules.push((rule_weight, quote! {
                     #rw_rel(#term_var.clone(), t) <--
                         #cat_rel(#term_var),
                         if let #category::#label(inner) = #term_var,
                         if let #arg_category::#arg_lit_label(s_ref) = inner.as_ref(),
                         let #param_name = s_ref.clone(),
                         let t = #category::#result_lit_label((#rust_code));
-                });
+                }));
             },
             _ => {
                 // N-ary step rule (3+ arguments)
@@ -441,21 +955,27 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
                     .collect();
 
                 // Use __src/__dst to avoid name collisions with user-defined param names
-                nary_rust_rules.push(quote! {
+                nary_rust_rules.push((rule_weight, quote! {
                     #rw_rel(__src.clone(), __dst) <--
                         #cat_rel(__src),
                         if let #category::#label(#(#field_names),*) = __src,
                         #(#destructure_fields)*
                         #(#let_bindings)*
                         let __dst = #category::#result_lit_label((#rust_code));
-                });
+                }));
             },
         }
     }
 
-    rules.extend(binary_rust_rules);
-    rules.extend(unary_rust_rules);
-    rules.extend(nary_rust_rules);
+    // Sprint 3: Sort each group by weight (lower = more frequent = first)
+    // for better cache locality and earlier convergence in Ascent evaluation.
+    binary_rust_rules.sort_by(|a, b| a.0.total_cmp(&b.0));
+    unary_rust_rules.sort_by(|a, b| a.0.total_cmp(&b.0));
+    nary_rust_rules.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    rules.extend(binary_rust_rules.into_iter().map(|(_, r)| r));
+    rules.extend(unary_rust_rules.into_iter().map(|(_, r)| r));
+    rules.extend(nary_rust_rules.into_iter().map(|(_, r)| r));
 
     rules
 }

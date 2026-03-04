@@ -952,14 +952,21 @@ impl PatternTerm {
                             },
                         );
                     } else {
-                        // Subsequent occurrence: emit eq check
+                        // Subsequent occurrence: emit eq check inline (Sprint 7).
+                        //
+                        // Interleaving the eq check here — at its earliest valid
+                        // position — rather than batching all eq checks after the
+                        // full LHS clause sequence enables fail-fast evaluation.
+                        // Both `existing` (bound at first occurrence) and `term_var`
+                        // (bound by a preceding destructuring clause) are already
+                        // available, so the check is valid at this point.
                         let existing = result
                             .bindings
                             .get(&var_name)
                             .map(|b| &b.expression)
                             .unwrap();
                         let eq_rel = format_ident!("eq_{}", category.to_string().to_lowercase());
-                        result.equational_checks.push(quote! {
+                        result.clauses.push(quote! {
                             #eq_rel(#existing, #term_var.clone())
                         });
                     }

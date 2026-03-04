@@ -1295,6 +1295,9 @@ eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_PROC_EQ_CONG_7 : std::cell::Cell < Vec < (Proc, Proc, Proc, Proc) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_7.with(| p | p.take()); buf.clear(); match (s, t) {
+        (Proc::ConcatStr(sf0, sf1), Proc::ConcatStr(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
         (Proc::Add(sf0, sf1), Proc::Add(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
@@ -1329,9 +1332,6 @@ eq_proc(s.clone(), t.clone()) <--
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         (Proc::Or(sf0, sf1), Proc::Or(tf0, tf1)) => {
-            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
-        },
-        (Proc::ConcatStr(sf0, sf1), Proc::ConcatStr(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         _ => {},

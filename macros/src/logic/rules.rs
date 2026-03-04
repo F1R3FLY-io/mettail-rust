@@ -99,18 +99,24 @@ pub fn generate_rule_clause_with_category(
     let lhs_var = format_ident!("s");
     let lhs_clauses = left.to_ascent_clauses(&lhs_var, category, language, &duplicate_vars);
 
-    // 4. Generate condition checks and collect env query bindings
-    let (condition_clauses, env_bindings) = generate_condition_clauses(conditions, &lhs_clauses);
+    // 4. Sort conditions by estimated cost (cheapest first) for fail-fast evaluation.
+    // Respects data dependencies: if condition B references a variable bound by
+    // condition A's EnvQuery, A must precede B.
+    let sorted_conditions = sort_conditions_by_cost(conditions);
 
-    // 5. Merge LHS bindings with env query bindings for RHS generation
+    // 5. Generate condition checks and collect env query bindings
+    let (condition_clauses, env_bindings) =
+        generate_condition_clauses(&sorted_conditions, &lhs_clauses);
+
+    // 6. Merge LHS bindings with env query bindings for RHS generation
     let mut all_bindings = lhs_clauses.bindings.clone();
     all_bindings.extend(env_bindings);
 
-    // 6. Generate RHS construction
+    // 7. Generate RHS construction
     let rhs_var = format_ident!("t");
     let rhs_expr = right.to_ascent_rhs(&all_bindings, language);
 
-    // 7. Assemble the rule
+    // 8. Assemble the rule
     let clauses = &lhs_clauses.clauses;
     let eq_checks = &lhs_clauses.equational_checks;
 
@@ -138,7 +144,12 @@ pub fn generate_rule_clause_with_category(
         )
     };
 
-    // Assemble body clauses in order: first_clause, LHS pattern, eq_checks, conditions, RHS binding
+    // Assemble body clauses in order: first_clause, LHS pattern (with interleaved
+    // eq checks from Sprint 7), conditions, RHS binding.
+    //
+    // Sprint 7: Equational checks are now interleaved into `clauses` at their
+    // earliest valid position (in pattern.rs), so `eq_checks` is typically empty.
+    // We still extend from it for backward compatibility.
     let mut body =
         Vec::with_capacity(1 + clauses.len() + eq_checks.len() + condition_clauses.len() + 1);
     body.push(first_clause);
@@ -148,6 +159,142 @@ pub fn generate_rule_clause_with_category(
     body.push(quote! { let #rhs_var = (#rhs_expr).normalize() });
 
     quote! { #head <-- #(#body),*; }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Sprint 2: Premise cost ordering
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Estimate relative cost of evaluating a condition clause.
+///
+/// Lower cost = cheaper = should be evaluated first in the rule body.
+/// Since Ascent evaluates body clauses left-to-right (3+ clause rules have
+/// fixed order), putting cheap fail-fast checks first reduces the intermediate
+/// tuple count during semi-naive evaluation.
+///
+/// Cost model:
+/// - Freshness: O(1) — single `free_vars().contains()` check
+/// - EnvQuery: O(|relation|) — scans the relation to find matching rows
+/// - ForAll: O(|collection| × body_cost) — iterates collection, checks body per element
+fn condition_cost(condition: &Condition) -> u32 {
+    match condition {
+        Condition::Freshness(_) => 1,
+        Condition::EnvQuery { .. } => 10,
+        Condition::ForAll { body, .. } => 100 + condition_cost(body),
+    }
+}
+
+/// Collect the set of variable names that a condition **binds** (produces).
+///
+/// EnvQuery binds its result arguments (2nd+ args).
+/// Freshness and ForAll do not bind new variables.
+fn condition_binds(condition: &Condition) -> HashSet<String> {
+    match condition {
+        Condition::EnvQuery { args, .. } => {
+            // First arg is the lookup key (already bound by LHS),
+            // subsequent args are result bindings.
+            args.iter().skip(1).map(|a| a.to_string()).collect()
+        }
+        _ => HashSet::new(),
+    }
+}
+
+/// Collect the set of variable names that a condition **requires** (consumes).
+///
+/// A condition requires a variable if it references it but doesn't bind it.
+/// EnvQuery requires its first arg (lookup key).
+/// ForAll requires its collection variable and body's requirements.
+/// Freshness requires its variable and term.
+fn condition_requires(condition: &Condition) -> HashSet<String> {
+    match condition {
+        Condition::Freshness(fc) => {
+            let mut required = HashSet::new();
+            required.insert(fc.var.to_string());
+            match &fc.term {
+                FreshnessTarget::Var(v) => { required.insert(v.to_string()); }
+                FreshnessTarget::CollectionRest(v) => { required.insert(v.to_string()); }
+            }
+            required
+        }
+        Condition::EnvQuery { args, .. } => {
+            // First arg is the lookup key (required from LHS or prior condition)
+            let mut required = HashSet::new();
+            if let Some(first) = args.first() {
+                required.insert(first.to_string());
+            }
+            required
+        }
+        Condition::ForAll { collection, body, .. } => {
+            let mut required = HashSet::new();
+            required.insert(collection.to_string());
+            required.extend(condition_requires(body));
+            required
+        }
+    }
+}
+
+/// Sort conditions by cost, respecting data dependencies.
+///
+/// If condition B requires a variable that condition A binds,
+/// A must precede B. Within dependency-compatible groups, sort by
+/// ascending cost for fail-fast evaluation.
+///
+/// Uses a stable topological sort with cost-based tie-breaking:
+/// repeatedly select the cheapest condition whose requirements are
+/// satisfied by LHS bindings + previously emitted conditions.
+fn sort_conditions_by_cost(conditions: &[Condition]) -> Vec<Condition> {
+    if conditions.len() <= 1 {
+        return conditions.to_vec();
+    }
+
+    // Pre-compute costs, bindings, and requirements for each condition
+    let costs: Vec<u32> = conditions.iter().map(condition_cost).collect();
+    let binds: Vec<HashSet<String>> = conditions.iter().map(condition_binds).collect();
+    let requires: Vec<HashSet<String>> = conditions.iter().map(condition_requires).collect();
+
+    // Track which variables are available (initially: all LHS bindings are available,
+    // but we don't have access to them here — we only track variables that other
+    // conditions produce. LHS-bound variables are always available.)
+    let mut available_from_conditions: HashSet<String> = HashSet::new();
+    let mut emitted = vec![false; conditions.len()];
+    let mut result = Vec::with_capacity(conditions.len());
+
+    for _ in 0..conditions.len() {
+        // Find cheapest unemitted condition whose requirements from OTHER conditions
+        // are satisfied. Requirements from LHS bindings are always satisfied.
+        let best = (0..conditions.len())
+            .filter(|&i| !emitted[i])
+            .filter(|&i| {
+                // Check that all requirements that come from other conditions are met.
+                // A requirement is "from another condition" if some condition j (j != i)
+                // binds it. If no condition binds it, it's from the LHS and always available.
+                requires[i].iter().all(|req| {
+                    let bound_by_condition = binds.iter().enumerate().any(|(j, b)| j != i && b.contains(req));
+                    !bound_by_condition || available_from_conditions.contains(req)
+                })
+            })
+            .min_by_key(|&i| costs[i]);
+
+        match best {
+            Some(idx) => {
+                emitted[idx] = true;
+                available_from_conditions.extend(binds[idx].iter().cloned());
+                result.push(conditions[idx].clone());
+            }
+            None => {
+                // Cycle detected or all remaining have unsatisfied deps.
+                // Emit remaining in declaration order (safe fallback).
+                for (i, cond) in conditions.iter().enumerate() {
+                    if !emitted[i] {
+                        result.push(cond.clone());
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    result
 }
 
 /// Generate condition clauses from freshness and env conditions.
@@ -336,13 +483,22 @@ fn premise_to_condition(premise: &crate::ast::language::Premise) -> Option<Condi
 /// because they define the base equations that feed into the eq_* relations.
 ///
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
+/// When `subsumed_equations` is non-empty, subsumed equations are skipped (Sprint A N10 DCE).
 pub fn generate_equation_rules(
     language: &LanguageDef,
     cat_filter: CategoryFilter,
+    subsumed_equations: &std::collections::HashSet<usize>,
 ) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
-    for eq in &language.equations {
+    for (eq_idx, eq) in language.equations.iter().enumerate() {
+        // Sprint A (N10): Skip subsumed equations.
+        // A subsumed equation's LHS pattern is strictly less general than another
+        // equation's. Since equations are symmetric, the general equation already
+        // covers all terms the subsumed one would match.
+        if subsumed_equations.contains(&eq_idx) {
+            continue;
+        }
         // Determine category - try LHS first, then RHS
         let category = eq
             .left

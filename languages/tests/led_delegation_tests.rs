@@ -1,4 +1,4 @@
-#![cfg(feature = "led-test")]
+#![cfg(feature = "test-languages")]
 //! Tests for LED (Left-Denotation) delegation in sum-type categories.
 //!
 //! The LedTest language has operators on constituent categories (Num, Pred) but

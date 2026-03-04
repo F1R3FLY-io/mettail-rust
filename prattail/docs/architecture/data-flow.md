@@ -184,7 +184,7 @@ This path follows the automata pipeline.
 ```
 LanguageSpec.rules  ───▶  for each rule:
                             filter syntax items to SyntaxItemSpec::Terminal
-                            collect terminal strings (recurses into ZipMapSep body_items)
+                            collect terminal strings (recurses into Sep, Map, Zip, Optional body items)
                           ───▶  GrammarRuleInfo { label, category, terminals, is_infix }
 
 LanguageSpec.types  ───▶  for each type:
@@ -535,6 +535,16 @@ FIRST sets + FOLLOW sets + DispatchTables + Overlaps
     │       CountingWeight pass: emit codegen-time ambiguity warnings
     │       BooleanWeight pass: detect dead (unreachable) rules
     │
+    ├───▶ [Tier 4: Semantic Liveness Resurrection]
+    │       semantic_dependency_groups from macros crate
+    │         (collected from equations/rewrites/logic via collect_constructor_labels())
+    │       compute_semantic_live_labels(parsing_live, dependency_groups)
+    │         Fixed-point closure: if any label in a dependency group is live,
+    │         all labels in that group become live (transitive propagation)
+    │       Resurrection: Tiers 1-3 flag as dead → Tier 4 checks dependency groups
+    │         → unflag if semantically live (referenced by equations/rewrites/logic
+    │           that also reference a parsing-live constructor)
+    │
     ├───▶ [resolve_dispatch_winners()]
     │       For each (category, token) pair:
     │         Select tropical shortest-path winner → (winning_rule, weight)
@@ -563,6 +573,42 @@ FIRST sets + FOLLOW sets + DispatchTables + Overlaps
 
 > **Cross-reference:** See [benchmarks/wfst-pipeline-integration.md](../benchmarks/wfst-pipeline-integration.md)
 > for detailed WFST pipeline benchmark results and performance analysis.
+
+---
+
+## Lint Layer Data Flow
+
+After WFST construction, prediction, and dead-rule detection complete, the pipeline
+runs a comprehensive lint pass before codegen. The lint layer borrows all pipeline
+analysis data immutably — it never modifies state.
+
+```
+WFST construction + prediction outputs + dead-rule analysis
+    │
+    ▼
+[run_lints(&LintContext)]
+    │
+    ├──▶ LintContext borrows all pipeline data immutably:
+    │      categories, rules, rd_rules, first_sets, follow_sets,
+    │      bp_table, prediction_wfsts, recovery_wfsts, cast_rules,
+    │      cross_rules, all_syntax, follow_inputs,
+    │      semantic_dependency_groups, nfa_spillover_categories,
+    │      recovery_config, grammar_name, rule_locations
+    │
+    ├──▶ 23 lints across 5 categories:
+    │      G01-G10  Grammar structure (left-recursion, unused categories, etc.)
+    │      W01-W06  WFST-specific (dead rules, ambiguous prefix, weight anomalies)
+    │      R01-R07  Recovery (empty sync set, sparse recovery, etc.)
+    │      C01-C04  Cross-category (cast cycles, transitive redundancy, wide overlap)
+    │      P02-P04  Performance (high NFA spillover, deep cast nesting, many alts)
+    │
+    ├──▶ Emit to stderr in Rust-compiler-style format:
+    │      warning[W01]: rule FloatToStr in category Str is unreachable (dead code)
+    │        = hint: remove the rule or add a unique dispatch token
+    │
+    ▼
+Vec<LintDiagnostic>  (informational only, does not block codegen)
+```
 
 ---
 

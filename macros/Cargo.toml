@@ -27,6 +27,8 @@ moniker = { workspace = true }
 indexmap = { workspace = true }
 mettail-prattail = { path = "../prattail" }
 ascent_syntax_export = { workspace = true }
+pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
+rustc-hash = "1.1"
 
 [dev-dependencies]
 trybuild = "1.0"

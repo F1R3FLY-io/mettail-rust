@@ -10,8 +10,9 @@ edition = "2021"
 [features]
 ## Propagate features through macros to mettail-prattail.
 wfst-log = ["mettail-macros/wfst-log", "mettail-prattail/wfst-log"]
-## Test-only language for LED delegation testing. Not for application use.
-led-test = []
+## Test-only languages: composition (BaseMath, ExtMath, MixedMath, ImportedMath,
+## CalcLambda) and LedTest. Not for application use.
+test-languages = []
 
 [dependencies]
 mettail-macros = { path = "../macros" }

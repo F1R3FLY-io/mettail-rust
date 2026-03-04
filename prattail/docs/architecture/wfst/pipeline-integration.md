@@ -235,7 +235,7 @@ token in the grammar:
 Viterbi over the recovery WFST finds the minimum-cost repair sequence for
 a given error position.
 
-### Step 5f — dead-rule detection (three-tier)
+### Step 5f — dead-rule detection (four-tier)
 
 ```
   Inputs:
@@ -306,13 +306,13 @@ for the full Layer 2.5 architecture.
 
 ## 4. Dead-Rule Detection
 
-After WFST construction, the pipeline performs a three-tier analysis to
+After WFST construction, the pipeline performs a four-tier analysis to
 identify dead rules.  Detection runs via `detect_dead_rules()` in
 `pipeline.rs:106–207` and is surfaced through the unified lint layer
 (`lint.rs`, lint ID W01).
 
 ```
-  Three-Tier Dead-Rule Detection (pipeline.rs:106–207)
+  Four-Tier Dead-Rule Detection (pipeline.rs:106–207)
   ┌───────────────────────────────────────────────────────────────┐
   │                                                               │
   │  For each rule R:                                             │
@@ -392,7 +392,7 @@ the pipeline together with the WFST-specific fields added by each step.
          ▼ build_recovery_wfsts()
   recovery_wfsts               ← Vec<RecoveryWfst>
          │
-         ▼ dead-rule detection (three-tier: literal / category-reachability / WFST)
+         ▼ dead-rule detection (four-tier: literal / category-reachability / WFST / semantic-liveness)
   DeadRuleWarning[]            ← per-rule dead-rule classification
          │
          ▼ lint::run_lints() (23 lints including W01 dead-rule)
@@ -693,7 +693,7 @@ source location.
 | `ParseSimulator::from_flat()` | `recovery.rs` |
 | `TrainedModel::from_embedded()` | `training.rs` (wfst-log) |
 | `RepairAction::edit_cost()` | `recovery.rs` |
-| `detect_dead_rules()` (three-tier) | `pipeline.rs` |
+| `detect_dead_rules()` (four-tier) | `pipeline.rs` |
 | `DeadRuleWarning` enum | `pipeline.rs` |
 | `lint_w01_dead_rule()` | `lint.rs` |
 | `run_lints()` (23 lints) | `lint.rs` |
