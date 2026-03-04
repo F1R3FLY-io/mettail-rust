@@ -111,13 +111,13 @@ Viterbi extract the winner in a single O(V + E) pass.
 Station 0         Station 1         Station 2         Station 3
 (before >)        (between > >)     (between > =)     (after =)
     ●─── Gt(1.0) ───●─── Gt(1.0) ───●─── Eq(0.0) ───●
-    │                │               ▲                 │
-    │                └── GtEq(0.5) ──┘                 │
-    │                                                  │
+    │               │               ▲               │
+    │               └── GtEq(0.5) ──┘               │
+    │                                               │
     ├──── GtGt(0.0) ─── ● ╌╌╌ Eq(0.0) ╌╌╌╌╌╌╌╌╌╌╌╌╌─┤
-    │                    2                              │
-    │                                                  │
-    └───────────── ShrAssign(0.0) ─────────────────────┘
+    │                   2                           │
+    │                                               │
+    └───────────── ShrAssign(0.0) ──────────────────┘
 
 Express:  ShrAssign          (1 token, cost 0.0)
 Local:    Gt + Gt + Eq       (3 tokens, cost 2.0)
@@ -169,13 +169,13 @@ L = (V, E, s, f, w)
 
 where:
 
-| Symbol | Type                   | Description                          |
-|:------:|:-----------------------|:-------------------------------------|
-| V      | {0, 1, ..., N}        | Node set = positions in the input    |
-| E      | V × V × T × S         | Directed edges (arcs)                |
-| s      | 0                      | Start node                           |
-| f      | N                      | Final node                           |
-| w      | E → K                  | Weight function                      |
+| Symbol | Type           | Description                       |
+|:------:|:---------------|:----------------------------------|
+|   V    | {0, 1, ..., N} | Node set = positions in the input |
+|   E    | V × V × T × S  | Directed edges (arcs)             |
+|   s    | 0              | Start node                        |
+|   f    | N              | Final node                        |
+|   w    | E → K          | Weight function                   |
 
 Each edge e = (u, v, t, σ) ∈ E with u < v asserts: "the input from
 position u to position v can be tokenized as token t covering span σ
@@ -190,10 +190,10 @@ This ensures L is acyclic.
                  GtGt (w = 0.0)
     ┌───────────────────────────────┐
     │                               ▼
-  ┌───┐    Gt (w = 1.0)    ┌───┐   Gt (w = 1.0)    ┌───┐
+  ┌───┐    Gt (w = 1.0)    ┌───┐   Gt (w = 1.0)     ┌───┐
   │ 0 │ ──────────────────►│ 1 │ ──────────────────►│ 2 │
-  └───┘                    └───┘                     └───┘
-    s                                                  f
+  └───┘                    └───┘                    └───┘
+    s                                                 f
 ```
 
 Node 0 is the start (position before `>`), node 1 is the position
@@ -289,10 +289,10 @@ edge weights — which is 1̄ when all edges carry unit weight.
 
 In PraTTaIL's type system:
 
-| Formal condition         | Runtime type           | Overhead |
-|:-------------------------|:-----------------------|:---------|
-| Linear lattice           | `TokenSource::Linear`  | Zero     |
-| Non-linear lattice       | `TokenSource::Lattice` | O(\|E\|) |
+| Formal condition   | Runtime type           | Overhead |
+|:-------------------|:-----------------------|:---------|
+| Linear lattice     | `TokenSource::Linear`  | Zero     |
+| Non-linear lattice | `TokenSource::Lattice` | O(\|E\|) |
 
 The `resolve()` method branches once on the variant, not per-token.
 
@@ -403,14 +403,14 @@ The alternative edge 0 → 2 with token `Num12` (weight 2.0) represents a
 hypothetical tokenization where "1+" is a single numeric literal. Viterbi
 traces:
 
-| Step | Node | α[v]   | pred[v]  | Note                                |
-|:----:|:----:|:------:|:--------:|:------------------------------------|
-| 0    | 0    | 0.0    | —        | Start                               |
-| 1    | 1    | 0.0    | (0, 0)   | via Int(0.0): 0.0 + 0.0 = 0.0      |
-| 2    | 2    | 0.0    | (1, 0)   | via Plus(0.0): 0.0 + 0.0 = 0.0     |
-|      |      |        |          | Num12 path: 0.0 + 2.0 = 2.0 > 0.0  |
-| 3    | 3    | 0.0    | (2, 0)   | via Int(0.0): 0.0 + 0.0 = 0.0      |
-| 4    | 4    | 0.0    | (3, 0)   | via Eof(0.0): 0.0 + 0.0 = 0.0      |
+| Step | Node | α[v] | pred[v] | Note                              |
+|:----:|:----:|:----:|:-------:|:----------------------------------|
+|  0   |  0   | 0.0  |    —    | Start                             |
+|  1   |  1   | 0.0  | (0, 0)  | via Int(0.0): 0.0 + 0.0 = 0.0     |
+|  2   |  2   | 0.0  | (1, 0)  | via Plus(0.0): 0.0 + 0.0 = 0.0    |
+|      |      |      |         | Num12 path: 0.0 + 2.0 = 2.0 > 0.0 |
+|  3   |  3   | 0.0  | (2, 0)  | via Int(0.0): 0.0 + 0.0 = 0.0     |
+|  4   |  4   | 0.0  | (3, 0)  | via Eof(0.0): 0.0 + 0.0 = 0.0     |
 
 **Result:** α[4] = 0.0. Backtrace: 4←3←2←1←0, yielding
 `[Int, Plus, Int, Eof]` with total weight 0.0.
@@ -512,7 +512,7 @@ This means:
   ┌─────────────────────────────────────────────────────┐
   │  Weight axis                                        │
   │                                                     │
-  │  ─ ─ ─ ─ ─ ─ α_best_final + B ─ ─ ─ ─ ─ ─ beam   │
+  │  ─ ─ ─ ─ ─ ─ α_best_final + B ─ ─ ─ ─ ─ ─ beam      │
   │                    ┌─────────────────────┐ ceiling  │
   │                    │   PRUNED REGION     │          │
   │  ══════════════════╪═════════════════════╪════════  │
@@ -776,16 +776,16 @@ with the semiring weight encoding preference strength.
 
 ### 9.4 Feature Comparison Table
 
-| Feature | PraTTaIL Lattice | Speech Word Lattice | Chinese Segmentation | Morphological |
-|:--------|:----------------:|:-------------------:|:--------------------:|:-------------:|
-| Nodes | char positions | time points | char positions | char positions |
-| Edges | token hypotheses | word hypotheses | word hypotheses | morpheme + POS |
-| Weight | dispatch priority | acoustic + LM | learned model | joint probability |
-| Typical size | 5–50 nodes | 100–10K nodes | 10–200 nodes | 10–100 nodes |
-| Ambiguity source | operator overlap | acoustic confusion | no whitespace | morphological richness |
-| Resolution | Viterbi (tropical) | Viterbi (tropical) | Viterbi (learned) | joint CRF |
-| Semirings available | 10 types | typically 1–2 | 1 | 1 |
-| Training | wfst-log (planned) | EM / discriminative | discriminative | CRF |
+| Feature             |  PraTTaIL Lattice  | Speech Word Lattice | Chinese Segmentation |     Morphological      |
+|:--------------------|:------------------:|:-------------------:|:--------------------:|:----------------------:|
+| Nodes               |   char positions   |     time points     |    char positions    |     char positions     |
+| Edges               |  token hypotheses  |   word hypotheses   |   word hypotheses    |     morpheme + POS     |
+| Weight              | dispatch priority  |    acoustic + LM    |    learned model     |   joint probability    |
+| Typical size        |     5–50 nodes     |    100–10K nodes    |     10–200 nodes     |      10–100 nodes      |
+| Ambiguity source    |  operator overlap  | acoustic confusion  |    no whitespace     | morphological richness |
+| Resolution          | Viterbi (tropical) | Viterbi (tropical)  |  Viterbi (learned)   |       joint CRF        |
+| Semirings available |      10 types      |    typically 1–2    |          1           |           1            |
+| Training            | wfst-log (planned) | EM / discriminative |    discriminative    |          CRF           |
 
 PraTTaIL's lattice is distinguished by its multi-semiring framework:
 the same lattice structure supports ten different semiring types, each
@@ -804,6 +804,10 @@ community (Murveit et al. 1993) and has become standard in NLP. PraTTaIL
 follows this convention. If order-theoretic lattices are needed elsewhere
 in the codebase (e.g., for type inference), they should be given a
 distinct name (e.g., `PartialOrderLattice`) to avoid confusion.
+
+For the formal order-theoretic treatment of lattices (partial orders, meet,
+join, bounded distributive lattices), see
+[Mathematical Foundations: Order Theory](../foundations/01-order-theory.md).
 
 ---
 
@@ -836,20 +840,20 @@ distinct name (e.g., `PartialOrderLattice`) to avoid confusion.
 
 ## 11. Source Reference
 
-| Concept                      | File                | Lines/Function                    |
-|:-----------------------------|:--------------------|:----------------------------------|
-| TokenSource enum             | `src/lattice.rs`    | `TokenSource<T, S>` (line 51)    |
-| TokenLattice struct          | `src/lattice.rs`    | `TokenLattice<T, S, W>` (line 240) |
-| LatticeEdge struct           | `src/lattice.rs`    | `LatticeEdge<T, S, W>` (line 247) |
-| ViterbiPath struct           | `src/lattice.rs`    | `ViterbiPath<T, S, W>` (line 343) |
-| Viterbi (tropical, beam)     | `src/lattice.rs`    | `viterbi_best_path_beam()` (line 371) |
-| Viterbi (generic semiring)   | `src/lattice.rs`    | `viterbi_generic()` (line 484)   |
-| Linear→Lattice conversion    | `src/lattice.rs`    | `linear_to_lattice()` (line 546) |
-| Generic conversion           | `src/lattice.rs`    | `linear_to_lattice_generic()` (line 562) |
-| N-best paths                 | `src/lattice.rs`    | `n_best_paths()` (line 598)      |
-| Alternative paths            | `src/lattice.rs`    | `alternative_paths()` (line 708) |
-| Semiring trait               | `src/automata/semiring.rs` | `Semiring` (line 36)       |
-| TropicalWeight               | `src/automata/semiring.rs` | `TropicalWeight` (line 68) |
+| Concept                    | File                       | Lines/Function                           |
+|:---------------------------|:---------------------------|:-----------------------------------------|
+| TokenSource enum           | `src/lattice.rs`           | `TokenSource<T, S>` (line 51)            |
+| TokenLattice struct        | `src/lattice.rs`           | `TokenLattice<T, S, W>` (line 240)       |
+| LatticeEdge struct         | `src/lattice.rs`           | `LatticeEdge<T, S, W>` (line 247)        |
+| ViterbiPath struct         | `src/lattice.rs`           | `ViterbiPath<T, S, W>` (line 343)        |
+| Viterbi (tropical, beam)   | `src/lattice.rs`           | `viterbi_best_path_beam()` (line 371)    |
+| Viterbi (generic semiring) | `src/lattice.rs`           | `viterbi_generic()` (line 484)           |
+| Linear→Lattice conversion  | `src/lattice.rs`           | `linear_to_lattice()` (line 546)         |
+| Generic conversion         | `src/lattice.rs`           | `linear_to_lattice_generic()` (line 562) |
+| N-best paths               | `src/lattice.rs`           | `n_best_paths()` (line 598)              |
+| Alternative paths          | `src/lattice.rs`           | `alternative_paths()` (line 708)         |
+| Semiring trait             | `src/automata/semiring.rs` | `Semiring` (line 36)                     |
+| TropicalWeight             | `src/automata/semiring.rs` | `TropicalWeight` (line 68)               |
 
 ---
 
@@ -862,3 +866,4 @@ distinct name (e.g., `PartialOrderLattice`) to avoid confusion.
 - [Token Lattice Architecture](../../architecture/wfst/token-lattices.md) — Pipeline integration
 - [Error Recovery](../../design/wfst/error-recovery.md) — Recovery WFST and lattice recovery
 - [Per-semiring documents](semirings/) — Detailed theory for each semiring type
+- [Stream-to-Lattice Conversion](stream-to-lattice.md) — Pedagogical guide to all seven conversion points and five implicit lattice structures

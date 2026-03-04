@@ -21,6 +21,7 @@ parsers from HOL-style language definitions.
 2. [Prediction and Lookahead](theory/prediction-and-lookahead.md) — FIRST/FOLLOW sets, dispatch tables, comparison with LL/LR
 3. [Pratt Parsing](theory/pratt-parsing.md) — Binding power pairs, precedence, associativity
 4. [Disambiguation (overview)](design/disambiguation/README.md) — Six-layer model for resolving parse ambiguity
+5. [Mathematical Foundations](theory/foundations/README.md) — Order theory, automata theory, language theory, compiler theory, parsing algebra, optimization theory, machine learning
 
 ### Deep-Dive Design
 

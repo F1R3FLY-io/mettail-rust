@@ -216,6 +216,10 @@ In terms of the bitset representation:
 
 ### 4.3 Lattice ordering
 
+For the formal power-set lattice definition and proof that ContextWeight is a
+bounded distributive lattice (Boolean algebra), see
+[Mathematical Foundations: Order Theory](../../foundations/01-order-theory.md) § 4.
+
 The natural partial order on subsets is inclusion: A <= B iff A subset-of B.
 The implementation uses a different total order for `Ord`: cardinality first,
 then raw bit value for deterministic tiebreaking:

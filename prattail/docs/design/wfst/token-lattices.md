@@ -661,3 +661,5 @@ and Viterbi extraction).
 - [Per-Semiring Design](semirings/) — Implementation details for each weight type
 - [Viterbi and Forward-Backward](../../theory/wfst/viterbi-and-forward-backward.md) — Algorithm details
 - [Weighted Automata](../../theory/wfst/weighted-automata.md) — WFST formal definition
+- [Stream-to-Lattice — Theory](../../theory/wfst/stream-to-lattice.md) — Pedagogical guide to all conversion points
+- [Stream-to-Lattice — Architecture](../../architecture/wfst/stream-to-lattice.md) — Code-path walkthrough with source-line references

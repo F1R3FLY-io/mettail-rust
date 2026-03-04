@@ -133,7 +133,7 @@ quantified statement reduces to at most 4 or 8 concrete cases.
 | true  | true  | false | true        | true              | yes   |
 | true  | true  | true  | true        | true              | yes   |
 
-**Right**: (b ⊕ c) ⊗ a = (b ⊗ a) ⊕ (c ⊗ a) follows identically by
+**Right**: (b ⊕  c) ⊗ a = (b ⊗ a) ⊕ (c ⊗ a) follows identically by
 commutativity of ∧.
 
 ### 3.4 Zero annihilation: 0 ⊗ a = a ⊗ 0 = 0
@@ -167,7 +167,7 @@ Therefore B is a **commutative semiring**.
 
 ### 4.2 Idempotency of ⊕
 
-Addition ⊕ = ∨ is idempotent:
+Addition ⊕  = ∨ is idempotent:
 
     a ∨ a = a    for all a in {false, true}
 

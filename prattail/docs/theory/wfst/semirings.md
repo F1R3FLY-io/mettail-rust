@@ -397,11 +397,11 @@ The **log semiring** over R+ union {+inf}, representing **negative log-probabili
 (w = -ln p):
 
 ```
-K   =  ℝ⁺ ∪ {+∞}
-a ⊕ b  =  −ln(e⁻ᵃ + e⁻ᵇ)     (log-sum-exp)
-a ⊗ b  =  a + b                (log-domain multiplication)
-0̄      =  +∞                   (probability 0; identity for log-sum-exp)
-1̄      =  0.0                  (probability 1; identity for addition)
+K       =  ℝ⁺ ∪ {+∞}
+a ⊕  b  =  −ln(e⁻ᵃ + e⁻ᵇ)       (log-sum-exp)
+a ⊗  b  =  a + b                (log-domain multiplication)
+0̄       =  +∞                   (probability 0; identity for log-sum-exp)
+1̄       =  0.0                  (probability 1; identity for addition)
 ```
 
 Properties:
@@ -1606,3 +1606,12 @@ weight strategy is most valuable.
 | Multi-rule paths    | Lower total = more specific   | Lower total = higher priority  | Lower total = more probable |
 | Requires user input | No                            | Yes (annotations)              | Yes (training corpus)       |
 | Granularity         | Per-rule                      | Per-token                      | Per-arc                     |
+
+---
+
+## 18. Further Reading
+
+For the order-theoretic foundations underlying semiring structure — partial
+orders, lattices, the idempotent-semiring ↔ semilattice correspondence, and
+fixed-point theory — see
+[Mathematical Foundations: Order Theory](../foundations/01-order-theory.md).

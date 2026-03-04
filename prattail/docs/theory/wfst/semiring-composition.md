@@ -339,3 +339,4 @@ external parameters.  Therefore, the target semiring's algebraic properties
 | [`dead-rule-detection.md`](../../design/wfst/dead-rule-detection.md) | Four-tier dead-rule analysis (Modes 1 + 4) |
 | [`pipeline-integration.md`](../../architecture/wfst/pipeline-integration.md) | Pipeline step-by-step data flow |
 | [`composed-dispatch.md`](../../design/composed-dispatch.md) | Composed dispatch table construction |
+| [`stream-to-lattice.md`](stream-to-lattice.md) | Stream-to-Lattice Conversion — the lattice structures that Mode 1/2/3 operate over |

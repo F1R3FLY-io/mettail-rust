@@ -577,3 +577,4 @@ lexing unnecessary. The `from_weighted()` function always produces the
 - [Error Recovery Design](../../design/wfst/error-recovery.md) — Repair cost model, 3-tier context
 - [NFA Disambiguation](../../design/disambiguation/08-nfa-wfst-disambiguation.md) — Forced-prefix replay, weight annotation
 - [Weight Training](../../design/wfst/weight-training.md) — LogWeight SGD, forward-backward
+- [Stream-to-Lattice Conversion](stream-to-lattice.md) — Unified walkthrough of all seven conversion points and five implicit lattice structures

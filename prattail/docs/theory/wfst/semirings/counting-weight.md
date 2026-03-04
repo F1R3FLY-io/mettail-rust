@@ -39,13 +39,13 @@ C  =  ( N,  +,  ×,  0,  1 )
 
 where:
 
-| Component        | Symbol | Concrete value | Meaning                       |
-|------------------|--------|----------------|-------------------------------|
-| Carrier set      | K      | N = {0, 1, 2, ...} | Natural numbers (non-negative integers) |
-| Addition (⊕)     | +      | a + b (saturating) | Sum parallel path counts      |
-| Multiplication (⊗)| ×    | a × b (saturating) | Multiply sequential segment counts |
-| Additive identity (0̄) | 0 | `0_u64`        | No derivations (dead rule)    |
-| Multiplicative identity (1̄) | 1 | `1_u64` | Exactly one derivation        |
+| Component                   | Symbol | Concrete value     | Meaning                                 |
+|-----------------------------|--------|--------------------|-----------------------------------------|
+| Carrier set                 | K      | N = {0, 1, 2, ...} | Natural numbers (non-negative integers) |
+| Addition (⊕)                | +      | a + b (saturating) | Sum parallel path counts                |
+| Multiplication (⊗)          | ×      | a × b (saturating) | Multiply sequential segment counts      |
+| Additive identity (0̄)       | 0      | `0_u64`            | No derivations (dead rule)              |
+| Multiplicative identity (1̄) | 1      | `1_u64`            | Exactly one derivation                  |
 
 This is the standard natural-number semiring from abstract algebra,
 restricted to `u64` with saturating arithmetic for overflow safety.
@@ -59,8 +59,8 @@ We verify all eight semiring axioms. Let a = 2, b = 3, c = 5.
 ### (A1) Associativity of ⊕
 
 ```
-(a ⊕ b) ⊕ c  =  (2 + 3) + 5  =  5 + 5  =  10
-a ⊕ (b ⊕ c)  =  2 + (3 + 5)  =  2 + 8  =  10   ✓
+(a ⊕  b) ⊕ c  =  (2 + 3) + 5  =  5 + 5  =  10
+a ⊕  (b ⊕  c)  =  2 + (3 + 5)  =  2 + 8  =  10   ✓
 ```
 
 Natural number addition is associative. *Parsing interpretation:* the
@@ -70,8 +70,8 @@ which the parser discovers competing rules.
 ### (A2) Commutativity of ⊕
 
 ```
-a ⊕ b  =  2 + 3  =  5
-b ⊕ a  =  3 + 2  =  5   ✓
+a ⊕  b  =  2 + 3  =  5
+b ⊕  a  =  3 + 2  =  5   ✓
 ```
 
 Natural number addition is commutative. *Parsing interpretation:*

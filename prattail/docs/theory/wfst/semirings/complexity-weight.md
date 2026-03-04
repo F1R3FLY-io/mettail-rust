@@ -356,6 +356,11 @@ is not idempotent: 3 + 3 = 6 /= 3).
 Therefore (N ∪ {∞}, min, max, ∞, 0) is a bounded distributive
 lattice, and equivalently a doubly idempotent semiring.   ∎
 
+For general lattice definitions (partial orders, meet, join, bounded
+distributive lattices) and the idempotent-semiring ↔ semilattice
+correspondence, see
+[Mathematical Foundations: Order Theory](../../foundations/01-order-theory.md).
+
 ### 4.4 Total Ordering and Viterbi Compatibility
 
 ComplexityWeight implements `Ord` via the natural ordering on `u32`:

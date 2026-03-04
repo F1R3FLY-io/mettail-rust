@@ -732,3 +732,5 @@ source location.
   [../../usage/wfst/dsl-configuration.md](../../usage/wfst/dsl-configuration.md).
 - Trampoline parser architecture: see
   [../../architecture/generated-code-anatomy.md](../../architecture/generated-code-anatomy.md).
+- Stream-to-lattice conversion catalog: see
+  [stream-to-lattice.md](stream-to-lattice.md) for all seven conversion points.

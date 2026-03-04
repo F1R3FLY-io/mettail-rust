@@ -29,10 +29,10 @@ that requires tropical resolution or NFA spillover.
 
 ContextWeight serves three codegen-time analysis functions:
 
-| Function | Integration Point | Description |
-|----------|-------------------|-------------|
-| **Ambiguity diagnosis** | `compute_composed_dispatch()` | Tokens where \|ContextWeight\| > 1 indicate multiple rules competing for the same dispatch token |
-| **Follow-set tightening** | Recovery WFST construction | Intersection of context weights narrows sync token candidates to only those tokens where rules actually overlap |
+| Function                    | Integration Point                    | Description                                                                                                                |
+|-----------------------------|--------------------------------------|----------------------------------------------------------------------------------------------------------------------------|
+| **Ambiguity diagnosis**     | `compute_composed_dispatch()`        | Tokens where \|ContextWeight\| > 1 indicate multiple rules competing for the same dispatch token                           |
+| **Follow-set tightening**   | Recovery WFST construction           | Intersection of context weights narrows sync token candidates to only those tokens where rules actually overlap            |
 | **NFA spillover decisions** | `categories_needing_nfa_spillover()` | Categories where any dispatch token has \|ContextWeight\| > 1 need forced-prefix replay via thread-local spillover buffers |
 
 ContextWeight is a **type-level formalization** of "which rules reach this token."
