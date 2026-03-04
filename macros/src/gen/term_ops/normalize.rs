@@ -326,6 +326,23 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                                     }
                                 })
                             },
+                            GrammarItem::NonTerminal(field_cat)
+                                if category.to_string() == "Proc"
+                                    && label.to_string() == "PDrop"
+                                    && field_cat.to_string() == "Name" =>
+                            {
+                                // *@P = P: reduce PDrop(NQuote(p)) to p to avoid ExecEq infinite loop
+                                // (see docs/design/exploring/exec-eq-infinite-loop.md)
+                                let name_ty = format_ident!("{}", field_cat);
+                                Some(quote! {
+                                    #category::#label(f0) => {
+                                        match f0.as_ref() {
+                                            #name_ty::NQuote(p) => p.as_ref().normalize(),
+                                            _ => #category::#label(Box::new(f0.as_ref().normalize())),
+                                        }
+                                    }
+                                })
+                            },
                             _ => {
                                 // Different category or unsupported - just clone
                                 Some(quote! {

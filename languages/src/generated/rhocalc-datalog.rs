@@ -747,7 +747,7 @@ str(sub.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_STR_STR.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-proc(c1.clone()) <--
+proc(c1.clone().normalize()) <--
     proc(c0),
     rw_proc(c0, c1);
 
@@ -1723,117 +1723,6 @@ rw_proc(lhs.clone(), rhs) <--
     let body = scope.unsafe_body(),
     rw_proc((** body).clone(), body_rewritten),
     let rhs = Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(binder.clone(), Box::new(body_rewritten.clone())));
-
-rw_proc(lhs.clone(), match (lhs, vi) {
-    (Proc::Add(_, x1), 0usize) => Proc::Add(Box::new(t.clone()), x1.clone()),
-    (Proc::Add(x0, _), 1usize) => Proc::Add(x0.clone(), Box::new(t.clone())),
-    (Proc::Sub(_, x1), 2usize) => Proc::Sub(Box::new(t.clone()), x1.clone()),
-    (Proc::Sub(x0, _), 3usize) => Proc::Sub(x0.clone(), Box::new(t.clone())),
-    (Proc::Mul(_, x1), 4usize) => Proc::Mul(Box::new(t.clone()), x1.clone()),
-    (Proc::Mul(x0, _), 5usize) => Proc::Mul(x0.clone(), Box::new(t.clone())),
-    (Proc::Div(_, x1), 6usize) => Proc::Div(Box::new(t.clone()), x1.clone()),
-    (Proc::Div(x0, _), 7usize) => Proc::Div(x0.clone(), Box::new(t.clone())),
-    (Proc::Eq(_, x1), 8usize) => Proc::Eq(Box::new(t.clone()), x1.clone()),
-    (Proc::Eq(x0, _), 9usize) => Proc::Eq(x0.clone(), Box::new(t.clone())),
-    (Proc::Ne(_, x1), 10usize) => Proc::Ne(Box::new(t.clone()), x1.clone()),
-    (Proc::Ne(x0, _), 11usize) => Proc::Ne(x0.clone(), Box::new(t.clone())),
-    (Proc::Gt(_, x1), 12usize) => Proc::Gt(Box::new(t.clone()), x1.clone()),
-    (Proc::Gt(x0, _), 13usize) => Proc::Gt(x0.clone(), Box::new(t.clone())),
-    (Proc::Lt(_, x1), 14usize) => Proc::Lt(Box::new(t.clone()), x1.clone()),
-    (Proc::Lt(x0, _), 15usize) => Proc::Lt(x0.clone(), Box::new(t.clone())),
-    (Proc::GtEq(_, x1), 16usize) => Proc::GtEq(Box::new(t.clone()), x1.clone()),
-    (Proc::GtEq(x0, _), 17usize) => Proc::GtEq(x0.clone(), Box::new(t.clone())),
-    (Proc::LtEq(_, x1), 18usize) => Proc::LtEq(Box::new(t.clone()), x1.clone()),
-    (Proc::LtEq(x0, _), 19usize) => Proc::LtEq(x0.clone(), Box::new(t.clone())),
-    (Proc::Not(_), 20usize) => Proc::Not(Box::new(t.clone())),
-    (Proc::And(_, x1), 21usize) => Proc::And(Box::new(t.clone()), x1.clone()),
-    (Proc::And(x0, _), 22usize) => Proc::And(x0.clone(), Box::new(t.clone())),
-    (Proc::Or(_, x1), 23usize) => Proc::Or(Box::new(t.clone()), x1.clone()),
-    (Proc::Or(x0, _), 24usize) => Proc::Or(x0.clone(), Box::new(t.clone())),
-    (Proc::ConcatStr(_, x1), 25usize) => Proc::ConcatStr(Box::new(t.clone()), x1.clone()),
-    (Proc::ConcatStr(x0, _), 26usize) => Proc::ConcatStr(x0.clone(), Box::new(t.clone())),
-    (Proc::Len(_), 27usize) => Proc::Len(Box::new(t.clone())),
-    (Proc::ToInt(_), 28usize) => Proc::ToInt(Box::new(t.clone())),
-    (Proc::ToFloat(_), 29usize) => Proc::ToFloat(Box::new(t.clone())),
-    (Proc::ToBool(_), 30usize) => Proc::ToBool(Box::new(t.clone())),
-    (Proc::ToStr(_), 31usize) => Proc::ToStr(Box::new(t.clone())),
-    _ => unreachable!(),
-}) <--
-    proc(lhs),
-    for (field_val, vi) in { std::thread_local! { static POOL_PROC_SCONG_PROC : std::cell::Cell < Vec < (Proc, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_SCONG_PROC.with(| p | p.take()); buf.clear(); match lhs {
-        Proc::Add(x0, x1) => {
-            buf.push(((** x0).clone(), 0usize));
-            buf.push(((** x1).clone(), 1usize));
-        },
-        Proc::And(x0, x1) => {
-            buf.push(((** x0).clone(), 21usize));
-            buf.push(((** x1).clone(), 22usize));
-        },
-        Proc::ConcatStr(x0, x1) => {
-            buf.push(((** x0).clone(), 25usize));
-            buf.push(((** x1).clone(), 26usize));
-        },
-        Proc::Div(x0, x1) => {
-            buf.push(((** x0).clone(), 6usize));
-            buf.push(((** x1).clone(), 7usize));
-        },
-        Proc::Eq(x0, x1) => {
-            buf.push(((** x0).clone(), 8usize));
-            buf.push(((** x1).clone(), 9usize));
-        },
-        Proc::Gt(x0, x1) => {
-            buf.push(((** x0).clone(), 12usize));
-            buf.push(((** x1).clone(), 13usize));
-        },
-        Proc::GtEq(x0, x1) => {
-            buf.push(((** x0).clone(), 16usize));
-            buf.push(((** x1).clone(), 17usize));
-        },
-        Proc::Len(x0) => {
-            buf.push(((** x0).clone(), 27usize));
-        },
-        Proc::Lt(x0, x1) => {
-            buf.push(((** x0).clone(), 14usize));
-            buf.push(((** x1).clone(), 15usize));
-        },
-        Proc::LtEq(x0, x1) => {
-            buf.push(((** x0).clone(), 18usize));
-            buf.push(((** x1).clone(), 19usize));
-        },
-        Proc::Mul(x0, x1) => {
-            buf.push(((** x0).clone(), 4usize));
-            buf.push(((** x1).clone(), 5usize));
-        },
-        Proc::Ne(x0, x1) => {
-            buf.push(((** x0).clone(), 10usize));
-            buf.push(((** x1).clone(), 11usize));
-        },
-        Proc::Not(x0) => {
-            buf.push(((** x0).clone(), 20usize));
-        },
-        Proc::Or(x0, x1) => {
-            buf.push(((** x0).clone(), 23usize));
-            buf.push(((** x1).clone(), 24usize));
-        },
-        Proc::Sub(x0, x1) => {
-            buf.push(((** x0).clone(), 2usize));
-            buf.push(((** x1).clone(), 3usize));
-        },
-        Proc::ToBool(x0) => {
-            buf.push(((** x0).clone(), 30usize));
-        },
-        Proc::ToFloat(x0) => {
-            buf.push(((** x0).clone(), 29usize));
-        },
-        Proc::ToInt(x0) => {
-            buf.push(((** x0).clone(), 28usize));
-        },
-        Proc::ToStr(x0) => {
-            buf.push(((** x0).clone(), 31usize));
-        },
-        _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
-    rw_proc(field_val, t);
 
 rw_proc(a.clone(), c.clone()) <--
     eq_proc(a, b),

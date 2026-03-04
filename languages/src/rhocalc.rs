@@ -314,50 +314,8 @@ language! {
 
         NewCong . | S ~> T |- (PNew ^[xs].S) ~> (PNew ^[xs].T);
 
-        // TODO: shorthand to make these in the term declarations
-        AddCongL . | S ~> T |- (Add S X) ~> (Add T X);
-
-        AddCongR . | S ~> T |- (Add X S) ~> (Add X T);
-
-        SubCongL . | S ~> T |- (Sub S X) ~> (Sub T X);
-
-        SubCongR . | S ~> T |- (Sub X S) ~> (Sub X T);
-
-        MulCongL . | S ~> T |- (Mul S X) ~> (Mul T X);
-
-        MulCongR . | S ~> T |- (Mul X S) ~> (Mul X T);
-
-        DivCongL . | S ~> T |- (Div S X) ~> (Div T X);
-
-        DivCongR . | S ~> T |- (Div X S) ~> (Div X T);
-
-        EqCongL . | S ~> T |- (Eq S X) ~> (Eq T X);
-        EqCongR . | S ~> T |- (Eq X S) ~> (Eq X T);
-        NeCongL . | S ~> T |- (Ne S X) ~> (Ne T X);
-        NeCongR . | S ~> T |- (Ne X S) ~> (Ne X T);
-        GtCongL . | S ~> T |- (Gt S X) ~> (Gt T X);
-        GtCongR . | S ~> T |- (Gt X S) ~> (Gt X T);
-        LtCongL . | S ~> T |- (Lt S X) ~> (Lt T X);
-        LtCongR . | S ~> T |- (Lt X S) ~> (Lt X T);
-        GtEqCongL . | S ~> T |- (GtEq S X) ~> (GtEq T X);
-        GtEqCongR . | S ~> T |- (GtEq X S) ~> (GtEq X T);
-        LtEqCongL . | S ~> T |- (LtEq S X) ~> (LtEq T X);
-        LtEqCongR . | S ~> T |- (LtEq X S) ~> (LtEq X T);
-
-        NotCong . | S ~> T |- (Not S) ~> (Not T);
-        AndCongL . | S ~> T |- (And S X) ~> (And T X);
-        AndCongR . | S ~> T |- (And X S) ~> (And X T);
-        OrCongL . | S ~> T |- (Or S X) ~> (Or T X);
-        OrCongR . | S ~> T |- (Or X S) ~> (Or X T);
-
-        ConcatStrCongL . | S ~> T |- (ConcatStr S X) ~> (ConcatStr T X);
-        ConcatStrCongR . | S ~> T |- (ConcatStr X S) ~> (ConcatStr X T);
-        LenCong . | S ~> T |- (Len S) ~> (Len T);
-
-        ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
-        ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
-        ToBoolCong . | S ~> T |- (ToBool S) ~> (ToBool T);
-        ToStrCong . | S ~> T |- (ToStr S) ~> (ToStr T);
+        // Experiment: only ParCong and NewCong kept; *@P normalized so Add/... congruences not needed.
+        // See docs/design/exploring/exec-eq-infinite-loop.md
     },
 
     logic {

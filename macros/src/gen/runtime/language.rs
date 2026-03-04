@@ -464,6 +464,13 @@ fn generate_language_struct(
         #primary_type::parse(input).map(#term_name)
     };
 
+    // For Proc, seed normalized so *@P is stored as P (avoids ExecEq infinite loop)
+    let primary_seed = if primary_type.to_string() == "Proc" {
+        quote! { (initial.clone().normalize(),) }
+    } else {
+        quote! { (initial.clone(),) }
+    };
+
     quote! {
         ascent::ascent! {
             struct #prog_struct_name;
@@ -492,7 +499,7 @@ fn generate_language_struct(
                 let initial = term.0.clone();
 
                 let mut prog = #prog_struct_name::default();
-                prog.#primary_relation.push((initial.clone(),));
+                prog.#primary_relation.push(#primary_seed);
                 prog.step_term.push((initial.clone(),));
                 prog.run();
 
@@ -1133,6 +1140,11 @@ fn generate_language_struct_multi(
             let cat = &t.name;
             let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
             let variant = format_ident!("{}", cat);
+            let seed_val = if cat.to_string() == "Proc" {
+                quote! { (initial.clone().normalize(),) }
+            } else {
+                quote! { (initial.clone(),) }
+            };
             let seed_step_term = primary_type_for_step
                 .map(|pt| {
                     if pt == cat {
@@ -1145,7 +1157,7 @@ fn generate_language_struct_multi(
             quote! {
                 #inner_enum_name::#variant(inner) => {
                     let initial = inner.clone();
-                    prog.#cat_lower.push((initial.clone(),));
+                    prog.#cat_lower.push(#seed_val);
                     #seed_step_term
                 }
             }
@@ -1294,19 +1306,24 @@ fn generate_language_struct_multi(
                 let cat = &t.name;
                 let cat_lower = format_ident!("{}", cat.to_string().to_lowercase());
                 let variant = format_ident!("{}", cat);
+                let seed_val = if cat.to_string() == "Proc" {
+                    quote! { (initial.clone().normalize(),) }
+                } else {
+                    quote! { (initial.clone(),) }
+                };
                 let seed_step_term = primary_type_for_step
                     .map(|pt| {
                         if pt == cat {
                             quote! { prog.step_term.push((initial.clone(),)); }
-                        } else {
-                            quote! {}
-                        }
-                    })
-                    .unwrap_or_default();
+                    } else {
+                        quote! {}
+                    }
+                })
+                .unwrap_or_default();
                 quote! {
                     #inner_enum_name::#variant(inner) => {
                         let initial = inner.clone();
-                        prog.#cat_lower.push((initial.clone(),));
+                        prog.#cat_lower.push(#seed_val);
                         #seed_step_term
                     }
                 }

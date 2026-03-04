@@ -63,8 +63,14 @@ pub fn generate_category_rules(language: &LanguageDef, cat_filter: CategoryFilte
 
         // Expand via rewrites: add rewritten terms to enable further exploration
         // Clone c1 so we insert an owned value; Ascent may bind c1 by reference (e.g. &Str).
+        // For Proc, normalize so *@P is stored as P (avoids ExecEq infinite loop; see exec-eq-infinite-loop.md).
+        let push_rhs = if cat.to_string() == "Proc" {
+            quote! { #cat_lower(c1.clone().normalize()) }
+        } else {
+            quote! { #cat_lower(c1.clone()) }
+        };
         rules.push(quote! {
-            #cat_lower(c1.clone()) <-- #cat_lower(c0), #rw_rel(c0, c1);
+            #push_rhs <-- #cat_lower(c0), #rw_rel(c0, c1);
         });
 
         // PERFORMANCE OPTIMIZATION (2026-01-27):
