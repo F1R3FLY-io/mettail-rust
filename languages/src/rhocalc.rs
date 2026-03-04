@@ -313,9 +313,6 @@ language! {
         ParCong . | S ~> T |- (PPar {S, ...rest}) ~> (PPar {T, ...rest});
 
         NewCong . | S ~> T |- (PNew ^[xs].S) ~> (PNew ^[xs].T);
-
-        // Experiment: only ParCong and NewCong kept; *@P normalized so Add/... congruences not needed.
-        // See docs/design/exploring/exec-eq-infinite-loop.md
     },
 
     logic {
