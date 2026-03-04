@@ -286,30 +286,13 @@ impl LanguageDef {
         self.types.iter().find(|t| &t.name == category)
     }
 
-    /// True if this category has any constructor with a field of type List or Bag (e.g. Proc with ProcList/ProcBag).
-    /// Used to force Debug display for types that contain Vec<Proc> or HashBag<Proc>.
-    pub fn type_has_list_or_bag_fields(&self, category: &Ident) -> bool {
-        self.terms
-            .iter()
-            .filter(|r| &r.category == category)
-            .flat_map(|r| &r.items)
-            .any(|i| {
-                if let GrammarItem::NonTerminal(name) = i {
-                    let s = name.to_string();
-                    s == "List" || s == "Bag"
-                } else {
-                    false
-                }
-            })
-    }
-
     /// Element type for a collection category (e.g. List -> Proc). First tries the type-based path
     /// for List/Bag (native_type + collection_kind); otherwise a constructor with a Collection grammar item.
     pub fn collection_element_type_for_category(&self, category: &Ident) -> Option<Ident> {
         // Type-based first: when category is a collection type (List/Bag) with native_type, extract element from e.g. Vec<Proc>, HashBag<Proc>
         let cat_str = category.to_string();
         if cat_str == "List" || cat_str == "Bag" {
-            if let Some(lang_type) = self.types.iter().find(|t| t.name.to_string() == cat_str) {
+            if let Some(lang_type) = self.types.iter().find(|t| &t.name == category) {
                 if lang_type.collection_kind.is_some() {
                     if let Some(native_type) = lang_type.native_type.as_ref() {
                         if let Some(elem) = element_ident_from_native_type(native_type) {
@@ -522,11 +505,7 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
             } else {
                 None
             };
-            types.push(LangType {
-                name,
-                native_type: None,
-                collection_kind,
-            });
+            types.push(LangType { name, native_type: None, collection_kind });
         }
 
         if content.peek(Token![;]) {

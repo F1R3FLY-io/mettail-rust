@@ -66,7 +66,10 @@ fn generate_display_impl(
     }
 
     // Display for List/Bag literal variants (ListLit, BagLit)
-    if let Some(ref ck) = language.get_type(category).and_then(|t| t.collection_kind.clone()) {
+    if let Some(ref ck) = language
+        .get_type(category)
+        .and_then(|t| t.collection_kind.clone())
+    {
         use crate::ast::language::CollectionCategory;
         use proc_macro2::Span;
         use syn::LitStr;
@@ -114,7 +117,10 @@ fn generate_display_impl(
     // Check if NumLit variant was auto-generated (for native types).
     // Skip for collection categories (List/Bag) — they already have ListLit/BagLit display arms above.
     let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
-    let is_collection_category = language.get_type(category).and_then(|t| t.collection_kind.as_ref()).is_some();
+    let is_collection_category = language
+        .get_type(category)
+        .and_then(|t| t.collection_kind.as_ref())
+        .is_some();
     if let Some(native_type) = has_native_type(category, language) {
         if !has_literal_rule && !is_collection_category {
             let literal_arm = generate_auto_literal_display_arm(category, native_type);
@@ -123,54 +129,58 @@ fn generate_display_impl(
     }
 
     // Generate display arms for auto-generated lambda variants (skip for collection categories)
-    if language.get_type(category).and_then(|t| t.collection_kind.as_ref()).is_none() {
-    for domain_lang_type in &language.types {
-        let domain_name = &domain_lang_type.name;
+    if language
+        .get_type(category)
+        .and_then(|t| t.collection_kind.as_ref())
+        .is_none()
+    {
+        for domain_lang_type in &language.types {
+            let domain_name = &domain_lang_type.name;
 
-        // Single-binder lambda: Lam{Domain}
-        let lam_variant =
-            syn::Ident::new(&format!("Lam{}", domain_name), proc_macro2::Span::call_site());
-        match_arms.push(quote! {
-            #category::#lam_variant(scope) => {
-                let (binder, body) = scope.clone().unbind();
-                let var_name = binder.0.pretty_name.as_deref().unwrap_or("?");
-                write!(f, "^{}.{{{}}}", var_name, body)
-            }
-        });
+            // Single-binder lambda: Lam{Domain}
+            let lam_variant =
+                syn::Ident::new(&format!("Lam{}", domain_name), proc_macro2::Span::call_site());
+            match_arms.push(quote! {
+                #category::#lam_variant(scope) => {
+                    let (binder, body) = scope.clone().unbind();
+                    let var_name = binder.0.pretty_name.as_deref().unwrap_or("?");
+                    write!(f, "^{}.{{{}}}", var_name, body)
+                }
+            });
 
-        // Multi-binder lambda: MLam{Domain}
-        let mlam_variant =
-            syn::Ident::new(&format!("MLam{}", domain_name), proc_macro2::Span::call_site());
-        match_arms.push(quote! {
-            #category::#mlam_variant(scope) => {
-                let (binders, body) = scope.clone().unbind();
-                let names: Vec<_> = binders.iter()
-                    .map(|b| b.0.pretty_name.as_deref().unwrap_or("?").to_string())
-                    .collect();
-                write!(f, "^[{}].{{{}}}", names.join(","), body)
-            }
-        });
+            // Multi-binder lambda: MLam{Domain}
+            let mlam_variant =
+                syn::Ident::new(&format!("MLam{}", domain_name), proc_macro2::Span::call_site());
+            match_arms.push(quote! {
+                #category::#mlam_variant(scope) => {
+                    let (binders, body) = scope.clone().unbind();
+                    let names: Vec<_> = binders.iter()
+                        .map(|b| b.0.pretty_name.as_deref().unwrap_or("?").to_string())
+                        .collect();
+                    write!(f, "^[{}].{{{}}}", names.join(","), body)
+                }
+            });
 
-        // Application: Apply{Domain} - display as $domain(lam, arg)
-        let apply_variant =
-            syn::Ident::new(&format!("Apply{}", domain_name), proc_macro2::Span::call_site());
-        let domain_lower = domain_name.to_string().to_lowercase();
-        match_arms.push(quote! {
-            #category::#apply_variant(lam, arg) => {
-                write!(f, "${}({}, {})", #domain_lower, lam, arg)
-            }
-        });
+            // Application: Apply{Domain} - display as $domain(lam, arg)
+            let apply_variant =
+                syn::Ident::new(&format!("Apply{}", domain_name), proc_macro2::Span::call_site());
+            let domain_lower = domain_name.to_string().to_lowercase();
+            match_arms.push(quote! {
+                #category::#apply_variant(lam, arg) => {
+                    write!(f, "${}({}, {})", #domain_lower, lam, arg)
+                }
+            });
 
-        // Multi-application: MApply{Domain} - display as $$domain(lam, args...)
-        let mapply_variant =
-            syn::Ident::new(&format!("MApply{}", domain_name), proc_macro2::Span::call_site());
-        match_arms.push(quote! {
-            #category::#mapply_variant(lam, args) => {
-                let arg_strs: Vec<_> = args.iter().map(|a| a.to_string()).collect();
-                write!(f, "$${}({}, {})", #domain_lower, lam, arg_strs.join(", "))
-            }
-        });
-    }
+            // Multi-application: MApply{Domain} - display as $$domain(lam, args...)
+            let mapply_variant =
+                syn::Ident::new(&format!("MApply{}", domain_name), proc_macro2::Span::call_site());
+            match_arms.push(quote! {
+                #category::#mapply_variant(lam, args) => {
+                    let arg_strs: Vec<_> = args.iter().map(|a| a.to_string()).collect();
+                    write!(f, "$${}({}, {})", #domain_lower, lam, arg_strs.join(", "))
+                }
+            });
+        }
     }
 
     quote! {
@@ -391,15 +401,28 @@ fn generate_syntax_pattern_display_arm(
                 // Simple parameter: use positional ident (f0, f1) to avoid shadowing formatter "f"; use .as_ref() for Box<OtherCat>
                 else {
                     let idx = param_index.get(&name).copied().unwrap_or(0);
-                    let field_ident = syn::Ident::new(&format!("f{}", idx), proc_macro2::Span::call_site());
+                    let field_ident =
+                        syn::Ident::new(&format!("f{}", idx), proc_macro2::Span::call_site());
                     let param_ty = term_context.iter().find_map(|p| {
                         if let TermParam::Simple { name: n, ty } = p {
-                            if n.to_string() == name { Some(ty) } else { None }
-                        } else { None }
+                            if n.to_string() == name {
+                                Some(ty)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
                     });
-                    let use_deref = param_ty.map(|ty| {
-                        if let TypeExpr::Base(ref cat) = ty { cat != category } else { false }
-                    }).unwrap_or(false);
+                    let use_deref = param_ty
+                        .map(|ty| {
+                            if let TypeExpr::Base(ref cat) = ty {
+                                cat != category
+                            } else {
+                                false
+                            }
+                        })
+                        .unwrap_or(false);
                     // List/Bag implement Display (ListLit/BagLit produce [] and {}), use {} for round-trip
                     if use_deref {
                         format_parts.push(quote! { write!(f, "{}", #field_ident.as_ref())?; });
@@ -409,8 +432,12 @@ fn generate_syntax_pattern_display_arm(
                 }
             },
             SyntaxExpr::Op(op) => {
-                let op_code =
-                    generate_pattern_op_display(op, &abstraction_binder, &abstraction_body, &param_index);
+                let op_code = generate_pattern_op_display(
+                    op,
+                    &abstraction_binder,
+                    &abstraction_body,
+                    &param_index,
+                );
                 format_parts.push(op_code);
             },
         }
@@ -496,13 +523,17 @@ fn generate_pattern_op_display(
         PatternOp::Sep { collection, separator, source } => {
             // Handle chained #zip().#map().#sep() for multi-binder display
             if let Some(chain_source) = source {
-                return generate_chained_sep_display_code(chain_source, separator, param_index, &collection.to_string());
+                return generate_chained_sep_display_code(
+                    chain_source,
+                    separator,
+                    param_index,
+                    &collection.to_string(),
+                );
             }
             // Determine collection name and a safe identifier (avoid shadowing `f` formatter)
             let coll_name = collection.to_string();
             let idx = param_index.get(&coll_name).copied().unwrap_or(0);
-            let coll_ident =
-                syn::Ident::new(&format!("f{}", idx), proc_macro2::Span::call_site());
+            let coll_ident = syn::Ident::new(&format!("f{}", idx), proc_macro2::Span::call_site());
             let sep_with_spaces = format!(" {} ", separator);
 
             // If this collection is the abstraction binder, iterate binder_names
@@ -550,10 +581,13 @@ fn generate_pattern_op_display(
                     },
                     SyntaxExpr::Param(id) => {
                         let idx = param_index.get(&id.to_string()).copied().unwrap_or(0);
-                        let ident = syn::Ident::new(&format!("f{}", idx), proc_macro2::Span::call_site());
+                        let ident =
+                            syn::Ident::new(&format!("f{}", idx), proc_macro2::Span::call_site());
                         quote! { write!(f, "{}", #ident)?; }
                     },
-                    SyntaxExpr::Op(op) => generate_pattern_op_display(op, &None, &None, param_index),
+                    SyntaxExpr::Op(op) => {
+                        generate_pattern_op_display(op, &None, &None, param_index)
+                    },
                 })
                 .collect();
             quote! { #(#inner_parts)* }
@@ -578,7 +612,11 @@ fn generate_chained_sep_display_code(
         if let PatternOp::Zip { left, .. } = map_source.as_ref() {
             // We have #zip(left, right).#map(|params...| body).#sep(separator)
             // Use positional ident for the collection (e.g. f0) so we don't use param name "ns"
-            let idx = param_index.get(collection_name).or_else(|| param_index.get(&left.to_string())).copied().unwrap_or(0);
+            let idx = param_index
+                .get(collection_name)
+                .or_else(|| param_index.get(&left.to_string()))
+                .copied()
+                .unwrap_or(0);
             let coll_ident = syn::Ident::new(&format!("f{}", idx), proc_macro2::Span::call_site());
 
             // Generate format code for each pair based on the body

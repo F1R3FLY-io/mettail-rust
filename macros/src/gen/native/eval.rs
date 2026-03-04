@@ -127,7 +127,6 @@ pub fn generate_eval_method(language: &LanguageDef) -> TokenStream {
         }
 
         // Add arm for auto-generated Var variant if no explicit Var rule (include List/Bag LVar/BVar)
-        let is_collection = lang_type.collection_kind.is_some();
         let var_label = generate_var_label(category);
         let panic_msg = format!(
             "Cannot evaluate {} - variables must be substituted via rewrites first",

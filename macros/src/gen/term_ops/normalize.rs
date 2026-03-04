@@ -2,7 +2,7 @@
 
 use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::language::LanguageDef;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
+use crate::gen::{generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
 use std::collections::HashMap;
@@ -116,7 +116,7 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
             .collect();
 
         // Native types: generate simple recursive normalize (no beta-reduction, no collections)
-        if let Some(ref native_type) = lang_type.native_type {
+        if lang_type.native_type.is_some() {
             let has_literal_rule = rules_for_category.iter().any(|r| is_literal_rule(r));
             let has_var_rule = rules_for_category.iter().any(|r| is_var_rule(r));
             let mut match_arms: Vec<TokenStream> = rules_for_category
@@ -161,7 +161,9 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                 })
                 .collect();
             if !has_literal_rule {
-                if let Some(literal_label) = crate::logic::common::literal_label_for(language, category) {
+                if let Some(literal_label) =
+                    crate::logic::common::literal_label_for(language, category)
+                {
                     match_arms.push(quote! {
                         #category::#literal_label(_) => self.clone()
                     });
@@ -474,7 +476,11 @@ fn generate_beta_reduction_arms(category: &syn::Ident, language: &LanguageDef) -
     let mut arms = Vec::new();
 
     // Collection categories (List, Bag) have no Apply/Lam variants
-    if language.get_type(category).and_then(|t| t.collection_kind.as_ref()).is_some() {
+    if language
+        .get_type(category)
+        .and_then(|t| t.collection_kind.as_ref())
+        .is_some()
+    {
         return arms;
     }
 

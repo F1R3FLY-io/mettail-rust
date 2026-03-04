@@ -716,7 +716,9 @@ fn write_trampoline_body(
         r.category == *config.category
             && is_simple_collection(r)
             && r.items.iter().find_map(|i| match i {
-                RDSyntaxItem::Collection { element_category, .. } => Some(element_category.as_str()),
+                RDSyntaxItem::Collection { element_category, .. } => {
+                    Some(element_category.as_str())
+                },
                 _ => None,
             }) != Some(config.category.as_str())
     });
@@ -725,18 +727,16 @@ fn write_trampoline_body(
         let dummy = rd_rules
             .iter()
             .find(|r| r.category == *config.category && is_simple_collection(r))
-            .map(|r| {
-                match r.collection_type.unwrap_or(CollectionKind::HashBag) {
-                    CollectionKind::Vec => format!("{}::{}(vec![])", config.category, r.label),
-                    CollectionKind::HashBag => {
-                        format!("{}::{}(mettail_runtime::HashBag::new())", config.category, r.label)
-                    },
-                    CollectionKind::HashSet => {
-                        format!("{}::{}(std::collections::HashSet::new())", config.category, r.label)
-                    },
-                }
+            .map(|r| match r.collection_type.unwrap_or(CollectionKind::HashBag) {
+                CollectionKind::Vec => format!("{}::{}(vec![])", config.category, r.label),
+                CollectionKind::HashBag => {
+                    format!("{}::{}(mettail_runtime::HashBag::new())", config.category, r.label)
+                },
+                CollectionKind::HashSet => {
+                    format!("{}::{}(std::collections::HashSet::new())", config.category, r.label)
+                },
             })
-            .unwrap_or_else(|| format!("unsafe {{ std::mem::zeroed() }}"));
+            .unwrap_or_else(|| "unsafe { std::mem::zeroed() }".to_string());
         write!(buf, "let mut lhs: {} = {};", config.category, dummy).unwrap();
     } else {
         write!(buf, "let mut lhs: {};", config.category).unwrap();
@@ -761,10 +761,16 @@ fn write_trampoline_body(
             let empty_init = match rd_rule.collection_type.unwrap_or(CollectionKind::HashBag) {
                 CollectionKind::Vec => format!("{}::{}(vec![])", config.category, rd_rule.label),
                 CollectionKind::HashBag => {
-                    format!("{}::{}(mettail_runtime::HashBag::new())", config.category, rd_rule.label)
+                    format!(
+                        "{}::{}(mettail_runtime::HashBag::new())",
+                        config.category, rd_rule.label
+                    )
                 },
                 CollectionKind::HashSet => {
-                    format!("{}::{}(std::collections::HashSet::new())", config.category, rd_rule.label)
+                    format!(
+                        "{}::{}(std::collections::HashSet::new())",
+                        config.category, rd_rule.label
+                    )
                 },
             };
             write!(
@@ -786,7 +792,7 @@ fn write_trampoline_body(
     write_prefix_phase(buf, config, prefix_handlers, rd_rules, frame_info, &expected_escaped);
 
     if needs_pending_elem {
-        buf.push_str("}"); // close if !skip_prefix
+        buf.push('}'); // close if !skip_prefix
     }
 
     // ═══ Phase B: Infix loop + continuation unwinding ═══
@@ -816,8 +822,6 @@ fn write_prefix_phase(
     frame_info: &FrameInfo,
     expected_escaped: &str,
 ) {
-    let cat = &config.category;
-
     // The prefix match block: produces `lhs` or pushes frame + continues
     buf.push_str("lhs = 'prefix: {");
 
@@ -1114,9 +1118,7 @@ fn write_prefix_match_arms(
                 if needs_elem_parse {
                     format!(
                         "stack.push({}::ElemParse_{}_{} {{}}); ",
-                        frame_info.enum_name,
-                        rd_rule.label,
-                        elem_cat
+                        frame_info.enum_name, rd_rule.label, elem_cat
                     )
                 } else {
                     String::new()
@@ -1226,7 +1228,8 @@ fn write_prefix_match_arms(
             .filter_map(|r| {
                 let first_nt = matches!(
                     r.items.first(),
-                    Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
+                    Some(RDSyntaxItem::NonTerminal { .. })
+                        | Some(RDSyntaxItem::IdentCapture { .. })
                 );
                 if !first_nt {
                     return None;
@@ -1242,8 +1245,10 @@ fn write_prefix_match_arms(
             })
             .collect();
 
-        let mut seen: std::collections::HashSet<String> =
-            ident_lookahead_cases.iter().map(|(t, _)| t.clone()).collect();
+        let mut seen: std::collections::HashSet<String> = ident_lookahead_cases
+            .iter()
+            .map(|(t, _)| t.clone())
+            .collect();
         for (term, fn_name) in rd_fallback {
             if seen.insert(term.clone()) {
                 ident_lookahead_cases.push((term, fn_name));
@@ -1251,7 +1256,8 @@ fn write_prefix_match_arms(
         }
 
         if !ident_lookahead_cases.is_empty() {
-            let mut arm = String::from("Token::Ident(name) => { match peek_ahead(tokens, *pos, 1) {");
+            let mut arm =
+                String::from("Token::Ident(name) => { match peek_ahead(tokens, *pos, 1) {");
             for (terminal, parse_fn_name) in &ident_lookahead_cases {
                 let variant = terminal_to_variant_name(terminal);
                 write!(arm, "Some(Token::{}) => {{ match {}(tokens, pos) {{ Ok(v) => break 'prefix v, Err(e) => {{ match stack.pop() {{ None => return Err(e),",
@@ -1609,7 +1615,7 @@ fn write_nfa_inline_constructor(buf: &mut String, rule: &RDRuleInfo, segments: &
                 .collect();
             write!(buf, "Ok({cat}::{label}(").unwrap();
             for c in &extra {
-                write_segment_capture_as_arg(buf, c, rule);
+                write_segment_capture_as_arg(buf, c);
                 buf.push(',');
             }
             write!(
@@ -1632,7 +1638,7 @@ fn write_nfa_inline_constructor(buf: &mut String, rule: &RDRuleInfo, segments: &
             if i > 0 {
                 buf.push(',');
             }
-            write_segment_capture_as_arg(buf, c, rule);
+            write_segment_capture_as_arg(buf, c);
         }
         buf.push_str("))");
     }
@@ -1759,7 +1765,7 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
                 .collect();
             write!(buf, "break 'prefix {cat}::{label}(").unwrap();
             for c in &extra {
-                write_segment_capture_as_arg(buf, c, rule);
+                write_segment_capture_as_arg(buf, c);
                 buf.push(',');
             }
             write!(
@@ -1782,7 +1788,7 @@ fn write_rd_constructor_inline(buf: &mut String, rule: &RDRuleInfo, segments: &[
             if i > 0 {
                 buf.push(',');
             }
-            write_segment_capture_as_arg(buf, c, rule);
+            write_segment_capture_as_arg(buf, c);
         }
         buf.push_str(");");
     }
@@ -2273,7 +2279,12 @@ fn write_unwind_handlers(
         ).unwrap();
 
         if use_pending_elem {
-            write!(buf, "if let Some(elem) = pending_elem.take() {{ elements.{}(elem); }}", insert_method).unwrap();
+            write!(
+                buf,
+                "if let Some(elem) = pending_elem.take() {{ elements.{}(elem); }}",
+                insert_method
+            )
+            .unwrap();
         } else {
             // Same category: lhs may be List/Bag — wrap as ProcList/ProcBag when in Proc collection
             let wrap_for_proc = elem_cat == "Proc" && (cat == "List" || cat == "Bag");
@@ -2310,9 +2321,7 @@ fn write_unwind_handlers(
                 elem_parse_push = if needs_elem_parse {
                     format!(
                         "stack.push({}::ElemParse_{}_{} {{}}); ",
-                        frame_info.enum_name,
-                        rd_rule.label,
-                        elem_cat
+                        frame_info.enum_name, rd_rule.label, elem_cat
                     )
                 } else {
                     String::new()
@@ -2731,7 +2740,7 @@ fn write_rd_constructor_from_segments(
 
             write!(buf, "lhs = {cat}::{label}(").unwrap();
             for c in &extra_caps {
-                write_segment_capture_as_arg(buf, c, rule);
+                write_segment_capture_as_arg(buf, c);
                 buf.push(',');
             }
             write!(
@@ -2782,7 +2791,7 @@ fn write_rd_constructor_from_segments(
 
             write!(buf, "lhs = {cat}::{label}(").unwrap();
             for c in &extra_caps {
-                write_segment_capture_as_arg(buf, c, rule);
+                write_segment_capture_as_arg(buf, c);
                 buf.push(',');
             }
             write!(
@@ -2803,7 +2812,7 @@ fn write_rd_constructor_from_segments(
             if i > 0 {
                 buf.push(',');
             }
-            write_segment_capture_as_arg(buf, c, rule);
+            write_segment_capture_as_arg(buf, c);
         }
         buf.push_str(");");
     }
@@ -2811,7 +2820,7 @@ fn write_rd_constructor_from_segments(
 
 /// Write a segment capture as a constructor argument.
 /// For List/Bag categories, collection captures use Vec/HashBag directly.
-fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture, rule: &RDRuleInfo) {
+fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture) {
     match capture {
         SegmentCapture::NonTerminal { name, .. } => {
             write!(buf, "Box::new({})", name).unwrap();

@@ -47,7 +47,11 @@ pub fn native_type_element_ident(native_type: &syn::Type) -> Option<Ident> {
     };
     let first = args.first()?;
     match first {
-        GenericArgument::Type(syn::Type::Path(t)) => t.path.get_ident().cloned().or_else(|| t.path.segments.last().map(|s| s.ident.clone())),
+        GenericArgument::Type(syn::Type::Path(t)) => t
+            .path
+            .get_ident()
+            .cloned()
+            .or_else(|| t.path.segments.last().map(|s| s.ident.clone())),
         _ => None,
     }
 }

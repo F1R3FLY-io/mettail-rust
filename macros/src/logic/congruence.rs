@@ -118,18 +118,19 @@ pub fn generate_auto_congruence_rules(
         let n_fields = count_nonterminals(rule);
         // Only generate single-field collection congruence when constructor has exactly one collection
         let only_one_collection = n_fields == 1
-            && rule.items.iter().filter(|i| matches!(i, GrammarItem::Collection { .. })).count() == 1;
+            && rule
+                .items
+                .iter()
+                .filter(|i| matches!(i, GrammarItem::Collection { .. }))
+                .count()
+                == 1;
         let mut field_idx = 0;
         for item in &rule.items {
             match item {
                 GrammarItem::NonTerminal(_) => {
                     field_idx += 1;
                 },
-                GrammarItem::Collection {
-                    element_type,
-                    coll_type,
-                    ..
-                } => {
+                GrammarItem::Collection { element_type, coll_type, .. } => {
                     if only_one_collection {
                         if let Some(rule_ts) = generate_collection_congruence(
                             category,
@@ -147,9 +148,13 @@ pub fn generate_auto_congruence_rules(
                 GrammarItem::Binder { .. } => {
                     let body_category = get_binder_body_category(rule, field_idx)
                         .unwrap_or_else(|| rule.category.clone());
-                    if let Some(rule_ts) =
-                        generate_binding_congruence(category, constructor, field_idx, &body_category, language)
-                    {
+                    if let Some(rule_ts) = generate_binding_congruence(
+                        category,
+                        constructor,
+                        field_idx,
+                        &body_category,
+                        language,
+                    ) {
                         rules.push(rule_ts);
                     }
                     field_idx += 1;
@@ -310,11 +315,7 @@ fn find_rewrite_context_in_term(
                         }
                         field_idx += 1;
                     },
-                    GrammarItem::Collection {
-                        element_type,
-                        coll_type,
-                        ..
-                    } => {
+                    GrammarItem::Collection { element_type, coll_type, .. } => {
                         if let Some(Pattern::Collection { elements, rest, .. }) =
                             args.get(field_idx)
                         {
@@ -439,7 +440,7 @@ fn generate_collection_congruence(
             })
         },
         CollectionType::HashBag | CollectionType::HashSet => {
-            let is_bag_cat = category.to_string() == "Bag";
+            let is_bag_cat = *category == "Bag";
             if is_bag_cat {
                 // Bag = HashBag: clone, remove one, insert rewritten
                 Some(quote! {

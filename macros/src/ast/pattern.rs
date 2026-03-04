@@ -1363,12 +1363,20 @@ impl Pattern {
             language
                 .list_type_name()
                 .and_then(|name| language.collection_element_type_for_category(name))
-                .or_else(|| language.list_type_name().map(|_| quote::format_ident!("Proc")))
+                .or_else(|| {
+                    language
+                        .list_type_name()
+                        .map(|_| quote::format_ident!("Proc"))
+                })
         } else {
             language
                 .bag_type_name()
                 .and_then(|name| language.collection_element_type_for_category(name))
-                .or_else(|| language.bag_type_name().map(|_| quote::format_ident!("Proc")))
+                .or_else(|| {
+                    language
+                        .bag_type_name()
+                        .map(|_| quote::format_ident!("Proc"))
+                })
         };
         // When building List (Vec<Proc>) or Bag (HashBag<Proc>), wrap any List/Bag element in ProcList/ProcBag so push/insert get Proc.
         let elem_cat = elem_cat_opt.unwrap_or_else(|| quote::format_ident!("Proc"));
@@ -1376,16 +1384,15 @@ impl Pattern {
             .iter()
             .map(|e| {
                 let expr = e.to_ascent_rhs(bindings, language);
-                let cat_str = e
-                    .category(language)
-                    .map(|c| c.to_string())
-                    .or_else(|| {
-                        if let Pattern::Term(PatternTerm::Var(v)) = e {
-                            bindings.get(&v.to_string()).map(|b| b.lang_type.to_string())
-                        } else {
-                            None
-                        }
-                    });
+                let cat_str = e.category(language).map(|c| c.to_string()).or_else(|| {
+                    if let Pattern::Term(PatternTerm::Var(v)) = e {
+                        bindings
+                            .get(&v.to_string())
+                            .map(|b| b.lang_type.to_string())
+                    } else {
+                        None
+                    }
+                });
                 match cat_str.as_deref() {
                     Some("List") => quote! { #elem_cat::ProcList(Box::new(#expr)) },
                     Some("Bag") => quote! { #elem_cat::ProcBag(Box::new(#expr)) },
@@ -1472,29 +1479,26 @@ fn generate_collection_rhs_with_constructor(
             .iter()
             .map(|e| e.to_ascent_rhs(bindings, language))
             .collect(),
-        Some(elem_cat) => {
-            elements
-                .iter()
-                .map(|e| {
-                    let expr = e.to_ascent_rhs(bindings, language);
-                    let cat_str = e
-                        .category(language)
-                        .map(|c| c.to_string())
-                        .or_else(|| {
-                            if let Pattern::Term(PatternTerm::Var(v)) = e {
-                                bindings.get(&v.to_string()).map(|b| b.lang_type.to_string())
-                            } else {
-                                None
-                            }
-                        });
-                    match cat_str.as_deref() {
-                        Some("List") => quote! { #elem_cat::ProcList(Box::new(#expr)) },
-                        Some("Bag") => quote! { #elem_cat::ProcBag(Box::new(#expr)) },
-                        _ => expr,
+        Some(elem_cat) => elements
+            .iter()
+            .map(|e| {
+                let expr = e.to_ascent_rhs(bindings, language);
+                let cat_str = e.category(language).map(|c| c.to_string()).or_else(|| {
+                    if let Pattern::Term(PatternTerm::Var(v)) = e {
+                        bindings
+                            .get(&v.to_string())
+                            .map(|b| b.lang_type.to_string())
+                    } else {
+                        None
                     }
-                })
-                .collect()
-        }
+                });
+                match cat_str.as_deref() {
+                    Some("List") => quote! { #elem_cat::ProcList(Box::new(#expr)) },
+                    Some("Bag") => quote! { #elem_cat::ProcBag(Box::new(#expr)) },
+                    _ => expr,
+                }
+            })
+            .collect(),
     };
 
     // Use coll_type if provided, default to HashBag

@@ -515,8 +515,11 @@ mod tests {
         match &ctx[1] {
             TermParam::Simple { name, ty } => {
                 assert_eq!(name.to_string(), "i");
-                assert!(matches!(ty, TypeExpr::Base(id) if id.to_string() == "Int"),
-                    "Second param should be Int, got {:?}", ctx[1]);
+                assert!(
+                    matches!(ty, TypeExpr::Base(id) if id.to_string() == "Int"),
+                    "Second param should be Int, got {:?}",
+                    ctx[1]
+                );
             },
             _ => panic!("Expected Simple param i:Int"),
         }
@@ -555,14 +558,19 @@ mod tests {
         assert_eq!(concat.label.to_string(), "ConcatList");
         let ctx0 = concat.term_context.as_ref().unwrap();
         assert_eq!(ctx0.len(), 2);
-        assert!(matches!(&ctx0[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id.to_string() == "List"));
+        assert!(
+            matches!(&ctx0[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id.to_string() == "List")
+        );
 
         let delete = &language.terms[1];
         assert_eq!(delete.label.to_string(), "DeleteList");
         let ctx1 = delete.term_context.as_ref().unwrap();
         assert_eq!(ctx1.len(), 2);
-        assert!(matches!(&ctx1[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id.to_string() == "Int"),
-            "DeleteList second param should be Int, got {:?}", ctx1[1]);
+        assert!(
+            matches!(&ctx1[1], TermParam::Simple { ty: TypeExpr::Base(id), .. } if id.to_string() == "Int"),
+            "DeleteList second param should be Int, got {:?}",
+            ctx1[1]
+        );
         assert_eq!(delete.items.len(), 2);
         if let (GrammarItem::NonTerminal(t0), GrammarItem::NonTerminal(t1)) =
             (&delete.items[0], &delete.items[1])

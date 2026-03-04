@@ -698,13 +698,13 @@ fn generate_var_collection_impl(
     // Generate lambda handling arms (skip for List/Bag - they have no Var/Lam/Apply)
     let mut lambda_arms: Vec<TokenStream> = Vec::new();
     if !is_collection_category {
-    for domain in &categories {
-        let domain_lit = LitStr::new(&domain.to_string(), domain.span());
-        let lam_variant = format_ident!("Lam{}", domain);
-        let mlam_variant = format_ident!("MLam{}", domain);
+        for domain in &categories {
+            let domain_lit = LitStr::new(&domain.to_string(), domain.span());
+            let lam_variant = format_ident!("Lam{}", domain);
+            let mlam_variant = format_ident!("MLam{}", domain);
 
-        // LamX variant - extract binder and recurse into body
-        lambda_arms.push(quote! {
+            // LamX variant - extract binder and recurse into body
+            lambda_arms.push(quote! {
             #primary_type::#lam_variant(scope) => {
                 // Use unbind to get the binder with proper type
                 let (binder, body) = scope.clone().unbind();
@@ -726,8 +726,8 @@ fn generate_var_collection_impl(
             }
         });
 
-        // MLamX variant - extract all binders and recurse into body
-        lambda_arms.push(quote! {
+            // MLamX variant - extract all binders and recurse into body
+            lambda_arms.push(quote! {
             #primary_type::#mlam_variant(scope) => {
                 // Use unbind to get binders and body with proper types
                 let (binders, body) = scope.clone().unbind();
@@ -751,25 +751,25 @@ fn generate_var_collection_impl(
             }
         });
 
-        // ApplyX variant - only recurse into lam (which has type Proc)
-        // The arg has the domain type, not the primary type
-        let apply_variant = format_ident!("Apply{}", domain);
-        lambda_arms.push(quote! {
-            #primary_type::#apply_variant(lam, _arg) => {
-                Self::#impl_fn_name(root_term, lam.as_ref(), result, seen);
-                // Note: _arg is of type #domain, not #primary_type, so we can't recurse on it here
-            }
-        });
+            // ApplyX variant - only recurse into lam (which has type Proc)
+            // The arg has the domain type, not the primary type
+            let apply_variant = format_ident!("Apply{}", domain);
+            lambda_arms.push(quote! {
+                #primary_type::#apply_variant(lam, _arg) => {
+                    Self::#impl_fn_name(root_term, lam.as_ref(), result, seen);
+                    // Note: _arg is of type #domain, not #primary_type, so we can't recurse on it here
+                }
+            });
 
-        // MApplyX variant - only recurse into lam
-        let mapply_variant = format_ident!("MApply{}", domain);
-        lambda_arms.push(quote! {
-            #primary_type::#mapply_variant(lam, _args) => {
-                Self::#impl_fn_name(root_term, lam.as_ref(), result, seen);
-                // Note: _args contains #domain values, not #primary_type, so we can't recurse on them here
-            }
-        });
-    }
+            // MApplyX variant - only recurse into lam
+            let mapply_variant = format_ident!("MApply{}", domain);
+            lambda_arms.push(quote! {
+                #primary_type::#mapply_variant(lam, _args) => {
+                    Self::#impl_fn_name(root_term, lam.as_ref(), result, seen);
+                    // Note: _args contains #domain values, not #primary_type, so we can't recurse on them here
+                }
+            });
+        }
     }
 
     // Generate arms for constructor variants from grammar
@@ -861,9 +861,11 @@ fn generate_var_collection_impl(
                                                     }
                                                 },
                                                 crate::ast::types::CollectionType::HashBag
-                                                | crate::ast::types::CollectionType::HashSet => quote! {
-                                                    for (elem, _) in #field_name.iter() {
-                                                        Self::#impl_fn_name(root_term, elem, result, seen);
+                                                | crate::ast::types::CollectionType::HashSet => {
+                                                    quote! {
+                                                        for (elem, _) in #field_name.iter() {
+                                                            Self::#impl_fn_name(root_term, elem, result, seen);
+                                                        }
                                                     }
                                                 },
                                             };
@@ -1090,23 +1092,25 @@ fn generate_var_collection_impl(
 /// For a category (e.g. Proc) that has injection rules (e.g. ProcInt . i:Int |- i : Proc), generate
 /// seed pushes so that when we seed proc(ProcInt(inner)) we also seed int(inner). This allows the
 /// fixpoint to reduce Int and then propagate via ProcIntCong to rw_proc.
-fn injection_seed_pushes_for_category(
-    language: &LanguageDef,
-    cat: &Ident,
-    inner_enum_name: &Ident,
-) -> TokenStream {
+fn injection_seed_pushes_for_category(language: &LanguageDef, cat: &Ident) -> TokenStream {
     let mut pushes = Vec::new();
     for rule in &language.terms {
         if rule.category != *cat {
             continue;
         }
-        let Some(ref ctx) = rule.term_context else { continue };
+        let Some(ref ctx) = rule.term_context else {
+            continue;
+        };
         if ctx.len() != 1 {
             continue;
         }
         let param = &ctx[0];
-        let TermParam::Simple { ty, .. } = param else { continue };
-        let TypeExpr::Base(inner_cat) = ty else { continue };
+        let TermParam::Simple { ty, .. } = param else {
+            continue;
+        };
+        let TypeExpr::Base(inner_cat) = ty else {
+            continue;
+        };
         if *inner_cat == *cat {
             continue;
         }
@@ -1197,11 +1201,7 @@ fn generate_language_struct_multi(
     let primary_type = primary_type_for_step.expect("at least one type");
     // Injection seed: when seeding the primary category (e.g. Proc), also seed injected sub-terms
     // (e.g. ProcInt(inner) => seed int(inner)) so that reduction can run and congruence can propagate.
-    let injection_seed_pushes = injection_seed_pushes_for_category(
-        language,
-        primary_type,
-        &inner_enum_name,
-    );
+    let injection_seed_pushes = injection_seed_pushes_for_category(language, primary_type);
     // Seed arms: push the initial term into the appropriate relation on the unified Ascent struct.
     let seed_arms: Vec<TokenStream> = language
         .types
@@ -1396,11 +1396,11 @@ fn generate_language_struct_multi(
                     .map(|pt| {
                         if pt == cat {
                             quote! { prog.step_term.push((initial.clone(),)); }
-                    } else {
-                        quote! {}
-                    }
-                })
-                .unwrap_or_default();
+                        } else {
+                            quote! {}
+                        }
+                    })
+                    .unwrap_or_default();
                 quote! {
                     #inner_enum_name::#variant(inner) => {
                         let initial = inner.clone();
@@ -1715,7 +1715,10 @@ fn generate_language_trait_impl(
         .iter()
         .map(|cat| {
             let field = format_ident!("{}", cat.to_string().to_lowercase());
-            let use_debug = language.get_type(cat).and_then(|t| t.collection_kind.as_ref()).is_some();
+            let use_debug = language
+                .get_type(cat)
+                .and_then(|t| t.collection_kind.as_ref())
+                .is_some();
             let format_fmt = if use_debug {
                 quote! { format!("{:?}", val) }
             } else {
@@ -1929,7 +1932,10 @@ fn generate_language_trait_impl_multi(
         .iter()
         .map(|cat| {
             let field = format_ident!("{}", cat.to_string().to_lowercase());
-            let use_debug = language.get_type(cat).and_then(|t| t.collection_kind.as_ref()).is_some();
+            let use_debug = language
+                .get_type(cat)
+                .and_then(|t| t.collection_kind.as_ref())
+                .is_some();
             let format_fmt = if use_debug {
                 quote! { format!("{:?}", val) }
             } else {
@@ -2326,14 +2332,14 @@ fn generate_type_inference_helpers(
     // Generate match arms for lambda variants (only for non-collection categories)
     let mut lambda_arms: Vec<TokenStream> = Vec::new();
     if !is_collection {
-    for domain in &categories {
-        let domain_lit = LitStr::new(&domain.to_string(), domain.span());
-        let lam_variant = format_ident!("Lam{}", domain);
-        let mlam_variant = format_ident!("MLam{}", domain);
+        for domain in &categories {
+            let domain_lit = LitStr::new(&domain.to_string(), domain.span());
+            let lam_variant = format_ident!("Lam{}", domain);
+            let mlam_variant = format_ident!("MLam{}", domain);
 
-        // Single lambda: Lam{Domain}(scope) -> [inferred_domain -> body_type]
-        // We infer the domain type from how the binder is USED in the body
-        lambda_arms.push(quote! {
+            // Single lambda: Lam{Domain}(scope) -> [inferred_domain -> body_type]
+            // We infer the domain type from how the binder is USED in the body
+            lambda_arms.push(quote! {
             #primary_type::#lam_variant(scope) => {
                 // Use unbind to get binder and body with proper types
                 let (binder, body) = scope.clone().unbind();
@@ -2360,18 +2366,18 @@ fn generate_type_inference_helpers(
             }
         });
 
-        // Multi lambda: MLam{Domain}(scope) -> [Domain* -> body_type]
-        lambda_arms.push(quote! {
-            #primary_type::#mlam_variant(scope) => {
-                let (_binders, body) = scope.clone().unbind();
-                let body_type = Self::#self_fn_name(&body);
-                mettail_runtime::TermType::MultiArrow(
-                    Box::new(mettail_runtime::TermType::Base(#domain_lit.to_string())),
-                    Box::new(body_type),
-                )
-            }
-        });
-    }
+            // Multi lambda: MLam{Domain}(scope) -> [Domain* -> body_type]
+            lambda_arms.push(quote! {
+                #primary_type::#mlam_variant(scope) => {
+                    let (_binders, body) = scope.clone().unbind();
+                    let body_type = Self::#self_fn_name(&body);
+                    mettail_runtime::TermType::MultiArrow(
+                        Box::new(mettail_runtime::TermType::Base(#domain_lit.to_string())),
+                        Box::new(body_type),
+                    )
+                }
+            });
+        }
     }
 
     quote! {
@@ -2403,7 +2409,7 @@ fn generate_custom_relation_extraction(language: &LanguageDef) -> TokenStream {
         let arity = rel.param_types.len();
         let tuple_vars: Vec<syn::Ident> = (0..arity).map(|i| format_ident!("e{}", i)).collect();
 
-// Format each tuple element; use DisplaySlice for common collections and
+        // Format each tuple element; use DisplaySlice for common collections and
         // default to debug printing otherwise to avoid requiring Display on all
         // payload types.
         let format_exprs: Vec<TokenStream> = rel

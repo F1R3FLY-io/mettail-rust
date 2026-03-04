@@ -239,12 +239,7 @@ fn generate_collection_projection_population(
 
         // Check if this constructor has a collection field
         for item in &constructor.items {
-            if let GrammarItem::Collection {
-                element_type,
-                coll_type,
-                ..
-            } = item
-            {
+            if let GrammarItem::Collection { element_type, coll_type, .. } = item {
                 // Found a collection field - generate projection rule
                 let parent_cat = &constructor.category;
                 let parent_cat_lower = format_ident!("{}", parent_cat.to_string().to_lowercase());

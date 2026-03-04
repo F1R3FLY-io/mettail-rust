@@ -64,10 +64,13 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         if has_fold {
             let fold_rel = format_ident!("fold_{}", cat.to_string().to_lowercase());
             let ty = cat.to_string();
-            let second_ty = match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
-                (Some(_), Some(payload_ty)) => crate::gen::native::native_type_to_string(payload_ty),
-                _ => ty.clone(),
-            };
+            let second_ty =
+                match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
+                    (Some(_), Some(payload_ty)) => {
+                        crate::gen::native::native_type_to_string(payload_ty)
+                    },
+                    _ => ty.clone(),
+                };
             out.push(RelationForExtraction {
                 name: fold_rel,
                 param_types: vec![ty.clone(), second_ty],
@@ -150,10 +153,11 @@ pub fn generate_relations(language: &LanguageDef) -> TokenStream {
             .iter()
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
         if has_fold {
-            let fold_second_ty = match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
-                (Some(_), Some(payload_ty)) => quote! { #payload_ty },
-                _ => quote! { #cat },
-            };
+            let fold_second_ty =
+                match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {
+                    (Some(_), Some(payload_ty)) => quote! { #payload_ty },
+                    _ => quote! { #cat },
+                };
             relations.push(quote! {
                 relation #fold_rel(#cat, #fold_second_ty);
             });

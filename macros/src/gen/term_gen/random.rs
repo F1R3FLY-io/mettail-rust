@@ -657,11 +657,9 @@ fn generate_random_collection_constructor(
         .items
         .iter()
         .find_map(|item| match item {
-            GrammarItem::Collection {
-                element_type,
-                coll_type,
-                ..
-            } => Some((element_type.clone(), coll_type.clone())),
+            GrammarItem::Collection { element_type, coll_type, .. } => {
+                Some((element_type.clone(), coll_type.clone()))
+            },
             _ => None,
         })
         .expect("Collection constructor must have a collection field");
@@ -674,11 +672,6 @@ fn generate_random_collection_constructor(
         .get_type(cat_name)
         .and_then(|t| t.collection_kind.as_ref())
         .map(|ck| matches!(ck, CollectionCategory::List(_)))
-        .unwrap_or(false);
-    let is_bag = language
-        .get_type(cat_name)
-        .and_then(|t| t.collection_kind.as_ref())
-        .map(|ck| matches!(ck, CollectionCategory::Bag(_)))
         .unwrap_or(false);
 
     if is_list {
@@ -700,26 +693,8 @@ fn generate_random_collection_constructor(
                 #cat_name::#label(vec)
             }
         }
-    } else if is_bag {
-        quote! {
-            {
-                let size = rng.gen_range(0..=max_collection_width);
-                let mut bag = mettail_runtime::HashBag::new();
-                for _ in 0..size {
-                    let elem_depth = if depth > 0 { rng.gen_range(0..depth) } else { 0 };
-                    let elem = #element_cat::generate_random_at_depth_internal(
-                        vars,
-                        elem_depth,
-                        max_collection_width,
-                        rng,
-                        binding_depth
-                    );
-                    bag.insert(elem);
-                }
-                #cat_name::#label(bag)
-            }
-        }
     } else {
+        // List and Bag both use the same bag-shaped generation when not is_list
         quote! {
             {
                 let size = rng.gen_range(0..=max_collection_width);

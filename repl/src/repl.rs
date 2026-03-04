@@ -929,8 +929,14 @@ impl Repl {
         // This avoids parsing "z" as e.g. IVar(z) when z is bound as a Proc, which would leave
         // the variable unsubstituted and panic on eval.
         let (term, from_env) = if !trimmed.is_empty()
-            && trimmed.chars().all(|c| c.is_alphabetic() || c == '_' || c.is_ascii_digit())
-            && trimmed.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false)
+            && trimmed
+                .chars()
+                .all(|c| c.is_alphabetic() || c == '_' || c.is_ascii_digit())
+            && trimmed
+                .chars()
+                .next()
+                .map(|c| c.is_alphabetic() || c == '_')
+                .unwrap_or(false)
         {
             if let Some(env) = self.state.environment() {
                 if let Some(env_term) = language.get_env_term(env, trimmed) {

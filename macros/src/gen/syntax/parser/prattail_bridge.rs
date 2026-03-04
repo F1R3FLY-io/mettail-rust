@@ -57,9 +57,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             inputs.push(RuleSpecInput {
                 label,
                 category: category.clone(),
-                syntax: vec![SyntaxItemSpec::IdentCapture {
-                    param_name: "v".to_string(),
-                }],
+                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
                 associativity: mettail_prattail::binding_power::Associativity::Left,
                 prefix_precedence: None,
                 has_rust_code: false,
@@ -78,9 +76,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             inputs.push(RuleSpecInput {
                 label,
                 category: category.clone(),
-                syntax: vec![SyntaxItemSpec::IdentCapture {
-                    param_name: "v".to_string(),
-                }],
+                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
                 associativity: mettail_prattail::binding_power::Associativity::Left,
                 prefix_precedence: None,
                 has_rust_code: false,

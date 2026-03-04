@@ -457,27 +457,25 @@ fn generate_hol_step_rules(language: &LanguageDef, cat_filter: CategoryFilter) -
                     .map(|i| format_ident!("r{}", i))
                     .collect();
 
-                let (destructure_fields, let_bindings): (Vec<TokenStream>, Vec<TokenStream>) = arg_infos
-                    .iter()
-                    .enumerate()
-                    .map(|(i, (param_name, arg_cat, lit_label))| {
-                        let fi = &field_names[i];
-                        let ri = &ref_names[i];
-                        if common::is_collection_category(language, arg_cat) {
-                            (
-                                quote! {},
-                                quote! { let #param_name = #fi.as_ref().clone(), },
-                            )
-                        } else {
-                            (
-                                quote! {
-                                    if let #arg_cat::#lit_label(#ri) = #fi.as_ref(),
-                                },
-                                quote! { let #param_name = #ri.clone(), },
-                            )
-                        }
-                    })
-                    .unzip();
+                let (destructure_fields, let_bindings): (Vec<TokenStream>, Vec<TokenStream>) =
+                    arg_infos
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (param_name, arg_cat, lit_label))| {
+                            let fi = &field_names[i];
+                            let ri = &ref_names[i];
+                            if common::is_collection_category(language, arg_cat) {
+                                (quote! {}, quote! { let #param_name = #fi.as_ref().clone(), })
+                            } else {
+                                (
+                                    quote! {
+                                        if let #arg_cat::#lit_label(#ri) = #fi.as_ref(),
+                                    },
+                                    quote! { let #param_name = #ri.clone(), },
+                                )
+                            }
+                        })
+                        .unzip();
 
                 // Use __src/__dst to avoid name collisions with user-defined param names
                 nary_rust_rules.push(quote! {
@@ -721,10 +719,8 @@ fn generate_fold_big_step_rules(
                     if param_count == 1 {
                         let p0 = &param_names[0];
                         let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
-                            if let Some(TermParam::Simple {
-                                ty: TypeExpr::Base(ident),
-                                ..
-                            }) = ctx.first()
+                            if let Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) =
+                                ctx.first()
                             {
                                 common::relation_names(ident).fold_rel
                             } else {
@@ -749,10 +745,9 @@ fn generate_fold_big_step_rules(
                                 let types: Vec<_> = ctx
                                     .iter()
                                     .filter_map(|p| match p {
-                                        TermParam::Simple {
-                                            ty: TypeExpr::Base(ident),
-                                            ..
-                                        } => Some(ident.clone()),
+                                        TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                            Some(ident.clone())
+                                        },
                                         _ => None,
                                     })
                                     .collect();
@@ -804,10 +799,8 @@ fn generate_fold_big_step_rules(
                     if param_count == 1 {
                         let p0 = &param_names[0];
                         let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
-                            if let Some(TermParam::Simple {
-                                ty: TypeExpr::Base(ident),
-                                ..
-                            }) = ctx.first()
+                            if let Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) =
+                                ctx.first()
                             {
                                 common::relation_names(ident).fold_rel
                             } else {
@@ -832,10 +825,9 @@ fn generate_fold_big_step_rules(
                                 let types: Vec<_> = ctx
                                     .iter()
                                     .filter_map(|p| match p {
-                                        TermParam::Simple {
-                                            ty: TypeExpr::Base(ident),
-                                            ..
-                                        } => Some(ident.clone()),
+                                        TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                            Some(ident.clone())
+                                        },
                                         _ => None,
                                     })
                                     .collect();
@@ -892,10 +884,8 @@ fn generate_fold_big_step_rules(
                 if param_count == 1 {
                     let p0 = &param_names[0];
                     let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
-                        if let Some(TermParam::Simple {
-                            ty: TypeExpr::Base(ident),
-                            ..
-                        }) = ctx.first()
+                        if let Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) =
+                            ctx.first()
                         {
                             relation_names(ident).fold_rel
                         } else {
@@ -915,28 +905,26 @@ fn generate_fold_big_step_rules(
                 } else {
                     let p0 = &param_names[0];
                     let p1 = &param_names[1];
-                    let (left_fold_rel, right_fold_rel) =
-                        if let Some(ref ctx) = rule.term_context {
-                            let types: Vec<_> = ctx
-                                .iter()
-                                .filter_map(|p| match p {
-                                    TermParam::Simple {
-                                        ty: TypeExpr::Base(ident),
-                                        ..
-                                    } => Some(ident.clone()),
-                                    _ => None,
-                                })
-                                .collect();
-                            if types.len() == 2 {
-                                let left_rn = relation_names(&types[0]);
-                                let right_rn = relation_names(&types[1]);
-                                (left_rn.fold_rel, right_rn.fold_rel)
-                            } else {
-                                (fold_rel.clone(), fold_rel.clone())
-                            }
+                    let (left_fold_rel, right_fold_rel) = if let Some(ref ctx) = rule.term_context {
+                        let types: Vec<_> = ctx
+                            .iter()
+                            .filter_map(|p| match p {
+                                TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                    Some(ident.clone())
+                                },
+                                _ => None,
+                            })
+                            .collect();
+                        if types.len() == 2 {
+                            let left_rn = relation_names(&types[0]);
+                            let right_rn = relation_names(&types[1]);
+                            (left_rn.fold_rel, right_rn.fold_rel)
                         } else {
                             (fold_rel.clone(), fold_rel.clone())
-                        };
+                        }
+                    } else {
+                        (fold_rel.clone(), fold_rel.clone())
+                    };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),
@@ -1041,28 +1029,26 @@ fn generate_fold_big_step_rules(
                     let p0 = &param_names[0];
                     let p1 = &param_names[1];
                     // Use per-param fold relation when term_context has different param types (e.g. DeleteList List,Int)
-                    let (left_fold_rel, right_fold_rel) =
-                        if let Some(ref ctx) = rule.term_context {
-                            let types: Vec<_> = ctx
-                                .iter()
-                                .filter_map(|p| match p {
-                                    TermParam::Simple {
-                                        ty: TypeExpr::Base(ident),
-                                        ..
-                                    } => Some(ident.clone()),
-                                    _ => None,
-                                })
-                                .collect();
-                            if types.len() == 2 {
-                                let left_rn = relation_names(&types[0]);
-                                let right_rn = relation_names(&types[1]);
-                                (left_rn.fold_rel, right_rn.fold_rel)
-                            } else {
-                                (fold_rel.clone(), fold_rel.clone())
-                            }
+                    let (left_fold_rel, right_fold_rel) = if let Some(ref ctx) = rule.term_context {
+                        let types: Vec<_> = ctx
+                            .iter()
+                            .filter_map(|p| match p {
+                                TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                    Some(ident.clone())
+                                },
+                                _ => None,
+                            })
+                            .collect();
+                        if types.len() == 2 {
+                            let left_rn = relation_names(&types[0]);
+                            let right_rn = relation_names(&types[1]);
+                            (left_rn.fold_rel, right_rn.fold_rel)
                         } else {
                             (fold_rel.clone(), fold_rel.clone())
-                        };
+                        }
+                    } else {
+                        (fold_rel.clone(), fold_rel.clone())
+                    };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),
@@ -1077,10 +1063,8 @@ fn generate_fold_big_step_rules(
                 } else if param_names.len() == 1 {
                     let p0 = &param_names[0];
                     let inner_fold_rel = if let Some(ref ctx) = rule.term_context {
-                        if let Some(TermParam::Simple {
-                            ty: TypeExpr::Base(ident),
-                            ..
-                        }) = ctx.first()
+                        if let Some(TermParam::Simple { ty: TypeExpr::Base(ident), .. }) =
+                            ctx.first()
                         {
                             relation_names(ident).fold_rel
                         } else {

@@ -26,7 +26,7 @@ use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{CollectionCategory, LanguageDef};
 use crate::ast::types::{CollectionType, TypeExpr};
 use crate::gen::native::native_type_to_string;
-use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
+use crate::gen::{generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use syn::Ident;
@@ -327,35 +327,33 @@ fn generate_unify_freevars_arm(
             }
         },
 
-        VariantKind::Collection { label, coll_type, .. } => {
-            match coll_type {
-                CollectionType::HashBag => {
-                    quote! {
-                        #category::#label(bag) => {
-                            let mut new_bag = mettail_runtime::HashBag::new();
-                            for (elem, count) in bag.iter() {
-                                let u = elem.unify_freevars_impl();
-                                for _ in 0..count { new_bag.insert(u.clone()); }
-                            }
-                            #category::#label(new_bag)
+        VariantKind::Collection { label, coll_type, .. } => match coll_type {
+            CollectionType::HashBag => {
+                quote! {
+                    #category::#label(bag) => {
+                        let mut new_bag = mettail_runtime::HashBag::new();
+                        for (elem, count) in bag.iter() {
+                            let u = elem.unify_freevars_impl();
+                            for _ in 0..count { new_bag.insert(u.clone()); }
                         }
+                        #category::#label(new_bag)
                     }
-                },
-                CollectionType::HashSet => {
-                    quote! {
-                        #category::#label(elems) => {
-                            #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect())
-                        }
+                }
+            },
+            CollectionType::HashSet => {
+                quote! {
+                    #category::#label(elems) => {
+                        #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect())
                     }
-                },
-                CollectionType::Vec => {
-                    quote! {
-                        #category::#label(elems) => {
-                            #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect::<Vec<_>>())
-                        }
+                }
+            },
+            CollectionType::Vec => {
+                quote! {
+                    #category::#label(elems) => {
+                        #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect::<Vec<_>>())
                     }
-                },
-            }
+                }
+            },
         },
 
         VariantKind::Binder { label, pre_scope_fields, .. } => {
@@ -712,7 +710,7 @@ fn generate_subst_cross_var_arm(
     variant: &VariantKind,
     language: &LanguageDef,
     primary_type: &Ident,
-    env_name: &Ident,
+    _env_name: &Ident,
     use_cross_lookups: bool,
 ) -> TokenStream {
     match variant {
@@ -730,7 +728,10 @@ fn generate_subst_cross_var_arm(
                 .filter(|t| {
                     t.name == *category
                         || t.name == *primary_type
-                        || language.get_type(&t.name).map(|lt| lt.native_type.is_some() && lt.collection_kind.is_none()).unwrap_or(false)
+                        || language
+                            .get_type(&t.name)
+                            .map(|lt| lt.native_type.is_some() && lt.collection_kind.is_none())
+                            .unwrap_or(false)
                 })
                 .collect();
             let lookups: Vec<TokenStream> = types_to_try
@@ -772,13 +773,13 @@ fn generate_subst_cross_var_arm(
                     self.clone()
                 }
             }
-        }
+        },
         VariantKind::Literal { label } => {
             quote! { #category::#label(_) => self.clone() }
-        }
+        },
         VariantKind::Nullary { label } => {
             quote! { #category::#label => self.clone() }
-        }
+        },
         VariantKind::Regular { label, fields } => {
             let field_names: Vec<Ident> =
                 (0..fields.len()).map(|i| format_ident!("f{}", i)).collect();
@@ -813,30 +814,29 @@ fn generate_subst_cross_var_arm(
                     #category::#label(#(#field_substs),*)
                 }
             }
-        }
-        VariantKind::Collection { label, coll_type, .. } => {
-            match coll_type {
-                CollectionType::HashBag => quote! {
-                    #category::#label(bag) => {
-                        let mut new_bag = mettail_runtime::HashBag::new();
-                        for (elem, count) in bag.iter() {
-                            let s = elem.subst_cross_var(env);
-                            for _ in 0..count { new_bag.insert(s.clone()); }
-                        }
-                        #category::#label(new_bag)
+        },
+        VariantKind::Collection { label, coll_type, .. } => match coll_type {
+            CollectionType::HashBag => quote! {
+                #category::#label(bag) => {
+                    let mut new_bag = mettail_runtime::HashBag::new();
+                    for (elem, count) in bag.iter() {
+                        let s = elem.subst_cross_var(env);
+                        for _ in 0..count { new_bag.insert(s.clone()); }
                     }
-                },
-                CollectionType::HashSet => quote! {
-                    #category::#label(elems) => #category::#label(elems.iter().map(|e| e.subst_cross_var(env)).collect())
-                },
-                CollectionType::Vec => quote! {
-                    #category::#label(elems) => #category::#label(elems.iter().map(|e| e.subst_cross_var(env)).collect())
-                },
-            }
-        }
+                    #category::#label(new_bag)
+                }
+            },
+            CollectionType::HashSet => quote! {
+                #category::#label(elems) => #category::#label(elems.iter().map(|e| e.subst_cross_var(env)).collect())
+            },
+            CollectionType::Vec => quote! {
+                #category::#label(elems) => #category::#label(elems.iter().map(|e| e.subst_cross_var(env)).collect())
+            },
+        },
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
-            let field_names: Vec<Ident> =
-                (0..pre_scope_fields.len()).map(|i| format_ident!("f{}", i)).collect();
+            let field_names: Vec<Ident> = (0..pre_scope_fields.len())
+                .map(|i| format_ident!("f{}", i))
+                .collect();
             let field_substs: Vec<TokenStream> = pre_scope_fields
                 .iter()
                 .zip(field_names.iter())
@@ -872,10 +872,11 @@ fn generate_subst_cross_var_arm(
                     #reconstruction
                 }
             }
-        }
+        },
         VariantKind::MultiBinder { label, pre_scope_fields, body_cat, .. } => {
-            let field_names: Vec<Ident> =
-                (0..pre_scope_fields.len()).map(|i| format_ident!("f{}", i)).collect();
+            let field_names: Vec<Ident> = (0..pre_scope_fields.len())
+                .map(|i| format_ident!("f{}", i))
+                .collect();
             let field_substs: Vec<TokenStream> = pre_scope_fields
                 .iter()
                 .zip(field_names.iter())
@@ -911,7 +912,7 @@ fn generate_subst_cross_var_arm(
                     #reconstruction
                 }
             }
-        }
+        },
     }
 }
 
@@ -955,11 +956,7 @@ pub(crate) fn collect_category_variants(
                 CollectionCategory::List(_) => (format_ident!("ListLit"), CollectionType::Vec),
                 CollectionCategory::Bag(_) => (format_ident!("BagLit"), CollectionType::HashBag),
             };
-            variants.push(VariantKind::Collection {
-                label,
-                element_cat: elem_cat,
-                coll_type,
-            });
+            variants.push(VariantKind::Collection { label, element_cat: elem_cat, coll_type });
         }
     }
 
@@ -968,9 +965,7 @@ pub(crate) fn collect_category_variants(
         .iter()
         .any(|v| matches!(v, VariantKind::Var { .. }));
     if !has_var {
-        variants.push(VariantKind::Var {
-            label: generate_var_label(category),
-        });
+        variants.push(VariantKind::Var { label: generate_var_label(category) });
     }
 
     // Auto-generated Literal variant (for native types).
@@ -981,10 +976,9 @@ pub(crate) fn collect_category_variants(
                 .iter()
                 .any(|v| matches!(v, VariantKind::Literal { .. }));
             if !has_lit {
-                if let Some(lit_label) = crate::logic::common::literal_label_for(language, category) {
-                    variants.push(VariantKind::Literal {
-                        label: lit_label,
-                    });
+                if let Some(lit_label) = crate::logic::common::literal_label_for(language, category)
+                {
+                    variants.push(VariantKind::Literal { label: lit_label });
                 }
             }
         }
@@ -993,65 +987,65 @@ pub(crate) fn collect_category_variants(
     // Auto-generated lambda/Apply variants for every category (skip for collection categories)
     if !is_collection_category {
         for domain_lang_type in &language.types {
-        let domain_name = &domain_lang_type.name;
+            let domain_name = &domain_lang_type.name;
 
-        // Single-binder lambda: Lam{Domain}
-        let lam_label =
-            syn::Ident::new(&format!("Lam{}", domain_name), proc_macro2::Span::call_site());
-        variants.push(VariantKind::Binder {
-            label: lam_label,
-            pre_scope_fields: vec![], // No pre-scope fields
-            binder_cat: domain_name.clone(),
-            body_cat: category.clone(),
-        });
+            // Single-binder lambda: Lam{Domain}
+            let lam_label =
+                syn::Ident::new(&format!("Lam{}", domain_name), proc_macro2::Span::call_site());
+            variants.push(VariantKind::Binder {
+                label: lam_label,
+                pre_scope_fields: vec![], // No pre-scope fields
+                binder_cat: domain_name.clone(),
+                body_cat: category.clone(),
+            });
 
-        // Multi-binder lambda: MLam{Domain}
-        let mlam_label =
-            syn::Ident::new(&format!("MLam{}", domain_name), proc_macro2::Span::call_site());
-        variants.push(VariantKind::MultiBinder {
-            label: mlam_label,
-            pre_scope_fields: vec![], // No pre-scope fields
-            binder_cat: domain_name.clone(),
-            body_cat: category.clone(),
-        });
+            // Multi-binder lambda: MLam{Domain}
+            let mlam_label =
+                syn::Ident::new(&format!("MLam{}", domain_name), proc_macro2::Span::call_site());
+            variants.push(VariantKind::MultiBinder {
+                label: mlam_label,
+                pre_scope_fields: vec![], // No pre-scope fields
+                binder_cat: domain_name.clone(),
+                body_cat: category.clone(),
+            });
 
-        // Application variant: Apply{Domain}
-        let apply_label =
-            syn::Ident::new(&format!("Apply{}", domain_name), proc_macro2::Span::call_site());
-        variants.push(VariantKind::Regular {
-            label: apply_label,
-            fields: vec![
-                FieldInfo {
-                    category: category.clone(),
-                    is_collection: false,
-                    coll_type: None,
-                },
-                FieldInfo {
-                    category: domain_name.clone(),
-                    is_collection: false,
-                    coll_type: None,
-                },
-            ],
-        });
+            // Application variant: Apply{Domain}
+            let apply_label =
+                syn::Ident::new(&format!("Apply{}", domain_name), proc_macro2::Span::call_site());
+            variants.push(VariantKind::Regular {
+                label: apply_label,
+                fields: vec![
+                    FieldInfo {
+                        category: category.clone(),
+                        is_collection: false,
+                        coll_type: None,
+                    },
+                    FieldInfo {
+                        category: domain_name.clone(),
+                        is_collection: false,
+                        coll_type: None,
+                    },
+                ],
+            });
 
-        // Multi-application variant: MApply{Domain}
-        let mapply_label =
-            syn::Ident::new(&format!("MApply{}", domain_name), proc_macro2::Span::call_site());
-        variants.push(VariantKind::Regular {
-            label: mapply_label,
-            fields: vec![
-                FieldInfo {
-                    category: category.clone(),
-                    is_collection: false,
-                    coll_type: None,
-                },
-                FieldInfo {
-                    category: domain_name.clone(),
-                    is_collection: true,
-                    coll_type: Some(CollectionType::Vec),
-                },
-            ],
-        });
+            // Multi-application variant: MApply{Domain}
+            let mapply_label =
+                syn::Ident::new(&format!("MApply{}", domain_name), proc_macro2::Span::call_site());
+            variants.push(VariantKind::Regular {
+                label: mapply_label,
+                fields: vec![
+                    FieldInfo {
+                        category: category.clone(),
+                        is_collection: false,
+                        coll_type: None,
+                    },
+                    FieldInfo {
+                        category: domain_name.clone(),
+                        is_collection: true,
+                        coll_type: Some(CollectionType::Vec),
+                    },
+                ],
+            });
         }
     }
 
@@ -1496,11 +1490,9 @@ fn generate_subst_arm(category: &Ident, variant: &VariantKind, repl_cat: &Ident)
             generate_regular_subst_arm(category, label, fields, repl_cat)
         },
 
-        VariantKind::Collection {
-            label,
-            element_cat,
-            coll_type,
-        } => generate_collection_subst_arm(category, label, element_cat, coll_type, repl_cat),
+        VariantKind::Collection { label, element_cat, coll_type } => {
+            generate_collection_subst_arm(category, label, element_cat, coll_type, repl_cat)
+        },
 
         VariantKind::Binder {
             label,

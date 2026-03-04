@@ -32,7 +32,12 @@ fn test_parse_empty_list() {
     assert_eq!(display, "[]", "display of [] should be []");
     // Round-trip: parse the display
     let roundtrip = lang.parse_term(&display);
-    assert!(roundtrip.is_ok(), "roundtrip parse of '{}' should succeed: {:?}", display, roundtrip.err());
+    assert!(
+        roundtrip.is_ok(),
+        "roundtrip parse of '{}' should succeed: {:?}",
+        display,
+        roundtrip.err()
+    );
 }
 
 #[test]
@@ -75,5 +80,10 @@ fn test_parse_empty_bag() {
     assert_eq!(display, "{}", "display of {{}} should be {{}}");
     // Round-trip: parse the display
     let roundtrip = lang.parse_term(&display);
-    assert!(roundtrip.is_ok(), "roundtrip parse of '{}' should succeed: {:?}", display, roundtrip.err());
+    assert!(
+        roundtrip.is_ok(),
+        "roundtrip parse of '{}' should succeed: {:?}",
+        display,
+        roundtrip.err()
+    );
 }

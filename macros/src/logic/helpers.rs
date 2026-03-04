@@ -19,7 +19,7 @@
 
 use super::common::{
     collect_nonterminal_fields, count_nonterminals, generate_tls_pool_iter, has_collection_field,
-    is_multi_binder, relation_names, literal_label_for, PoolArm,
+    is_multi_binder, literal_label_for, relation_names, PoolArm,
 };
 use crate::ast::grammar::{GrammarItem, GrammarRule};
 use crate::ast::language::{CollectionCategory, LanguageDef};
@@ -137,7 +137,11 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
     }
 
     // 2. Auto-generated variants (Apply, MApply, Lam, MLam) for each domain — skip for collection categories
-    if language.get_type(src).and_then(|t| t.collection_kind.as_ref()).is_none() {
+    if language
+        .get_type(src)
+        .and_then(|t| t.collection_kind.as_ref())
+        .is_none()
+    {
         for domain_type in &language.types {
             let domain = &domain_type.name;
             let auto = generate_auto_variant_pool_arms(src, tgt, domain);
@@ -147,16 +151,23 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
 
     // 3. Collection (List/Bag) literal: when src is List or Bag and tgt is element type, push each element
     for lang_type in &language.types {
-        let Some(ref native_type) = lang_type.native_type else { continue };
-        let Some(ref collection_kind) = lang_type.collection_kind else { continue };
+        let Some(ref native_type) = lang_type.native_type else {
+            continue;
+        };
+        let Some(ref collection_kind) = lang_type.collection_kind else {
+            continue;
+        };
         if lang_type.name != *src {
             continue;
         }
-        let Some(elem_ident) = native_type_element_ident(native_type) else { continue };
+        let Some(elem_ident) = native_type_element_ident(native_type) else {
+            continue;
+        };
         if elem_ident != *tgt {
             continue;
         }
-        let lit_label = literal_label_for(language, &lang_type.name).expect("collection has literal label");
+        let lit_label =
+            literal_label_for(language, &lang_type.name).expect("collection has literal label");
         match collection_kind {
             CollectionCategory::List(_) => {
                 arms.push(PoolArm {
@@ -257,10 +268,7 @@ fn generate_user_constructor_pool_arm(
 }
 
 /// When category has injection variants (e.g. ProcList, ProcBag), push the wrapped term so pool type stays correct.
-fn generate_injection_wrapper_pool_arm(
-    rule: &GrammarRule,
-    src: &Ident,
-) -> Option<PoolArm> {
+fn generate_injection_wrapper_pool_arm(rule: &GrammarRule, src: &Ident) -> Option<PoolArm> {
     let fields = collect_nonterminal_fields(rule);
     if fields.len() != 1 {
         return None;
@@ -429,7 +437,11 @@ pub fn generate_consolidated_congruence_rules(
     let mut rules = Vec::new();
 
     // Collection categories (List, Bag) have no Apply/Lam variants
-    if language.get_type(category).and_then(|t| t.collection_kind.as_ref()).is_some() {
+    if language
+        .get_type(category)
+        .and_then(|t| t.collection_kind.as_ref())
+        .is_some()
+    {
         return rules;
     }
 

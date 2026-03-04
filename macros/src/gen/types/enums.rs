@@ -31,11 +31,7 @@ fn generate_variant_from_items_for_term_context(
                 };
                 field_types.push(ft);
             },
-            GrammarItem::Collection {
-                coll_type,
-                element_type,
-                ..
-            } => {
+            GrammarItem::Collection { coll_type, element_type, .. } => {
                 let coll_ts = match coll_type {
                     CollectionType::HashBag => quote! { mettail_runtime::HashBag<#element_type> },
                     CollectionType::HashSet => quote! { std::collections::HashSet<#element_type> },
@@ -116,13 +112,11 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
         if let Some(ref collection_kind) = lang_type.collection_kind.as_ref() {
             let payload_opt: Option<TokenStream> = if let Some(ref native_type) = lang_type.native_type {
                 Some(quote! { #native_type })
-            } else if let Some(elem_type) = elem_type {
-                Some(match collection_kind {
+            } else {
+                elem_type.map(|elem_type| match collection_kind {
                     CollectionCategory::List(_) => quote! { Vec<#elem_type> },
                     CollectionCategory::Bag(_) => quote! { mettail_runtime::HashBag<#elem_type> },
                 })
-            } else {
-                None
             };
             if let (Some(payload_type), false) = (payload_opt, has_literal_rule) {
                 let literal_label = match collection_kind {
