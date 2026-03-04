@@ -29,15 +29,15 @@ M = (Σ, Q, I, F, δ, λ, ρ)
 
 where:
 
-| Symbol | Type | Description |
-|:------:|:----:|:------------|
-| Σ      | set  | Input alphabet — the set of token variants |
-| Q      | set  | Finite set of states |
-| I      | I ⊆ Q | Initial (start) states |
-| F      | F ⊆ Q | Final (accepting) states |
-| δ      | Q × Σ → Q | Transition function |
-| λ      | I → K | Initial weight function |
-| ρ      | F → K | Final weight function |
+| Symbol |   Type    | Description                                |
+|:------:|:---------:|:-------------------------------------------|
+|   Σ    |    set    | Input alphabet — the set of token variants |
+|   Q    |    set    | Finite set of states                       |
+|   I    |   I ⊆ Q   | Initial (start) states                     |
+|   F    |   F ⊆ Q   | Final (accepting) states                   |
+|   δ    | Q × Σ → Q | Transition function                        |
+|   λ    |   I → K   | Initial weight function                    |
+|   ρ    |   F → K   | Final weight function                      |
 
 Each arc in δ carries a label σ ∈ Σ and a weight w ∈ K.
 
@@ -396,45 +396,45 @@ topology.
 
 **`wfst.rs` (16 tests):**
 
-| Test | What it verifies |
-|:-----|:----------------|
-| `test_prediction_wfst_builder_basic` | State count = 1 + actions |
-| `test_prediction_wfst_predict_deterministic` | Single-action token returns one result |
-| `test_prediction_wfst_predict_ambiguous_ordered_by_weight` | Lower-weight returned first |
-| `test_compute_action_weight` | Weight values for all DispatchAction variants |
-| `test_generate_weighted_dispatch_empty` | Empty WFST returns None |
-| `test_generate_weighted_dispatch_produces_comments` | Code comment includes "ambiguous" |
-| `test_beam_pruning_none_is_identity` | No beam -> same as predict() |
-| `test_beam_pruning_filters_high_weight` | Threshold correctly applied |
-| `test_beam_pruning_preserves_best` | Best action always returned |
-| `test_beam_width_from_builder` | Builder sets beam_width |
-| `test_beam_width_from_language_spec` | DSL `beam_width: 1.5` -> TropicalWeight(1.5) |
+| Test                                                       | What it verifies                              |
+|:-----------------------------------------------------------|:----------------------------------------------|
+| `test_prediction_wfst_builder_basic`                       | State count = 1 + actions                     |
+| `test_prediction_wfst_predict_deterministic`               | Single-action token returns one result        |
+| `test_prediction_wfst_predict_ambiguous_ordered_by_weight` | Lower-weight returned first                   |
+| `test_compute_action_weight`                               | Weight values for all DispatchAction variants |
+| `test_generate_weighted_dispatch_empty`                    | Empty WFST returns None                       |
+| `test_generate_weighted_dispatch_produces_comments`        | Code comment includes "ambiguous"             |
+| `test_beam_pruning_none_is_identity`                       | No beam -> same as predict()                  |
+| `test_beam_pruning_filters_high_weight`                    | Threshold correctly applied                   |
+| `test_beam_pruning_preserves_best`                         | Best action always returned                   |
+| `test_beam_width_from_builder`                             | Builder sets beam_width                       |
+| `test_beam_width_from_language_spec`                       | DSL `beam_width: 1.5` -> TropicalWeight(1.5)  |
 
 **`token_id.rs` (4 tests):**
 
-| Test | What it verifies |
-|:-----|:----------------|
-| `test_token_id_map_basic` | get_or_insert is idempotent |
-| `test_token_id_map_lookup` | Bidirectional name<->id lookup |
-| `test_token_id_map_from_names` | Deduplication and sort order |
-| `test_token_id_map_iter` | Iteration in ID order |
+| Test                           | What it verifies               |
+|:-------------------------------|:-------------------------------|
+| `test_token_id_map_basic`      | get_or_insert is idempotent    |
+| `test_token_id_map_lookup`     | Bidirectional name<->id lookup |
+| `test_token_id_map_from_names` | Deduplication and sort order   |
+| `test_token_id_map_iter`       | Iteration in ID order          |
 
 ---
 
 ## 11. Source Reference
 
-| Symbol | Location |
-|:-------|:---------|
-| `WfstStateId`, `NO_STATE` | `prattail/src/wfst.rs` |
-| `WeightedTransition` | `prattail/src/wfst.rs` |
-| `WfstState` | `prattail/src/wfst.rs` |
-| `WeightedAction` | `prattail/src/wfst.rs` |
-| `PredictionWfst` | `prattail/src/wfst.rs` |
-| `PredictionWfstBuilder` | `prattail/src/wfst.rs` |
-| `build_prediction_wfsts` | `prattail/src/wfst.rs` |
-| `compute_action_weight` | `prattail/src/wfst.rs` |
+| Symbol                     | Location                   |
+|:---------------------------|:---------------------------|
+| `WfstStateId`, `NO_STATE`  | `prattail/src/wfst.rs`     |
+| `WeightedTransition`       | `prattail/src/wfst.rs`     |
+| `WfstState`                | `prattail/src/wfst.rs`     |
+| `WeightedAction`           | `prattail/src/wfst.rs`     |
+| `PredictionWfst`           | `prattail/src/wfst.rs`     |
+| `PredictionWfstBuilder`    | `prattail/src/wfst.rs`     |
+| `build_prediction_wfsts`   | `prattail/src/wfst.rs`     |
+| `compute_action_weight`    | `prattail/src/wfst.rs`     |
 | `TokenId`, `EPSILON_TOKEN` | `prattail/src/token_id.rs` |
-| `TokenIdMap` | `prattail/src/token_id.rs` |
+| `TokenIdMap`               | `prattail/src/token_id.rs` |
 
 ---
 

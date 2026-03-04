@@ -297,6 +297,8 @@ language! {
     equations {
         QuoteDrop . |- (NQuote (PDrop N)) = N ;
 
+        ExecEq . |- (PDrop (NQuote P)) = P ;
+
         Extrude . xs.*map(|x| x # ...rest)
             |- (PPar {(PNew ^[xs].p), ...rest}) = (PNew ^[xs].(PPar {p, ...rest})) ;
     },

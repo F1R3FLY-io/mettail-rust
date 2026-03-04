@@ -34,18 +34,18 @@ WFST functionality — prediction, recovery, lattice, composition, and
 semirings — is always compiled.
 
 ```
-   ┌──────────────────────────────────────────────────────────────┐
-   │  Tier 0 — default (no features)                              │
-   │  Core automata · Pratt parser · RD parser · prediction sets  │
-   │  PredictionWfst · TokenLattice · RecoveryWfst                │
-   │  compose · token_id · transducer · semirings (6 types)       │
-   │                                                              │
-   │  ┌────────────────────────────────────────────────────────┐  │
-   │  │  --features wfst-log                                   │  │
-   │  │  + LogWeight · EntropyWeight                           │  │
-   │  │  + ForwardBackward · LogPush · TrainedModel · SGD      │  │
-   │  └────────────────────────────────────────────────────────┘  │
-   └──────────────────────────────────────────────────────────────┘
+  ┌──────────────────────────────────────────────────────────────┐
+  │  Tier 0 — default (no features)                              │
+  │  Core automata · Pratt parser · RD parser · prediction sets  │
+  │  PredictionWfst · TokenLattice · RecoveryWfst                │
+  │  compose · token_id · transducer · semirings (6 types)       │
+  │                                                              │
+  │  ┌────────────────────────────────────────────────────────┐  │
+  │  │  --features wfst-log                                   │  │
+  │  │  + LogWeight · EntropyWeight                           │  │
+  │  │  + ForwardBackward · LogPush · TrainedModel · SGD      │  │
+  │  └────────────────────────────────────────────────────────┘  │
+  └──────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -272,22 +272,28 @@ always-available, `[log]` for `#[cfg(feature = "wfst-log")]`.
 
 ```
   lib.rs [core]
-  ├── pipeline.rs [core] ─────────────┬──────────────────────────────────────┐
-  │     │                             │                                       │
-  │     ▼                             ▼                                       │
-  │   prediction.rs [core] ─────────► dispatch.rs [core]                     │
-  │     │                               │                                     │
-  │     │                               ▼                                     │
-  │     │                          write_category_                            │
-  │     │                          dispatch_weighted()                        │
-  │     │                               │                                     │
+  ├── pipeline.rs [core] ────────────────┐
+  │     │                                │
+  │     ▼                                ▼
+  │   prediction.rs [core] ─────────► dispatch.rs [core]
+  │     │                                │
+  │     │                                ▼
+  │     │                          write_category_
+  │     │                          dispatch_weighted()
+  │     │                                │
+  │     │                                ▼
   │     └────────────────────────────────┼──► wfst.rs [core] ──► token_id.rs [core]
-  │                                      │         │                   │
-  │                                      │         ▼                   │
-  │                                      │    PredictionWfst ──────────┘
+  │                                      │         │
+  │                                      │         ▼
+  │                                      │    PredictionWfst
   │                                      │         │
   │                                      │         ▼
   │                                      │    generate_weighted_dispatch()
+  │                                      │
+  │                                      ├──► transducer.rs [core]
+  │                                      │         │
+  │                                      │         ├──► wfst.rs (PredictionWfst)
+  │                                      │         └──► semiring.rs (TropicalWeight)
   │                                      │
   │                                      ├──► recovery.rs [core] ──► token_id.rs [core]
   │                                      │         │
@@ -302,25 +308,19 @@ always-available, `[log]` for `#[cfg(feature = "wfst-log")]`.
   │                                      │         │
   │                                      │         └──► compose.rs [core] ──► lib.rs [core]
   │                                      │
-  └──────────────────────────────────────┼──► forward_backward.rs [log]
-                                         │         │
-                                         │         ├──► semiring.rs (LogWeight)
-                                         │         │
-                                         │         ▼
-                                         │    log_push.rs [log] ──► forward_backward.rs [log]
-                                         │         │
-                                         │         └──► semiring.rs
-                                         │
-                                         │    training.rs [log] ──► forward_backward.rs [log]
-                                         │         ├──► semiring.rs (LogWeight, TropicalWeight)
-                                         │         └──► serde_json (model I/O)
-                                         │
-                                         └─────────────────────────────────────────────────────
-```
+  └──────────────────────────────────────┴──► forward_backward.rs [log]
+                                                    │
+                                                    ├──► semiring.rs (LogWeight)
+                                                    │
+                                                    ▼
+                                               log_push.rs [log] ──► forward_backward.rs [log]
+                                                    │
+                                                    └──► semiring.rs
 
-**Additional dependency (not shown above):** `transducer.rs` imports
-`PredictionWfst` from `wfst.rs` and `TropicalWeight` from `semiring.rs`.
-It is called by `pipeline.rs` after `build_prediction_wfsts()`.
+                                               training.rs [log] ──► forward_backward.rs [log]
+                                                    ├──► semiring.rs (LogWeight, TropicalWeight)
+                                                    └──► serde_json (model I/O)
+```
 
 **Additional dependency (not shown above):** `trampoline.rs` calls
 `wfst.rs::PredictionWfst::nfa_alternative_order()` to order NFA merged prefix

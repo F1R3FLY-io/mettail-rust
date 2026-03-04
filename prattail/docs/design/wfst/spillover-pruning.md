@@ -40,12 +40,12 @@ of unlikely alternatives times the cost of a full parse.
 Consider the Calculator language's `Float` category with four rules sharing
 `Token::KwFloat`:
 
-| Rule          | WFST Weight | Likelihood |
-|---------------|-------------|------------|
-| `FloatId`     | 0.0         | identity (most common)  |
-| `IntToFloat`  | 0.3         | integer promotion       |
-| `BoolToFloat` | 0.8         | boolean coercion        |
-| `StrToFloat`  | 1.5         | string parsing (rare)   |
+| Rule          | WFST Weight | Likelihood             |
+|---------------|-------------|------------------------|
+| `FloatId`     | 0.0         | identity (most common) |
+| `IntToFloat`  | 0.3         | integer promotion      |
+| `BoolToFloat` | 0.8         | boolean coercion       |
+| `StrToFloat`  | 1.5         | string parsing (rare)  |
 
 Without pruning, all three non-primary alternatives are spilled and each
 triggers a full parser replay.  With a beam width of 1.0, only `IntToFloat`
@@ -99,19 +99,19 @@ and F1 falls back to position-only filtering (backward compatible).
 
 ```
                     ┌──────────────────────────┐
-                    │ needs_nfa_spillover?      │
+                    │ needs_nfa_spillover?     │
                     └────────────┬─────────────┘
                           yes    │    no
                     ┌────────────┴────┐
                     │                 │
-              ┌─────▼─────┐   ┌──────▼──────────────┐
+              ┌─────▼──────┐   ┌──────▼──────────────┐
               │ beam_width │   │ No spill loop.      │
               │ configured?│   │ Take first result,  │
               └──┬─────────┘   │ break 'prefix.      │
             yes  │   no        └─────────────────────┘
          ┌───────┴────────┐
          │                │
-   ┌─────▼──────┐  ┌─────▼──────────┐
+   ┌─────▼──────┐  ┌──────▼─────────┐
    │ Emit spill │  │ Emit spill     │
    │ with pos + │  │ with pos-only  │
    │ weight     │  │ filter         │
@@ -257,13 +257,13 @@ result from the NFA try-all phase.  The alternatives are sorted by weight
 
 ### Edge cases
 
-| Case | Behavior |
-|------|----------|
+| Case                                     | Behavior                                                                            |
+|------------------------------------------|-------------------------------------------------------------------------------------|
 | No beam configured (`beam_width = None`) | F1 is a no-op; all position-matching alternatives are spilled (backward compatible) |
-| Beam = 0.0 | Only alternatives with weight exactly equal to `w_best` are spilled |
-| Beam = +inf | Equivalent to no beam; all alternatives pass the filter |
-| Single alternative (`N = 1`) | No spillover occurs; F1 is never reached |
-| All alternatives have identical weight | All pass the filter (difference is 0.0 <= beam for any beam >= 0.0) |
+| Beam = 0.0                               | Only alternatives with weight exactly equal to `w_best` are spilled                 |
+| Beam = +inf                              | Equivalent to no beam; all alternatives pass the filter                             |
+| Single alternative (`N = 1`)             | No spillover occurs; F1 is never reached                                            |
+| All alternatives have identical weight   | All pass the filter (difference is 0.0 <= beam for any beam >= 0.0)                 |
 
 ---
 
@@ -272,13 +272,13 @@ result from the NFA try-all phase.  The alternatives are sorted by weight
 F1 (Spillover Pruning) and F2 (Early Termination) are complementary
 optimizations that target different phases of NFA disambiguation:
 
-| Property | F1: Spillover Pruning | F2: Early Termination |
-|----------|----------------------|----------------------|
-| **Phase** | After NFA try-all (spill loop) | During NFA try-all (inner loop) |
-| **Trigger** | `beam_width` configured on `PredictionWfst` | First alternative has weight 0.0 |
-| **Effect** | Fewer alternatives replayed | Fewer alternatives tried |
-| **Guard** | `needs_nfa_spillover` (only applies when spillover is active) | `!needs_nfa_spillover` (incompatible with spillover) |
-| **Scope** | Compile-time literal in spill filter | Compile-time `if nfa_results.is_empty()` guard |
+| Property    | F1: Spillover Pruning                                         | F2: Early Termination                                |
+|-------------|---------------------------------------------------------------|------------------------------------------------------|
+| **Phase**   | After NFA try-all (spill loop)                                | During NFA try-all (inner loop)                      |
+| **Trigger** | `beam_width` configured on `PredictionWfst`                   | First alternative has weight 0.0                     |
+| **Effect**  | Fewer alternatives replayed                                   | Fewer alternatives tried                             |
+| **Guard**   | `needs_nfa_spillover` (only applies when spillover is active) | `!needs_nfa_spillover` (incompatible with spillover) |
+| **Scope**   | Compile-time literal in spill filter                          | Compile-time `if nfa_results.is_empty()` guard       |
 
 ### Mutual exclusivity of F2 and spillover
 
@@ -316,20 +316,20 @@ The two optimizations therefore never conflict.
 
 ```
 NFA Try-All Phase                         Spill Phase
-  ┌─────────┐                            ┌────────────┐
+  ┌─────────┐                           ┌────────────┐
   │ Alt 1   │─── F2: if w=0.0 and       │            │
-  │ (w=0.0) │    !spillover, skip ────── │            │
-  │         │    rest                     │            │
-  ├─────────┤                            │            │
-  │ Alt 2   │──── tried regardless ────► │ F1: spill  │
-  │ (w=0.3) │    when spillover active   │ if w <=    │
-  ├─────────┤                            │ best+beam  │──► replay
-  │ Alt 3   │──── tried regardless ────► │            │
-  │ (w=0.8) │                            │            │──► replay
-  ├─────────┤                            │            │
-  │ Alt 4   │──── tried regardless ────► │            │
-  │ (w=1.5) │                            │            │──► pruned (1.5 > 0.0+1.0)
-  └─────────┘                            └────────────┘
+  │ (w=0.0) │    !spillover, skip ──────│            │
+  │         │    rest                   │            │
+  ├─────────┤                           │            │
+  │ Alt 2   │──── tried regardless ────►│ F1: spill  │
+  │ (w=0.3) │    when spillover active  │ if w <=    │
+  ├─────────┤                           │ best+beam  │──► replay
+  │ Alt 3   │──── tried regardless ────►│            │
+  │ (w=0.8) │                           │            │──► replay
+  ├─────────┤                           │            │
+  │ Alt 4   │──── tried regardless ────►│            │
+  │ (w=1.5) │                           │            │──► pruned (1.5 > 0.0+1.0)
+  └─────────┘                           └────────────┘
 ```
 
 ---
@@ -338,23 +338,23 @@ NFA Try-All Phase                         Spill Phase
 
 ### Compile-time cost
 
-| Operation | Cost |
-|-----------|------|
-| Beam width extraction (`beam_width()`) | O(1) -- field read |
-| Spill filter string construction | O(1) -- one `format!` call with literal |
-| Per-alternative filter condition | O(1) -- single `<=` comparison in template |
-| Total codegen overhead | O(A) where A = number of alternatives in the merged arm |
+| Operation                              | Cost                                                    |
+|----------------------------------------|---------------------------------------------------------|
+| Beam width extraction (`beam_width()`) | O(1) -- field read                                      |
+| Spill filter string construction       | O(1) -- one `format!` call with literal                 |
+| Per-alternative filter condition       | O(1) -- single `<=` comparison in template              |
+| Total codegen overhead                 | O(A) where A = number of alternatives in the merged arm |
 
 The generated code size changes by exactly one `&& alt_w <= nfa_weights[0] + <beam>`
 clause per merged NFA arm -- typically 1-3 arms per category.
 
 ### Runtime cost
 
-| Operation | Cost |
-|-----------|------|
-| Weight comparison (`alt_w <= nfa_weights[0] + beam`) | O(1) -- single f64 comparison |
-| Per spill iteration | O(1) -- existing position check + one added comparison |
-| Total spill loop | O(N-1) where N = number of NFA alternatives |
+| Operation                                            | Cost                                                   |
+|------------------------------------------------------|--------------------------------------------------------|
+| Weight comparison (`alt_w <= nfa_weights[0] + beam`) | O(1) -- single f64 comparison                          |
+| Per spill iteration                                  | O(1) -- existing position check + one added comparison |
+| Total spill loop                                     | O(N-1) where N = number of NFA alternatives            |
 
 The overhead of F1 is one additional f64 comparison per spilled alternative.
 On modern architectures, this is a single `ucomisd` instruction on the

@@ -66,18 +66,18 @@ a training corpus.
 
 ### 2.2 Lookahead (1 field)
 
-| Field                | Type    | Default | Semantics                           |
-|----------------------|---------|---------|-------------------------------------|
-| `max_skip_lookahead` | `usize` | 32     | Maximum tokens to scan for sync     |
+| Field                | Type    | Default | Semantics                       |
+|----------------------|---------|---------|---------------------------------|
+| `max_skip_lookahead` | `usize` | 32      | Maximum tokens to scan for sync |
 
 ### 2.3 Tier 1: Depth Scaling (4 fields)
 
-| Field                     | Type    | Default | Semantics                                |
-|---------------------------|---------|---------|------------------------------------------|
-| `deep_nesting_threshold`  | `usize` | 1000   | Depth above which skip is discounted     |
-| `deep_nesting_skip_mult`  | `f64`   | 0.5    | Skip multiplier when deeply nested       |
-| `shallow_depth_threshold` | `usize` | 10     | Depth below which skip is penalized      |
-| `shallow_depth_skip_mult` | `f64`   | 2.0    | Skip multiplier when shallowly nested    |
+| Field                     | Type    | Default | Semantics                             |
+|---------------------------|---------|---------|---------------------------------------|
+| `deep_nesting_threshold`  | `usize` | 1000    | Depth above which skip is discounted  |
+| `deep_nesting_skip_mult`  | `f64`   | 0.5     | Skip multiplier when deeply nested    |
+| `shallow_depth_threshold` | `usize` | 10      | Depth below which skip is penalized   |
+| `shallow_depth_skip_mult` | `f64`   | 2.0     | Skip multiplier when shallowly nested |
 
 **Semantics:** When the parse depth exceeds `deep_nesting_threshold`,
 skip actions become cheaper (multiplied by 0.5) because errors in deeply
@@ -88,10 +88,10 @@ preferred.
 
 ### 2.4 Tier 1: BP Scaling (2 fields)
 
-| Field               | Type  | Default | Semantics                              |
-|---------------------|-------|---------|----------------------------------------|
-| `low_bp_threshold`  | `u8`  | 4       | BP below which skip is discounted      |
-| `low_bp_skip_mult`  | `f64` | 0.75    | Skip multiplier for low binding power  |
+| Field              | Type  | Default | Semantics                             |
+|--------------------|-------|---------|---------------------------------------|
+| `low_bp_threshold` | `u8`  | 4       | BP below which skip is discounted     |
+| `low_bp_skip_mult` | `f64` | 0.75    | Skip multiplier for low binding power |
 
 **Semantics:** Low binding power means the parser is in a loosely bound
 context (top-level expression, statement boundary). Skipping is safer
@@ -99,12 +99,12 @@ in these contexts because there's less accumulated state to invalidate.
 
 ### 2.5 Tier 1: Frame-Kind Multipliers (4 fields)
 
-| Field                   | Type  | Default | Semantics                              |
-|-------------------------|-------|---------|----------------------------------------|
-| `collection_insert_mult`| `f64` | 0.5    | Insert discount in Collection frames   |
-| `group_insert_mult`     | `f64` | 0.5    | Insert discount in Group frames        |
-| `bracket_insert_mult`   | `f64` | 0.3    | Insert discount for unmatched brackets |
-| `mixfix_substitute_mult`| `f64` | 0.75   | Substitute discount in Mixfix frames   |
+| Field                    | Type  | Default | Semantics                              |
+|--------------------------|-------|---------|----------------------------------------|
+| `collection_insert_mult` | `f64` | 0.5     | Insert discount in Collection frames   |
+| `group_insert_mult`      | `f64` | 0.5     | Insert discount in Group frames        |
+| `bracket_insert_mult`    | `f64` | 0.3     | Insert discount for unmatched brackets |
+| `mixfix_substitute_mult` | `f64` | 0.75    | Substitute discount in Mixfix frames   |
 
 **Semantics:**
 
@@ -120,10 +120,10 @@ in these contexts because there's less accumulated state to invalidate.
 
 ### 2.6 Tier 3: Simulation Multipliers (2 fields)
 
-| Field                    | Type  | Default | Semantics                                |
-|--------------------------|-------|---------|------------------------------------------|
-| `simulation_valid_mult`  | `f64` | 0.5    | Discount when simulation shows valid     |
-| `simulation_fail_penalty`| `f64` | 0.2    | Penalty per unmatched token on failure   |
+| Field                     | Type  | Default | Semantics                              |
+|---------------------------|-------|---------|----------------------------------------|
+| `simulation_valid_mult`   | `f64` | 0.5     | Discount when simulation shows valid   |
+| `simulation_fail_penalty` | `f64` | 0.2     | Penalty per unmatched token on failure |
 
 **Semantics:** After proposing a repair, the ParseSimulator checks
 whether the subsequent tokens form a valid parse continuation. If yes,
@@ -133,9 +133,9 @@ the repair's cost is halved (0.5×). If no, a penalty of
 
 ### 2.7 Beam Pruning (1 field)
 
-| Field        | Type          | Default    | Semantics                      |
-|--------------|---------------|------------|--------------------------------|
-| `beam_width` | `Option<f64>` | `Some(3.0)`| Viterbi beam width; None = off |
+| Field        | Type          | Default     | Semantics                      |
+|--------------|---------------|-------------|--------------------------------|
+| `beam_width` | `Option<f64>` | `Some(3.0)` | Viterbi beam width; None = off |
 
 **Semantics:** In `viterbi_multi_step()`, nodes whose accumulated cost
 exceeds `dist[SINK] + beam_width` are pruned. `None` disables beam
@@ -143,9 +143,9 @@ pruning (evaluates all nodes).
 
 ### 2.8 Cascade Prevention (1 field)
 
-| Field            | Type    | Default | Semantics                         |
-|------------------|---------|---------|-----------------------------------|
-| `cascade_window` | `usize` | 3      | Tokens within which to suppress   |
+| Field            | Type    | Default | Semantics                       |
+|------------------|---------|---------|---------------------------------|
+| `cascade_window` | `usize` | 3       | Tokens within which to suppress |
 
 **Semantics:** After reporting an error at position *p*, errors at
 positions [*p* + 1, *p* + *k*] are suppressed. See
@@ -155,28 +155,28 @@ positions [*p* + 1, *p* + *k*] are suppressed. See
 
 ## 3. Complete Default Values Table
 
-| #  | Field                     | Default    | Valid Range     | Effect of Increasing               |
-|----|---------------------------|------------|-----------------|-------------------------------------|
-| 1  | `skip_per_token`          | 0.5        | (0, ∞)          | Skip becomes more expensive         |
-| 2  | `delete_cost`             | 1.0        | (0, ∞)          | Delete becomes more expensive       |
-| 3  | `substitute_cost`         | 1.5        | (0, ∞)          | Substitute becomes more expensive   |
-| 4  | `insert_cost`             | 2.0        | (0, ∞)          | Insert becomes more expensive       |
-| 5  | `swap_cost`               | 1.25       | (0, ∞)          | Swap becomes more expensive         |
-| 6  | `max_skip_lookahead`      | 32         | [1, ∞)          | Wider skip search window            |
-| 7  | `deep_nesting_threshold`  | 1000       | [0, ∞)          | Fewer positions qualify as "deep"   |
-| 8  | `deep_nesting_skip_mult`  | 0.5        | (0, ∞)          | Less discount when deep             |
-| 9  | `shallow_depth_threshold` | 10         | [0, ∞)          | More positions qualify as "shallow" |
-| 10 | `shallow_depth_skip_mult` | 2.0        | (0, ∞)          | More penalty when shallow           |
-| 11 | `low_bp_threshold`        | 4          | [0, 255]        | Wider range qualifies as "low BP"   |
-| 12 | `low_bp_skip_mult`        | 0.75       | (0, ∞)          | Less discount at low BP             |
-| 13 | `collection_insert_mult`  | 0.5        | (0, ∞)          | Less discount in collections        |
-| 14 | `group_insert_mult`       | 0.5        | (0, ∞)          | Less discount in groups             |
-| 15 | `bracket_insert_mult`     | 0.3        | (0, ∞)          | Less discount for bracket repair    |
-| 16 | `mixfix_substitute_mult`  | 0.75       | (0, ∞)          | Less discount in mixfix             |
-| 17 | `simulation_valid_mult`   | 0.5        | (0, ∞)          | Less simulation discount            |
-| 18 | `simulation_fail_penalty` | 0.2        | [0, ∞)          | Larger penalty on sim failure       |
-| 19 | `beam_width`              | Some(3.0)  | None or (0, ∞)  | Wider beam, more paths explored     |
-| 20 | `cascade_window`          | 3          | [0, ∞)          | More phantom errors suppressed      |
+| #  | Field                     | Default   | Valid Range    | Effect of Increasing                |
+|----|---------------------------|-----------|----------------|-------------------------------------|
+| 1  | `skip_per_token`          | 0.5       | (0, ∞)         | Skip becomes more expensive         |
+| 2  | `delete_cost`             | 1.0       | (0, ∞)         | Delete becomes more expensive       |
+| 3  | `substitute_cost`         | 1.5       | (0, ∞)         | Substitute becomes more expensive   |
+| 4  | `insert_cost`             | 2.0       | (0, ∞)         | Insert becomes more expensive       |
+| 5  | `swap_cost`               | 1.25      | (0, ∞)         | Swap becomes more expensive         |
+| 6  | `max_skip_lookahead`      | 32        | [1, ∞)         | Wider skip search window            |
+| 7  | `deep_nesting_threshold`  | 1000      | [0, ∞)         | Fewer positions qualify as "deep"   |
+| 8  | `deep_nesting_skip_mult`  | 0.5       | (0, ∞)         | Less discount when deep             |
+| 9  | `shallow_depth_threshold` | 10        | [0, ∞)         | More positions qualify as "shallow" |
+| 10 | `shallow_depth_skip_mult` | 2.0       | (0, ∞)         | More penalty when shallow           |
+| 11 | `low_bp_threshold`        | 4         | [0, 255]       | Wider range qualifies as "low BP"   |
+| 12 | `low_bp_skip_mult`        | 0.75      | (0, ∞)         | Less discount at low BP             |
+| 13 | `collection_insert_mult`  | 0.5       | (0, ∞)         | Less discount in collections        |
+| 14 | `group_insert_mult`       | 0.5       | (0, ∞)         | Less discount in groups             |
+| 15 | `bracket_insert_mult`     | 0.3       | (0, ∞)         | Less discount for bracket repair    |
+| 16 | `mixfix_substitute_mult`  | 0.75      | (0, ∞)         | Less discount in mixfix             |
+| 17 | `simulation_valid_mult`   | 0.5       | (0, ∞)         | Less simulation discount            |
+| 18 | `simulation_fail_penalty` | 0.2       | [0, ∞)         | Larger penalty on sim failure       |
+| 19 | `beam_width`              | Some(3.0) | None or (0, ∞) | Wider beam, more paths explored     |
+| 20 | `cascade_window`          | 3         | [0, ∞)         | More phantom errors suppressed      |
 
 (20 fields total — the plan listed 19 but `cascade_window` is the 20th
 when counting all individually.)
@@ -294,15 +294,15 @@ pub fn train_recovery_weights(
 
 **Strategy name mapping:**
 
-| RepairAction       | Config Key          |
-|--------------------|---------------------|
-| SkipToSync         | `skip_per_token`    |
-| DeleteToken        | `delete_cost`       |
-| SubstituteToken    | `substitute_cost`   |
-| InsertToken        | `insert_cost`       |
-| SwapTokens         | `swap_cost`         |
-| Composite          | `delete_cost`       |
-| CategorySwitch     | `substitute_cost`   |
+| RepairAction    | Config Key        |
+|-----------------|-------------------|
+| SkipToSync      | `skip_per_token`  |
+| DeleteToken     | `delete_cost`     |
+| SubstituteToken | `substitute_cost` |
+| InsertToken     | `insert_cost`     |
+| SwapTokens      | `swap_cost`       |
+| Composite       | `delete_cost`     |
+| CategorySwitch  | `substitute_cost` |
 
 Composite uses `delete_cost` as its dominant cost key. CategorySwitch
 uses `substitute_cost` since it's semantically a substitution.
@@ -423,19 +423,19 @@ nested contexts.
 
 ## 8. Source Reference
 
-| Symbol                        | Location                              |
-|-------------------------------|---------------------------------------|
-| `RecoveryConfig`              | `prattail/src/recovery.rs:109–166`    |
-| `RecoveryConfig::default()`   | `prattail/src/recovery.rs:168–193`    |
-| `apply_trained_weights()`     | `prattail/src/recovery.rs:200–217`    |
-| `RecoveryContext`             | `prattail/src/recovery.rs:1198–1227`  |
-| `skip_multiplier_with()`      | `prattail/src/recovery.rs:1241–1262`  |
-| `insert_multiplier_with()`    | `prattail/src/recovery.rs:1274–1288`  |
+| Symbol                             | Location                             |
+|------------------------------------|--------------------------------------|
+| `RecoveryConfig`                   | `prattail/src/recovery.rs:109–166`   |
+| `RecoveryConfig::default()`        | `prattail/src/recovery.rs:168–193`   |
+| `apply_trained_weights()`          | `prattail/src/recovery.rs:200–217`   |
+| `RecoveryContext`                  | `prattail/src/recovery.rs:1198–1227` |
+| `skip_multiplier_with()`           | `prattail/src/recovery.rs:1241–1262` |
+| `insert_multiplier_with()`         | `prattail/src/recovery.rs:1274–1288` |
 | `bracket_insert_multiplier_with()` | `prattail/src/recovery.rs:1318–1329` |
-| `RecoveryTrainingExample`     | `prattail/src/training.rs:361–370`    |
-| `train_recovery_weights()`    | `prattail/src/training.rs:387–456`    |
-| `TrainedModel`                | `prattail/src/training.rs` (struct)   |
-| `RECOVERY_BEAM_WIDTH`         | `prattail/src/pipeline.rs:791`        |
+| `RecoveryTrainingExample`          | `prattail/src/training.rs:361–370`   |
+| `train_recovery_weights()`         | `prattail/src/training.rs:387–456`   |
+| `TrainedModel`                     | `prattail/src/training.rs` (struct)  |
+| `RECOVERY_BEAM_WIDTH`              | `prattail/src/pipeline.rs:791`       |
 
 **Cross-references:**
 

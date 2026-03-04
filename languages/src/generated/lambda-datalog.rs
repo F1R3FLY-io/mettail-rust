@@ -43,7 +43,7 @@ term(sub.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_TERM_TERM.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-term(c1.clone()) <--
+term(c1.clone().normalize()) <--
     term(c0),
     rw_term(c0, c1);
 

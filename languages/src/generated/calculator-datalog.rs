@@ -647,7 +647,7 @@ str(sub.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_STR_STR.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-int(c1.clone()) <--
+int(c1.clone().normalize()) <--
     int(c0),
     rw_int(c0, c1);
 
@@ -744,7 +744,7 @@ rw_int(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_INT_CONG_ARG_STR.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_str(arg, new_arg);
 
-float(c1.clone()) <--
+float(c1.clone().normalize()) <--
     float(c0),
     rw_float(c0, c1);
 
@@ -841,7 +841,7 @@ rw_float(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_FLOAT_CONG_ARG_STR.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_str(arg, new_arg);
 
-bool(c1.clone()) <--
+bool(c1.clone().normalize()) <--
     bool(c0),
     rw_bool(c0, c1);
 
@@ -938,7 +938,7 @@ rw_bool(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_BOOL_CONG_ARG_STR.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_str(arg, new_arg);
 
-str(c1.clone()) <--
+str(c1.clone().normalize()) <--
     str(c0),
     rw_str(c0, c1);
 

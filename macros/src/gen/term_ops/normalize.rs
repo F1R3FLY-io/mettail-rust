@@ -2,10 +2,11 @@
 
 use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::language::LanguageDef;
+use crate::ast::pattern::CancellationPair;
 use crate::gen::{generate_literal_label, generate_var_label, is_literal_rule, is_var_rule};
 use proc_macro2::TokenStream;
 use quote::quote;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// For each constructor with a collection field, generates a helper function that automatically flattens nested collections of the same type.
 pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
@@ -98,9 +99,16 @@ pub fn generate_flatten_helpers(language: &LanguageDef) -> TokenStream {
     }
 }
 
-/// Generate normalize functions that recursively flatten nested collections
-/// and perform immediate beta-reduction.
-pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
+/// Generate normalize functions that recursively flatten nested collections,
+/// perform immediate beta-reduction, and eagerly collapse cancellation pairs.
+///
+/// Cancellation pairs (e.g., `PDrop(NQuote(P)) = P`) generate match arms that
+/// check for the inner constructor after normalizing the field, and collapse
+/// the composition to the identity when matched.
+pub fn generate_normalize_functions(
+    language: &LanguageDef,
+    cancellation_pairs: &[CancellationPair],
+) -> TokenStream {
     use quote::format_ident;
 
     let mut impls = Vec::new();
@@ -113,6 +121,16 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
             .terms
             .iter()
             .filter(|rule| rule.category == *category)
+            .collect();
+
+        // Collect cancellation pairs where this category is the outer
+        let cat_cancel_pairs: Vec<&CancellationPair> = cancellation_pairs
+            .iter()
+            .filter(|p| p.outer_category == *category)
+            .collect();
+        let cancelled_ctors: HashSet<String> = cat_cancel_pairs
+            .iter()
+            .map(|p| p.outer_constructor.to_string())
             .collect();
 
         // Native types: generate simple recursive normalize (no beta-reduction, no collections)
@@ -199,8 +217,14 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
         // Generate beta-reduction arms for Apply/Lam variants
         let beta_reduction_arms = generate_beta_reduction_arms(category, language);
 
-        // If no collections and no beta-reduction, generate a simple normalize
-        if !has_collections && beta_reduction_arms.is_empty() {
+        // Generate cancellation pair match arms for this category
+        let cancel_pair_arms: Vec<TokenStream> = cat_cancel_pairs
+            .iter()
+            .map(|pair| generate_cancellation_pair_arm(pair))
+            .collect();
+
+        // If no collections, no beta-reduction, and no cancellation pairs, generate a simple normalize
+        if !has_collections && beta_reduction_arms.is_empty() && cancel_pair_arms.is_empty() {
             let impl_block = quote! {
                 impl #category {
                     /// Normalize (no-op for categories without collections or beta-redexes)
@@ -219,6 +243,11 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
             .iter()
             .filter_map(|rule| {
                 let label = &rule.label;
+
+                // Skip constructors handled by cancellation pair arms
+                if cancelled_ctors.contains(&label.to_string()) {
+                    return None;
+                }
 
                 // Check if this rule uses term_context with multi-binder
                 let has_multi_binder = rule.term_context.as_ref().is_some_and(|ctx| {
@@ -447,11 +476,13 @@ pub fn generate_normalize_functions(language: &LanguageDef) -> TokenStream {
                 /// Recursively normalize this term by:
                 /// 1. Flattening nested collections (e.g., `PPar({PPar({a, b}), c})` becomes `PPar({a, b, c})`)
                 /// 2. Performing immediate beta-reduction (e.g., `Apply(Lam(^x.body), arg)` becomes `body[arg/x]`)
+                /// 3. Eagerly collapsing cancellation pairs (e.g., `PDrop(NQuote(P))` becomes `P`)
                 ///
                 /// This ensures terms are always in canonical form with beta-redexes reduced.
                 pub fn normalize(&self) -> Self {
                     match self {
                         #(#beta_reduction_arms,)*
+                        #(#cancel_pair_arms,)*
                         #(#match_arms,)*
                         #fallback
                     }
@@ -543,4 +574,38 @@ fn generate_beta_reduction_arms(category: &syn::Ident, language: &LanguageDef) -
     }
 
     arms
+}
+
+/// Generate a match arm for a cancellation pair.
+///
+/// For `CancellationPair { outer: PDrop, outer_cat: Proc, inner: NQuote, inner_cat: Name }`:
+/// ```text
+/// Proc::PDrop(f0) => {
+///     let inner_normalized = f0.as_ref().normalize();
+///     match inner_normalized {
+///         Name::NQuote(p) => p.as_ref().normalize(),
+///         other => Proc::PDrop(Box::new(other)),
+///     }
+/// }
+/// ```
+///
+/// The arm normalizes the inner field first, then checks if the result matches
+/// the inner constructor. If so, it collapses the composition to the identity
+/// (returning the innermost value, re-normalized as a safety net). Otherwise,
+/// it reconstructs the outer constructor with the normalized field.
+fn generate_cancellation_pair_arm(pair: &CancellationPair) -> TokenStream {
+    let outer_cat = &pair.outer_category;
+    let outer_ctor = &pair.outer_constructor;
+    let inner_cat = &pair.inner_category;
+    let inner_ctor = &pair.inner_constructor;
+
+    quote! {
+        #outer_cat::#outer_ctor(f0) => {
+            let inner_normalized = f0.as_ref().normalize();
+            match inner_normalized {
+                #inner_cat::#inner_ctor(p) => p.as_ref().normalize(),
+                other => #outer_cat::#outer_ctor(Box::new(other)),
+            }
+        }
+    }
 }

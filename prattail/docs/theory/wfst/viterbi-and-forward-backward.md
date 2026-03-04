@@ -315,18 +315,18 @@ zero()."
 
 #### Viterbi Compatibility Table
 
-| Semiring | Viterbi-Compatible? | Reason |
-|:---------|:-------------------:|:-------|
-| TropicalWeight | Yes (specialized) | `zero()` = +∞ is largest under Ord |
-| EditWeight | Yes (generic) | `zero()` = u32::MAX is largest |
-| ComplexityWeight | Yes (generic) | `zero()` = u32::MAX is largest |
-| ProductWeight⟨T, E⟩ | Yes (generic) | Lexicographic; +∞ first |
-| NbestWeight⟨N⟩ | Not standalone | Use via ProductWeight or dedicated N-best |
-| CountingWeight | **No** | `zero()` = 0 is _smallest_ — breaks Viterbi invariant |
-| BooleanWeight | **No** (meaningless) | Only two values; min always yields `false` |
-| ContextWeight | **No** (set-valued) | Not totally ordered |
-| LogWeight | Technically yes, but use forward-backward | `zero()` = +∞ is largest, but sum semantics are needed |
-| EntropyWeight | **No** | Expectation semiring; not path-valued |
+| Semiring            |            Viterbi-Compatible?            | Reason                                                 |
+|:--------------------|:-----------------------------------------:|:-------------------------------------------------------|
+| TropicalWeight      |             Yes (specialized)             | `zero()` = +∞ is largest under Ord                     |
+| EditWeight          |               Yes (generic)               | `zero()` = u32::MAX is largest                         |
+| ComplexityWeight    |               Yes (generic)               | `zero()` = u32::MAX is largest                         |
+| ProductWeight⟨T, E⟩ |               Yes (generic)               | Lexicographic; +∞ first                                |
+| NbestWeight⟨N⟩      |              Not standalone               | Use via ProductWeight or dedicated N-best              |
+| CountingWeight      |                  **No**                   | `zero()` = 0 is _smallest_ — breaks Viterbi invariant  |
+| BooleanWeight       |           **No** (meaningless)            | Only two values; min always yields `false`             |
+| ContextWeight       |            **No** (set-valued)            | Not totally ordered                                    |
+| LogWeight           | Technically yes, but use forward-backward | `zero()` = +∞ is largest, but sum semantics are needed |
+| EntropyWeight       |                  **No**                   | Expectation semiring; not path-valued                  |
 
 #### Why CountingWeight Breaks Viterbi
 
@@ -781,14 +781,14 @@ Drawn with crossing arcs annotated:
 
 Process nodes 0 -> 5 in order:
 
-| Node | Incoming edges | α[node] = min(predecessors) |
-|:----:|:--------------|:----------------------------|
-| 0    | (start)        | 0.0 (= 1̄)                   |
-| 1    | 0->1 (0.0+1.0)  | 1.0                          |
-| 2    | 0->2 (0.0+3.0)  | 3.0                          |
-| 3    | 0->3 (0.0+1.5)  | 1.5                          |
-| 4    | 3->4 (1.5+1.0)  | 2.5                          |
-| 5    | 1->5 (1.0+2.0)=3.0, 2->5 (3.0+0.5)=3.5, 4->5 (2.5+0.5)=3.0 -> **min=3.0** | 3.0 |
+| Node | Incoming edges                                                            | α[node] = min(predecessors) |
+|:----:|:--------------------------------------------------------------------------|:----------------------------|
+|  0   | (start)                                                                   | 0.0 (= 1̄)                   |
+|  1   | 0->1 (0.0+1.0)                                                            | 1.0                         |
+|  2   | 0->2 (0.0+3.0)                                                            | 3.0                         |
+|  3   | 0->3 (0.0+1.5)                                                            | 1.5                         |
+|  4   | 3->4 (1.5+1.0)                                                            | 2.5                         |
+|  5   | 1->5 (1.0+2.0)=3.0, 2->5 (3.0+0.5)=3.5, 4->5 (2.5+0.5)=3.0 -> **min=3.0** | 3.0                         |
 
 **Forward score at final node = 3.0.**
 
@@ -796,14 +796,14 @@ Process nodes 0 -> 5 in order:
 
 Process nodes 5 -> 0 in reverse:
 
-| Node | Outgoing edges | β[node] = min(successors) |
-|:----:|:--------------|:--------------------------|
-| 5    | (final)        | 0.0 (= 1̄)                 |
-| 4    | 4->5 (0.5+0.0)  | 0.5                        |
-| 3    | 3->4 (1.0+0.5)  | 1.5                        |
-| 2    | 2->5 (0.5+0.0)  | 0.5                        |
-| 1    | 1->5 (2.0+0.0)  | 2.0                        |
-| 0    | 0->1 (1.0+2.0)=3.0, 0->2 (3.0+0.5)=3.5, 0->3 (1.5+1.5)=3.0 -> **min=3.0** | 3.0 |
+| Node | Outgoing edges                                                            | β[node] = min(successors) |
+|:----:|:--------------------------------------------------------------------------|:--------------------------|
+|  5   | (final)                                                                   | 0.0 (= 1̄)                 |
+|  4   | 4->5 (0.5+0.0)                                                            | 0.5                       |
+|  3   | 3->4 (1.0+0.5)                                                            | 1.5                       |
+|  2   | 2->5 (0.5+0.0)                                                            | 0.5                       |
+|  1   | 1->5 (2.0+0.0)                                                            | 2.0                       |
+|  0   | 0->1 (1.0+2.0)=3.0, 0->2 (3.0+0.5)=3.5, 0->3 (1.5+1.5)=3.0 -> **min=3.0** | 3.0                       |
 
 **Backward score at start node = 3.0.** Identity α[5] = β[0] = 3.0 holds.
 
@@ -832,11 +832,11 @@ in iteration order.)
 With LogWeight, the three paths have weights 3.0, 3.5, and 3.0.
 The heap-based N-best returns them in order:
 
-| Rank | Path      | Weight |
-|:----:|:----------|:------:|
-| 1    | 0->1->5     | 3.0    |
-| 2    | 0->3->4->5   | 3.0    |
-| 3    | 0->2->5     | 3.5    |
+| Rank | Path       | Weight |
+|:----:|:-----------|:------:|
+|  1   | 0->1->5    |  3.0   |
+|  2   | 0->3->4->5 |  3.0   |
+|  3   | 0->2->5    |  3.5   |
 
 Paths of equal weight are returned in heap-pop order (determined by
 insertion order when weights are tied).
@@ -847,35 +847,35 @@ insertion order when weights are tied).
 
 **`lattice.rs` (20 tests across two modules):**
 
-| Test | Algorithm | What it verifies |
-|:-----|:---------|:----------------|
-| `test_token_source_linear_zero_overhead` | — | Linear source access |
-| `test_token_source_lattice` | — | Lattice source variant |
-| `test_token_lattice_basic` | — | add_edge, num_nodes, num_edges |
-| `test_token_lattice_ambiguous` | — | Multiple edges from same node |
-| `test_viterbi_best_path_chain` | Viterbi | Chain lattice, weight accumulation |
-| `test_viterbi_best_path_ambiguous` | Viterbi | Selects min-weight path |
-| `test_viterbi_empty_lattice` | Viterbi | Returns None on empty lattice |
-| `test_viterbi_unreachable_final` | Viterbi | Returns None when final unreachable |
-| `test_linear_to_lattice` | Viterbi | Round-trip through chain lattice |
-| `test_viterbi_beam_prunes_edges` | Beam Viterbi | Beam prunes high-cost path |
-| `test_sort_edges_by_weight` | — | Sort by weight for greedy access |
-| `n_best_tests::test_n_best_single_path` | N-best | Single path returned once |
-| `n_best_tests::test_n_best_diamond` | N-best | Diamond graph, 2 paths ordered |
-| `n_best_tests::test_n_best_many_paths` | N-best | Top 3 of 4 paths returned |
-| `n_best_tests::test_n_best_unreachable` | N-best | Empty on unreachable lattice |
+| Test                                     | Algorithm    | What it verifies                    |
+|:-----------------------------------------|:-------------|:------------------------------------|
+| `test_token_source_linear_zero_overhead` | —            | Linear source access                |
+| `test_token_source_lattice`              | —            | Lattice source variant              |
+| `test_token_lattice_basic`               | —            | add_edge, num_nodes, num_edges      |
+| `test_token_lattice_ambiguous`           | —            | Multiple edges from same node       |
+| `test_viterbi_best_path_chain`           | Viterbi      | Chain lattice, weight accumulation  |
+| `test_viterbi_best_path_ambiguous`       | Viterbi      | Selects min-weight path             |
+| `test_viterbi_empty_lattice`             | Viterbi      | Returns None on empty lattice       |
+| `test_viterbi_unreachable_final`         | Viterbi      | Returns None when final unreachable |
+| `test_linear_to_lattice`                 | Viterbi      | Round-trip through chain lattice    |
+| `test_viterbi_beam_prunes_edges`         | Beam Viterbi | Beam prunes high-cost path          |
+| `test_sort_edges_by_weight`              | —            | Sort by weight for greedy access    |
+| `n_best_tests::test_n_best_single_path`  | N-best       | Single path returned once           |
+| `n_best_tests::test_n_best_diamond`      | N-best       | Diamond graph, 2 paths ordered      |
+| `n_best_tests::test_n_best_many_paths`   | N-best       | Top 3 of 4 paths returned           |
+| `n_best_tests::test_n_best_unreachable`  | N-best       | Empty on unreachable lattice        |
 
 **`forward_backward.rs` (7 tests, feature `wfst-log`):**
 
-| Test | Algorithm | What it verifies |
-|:-----|:---------|:----------------|
-| `test_forward_scores_chain` | Forward | Chain: α[1]=2.0, α[2]=5.0 |
-| `test_backward_scores_chain` | Backward | Chain: β[1]=3.0, β[0]=5.0 |
-| `test_forward_scores_diamond` | Forward | Diamond: min(3.0, 4.0)=3.0 |
-| `test_forward_backward_consistency` | Both | α[final] = β[start] |
-| `test_forward_with_tropical` | Forward | Triangle: via 1 beats direct |
-| `log_tests::test_forward_scores_diamond_log` | Forward (Log) | Log sum-over-paths |
-| `log_tests::test_forward_backward_consistency_log` | Both (Log) | Identity under LogWeight |
+| Test                                               | Algorithm     | What it verifies             |
+|:---------------------------------------------------|:--------------|:-----------------------------|
+| `test_forward_scores_chain`                        | Forward       | Chain: α[1]=2.0, α[2]=5.0    |
+| `test_backward_scores_chain`                       | Backward      | Chain: β[1]=3.0, β[0]=5.0    |
+| `test_forward_scores_diamond`                      | Forward       | Diamond: min(3.0, 4.0)=3.0   |
+| `test_forward_backward_consistency`                | Both          | α[final] = β[start]          |
+| `test_forward_with_tropical`                       | Forward       | Triangle: via 1 beats direct |
+| `log_tests::test_forward_scores_diamond_log`       | Forward (Log) | Log sum-over-paths           |
+| `log_tests::test_forward_backward_consistency_log` | Both (Log)    | Identity under LogWeight     |
 
 Additionally, 7 generic lattice tests verify `viterbi_generic<W>()` and
 `linear_to_lattice_generic<W>()` for non-tropical weight types.
@@ -884,21 +884,21 @@ Additionally, 7 generic lattice tests verify `viterbi_generic<W>()` and
 
 ## 10. Source Reference
 
-| Symbol | Location |
-|:-------|:---------|
-| `TokenSource<T,S>` | `prattail/src/lattice.rs` |
-| `TokenLattice<T,S,W>` | `prattail/src/lattice.rs` |
-| `LatticeEdge<T,S,W>` | `prattail/src/lattice.rs` |
-| `ViterbiPath<T,S,W>` | `prattail/src/lattice.rs` |
-| `viterbi_best_path` | `prattail/src/lattice.rs` |
-| `viterbi_best_path_beam` | `prattail/src/lattice.rs` |
-| `viterbi_generic` | `prattail/src/lattice.rs` |
-| `linear_to_lattice` | `prattail/src/lattice.rs` |
-| `linear_to_lattice_generic` | `prattail/src/lattice.rs` |
-| `n_best_paths` (wfst-log) | `prattail/src/lattice.rs` |
-| `forward_scores` | `prattail/src/forward_backward.rs` (wfst-log) |
-| `backward_scores` | `prattail/src/forward_backward.rs` (wfst-log) |
-| `total_weight` | `prattail/src/forward_backward.rs` (wfst-log) |
+| Symbol                      | Location                                      |
+|:----------------------------|:----------------------------------------------|
+| `TokenSource<T,S>`          | `prattail/src/lattice.rs`                     |
+| `TokenLattice<T,S,W>`       | `prattail/src/lattice.rs`                     |
+| `LatticeEdge<T,S,W>`        | `prattail/src/lattice.rs`                     |
+| `ViterbiPath<T,S,W>`        | `prattail/src/lattice.rs`                     |
+| `viterbi_best_path`         | `prattail/src/lattice.rs`                     |
+| `viterbi_best_path_beam`    | `prattail/src/lattice.rs`                     |
+| `viterbi_generic`           | `prattail/src/lattice.rs`                     |
+| `linear_to_lattice`         | `prattail/src/lattice.rs`                     |
+| `linear_to_lattice_generic` | `prattail/src/lattice.rs`                     |
+| `n_best_paths` (wfst-log)   | `prattail/src/lattice.rs`                     |
+| `forward_scores`            | `prattail/src/forward_backward.rs` (wfst-log) |
+| `backward_scores`           | `prattail/src/forward_backward.rs` (wfst-log) |
+| `total_weight`              | `prattail/src/forward_backward.rs` (wfst-log) |
 
 ---
 

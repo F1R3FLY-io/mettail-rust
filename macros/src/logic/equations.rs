@@ -26,11 +26,14 @@ use syn::Ident;
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
 /// When `analysis` is `Some`, dead constructors are skipped in congruence rules (Sprint 1 DCE).
 /// When `subsumed_equations` is non-empty, subsumed equations are eliminated (Sprint A N10 DCE).
+/// When `cancellation_equations` is non-empty, cancellation pair equations are suppressed from
+/// eqrel generation (they would cause non-convergence via symmetric expansion).
 pub fn generate_equation_rules(
     language: &LanguageDef,
     cat_filter: CategoryFilter,
     analysis: Option<&mettail_prattail::PipelineAnalysis>,
     subsumed_equations: &std::collections::HashSet<usize>,
+    cancellation_equations: &std::collections::HashSet<usize>,
 ) -> TokenStream {
     let mut rules = Vec::new();
 
@@ -42,8 +45,9 @@ pub fn generate_equation_rules(
     rules.extend(generate_congruence_rules(language, cat_filter, analysis));
 
     // 3. Generate user-defined equation rules using unified approach,
-    //    filtering out subsumed equations (Sprint A N10 DCE)
-    rules.extend(unified_rules::generate_equation_rules(language, cat_filter, subsumed_equations));
+    //    filtering out subsumed equations (Sprint A N10 DCE) and
+    //    cancellation pair equations (would cause non-convergence)
+    rules.extend(unified_rules::generate_equation_rules(language, cat_filter, subsumed_equations, cancellation_equations));
 
     quote! {
         #(#rules)*

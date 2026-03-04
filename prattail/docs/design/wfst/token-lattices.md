@@ -142,12 +142,12 @@ variant is known at the call site.
   │        ▼                          ▼                  │
   │  from_weighted()            build TokenLattice       │
   │  → strip f64               → populate edges          │
-  │  → Linear(Vec<(T,S)>)     → Lattice(TokenLattice)   │
+  │  → Linear(Vec<(T,S)>)      → Lattice(TokenLattice)   │
   │        │                          │                  │
   │        ▼                          ▼                  │
   │  resolve()                 resolve() / resolve_beam()│
   │  → identity                → Viterbi extraction      │
-  │  → Vec<(T,S)>             → Vec<(T,S)>              │
+  │  → Vec<(T,S)>              → Vec<(T,S)>              │
   └──────────────────────────────────────────────────────┘
 ```
 
@@ -204,13 +204,13 @@ testing with simple `(usize, usize)` tuples.
 The weight type `W: Semiring` defaults to `TropicalWeight` but can be
 any semiring implementation. Use cases:
 
-| Weight type                               | Use case                           |
-|:------------------------------------------|:-----------------------------------|
-| `TropicalWeight`                          | Standard dispatch priority         |
-| `EditWeight`                              | Minimum-edit recovery              |
-| `ProductWeight<TropicalWeight, EditWeight>`| Joint priority + edit distance     |
-| `CountingWeight`                          | Ambiguity detection (via Product)  |
-| `LogWeight`                               | Probabilistic training (`wfst-log`)|
+| Weight type                                 | Use case                            |
+|:--------------------------------------------|:------------------------------------|
+| `TropicalWeight`                            | Standard dispatch priority          |
+| `EditWeight`                                | Minimum-edit recovery               |
+| `ProductWeight<TropicalWeight, EditWeight>` | Joint priority + edit distance      |
+| `CountingWeight`                            | Ambiguity detection (via Product)   |
+| `LogWeight`                                 | Probabilistic training (`wfst-log`) |
 
 ### 3.4 Why a Default Type Parameter
 
@@ -239,12 +239,12 @@ the lattice resolution process and are not exposed to the parser.
 The lattice stores edges as `Vec<Vec<LatticeEdge<T, S, W>>>` — an
 adjacency list indexed by source node.
 
-| Alternative       | Pros                         | Cons                           | Why not chosen                |
-|:------------------|:-----------------------------|:-------------------------------|:------------------------------|
-| Adjacency list    | O(1) node lookup, cache-friendly edge scan | Wastes space for sparse nodes | **Chosen:** natural fit for sequential DAG processing |
-| CSR (compressed)  | Most compact, cache-optimal  | Static (no dynamic add_edge)  | Need dynamic construction     |
-| Edge list         | Compact, simple              | O(\|E\|) per node lookup       | Viterbi needs per-node access |
-| HashMap           | Sparse-friendly              | Hash overhead, poor cache      | Nodes are dense 0..N          |
+| Alternative      | Pros                                       | Cons                          | Why not chosen                                        |
+|:-----------------|:-------------------------------------------|:------------------------------|:------------------------------------------------------|
+| Adjacency list   | O(1) node lookup, cache-friendly edge scan | Wastes space for sparse nodes | **Chosen:** natural fit for sequential DAG processing |
+| CSR (compressed) | Most compact, cache-optimal                | Static (no dynamic add_edge)  | Need dynamic construction                             |
+| Edge list        | Compact, simple                            | O(\|E\|) per node lookup      | Viterbi needs per-node access                         |
+| HashMap          | Sparse-friendly                            | Hash overhead, poor cache     | Nodes are dense 0..N                                  |
 
 The adjacency list is the right choice because:
 
@@ -555,33 +555,33 @@ Both conversion functions are free functions rather than methods on
 
 ## 10. Feature Gating Strategy
 
-| Function / Type             | Feature gate            | Rationale                              |
-|:----------------------------|:------------------------|:---------------------------------------|
-| `TokenSource`               | always                  | Core abstraction for all parsers       |
-| `TokenLattice`              | always                  | Needed by recovery (implicit lattices) |
-| `LatticeEdge`               | always                  | Part of TokenLattice                   |
-| `ViterbiPath`               | always                  | Return type of Viterbi functions       |
-| `viterbi_best_path()`       | always                  | Lattice resolution                     |
-| `viterbi_best_path_beam()`  | always                  | Beam-pruned lattice resolution         |
-| `viterbi_generic()`         | always                  | Multi-semiring lattice analysis        |
-| `linear_to_lattice()`       | always                  | Testing and composition                |
-| `linear_to_lattice_generic()` | always                | Multi-semiring testing                 |
-| `sort_edges_by_weight()`    | always (needs `W: Ord`) | Edge ordering                          |
-| `n_best_paths()`            | `wfst-log`              | Probabilistic N-best extraction        |
-| `alternative_paths()`       | removed (was `context-sensitive-lex`) | Lattice-aware error recovery (removed) |
+| Function / Type               | Feature gate                          | Rationale                              |
+|:------------------------------|:--------------------------------------|:---------------------------------------|
+| `TokenSource`                 | always                                | Core abstraction for all parsers       |
+| `TokenLattice`                | always                                | Needed by recovery (implicit lattices) |
+| `LatticeEdge`                 | always                                | Part of TokenLattice                   |
+| `ViterbiPath`                 | always                                | Return type of Viterbi functions       |
+| `viterbi_best_path()`         | always                                | Lattice resolution                     |
+| `viterbi_best_path_beam()`    | always                                | Beam-pruned lattice resolution         |
+| `viterbi_generic()`           | always                                | Multi-semiring lattice analysis        |
+| `linear_to_lattice()`         | always                                | Testing and composition                |
+| `linear_to_lattice_generic()` | always                                | Multi-semiring testing                 |
+| `sort_edges_by_weight()`      | always (needs `W: Ord`)               | Edge ordering                          |
+| `n_best_paths()`              | `wfst-log`                            | Probabilistic N-best extraction        |
+| `alternative_paths()`         | removed (was `context-sensitive-lex`) | Lattice-aware error recovery (removed) |
 
 ---
 
 ## 11. Design Decisions Summary
 
-| Decision                          | Chosen                      | Alternative              | Rationale                                                  |
-|:----------------------------------|:----------------------------|:-------------------------|:-----------------------------------------------------------|
-| Two-path enum vs always lattice   | `TokenSource` enum          | Always `TokenLattice`    | Zero overhead for unambiguous case (99%+ of inputs)        |
-| Adjacency list vs CSR             | `Vec<Vec<LatticeEdge>>`     | CSR                      | Dynamic construction via `add_edge()`                      |
-| Two Viterbi fns vs one generic    | Specialized + generic       | Single generic           | Beam pruning requires TropicalWeight-specific float ops    |
-| Predecessor as (node, idx)        | `Vec<Option<(usize,usize)>>`| Path cloning per node    | Avoids allocation during forward pass                      |
-| Edge sorting opt-in               | `sort_edges_by_weight()`    | Auto-sort on add_edge    | O(\|E\| log d) batch vs O(\|E\| × d) incremental           |
-| N-best feature gated              | `wfst-log`                  | Always available         | Only useful for probabilistic workflows; reduces binary size|
+| Decision                        | Chosen                       | Alternative           | Rationale                                                    |
+|:--------------------------------|:-----------------------------|:----------------------|:-------------------------------------------------------------|
+| Two-path enum vs always lattice | `TokenSource` enum           | Always `TokenLattice` | Zero overhead for unambiguous case (99%+ of inputs)          |
+| Adjacency list vs CSR           | `Vec<Vec<LatticeEdge>>`      | CSR                   | Dynamic construction via `add_edge()`                        |
+| Two Viterbi fns vs one generic  | Specialized + generic        | Single generic        | Beam pruning requires TropicalWeight-specific float ops      |
+| Predecessor as (node, idx)      | `Vec<Option<(usize,usize)>>` | Path cloning per node | Avoids allocation during forward pass                        |
+| Edge sorting opt-in             | `sort_edges_by_weight()`     | Auto-sort on add_edge | O(\|E\| log d) batch vs O(\|E\| × d) incremental             |
+| N-best feature gated            | `wfst-log`                   | Always available      | Only useful for probabilistic workflows; reduces binary size |
 
 ---
 
@@ -589,39 +589,39 @@ Both conversion functions are free functions rather than methods on
 
 41 tests covering all major functionality:
 
-| Test name                                    | Category         | What it verifies                                |
-|:---------------------------------------------|:-----------------|:------------------------------------------------|
-| `test_token_source_linear_zero_overhead`     | TokenSource      | Linear variant access, len, is_linear           |
-| `test_token_source_lattice`                  | TokenSource      | Lattice variant detection                       |
-| `test_token_lattice_basic`                   | TokenLattice     | Chain construction, node/edge counts            |
-| `test_token_lattice_ambiguous`               | TokenLattice     | Multi-edge nodes (GtGt ambiguity)               |
-| `test_viterbi_best_path_chain`               | Viterbi          | Simple chain path extraction + weight           |
-| `test_viterbi_best_path_ambiguous`           | Viterbi          | Correct path selection (lower weight wins)      |
-| `test_viterbi_empty_lattice`                 | Viterbi          | None on empty lattice                           |
-| `test_viterbi_unreachable_final`             | Viterbi          | None when final node unreachable                |
-| `test_linear_to_lattice`                     | Conversion       | Chain construction + Viterbi round-trip         |
-| `test_viterbi_beam_prunes_edges`             | Beam             | High-weight path pruned, best path preserved    |
-| `test_sort_edges_by_weight`                  | Sorting          | Edges sorted ascending by weight                |
-| `test_from_weighted_strips_weights`          | from_weighted    | f64 weights stripped, Linear produced            |
-| `test_resolve_linear_zero_overhead`          | resolve          | Linear resolve returns same Vec                 |
-| `test_resolve_lattice_viterbi`               | resolve          | Lattice resolve picks minimum-weight path       |
-| `test_resolve_empty_lattice_returns_error`   | resolve          | Error on empty lattice                          |
-| `test_resolve_beam_linear_ignores_beam`      | resolve_beam     | Beam parameter ignored for Linear               |
-| `test_edit_weight_lattice`                   | Generic lattice  | EditWeight Viterbi selects min-edit path        |
-| `test_product_weight_lattice`                | Generic lattice  | ProductWeight lexicographic Viterbi             |
-| `test_counting_weight_not_viterbi_compatible`| Generic lattice  | CountingWeight Viterbi correctly fails          |
-| `test_generic_lattice_linear_conversion`     | Generic convert  | linear_to_lattice_generic round-trip            |
-| `test_generic_viterbi_unreachable`           | Generic Viterbi  | None for unreachable final node                 |
-| `test_generic_viterbi_empty`                 | Generic Viterbi  | None for empty lattice                          |
-| `test_n_best_single_path`                    | N-best (wfst-log)| Single path returns 1 result                   |
-| `test_n_best_diamond`                        | N-best (wfst-log)| Diamond yields 2 paths, ordered by weight       |
-| `test_n_best_many_paths`                     | N-best (wfst-log)| Top-3 from 4 parallel paths                    |
-| `test_n_best_unreachable`                    | N-best (wfst-log)| Empty vec for unreachable final                 |
-| `test_alternative_paths_single_path`         | Alt paths (csl)  | Single chain yields 1 result                   |
-| `test_alternative_paths_diamond`             | Alt paths (csl)  | Diamond yields 2 paths, weight-sorted           |
-| `test_alternative_paths_from_midpoint`       | Alt paths (csl)  | Start from non-zero node                        |
-| `test_alternative_paths_empty`               | Alt paths (csl)  | Empty lattice yields no paths                   |
-| `test_alternative_paths_n_limit`             | Alt paths (csl)  | Respects N-limit                                |
+| Test name                                     | Category          | What it verifies                             |
+|:----------------------------------------------|:------------------|:---------------------------------------------|
+| `test_token_source_linear_zero_overhead`      | TokenSource       | Linear variant access, len, is_linear        |
+| `test_token_source_lattice`                   | TokenSource       | Lattice variant detection                    |
+| `test_token_lattice_basic`                    | TokenLattice      | Chain construction, node/edge counts         |
+| `test_token_lattice_ambiguous`                | TokenLattice      | Multi-edge nodes (GtGt ambiguity)            |
+| `test_viterbi_best_path_chain`                | Viterbi           | Simple chain path extraction + weight        |
+| `test_viterbi_best_path_ambiguous`            | Viterbi           | Correct path selection (lower weight wins)   |
+| `test_viterbi_empty_lattice`                  | Viterbi           | None on empty lattice                        |
+| `test_viterbi_unreachable_final`              | Viterbi           | None when final node unreachable             |
+| `test_linear_to_lattice`                      | Conversion        | Chain construction + Viterbi round-trip      |
+| `test_viterbi_beam_prunes_edges`              | Beam              | High-weight path pruned, best path preserved |
+| `test_sort_edges_by_weight`                   | Sorting           | Edges sorted ascending by weight             |
+| `test_from_weighted_strips_weights`           | from_weighted     | f64 weights stripped, Linear produced        |
+| `test_resolve_linear_zero_overhead`           | resolve           | Linear resolve returns same Vec              |
+| `test_resolve_lattice_viterbi`                | resolve           | Lattice resolve picks minimum-weight path    |
+| `test_resolve_empty_lattice_returns_error`    | resolve           | Error on empty lattice                       |
+| `test_resolve_beam_linear_ignores_beam`       | resolve_beam      | Beam parameter ignored for Linear            |
+| `test_edit_weight_lattice`                    | Generic lattice   | EditWeight Viterbi selects min-edit path     |
+| `test_product_weight_lattice`                 | Generic lattice   | ProductWeight lexicographic Viterbi          |
+| `test_counting_weight_not_viterbi_compatible` | Generic lattice   | CountingWeight Viterbi correctly fails       |
+| `test_generic_lattice_linear_conversion`      | Generic convert   | linear_to_lattice_generic round-trip         |
+| `test_generic_viterbi_unreachable`            | Generic Viterbi   | None for unreachable final node              |
+| `test_generic_viterbi_empty`                  | Generic Viterbi   | None for empty lattice                       |
+| `test_n_best_single_path`                     | N-best (wfst-log) | Single path returns 1 result                 |
+| `test_n_best_diamond`                         | N-best (wfst-log) | Diamond yields 2 paths, ordered by weight    |
+| `test_n_best_many_paths`                      | N-best (wfst-log) | Top-3 from 4 parallel paths                  |
+| `test_n_best_unreachable`                     | N-best (wfst-log) | Empty vec for unreachable final              |
+| `test_alternative_paths_single_path`          | Alt paths (csl)   | Single chain yields 1 result                 |
+| `test_alternative_paths_diamond`              | Alt paths (csl)   | Diamond yields 2 paths, weight-sorted        |
+| `test_alternative_paths_from_midpoint`        | Alt paths (csl)   | Start from non-zero node                     |
+| `test_alternative_paths_empty`                | Alt paths (csl)   | Empty lattice yields no paths                |
+| `test_alternative_paths_n_limit`              | Alt paths (csl)   | Respects N-limit                             |
 
 Plus 10 additional semiring-related tests exercised through lattice
 operations (EditWeight, ProductWeight, CountingWeight lattice creation
@@ -631,23 +631,23 @@ and Viterbi extraction).
 
 ## 13. Source Reference
 
-| Type / Function                    | File             | Lines          |
-|:-----------------------------------|:-----------------|:---------------|
-| `TokenSource<T, S>`               | `src/lattice.rs` | 51–205         |
-| `TokenSource::linear()`           | `src/lattice.rs` | 70–72          |
-| `TokenSource::from_weighted()`    | `src/lattice.rs` | 144–147        |
-| `TokenSource::resolve()`          | `src/lattice.rs` | 156–171        |
-| `TokenSource::resolve_beam()`     | `src/lattice.rs` | 177–193        |
-| `TokenLattice<T, S, W>`          | `src/lattice.rs` | 240–331        |
-| `LatticeEdge<T, S, W>`           | `src/lattice.rs` | 247–254        |
-| `ViterbiPath<T, S, W>`           | `src/lattice.rs` | 343–348        |
-| `viterbi_best_path()`            | `src/lattice.rs` | 356–361        |
-| `viterbi_best_path_beam()`       | `src/lattice.rs` | 371–449        |
-| `viterbi_generic()`              | `src/lattice.rs` | 484–536        |
-| `linear_to_lattice()`            | `src/lattice.rs` | 546–556        |
-| `linear_to_lattice_generic()`    | `src/lattice.rs` | 562–572        |
-| `n_best_paths()`                 | `src/lattice.rs` | 598–689        |
-| `alternative_paths()`            | `src/lattice.rs` | 708–785        |
+| Type / Function                | File             | Lines   |
+|:-------------------------------|:-----------------|:--------|
+| `TokenSource<T, S>`            | `src/lattice.rs` | 51–205  |
+| `TokenSource::linear()`        | `src/lattice.rs` | 70–72   |
+| `TokenSource::from_weighted()` | `src/lattice.rs` | 144–147 |
+| `TokenSource::resolve()`       | `src/lattice.rs` | 156–171 |
+| `TokenSource::resolve_beam()`  | `src/lattice.rs` | 177–193 |
+| `TokenLattice<T, S, W>`        | `src/lattice.rs` | 240–331 |
+| `LatticeEdge<T, S, W>`         | `src/lattice.rs` | 247–254 |
+| `ViterbiPath<T, S, W>`         | `src/lattice.rs` | 343–348 |
+| `viterbi_best_path()`          | `src/lattice.rs` | 356–361 |
+| `viterbi_best_path_beam()`     | `src/lattice.rs` | 371–449 |
+| `viterbi_generic()`            | `src/lattice.rs` | 484–536 |
+| `linear_to_lattice()`          | `src/lattice.rs` | 546–556 |
+| `linear_to_lattice_generic()`  | `src/lattice.rs` | 562–572 |
+| `n_best_paths()`               | `src/lattice.rs` | 598–689 |
+| `alternative_paths()`          | `src/lattice.rs` | 708–785 |
 
 ---
 

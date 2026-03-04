@@ -73,7 +73,7 @@ Overall throughput (parsing ease) is limited by the narrowest segment:
 
     ╔════════╗   ╔══╗   ╔══════╗   ╔═══════════════╗
     ║ wide   ║───║  ║───║ med  ║───║    wide       ║
-    ║ (c=0)  ║   ║  ║   ║(c=1) ║   ║   (c=0)      ║
+    ║ (c=0)  ║   ║  ║   ║(c=1) ║   ║   (c=0)       ║
     ╚════════╝   ║  ║   ╚══════╝   ╚═══════════════╝
                  ║  ║ ← bottleneck! (c=3)
                  ╚══╝
@@ -110,13 +110,13 @@ B  =  ( N ∪ {∞},  min,  max,  ∞,  0 )
 
 where:
 
-| Component        | Symbol | Concrete value      | Meaning                                 |
-|------------------|--------|---------------------|-----------------------------------------|
-| Carrier set      | K      | N ∪ {∞}             | Non-negative integers plus infinity     |
-| Addition (⊕)     | min    | min(a, b)           | Select least-complex alternative        |
-| Multiplication (⊗)| max   | max(a, b)           | Bottleneck: path complexity = worst segment |
-| Additive identity (0̄) | ∞ | `u32::MAX`          | Unreachable path (identity for min)     |
-| Multiplicative identity (1̄) | 0 | `0_u32`       | Zero complexity (identity for max)      |
+| Component                   | Symbol | Concrete value | Meaning                                     |
+|-----------------------------|--------|----------------|---------------------------------------------|
+| Carrier set                 | K      | N ∪ {∞}        | Non-negative integers plus infinity         |
+| Addition (⊕)                | min    | min(a, b)      | Select least-complex alternative            |
+| Multiplication (⊗)          | max    | max(a, b)      | Bottleneck: path complexity = worst segment |
+| Additive identity (0̄)       | ∞      | `u32::MAX`     | Unreachable path (identity for min)         |
+| Multiplicative identity (1̄) | 0      | `0_u32`        | Zero complexity (identity for max)          |
 
 The name "bottleneck" comes from the max operation along a path: the
 overall path complexity is determined by its most complex (highest)
@@ -401,13 +401,13 @@ selects the best (least-bottlenecked) alternative.
 
 ### 5.2 Relationship to Other Path Problems
 
-| Problem              | Semiring        | ⊕    | ⊗   | Semantics                     |
-|----------------------|-----------------|------|-----|-------------------------------|
-| Shortest path        | Tropical        | min  | +   | Minimize total cost           |
-| Bottleneck path      | Bottleneck      | min  | max | Minimize worst edge           |
-| Widest path          | Max-min         | max  | min | Maximize narrowest edge       |
-| Most reliable path   | Probability     | max  | ×   | Maximize product reliability  |
-| Counting paths       | Counting        | +    | ×   | Count distinct paths          |
+| Problem            | Semiring    | ⊕   | ⊗   | Semantics                    |
+|--------------------|-------------|-----|-----|------------------------------|
+| Shortest path      | Tropical    | min | +   | Minimize total cost          |
+| Bottleneck path    | Bottleneck  | min | max | Minimize worst edge          |
+| Widest path        | Max-min     | max | min | Maximize narrowest edge      |
+| Most reliable path | Probability | max | ×   | Maximize product reliability |
+| Counting paths     | Counting    | +   | ×   | Count distinct paths         |
 
 The bottleneck semiring is the *dual* of the widest-path (max-min)
 semiring obtained by swapping ⊕ and ⊗. In network routing, the
@@ -434,25 +434,25 @@ ordered.
 The ComplexityWeight value represents the estimated **lookahead
 depth** or **parsing effort** required at a dispatch point:
 
-| Value    | Constant               | Interpretation                                |
-|----------|------------------------|-----------------------------------------------|
-| 0        | `deterministic()`      | Deterministic dispatch -- no lookahead needed |
-| 1        | `single_lookahead()`   | Single-token lookahead resolves ambiguity     |
-| n        | `multi_lookahead(n)`   | n-token lookahead required                    |
-| ∞ (MAX)  | `infinite()`           | Unreachable path -- no valid derivation       |
+| Value   | Constant             | Interpretation                                |
+|---------|----------------------|-----------------------------------------------|
+| 0       | `deterministic()`    | Deterministic dispatch -- no lookahead needed |
+| 1       | `single_lookahead()` | Single-token lookahead resolves ambiguity     |
+| n       | `multi_lookahead(n)` | n-token lookahead required                    |
+| ∞ (MAX) | `infinite()`         | Unreachable path -- no valid derivation       |
 
 ### 6.2 Semantic Mapping
 
 Each dispatch point in PraTTaIL's generated parser carries an
 implicit complexity level:
 
-| Dispatch Scenario                   | Complexity | Rationale                            |
-|-------------------------------------|------------|--------------------------------------|
-| Unique token in FIRST set           | 0          | No ambiguity, direct dispatch        |
-| Two alternatives, distinct 2nd token | 1         | One lookahead disambiguates          |
-| Three alternatives, shared prefix    | 2         | Two lookaheads needed                |
-| Cross-category with shared FIRST    | 1--3       | Depends on overlap depth             |
-| Unreachable category/token pair     | ∞          | No derivation exists                 |
+| Dispatch Scenario                    | Complexity | Rationale                     |
+|--------------------------------------|------------|-------------------------------|
+| Unique token in FIRST set            | 0          | No ambiguity, direct dispatch |
+| Two alternatives, distinct 2nd token | 1          | One lookahead disambiguates   |
+| Three alternatives, shared prefix    | 2          | Two lookaheads needed         |
+| Cross-category with shared FIRST     | 1--3       | Depends on overlap depth      |
+| Unreachable category/token pair      | ∞          | No derivation exists          |
 
 ### 6.3 Applications
 
@@ -657,13 +657,13 @@ u32::MAX is the largest u32). The Viterbi invariant is satisfied.
 
 All ComplexityWeight operations are O(1) integer operations:
 
-| Operation           | Implementation         | Cost   |
-|---------------------|------------------------|--------|
-| `plus(a, b)`        | `u32::min(a, b)`       | O(1)   |
-| `times(a, b)`       | `u32::max(a, b)`       | O(1)   |
-| `is_zero(a)`        | `a == u32::MAX`        | O(1)   |
-| `is_one(a)`         | `a == 0`               | O(1)   |
-| `cmp(a, b)`         | `u32::cmp(a, b)`       | O(1)   |
+| Operation     | Implementation   | Cost |
+|---------------|------------------|------|
+| `plus(a, b)`  | `u32::min(a, b)` | O(1) |
+| `times(a, b)` | `u32::max(a, b)` | O(1) |
+| `is_zero(a)`  | `a == u32::MAX`  | O(1) |
+| `is_one(a)`   | `a == 0`         | O(1) |
+| `cmp(a, b)`   | `u32::cmp(a, b)` | O(1) |
 
 Both `min` and `max` on `u32` compile to a single conditional-move
 instruction (`cmov`) on x86-64, making them branch-free. There is

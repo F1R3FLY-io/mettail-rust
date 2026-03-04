@@ -61,10 +61,13 @@ pub fn generate_category_rules(language: &LanguageDef, cat_filter: CategoryFilte
         let cat_lower = &rn.cat_lower;
         let rw_rel = &rn.rw_rel;
 
-        // Expand via rewrites: add rewritten terms to enable further exploration
-        // Clone c1 so we insert an owned value; Ascent may bind c1 by reference (e.g. &Str).
+        // Expand via rewrites: add rewritten terms to enable further exploration.
+        // Normalize the rewritten term to eagerly collapse cancellation pairs
+        // (e.g., PDrop(NQuote(P)) → P) before inserting into the category relation.
+        // Without this, cancellation pairs introduced by rewrites would persist
+        // as un-collapsed terms in the Ascent fixpoint.
         rules.push(quote! {
-            #cat_lower(c1.clone()) <-- #cat_lower(c0), #rw_rel(c0, c1);
+            #cat_lower(c1.clone().normalize()) <-- #cat_lower(c0), #rw_rel(c0, c1);
         });
 
         // PERFORMANCE OPTIMIZATION (2026-01-27):

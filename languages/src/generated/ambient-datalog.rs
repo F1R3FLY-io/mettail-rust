@@ -127,7 +127,7 @@ name(sub.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_NAME_NAME.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-proc(c1.clone()) <--
+proc(c1.clone().normalize()) <--
     proc(c0),
     rw_proc(c0, c1);
 
@@ -190,7 +190,7 @@ rw_proc(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_CONG_ARG_NAME.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_name(arg, new_arg);
 
-name(c1.clone()) <--
+name(c1.clone().normalize()) <--
     name(c0),
     rw_name(c0, c1);
 

@@ -15,6 +15,16 @@
 //! | C | Cross-category | Cast rules + FIRST sets |
 //! | P | Performance | DFA stats + WFST metrics |
 //!
+//! ## Macro-Phase Lints
+//!
+//! The following lints are emitted by the macros crate (not this module) because
+//! they require access to equation/rewrite data unavailable in the PraTTaIL pipeline:
+//!
+//! | ID | Severity | Name | Description |
+//! |----|----------|------|-------------|
+//! | G25 | note | cancellation-pair-detected | Equation `Outer(Inner(X)) = X` suppressed from eqrel |
+//! | W09 | warning | cancellation-pair-missing-rewrite | Suppressed equation has no corresponding rewrite |
+//!
 //! ## Display Format
 //!
 //! Rust-compiler-style diagnostics to stderr:

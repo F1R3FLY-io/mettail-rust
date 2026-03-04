@@ -62,8 +62,8 @@ Consider a simple 3-node dispatch graph:
 
 ```
          ┌─── w₁ ───▶ B ─── w₃ ───┐
-    q₀ ──┤                         ├──▶ q_f    ⊗ chains steps: w₁ ⊗ w₃
-         └─── w₂ ───▶ C ─── w₄ ───┘            ⊕ picks winner: path₁ ⊕ path₂
+    q₀ ──┤                        ├──▶ q_f    ⊗ chains steps: w₁ ⊗ w₃
+         └─── w₂ ───▶ C ─── w₄ ───┘           ⊕ picks winner: path₁ ⊕ path₂
 
     path₁ = w₁ ⊗ w₃     (cost of going through B)
     path₂ = w₂ ⊗ w₄     (cost of going through C)
@@ -575,6 +575,15 @@ Pipeline Stage                        Active Semirings
 Stages 1–8 occur at compile time (inside the proc-macro expansion).
 Stages 9–12 occur at parse time in the generated parser. The `wfst-log`
 feature gates stages 11 (forward-backward) and the EntropyWeight semiring.
+
+> **Multi-Semiring Composition:** The table above lists semirings per stage but
+> does not distinguish *how* they interact.  PraTTaIL uses three composition
+> modes — **Re-Interpretation** (Mode 1), **ProductWeight Joint Tracking**
+> (Mode 2), and **Cross-Structure Data Flow** (Mode 3) — to orchestrate
+> multiple semirings over shared WFST topology.  See
+> [`semiring-composition.md`](semiring-composition.md) for the quick reference
+> and [`architecture/wfst/semiring-orchestration.md`](../../architecture/wfst/semiring-orchestration.md)
+> for the full pipeline annotation.
 
 ---
 

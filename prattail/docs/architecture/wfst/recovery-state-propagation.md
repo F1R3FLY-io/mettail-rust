@@ -29,12 +29,12 @@ no recovery-related code executes during successful parsing.
 
 The recovery system uses four categories of state:
 
-| Category                     | Storage                          | Scope         | Initialized  |
-|------------------------------|----------------------------------|---------------|-------------|
-| Bracket balance              | `Cell<(usize, u16, u16, u16)>`   | Per-category  | On min_bp=0 |
-| Last error position          | `Cell<usize>`                    | Per-category  | On min_bp=0 |
-| Frame depth + kind           | `Cell<(u16, u8)>`                | Per-category  | On each drive loop |
-| ParseSimulator               | `LazyLock<ParseSimulator>`       | Global        | On first error |
+| Category            | Storage                        | Scope        | Initialized        |
+|---------------------|--------------------------------|--------------|--------------------|
+| Bracket balance     | `Cell<(usize, u16, u16, u16)>` | Per-category | On min_bp=0        |
+| Last error position | `Cell<usize>`                  | Per-category | On min_bp=0        |
+| Frame depth + kind  | `Cell<(u16, u8)>`              | Per-category | On each drive loop |
+| ParseSimulator      | `LazyLock<ParseSimulator>`     | Global       | On first error     |
 
 All four are thread-local (`thread_local!` macro) or `static`
 (`LazyLock`). None are accessed on the happy path.
@@ -483,14 +483,14 @@ static RECOVERY_TOKEN_NAMES_Int: &[&str] = &[
 
 `RepairAction::describe(token_names)` produces user-facing messages:
 
-| Action                              | Description                               |
-|-------------------------------------|-------------------------------------------|
-| `SkipToSync { skip_count: 2, .. }`  | `"skip 2 token(s) to 'Semi'"`            |
-| `DeleteToken`                       | `"delete unexpected token"`               |
-| `InsertToken { token: RParen }`     | `"insert missing ')'"`                   |
-| `SubstituteToken { .. }`            | `"expected 'Plus' here"`                  |
-| `SwapTokens { .. }`                 | `"swap adjacent tokens"`                  |
-| `CategorySwitch { to: "Bool", .. }` | `"try parsing as Bool (cast Bool → Int)"` |
+| Action                              | Description                                         |
+|-------------------------------------|-----------------------------------------------------|
+| `SkipToSync { skip_count: 2, .. }`  | `"skip 2 token(s) to 'Semi'"`                       |
+| `DeleteToken`                       | `"delete unexpected token"`                         |
+| `InsertToken { token: RParen }`     | `"insert missing ')'"`                              |
+| `SubstituteToken { .. }`            | `"expected 'Plus' here"`                            |
+| `SwapTokens { .. }`                 | `"swap adjacent tokens"`                            |
+| `CategorySwitch { to: "Bool", .. }` | `"try parsing as Bool (cast Bool → Int)"`           |
 | `Composite { steps: [del, skip] }`  | `"delete unexpected token, skip 1 token(s) to ';'"` |
 
 ---
@@ -544,18 +544,18 @@ are penalized both by their lexer weight and by the index penalty.
 
 ## 10. Zero-Overhead Summary
 
-| Component                    | Happy Path    | Error Path               |
-|------------------------------|---------------|--------------------------|
-| parse_Cat()                  | Called        | Not called               |
-| parse_Cat_recovering()       | Delegates     | Full recovery logic      |
-| BRACKET_STATE_Cat            | Not touched   | Incremental scan         |
-| LAST_ERROR_POS_Cat           | Not touched   | Cascade check + update   |
-| FRAME_STATE_Cat              | Written (3 bytes) | Read by wfst_recover |
-| PARSE_SIMULATOR              | Not initialized | Lazy init on first use |
-| token_to_id()                | Not called    | Called for sim + Viterbi  |
-| wfst_recover_Cat()           | Not called    | Full 7-strategy eval     |
-| RecoveryConfig constants     | Not read      | Read by multipliers      |
-| CROSS_CAT_CASTS_Cat          | Not read      | Iterated on error        |
+| Component                | Happy Path        | Error Path               |
+|--------------------------|-------------------|--------------------------|
+| parse_Cat()              | Called            | Not called               |
+| parse_Cat_recovering()   | Delegates         | Full recovery logic      |
+| BRACKET_STATE_Cat        | Not touched       | Incremental scan         |
+| LAST_ERROR_POS_Cat       | Not touched       | Cascade check + update   |
+| FRAME_STATE_Cat          | Written (3 bytes) | Read by wfst_recover     |
+| PARSE_SIMULATOR          | Not initialized   | Lazy init on first use   |
+| token_to_id()            | Not called        | Called for sim + Viterbi |
+| wfst_recover_Cat()       | Not called        | Full 7-strategy eval     |
+| RecoveryConfig constants | Not read          | Read by multipliers      |
+| CROSS_CAT_CASTS_Cat      | Not read          | Iterated on error        |
 
 **FRAME_STATE_Cat** is the only recovery-related cell written on the
 happy path (at the top of each trampoline `'drive` loop). The write is a
@@ -566,24 +566,24 @@ recovery infrastructure is completely idle during successful parsing.
 
 ## 11. Source Reference
 
-| Symbol                                  | Location                              |
-|-----------------------------------------|---------------------------------------|
-| `BRACKET_STATE_Cat`                     | `prattail/src/pipeline.rs:2099`       |
-| `LAST_ERROR_POS_Cat`                    | `prattail/src/pipeline.rs:2101`       |
-| `FRAME_STATE_Cat`                       | `prattail/src/trampoline.rs:1030`     |
-| `frame_kind_of_Cat()`                   | `prattail/src/trampoline.rs:1041`     |
-| `FRAME_POOL_Cat`                        | `prattail/src/trampoline.rs` (pool)   |
-| `emit_recovery_wfst_static()`           | `prattail/src/pipeline.rs:1622`       |
-| `emit_parse_simulator_static()`         | `prattail/src/pipeline.rs:1695`       |
-| `emit_token_to_id_fn()`                 | `prattail/src/pipeline.rs:1774`       |
-| `generate_wfst_recovery_fn()`           | `prattail/src/pipeline.rs:1831`       |
-| `write_trampolined_parser_recovering_wfst()` | `prattail/src/pipeline.rs:2070` |
-| `RECOVERY_TOKEN_NAMES_Cat`              | `prattail/src/pipeline.rs:1666`       |
-| `ParseError::RecoveryApplied`           | `prattail/src/runtime_types.rs:93–97` |
-| `RepairAction::describe()`              | `prattail/src/recovery.rs:332–361`    |
-| `lattice_recovery()`                    | `prattail/src/recovery.rs:1709–1750`  |
-| `CROSS_CAT_CASTS_Cat`                   | `prattail/src/pipeline.rs:1180`       |
-| `cast_suggestions`                      | `prattail/src/trampoline.rs:677`      |
+| Symbol                                       | Location                              |
+|----------------------------------------------|---------------------------------------|
+| `BRACKET_STATE_Cat`                          | `prattail/src/pipeline.rs:2099`       |
+| `LAST_ERROR_POS_Cat`                         | `prattail/src/pipeline.rs:2101`       |
+| `FRAME_STATE_Cat`                            | `prattail/src/trampoline.rs:1030`     |
+| `frame_kind_of_Cat()`                        | `prattail/src/trampoline.rs:1041`     |
+| `FRAME_POOL_Cat`                             | `prattail/src/trampoline.rs` (pool)   |
+| `emit_recovery_wfst_static()`                | `prattail/src/pipeline.rs:1622`       |
+| `emit_parse_simulator_static()`              | `prattail/src/pipeline.rs:1695`       |
+| `emit_token_to_id_fn()`                      | `prattail/src/pipeline.rs:1774`       |
+| `generate_wfst_recovery_fn()`                | `prattail/src/pipeline.rs:1831`       |
+| `write_trampolined_parser_recovering_wfst()` | `prattail/src/pipeline.rs:2070`       |
+| `RECOVERY_TOKEN_NAMES_Cat`                   | `prattail/src/pipeline.rs:1666`       |
+| `ParseError::RecoveryApplied`                | `prattail/src/runtime_types.rs:93–97` |
+| `RepairAction::describe()`                   | `prattail/src/recovery.rs:332–361`    |
+| `lattice_recovery()`                         | `prattail/src/recovery.rs:1709–1750`  |
+| `CROSS_CAT_CASTS_Cat`                        | `prattail/src/pipeline.rs:1180`       |
+| `cast_suggestions`                           | `prattail/src/trampoline.rs:677`      |
 
 **Cross-references:**
 

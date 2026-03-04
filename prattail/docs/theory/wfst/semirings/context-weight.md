@@ -66,19 +66,19 @@ S  =  ( 𝒫(Labels),  ∪,  ∩,  ∅,  U )
 where `Labels = {0, 1, ..., 127}` and `𝒫(Labels)` is its power set,
 represented as `BitSet<u128>`.
 
-| Component                      | Symbol | Concrete value             | Meaning                                      |
-|--------------------------------|--------|----------------------------|----------------------------------------------|
-| Carrier set                    | K      | 𝒫(Labels) via `u128`      | Subsets of up to 128 rule label IDs          |
-| Addition (⊕)                   | ∪      | bitwise OR (`\|`)          | Any contributing rule from either path       |
-| Multiplication (⊗)             | ∩      | bitwise AND (`&`)          | Rules common to both sequential segments     |
-| Additive identity (0̄)          | ∅      | `0_u128`                   | No rules reachable (empty set)               |
-| Multiplicative identity (1̄)    | U      | `u128::MAX` (all 128 bits) | All rules reachable (universal set)           |
+| Component                   | Symbol | Concrete value             | Meaning                                  |
+|-----------------------------|--------|----------------------------|------------------------------------------|
+| Carrier set                 | K      | 𝒫(Labels) via `u128`       | Subsets of up to 128 rule label IDs      |
+| Addition (⊕)                | ∪      | bitwise OR (`\|`)          | Any contributing rule from either path   |
+| Multiplication (⊗)          | ∩      | bitwise AND (`&`)          | Rules common to both sequential segments |
+| Additive identity (0̄)       | ∅      | `0_u128`                   | No rules reachable (empty set)           |
+| Multiplicative identity (1̄) | U      | `u128::MAX` (all 128 bits) | All rules reachable (universal set)      |
 
 In WFST terms:
 
-- **⊕ = ∪** combines parallel paths: the union of contributing rules from
+- **⊕  = ∪** combines parallel paths: the union of contributing rules from
   each alternative.
-- **⊗ = ∩** sequences path segments: only rules that contributed to *both*
+- **⊗  = ∩** sequences path segments: only rules that contributed to *both*
   segments survive composition.
 - **0̄ = ∅** is the "no rules" weight -- the additive identity (∅ ∪ A = A).
 - **1̄ = U** is the "all rules" weight -- the multiplicative identity

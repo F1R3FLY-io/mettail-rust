@@ -484,10 +484,13 @@ fn premise_to_condition(premise: &crate::ast::language::Premise) -> Option<Condi
 ///
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
 /// When `subsumed_equations` is non-empty, subsumed equations are skipped (Sprint A N10 DCE).
+/// When `cancellation_equations` is non-empty, cancellation pair equations are suppressed
+/// from eqrel generation (they would cause non-convergence via symmetric expansion).
 pub fn generate_equation_rules(
     language: &LanguageDef,
     cat_filter: CategoryFilter,
     subsumed_equations: &std::collections::HashSet<usize>,
+    cancellation_equations: &std::collections::HashSet<usize>,
 ) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
@@ -497,6 +500,12 @@ pub fn generate_equation_rules(
         // equation's. Since equations are symmetric, the general equation already
         // covers all terms the subsumed one would match.
         if subsumed_equations.contains(&eq_idx) {
+            continue;
+        }
+        // Skip cancellation pair equations: Outer(Inner(X)) = X
+        // These would cause non-convergence in eqrel due to symmetric expansion.
+        // Handled by normalize arms + directional rewrites instead.
+        if cancellation_equations.contains(&eq_idx) {
             continue;
         }
         // Determine category - try LHS first, then RHS

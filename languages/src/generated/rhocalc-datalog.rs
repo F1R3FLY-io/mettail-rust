@@ -747,7 +747,7 @@ str(sub.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_STR_STR.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-proc(c1.clone()) <--
+proc(c1.clone().normalize()) <--
     proc(c0),
     rw_proc(c0, c1);
 
@@ -903,7 +903,7 @@ rw_proc(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_CONG_ARG_STR.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_str(arg, new_arg);
 
-name(c1.clone()) <--
+name(c1.clone().normalize()) <--
     name(c0),
     rw_name(c0, c1);
 
@@ -1042,7 +1042,7 @@ rw_name(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_NAME_CONG_ARG_STR.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_str(arg, new_arg);
 
-int(c1.clone()) <--
+int(c1.clone().normalize()) <--
     int(c0),
     rw_int(c0, c1);
 
@@ -1076,7 +1076,7 @@ rw_int(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_INT_CONG_ARG_INT.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_int(arg, new_arg);
 
-float(c1.clone()) <--
+float(c1.clone().normalize()) <--
     float(c0),
     rw_float(c0, c1);
 
@@ -1110,7 +1110,7 @@ rw_float(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_FLOAT_CONG_ARG_FLOAT.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_float(arg, new_arg);
 
-bool(c1.clone()) <--
+bool(c1.clone().normalize()) <--
     bool(c0),
     rw_bool(c0, c1);
 
@@ -1144,7 +1144,7 @@ rw_bool(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_BOOL_CONG_ARG_BOOL.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_bool(arg, new_arg);
 
-str(c1.clone()) <--
+str(c1.clone().normalize()) <--
     str(c0),
     rw_str(c0, c1);
 
@@ -1349,15 +1349,6 @@ eq_proc(s.clone(), t.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_8.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_str(s_f0, t_f0);
-
-eq_name(s.clone(), t.clone()),
-name(t.clone()) <--
-    name(s),
-    if let Name::NQuote(ref s_f0) = s,
-    let s_f0_deref = &** s_f0,
-    if let Proc::PDrop(ref s_f0_deref_f0) = s_f0_deref,
-    let s_f0_deref_f0_deref = &** s_f0_deref_f0,
-    let t = ((s_f0_deref_f0_deref.clone()).clone()).normalize();
 
 eq_proc(s.clone(), t.clone()),
 proc(t.clone()) <--

@@ -35,14 +35,14 @@ moves it one step forward; it cannot go backwards.
   ┌──────────────────────────────────────────────────────────────────────┐
   │  PipelineState                                                       │
   │                                                                      │
-  │  ┌───────────┐   advance()   ┌─────────────┐   advance()            │
-  │  │  Ready    │ ─────────────►│  Generated  │ ─────────────►Complete │
-  │  │           │               │             │                        │
-  │  │ lexer_    │               │ lexer_code  │               Token-   │
-  │  │  bundle   │               │             │               Stream   │
-  │  │ parser_   │               │ parser_code │                        │
-  │  │  bundle   │               │             │                        │
-  │  └───────────┘               └─────────────┘                        │
+  │  ┌───────────┐   advance()   ┌─────────────┐   advance()             │
+  │  │  Ready    │ ─────────────►│  Generated  │ ─────────────►Complete  │
+  │  │           │               │             │                         │
+  │  │ lexer_    │               │ lexer_code  │               Token-    │
+  │  │  bundle   │               │             │               Stream    │
+  │  │ parser_   │               │ parser_code │                         │
+  │  │  bundle   │               │             │                         │
+  │  └───────────┘               └─────────────┘                         │
   └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -77,7 +77,7 @@ output is written to the output buffer. The overall sequence is:
   ├─ 4. compute_follow_sets_from_inputs()  ← FOLLOW sets per category
   │
   ├─ 5. WFST construction ──────────────────────────────────────────────┐
-  │       │                                                              │
+  │       │                                                             │
   │       ├─ a. build_dispatch_action_tables()   (prediction.rs)        │
   │       ├─ b. build_prediction_wfsts()         (wfst.rs)              │
   │       ├─ c. TransducerCascade optimization    (transducer.rs)       │
@@ -86,12 +86,12 @@ output is written to the output buffer. The overall sequence is:
   │       ├─ d. TokenIdMap::from_names()         (token_id.rs)          │
   │       ├─ e. build_recovery_wfsts()           (recovery.rs)          │
   │       ├─ f. dead-rule detection              (BooleanWeight)        │
-  │       └─ g. NFA spillover detection          (trampoline.rs)       │
-  │                                                                      │
+  │       └─ g. NFA spillover detection          (trampoline.rs)        │
+  │                                                                     │
   ├─ 6. resolve_dispatch_winners() ← composed dispatch resolution       │
-  │                                                                      │
+  │                                                                     │
   ├─ 7. write_rd_handler() × N        ← RD prefix handlers              │
-  │                                                                      │
+  │                                                                     │
   ├─ 8. write_trampolined_parser() ←───── uses prediction_wfst per cat ─┘
   │      per category
   │
@@ -222,6 +222,15 @@ incremental recompiles.
     recovery_wfsts       Vec<RecoveryWfst>  — one per category
 ```
 
+> **Mode 3 — Cross-Structure Data Flow:** `build_recovery_wfsts()` contains two
+> Mode 3 cross-structure flows: **Flow A** extracts tropical weights from the
+> prediction WFST and injects them as discount factors, and **Flow B** extracts
+> rule indices and injects them as `ContextWeight` bitsets.  See
+> [`semiring-composition.md`](../../theory/wfst/semiring-composition.md) §4 for
+> the formal definition and
+> [`semiring-orchestration.md`](semiring-orchestration.md) §5 for
+> source-level detail.
+
 Each `RecoveryWfst` encodes three classes of repair actions for every
 token in the grammar:
 
@@ -313,36 +322,36 @@ identify dead rules.  Detection runs via `detect_dead_rules()` in
 
 ```
   Four-Tier Dead-Rule Detection (pipeline.rs:106–207)
-  ┌───────────────────────────────────────────────────────────────┐
-  │                                                               │
-  │  For each rule R:                                             │
-  │                                                               │
-  │  Tier 1 — Literal rules                                       │
-  │    if R.is_literal:                                           │
-  │      dead if category has no native_type                      │
-  │      (no match arm generated → definitionally unreachable)    │
-  │                                                               │
-  │  Tier 2 — Same-category infix/var rules                       │
+  ┌──────────────────────────────────────────────────────────────┐
+  │                                                              │
+  │  For each rule R:                                            │
+  │                                                              │
+  │  Tier 1 — Literal rules                                      │
+  │    if R.is_literal:                                          │
+  │      dead if category has no native_type                     │
+  │      (no match arm generated → definitionally unreachable)   │
+  │                                                              │
+  │  Tier 2 — Same-category infix/var rules                      │
   │    if (R.is_infix && !R.is_cross_category) || R.is_var:      │
-  │      dead if category ∉ reachable_categories                  │
+  │      dead if category ∉ reachable_categories                 │
   │      (reachable = μX. {C|FIRST(C)≠∅} ∪                       │
   │                        {C|∃cast/cross-cat r: src∈X,tgt=C})   │
-  │                                                               │
-  │  Tier 3 — Prefix/cast/cross-category rules                    │
-  │    dead if no token in FIRST(R.category) dispatches to R      │
-  │    via the prediction WFST (implicit BooleanWeight query)     │
-  │                                                               │
-  │  Data flow:                                                   │
-  │    detect_dead_rules() → Vec<DeadRuleWarning>                 │
-  │      → lint_w01_dead_rule() → Vec<LintDiagnostic>             │
-  │        → emit_diagnostics() → stderr                          │
-  │                                                               │
-  │  Dead rules are reported but not removed from the grammar     │
-  │  (they may be intentionally present for documentation or      │
-  │  future use). The diagnostic helps grammar authors identify   │
-  │  rules that are shadowed by higher-priority alternatives.     │
-  │                                                               │
-  └───────────────────────────────────────────────────────────────┘
+  │                                                              │
+  │  Tier 3 — Prefix/cast/cross-category rules                   │
+  │    dead if no token in FIRST(R.category) dispatches to R     │
+  │    via the prediction WFST (implicit BooleanWeight query)    │
+  │                                                              │
+  │  Data flow:                                                  │
+  │    detect_dead_rules() → Vec<DeadRuleWarning>                │
+  │      → lint_w01_dead_rule() → Vec<LintDiagnostic>            │
+  │        → emit_diagnostics() → stderr                         │
+  │                                                              │
+  │  Dead rules are reported but not removed from the grammar    │
+  │  (they may be intentionally present for documentation or     │
+  │  future use). The diagnostic helps grammar authors identify  │
+  │  rules that are shadowed by higher-priority alternatives.    │
+  │                                                              │
+  └──────────────────────────────────────────────────────────────┘
 ```
 
 See [../../design/wfst/dead-rule-detection.md](../../design/wfst/dead-rule-detection.md)
@@ -405,7 +414,7 @@ the pipeline together with the WFST-specific fields added by each step.
   ┌──────────────────────────────────────────────────────────────────────┐
   │  Generated parser code (String)                                      │
   │                                                                      │
-  │  * RD prefix handlers      ← write_rd_handler() × N                 │
+  │  * RD prefix handlers      ← write_rd_handler() × N                  │
   │  * Trampolined parsers      ← write_trampolined_parser()             │
   │      ↳ prediction_wfst injected into TrampolineConfig per category   │
   │  * Cross-cat dispatch       ← write_category_dispatch_weighted()     │

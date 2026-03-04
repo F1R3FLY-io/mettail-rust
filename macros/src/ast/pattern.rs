@@ -2206,3 +2206,143 @@ fn is_collection_field(rule: &super::grammar::GrammarRule, i: usize) -> bool {
     }
     false
 }
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Cancellation pair detection
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A detected cancellation pair from an equation.
+///
+/// Represents the pattern `Outer(Inner(X)) = X` where `Outer` and `Inner` are
+/// single-argument constructors (possibly from different categories) whose
+/// composition is the identity. The equation is suppressed from `eqrel` generation
+/// and handled by an eagerly-applied normalize arm instead.
+///
+/// Example: `PDrop(NQuote(P)) = P` — PDrop (Proc→Name) and NQuote (Name→Proc)
+/// cancel each other when composed.
+#[derive(Debug, Clone)]
+pub struct CancellationPair {
+    /// The outer constructor (e.g., PDrop)
+    pub outer_constructor: Ident,
+    /// The category the outer constructor belongs to (e.g., Proc)
+    pub outer_category: Ident,
+    /// The inner constructor (e.g., NQuote)
+    pub inner_constructor: Ident,
+    /// The category the inner constructor belongs to (e.g., Name)
+    pub inner_category: Ident,
+    /// Index into `language.equations`
+    pub equation_index: usize,
+    /// The equation's name identifier (e.g., QuoteDrop, ExecEq)
+    pub equation_name: Ident,
+}
+
+/// Detect if an equation represents a cancellation pair.
+///
+/// A cancellation pair has the form `Outer(Inner(X)) = X` where:
+/// - One side is a bare variable `X`
+/// - The other side is `Apply(Outer, [Apply(Inner, [Var(X)])])` with the same `X`
+/// - Both constructors have exactly one non-terminal argument and no binders
+///
+/// Checks both orientations: `LHS = RHS` and `RHS = LHS`.
+pub fn detect_cancellation_pair(
+    eq_idx: usize,
+    eq: &super::language::Equation,
+    language: &LanguageDef,
+) -> Option<CancellationPair> {
+    try_detect_cancellation(eq_idx, eq, &eq.left, &eq.right, language)
+        .or_else(|| try_detect_cancellation(eq_idx, eq, &eq.right, &eq.left, language))
+}
+
+/// Try to detect a cancellation pair with `structured` as the composed side
+/// and `variable` as the bare variable side.
+fn try_detect_cancellation(
+    eq_idx: usize,
+    eq: &super::language::Equation,
+    structured: &Pattern,
+    variable: &Pattern,
+    language: &LanguageDef,
+) -> Option<CancellationPair> {
+    // Variable side must be a bare variable
+    let var_name = match variable {
+        Pattern::Term(PatternTerm::Var(v)) => v,
+        _ => return None,
+    };
+
+    // Structured side must be Apply(Outer, [inner_pattern])
+    let (outer_ctor, inner_pattern) = match structured {
+        Pattern::Term(PatternTerm::Apply { constructor, args }) if args.len() == 1 => {
+            (constructor, &args[0])
+        }
+        _ => return None,
+    };
+
+    // Inner pattern must be Apply(Inner, [Var(same_name)])
+    let (inner_ctor, innermost_var) = match inner_pattern {
+        Pattern::Term(PatternTerm::Apply { constructor, args }) if args.len() == 1 => {
+            (constructor, &args[0])
+        }
+        _ => return None,
+    };
+
+    // Innermost must be Var with same name as the variable side
+    let inner_var = match innermost_var {
+        Pattern::Term(PatternTerm::Var(v)) => v,
+        _ => return None,
+    };
+    if inner_var.to_string() != var_name.to_string() {
+        return None;
+    }
+
+    // Look up both constructors in language.terms
+    let outer_rule = language
+        .terms
+        .iter()
+        .find(|r| r.label == *outer_ctor)?;
+    let inner_rule = language
+        .terms
+        .iter()
+        .find(|r| r.label == *inner_ctor)?;
+
+    // Both must have exactly 1 non-terminal field and no binders
+    let outer_nt_count = outer_rule
+        .items
+        .iter()
+        .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+        .count();
+    let inner_nt_count = inner_rule
+        .items
+        .iter()
+        .filter(|item| matches!(item, GrammarItem::NonTerminal(_)))
+        .count();
+    if outer_nt_count != 1 || inner_nt_count != 1 {
+        return None;
+    }
+    if !outer_rule.bindings.is_empty() || !inner_rule.bindings.is_empty() {
+        return None;
+    }
+
+    Some(CancellationPair {
+        outer_constructor: outer_ctor.clone(),
+        outer_category: outer_rule.category.clone(),
+        inner_constructor: inner_ctor.clone(),
+        inner_category: inner_rule.category.clone(),
+        equation_index: eq_idx,
+        equation_name: eq.name.clone(),
+    })
+}
+
+/// Detect all cancellation pairs from equations.
+///
+/// Returns `(pairs, suppressed_indices)` where `suppressed_indices` is the set of
+/// equation indices to suppress from `eqrel` generation.
+pub fn detect_cancellation_pairs(language: &LanguageDef) -> (Vec<CancellationPair>, HashSet<usize>) {
+    let mut pairs = Vec::new();
+    let mut suppressed = HashSet::new();
+    for (idx, eq) in language.equations.iter().enumerate() {
+        if let Some(pair) = detect_cancellation_pair(idx, eq, language) {
+            suppressed.insert(idx);
+            pairs.push(pair);
+        }
+    }
+    (pairs, suppressed)
+}

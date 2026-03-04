@@ -32,9 +32,9 @@ The five mechanisms fall into two architectural families: **merge-based**
 multiple independent parsers).
 
 ```
-  ┌─────────────────────────────────────────────────────────────────┐
-  │                   Grammar Composition                           │
-  │                                                                 │
+  ┌────────────────────────────────────────────────────────────────┐
+  │                   Grammar Composition                          │
+  │                                                                │
   │  ┌──────────────────────────────────────┐  ┌────────────────┐  │
   │  │     Merge-Based (single parser)      │  │  Delegation    │  │
   │  │                                      │  │  (N parsers)   │  │
@@ -54,7 +54,7 @@ multiple independent parsers).
   │  │  │  compose_with_wfst()           │  │                      │
   │  │  └────────────────────────────────┘  │                      │
   │  └──────────────────────────────────────┘                      │
-  └─────────────────────────────────────────────────────────────────┘
+  └────────────────────────────────────────────────────────────────┘
 ```
 
 **Merge-based** mechanisms combine grammar fragments into a single

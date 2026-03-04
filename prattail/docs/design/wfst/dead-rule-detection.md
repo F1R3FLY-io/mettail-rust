@@ -226,6 +226,14 @@ projecting each WFST transition weight onto `BooleanWeight` via
 all transitions.  See `theory/wfst/semirings/boolean-weight.md` for the
 formal connection.
 
+> **Mode 1 — Re-Interpretation:** This implicit boolean projection is a
+> canonical example of Mode 1 composition: the prediction WFST's tropical
+> weights are projected onto `BooleanWeight` at query time without allocating
+> a new structure.  See [`semiring-composition.md`](../../theory/wfst/semiring-composition.md)
+> §2 for the formal definition and
+> [`semiring-orchestration.md`](../../architecture/wfst/semiring-orchestration.md) §3.1
+> for the source-level walkthrough.
+
 **Example**: Cast rule `FloatToStr` in the `Str` category is dead if
 the WFST routes every FIRST token to higher-priority alternatives (e.g.,
 `StrLit` for `"..."` and `IntToStr` for `Integer`).

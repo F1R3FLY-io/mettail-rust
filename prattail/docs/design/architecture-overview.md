@@ -136,10 +136,11 @@ do not contain `proc_macro2::TokenStream` fields), enabling future
 parallelism if codegen workload becomes large enough to justify thread
 overhead.
 
-| Output | Contents |
-|--------|----------|
-| `LexerBundle` | `grammar_rules`, `type_infos`, `has_binders`, `category_names`, `literal_patterns` |
+| Output         | Contents                                                                                                                                                                                                                       |
+|----------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `LexerBundle`  | `grammar_rules`, `type_infos`, `has_binders`, `category_names`, `literal_patterns`                                                                                                                                             |
 | `ParserBundle` | `grammar_name`, `categories`, `bp_table`, `rule_infos`, `follow_inputs`, `rd_rules`, `cross_rules`, `cast_rules`, `has_binders`, `beam_width`, `recovery_config`, `all_syntax`, `rule_locations`, `semantic_dependency_groups` |
+|                |                                                                                                                                                                                                                                |
 
 State transition: `LanguageSpec` -> `PipelineState::Ready { lexer_bundle, parser_bundle }`
 

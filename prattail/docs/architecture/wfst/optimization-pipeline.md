@@ -87,66 +87,66 @@ Finalize (concatenate + parse TokenStream)
 
 ## 3. Optimization Inventory
 
-| ID | Name | Category | Complexity | Sprint |
-|----|------|----------|-----------|--------|
-| F1 | Spillover Pruning | NFA Spillover | Trivial | 1 ✓ |
-| F2 | Early Termination | NFA Spillover | Trivial | 1 ✓ |
-| A2 | Hot/Cold Splitting | Compile-Time | Low | 1 ✓ |
-| D1 | CostBenefit Framework | Meta | Low | 1 ✓ |
-| B2 | Adaptive Recovery | Runtime | Low | 1 ✓ |
-| F3 | Lazy Spillover | NFA Spillover | Medium | 2 |
-| C1 | ContextWeight | Semiring | Low-Med | 2 |
-| C2 | ComplexityWeight | Semiring | Low | 2 |
-| A4 | Enhanced DCE | Compile-Time | Low-Med | 2 |
-| A5 | Ambiguity Targeting | Compile-Time | Low | 2 |
-| B1 | Multi-Token Lookahead | Runtime | Medium | 3 |
-| A1 | Left-Factoring | Compile-Time | Medium | 3 |
-| B3 | WFST Minimization | Runtime | Low | 3 |
-| C3 | EntropyWeight | Semiring | Medium | 4 |
-| C4 | Viterbi-N-Best | Semiring | Med-High | 4 |
-| E1 | Transducer Cascade | Architecture | High | 4 |
-| A3 | Composed DFA+Min | Compile-Time | High | Future |
+| ID | Name                  | Category      | Complexity | Sprint |
+|----|-----------------------|---------------|------------|--------|
+| F1 | Spillover Pruning     | NFA Spillover | Trivial    | 1 ✓    |
+| F2 | Early Termination     | NFA Spillover | Trivial    | 1 ✓    |
+| A2 | Hot/Cold Splitting    | Compile-Time  | Low        | 1 ✓    |
+| D1 | CostBenefit Framework | Meta          | Low        | 1 ✓    |
+| B2 | Adaptive Recovery     | Runtime       | Low        | 1 ✓    |
+| F3 | Lazy Spillover        | NFA Spillover | Medium     | 2      |
+| C1 | ContextWeight         | Semiring      | Low-Med    | 2      |
+| C2 | ComplexityWeight      | Semiring      | Low        | 2      |
+| A4 | Enhanced DCE          | Compile-Time  | Low-Med    | 2      |
+| A5 | Ambiguity Targeting   | Compile-Time  | Low        | 2      |
+| B1 | Multi-Token Lookahead | Runtime       | Medium     | 3      |
+| A1 | Left-Factoring        | Compile-Time  | Medium     | 3      |
+| B3 | WFST Minimization     | Runtime       | Low        | 3      |
+| C3 | EntropyWeight         | Semiring      | Medium     | 4      |
+| C4 | Viterbi-N-Best        | Semiring      | Med-High   | 4      |
+| E1 | Transducer Cascade    | Architecture  | High       | 4      |
+| A3 | Composed DFA+Min      | Compile-Time  | High       | Future |
 
 ---
 
 ## 4. Compile-Time vs Runtime Classification
 
 ```
-┌───────────────────────────────────────────────────────────────┐
-│                    COMPILE-TIME                                │
-│                                                               │
-│  Pipeline Analysis        Codegen Transformation              │
-│  ┌─────────────────┐     ┌──────────────────────────────┐    │
-│  │ D1 CostBenefit  │     │ A2 Hot/Cold Splitting        │    │
-│  │ A4 Enhanced DCE │     │ A1 Left-Factoring            │    │
-│  │ A5 Ambiguity    │     │ F1 Spillover Pruning         │    │
-│  │    Targeting     │     │ F2 Early Termination         │    │
-│  │                  │     │ A3 Composed DFA+Min          │    │
-│  └─────────────────┘     └──────────────────────────────┘    │
-│                                                               │
-├───────────────────────────────────────────────────────────────┤
-│                     RUNTIME                                    │
-│                                                               │
-│  Generated Code            Infrastructure                     │
-│  ┌─────────────────┐     ┌──────────────────────────────┐    │
-│  │ B2 Adaptive     │     │ F3 Lazy Spillover            │    │
-│  │    Recovery      │     │ B1 Multi-Token Lookahead     │    │
-│  │ B3 WFST         │     │ E1 Transducer Cascade        │    │
-│  │    Minimization  │     │                              │    │
-│  └─────────────────┘     └──────────────────────────────┘    │
-│                                                               │
-├───────────────────────────────────────────────────────────────┤
-│                    SEMIRINGS                                   │
-│                                                               │
-│  Existing                  Planned                            │
-│  ┌─────────────────┐     ┌──────────────────────────────┐    │
-│  │ TropicalWeight   │     │ C1 ContextWeight (BitSet)    │    │
-│  │ BooleanWeight    │     │ C2 ComplexityWeight          │    │
-│  │ CountingWeight   │     │ C3 EntropyWeight (wfst-log)  │    │
-│  │ EditWeight       │     │ C4 Viterbi-N-Best            │    │
-│  │ ProductWeight    │     │                              │    │
-│  └─────────────────┘     └──────────────────────────────┘    │
-└───────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  COMPILE-TIME                                              │
+│                                                            │
+│  Pipeline Analysis       Codegen Transformation            │
+│  ┌─────────────────┐     ┌──────────────────────────────┐  │
+│  │ D1 CostBenefit  │     │ A2 Hot/Cold Splitting        │  │
+│  │ A4 Enhanced DCE │     │ A1 Left-Factoring            │  │
+│  │ A5 Ambiguity    │     │ F1 Spillover Pruning         │  │
+│  │    Targeting    │     │ F2 Early Termination         │  │
+│  │                 │     │ A3 Composed DFA+Min          │  │
+│  └─────────────────┘     └──────────────────────────────┘  │
+│                                                            │
+├────────────────────────────────────────────────────────────┤
+│  RUNTIME                                                   │
+│                                                            │
+│  Generated Code          Infrastructure                    │
+│  ┌─────────────────┐     ┌──────────────────────────────┐  │
+│  │ B2 Adaptive     │     │ F3 Lazy Spillover            │  │
+│  │    Recovery     │     │ B1 Multi-Token Lookahead     │  │
+│  │ B3 WFST         │     │ E1 Transducer Cascade        │  │
+│  │    Minimization │     │                              │  │
+│  └─────────────────┘     └──────────────────────────────┘  │
+│                                                            │
+├────────────────────────────────────────────────────────────┤
+│  SEMIRINGS                                                 │
+│                                                            │
+│  Existing                Planned                           │
+│  ┌─────────────────┐     ┌──────────────────────────────┐  │
+│  │ TropicalWeight  │     │ C1 ContextWeight (BitSet)    │  │
+│  │ BooleanWeight   │     │ C2 ComplexityWeight          │  │
+│  │ CountingWeight  │     │ C3 EntropyWeight (wfst-log)  │  │
+│  │ EditWeight      │     │ C4 Viterbi-N-Best            │  │
+│  │ ProductWeight   │     │                              │  │
+│  └─────────────────┘     └──────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -155,81 +155,81 @@ Finalize (concatenate + parse TokenStream)
 
 Each optimization is powered by one or more semirings:
 
-| Optimization | Primary Semiring | Secondary | Purpose |
-|---|---|---|---|
-| Dispatch ordering | TropicalWeight | — | Sort arms by likelihood |
-| Dead-rule (W01) | BooleanWeight | — | Reachability analysis |
-| Ambiguity (W02) | CountingWeight | — | Alternative counting |
-| Recovery costs | EditWeight | — | Repair strategy selection |
-| D1 CostBenefit | ProductWeight⟨Trop,Trop⟩ | — | Speedup × cost ranking |
-| F1 Spillover | TropicalWeight | — | Beam-width filter |
-| B2 Adaptive | TropicalWeight | — | Accumulated confidence |
-| A4 Enhanced DCE | BooleanWeight | ProductWeight | Forward-backward |
-| C1 Context | ContextWeight (BitSet) | — | Rule-set reachability |
-| C2 Complexity | ComplexityWeight | ProductWeight⟨Trop,Comp⟩ | Lookahead budget |
-| C3 Entropy | EntropyWeight | — | Parse distribution |
-| C4 N-Best | ViterbiNBest | — | Lazy disambiguation |
+| Optimization      | Primary Semiring         | Secondary                | Purpose                   |
+|-------------------|--------------------------|--------------------------|---------------------------|
+| Dispatch ordering | TropicalWeight           | —                        | Sort arms by likelihood   |
+| Dead-rule (W01)   | BooleanWeight            | —                        | Reachability analysis     |
+| Ambiguity (W02)   | CountingWeight           | —                        | Alternative counting      |
+| Recovery costs    | EditWeight               | —                        | Repair strategy selection |
+| D1 CostBenefit    | ProductWeight⟨Trop,Trop⟩ | —                        | Speedup × cost ranking    |
+| F1 Spillover      | TropicalWeight           | —                        | Beam-width filter         |
+| B2 Adaptive       | TropicalWeight           | —                        | Accumulated confidence    |
+| A4 Enhanced DCE   | BooleanWeight            | ProductWeight            | Forward-backward          |
+| C1 Context        | ContextWeight (BitSet)   | —                        | Rule-set reachability     |
+| C2 Complexity     | ComplexityWeight         | ProductWeight⟨Trop,Comp⟩ | Lookahead budget          |
+| C3 Entropy        | EntropyWeight            | —                        | Parse distribution        |
+| C4 N-Best         | ViterbiNBest             | —                        | Lazy disambiguation       |
 
 ---
 
 ## 6. Data Flow Diagram
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│  LanguageSpec                                                     │
-│  ┌──────────┐  ┌──────────────┐  ┌──────────────┐               │
-│  │ RuleSpec  │  │ CategorySpec │  │ BeamWidth    │               │
-│  └─────┬────┘  └──────┬───────┘  └──────┬───────┘               │
-│        │              │                  │                        │
-│        ▼              ▼                  │                        │
-│  ┌──────────────────────────┐            │                        │
-│  │ FIRST/FOLLOW set engine  │            │                        │
-│  └────────────┬─────────────┘            │                        │
-│               │                          │                        │
-│               ▼                          │                        │
-│  ┌──────────────────────────┐            │                        │
-│  │ Dispatch action tables   │            │                        │
-│  └────────────┬─────────────┘            │                        │
-│               │                          │                        │
-│               ▼                          ▼                        │
-│  ┌──────────────────────────────────────────────┐                │
-│  │ PredictionWfst (per category)                 │                │
-│  │  ┌──────────┐ ┌──────────┐ ┌───────────────┐ │                │
-│  │  │ States   │ │ Actions  │ │ beam_width    │ │                │
-│  │  │ (2-level)│ │ (weighted│ │ (TropicalWt)  │ │                │
-│  │  └────┬─────┘ └────┬─────┘ └───────┬───────┘ │                │
-│  └───────┼────────────┼───────────────┼──────────┘                │
-│          │            │               │                           │
-│   ┌──────┴──────┬─────┴─────┬─────────┴──────┐                   │
-│   ▼             ▼           ▼                ▼                   │
-│  D1 Grammar  A2 Hot/Cold  F1 Beam     F2 Deterministic           │
-│  Profile     Partition    Filter      Early-Exit                  │
-│   │                                                               │
-│   ▼                                                               │
-│  Recommended                                                      │
-│  Optimizations                                                    │
-│   │                                                               │
-│   ▼                                                               │
-│  Codegen: trampoline.rs, dispatch.rs                              │
-│   │                                                               │
-│   ▼                                                               │
-│  Generated Parser Code                                            │
-│  ┌────────────────────────────────────────────┐                  │
-│  │  Thread-locals:                             │                  │
-│  │  ├─ NFA_PREFIX_SPILL_CAT                    │                  │
-│  │  ├─ NFA_FORCED_PREFIX_CAT                   │                  │
-│  │  ├─ NFA_PRIMARY_WEIGHT_CAT                  │                  │
-│  │  ├─ RUNNING_WEIGHT_CAT  (B2)                │                  │
-│  │  └─ FRAME_STATE_CAT                         │                  │
-│  │                                             │                  │
-│  │  Functions:                                 │                  │
-│  │  ├─ parse_<Cat>()          [hot path]       │                  │
-│  │  ├─ parse_<Cat>_cold()     [A2 cold path]   │                  │
-│  │  ├─ parse_<Cat>_own()      [trampoline]     │                  │
-│  │  ├─ parse_<Cat>_recovering() [B2 aware]     │                  │
-│  │  └─ running_weight_<cat>() [B2 accessor]    │                  │
-│  └────────────────────────────────────────────┘                  │
-└──────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│  LanguageSpec                                           │
+│  ┌──────────┐  ┌──────────────┐  ┌──────────────┐       │
+│  │ RuleSpec │  │ CategorySpec │  │ BeamWidth    │       │
+│  └─────┬────┘  └──────┬───────┘  └──────┬───────┘       │
+│        │              │                 │               │
+│        ▼              ▼                 │               │
+│  ┌──────────────────────────┐           │               │
+│  │ FIRST/FOLLOW set engine  │           │               │
+│  └────────────┬─────────────┘           │               │
+│               │                         │               │
+│               ▼                         │               │
+│  ┌──────────────────────────┐           │               │
+│  │ Dispatch action tables   │           │               │
+│  └────────────┬─────────────┘           │               │
+│               │                         │               │
+│               ▼                         ▼               │
+│  ┌──────────────────────────────────────────────┐       │
+│  │ PredictionWfst (per category)                │       │
+│  │  ┌──────────┐ ┌──────────┐ ┌───────────────┐ │       │
+│  │  │ States   │ │ Actions  │ │ beam_width    │ │       │
+│  │  │ (2-level)│ │ (weighted│ │ (TropicalWt)  │ │       │
+│  │  └────┬─────┘ └────┬─────┘ └───────┬───────┘ │       │
+│  └───────┼────────────┼───────────────┼─────────┘       │
+│          │            │               │                 │
+│   ┌──────┴──────┬─────┴─────┬─────────┴──────┐          │
+│   ▼             ▼           ▼                ▼          │
+│  D1 Grammar  A2 Hot/Cold  F1 Beam     F2 Deterministic  │
+│  Profile     Partition    Filter      Early-Exit        │
+│   │                                                     │
+│   ▼                                                     │
+│  Recommended                                            │
+│  Optimizations                                          │
+│   │                                                     │
+│   ▼                                                     │
+│  Codegen: trampoline.rs, dispatch.rs                    │
+│   │                                                     │
+│   ▼                                                     │
+│  Generated Parser Code                                  │
+│  ┌────────────────────────────────────────────┐         │
+│  │  Thread-locals:                            │         │
+│  │  ├─ NFA_PREFIX_SPILL_CAT                   │         │
+│  │  ├─ NFA_FORCED_PREFIX_CAT                  │         │
+│  │  ├─ NFA_PRIMARY_WEIGHT_CAT                 │         │
+│  │  ├─ RUNNING_WEIGHT_CAT  (B2)               │         │
+│  │  └─ FRAME_STATE_CAT                        │         │
+│  │                                            │         │
+│  │  Functions:                                │         │
+│  │  ├─ parse_<Cat>()          [hot path]      │         │
+│  │  ├─ parse_<Cat>_cold()     [A2 cold path]  │         │
+│  │  ├─ parse_<Cat>_own()      [trampoline]    │         │
+│  │  ├─ parse_<Cat>_recovering() [B2 aware]    │         │
+│  │  └─ running_weight_<cat>() [B2 accessor]   │         │
+│  └────────────────────────────────────────────┘         │
+└─────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -265,27 +265,27 @@ completed prerequisites, enabling parallel implementation.
 
 ### New Modules (Sprint 1)
 
-| Module | Purpose | Lines |
-|---|---|---|
-| `cost_benefit.rs` | D1 meta-optimization framework | ~320 |
+| Module            | Purpose                        | Lines |
+|-------------------|--------------------------------|-------|
+| `cost_benefit.rs` | D1 meta-optimization framework | ~320  |
 
 ### Modified Modules (Sprint 1)
 
-| Module | Optimization | Change Description |
-|---|---|---|
-| `trampoline.rs` | F1 | Beam-width filter in spillover codegen |
-| `trampoline.rs` | F2 | `if nfa_results.is_empty()` guard for weight-0.0 |
-| `trampoline.rs` | B2 | `RUNNING_WEIGHT_CAT` thread-local + accumulation |
-| `dispatch.rs` | A2 | Cold-path partitioning with `#[cold]` helper |
-| `pipeline.rs` | D1 | Grammar profiling + optimization recommendations |
+| Module          | Optimization | Change Description                               |
+|-----------------|--------------|--------------------------------------------------|
+| `trampoline.rs` | F1           | Beam-width filter in spillover codegen           |
+| `trampoline.rs` | F2           | `if nfa_results.is_empty()` guard for weight-0.0 |
+| `trampoline.rs` | B2           | `RUNNING_WEIGHT_CAT` thread-local + accumulation |
+| `dispatch.rs`   | A2           | Cold-path partitioning with `#[cold]` helper     |
+| `pipeline.rs`   | D1           | Grammar profiling + optimization recommendations |
 
 ### Planned Modules (Future Sprints)
 
-| Module | Optimization | Sprint |
-|---|---|---|
-| `semiring.rs` (additions) | C1, C2, C3, C4 | 2, 4 |
-| `wfst.rs` (extensions) | B1, B3, E1 | 3, 4 |
-| `forward_backward.rs` (extensions) | A4 | 2 |
+| Module                             | Optimization   | Sprint |
+|------------------------------------|----------------|--------|
+| `semiring.rs` (additions)          | C1, C2, C3, C4 | 2, 4   |
+| `wfst.rs` (extensions)             | B1, B3, E1     | 3, 4   |
+| `forward_backward.rs` (extensions) | A4             | 2      |
 
 ---
 
@@ -313,32 +313,32 @@ Grammar Profile ──→ evaluate_optimizations() ──→ Ranked Candidates
 
 `build_grammar_profile()` computes metrics from pipeline data:
 
-| Metric | Source | Used By |
-|---|---|---|
-| `shared_prefix_ratio` | NFA spillover categories / total | A1 |
-| `cold_fraction` | WFST actions with weight ≥ 1.0 / total | A2 |
-| `ambiguous_fraction` | Tokens with >1 prediction / total | A5, B1 |
-| `ambiguous_count` | Count of ambiguous tokens | B1 |
-| `nfa_spillover_categories` | `categories_needing_nfa_spillover()` | F1, F2, F3 |
-| `has_beam_width` | `BeamWidthConfig::is_enabled()` | F1 |
-| `total_wfst_states` | Sum of `wfst.states.len()` | B3 |
+| Metric                     | Source                                 | Used By    |
+|----------------------------|----------------------------------------|------------|
+| `shared_prefix_ratio`      | NFA spillover categories / total       | A1         |
+| `cold_fraction`            | WFST actions with weight ≥ 1.0 / total | A2         |
+| `ambiguous_fraction`       | Tokens with >1 prediction / total      | A5, B1     |
+| `ambiguous_count`          | Count of ambiguous tokens              | B1         |
+| `nfa_spillover_categories` | `categories_needing_nfa_spillover()`   | F1, F2, F3 |
+| `has_beam_width`           | `BeamWidthConfig::is_enabled()`        | F1         |
+| `total_wfst_states`        | Sum of `wfst.states.len()`             | B3         |
 
 ---
 
 ## 10. Source References
 
-| File | Content |
-|---|---|
-| `trampoline.rs:162-412` | NFA merged prefix arm with F1/F2 |
-| `trampoline.rs:1143-1195` | Thread-local declarations (NFA + B2) |
-| `trampoline.rs:1200-1210` | Wrapper function with B2 reset |
-| `trampoline.rs:2990-3025` | Recovery function with B2 weight reading |
-| `dispatch.rs:304-415` | A2 hot/cold partitioning |
-| `cost_benefit.rs` | D1 framework (full module) |
-| `pipeline.rs:963-985` | D1 integration point |
-| `wfst.rs:198-228` | `nfa_alternative_order()`, `beam_width()` |
-| `wfst.rs:559-581` | `compute_action_weight()` weight scale |
-| `semiring.rs:496-620` | `ProductWeight` (used by D1) |
+| File                      | Content                                   |
+|---------------------------|-------------------------------------------|
+| `trampoline.rs:162-412`   | NFA merged prefix arm with F1/F2          |
+| `trampoline.rs:1143-1195` | Thread-local declarations (NFA + B2)      |
+| `trampoline.rs:1200-1210` | Wrapper function with B2 reset            |
+| `trampoline.rs:2990-3025` | Recovery function with B2 weight reading  |
+| `dispatch.rs:304-415`     | A2 hot/cold partitioning                  |
+| `cost_benefit.rs`         | D1 framework (full module)                |
+| `pipeline.rs:963-985`     | D1 integration point                      |
+| `wfst.rs:198-228`         | `nfa_alternative_order()`, `beam_width()` |
+| `wfst.rs:559-581`         | `compute_action_weight()` weight scale    |
+| `semiring.rs:496-620`     | `ProductWeight` (used by D1)              |
 
 ### Related Documents
 

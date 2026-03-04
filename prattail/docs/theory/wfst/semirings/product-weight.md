@@ -672,6 +672,12 @@ component flags whether the choice was unique.
 
 ## 14. Composition Catalog
 
+> **Mode 2 — ProductWeight Joint Tracking:** The ProductWeight pattern below
+> is formalized as "Mode 2" in the multi-semiring composition framework.  See
+> [`semiring-composition.md`](../semiring-composition.md) §3 for the formal
+> definition and [`semiring-orchestration.md`](../../../architecture/wfst/semiring-orchestration.md)
+> §4 for per-instance source references and correctness invariants.
+
 The following table lists all ProductWeight instantiations that have been
 realized in PraTTaIL's codebase or test suite, along with their use cases
 and pipeline stages:

@@ -64,9 +64,13 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     use term_ops::subst::{generate_env_substitution, generate_substitution};
     use types::enums::generate_ast_enums;
 
+    // Detect cancellation pairs for normalize arm generation
+    let (cancellation_pairs, _cancellation_equations) =
+        crate::ast::pattern::detect_cancellation_pairs(language);
+
     let ast_enums = generate_ast_enums(language);
     let flatten_helpers = generate_flatten_helpers(language);
-    let normalize_impl = generate_normalize_functions(language);
+    let normalize_impl = generate_normalize_functions(language, &cancellation_pairs);
     let subst_impl = generate_substitution(language);
     let env_types = generate_environments(language);
     let env_subst_impl = generate_env_substitution(language);

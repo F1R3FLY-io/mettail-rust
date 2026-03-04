@@ -87,10 +87,17 @@ pub fn generate_ascent_source(
     // Rewrite subsumption would require separate RHS analysis (deferred).
     let subsumed_equations = compute_subsumed_equations(language);
 
+    // Detect cancellation pairs: equations of the form Outer(Inner(X)) = X.
+    // These are suppressed from eqrel generation (would cause non-convergence)
+    // and handled by normalize arms + directional rewrites instead.
+    let (cancellation_pairs, cancellation_equations) =
+        crate::ast::pattern::detect_cancellation_pairs(language);
+    emit_cancellation_pair_lints(&cancellation_pairs, language);
+
     let helper_fns = helpers::generate_helper_functions(language);
     let relations = generate_relations(language);
     let category_rules = generate_category_rules(language, None);
-    let equation_rules = generate_equation_rules(language, None, analysis, &subsumed_equations);
+    let equation_rules = generate_equation_rules(language, None, analysis, &subsumed_equations, &cancellation_equations);
     let rewrite_rules = generate_rewrite_rules(language, None, analysis);
     let custom_logic = language
         .logic
@@ -113,7 +120,7 @@ pub fn generate_ascent_source(
     // Generate core content if this is a multi-category language with non-trivial core
     let core_raw_content = common::compute_core_categories(language).map(|core_cats| {
         let core_category_rules = generate_category_rules(language, Some(&core_cats));
-        let core_equation_rules = generate_equation_rules(language, Some(&core_cats), analysis, &subsumed_equations);
+        let core_equation_rules = generate_equation_rules(language, Some(&core_cats), analysis, &subsumed_equations, &cancellation_equations);
         let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats), analysis);
 
         quote! {
@@ -338,6 +345,101 @@ fn compute_subsumed_equations(language: &LanguageDef) -> HashSet<usize> {
     }
 
     subsumed
+}
+
+/// Emit lint diagnostics for detected cancellation pairs.
+///
+/// **G25 (note)**: Fires for every suppressed cancellation pair equation.
+/// Informational: tells the user that the equation was detected as a
+/// cancellation pair and will be handled by `normalize()` instead of `eqrel`.
+///
+/// **W09 (warning)**: Fires when a cancellation pair equation is suppressed
+/// but no corresponding directional rewrite exists to cover the same pattern.
+/// Without the rewrite, the cancellation pair can only be collapsed during
+/// `normalize()` calls, not during Ascent's fixpoint iteration. This is only
+/// a problem for categories with explicit congruence rewrites (which can
+/// introduce the cancellation pattern at runtime).
+fn emit_cancellation_pair_lints(
+    pairs: &[crate::ast::pattern::CancellationPair],
+    language: &LanguageDef,
+) {
+    use crate::ast::pattern::{Pattern, PatternTerm};
+
+    for pair in pairs {
+        let eq_rel = pair.outer_category.to_string().to_lowercase();
+
+        // G25: note — cancellation pair detected and suppressed
+        eprintln!(
+            "note[G25]: equation `{}` is a cancellation pair and has been suppressed",
+            pair.equation_name
+        );
+        eprintln!(
+            "  = note: {}({}(X)) = X is handled by normalize() instead of eq_{}",
+            pair.outer_constructor, pair.inner_constructor, eq_rel
+        );
+
+        // W09: check if a corresponding directional rewrite exists
+        let has_corresponding_rewrite = language.rewrites.iter().any(|rw| {
+            // Check if LHS is Outer(Inner(Var(X))) and RHS is Var(X)
+            match (&rw.left, &rw.right) {
+                (
+                    Pattern::Term(PatternTerm::Apply {
+                        constructor: outer,
+                        args: outer_args,
+                    }),
+                    Pattern::Term(PatternTerm::Var(rhs_var)),
+                ) if outer == &pair.outer_constructor && outer_args.len() == 1 => {
+                    // Check inner: Apply(inner_ctor, [Var(X)])
+                    match &outer_args[0] {
+                        Pattern::Term(PatternTerm::Apply {
+                            constructor: inner,
+                            args: inner_args,
+                        }) if inner == &pair.inner_constructor && inner_args.len() == 1 => {
+                            // Check innermost is Var(X) matching RHS
+                            match &inner_args[0] {
+                                Pattern::Term(PatternTerm::Var(lhs_var)) => {
+                                    lhs_var.to_string() == rhs_var.to_string()
+                                }
+                                _ => false,
+                            }
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            }
+        });
+
+        if !has_corresponding_rewrite {
+            // Only warn if the category has explicit congruence rewrites.
+            // Categories without congruences (e.g., Name) won't introduce the
+            // cancellation pattern at runtime, so the missing rewrite is harmless.
+            let cat_str = pair.outer_category.to_string();
+            let has_congruence_rewrites = language.rewrites.iter().any(|rw| {
+                rw.is_congruence_rule()
+                    && rw
+                        .left
+                        .category(language)
+                        .map(|c| c.to_string())
+                        == Some(cat_str.clone())
+            });
+
+            if has_congruence_rewrites {
+                eprintln!(
+                    "warning[W09]: cancellation pair `{}` has no corresponding rewrite",
+                    pair.equation_name
+                );
+                eprintln!(
+                    "  = note: add `|- ({} ({} X)) ~> X ;` to ensure runtime reduction",
+                    pair.outer_constructor, pair.inner_constructor
+                );
+                eprintln!(
+                    "  = note: without this rewrite, {}({}(X)) can only be collapsed by normalize()",
+                    pair.outer_constructor, pair.inner_constructor
+                );
+            }
+        }
+    }
 }
 
 /// Format Ascent source for display and file output

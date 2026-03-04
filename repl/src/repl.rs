@@ -991,7 +991,12 @@ impl Repl {
 
         // Direct eval only for exec: step must always run Ascent and show the initial term
         if !step_mode {
+            let start_time = Instant::now();
             if let Some(result_term) = language.try_direct_eval(term.as_ref()) {
+                let elapsed = start_time.elapsed();
+                print!("Direct eval... ");
+                println!("Time taken: {:?}", elapsed);
+                println!("{}", "Done!".green());
                 let result_id = result_term.term_id();
                 let results = AscentResults::from_single_term(result_term.as_ref());
                 println!();

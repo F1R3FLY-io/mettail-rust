@@ -90,12 +90,12 @@ thread_local! {
 
 ### 2.2 Per-Variable Semantics
 
-| Thread-Local | Type | Default | Written By | Read By |
-|---|---|---|---|---|
-| `NFA_PREFIX_SPILL_CAT` | `Cell<Vec<(Cat, usize, f64)>>` | Empty `Vec` | NFA merged arm (spillover) | `parse_preserving_vars()` (drain loop) |
-| `NFA_FORCED_PREFIX_CAT` | `Cell<Option<(Cat, usize, f64)>>` | `None` | Drain loop (before replay) | Prefix block entry (forced check) |
-| `NFA_PRIMARY_WEIGHT_CAT` | `Cell<f64>` | `0.5` | NFA merged arm (best weight) | `parse_preserving_vars()` (weight recording) |
-| `RUNNING_WEIGHT_CAT` | `Cell<f64>` | `0.0` | Dispatch decisions (accumulate) | Recovery code via `running_weight_cat()` |
+| Thread-Local             | Type                              | Default     | Written By                      | Read By                                      |
+|--------------------------|-----------------------------------|-------------|---------------------------------|----------------------------------------------|
+| `NFA_PREFIX_SPILL_CAT`   | `Cell<Vec<(Cat, usize, f64)>>`    | Empty `Vec` | NFA merged arm (spillover)      | `parse_preserving_vars()` (drain loop)       |
+| `NFA_FORCED_PREFIX_CAT`  | `Cell<Option<(Cat, usize, f64)>>` | `None`      | Drain loop (before replay)      | Prefix block entry (forced check)            |
+| `NFA_PRIMARY_WEIGHT_CAT` | `Cell<f64>`                       | `0.5`       | NFA merged arm (best weight)    | `parse_preserving_vars()` (weight recording) |
+| `RUNNING_WEIGHT_CAT`     | `Cell<f64>`                       | `0.0`       | Dispatch decisions (accumulate) | Recovery code via `running_weight_cat()`     |
 
 ### 2.3 Tuple Layout: `(Cat, usize, f64)`
 
@@ -103,9 +103,9 @@ Each spilled alternative is a 3-tuple:
 
 ```
 (Cat, usize, f64)
-  │     │      │
-  │     │      └── Tropical weight from PredictionWfst
-  │     │          (lower = more likely; 0.0 = deterministic)
+  ▲     ▲     ▲
+  │     │     └── Tropical weight from PredictionWfst
+  │     │         (lower = more likely; 0.0 = deterministic)
   │     │
   │     └── End position: number of tokens consumed by the
   │         prefix parse (used to advance *pos on replay)
@@ -149,14 +149,14 @@ outer call's `Vec` lives on its stack frame, unaffected.
 
 Both `Cell::take()` and `Cell::set()` compile down to pointer-width stores:
 
-| Operation | Implementation | Cost |
-|---|---|---|
-| `Cell::take()` on empty `Vec` | Store `(ptr=dangling, len=0, cap=0)` | 3 pointer stores |
-| `Cell::set()` with empty `Vec` | Store `(ptr=dangling, len=0, cap=0)`, drop old (no-op) | 3 pointer stores |
-| `Cell::take()` on populated `Vec` | Store empty, return owned `Vec` | 3 pointer stores |
-| `Cell::set()` with populated `Vec` | Store new, drop old (dealloc if non-empty) | 3 pointer stores + optional dealloc |
-| `Cell::get()` on `f64` | Copy the `f64` value | 1 `f64` load |
-| `Cell::set()` on `f64` | Store the `f64` value | 1 `f64` store |
+| Operation                          | Implementation                                         | Cost                                |
+|------------------------------------|--------------------------------------------------------|-------------------------------------|
+| `Cell::take()` on empty `Vec`      | Store `(ptr=dangling, len=0, cap=0)`                   | 3 pointer stores                    |
+| `Cell::set()` with empty `Vec`     | Store `(ptr=dangling, len=0, cap=0)`, drop old (no-op) | 3 pointer stores                    |
+| `Cell::take()` on populated `Vec`  | Store empty, return owned `Vec`                        | 3 pointer stores                    |
+| `Cell::set()` with populated `Vec` | Store new, drop old (dealloc if non-empty)             | 3 pointer stores + optional dealloc |
+| `Cell::get()` on `f64`             | Copy the `f64` value                                   | 1 `f64` load                        |
+| `Cell::set()` on `f64`             | Store the `f64` value                                  | 1 `f64` store                       |
 
 ### 3.3 Pool Semantics
 
@@ -262,13 +262,13 @@ token stream), this is the optimal allocation to retain.
 
 ### 5.1 Cost by Scenario
 
-| Scenario | NFA_PREFIX_SPILL | NFA_FORCED_PREFIX | NFA_PRIMARY_WEIGHT | RUNNING_WEIGHT | Total |
-|---|---|---|---|---|---|
-| No NFA ambiguity (unambiguous token) | Untouched | take(None) → 1 ptr store | Untouched | +w via set() → 1 f64 store | ~1 ptr + 1 f64 |
-| Single NFA success (only 1 alternative parsed) | Untouched | take(None) → 1 ptr store | set(w) → 1 f64 store | +w via set() → 1 f64 store | ~1 ptr + 2 f64 |
-| NFA with N successes, spillover | take + push(N-1) + set → O(N-1) | take(None) → 1 ptr store | set(w) → 1 f64 store | +w via set() → 1 f64 store | O(N-1) pushes |
-| Forced-prefix replay (per spilled alt) | take() to clear nested → 1 ptr store | set(Some) + take(Some) → 2 ptr stores | Untouched (weight carried in tuple) | reset(0.0) + reaccumulate | ~3 ptr stores |
-| Error path (parse failure) | take() to clear → 1 ptr store | Untouched | Untouched | Untouched | ~1 ptr store |
+| Scenario                                       | NFA_PREFIX_SPILL                     | NFA_FORCED_PREFIX                     | NFA_PRIMARY_WEIGHT                  | RUNNING_WEIGHT             | Total          |
+|------------------------------------------------|--------------------------------------|---------------------------------------|-------------------------------------|----------------------------|----------------|
+| No NFA ambiguity (unambiguous token)           | Untouched                            | take(None) → 1 ptr store              | Untouched                           | +w via set() → 1 f64 store | ~1 ptr + 1 f64 |
+| Single NFA success (only 1 alternative parsed) | Untouched                            | take(None) → 1 ptr store              | set(w) → 1 f64 store                | +w via set() → 1 f64 store | ~1 ptr + 2 f64 |
+| NFA with N successes, spillover                | take + push(N-1) + set → O(N-1)      | take(None) → 1 ptr store              | set(w) → 1 f64 store                | +w via set() → 1 f64 store | O(N-1) pushes  |
+| Forced-prefix replay (per spilled alt)         | take() to clear nested → 1 ptr store | set(Some) + take(Some) → 2 ptr stores | Untouched (weight carried in tuple) | reset(0.0) + reaccumulate  | ~3 ptr stores  |
+| Error path (parse failure)                     | take() to clear → 1 ptr store        | Untouched                             | Untouched                           | Untouched                  | ~1 ptr store   |
 
 ### 5.2 Overhead for Unambiguous Grammars
 
@@ -351,7 +351,7 @@ replays are attempted.
 ```
   Drain Loop Algorithm:
   ┌────────────────────────────────────────────────────────────┐
-  │  spilled = NFA_PREFIX_SPILL_CAT.take()  [weight-sorted]   │
+  │  spilled = NFA_PREFIX_SPILL_CAT.take()  [weight-sorted]    │
   │  primary_w = NFA_PRIMARY_WEIGHT_CAT.get()                  │
   │  threshold = primary_w + 2.0                               │
   │                                                            │
@@ -433,71 +433,71 @@ re-parses per multi-category parse.
  │  │       │                                                     │     │
  │  │       ▼                                                     │     │
  │  │  ┌────────────────────────────────────────────────────────┐ │     │
- │  │  │  'prefix block                                        │ │     │
- │  │  │       │                                               │ │     │
- │  │  │       ▼                                               │ │     │
- │  │  │  NFA_FORCED_PREFIX_CAT.take()                         │ │     │
- │  │  │       │                                               │ │     │
- │  │  │    None (first call)                                  │ │     │
- │  │  │       │                                               │ │     │
- │  │  │       ▼                                               │ │     │
- │  │  │  match token {                                        │ │     │
- │  │  │    Token::KwFloat => {  [NFA MERGED ARM]              │ │     │
- │  │  │       │                                               │ │     │
- │  │  │       ▼                                               │ │     │
- │  │  │    ┌──────────────────────────────────────┐           │ │     │
- │  │  │    │  Try alt[0] (w=0.50): FloatId        │           │ │     │
- │  │  │    │  Try alt[1] (w=1.00): IntToFloat     │           │ │     │
- │  │  │    │  Try alt[2] (w=1.50): BoolToFloat    │           │ │     │
- │  │  │    │  Try alt[3] (w=2.00): StrToFloat     │           │ │     │
- │  │  │    │       │                              │           │ │     │
- │  │  │    │       ▼                              │           │ │     │
- │  │  │    │  nfa_results = [FloatId, IntToFloat]  │           │ │     │
- │  │  │    │  nfa_weights = [0.50, 1.00]           │           │ │     │
- │  │  │    │       │                              │           │ │     │
- │  │  │    │       ▼                              │           │ │     │
- │  │  │    │  match nfa_results.len() {           │           │ │     │
- │  │  │    │    _ => {                            │           │ │     │
- │  │  │    │      best = FloatId(x) [idx 0]      │           │ │     │
- │  │  │    │                                      │           │ │     │
- │  │  │    │      NFA_PRIMARY_WEIGHT_CAT          │           │ │     │
- │  │  │    │        .set(0.50)                    │           │ │     │
- │  │  │    │                                      │           │ │     │
- │  │  │    │      RUNNING_WEIGHT_CAT              │           │ │     │
- │  │  │    │        .set(get() + 0.50)            │           │ │     │
- │  │  │    │                                      │           │ │     │
- │  │  │    │      NFA_PREFIX_SPILL_CAT.take()     │           │ │     │
- │  │  │    │        → push (IntToFloat, pos, 1.0) │           │ │     │
- │  │  │    │        → set(spill_buf)              │           │ │     │
- │  │  │    │                                      │           │ │     │
- │  │  │    │      break 'prefix best              │           │ │     │
- │  │  │    │    }                                 │           │ │     │
- │  │  │    │  }                                   │           │ │     │
- │  │  │    └──────────────────────────────────────┘           │ │     │
- │  │  │    }  // end Token::KwFloat arm                       │ │     │
- │  │  │  }  // end match                                      │ │     │
- │  │  │       │                                               │ │     │
- │  │  │       ▼                                               │ │     │
- │  │  │  lhs = FloatId(x)                                     │ │     │
- │  │  │       │                                               │ │     │
- │  │  └───────┼───────────────────────────────────────────────┘ │     │
- │  │          ▼                                                 │     │
- │  │     infix loop (processes + 1.0 etc.)                      │     │
- │  │          │                                                 │     │
- │  │          ▼                                                 │     │
- │  │     return Ok(Float::Add(FloatId(x), NumLit(1.0)))         │     │
+ │  │  │  'prefix block                                         │ │     │
+ │  │  │       │                                                │ │     │
+ │  │  │       ▼                                                │ │     │
+ │  │  │  NFA_FORCED_PREFIX_CAT.take()                          │ │     │
+ │  │  │       │                                                │ │     │
+ │  │  │    None (first call)                                   │ │     │
+ │  │  │       │                                                │ │     │
+ │  │  │       ▼                                                │ │     │
+ │  │  │  match token {                                         │ │     │
+ │  │  │    Token::KwFloat => {  [NFA MERGED ARM]               │ │     │
+ │  │  │       │                                                │ │     │
+ │  │  │       ▼                                                │ │     │
+ │  │  │    ┌──────────────────────────────────────┐            │ │     │
+ │  │  │    │  Try alt[0] (w=0.50): FloatId        │            │ │     │
+ │  │  │    │  Try alt[1] (w=1.00): IntToFloat     │            │ │     │
+ │  │  │    │  Try alt[2] (w=1.50): BoolToFloat    │            │ │     │
+ │  │  │    │  Try alt[3] (w=2.00): StrToFloat     │            │ │     │
+ │  │  │    │       │                              │            │ │     │
+ │  │  │    │       ▼                              │            │ │     │
+ │  │  │    │  nfa_results = [FloatId, IntToFloat] │            │ │     │
+ │  │  │    │  nfa_weights = [0.50, 1.00]          │            │ │     │
+ │  │  │    │       │                              │            │ │     │
+ │  │  │    │       ▼                              │            │ │     │
+ │  │  │    │  match nfa_results.len() {           │            │ │     │
+ │  │  │    │    _ => {                            │            │ │     │
+ │  │  │    │      best = FloatId(x) [idx 0]       │            │ │     │
+ │  │  │    │                                      │            │ │     │
+ │  │  │    │      NFA_PRIMARY_WEIGHT_CAT          │            │ │     │
+ │  │  │    │        .set(0.50)                    │            │ │     │
+ │  │  │    │                                      │            │ │     │
+ │  │  │    │      RUNNING_WEIGHT_CAT              │            │ │     │
+ │  │  │    │        .set(get() + 0.50)            │            │ │     │
+ │  │  │    │                                      │            │ │     │
+ │  │  │    │      NFA_PREFIX_SPILL_CAT.take()     │            │ │     │
+ │  │  │    │        → push (IntToFloat, pos, 1.0) │            │ │     │
+ │  │  │    │        → set(spill_buf)              │            │ │     │
+ │  │  │    │                                      │            │ │     │
+ │  │  │    │      break 'prefix best              │            │ │     │
+ │  │  │    │    }                                 │            │ │     │
+ │  │  │    │  }                                   │            │ │     │
+ │  │  │    └──────────────────────────────────────┘            │ │     │
+ │  │  │    }  // end Token::KwFloat arm                        │ │     │
+ │  │  │  }  // end match                                       │ │     │
+ │  │  │       │                                                │ │     │
+ │  │  │       ▼                                                │ │     │
+ │  │  │  lhs = FloatId(x)                                      │ │     │
+ │  │  │       │                                                │ │     │
+ │  │  └───────┼────────────────────────────────────────────────┘ │     │
+ │  │          ▼                                                  │     │
+ │  │     infix loop (processes + 1.0 etc.)                       │     │
+ │  │          │                                                  │     │
+ │  │          ▼                                                  │     │
+ │  │     return Ok(Float::Add(FloatId(x), NumLit(1.0)))          │     │
  │  └─────────────────────────────────────────────────────────────┘     │
  │       │                                                              │
  │       ▼                                                              │
  │  Record primary success + weight:                                    │
  │    successes.push(Inner::Float(result))                              │
- │    success_weights.push(NFA_PRIMARY_WEIGHT_CAT.get())  → 0.50       │
+ │    success_weights.push(NFA_PRIMARY_WEIGHT_CAT.get())  → 0.50        │
  │       │                                                              │
  │       ▼                                                              │
  │  ┌─────────────────────────────────────────────────────────────┐     │
  │  │  DRAIN LOOP (F3 demand-driven)                              │     │
  │  │                                                             │     │
- │  │  spilled = NFA_PREFIX_SPILL_CAT.take()  [weight-sorted ↑]  │     │
+ │  │  spilled = NFA_PREFIX_SPILL_CAT.take()  [weight-sorted ↑]   │     │
  │  │    → [(IntToFloat(x), 5, 1.0)]                              │     │
  │  │  primary_w = NFA_PRIMARY_WEIGHT_CAT.get() → 0.50            │     │
  │  │  threshold = 0.50 + 2.0 = 2.50                              │     │
@@ -508,7 +508,7 @@ re-parses per multi-category parse.
  │  │  alt_weight (1.0) > threshold (2.50)? → no, continue        │     │
  │  │       │                                                     │     │
  │  │       ▼                                                     │     │
- │  │  NFA_FORCED_PREFIX_CAT.set(Some((IntToFloat(x), 5, 1.0)))  │     │
+ │  │  NFA_FORCED_PREFIX_CAT.set(Some((IntToFloat(x), 5, 1.0)))   │     │
  │  │       │                                                     │     │
  │  │       ▼                                                     │     │
  │  │  ┌──────────────────────────────────────────────────────┐   │     │
@@ -522,7 +522,7 @@ re-parses per multi-category parse.
  │  │  │       │                                              │   │     │
  │  │  │       ▼                                              │   │     │
  │  │  │  *pos = forced_pos (= 5)                             │   │     │
- │  │  │  lhs = IntToFloat(x)   [skip NFA try-all]           │   │     │
+ │  │  │  lhs = IntToFloat(x)   [skip NFA try-all]            │   │     │
  │  │  │       │                                              │   │     │
  │  │  │       ▼                                              │   │     │
  │  │  │  infix loop (processes + 1.0 etc.)                   │   │     │
@@ -532,9 +532,9 @@ re-parses per multi-category parse.
  │  │  └──────────────────────────────────────────────────────┘   │     │
  │  │       │                                                     │     │
  │  │       ▼                                                     │     │
- │  │  wrapped = Inner::Float(result)                              │     │
+ │  │  wrapped = Inner::Float(result)                             │     │
  │  │  wrapped.is_accepting()? → check for F3 short-circuit       │     │
- │  │  successes.push(wrapped)                                     │     │
+ │  │  successes.push(wrapped)                                    │     │
  │  │  success_weights.push(1.0)                                  │     │
  │  │       │                                                     │     │
  │  │       ▼                                                     │     │
@@ -562,9 +562,9 @@ re-parses per multi-category parse.
  │  │       │                                                     │     │
  │  │       ▼                                                     │     │
  │  │  ┌────────────────────────────────────────────────────┐     │     │
- │  │  │  0 accepting → Ambiguous(all)  [defer to Ascent]  │     │     │
- │  │  │  1 accepting → return it       [unique ground]    │     │     │
- │  │  │  N accepting → min-weight wins [WFST tiebreak]    │     │     │
+ │  │  │  0 accepting → Ambiguous(all)  [defer to Ascent]   │     │     │
+ │  │  │  1 accepting → return it       [unique ground]     │     │     │
+ │  │  │  N accepting → min-weight wins [WFST tiebreak]     │     │     │
  │  │  └────────────────────────────────────────────────────┘     │     │
  │  │       │                                                     │     │
  │  │       ▼  (for N accepting, WFST tiebreak)                   │     │
@@ -591,9 +591,9 @@ NFA_PREFIX_SPILL_CAT:
  └───────────┘               │ (stack)  │               │ (populated)│
       ▲                      └──────────┘               └─────┬──────┘
       │                                                       │
-      │                           set(populated_vec)          │
-      │  ┌────────────────┐◀──────────────────────────────────┘
-      │  │ Populated Vec  │
+      │                                                       │
+      │  ┌────────────────┐       set(populated_vec)          │
+      │  │ Populated Vec  │◀──────────────────────────────────┘
       │  │ (in Cell)      │
       │  └───────┬────────┘
       │          │ take() by drain loop
@@ -607,29 +607,29 @@ NFA_PREFIX_SPILL_CAT:
 
 
 NFA_FORCED_PREFIX_CAT:
- ┌──────┐   set(Some(...))   ┌──────────┐   take()    ┌──────────────┐
- │ None │───────────────────▶│ Some(...) │───────────▶│ Some(...) on │
+ ┌──────┐   set(Some(...))   ┌───────────┐   take()   ┌───────────────┐
+ │ None │───────────────────▶│ Some(...) │───────────▶│ Some(...) on  │
  │      │                    │ (in Cell) │            │ stack; Cell   │
- └──┬───┘                    └──────────┘            │ reset to None │
-    │                                                 └──────┬───────┘
+ └──┬───┘                    └───────────┘            │ reset to None │
+    │                                                 └──────┬────────┘
     │                                                        │
     └────────────────────────────────────────────────────────┘
                      (replay consumes; cell returns to None)
 
 
 NFA_PRIMARY_WEIGHT_CAT:
- ┌──────┐    set(w)     ┌──────┐    get()     ┌──────┐   set(0.5)    ┌──────┐
+ ┌──────┐    set(w)    ┌──────┐    get()     ┌──────┐   set(0.5)   ┌──────┐
  │ 0.5  │─────────────▶│  w   │─────────────▶│  w   │─────────────▶│ 0.5  │
  │(init)│  (NFA arm)   │      │  (drain loop)│(read)│  (reset)     │      │
  └──────┘              └──────┘              └──────┘              └──────┘
 
 
 RUNNING_WEIGHT_CAT:
- ┌──────┐   set(0.0)    ┌──────┐   set(get()+w)   ┌────────────┐
+ ┌──────┐   set(0.0)   ┌──────┐   set(get()+w)   ┌────────────┐
  │  0.0 │─────────────▶│ 0.0  │─────────────────▶│ accumulated│
  │(init)│  (parse_cat  │      │  (each dispatch  │ weight     │
  └──────┘   entry)     └──────┘   decision)      └─────┬──────┘
-                                                        │
+                                                       │
                                               running_weight_cat()
                                               reads on error path
 ```
@@ -730,19 +730,19 @@ Filter is_accepting(): 1 accepting → return IntToFloat(IntLit(42)) directly
 
 ### 6.4 Source References
 
-| Component | File | Location |
-|---|---|---|
-| Thread-local declarations | `trampoline.rs` | `write_trampoline_parser()`, lines 1143--1173 |
-| `running_weight_cat()` accessor | `trampoline.rs` | lines 1178--1184 |
-| NFA spillover codegen | `trampoline.rs` | `write_nfa_merged_prefix_arm()`, lines 367--412 |
-| Forced-prefix check | `trampoline.rs` | `write_trampoline_body()`, lines 1343--1356 |
-| Recovery-mode forced-prefix check | `trampoline.rs` | lines 3144--3154 |
-| NFA ambiguity detection | `trampoline.rs` | `group_rd_by_dispatch_token()`, lines 77--116 |
-| Spillover category detection | `trampoline.rs` | `categories_needing_nfa_spillover()`, lines 136--151 |
-| Weight ordering | `trampoline.rs` | `write_nfa_merged_prefix_arm()`, lines 225--257 |
-| F2 early termination | `trampoline.rs` | lines 253--304 |
-| Drain loop (F3 demand-driven) | `language.rs` | `generate_language_impl()`, lines 1208--1245 |
-| Weight-ordered spill sort | `trampoline.rs` | `write_prefix_match_arms()`, spill_block + CSL spill_block_lazy |
-| `AMBIGUOUS_WEIGHTS` declaration | `language.rs` | lines 1529--1535 |
-| Weight-aware `from_alternatives()` | `language.rs` | lines 284--326 |
-| `parse_preserving_vars()` | `language.rs` | lines 1544--1569 |
+| Component                          | File            | Location                                                        |
+|------------------------------------|-----------------|-----------------------------------------------------------------|
+| Thread-local declarations          | `trampoline.rs` | `write_trampoline_parser()`, lines 1143--1173                   |
+| `running_weight_cat()` accessor    | `trampoline.rs` | lines 1178--1184                                                |
+| NFA spillover codegen              | `trampoline.rs` | `write_nfa_merged_prefix_arm()`, lines 367--412                 |
+| Forced-prefix check                | `trampoline.rs` | `write_trampoline_body()`, lines 1343--1356                     |
+| Recovery-mode forced-prefix check  | `trampoline.rs` | lines 3144--3154                                                |
+| NFA ambiguity detection            | `trampoline.rs` | `group_rd_by_dispatch_token()`, lines 77--116                   |
+| Spillover category detection       | `trampoline.rs` | `categories_needing_nfa_spillover()`, lines 136--151            |
+| Weight ordering                    | `trampoline.rs` | `write_nfa_merged_prefix_arm()`, lines 225--257                 |
+| F2 early termination               | `trampoline.rs` | lines 253--304                                                  |
+| Drain loop (F3 demand-driven)      | `language.rs`   | `generate_language_impl()`, lines 1208--1245                    |
+| Weight-ordered spill sort          | `trampoline.rs` | `write_prefix_match_arms()`, spill_block + CSL spill_block_lazy |
+| `AMBIGUOUS_WEIGHTS` declaration    | `language.rs`   | lines 1529--1535                                                |
+| Weight-aware `from_alternatives()` | `language.rs`   | lines 284--326                                                  |
+| `parse_preserving_vars()`          | `language.rs`   | lines 1544--1569                                                |
