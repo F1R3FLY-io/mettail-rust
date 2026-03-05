@@ -426,6 +426,7 @@ language! {
         CountBagCongL . | S ~> T |- (CountBag S X) ~> (CountBag T X);
         CountBagCongR . | S ~> T |- (CountBag X S) ~> (CountBag X T);
 
+        CastIntCong . | S ~> T |- (CastInt S) ~> (CastInt T);
         ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
         ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
         ToBoolCong . | S ~> T |- (ToBool S) ~> (ToBool T);
@@ -433,6 +434,13 @@ language! {
     },
 
     logic {
+        // fold *(@(P)) to P so that remove(*(@(bag)), *(@(elem))) can reduce (Exec semantics in fold)
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::PDrop(ref n) = s,
+            if let Name::NQuote(ref p) = n.as_ref(),
+            let res = p.as_ref().clone();
+
         // many-step to a result
         relation path(Proc, Proc);
         path(p0, p1) <-- rw_proc(p0, p1);

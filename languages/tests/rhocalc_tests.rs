@@ -442,6 +442,28 @@ mod native_ops {
         }
     }
 
+    mod bag {
+        use super::*;
+
+        /// remove(*(bag), *(elem)) after comm: removes one occurrence of elem from bag
+        #[test]
+        fn remove_comm() {
+            assert_reduces_to(
+                "{a!(#{1|2|2}#) | c!(2) | (a?b, c?e).{remove(*(b), *(e))}}",
+                "#{1|2}#",
+            );
+        }
+
+        /// count(*(bag), *(elem)) after comm: counts occurrences of elem in bag
+        #[test]
+        fn count_comm() {
+            assert_reduces_to(
+                "{a!(#{1|2|2}#) | c!(2) | (a?b, c?e).{count(*(b), *(e))}}",
+                "2",
+            );
+        }
+    }
+
     mod type_conversion {
         use super::*;
 

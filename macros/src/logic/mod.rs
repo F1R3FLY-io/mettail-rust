@@ -761,12 +761,24 @@ fn generate_fold_big_step_rules(
                             } else {
                                 (fold_rel.clone(), fold_rel.clone())
                             };
+                        // CountBag(bag, elem): only fold when first arg is ProcBag (avoids panic
+                        // when folding count(*(b), *(e)) before comm substitutes b,e)
+                        let proc_bag_guard = (rule.label == "CountBag"
+                            && rule
+                                .term_context
+                                .as_ref()
+                                .and_then(|ctx| ctx.first())
+                                .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if t.to_string() == "Proc"))
+                                .unwrap_or(false))
+                            .then(|| quote! { if (match & lv { Proc::ProcBag(_) => true, _ => false }), })
+                            .unwrap_or_else(|| quote! {});
                         rules.push(quote! {
                             #fold_rel(s.clone(), res) <--
                                 #cat_rel(s),
                                 if let #category::#label(left, right) = s,
                                 #left_fold_rel(left.as_ref().clone(), lv),
                                 #right_fold_rel(right.as_ref().clone(), rv),
+                                #proc_bag_guard
                                 let #p0 = lv,
                                 let #p1 = rv,
                                 let res = #res_expr;
@@ -969,6 +981,8 @@ fn generate_fold_big_step_rules(
 
             // Area 6: Consolidated identity rule — one rule per non-native category
             // Replaces N per-constructor identity rules with one inline match
+            // Special case: PDrop(NQuote(_)) must NOT use identity — it has a custom fold that
+            // reduces *(@(P)) to P (Exec semantics), so identity would block remove/count etc.
             let identity_arms: Vec<TokenStream> = language
                 .terms
                 .iter()
@@ -976,7 +990,17 @@ fn generate_fold_big_step_rules(
                 .map(|rule| {
                     let label = &rule.label;
                     let n = fold_field_count(rule);
-                    if n == 0 {
+                    let is_pdrop_with_name = rule.label == "PDrop"
+                        && n == 1
+                        && rule
+                            .term_context
+                            .as_ref()
+                            .and_then(|ctx| ctx.first())
+                            .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if t.to_string() == "Name"))
+                            .unwrap_or(false);
+                    if is_pdrop_with_name {
+                        quote! { #category::#label(ref n) => !matches!(n.as_ref(), Name::NQuote(_)), }
+                    } else if n == 0 {
                         quote! { #category::#label => true, }
                     } else {
                         let pat: Vec<TokenStream> = (0..n).map(|_| quote! { _ }).collect();

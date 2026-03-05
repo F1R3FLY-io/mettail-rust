@@ -2057,7 +2057,7 @@ fold_proc(t.clone(), t.clone()) <--
     proc(t),
     if (match t {
         Proc::PZero => true,
-        Proc::PDrop(_) => true,
+        Proc::PDrop(ref n) => ! matches!(n.as_ref(), Name::NQuote(_)),
         Proc::PPar(_) => true,
         Proc::POutput(_, _) => true,
         Proc::PInputs(_, _) => true,
@@ -2450,6 +2450,7 @@ fold_int(s.clone(), res) <--
     if let Int::CountBag(left, right) = s,
     fold_proc(left.as_ref().clone(), lv),
     fold_proc(right.as_ref().clone(), rv),
+    if (match & lv { Proc::ProcBag(_) => true, _ => false }),
     let b = lv,
     let e = rv,
     let res = Int::NumLit(({ match & b {
@@ -2491,6 +2492,19 @@ rw_int(lhs.clone(), match (lhs, vi) {
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_INT_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_proc(field_val, t);
+
+rw_proc(lhs.clone(), match (lhs, vi) {
+    (Proc::CastInt(_), 0usize) => Proc::CastInt(Box::new(t.clone())),
+    _ => unreachable!(),
+}) <--
+    proc(lhs),
+    for (field_val, vi) in { std::thread_local! { static POOL_PROC_SCONG_INT : std::cell::Cell < Vec < (Int, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_SCONG_INT.with(| p | p.take()); buf.clear(); match lhs {
+        Proc::CastInt(x0) => {
+            buf.push(((** x0).clone(), 0usize));
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_INT.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    rw_int(field_val, t);
 
 rw_proc(lhs.clone(), match (lhs, vi) {
     (Proc::Add(_, x1), 0usize) => Proc::Add(Box::new(t.clone()), x1.clone()),
@@ -2690,6 +2704,8 @@ rw_bag(a.clone(), c.clone()) <--
 
 
     // Custom logic
+fold_proc(s.clone(), res) <-- proc(s), if let Proc::PDrop(ref n) = s, if let Name::NQuote(ref p) = n.as_ref(), let res = p.as_ref().clone();
+
 relation path(Proc, Proc);
 
 path(p0, p1) <-- rw_proc(p0, p1);
