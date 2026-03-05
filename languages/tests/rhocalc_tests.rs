@@ -457,10 +457,7 @@ mod native_ops {
         /// count(*(bag), *(elem)) after comm: counts occurrences of elem in bag
         #[test]
         fn count_comm() {
-            assert_reduces_to(
-                "{a!(#{1|2|2}#) | c!(2) | (a?b, c?e).{count(*(b), *(e))}}",
-                "2",
-            );
+            assert_reduces_to("{a!(#{1|2|2}#) | c!(2) | (a?b, c?e).{count(*(b), *(e))}}", "2");
         }
     }
 

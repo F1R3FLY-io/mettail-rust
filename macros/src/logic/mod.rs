@@ -763,15 +763,18 @@ fn generate_fold_big_step_rules(
                             };
                         // CountBag(bag, elem): only fold when first arg is ProcBag (avoids panic
                         // when folding count(*(b), *(e)) before comm substitutes b,e)
-                        let proc_bag_guard = (rule.label == "CountBag"
+                        let is_count_bag_proc = rule.label == "CountBag"
                             && rule
                                 .term_context
                                 .as_ref()
                                 .and_then(|ctx| ctx.first())
-                                .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if t.to_string() == "Proc"))
-                                .unwrap_or(false))
-                            .then(|| quote! { if (match & lv { Proc::ProcBag(_) => true, _ => false }), })
-                            .unwrap_or_else(|| quote! {});
+                                .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if *t == "Proc"))
+                                .unwrap_or(false);
+                        let proc_bag_guard = if is_count_bag_proc {
+                            quote! { if (match & lv { Proc::ProcBag(_) => true, _ => false }), }
+                        } else {
+                            quote! {}
+                        };
                         rules.push(quote! {
                             #fold_rel(s.clone(), res) <--
                                 #cat_rel(s),
@@ -996,7 +999,7 @@ fn generate_fold_big_step_rules(
                             .term_context
                             .as_ref()
                             .and_then(|ctx| ctx.first())
-                            .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if t.to_string() == "Name"))
+                            .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if *t == "Name"))
                             .unwrap_or(false);
                     if is_pdrop_with_name {
                         quote! { #category::#label(ref n) => !matches!(n.as_ref(), Name::NQuote(_)), }
