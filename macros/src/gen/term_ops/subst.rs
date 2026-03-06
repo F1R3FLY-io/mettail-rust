@@ -51,7 +51,7 @@ pub(crate) enum VariantKind {
     /// Regular constructor with fields: Add(Box<Int>, Box<Int>)
     Regular { label: Ident, fields: Vec<FieldInfo> },
 
-    /// Collection constructor: ListLit(Vec<Proc>), BagLit(HashBag<Proc>)
+    /// Collection constructor: ListLit(Vec<Proc>), BagLit(HashBag<Proc>), MapLit(HashMapLit<Proc, Proc>)
     Collection {
         label: Ident,
         element_cat: Ident,
@@ -313,6 +313,19 @@ fn generate_unify_freevars_arm(
                             CollectionType::Vec => {
                                 quote! { #name.iter().map(|e| e.unify_freevars_impl()).collect() }
                             },
+                            CollectionType::HashMap => {
+                                quote! {
+                                    {
+                                        let mut m = mettail_runtime::HashMapLit::new();
+                                        for (k, v) in #name.iter() {
+                                            let ku = k.unify_freevars_impl();
+                                            let vu = v.unify_freevars_impl();
+                                            m.insert(ku, vu);
+                                        }
+                                        m
+                                    }
+                                }
+                            },
                         }
                     } else {
                         quote! { Box::new((**#name).unify_freevars_impl()) }
@@ -351,6 +364,19 @@ fn generate_unify_freevars_arm(
                 quote! {
                     #category::#label(elems) => {
                         #category::#label(elems.iter().map(|e| e.unify_freevars_impl()).collect::<Vec<_>>())
+                    }
+                }
+            },
+            CollectionType::HashMap => {
+                quote! {
+                    #category::#label(map) => {
+                        let mut m = mettail_runtime::HashMapLit::new();
+                        for (k, v) in map.iter() {
+                            let ku = k.unify_freevars_impl();
+                            let vu = v.unify_freevars_impl();
+                            m.insert(ku, vu);
+                        }
+                        #category::#label(m)
                     }
                 }
             },
@@ -506,6 +532,19 @@ fn generate_subst_by_name_arm(
                             CollectionType::Vec => {
                                 quote! { #name.iter().map(|elem| elem.#method(env_map)).collect() }
                             },
+                            CollectionType::HashMap => {
+                                quote! {
+                                    {
+                                        let mut m = mettail_runtime::HashMapLit::new();
+                                        for (k, v) in #name.iter() {
+                                            let ks = k.#method(env_map);
+                                            let vs = v.#method(env_map);
+                                            m.insert(ks, vs);
+                                        }
+                                        m
+                                    }
+                                }
+                            },
                         }
                     } else {
                         // Regular boxed field - recurse (same pattern as generate_regular_subst_arm)
@@ -547,6 +586,19 @@ fn generate_subst_by_name_arm(
                     quote! {
                         #category::#label(elems) => {
                             #category::#label(elems.iter().map(|e| e.#method(env_map)).collect::<Vec<_>>())
+                        }
+                    }
+                },
+                CollectionType::HashMap => {
+                    quote! {
+                        #category::#label(map) => {
+                            let mut m = mettail_runtime::HashMapLit::new();
+                            for (k, v) in map.iter() {
+                                let ks = k.#method(env_map);
+                                let vs = v.#method(env_map);
+                                m.insert(ks, vs);
+                            }
+                            #category::#label(m)
                         }
                     }
                 },
@@ -803,6 +855,17 @@ fn generate_subst_cross_var_arm(
                             CollectionType::Vec => {
                                 quote! { #_name.iter().map(|e| e.subst_cross_var(env)).collect() }
                             },
+                            CollectionType::HashMap => {
+                                quote! {
+                                    {
+                                        let mut m = mettail_runtime::HashMapLit::new();
+                                        for (k, v) in #_name.iter() {
+                                            m.insert(k.subst_cross_var(env), v.subst_cross_var(env));
+                                        }
+                                        m
+                                    }
+                                }
+                            },
                         }
                     } else {
                         quote! { Box::new((**#_name).subst_cross_var(env)) }
@@ -831,6 +894,15 @@ fn generate_subst_cross_var_arm(
             },
             CollectionType::Vec => quote! {
                 #category::#label(elems) => #category::#label(elems.iter().map(|e| e.subst_cross_var(env)).collect())
+            },
+            CollectionType::HashMap => quote! {
+                #category::#label(map) => {
+                    let mut m = mettail_runtime::HashMapLit::new();
+                    for (k, v) in map.iter() {
+                        m.insert(k.subst_cross_var(env), v.subst_cross_var(env));
+                    }
+                    #category::#label(m)
+                }
             },
         },
         VariantKind::Binder { label, pre_scope_fields, body_cat, .. } => {
@@ -944,7 +1016,7 @@ pub(crate) fn collect_category_variants(
     let lang_type = language.get_type(category);
     let is_collection_category = lang_type.and_then(|t| t.collection_kind.as_ref()).is_some();
 
-    // List/Bag: add literal variant (ListLit/BagLit) and skip Var + Lam/Apply
+    // List/Bag/Map: add literal variant (ListLit/BagLit/MapLit) and skip Var + Lam/Apply
     if let Some(lang_type) = lang_type {
         if let Some(ref collection_kind) = lang_type.collection_kind {
             let elem_cat = language
@@ -955,6 +1027,7 @@ pub(crate) fn collect_category_variants(
             let (label, coll_type) = match collection_kind {
                 CollectionCategory::List(_) => (format_ident!("ListLit"), CollectionType::Vec),
                 CollectionCategory::Bag(_) => (format_ident!("BagLit"), CollectionType::HashBag),
+                CollectionCategory::Map(_) => (format_ident!("MapLit"), CollectionType::HashMap),
             };
             variants.push(VariantKind::Collection { label, element_cat: elem_cat, coll_type });
         }
@@ -1289,6 +1362,7 @@ fn extract_base_category(ty: &TypeExpr) -> Ident {
         TypeExpr::Collection { element, .. } => extract_base_category(element),
         TypeExpr::Arrow { codomain, .. } => extract_base_category(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_category(inner),
+        TypeExpr::Map { value, .. } => extract_base_category(value),
     }
 }
 
@@ -1312,6 +1386,12 @@ fn field_info_from_type_expr(ty: &TypeExpr) -> FieldInfo {
             category: extract_base_category(element),
             is_collection: true,
             coll_type: Some(coll_type.clone()),
+        },
+        TypeExpr::Map { value, .. } => FieldInfo {
+            // Use value category for element_cat; HashMapLit maps over both key and value.
+            category: extract_base_category(value),
+            is_collection: true,
+            coll_type: Some(CollectionType::HashMap),
         },
         _ => FieldInfo {
             category: format_ident!("Unknown"),
@@ -1586,6 +1666,19 @@ fn generate_regular_subst_arm(
                             #name.iter().map(|elem| elem.#method(vars, repls)).collect()
                         }
                     },
+                    CollectionType::HashMap => {
+                        quote! {
+                            {
+                                let mut m = mettail_runtime::HashMapLit::new();
+                                for (k, v) in #name.iter() {
+                                    let ks = k.#method(vars, repls);
+                                    let vs = v.#method(vars, repls);
+                                    m.insert(ks, vs);
+                                }
+                                m
+                            }
+                        }
+                    },
                 }
             } else {
                 // Regular boxed field - recurse
@@ -1635,6 +1728,19 @@ fn generate_collection_subst_arm(
             quote! {
                 #category::#label(list) => {
                     #category::#label(list.iter().map(|elem| elem.#method(vars, repls)).collect::<Vec<_>>())
+                }
+            }
+        },
+        CollectionType::HashMap => {
+            quote! {
+                #category::#label(map) => {
+                    let mut m = mettail_runtime::HashMapLit::new();
+                    for (k, v) in map.iter() {
+                        let ks = k.#method(vars, repls);
+                        let vs = v.#method(vars, repls);
+                        m.insert(ks, vs);
+                    }
+                    #category::#label(m)
                 }
             }
         },

@@ -21,8 +21,9 @@ use super::common::{
     collect_nonterminal_fields, count_nonterminals, generate_tls_pool_iter, has_collection_field,
     is_multi_binder, literal_label_for, relation_names, PoolArm,
 };
-use crate::ast::grammar::{GrammarItem, GrammarRule};
+use crate::ast::grammar::{GrammarItem, TermParam, GrammarRule};
 use crate::ast::language::{CollectionCategory, LanguageDef};
+use crate::ast::types::TypeExpr;
 use crate::gen::native::native_type_element_ident;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
@@ -149,7 +150,7 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
         }
     }
 
-    // 3. Collection (List/Bag) literal: when src is List or Bag and tgt is element type, push each element
+    // 3. Collection (List/Bag/Map) literal: when src is a collection category and tgt is element type, push elements
     for lang_type in &language.types {
         let Some(ref native_type) = lang_type.native_type else {
             continue;
@@ -185,6 +186,17 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
                     pushes: vec![quote! {
                         for e in bag.iter_elements() {
                             buf.push(e.clone());
+                        }
+                    }],
+                });
+            },
+            CollectionCategory::Map(_) => {
+                arms.push(PoolArm {
+                    pattern: quote! { #src::#lit_label(ref map) },
+                    pushes: vec![quote! {
+                        for (k, v) in map.iter() {
+                            buf.push(k.clone());
+                            buf.push(v.clone());
                         }
                     }],
                 });
@@ -248,6 +260,43 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
                 pattern: quote! { #src::#label(#(#field_bindings),*) },
                 pushes,
             });
+        }
+    }
+
+    // 5. Injection default: when extracting into tgt from src, if tgt is the primary category
+    //    and there is an injection rule (e.g. ProcInt . i:Int |- ... : Proc), add a catch-all
+    //    so every src(t) also adds tgt(ProcInt(t)). This ensures int(2) yields proc(ProcInt(2))
+    //    and congruence can propagate. We only do this when extracting *into* the primary (Proc),
+    //    not when extracting from it (e.g. (Proc, Int) would wrongly add int(ProcToInt(t)) for
+    //    every proc(t), including ProcMap, and then fold would panic).
+    let primary = language.types.first().map(|t| &t.name);
+    if primary == Some(tgt) {
+        for rule in language.terms.iter() {
+            if rule.category != *tgt {
+                continue;
+            }
+            let Some(ref ctx) = rule.term_context else {
+                continue;
+            };
+            if ctx.len() != 1 {
+                continue;
+            }
+            let param = &ctx[0];
+            let TermParam::Simple { ty, .. } = param else {
+                continue;
+            };
+            let TypeExpr::Base(param_cat) = ty else {
+                continue;
+            };
+            if *param_cat != *src {
+                continue;
+            }
+            let label = &rule.label;
+            arms.push(PoolArm {
+                pattern: quote! { _ },
+                pushes: vec![quote! { buf.push(#tgt::#label(Box::new(t.clone()))); }],
+            });
+            break;
         }
     }
 

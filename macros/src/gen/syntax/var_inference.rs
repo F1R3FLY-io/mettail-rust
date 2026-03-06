@@ -366,6 +366,7 @@ fn generate_var_inference_arm(
                                 CollectionType::HashBag => InferFieldKind::HashBag,
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
+                                CollectionType::HashMap => InferFieldKind::Vec,
                             };
                             Some((field_name, element_type.clone(), kind))
                         } else {
@@ -571,6 +572,7 @@ fn generate_var_type_inference_arm(
                                 CollectionType::HashBag => InferFieldKind::HashBag,
                                 CollectionType::Vec => InferFieldKind::Vec,
                                 CollectionType::HashSet => InferFieldKind::Vec,
+                                CollectionType::HashMap => InferFieldKind::Vec,
                             };
                             Some((field_name, element_type.clone(), kind))
                         } else {
@@ -679,5 +681,6 @@ fn extract_base_cat(ty: &TypeExpr) -> syn::Ident {
         TypeExpr::Collection { element, .. } => extract_base_cat(element),
         TypeExpr::Arrow { codomain, .. } => extract_base_cat(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_cat(inner),
+        TypeExpr::Map { value, .. } => extract_base_cat(value),
     }
 }

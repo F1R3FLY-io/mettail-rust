@@ -1,4 +1,4 @@
-xs = [1,2,3]
+xs = list(1,2,3)
 x = 3
 test = x + 2
 x = int(int(float(float(at(xs, 1))))) + 10

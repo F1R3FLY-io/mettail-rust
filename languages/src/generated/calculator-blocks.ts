@@ -113,6 +113,24 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Proc Map: ...
+	{
+		type: "proc_proc_map",
+		tooltip: "Proc Map: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",
@@ -1411,6 +1429,23 @@ const definitions = [
 				type: "input_value",
 				name: "MESSAGE",
 				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Len Map: ...
+	{
+		type: "int_len_map",
+		tooltip: "Len Map: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
 			},
 		],
 		inputsInline: true,

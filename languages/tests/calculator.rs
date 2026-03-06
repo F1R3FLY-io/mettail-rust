@@ -706,22 +706,60 @@ fn test_nested_float_int_arithmetic() {
 
 #[test]
 fn test_int_from_list_elem() {
-    calc_normal_form("int(at([3, 2.0, true], 0))", "3");
+    calc_normal_form("int(at(list(3, 2.0, true), 0))", "3");
 }
 
 #[test]
 fn test_float_from_list_elem() {
-    calc_normal_form("float(at([3, 2.0, true], 1))", "2.0");
+    calc_normal_form("float(at(list(3, 2.0, true), 1))", "2.0");
 }
 
 #[test]
 fn test_bool_from_list_elem() {
-    calc_normal_form("bool(at([3, 2.0, true], 2))", "true");
+    calc_normal_form("bool(at(list(3, 2.0, true), 2))", "true");
 }
 
 #[test]
 fn test_str_from_int_list_elem() {
-    calc_normal_form("str(at([3, 2.0, true], 0))", "\"3\"");
+    calc_normal_form("str(at(list(3, 2.0, true), 0))", "\"3\"");
+}
+
+// --- Map ---
+
+#[test]
+fn test_map_literal_roundtrip() {
+    mettail_runtime::clear_var_cache();
+    let term = calc::Map::parse(r#"map(1:"hi", 2:"world")"#).expect("parse map literal");
+    let displayed = format!("{}", term);
+    mettail_runtime::clear_var_cache();
+    let reparsed = calc::Map::parse(&displayed).expect("reparse displayed map");
+    assert_eq!(term, reparsed, "map literal display should roundtrip");
+}
+
+#[test]
+fn test_map_empty_literal_roundtrip() {
+    mettail_runtime::clear_var_cache();
+    let term = calc::Map::parse("map()").expect("parse empty map");
+    let displayed = format!("{}", term);
+    mettail_runtime::clear_var_cache();
+    let reparsed = calc::Map::parse(&displayed).expect("reparse displayed empty map");
+    assert_eq!(term, reparsed);
+}
+
+// Map length (maplength to avoid ambiguity with length(List))
+#[test]
+fn test_map_length_empty() {
+    calc_normal_form("maplength(map())", "0");
+}
+
+#[test]
+fn test_map_length_one() {
+    calc_normal_form("maplength(map(1:2))", "1");
+}
+
+#[test]
+fn test_map_length_two() {
+    calc_normal_form("maplength(map(1:2, 3:4))", "2");
 }
 
 // ── Regression: existing casts still work ──

@@ -74,7 +74,8 @@ export const categoryInfo = {
 			"ProcToInt",
 			"CustomOp",
 			"LenList",
-			"CountBag"
+			"CountBag",
+			"LenMap"
 		],
 		colour: "51b0e0",
 	},
@@ -93,6 +94,7 @@ export const categoryInfo = {
 			"ProcStr",
 			"ProcList",
 			"ProcBag",
+			"ProcMap",
 			"ElemList"
 		],
 		colour: "208bfe",

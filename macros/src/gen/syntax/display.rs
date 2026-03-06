@@ -65,7 +65,7 @@ fn generate_display_impl(
         match_arms.push(var_arm);
     }
 
-    // Display for List/Bag literal variants (ListLit, BagLit)
+    // Display for List/Bag/Map literal variants (ListLit, BagLit, MapLit)
     if let Some(ref ck) = language
         .get_type(category)
         .and_then(|t| t.collection_kind.clone())
@@ -111,11 +111,35 @@ fn generate_display_impl(
                     }
                 });
             },
+            CollectionCategory::Map(d) => {
+                let open = LitStr::new(&d.open, Span::call_site());
+                let close = LitStr::new(&d.close, Span::call_site());
+                let sep = LitStr::new(&d.sep, Span::call_site());
+                let key_val_sep = LitStr::new(
+                    d.key_val_sep.as_deref().unwrap_or(":"),
+                    Span::call_site(),
+                );
+                let lit_label = syn::Ident::new("MapLit", Span::call_site());
+                match_arms.push(quote! {
+                    #category::#lit_label(ref map) => {
+                        let mut parts: Vec<(String, String)> =
+                            map.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+                        // Deterministic output.
+                        parts.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+                        write!(f, "{}", #open)?;
+                        for (i, (k, v)) in parts.iter().enumerate() {
+                            if i > 0 { write!(f, "{}", #sep)?; }
+                            write!(f, "{}{}{}", k, #key_val_sep, v)?;
+                        }
+                        write!(f, "{}", #close)
+                    }
+                });
+            },
         }
     }
 
     // Check if NumLit variant was auto-generated (for native types).
-    // Skip for collection categories (List/Bag) — they already have ListLit/BagLit display arms above.
+    // Skip for collection categories (List/Bag/Map) — they already have literal display arms above.
     let has_literal_rule = rules.iter().any(|rule| is_literal_rule(rule));
     let is_collection_category = language
         .get_type(category)

@@ -798,6 +798,11 @@ fn generate_pure_collection_case(
         .and_then(|t| t.collection_kind.as_ref())
         .map(|ck| matches!(ck, CollectionCategory::Bag(_)))
         .unwrap_or(false);
+    let is_map = language
+        .get_type(cat_name)
+        .and_then(|t| t.collection_kind.as_ref())
+        .map(|ck| matches!(ck, CollectionCategory::Map(_)))
+        .unwrap_or(false);
 
     if is_list {
         quote! {
@@ -905,6 +910,58 @@ fn generate_pure_collection_case(
                                                         bag.insert(elem2.clone());
                                                         bag.insert(elem3.clone());
                                                         terms.push(#cat_name::#label(bag));
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } else if is_map {
+        quote! {
+            for size in 0..=self.max_collection_width {
+                if size == 0 {
+                    terms.push(#cat_name::#label(mettail_runtime::HashMapLit::new()));
+                } else if size == 1 {
+                    for dk in 0..depth {
+                        for dv in 0..depth {
+                            if let Some(keys) = self.#field_name.get(&dk) {
+                                if let Some(vals) = self.#field_name.get(&dv) {
+                                    for k in keys {
+                                        for v in vals {
+                                            let mut m = mettail_runtime::HashMapLit::new();
+                                            m.insert(k.clone(), v.clone());
+                                            terms.push(#cat_name::#label(m));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if size == 2 {
+                    for dk1 in 0..depth {
+                        for dv1 in 0..depth {
+                            for dk2 in 0..depth {
+                                for dv2 in 0..depth {
+                                    if let (Some(keys1), Some(vals1), Some(keys2), Some(vals2)) = (
+                                        self.#field_name.get(&dk1),
+                                        self.#field_name.get(&dv1),
+                                        self.#field_name.get(&dk2),
+                                        self.#field_name.get(&dv2),
+                                    ) {
+                                        for k1 in keys1 {
+                                            for v1 in vals1 {
+                                                for k2 in keys2 {
+                                                    for v2 in vals2 {
+                                                        let mut m = mettail_runtime::HashMapLit::new();
+                                                        m.insert(k1.clone(), v1.clone());
+                                                        m.insert(k2.clone(), v2.clone());
+                                                        terms.push(#cat_name::#label(m));
                                                     }
                                                 }
                                             }

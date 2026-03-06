@@ -288,6 +288,9 @@ proc(sub.clone()) <--
         Proc::ProcBag(f0) => {
             buf.push(Proc::ProcBag(Box::new(f0.as_ref().clone())));
         },
+        _ => {
+            buf.push(Proc::Not(Box::new(t.clone())));
+        },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_PROC.with(| p | p.set(buf)); iter_buf }.into_iter();
 
@@ -410,6 +413,9 @@ proc(sub.clone()) <--
         },
         Name::MApplyProc(_, args) => {
             buf.extend(args.iter().cloned());
+        },
+        _ => {
+            buf.push(Proc::PDrop(Box::new(t.clone())));
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_NAME_PROC.with(| p | p.set(buf)); iter_buf }.into_iter();
@@ -605,6 +611,9 @@ proc(sub.clone()) <--
         },
         Int::MApplyProc(_, args) => {
             buf.extend(args.iter().cloned());
+        },
+        _ => {
+            buf.push(Proc::CastInt(Box::new(t.clone())));
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_INT_PROC.with(| p | p.set(buf)); iter_buf }.into_iter();

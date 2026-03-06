@@ -319,6 +319,9 @@ pub enum SyntaxItemSpec {
         element_category: String,
         separator: String,
         kind: CollectionKind,
+        /// Map-only separator between key and value (e.g., ":").
+        /// Must be `Some` when `kind == HashMap`, otherwise `None`.
+        key_val_separator: Option<String>,
     },
     /// A zip+map+sep pattern operation.
     ///

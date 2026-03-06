@@ -1140,6 +1140,7 @@ mod tests {
                         element_category: "Expr".to_string(),
                         separator: ",".to_string(),
                         kind: crate::recursive::CollectionKind::Vec,
+                        key_val_separator: None,
                     },
                     SyntaxItemSpec::Terminal("]".to_string()),
                 ],

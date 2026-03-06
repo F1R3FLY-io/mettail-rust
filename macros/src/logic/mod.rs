@@ -518,10 +518,25 @@ fn generate_fold_big_step_rules(
             continue;
         }
 
-        let has_fold = language
+        let has_fold_as_result = language
             .terms
             .iter()
             .any(|r| r.category == *category && r.eval_mode == Some(EvalMode::Fold));
+        // Collection categories (e.g. Map) may only appear as *params* of fold rules (LenMap(Map)->Int);
+        // we still need the literal fold rule (fold_map(t, payload) <-- map(t), if let MapLit(ref payload) = t).
+        let has_fold_as_param = language.terms.iter().any(|r| {
+            r.eval_mode == Some(EvalMode::Fold)
+                && r.term_context.as_ref().map_or(false, |ctx| {
+                    ctx.iter().any(|p| match p {
+                        TermParam::Simple {
+                            ty: TypeExpr::Base(ref id),
+                            ..
+                        } => id == category,
+                        _ => false,
+                    })
+                })
+        });
+        let has_fold = has_fold_as_result || has_fold_as_param;
         if !has_fold {
             continue;
         }
@@ -870,10 +885,11 @@ fn generate_fold_big_step_rules(
                 }
             }
         } else if is_collection {
-            // Collection category (List, Bag): literal folds to payload so rust_code gets Vec/HashBag
+            // Collection category (List, Bag, Map): literal folds to payload so rust_code gets Vec/HashBag/HashMapLit
             let num_lit = match lang_type.collection_kind.as_ref() {
                 Some(crate::ast::language::CollectionCategory::List(_)) => format_ident!("ListLit"),
                 Some(crate::ast::language::CollectionCategory::Bag(_)) => format_ident!("BagLit"),
+                Some(crate::ast::language::CollectionCategory::Map(_)) => format_ident!("MapLit"),
                 None => continue,
             };
             rules.push(quote! {

@@ -16,6 +16,7 @@ language! {
         ![str] as Str
         ![Vec<Proc>] as List
         ![mettail_runtime::HashBag<Proc>] as Bag
+        ![mettail_runtime::HashMapLit<Proc, Proc>] as Map
     },
     terms {
         // Injection into Proc (unified variant) so List/Bag elements are Proc
@@ -25,6 +26,7 @@ language! {
         ProcStr . s:Str |- s : Proc ;
         ProcList . l:List |- l : Proc ;
         ProcBag . b:Bag |- b : Proc ;
+        ProcMap . m:Map |- m : Proc ;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -185,6 +187,10 @@ language! {
         RemoveBag . a:Bag, e:Proc |- "remove" "(" a "," e ")" : Bag ![a.remove_one(&e)] fold;
         DiffBag . a:Bag, b:Bag |- "diff" "(" a "," b ")" : Bag ![a.diff(&b)] fold;
         CountBag . b:Bag, e:Proc |- "count" "(" b "," e ")" : Int ![{ mettail_runtime::HashBag::count(&b, &e) as i32 }] fold;
+        // Map operations (Map = HashMapLit<Proc, Proc>). Use "maplength" to avoid ambiguous dispatch with length(List).
+        LenMap . a:Map |- "maplength" "(" a ")" : Int ![
+            a.len() as i32
+        ] fold;
     },
     equations {
     },
@@ -293,6 +299,9 @@ language! {
         ProcStrCong . | S ~> T |- (ProcStr S) ~> (ProcStr T);
         ProcListCong . | S ~> T |- (ProcList S) ~> (ProcList T);
         ProcBagCong . | S ~> T |- (ProcBag S) ~> (ProcBag T);
+        ProcMapCong . | S ~> T |- (ProcMap S) ~> (ProcMap T);
+        // Map operations
+        LenMapCong . | S ~> T |- (LenMap S) ~> (LenMap T);
         // Custom operation
         CustomOpCongL . | S ~> T |- (CustomOp S R) ~> (CustomOp T R);
         CustomOpCongR . | S ~> T |- (CustomOp L S) ~> (CustomOp L T);

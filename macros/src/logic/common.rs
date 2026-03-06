@@ -44,13 +44,14 @@ pub fn relation_names(category: &Ident) -> RelationNames {
 /// Find the literal label for a category (e.g., `NumLit` for `Int`, `ListLit` for `List`).
 ///
 /// Returns `None` if the category has no native type or no literal rule.
-/// For collection categories (List/Bag), returns ListLit/BagLit to match the enum variant.
+    /// For collection categories (List/Bag/Map), returns ListLit/BagLit/MapLit to match the enum variant.
 pub fn literal_label_for(language: &LanguageDef, category: &Ident) -> Option<Ident> {
     let lang_type = language.types.iter().find(|t| t.name == *category)?;
     if let Some(ref ck) = lang_type.collection_kind {
         let label = match ck {
             crate::ast::language::CollectionCategory::List(_) => quote::format_ident!("ListLit"),
             crate::ast::language::CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
+            crate::ast::language::CollectionCategory::Map(_) => quote::format_ident!("MapLit"),
         };
         return Some(label);
     }
@@ -331,6 +332,10 @@ fn collect_type_refs(
         },
         TypeExpr::Collection { element, .. } => {
             collect_type_refs(src, element, categories, edges);
+        },
+        TypeExpr::Map { key, value } => {
+            collect_type_refs(src, key, categories, edges);
+            collect_type_refs(src, value, categories, edges);
         },
         TypeExpr::Arrow { domain, codomain } => {
             collect_type_refs(src, domain, categories, edges);

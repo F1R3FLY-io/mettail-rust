@@ -42,7 +42,11 @@ use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 /// Complex collections (ZipMapSep rules with binders like PInputs) are handled
 /// by standalone parse functions and should NOT have CollectionElem frames generated.
 fn is_simple_collection(rule: &RDRuleInfo) -> bool {
-    rule.is_collection && !rule.has_binder && !rule.has_multi_binder && !has_zipmapsep(rule)
+    rule.is_collection
+        && rule.collection_type != Some(CollectionKind::HashMap)
+        && !rule.has_binder
+        && !rule.has_multi_binder
+        && !has_zipmapsep(rule)
 }
 
 /// Check if a rule has any ZipMapSep syntax items.
@@ -63,7 +67,9 @@ fn has_zipmapsep(rule: &RDRuleInfo) -> bool {
 /// - Rules with ZipMapSep items (complex parsing logic)
 /// - Rules with multi-binder items (complex binder handling)
 fn should_use_standalone_fn(rule: &RDRuleInfo) -> bool {
-    has_zipmapsep(rule) || rule.has_multi_binder
+    has_zipmapsep(rule)
+        || rule.has_multi_binder
+        || rule.collection_type == Some(CollectionKind::HashMap)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -411,6 +417,9 @@ pub fn write_frame_enum(
                                 format!("std::collections::HashSet<{}>", element_category)
                             },
                             CollectionKind::Vec => format!("Vec<{}>", element_category),
+                            CollectionKind::HashMap => {
+                                format!("mettail_runtime::HashMapLit<{}, {}>", element_category, element_category)
+                            },
                         };
                         fields.push(FrameField { name: name.clone(), type_str });
                     },
@@ -443,6 +452,10 @@ pub fn write_frame_enum(
             CollectionKind::HashBag => format!("mettail_runtime::HashBag<{}>", element_category),
             CollectionKind::HashSet => format!("std::collections::HashSet<{}>", element_category),
             CollectionKind::Vec => format!("Vec<{}>", element_category),
+            CollectionKind::HashMap => format!(
+                "mettail_runtime::HashMapLit<{}, {}>",
+                element_category, element_category
+            ),
         };
 
         variants.push(FrameVariant {
@@ -735,6 +748,12 @@ fn write_trampoline_body(
                 CollectionKind::HashSet => {
                     format!("{}::{}(std::collections::HashSet::new())", config.category, r.label)
                 },
+                CollectionKind::HashMap => {
+                    format!(
+                        "{}::{}(mettail_runtime::HashMapLit::new())",
+                        config.category, r.label
+                    )
+                },
             })
             .unwrap_or_else(|| "unsafe { std::mem::zeroed() }".to_string());
         write!(buf, "let mut lhs: {} = {};", config.category, dummy).unwrap();
@@ -769,6 +788,12 @@ fn write_trampoline_body(
                 CollectionKind::HashSet => {
                     format!(
                         "{}::{}(std::collections::HashSet::new())",
+                        config.category, rd_rule.label
+                    )
+                },
+                CollectionKind::HashMap => {
+                    format!(
+                        "{}::{}(mettail_runtime::HashMapLit::new())",
                         config.category, rd_rule.label
                     )
                 },
@@ -1095,6 +1120,7 @@ fn write_prefix_match_arms(
                 CollectionKind::HashBag => "mettail_runtime::HashBag::new()",
                 CollectionKind::HashSet => "std::collections::HashSet::new()",
                 CollectionKind::Vec => "Vec::new()",
+                CollectionKind::HashMap => "mettail_runtime::HashMapLit::new()",
             };
             let needs_elem_parse = elem_cat != *cat;
 
@@ -2248,6 +2274,7 @@ fn write_unwind_handlers(
         let insert_method = match collection_type {
             CollectionKind::HashBag | CollectionKind::HashSet => "insert",
             CollectionKind::Vec => "push",
+            CollectionKind::HashMap => "insert",
         };
 
         // Find separator and closing terminal
