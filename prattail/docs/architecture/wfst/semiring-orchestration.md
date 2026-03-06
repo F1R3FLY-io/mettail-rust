@@ -49,31 +49,31 @@ perform semiring operations.
 Each row describes one semiring usage site.  The **Mode** column refers to the
 three composition modes defined in the quick reference.
 
-| # | Stage | Function | Semiring(s) | Mode | Purpose |
-|:-:|:-----:|:---------|:------------|:----:|:--------|
-| 1 | 3 | `PredictionWfst::build()` | `TropicalWeight` | — | Primary WFST construction; no composition |
-| 2 | 3 | `TransducerCascade::run()` | `TropicalWeight` | — | Optimization passes; single semiring |
-| 3 | 3 | `DeadStateElimination::apply()` | `TropicalWeight` → `BooleanWeight` | **1** | Forward/backward reachability check |
-| 4 | 4 | `compute_composed_dispatch()` | `TropicalWeight` + `CountingWeight` | **1** | Ambiguity warning: `entries.len()` as counting |
-| 5 | 4 | `predict_with_confidence()` | `TropicalWeight` + `CountingWeight` | **1** | Derivation count annotation |
-| 6 | 4 | `confidence_gap()` | `TropicalWeight` → `f64` | **1** | Second-best − best weight |
-| 7 | 5 | `RecoveryCost` type alias | `ProductWeight<Tropical, Edit>` | **2** | Joint priority + min-edit recovery |
-| 8 | 5 | `build_recovery_wfsts()` — discounts | `TropicalWeight` → `f64` → discounts | **3** | Prediction discount injection |
-| 9 | 5 | `build_recovery_wfsts()` — contexts | `TropicalWeight` → `ContextWeight` | **3** | Follow context injection |
-| 10 | 5 | `find_best_recovery()` Viterbi | `RecoveryCost` = `ProductWeight<T, E>` | **2** | Shortest-path over product semiring |
-| 11 | 7 | `detect_dead_rules()` Tier 3 | `TropicalWeight` → `BooleanWeight` | **1** | WFST-unreachable rules |
-| 12 | 7 | `detect_inter_category_dead_paths()` | `BooleanWeight` | **1** | Forward/backward co-reachability |
-| 13 | 7 | `detect_nearly_dead_paths()` | `ProductWeight<Boolean, Counting>` | **2** | Reachability + derivation count |
-| 14 | 7 | `viterbi_generic()` | `W: Semiring + Ord` | **2** | Generic lattice path extraction |
-| 15 | 7 | `linear_to_lattice_generic()` | `W: Semiring` | — | Lattice construction with typed weights |
+| #  | Stage | Function                             | Semiring(s)                            | Mode  | Purpose                                        |
+|:--:|:-----:|:-------------------------------------|:---------------------------------------|:-----:|:-----------------------------------------------|
+| 1  |   3   | `PredictionWfst::build()`            | `TropicalWeight`                       |   —   | Primary WFST construction; no composition      |
+| 2  |   3   | `TransducerCascade::run()`           | `TropicalWeight`                       |   —   | Optimization passes; single semiring           |
+| 3  |   3   | `DeadStateElimination::apply()`      | `TropicalWeight` → `BooleanWeight`     | **1** | Forward/backward reachability check            |
+| 4  |   4   | `compute_composed_dispatch()`        | `TropicalWeight` + `CountingWeight`    | **1** | Ambiguity warning: `entries.len()` as counting |
+| 5  |   4   | `predict_with_confidence()`          | `TropicalWeight` + `CountingWeight`    | **1** | Derivation count annotation                    |
+| 6  |   4   | `confidence_gap()`                   | `TropicalWeight` → `f64`               | **1** | Second-best − best weight                      |
+| 7  |   5   | `RecoveryCost` type alias            | `ProductWeight<Tropical, Edit>`        | **2** | Joint priority + min-edit recovery             |
+| 8  |   5   | `build_recovery_wfsts()` — discounts | `TropicalWeight` → `f64` → discounts   | **3** | Prediction discount injection                  |
+| 9  |   5   | `build_recovery_wfsts()` — contexts  | `TropicalWeight` → `ContextWeight`     | **3** | Follow context injection                       |
+| 10 |   5   | `find_best_recovery()` Viterbi       | `RecoveryCost` = `ProductWeight<T, E>` | **2** | Shortest-path over product semiring            |
+| 11 |   7   | `detect_dead_rules()` Tier 3         | `TropicalWeight` → `BooleanWeight`     | **1** | WFST-unreachable rules                         |
+| 12 |   7   | `detect_inter_category_dead_paths()` | `BooleanWeight`                        | **1** | Forward/backward co-reachability               |
+| 13 |   7   | `detect_nearly_dead_paths()`         | `ProductWeight<Boolean, Counting>`     | **2** | Reachability + derivation count                |
+| 14 |   7   | `viterbi_generic()`                  | `W: Semiring + Ord`                    | **2** | Generic lattice path extraction                |
+| 15 |   7   | `linear_to_lattice_generic()`        | `W: Semiring`                          |   —   | Lattice construction with typed weights        |
 
 ### Feature-Gated Additions (`wfst-log`)
 
-| # | Stage | Function | Semiring(s) | Mode | Purpose |
-|:-:|:-----:|:---------|:------------|:----:|:--------|
-| 16 | 7 | `forward_backward()` | `LogWeight` | — | Log-space probability computation |
-| 17 | 7 | `compute_entropy()` | `EntropyWeight` | — | Derivation entropy |
-| 18 | 7 | `n_best_paths()` | `NbestWeight<N>` | — | N-best path extraction |
+| #  | Stage | Function             | Semiring(s)      | Mode | Purpose                           |
+|:--:|:-----:|:---------------------|:-----------------|:----:|:----------------------------------|
+| 16 |   7   | `forward_backward()` | `LogWeight`      |  —   | Log-space probability computation |
+| 17 |   7   | `compute_entropy()`  | `EntropyWeight`  |  —   | Derivation entropy                |
+| 18 |   7   | `n_best_paths()`     | `NbestWeight<N>` |  —   | N-best path extraction            |
 
 ---
 
@@ -90,10 +90,10 @@ whether **any** token in a category's FIRST set dispatches to a given rule:
 let reachable = first_sets
     .get(&rule_info.category)
     .map_or(false, |fs| {
-        fs.tokens.iter().any(|tok| {          // ⊕ = ∨ (disjunction)
+        fs.tokens.iter().any(|tok| {          // ⊕  = ∨ (disjunction)
             wfst.predict(tok)
                 .iter()
-                .any(|a| a.action.rule_label() == rule_info.label)  // φ: w ↦ (w ≠ +∞)
+                .any(|a| a.action.rule_label() == rule_info.label)  // φ: w ↦  (w ≠ +∞)
         })
     });
 ```
@@ -102,7 +102,7 @@ The `.any()` call is the implicit `BooleanWeight::plus()` (disjunction).
 The predicate `a.action.rule_label() == rule_info.label` collapses the
 tropical weight to `BooleanWeight(true)` if the action exists at all.
 
-**Homomorphism:** φ(w) = BooleanWeight(w ≠ TropicalWeight::zero())
+**Homomorphism:** `φ(w) = BooleanWeight(w ≠ TropicalWeight::zero())`
 
 ### 3.2 CountingWeight in Composed Dispatch
 
@@ -122,7 +122,7 @@ This is a Mode 1 re-interpretation: the set of `TropicalWeight` actions
 is projected onto a single `CountingWeight` via `|entries|`.  The
 `CountingWeight` is not stored — it is used inline for diagnostic output.
 
-**Homomorphism:** φ({w₁, …, wₙ}) = CountingWeight(n)
+**Homomorphism:** `φ({w₁, …, wₙ}) = CountingWeight(n)`
 
 ### 3.3 predict_with_confidence
 
@@ -196,13 +196,13 @@ pub type RecoveryCost = ProductWeight<TropicalWeight, EditWeight>;
 
 The recovery WFST assigns `RecoveryCost` to each repair action:
 
-| Repair Action | Tropical Cost | Edit Count | Combined |
-|:--------------|:-------------|:-----------|:---------|
-| Skip (per token) | 0.5 | 1 | `(0.5, 1)` |
-| Delete | 1.0 | 1 | `(1.0, 1)` |
-| Swap | 1.25 | 2 | `(1.25, 2)` |
-| Substitute | 1.5 | 2 | `(1.5, 2)` |
-| Insert | 2.0 | 2 | `(2.0, 2)` |
+| Repair Action    | Tropical Cost | Edit Count | Combined    |
+|:-----------------|:--------------|:-----------|:------------|
+| Skip (per token) | 0.5           | 1          | `(0.5, 1)`  |
+| Delete           | 1.0           | 1          | `(1.0, 1)`  |
+| Swap             | 1.25          | 2          | `(1.25, 2)` |
+| Substitute       | 1.5           | 2          | `(1.5, 2)`  |
+| Insert           | 2.0           | 2          | `(2.0, 2)`  |
 
 The `find_best_recovery()` function runs Viterbi over `RecoveryCost`:
 - **Primary objective:** Minimize tropical cost (parse quality)
@@ -252,12 +252,12 @@ pub fn viterbi_generic<T: Clone, S: Clone, W: Semiring + Ord>(
 Any `ProductWeight` composition that satisfies `Semiring + Ord` can be used
 with `viterbi_generic()`.  Current test-verified compositions:
 
-| Composition | Tested | Viterbi-OK |
-|:------------|:-------|:-----------|
-| `ProductWeight<TropicalWeight, EditWeight>` | ✓ | ✓ |
-| `ProductWeight<BooleanWeight, CountingWeight>` | ✓ | ✓ |
-| `EditWeight` (standalone) | ✓ | ✓ |
-| `CountingWeight` (standalone) | ✓ | ✗ (zero = smallest) |
+| Composition                                    | Tested | Viterbi-OK          |
+|:-----------------------------------------------|:-------|:--------------------|
+| `ProductWeight<TropicalWeight, EditWeight>`    | ✓      | ✓                   |
+| `ProductWeight<BooleanWeight, CountingWeight>` | ✓      | ✓                   |
+| `EditWeight` (standalone)                      | ✓      | ✓                   |
+| `CountingWeight` (standalone)                  | ✓      | ✗ (zero = smallest) |
 
 ---
 
@@ -360,16 +360,18 @@ edge with the composition mode used:
                               │
                               ▼
                     ┌─────────────────────┐
-                    │   Stage 1–2: NFA/DFA │
-                    │   (TropicalWeight    │
-                    │    only)             │
+                    │ Stage 1–2: NFA/DFA  │
+                    ├─────────────────────┤
+                    │ (TropicalWeight     │
+                    │  only)              │
                     └──────────┬──────────┘
                                │
                                ▼
                     ┌─────────────────────┐
-                    │   Stage 3: WFST     │
+                    │ Stage 3: WFST       │
+                    ├─────────────────────┤
                     │                     │
-                    │ PredictionWfst      │──── DeadStateElimination ────┐
+                    │ PredictionWfst      │──── DeadStateElimination ───┐
                     │   [TropicalWeight]  │     Mode 1: BooleanWeight   │
                     │                     │     (transducer.rs)         │
                     │ TransducerCascade   │◄────────────────────────────┘
@@ -377,34 +379,35 @@ edge with the composition mode used:
                         │            │
            ┌────────────┘            └────────────┐
            ▼                                      ▼
-┌─────────────────────┐                ┌─────────────────────┐
-│ Stage 4: Dispatch   │                │ Stage 5: Recovery   │
-│                     │                │                     │
-│ compute_composed_   │  Mode 3 ──────►│ build_recovery_     │
-│   dispatch()        │  Flow A:       │   wfsts()           │
-│ ┌─────────────────┐ │  discount      │                     │
-│ │ CountingWeight   │ │  injection    │ ┌─────────────────┐ │
-│ │ (Mode 1: len()) │ │               │ │ RecoveryCost     │ │
+┌─────────────────────┐                ┌──────────────────────┐
+│ Stage 4: Dispatch   │                │ Stage 5: Recovery    │
+├─────────────────────┤                ├──────────────────────┤
+│ compute_composed_   │  Mode 3 ──────►│ build_recovery_      │
+│   dispatch()        │  Flow A:       │   wfsts()            │
+│ ┌─────────────────┐ │  discount      │                      │
+│ │ CountingWeight  │ │  injection     │ ┌──────────────────┐ │
+│ │ (Mode 1: len()) │ │                │ │ RecoveryCost     │ │
 │ └─────────────────┘ │  Mode 3 ──────►│ │ ProductWeight    │ │
 │                     │  Flow B:       │ │ <Tropical, Edit> │ │
 │ predict_with_       │  context       │ │ (Mode 2)         │ │
-│   confidence()      │  injection    │ └─────────────────┘ │
-│ ┌─────────────────┐ │               │                     │
-│ │ CountingWeight   │ │               │ prediction_        │
-│ │ (Mode 1)        │ │               │   discounts: f64   │
-│ └─────────────────┘ │               │ follow_contexts:   │
-│                     │               │   ContextWeight    │
-│ confidence_gap()    │               │                     │
-│ ┌─────────────────┐ │               │ find_best_recovery()│
-│ │ f64 extraction  │ │               │ Viterbi over       │
-│ │ (Mode 1)        │ │               │ RecoveryCost       │
-│ └─────────────────┘ │               │ (Mode 2)           │
-└─────────────────────┘               └─────────────────────┘
+│   confidence()      │  injection     │ └──────────────────┘ │
+│ ┌─────────────────┐ │                │                      │
+│ │ CountingWeight  │ │                │ prediction_          │
+│ │ (Mode 1)        │ │                │   discounts: f64     │
+│ └─────────────────┘ │                │ follow_contexts:     │
+│                     │                │   ContextWeight      │
+│ confidence_gap()    │                │                      │
+│ ┌─────────────────┐ │                │ find_best_recovery() │
+│ │ f64 extraction  │ │                │ Viterbi over         │
+│ │ (Mode 1)        │ │                │ RecoveryCost         │
+│ └─────────────────┘ │                │ (Mode 2)             │
+└──────────┬──────────┘                └──────────┬───────────┘
            │                                      │
            └────────────┬─────────────────────────┘
                         ▼
              ┌─────────────────────┐
              │ Stage 6: Codegen    │
+             ├─────────────────────┤
              │ (emits code; no     │
              │  semiring ops)      │
              └──────────┬──────────┘
@@ -412,15 +415,15 @@ edge with the composition mode used:
                         ▼
              ┌─────────────────────┐
              │ Stage 7: Lint       │
-             │                     │
+             ├─────────────────────┤
              │ detect_dead_rules() │
-             │ Tier 3: Mode 1     │
-             │ Tropical→Boolean   │
+             │ Tier 3: Mode 1      │
+             │ Tropical→Boolean    │
              │                     │
              │ detect_inter_       │
              │   category_dead_    │
              │   paths()           │
-             │ Mode 1: Boolean    │
+             │ Mode 1: Boolean     │
              │                     │
              │ detect_nearly_      │
              │   dead_paths()      │
@@ -487,7 +490,7 @@ You may need a new semiring type.  Add it to `automata/semiring.rs` with:
 
 Every Mode 1 instance in PraTTaIL uses one of two homomorphisms:
 
-**φ₁: TropicalWeight → BooleanWeight**
+**`φ₁: TropicalWeight → BooleanWeight`**
 ```
 φ₁(w) = BooleanWeight(w ≠ +∞)
 ```
@@ -497,7 +500,7 @@ Verification:
 - `φ₁(min(a,b)) = (min(a,b) ≠ +∞) = (a ≠ +∞) ∨ (b ≠ +∞) = φ₁(a) ∨ φ₁(b)` ✓
 - `φ₁(a+b) = (a+b ≠ +∞) = (a ≠ +∞) ∧ (b ≠ +∞) = φ₁(a) ∧ φ₁(b)` ✓
 
-**φ₂: Set{TropicalWeight} → CountingWeight**
+**`φ₂: Set{TropicalWeight} → CountingWeight`**
 ```
 φ₂({w₁, …, wₙ}) = CountingWeight(n)
 ```
@@ -512,10 +515,10 @@ For `viterbi_generic<W>()` correctness, `W` must satisfy:
 2. `W::times()` is monotone under Ord (relaxation soundness)
 3. No negative-weight cycles (termination)
 
-| ProductWeight Composition | (1) zero = largest | (2) times monotone | (3) no neg cycles |
-|:--------------------------|:------------------:|:------------------:|:-----------------:|
-| `<TropicalWeight, EditWeight>` | ✓ `(+∞, MAX)` | ✓ addition monotone | ✓ all costs ≥ 0 |
-| `<BooleanWeight, CountingWeight>` | ✓ `(false, 0)` | ✓ | ✓ |
+| ProductWeight Composition         | (1) zero = largest | (2) times monotone  | (3) no neg cycles |
+|:----------------------------------|:------------------:|:-------------------:|:-----------------:|
+| `<TropicalWeight, EditWeight>`    |   ✓ `(+∞, MAX)`    | ✓ addition monotone |  ✓ all costs ≥ 0  |
+| `<BooleanWeight, CountingWeight>` |   ✓ `(false, 0)`   |          ✓          |         ✓         |
 
 ### Mode 3: Conservative Injection
 
@@ -537,22 +540,22 @@ Both Mode 3 flows maintain conservativity:
 
 ## 9. Source Reference Map
 
-| # | Mode | Instance | Source File | Line Range |
-|:-:|:----:|:---------|:------------|:-----------|
-| 1 | 1 | Tier 3 dead-rule (Boolean projection) | `pipeline.rs` | 216–232 |
-| 2 | 1 | CountingWeight in dispatch | `prediction.rs` | 1638–1641 |
-| 3 | 1 | predict_with_confidence | `wfst.rs` | 362–366 |
-| 4 | 1 | confidence_gap | `wfst.rs` | 422–428 |
-| 5 | 1 | DeadStateElimination | `transducer.rs` | 107–122 |
-| 6 | 1 | Inter-category dead paths (Boolean) | `pipeline.rs` | 329–427 |
-| 7 | 2 | RecoveryCost type alias | `recovery.rs` | 53–58 |
-| 8 | 2 | RecoveryCost in repair costs | `recovery.rs` | 71–100 |
-| 9 | 2 | find_best_recovery Viterbi | `recovery.rs` | 1100–1291 |
-| 10 | 2 | Nearly-dead detection (Bool × Count) | `pipeline.rs` | 434–574 |
-| 11 | 2 | viterbi_generic | `lattice.rs` | 490–497 |
-| 12 | 2 | linear_to_lattice_generic | `lattice.rs` | 568–576 |
-| 13 | 3 | Prediction discount injection (Flow A) | `recovery.rs` | 1342–1365 |
-| 14 | 3 | Context weight injection (Flow B) | `recovery.rs` | 1367–1425 |
-| 15 | — | PredictionWfst construction | `wfst.rs` | 1–50 |
-| 16 | — | TransducerCascade | `transducer.rs` | 263–431 |
-| 17 | — | Semiring trait + 10 types | `automata/semiring.rs` | 28–51 (trait) |
+| #  | Mode | Instance                               | Source File            | Line Range    |
+|:--:|:----:|:---------------------------------------|:-----------------------|:--------------|
+| 1  |  1   | Tier 3 dead-rule (Boolean projection)  | `pipeline.rs`          | 216–232       |
+| 2  |  1   | CountingWeight in dispatch             | `prediction.rs`        | 1638–1641     |
+| 3  |  1   | predict_with_confidence                | `wfst.rs`              | 362–366       |
+| 4  |  1   | confidence_gap                         | `wfst.rs`              | 422–428       |
+| 5  |  1   | DeadStateElimination                   | `transducer.rs`        | 107–122       |
+| 6  |  1   | Inter-category dead paths (Boolean)    | `pipeline.rs`          | 329–427       |
+| 7  |  2   | RecoveryCost type alias                | `recovery.rs`          | 53–58         |
+| 8  |  2   | RecoveryCost in repair costs           | `recovery.rs`          | 71–100        |
+| 9  |  2   | find_best_recovery Viterbi             | `recovery.rs`          | 1100–1291     |
+| 10 |  2   | Nearly-dead detection (Bool × Count)   | `pipeline.rs`          | 434–574       |
+| 11 |  2   | viterbi_generic                        | `lattice.rs`           | 490–497       |
+| 12 |  2   | linear_to_lattice_generic              | `lattice.rs`           | 568–576       |
+| 13 |  3   | Prediction discount injection (Flow A) | `recovery.rs`          | 1342–1365     |
+| 14 |  3   | Context weight injection (Flow B)      | `recovery.rs`          | 1367–1425     |
+| 15 |  —   | PredictionWfst construction            | `wfst.rs`              | 1–50          |
+| 16 |  —   | TransducerCascade                      | `transducer.rs`        | 263–431       |
+| 17 |  —   | Semiring trait + 10 types              | `automata/semiring.rs` | 28–51 (trait) |

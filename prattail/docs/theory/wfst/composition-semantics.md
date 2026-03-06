@@ -53,11 +53,11 @@ The merge operation is parameterized by a duplicate strategy σ ∈ {Error, Over
 
 ### 1.3 Composition Clauses
 
-| Clause | Strategy | Components Merged |
-|--------|----------|-------------------|
-| `extends:` | Error | N, T, E, W, G, O |
-| `includes:` | Override | N, T only |
-| `mixins:` | Override | N, T only |
+| Clause      | Strategy | Components Merged |
+|-------------|----------|-------------------|
+| `extends:`  | Error    | N, T, E, W, G, O  |
+| `includes:` | Override | N, T only         |
+| `mixins:`   | Override | N, T only         |
 
 ---
 

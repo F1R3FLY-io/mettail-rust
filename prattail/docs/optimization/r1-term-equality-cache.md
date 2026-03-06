@@ -213,12 +213,12 @@ the birthday bound:
 
 For representative values:
 
-| N (distinct terms) | P(collision)    |
-|--------------------:|:----------------|
-|              1,000  | ~2.7 x 10^-14  |
-|             10,000  | ~5.4 x 10^-12  |
-|            100,000  | ~2.7 x 10^-10  |
-|          1,000,000  | ~2.7 x 10^-8   |
+| N (distinct terms) | P(collision)  |
+|-------------------:|:--------------|
+|              1,000 | ~2.7 x 10^-14 |
+|             10,000 | ~5.4 x 10^-12 |
+|            100,000 | ~2.7 x 10^-10 |
+|          1,000,000 | ~2.7 x 10^-8  |
 
 For N = 10,000 (a very large grammar evaluation): P ~= 5.4 x 10^-12.
 
@@ -231,13 +231,13 @@ state than a hash collision in this cache.
 Let N be the number of distinct terms, K the number of fixpoint iterations, and
 d the average binder depth.
 
-| Metric           | Without cache           | With cache                              |
-|-----------------:|:------------------------|:----------------------------------------|
-| Total comparisons| O(N^2 x K)             | O(N^2 x K)  (unchanged)                |
-| Per-comparison   | O(d) + allocs           | O(1) amortized (O(d) on cold miss)      |
-| Cold misses      | N/A                     | <= C(N, 2) = N(N-1)/2                   |
-| Total work       | O(N^2 x K x d)         | O(N^2 x d) + O(N^2 x K)               |
-| Memory overhead  | None                    | O(N^2) entries x 17 bytes each          |
+|            Metric | Without cache  | With cache                         |
+|------------------:|:---------------|:-----------------------------------|
+| Total comparisons | O(N^2 x K)     | O(N^2 x K)  (unchanged)            |
+|    Per-comparison | O(d) + allocs  | O(1) amortized (O(d) on cold miss) |
+|       Cold misses | N/A            | <= C(N, 2) = N(N-1)/2              |
+|        Total work | O(N^2 x K x d) | O(N^2 x d) + O(N^2 x K)            |
+|   Memory overhead | None           | O(N^2) entries x 17 bytes each     |
 
 The dominant improvement is eliminating the factor of K from the expensive
 O(d)-per-call work. For K = 10, this is roughly a 10x reduction in binder
@@ -253,14 +253,14 @@ freshening and allocation costs.
 Thread-Local Storage
 +---------------------------------------------------+
 | TERM_EQ_CACHE: Cell<HashMap<(u64, u64), bool>>    |
-|                                                    |
-|   Key: (min(h_a, h_b), max(h_a, h_b))            |
-|         +---------+  +---------+                   |
-|         | u64     |  | u64     |  --> bool          |
-|         | hash_lo |  | hash_hi |                   |
-|         +---------+  +---------+                   |
-|                                                    |
-|   Access pattern: Cell take/set (zero borrow cost) |
+|                                                   |
+|   Key: (min(h_a, h_b), max(h_a, h_b))             |
+|         +---------+  +---------+                  |
+|         | u64     |  | u64     |  --> bool        |
+|         | hash_lo |  | hash_hi |                  |
+|         +---------+  +---------+                  |
+|                                                   |
+|  Access pattern: Cell take/set (zero borrow cost) |
 +---------------------------------------------------+
 ```
 
@@ -316,11 +316,11 @@ where
 
 ### 8.1 Key Files
 
-| File | Role |
-|:-----|:-----|
-| `runtime/src/binding.rs` | Cache declaration, `structural_scope_hash()`, `cached_term_eq()`, `clear_term_eq_cache()`, `term_eq_cache_size()`, specialized `BoundTerm<String>` impl |
-| `runtime/src/lib.rs` | Re-exports `clear_term_eq_cache` and `term_eq_cache_size` via `pub use binding::*` |
-| `macros/src/gen/runtime/language.rs` | Emits `mettail_runtime::clear_term_eq_cache()` at the start of generated `run_ascent_typed()` |
+| File                                 | Role                                                                                                                                                    |
+|:-------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `runtime/src/binding.rs`             | Cache declaration, `structural_scope_hash()`, `cached_term_eq()`, `clear_term_eq_cache()`, `term_eq_cache_size()`, specialized `BoundTerm<String>` impl |
+| `runtime/src/lib.rs`                 | Re-exports `clear_term_eq_cache` and `term_eq_cache_size` via `pub use binding::*`                                                                      |
+| `macros/src/gen/runtime/language.rs` | Emits `mettail_runtime::clear_term_eq_cache()` at the start of generated `run_ascent_typed()`                                                           |
 
 ### 8.2 `structural_scope_hash()`
 
@@ -520,11 +520,11 @@ converges to the same result.
 
 All 1,331 tests pass with the cache enabled:
 
-| Feature Set   | Test Count |
-|--------------:|-----------:|
-| default       |      1,303 |
-| wfst-log      |      1,322 |
-| edge_case     |        220 |
+| Feature Set | Test Count |
+|------------:|-----------:|
+|     default |      1,303 |
+|    wfst-log |      1,322 |
+|   edge_case |        220 |
 
 No test regressions were introduced. The cache is fully transparent to
 existing test assertions.

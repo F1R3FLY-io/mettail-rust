@@ -56,11 +56,11 @@ conservatism.
 
 The dead-rule warning is analogous to Rust's `#[warn(dead_code)]`:
 
-| Rust compiler | PraTTaIL |
-|---------------|----------|
-| Function never called | Rule never dispatched via any FIRST-set token |
-| Struct field never read | Literal rule in category without `native_type` |
-| Dead arm in match | Infix rule in category with no reachable prefix |
+| Rust compiler           | PraTTaIL                                        |
+|-------------------------|-------------------------------------------------|
+| Function never called   | Rule never dispatched via any FIRST-set token   |
+| Struct field never read | Literal rule in category without `native_type`  |
+| Dead arm in match       | Infix rule in category with no reachable prefix |
 
 ---
 
@@ -75,36 +75,38 @@ runs after Tiers 1–3 and can **resurrect** rules that those tiers flagged
 as dead.
 
 ```
-  Rule
-   │
-   ▼
+                ┌──────┐
+                │ Rule │
+                └──┬───┘
+                   │
+                   ▼
   ┌────────────────────────────────┐
   │ Tier 1: Literal rule?          │
   │ (rule_info.is_literal == true) │
-  └────────┬───────────────────────┘
-           │
-     ┌─────┴─────┐
-     │yes        │no
-     ▼            ▼
+  └────────────────┬───────────────┘
+                   │
+       ┌───────────┴──────────┐
+       │yes                   │no
+       ▼                      ▼
   ┌──────────┐  ┌────────────────────────────────────────────┐
   │ Check:   │  │ Tier 2: Same-category infix/var?           │
   │ category │  │ (is_infix && !is_cross_category) || is_var │
-  │ has      │  └────────┬───────────────────────────────────┘
-  │ native_  │           │
-  │ type?    │     ┌─────┴─────┐
-  └────┬─────┘     │yes        │no
-       │           ▼            ▼
-  ┌────┴────┐  ┌──────────┐  ┌──────────────────────────┐
+  │ has      │  └─────────────┬──────────────────────────────┘
+  │ native_  │                │
+  │ type?    │      ┌─────────┴─────────┐
+  └────┬─────┘      │yes                │no
+       ▼            ▼                   ▼
+  ┌─────────┐  ┌──────────┐  ┌──────────────────────────┐
   │no →DEAD │  │ Check:   │  │ Tier 3: WFST reachable?  │
   │yes→LIVE │  │ category │  │ (prefix, cast, cross-cat)│
-  └─────────┘  │ reachable│  └────────┬─────────────────┘
-               │ ?        │           │
-               └────┬─────┘     ┌─────┴─────┐
-                    │           │yes        │no
-               ┌────┴────┐     ▼            ▼
-               │no →DEAD │  ┌──────┐    ┌──────┐
-               │yes→LIVE │  │ LIVE │    │ DEAD │
-               └─────────┘  └──────┘    └──────┘
+  └─────────┘  │ reachable│  └──────────┬───────────────┘
+               │ ?        │             │
+               └────┬─────┘     ┌───────┴───────┐
+                    ▼           │yes            │no
+               ┌─────────┐      ▼               ▼
+               │no →DEAD │   ┌──────┐        ┌──────┐
+               │yes→LIVE │   │ LIVE │        │ DEAD │
+               └─────────┘   └──────┘        └──────┘
 ```
 
 ### Tier 1 — Literal rules (structural check)
@@ -130,10 +132,10 @@ for rule_info in rule_infos:
 
 **Example**:
 
-| Rule | Category | `native_type` | Result |
-|------|----------|---------------|--------|
-| `NumLit` | `Int` | `Some("i32")` | Live — match arm generated |
-| `NumLit` | `Expr` | `None` | Dead — no match arm for `Token::Integer` |
+| Rule     | Category | `native_type` | Result                                   |
+|----------|----------|---------------|------------------------------------------|
+| `NumLit` | `Int`    | `Some("i32")` | Live — match arm generated               |
+| `NumLit` | `Expr`   | `None`        | Dead — no match arm for `Token::Integer` |
 
 ### Tier 2 — Same-category infix/var rules (graph reachability)
 
@@ -255,11 +257,11 @@ to the pipeline.
 
 **Extraction strategies**:
 
-| Block type | Strategy | Granularity |
-|-----------|----------|-------------|
-| `equations` | Structured `Pattern` traversal via `collect_constructor_labels()` | Per equation |
-| `rewrites` | Structured `Pattern` traversal via `collect_constructor_labels()` | Per rewrite |
-| `logic` | `TokenStream` scanning — intersect `Ident` tokens with known labels | Entire block |
+| Block type  | Strategy                                                            | Granularity  |
+|-------------|---------------------------------------------------------------------|--------------|
+| `equations` | Structured `Pattern` traversal via `collect_constructor_labels()`   | Per equation |
+| `rewrites`  | Structured `Pattern` traversal via `collect_constructor_labels()`   | Per rewrite  |
+| `logic`     | `TokenStream` scanning — intersect `Ident` tokens with known labels | Entire block |
 
 The logic block is conservatively treated as a single dependency group because
 it stores raw Ascent syntax (`TokenStream`), not structured `Pattern` types.
@@ -313,30 +315,37 @@ Dead-rule detection was migrated from inline `eprintln!` calls in
 `pipeline.rs` to the unified lint layer in `lint.rs`.  The data flow is:
 
 ```
-  pipeline.rs: generate_parser_code()
-       │
-       ▼
   ┌──────────────────────────────────────────────┐
-  │ lint::LintContext                             │
+  │ pipeline.rs: generate_parser_code()          │
+  └──────────────────┬───────────────────────────┘
+                     │
+                     ▼
+  ┌──────────────────────────────────────────────┐
+  │ lint::LintContext                            │
   │ { categories, rules, first_sets,             │
   │   prediction_wfsts, ... }                    │
   └──────────────────┬───────────────────────────┘
                      │
                      ▼
-  lint::run_lints(&ctx)
-       │
-       ├─ G01..G10  (grammar structure)
-       ├─ W01       (dead-rule) ◄── this lint
-       ├─ W02..W06  (WFST-specific)
-       ├─ R01..R07  (recovery)
-       ├─ C01..C04  (cross-category)
-       └─ P02..P04  (performance)
-       │
-       ▼
-  Vec<LintDiagnostic>
-       │
-       ▼
-  lint::emit_diagnostics()  →  stderr
+  ┌──────────────────────────────────────────────┐
+  │ lint::run_lints(&ctx)                        │
+  │ ├─ G01..G10  (grammar structure)             │
+  │ ├─ W01       (dead-rule) ◄── this lint       │
+  │ ├─ W02..W06  (WFST-specific)                 │
+  │ ├─ R01..R07  (recovery)                      │
+  │ ├─ C01..C04  (cross-category)                │
+  │ └─ P02..P04  (performance)                   │
+  └──────────────────┬───────────────────────────┘
+                     │
+                     ▼
+  ┌──────────────────────────────────────────────┐
+  │ Vec<LintDiagnostic>                          │
+  └──────────────────┬───────────────────────────┘
+                     │
+                     ▼
+  ┌──────────────────────────────────────────────┐
+  │ lint::emit_diagnostics()  →  stderr          │
+  └──────────────────────────────────────────────┘
 ```
 
 ### LintDiagnostic structure
@@ -359,11 +368,11 @@ The W01 lint function (`lint.rs:786–832`) calls `detect_dead_rules()` and
 maps each `DeadRuleWarning` variant to a `LintDiagnostic` with a
 variant-specific hint:
 
-| Variant | Hint |
-|---------|------|
+| Variant               | Hint                                                           |
+|-----------------------|----------------------------------------------------------------|
 | `LiteralNoNativeType` | "add a native_type to the category or remove the literal rule" |
-| `UnreachableCategory` | "add a prefix rule to make the category reachable" |
-| `WfstUnreachable` | "remove the rule or add a unique dispatch token" |
+| `UnreachableCategory` | "add a prefix rule to make the category reachable"             |
+| `WfstUnreachable`     | "remove the rule or add a unique dispatch token"               |
 
 ### Diagnostic display format
 
@@ -453,23 +462,23 @@ property independent of other rules.
 
 ### By language
 
-| Language | Dead Rules | Tier 1 | Tier 2 | Tier 3 |
-|----------|-----------|--------|--------|--------|
-| Calculator | 8 | 0 | 0 | 8 |
-| RhoCalc | 36 | 0 | 0 | 36 |
+| Language   | Dead Rules | Tier 1 | Tier 2 | Tier 3 |
+|------------|------------|--------|--------|--------|
+| Calculator | 8          | 0      | 0      | 8      |
+| RhoCalc    | 36         | 0      | 0      | 36     |
 
 ### Calculator dead rules (8)
 
-| Rule | Category | Tier | Reason |
-|------|----------|------|--------|
-| FloatToStr | Str | 3 | Cast shadowed by higher-priority alternatives |
-| FloatToBool | Bool | 3 | Cast shadowed by higher-priority alternatives |
-| StrToBool | Bool | 3 | Cast shadowed by higher-priority alternatives |
-| IntId | Int | 3 | Identity rule shadowed by direct parse |
-| FloatId | Float | 3 | Identity rule shadowed by direct parse |
-| BoolId | Bool | 3 | Identity rule shadowed by direct parse |
-| StrId | Str | 3 | Identity rule shadowed by direct parse |
-| POutput | Proc | 3 | Output rule unreachable via prefix dispatch |
+| Rule        | Category | Tier | Reason                                        |
+|-------------|----------|------|-----------------------------------------------|
+| FloatToStr  | Str      | 3    | Cast shadowed by higher-priority alternatives |
+| FloatToBool | Bool     | 3    | Cast shadowed by higher-priority alternatives |
+| StrToBool   | Bool     | 3    | Cast shadowed by higher-priority alternatives |
+| IntId       | Int      | 3    | Identity rule shadowed by direct parse        |
+| FloatId     | Float    | 3    | Identity rule shadowed by direct parse        |
+| BoolId      | Bool     | 3    | Identity rule shadowed by direct parse        |
+| StrId       | Str      | 3    | Identity rule shadowed by direct parse        |
+| POutput     | Proc     | 3    | Output rule unreachable via prefix dispatch   |
 
 ### RhoCalc dead rules (36)
 
@@ -482,38 +491,38 @@ shadow the cross-category path.
 
 18 unit tests in `tests/warning_tests.rs::dead_rule_tests`:
 
-| Test | Tier | Validates |
-|------|------|-----------|
-| `test_literal_rule_without_native_type_is_dead` | 1 | Literal in category without `native_type` flagged |
-| `test_literal_rule_with_native_type_is_not_dead` | 1 | Literal with `native_type` not flagged |
-| `test_infix_rule_in_unreachable_category_is_dead` | 2 | Infix in empty-FIRST category flagged |
-| `test_var_rule_in_unreachable_category_is_dead` | 2 | Var in empty-FIRST category flagged |
-| `test_infix_rule_in_reachable_category_is_not_dead` | 2 | Infix in reachable category not flagged |
-| `test_var_rule_in_reachable_category_is_not_dead` | 2 | Var in reachable category not flagged |
-| `test_cross_category_infix_goes_through_wfst_check` | 3 | Cross-cat infix uses WFST (not tier 2) |
-| `test_reachable_cross_category_not_flagged` | 3 | Reachable cross-cat rule not flagged |
-| `test_dead_cast_rule_flagged` | 3 | Unreachable cast rule flagged |
-| `test_reachable_cast_rule_not_flagged` | 3 | Reachable cast rule not flagged |
-| `test_category_reachable_transitively_via_cast` | 2 | Transitive cast chain makes category reachable |
-| `test_dead_rule_warning_display` | — | Display formatting for all 3 variants |
-| `test_mixed_grammar_dead_rules` | 1,2 | Mixed scenario: 3 dead rules across tiers |
-| `semantic_live_labels_transitive_closure` | 4 | Group `{A,B}` + `{B,C}` → all 3 resurrected |
-| `semantic_live_labels_no_overlap` | 4 | No overlap → no resurrection |
-| `semantic_live_labels_multiple_seeds` | 4 | Multiple parsing-live seeds resurrect distinct groups |
-| `semantic_live_labels_empty_groups` | 4 | Empty groups → result equals parsing-live set |
-| `tier4_resurrects_wfst_unreachable_label` | 3→4 | WFST-unreachable label resurrected by semantic group |
+| Test                                                | Tier | Validates                                             |
+|-----------------------------------------------------|------|-------------------------------------------------------|
+| `test_literal_rule_without_native_type_is_dead`     | 1    | Literal in category without `native_type` flagged     |
+| `test_literal_rule_with_native_type_is_not_dead`    | 1    | Literal with `native_type` not flagged                |
+| `test_infix_rule_in_unreachable_category_is_dead`   | 2    | Infix in empty-FIRST category flagged                 |
+| `test_var_rule_in_unreachable_category_is_dead`     | 2    | Var in empty-FIRST category flagged                   |
+| `test_infix_rule_in_reachable_category_is_not_dead` | 2    | Infix in reachable category not flagged               |
+| `test_var_rule_in_reachable_category_is_not_dead`   | 2    | Var in reachable category not flagged                 |
+| `test_cross_category_infix_goes_through_wfst_check` | 3    | Cross-cat infix uses WFST (not tier 2)                |
+| `test_reachable_cross_category_not_flagged`         | 3    | Reachable cross-cat rule not flagged                  |
+| `test_dead_cast_rule_flagged`                       | 3    | Unreachable cast rule flagged                         |
+| `test_reachable_cast_rule_not_flagged`              | 3    | Reachable cast rule not flagged                       |
+| `test_category_reachable_transitively_via_cast`     | 2    | Transitive cast chain makes category reachable        |
+| `test_dead_rule_warning_display`                    | —    | Display formatting for all 3 variants                 |
+| `test_mixed_grammar_dead_rules`                     | 1,2  | Mixed scenario: 3 dead rules across tiers             |
+| `semantic_live_labels_transitive_closure`           | 4    | Group `{A,B}` + `{B,C}` → all 3 resurrected           |
+| `semantic_live_labels_no_overlap`                   | 4    | No overlap → no resurrection                          |
+| `semantic_live_labels_multiple_seeds`               | 4    | Multiple parsing-live seeds resurrect distinct groups |
+| `semantic_live_labels_empty_groups`                 | 4    | Empty groups → result equals parsing-live set         |
+| `tier4_resurrects_wfst_unreachable_label`           | 3→4  | WFST-unreachable label resurrected by semantic group  |
 
 ---
 
 ## 6. Algorithm Complexity
 
-| Tier | Complexity | Description |
-|------|-----------|-------------|
-| 1 | O(\|rules\|) | Single pass, constant-time check per rule |
-| 2 (reachable set) | O(\|rules\| × \|categories\|) | Fixed-point with at most \|categories\| iterations |
-| 2 (rule check) | O(\|rules\|) | Set membership test per rule |
-| 3 | O(\|rules\| × \|FIRST\| × \|WFST_actions\|) | Bounded by grammar size |
-| 4 | O(\|groups\| × \|labels_per_group\| × \|iterations\|) | Typically O(50 × 4 × 3) — negligible |
+| Tier              | Complexity                                              | Description                                          |
+|-------------------|---------------------------------------------------------|------------------------------------------------------|
+| 1                 | `O(\|rules\|)`                                          | Single pass, constant-time check per rule            |
+| 2 (reachable set) | `O(\|rules\| × \|categories\|)`                         | Fixed-point with at most `\|categories\|` iterations |
+| 2 (rule check)    | `O(\|rules\|)`                                          | Set membership test per rule                         |
+| 3                 | `O(\|rules\| × \|FIRST\| × \|WFST_actions\|)`           | Bounded by grammar size                              |
+| 4                 | `O(\|groups\| × \|labels_per_group\| × \|iterations\|)` | Typically `O(50 × 4 × 3)` — negligible               |
 
 The total cost is dominated by Tier 3, which is O(|rules| × |FIRST| ×
 |WFST_actions|).  In practice this is negligible compared to WFST
@@ -584,15 +593,15 @@ properties.
 
 ## Source Locations
 
-| Component | File | Lines |
-|-----------|------|-------|
-| `DeadRuleWarning` enum | `pipeline.rs` | 53–92 |
-| `detect_dead_rules()` (Tiers 1–4) | `pipeline.rs` | 141–275 |
-| `compute_semantic_live_labels()` | `pipeline.rs` | 277–295 |
-| `collect_dead_rule_labels()` | `pipeline.rs` | 601–630 |
-| `lint_w01_dead_rule()` | `lint.rs` | 994–1001 |
-| `LintContext` struct | `lint.rs` | 118–152 |
-| `collect_semantic_dependency_groups()` | `prattail_bridge.rs` | 596–649 |
-| `collect_constructor_labels()` (Pattern) | `pattern.rs` | 225–243 |
-| `collect_constructor_labels()` (PatternTerm) | `pattern.rs` | 163–186 |
-| Unit tests (Tiers 1–4) | `tests/warning_tests.rs` | 355–1045 |
+| Component                                    | File                     | Lines    |
+|----------------------------------------------|--------------------------|----------|
+| `DeadRuleWarning` enum                       | `pipeline.rs`            | 53–92    |
+| `detect_dead_rules()` (Tiers 1–4)            | `pipeline.rs`            | 141–275  |
+| `compute_semantic_live_labels()`             | `pipeline.rs`            | 277–295  |
+| `collect_dead_rule_labels()`                 | `pipeline.rs`            | 601–630  |
+| `lint_w01_dead_rule()`                       | `lint.rs`                | 994–1001 |
+| `LintContext` struct                         | `lint.rs`                | 118–152  |
+| `collect_semantic_dependency_groups()`       | `prattail_bridge.rs`     | 596–649  |
+| `collect_constructor_labels()` (Pattern)     | `pattern.rs`             | 225–243  |
+| `collect_constructor_labels()` (PatternTerm) | `pattern.rs`             | 163–186  |
+| Unit tests (Tiers 1–4)                       | `tests/warning_tests.rs` | 355–1045 |

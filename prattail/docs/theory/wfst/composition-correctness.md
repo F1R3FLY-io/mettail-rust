@@ -166,12 +166,12 @@ at runtime using the public `predict()` API. Violations produce structured
 
 These theorems correspond to standard WFST algebra results:
 
-| Theorem | WFST Analog |
-|---------|-------------|
-| T1 (Completeness) | Union: 𝓛(A ∪ B) ⊇ 𝓛(A) ∪ 𝓛(B) |
-| T2 (Soundness) | Union: 𝓛(A ∪ B) ⊆ 𝓛(A) ∪ 𝓛(B) |
-| T3 (Weight) | Tropical semiring: w(a ⊕ b) = min(w(a), w(b)) |
-| T4 (Determinism) | Determinization: |δ(q, σ)| ≤ 1 per source |
+| Theorem           | WFST Analog                                   |
+|-------------------|-----------------------------------------------|
+| T1 (Completeness) | Union: 𝓛(A ∪ B) ⊇ 𝓛(A) ∪ 𝓛(B)                 |
+| T2 (Soundness)    | Union: 𝓛(A ∪ B) ⊆ 𝓛(A) ∪ 𝓛(B)                 |
+| T3 (Weight)       | Tropical semiring: w(a ⊕ b) = min(w(a), w(b)) |
+| T4 (Determinism)  | Determinization: \|δ(q, σ)\| ≤ 1 per source   |
 
 Together, T1 + T2 establish that `𝓛(A ⊕ B) = 𝓛(A) ∪ 𝓛(B)` — the composition
 preserves the language exactly. T3 ensures weight semantics are maintained.

@@ -95,68 +95,68 @@ Layer 2.5 operates in three phases, two at compile time and one spanning both
 compile time and runtime:
 
 ```
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │  COMPILE TIME                                                       │
-  │                                                                     │
-  │  ┌───────────────────────────────────────────────────────────────┐  │
-  │  │  Phase 1: NFA Try-All + Forced-Prefix Replay                 │  │
-  │  │                                                               │  │
-  │  │  Detect NFA-ambiguous categories:                             │  │
-  │  │    categories_needing_nfa_spillover()                         │  │
-  │  │    group_rd_by_dispatch_token()                               │  │
-  │  │                                                               │  │
-  │  │  Order alternatives by WFST weight:                           │  │
-  │  │    nfa_alternative_order() → sorted by tropical weight        │  │
-  │  │                                                               │  │
-  │  │  Generate merged prefix arm:                                  │  │
-  │  │    write_nfa_merged_prefix_arm()                              │  │
-  │  │    → save/restore loop, result selection, spillover           │  │
-  │  │                                                               │  │
-  │  │  Generate thread-local declarations:                          │  │
-  │  │    NFA_PREFIX_SPILL_CAT, NFA_FORCED_PREFIX_CAT,              │  │
-  │  │    NFA_PRIMARY_WEIGHT_CAT                                    │  │
-  │  │                                                               │  │
-  │  │  Generate forced-prefix check:                                │  │
-  │  │    prefix block entry → take forced → skip NFA → infix loop  │  │
-  │  └───────────────────────────────────────────────────────────────┘  │
-  │                                                                     │
-  │  ┌───────────────────────────────────────────────────────────────┐  │
-  │  │  Phase 2: Beam Pruning + Ambiguity Warnings                  │  │
-  │  │                                                               │  │
-  │  │  Compile-time beam pruning:                                   │  │
-  │  │    Filter alternatives where weight > best + beam_width       │  │
-  │  │    Pruned alternatives never appear in generated code         │  │
-  │  │                                                               │  │
-  │  │  CountingWeight ambiguity diagnostics:                        │  │
-  │  │    Equal-weight detection → deferred resolution warning       │  │
-  │  │    Supersedes old AmbiguousPrefix warning                     │  │
-  │  └───────────────────────────────────────────────────────────────┘  │
-  │                                                                     │
-  └─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  COMPILE TIME                                                       │
+│                                                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  Phase 1: NFA Try-All + Forced-Prefix Replay                  │  │
+│  │                                                               │  │
+│  │  Detect NFA-ambiguous categories:                             │  │
+│  │    categories_needing_nfa_spillover()                         │  │
+│  │    group_rd_by_dispatch_token()                               │  │
+│  │                                                               │  │
+│  │  Order alternatives by WFST weight:                           │  │
+│  │    nfa_alternative_order() → sorted by tropical weight        │  │
+│  │                                                               │  │
+│  │  Generate merged prefix arm:                                  │  │
+│  │    write_nfa_merged_prefix_arm()                              │  │
+│  │    → save/restore loop, result selection, spillover           │  │
+│  │                                                               │  │
+│  │  Generate thread-local declarations:                          │  │
+│  │    NFA_PREFIX_SPILL_CAT, NFA_FORCED_PREFIX_CAT,               │  │
+│  │    NFA_PRIMARY_WEIGHT_CAT                                     │  │
+│  │                                                               │  │
+│  │  Generate forced-prefix check:                                │  │
+│  │    prefix block entry → take forced → skip NFA → infix loop   │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  Phase 2: Beam Pruning + Ambiguity Warnings                   │  │
+│  │                                                               │  │
+│  │  Compile-time beam pruning:                                   │  │
+│  │    Filter alternatives where weight > best + beam_width       │  │
+│  │    Pruned alternatives never appear in generated code         │  │
+│  │                                                               │  │
+│  │  CountingWeight ambiguity diagnostics:                        │  │
+│  │    Equal-weight detection → deferred resolution warning       │  │
+│  │    Supersedes old AmbiguousPrefix warning                     │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 
-  ┌─────────────────────────────────────────────────────────────────────┐
-  │  RUNTIME (generated code)                                           │
-  │                                                                     │
-  │  ┌───────────────────────────────────────────────────────────────┐  │
-  │  │  Phase 3: Weight-Annotated Spillover + Weight-Aware          │  │
-  │  │           from_alternatives                                  │  │
-  │  │                                                               │  │
-  │  │  NFA merged arm:                                              │  │
-  │  │    Try all alternatives, collect (result, position, weight)   │  │
-  │  │    Best result → caller; N-1 → NFA_PREFIX_SPILL              │  │
-  │  │                                                               │  │
-  │  │  parse_preserving_vars drain loop:                            │  │
-  │  │    Primary parse → record NFA_PRIMARY_WEIGHT                 │  │
-  │  │    Drain NFA_PREFIX_SPILL → forced-prefix replay             │  │
-  │  │    Each replay: set NFA_FORCED_PREFIX → Cat::parse(input)    │  │
-  │  │    Collect successes + weights                                │  │
-  │  │                                                               │  │
-  │  │  Weight-aware from_alternatives:                              │  │
-  │  │    AMBIGUOUS_WEIGHTS thread-local carries weights             │  │
-  │  │    Multiple accepting → min-weight (tropical) wins            │  │
-  │  └───────────────────────────────────────────────────────────────┘  │
-  │                                                                     │
-  └─────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│  RUNTIME (generated code)                                           │
+│                                                                     │
+│  ┌───────────────────────────────────────────────────────────────┐  │
+│  │  Phase 3: Weight-Annotated Spillover + Weight-Aware           │  │
+│  │           from_alternatives                                   │  │
+│  │                                                               │  │
+│  │  NFA merged arm:                                              │  │
+│  │    Try all alternatives, collect (result, position, weight)   │  │
+│  │    Best result → caller; N-1 → NFA_PREFIX_SPILL               │  │
+│  │                                                               │  │
+│  │  parse_preserving_vars drain loop:                            │  │
+│  │    Primary parse → record NFA_PRIMARY_WEIGHT                  │  │
+│  │    Drain NFA_PREFIX_SPILL → forced-prefix replay              │  │
+│  │    Each replay: set NFA_FORCED_PREFIX → Cat::parse(input)     │  │
+│  │    Collect successes + weights                                │  │
+│  │                                                               │  │
+│  │  Weight-aware from_alternatives:                              │  │
+│  │    AMBIGUOUS_WEIGHTS thread-local carries weights             │  │
+│  │    Multiple accepting → min-weight (tropical) wins            │  │
+│  └───────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -615,12 +615,12 @@ that resolution must be deferred entirely to Layer 6.
 
 ### 4.3 Old vs New Warnings
 
-| Before (Layer 2)                       | After (Layer 2.5)                                              |
-|----------------------------------------|----------------------------------------------------------------|
-| `AmbiguousPrefix` in `prediction.rs`   | Suppressed (superseded)                                        |
-| Generic "rules X, Y share token T"     | Specific "NFA-ambiguous, N alternatives, weights [w₁, ..., wₙ]" |
-| No resolution mechanism                | Full NFA try-all + forced-prefix replay                        |
-| No weight information                  | Weight ordering from WFST prediction                           |
+| Before (Layer 2)                     | After (Layer 2.5)                                               |
+|--------------------------------------|-----------------------------------------------------------------|
+| `AmbiguousPrefix` in `prediction.rs` | Suppressed (superseded)                                         |
+| Generic "rules X, Y share token T"   | Specific "NFA-ambiguous, N alternatives, weights [w₁, ..., wₙ]" |
+| No resolution mechanism              | Full NFA try-all + forced-prefix replay                         |
+| No weight information                | Weight ordering from WFST prediction                            |
 
 The old `AmbiguousPrefix` warning from `prediction.rs` (`detect_ambiguous_prefix()`,
 lines 861–900) is suppressed for rules that are handled by NFA merged arms.
@@ -636,11 +636,11 @@ still trigger the old warning. See
 
 Each spilled alternative carries three values as a tuple `(Cat, usize, f64)`:
 
-| Field   | Type    | Purpose                                                      |
-|---------|---------|--------------------------------------------------------------|
-| `.0`    | `Cat`   | The parsed prefix value (e.g., `IntToFloat(IntVar("x"))`)   |
-| `.1`    | `usize` | The `pos` after parsing this alternative (end position)      |
-| `.2`    | `f64`   | The WFST tropical weight (lower = more likely)               |
+| Field | Type    | Purpose                                                   |
+|-------|---------|-----------------------------------------------------------|
+| `.0`  | `Cat`   | The parsed prefix value (e.g., `IntToFloat(IntVar("x"))`) |
+| `.1`  | `usize` | The `pos` after parsing this alternative (end position)   |
+| `.2`  | `f64`   | The WFST tropical weight (lower = more likely)            |
 
 The position field is essential for correct replay: when the forced-prefix
 check fires (§3.6), it sets `*pos = forced_pos` so the infix loop starts at
@@ -719,12 +719,12 @@ which is the first-declared category per the declaration-order invariant
 
 Layer 2.5 is designed to have zero overhead when it is not triggered:
 
-| Scenario           | Cost                                              |
-|--------------------|---------------------------------------------------|
-| **Unambiguous**    | `Cell::take()` on `None` / empty `Vec` (ptr swap) |
-| **All-fail**       | Single error return, no spillover                 |
-| **Ambiguous (1)**  | NFA merged arm: N try-restore + 1 spillover push  |
-| **Ambiguous (N)**  | Spillover: N-1 full re-parses via forced prefix   |
+| Scenario          | Cost                                              |
+|-------------------|---------------------------------------------------|
+| **Unambiguous**   | `Cell::take()` on `None` / empty `Vec` (ptr swap) |
+| **All-fail**      | Single error return, no spillover                 |
+| **Ambiguous (1)** | NFA merged arm: N try-restore + 1 spillover push  |
+| **Ambiguous (N)** | Spillover: N-1 full re-parses via forced prefix   |
 
 The thread-local declarations (`NFA_PREFIX_SPILL`, `NFA_FORCED_PREFIX`,
 `NFA_PRIMARY_WEIGHT`) are emitted for all categories but have zero cost when
@@ -748,51 +748,61 @@ precedence), feeding results into Layer 6 (semantic disambiguation):
 
 ```
   ┌───────────────────────────────────────────────────────────────────┐
-  │                         SOURCE TEXT                                │
-  └────────────────────────────┬──────────────────────────────────────┘
-                               │
-  ┌────────────────────────────▼──────────────────────────────────────┐
+  │                         SOURCE TEXT                               │
+  └───────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+  ┌───────────────────────────────────────────────────────────────────┐
   │  LAYER 1: LEXICAL DISAMBIGUATION                                  │
   │  DFA + maximal munch + priority                                   │
-  └────────────────────────────┬──────────────────────────────────────┘
-                               │
-  ┌────────────────────────────▼──────────────────────────────────────┐
+  └───────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+  ┌───────────────────────────────────────────────────────────────────┐
   │  LAYER 2: PARSE PREDICTION                                        │
   │  FIRST sets + dispatch tables + lookahead                         │
   │  → Identifies NFA-ambiguous token groups (cannot resolve)         │
-  └────────────────────────────┬──────────────────────────────────────┘
-                               │
-  ┌────────────────────────────▼──────────────────────────────────────┐
-  │  LAYER 2.5: NFA INTRA-CATEGORY DISAMBIGUATION                    │
+  └───────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+  ┌───────────────────────────────────────────────────────────────────┐
+  │  LAYER 2.5: NFA INTRA-CATEGORY DISAMBIGUATION                     │
   │  NFA try-all + forced-prefix replay + weight ordering             │
-  │  → Tries all alternatives, collects results, spills to Layer 6   │
-  └────────────────────────────┬──────────────────────────────────────┘
-                               │
-  ┌────────────────────────────▼──────────────────────────────────────┐
+  │  → Tries all alternatives, collects results, spills to Layer 6    │
+  └───────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+  ┌───────────────────────────────────────────────────────────────────┐
   │  LAYER 3: OPERATOR PRECEDENCE                                     │
   │  Binding power pairs + Pratt loop                                 │
   │  → Runs on each alternative independently (during NFA try-all     │
   │    and during forced-prefix replay)                               │
-  └────────────────────────────┬──────────────────────────────────────┘
-                               │
-  ┌────────────────────────────▼──────────────────────────────────────┐
+  └───────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+  ┌───────────────────────────────────────────────────────────────────┐
   │  LAYER 4: CROSS-CATEGORY RESOLUTION                               │
   │  FIRST set partition + backtracking dispatch                      │
-  └────────────────────────────┬──────────────────────────────────────┘
-                               │
-  ┌────────────────────────────▼──────────────────────────────────────┐
+  └───────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+  ┌───────────────────────────────────────────────────────────────────┐
   │  LAYER 5: ERROR RECOVERY                                          │
   │  FOLLOW sets + structural delimiters                              │
-  └────────────────────────────┬──────────────────────────────────────┘
-                               │
-  ┌────────────────────────────▼──────────────────────────────────────┐
+  └───────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+  ┌───────────────────────────────────────────────────────────────────┐
   │  LAYER 6: SEMANTIC DISAMBIGUATION                                 │
   │  NFA-style multi-category parse + is_ground() + Ambiguous         │
   │  → Receives Layer 2.5's intra-category alternatives via spillover │
   │  → Weight-aware from_alternatives for tiebreaking                 │
-  └────────────────────────────┬──────────────────────────────────────┘
-                               │
-                          Disambiguated AST
+  └───────────────────────────────┬───────────────────────────────────┘
+                                  │
+                                  ▼
+  ┌───────────────────────────────────────────────────────────────────┐
+  │                       Disambiguated AST                           │
+  └───────────────────────────────────────────────────────────────────┘
 ```
 
 ### Layer 2 → Layer 2.5
@@ -823,8 +833,8 @@ through to `from_alternatives()` for tiebreaking.
 
 ## 8. Source Map
 
-| Concept                                | File                                 | Function / Lines                              |
-|----------------------------------------|--------------------------------------|-----------------------------------------------|
+| Concept                                | File                                 | Function / Lines                               |
+|----------------------------------------|--------------------------------------|------------------------------------------------|
 | NFA-ambiguous category detection       | `prattail/src/trampoline.rs`         | `categories_needing_nfa_spillover()` (136–151) |
 | RD rule grouping by dispatch token     | `prattail/src/trampoline.rs`         | `group_rd_by_dispatch_token()` (77–116)        |
 | Public wrapper for pipeline access     | `prattail/src/trampoline.rs`         | `group_rd_by_dispatch_token_pub()` (118–125)   |
@@ -838,9 +848,9 @@ through to `from_alternatives()` for tiebreaking.
 | NFA spillover detection in pipeline    | `prattail/src/pipeline.rs`           | Lines 800–840                                  |
 | CountingWeight ambiguity warnings      | `prattail/src/pipeline.rs`           | Lines 800–840                                  |
 | `needs_nfa_spillover` configuration    | `prattail/src/pipeline.rs`           | Line 910                                       |
-| WFST alternative ordering              | `prattail/src/wfst.rs`              | `nfa_alternative_order()` (198–218)            |
-| Beam width application                 | `prattail/src/wfst.rs`              | `PredictionWfst::beam_width()` (175–191)       |
+| WFST alternative ordering              | `prattail/src/wfst.rs`               | `nfa_alternative_order()` (198–218)            |
+| Beam width application                 | `prattail/src/wfst.rs`               | `PredictionWfst::beam_width()` (175–191)       |
 | `AMBIGUOUS_WEIGHTS` thread-local       | `macros/src/gen/runtime/language.rs` | Lines 1529–1535                                |
 | Drain loop in `parse_preserving_vars`  | `macros/src/gen/runtime/language.rs` | Lines 1116–1161                                |
 | Weight-aware `from_alternatives()`     | `macros/src/gen/runtime/language.rs` | Lines 284–326                                  |
-| `BeamWidthConfig` enum                 | `prattail/src/lib.rs`               | Lines 76–123                                   |
+| `BeamWidthConfig` enum                 | `prattail/src/lib.rs`                | Lines 76–123                                   |

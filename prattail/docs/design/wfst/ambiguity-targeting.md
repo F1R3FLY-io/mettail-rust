@@ -35,16 +35,16 @@ Within a single category, dispatch tokens frequently have wildly
 different ambiguity profiles.  Consider a `Proc` category with 8
 dispatch tokens:
 
-| Token       | Alternatives | Rules               |
-|-------------|-------------|---------------------|
-| `Ident`     | 3           | PInput, POutput, PVar |
-| `KwNew`     | 2           | PNew, PNewChannel   |
-| `LParen`    | 1           | PGroup              |
-| `LBrace`    | 1           | PBlock              |
-| `KwFor`     | 1           | PFor                |
-| `KwMatch`   | 1           | PMatch              |
-| `KwIf`      | 1           | PIf                 |
-| `Star`      | 1           | PStar               |
+| Token     | Alternatives | Rules                 |
+|-----------|--------------|-----------------------|
+| `Ident`   | 3            | PInput, POutput, PVar |
+| `KwNew`   | 2            | PNew, PNewChannel     |
+| `LParen`  | 1            | PGroup                |
+| `LBrace`  | 1            | PBlock                |
+| `KwFor`   | 1            | PFor                  |
+| `KwMatch` | 1            | PMatch                |
+| `KwIf`    | 1            | PIf                   |
+| `Star`    | 1            | PStar                 |
 
 Only 2 of the 8 tokens (25%) are ambiguous.  Yet the entire category
 is flagged for NFA spillover because at least one token has multiple
@@ -112,12 +112,12 @@ pub fn predict_with_confidence(&self, token_name: &str)
 
 The `CountingWeight` value directly encodes the ambiguity level:
 
-| Count | Interpretation |
-|-------|----------------|
-| 0     | Token not in FIRST set (unreachable) |
-| 1     | Unambiguous -- single dispatch target |
+| Count | Interpretation                           |
+|-------|------------------------------------------|
+| 0     | Token not in FIRST set (unreachable)     |
+| 1     | Unambiguous -- single dispatch target    |
 | 2     | Binary ambiguity -- NFA try-two suffices |
-| 3+    | High ambiguity -- B1 candidate |
+| 3+    | High ambiguity -- B1 candidate           |
 
 ### Three outputs
 
@@ -125,21 +125,22 @@ A5 produces three categories of output from a single pass over all
 prediction WFSTs:
 
 ```
-                    ┌────────────────────────────────┐
-                    │  analyze_ambiguity_targets()   │
-                    │                                │
-                    │  Input:                        │
-                    │    prediction_wfsts             │
-                    │    first_sets                  │
-                    │    ambiguity_threshold          │
-                    └────────┬─────────┬──────┬──────┘
-                             │         │      │
-                   ┌─────────▼───┐  ┌──▼───┐  ▼
-                   │  Per-token  │  │ B1   │  Per-category
-                   │  ambiguity  │  │ cand │  max ambiguity
-                   │  info       │  │ list │  for buffer
-                   │             │  │      │  pre-sizing
-                   └─────────────┘  └──────┘
+     ┌─────────────────────────────┐
+     │ analyze_ambiguity_targets() │
+     │                             │
+     │ Input:                      │
+     │   prediction_wfsts          │
+     │   first_sets                │
+     │   ambiguity_threshold       │
+     └───┬────────┬────────────┬───┘
+         │        │            │
+         ▼        ▼            ▼
+┌───────────┐  ┌──────┐  ┌───────────────┐
+│ Per-token │  │ B1   │  │ Per-category  │
+│ ambiguity │  │ cand │  │ max ambiguity │
+│ info      │  │ list │  │ for buffer    │
+│           │  │      │  │ pre-sizing    │
+└───────────┘  └──────┘  └───────────────┘
 ```
 
 1. **Per-token ambiguity info:** `TokenAmbiguityInfo` structs for
@@ -266,11 +267,11 @@ pub fn analyze_ambiguity_targets(
 
 ### Parameters
 
-| Parameter | Type | Description |
-|---|---|---|
-| `prediction_wfsts` | `&HashMap<String, PredictionWfst>` | One WFST per category, built by `build_prediction_wfsts()` |
-| `first_sets` | `&HashMap<String, FirstSet>` | FIRST sets for each category, computed by `compute_first_sets()` |
-| `ambiguity_threshold` | `u64` | Tokens with `alternative_count > threshold` are flagged as B1 candidates. Pipeline passes `1`, meaning any token with 2+ alternatives is a candidate. |
+| Parameter             | Type                               | Description                                                                                                                                           |
+|-----------------------|------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `prediction_wfsts`    | `&HashMap<String, PredictionWfst>` | One WFST per category, built by `build_prediction_wfsts()`                                                                                            |
+| `first_sets`          | `&HashMap<String, FirstSet>`       | FIRST sets for each category, computed by `compute_first_sets()`                                                                                      |
+| `ambiguity_threshold` | `u64`                              | Tokens with `alternative_count > threshold` are flagged as B1 candidates. Pipeline passes `1`, meaning any token with 2+ alternatives is a candidate. |
 
 ### Algorithm
 
@@ -347,13 +348,13 @@ FUNCTION analyze_ambiguity_targets(wfsts, first_sets, threshold):
 
 ### Complexity
 
-| Operation | Cost |
-|-----------|------|
-| Outer loop (categories) | O(C) where C = number of categories |
-| Inner loop (tokens) | O(T_c) per category, T_c = tokens in FIRST set |
-| `predict_with_confidence()` | O(A) per token, A = number of actions |
-| `sorted_tokens()` | O(T_c log T_c) per category |
-| Total | O(sum_c(T_c log T_c + T_c * A_max)) |
+| Operation                   | Cost                                           |
+|-----------------------------|------------------------------------------------|
+| Outer loop (categories)     | O(C) where C = number of categories            |
+| Inner loop (tokens)         | O(T_c) per category, T_c = tokens in FIRST set |
+| `predict_with_confidence()` | O(A) per token, A = number of actions          |
+| `sorted_tokens()`           | O(T_c log T_c) per category                    |
+| Total                       | O(sum_c(T_c log T_c + T_c * A_max))            |
 
 For typical grammars (4-10 categories, 5-20 tokens per category,
 1-6 actions per token), the total cost is negligible relative to
@@ -444,12 +445,12 @@ the lint layer, using ANSI cyan for "info" severity:
 
 ### Downstream consumers
 
-| Consumer | What it reads | Purpose |
-|----------|---------------|---------|
-| B1 (multi-token lookahead) | `ambiguous_tokens` with `lookahead_candidate == true` | Identifies which tokens need extended WFSTs with k-token lookahead depth |
-| F3 (lazy spillover) | `presized_categories` | Pre-sizes demand-driven replay buffers to avoid reallocation |
-| Grammar author | Diagnostic output | Identifies which tokens cause dispatch ambiguity and which rules compete |
-| D1 (cost-benefit) | `ambiguous_fraction`, `ambiguous_count` (from `GrammarProfile`) | Evaluates whether A5 and B1 are applicable (A5 feeds D1 indirectly via shared profile data) |
+| Consumer                   | What it reads                                                   | Purpose                                                                                     |
+|----------------------------|-----------------------------------------------------------------|---------------------------------------------------------------------------------------------|
+| B1 (multi-token lookahead) | `ambiguous_tokens` with `lookahead_candidate == true`           | Identifies which tokens need extended WFSTs with k-token lookahead depth                    |
+| F3 (lazy spillover)        | `presized_categories`                                           | Pre-sizes demand-driven replay buffers to avoid reallocation                                |
+| Grammar author             | Diagnostic output                                               | Identifies which tokens cause dispatch ambiguity and which rules compete                    |
+| D1 (cost-benefit)          | `ambiguous_fraction`, `ambiguous_count` (from `GrammarProfile`) | Evaluates whether A5 and B1 are applicable (A5 feeds D1 indirectly via shared profile data) |
 
 ### Advisory, not blocking
 
@@ -507,11 +508,11 @@ Int.predict_with_confidence("Integer"):
 
 Iterating over all categories and tokens in sorted order:
 
-| Category | Token     | Count | > 1? | > threshold? | Action |
-|----------|-----------|-------|------|--------------|--------|
-| Int      | Integer   | 1     | No   | --           | unambiguous_count++ |
-| Proc     | Ident     | 3     | Yes  | Yes (3 > 1)  | Push TokenAmbiguityInfo, flag B1 |
-| Proc     | LParen    | 1     | No   | --           | unambiguous_count++ |
+| Category | Token   | Count | > 1? | > threshold? | Action                           |
+|----------|---------|-------|------|--------------|----------------------------------|
+| Int      | Integer | 1     | No   | --           | unambiguous_count++              |
+| Proc     | Ident   | 3     | Yes  | Yes (3 > 1)  | Push TokenAmbiguityInfo, flag B1 |
+| Proc     | LParen  | 1     | No   | --           | unambiguous_count++              |
 
 ### Result
 
@@ -606,10 +607,10 @@ max_spill(C) = max{A(t) - 1 | t in FIRST(C), A(t) > 1}
 
 From Section 6:
 
-| Category | Token   | A(t) | Spilled |
-|----------|---------|------|---------|
-| Proc     | Ident   | 3    | 2       |
-| Proc     | LParen  | 1    | 0       |
+| Category | Token  | A(t) | Spilled |
+|----------|--------|------|---------|
+| Proc     | Ident  | 3    | 2       |
+| Proc     | LParen | 1    | 0       |
 
 `max_spill(Proc) = max(2, 0) = 2`.
 
@@ -642,29 +643,29 @@ analysis, so there is no runtime overhead.
 
 ### Edge cases
 
-| Case | Pre-size | Rationale |
-|------|----------|-----------|
-| No ambiguous tokens in category | Not in `presized_categories` | No spillover occurs; default `Vec::new()` is optimal |
-| All tokens have A(t) = 2 | 1 | Single spilled alternative; capacity 1 avoids one reallocation |
-| One token has A(t) = 10 | 9 | Worst-case token dominates; 9 spilled alternatives |
-| Category not in `first_sets` | Skipped | Category has no dispatch tokens; cannot have ambiguity |
+| Case                            | Pre-size                     | Rationale                                                      |
+|---------------------------------|------------------------------|----------------------------------------------------------------|
+| No ambiguous tokens in category | Not in `presized_categories` | No spillover occurs; default `Vec::new()` is optimal           |
+| All tokens have A(t) = 2        | 1                            | Single spilled alternative; capacity 1 avoids one reallocation |
+| One token has A(t) = 10         | 9                            | Worst-case token dominates; 9 spilled alternatives             |
+| Category not in `first_sets`    | Skipped                      | Category has no dispatch tokens; cannot have ambiguity         |
 
 ---
 
 ## 8. Source References
 
-| Component | Location | Description |
-|---|---|---|
-| `TokenAmbiguityInfo` struct | `cost_benefit.rs:378-392` | Per-token ambiguity record |
-| `AmbiguityTargetingResult` struct | `cost_benefit.rs:394-405` | Aggregate analysis result |
-| `analyze_ambiguity_targets()` | `cost_benefit.rs:416-478` | A5 analysis function |
-| `predict_with_confidence()` | `wfst.rs:169-173` | CountingWeight-annotated WFST query |
-| `CountingWeight` semiring | `semiring.rs:204-281` | Counting semiring (N, +, x, 0, 1) |
-| `FirstSet::sorted_tokens()` | `prediction.rs:66-70` | Deterministic token iteration |
-| Pipeline integration (A5 block) | `pipeline.rs:1121-1159` | Diagnostic output and analysis invocation |
-| D1 integration (GrammarProfile) | `cost_benefit.rs:109-206` | Profile extraction feeding A5 scoring |
-| Unit test: empty input | `cost_benefit.rs:606-614` | Verifies empty WFST/first-set handling |
-| Unit test: structured result | `cost_benefit.rs:616-682` | Verifies per-token analysis with PredictionWfstBuilder |
+| Component                         | Location                  | Description                                            |
+|-----------------------------------|---------------------------|--------------------------------------------------------|
+| `TokenAmbiguityInfo` struct       | `cost_benefit.rs:378-392` | Per-token ambiguity record                             |
+| `AmbiguityTargetingResult` struct | `cost_benefit.rs:394-405` | Aggregate analysis result                              |
+| `analyze_ambiguity_targets()`     | `cost_benefit.rs:416-478` | A5 analysis function                                   |
+| `predict_with_confidence()`       | `wfst.rs:169-173`         | CountingWeight-annotated WFST query                    |
+| `CountingWeight` semiring         | `semiring.rs:204-281`     | Counting semiring (N, +, x, 0, 1)                      |
+| `FirstSet::sorted_tokens()`       | `prediction.rs:66-70`     | Deterministic token iteration                          |
+| Pipeline integration (A5 block)   | `pipeline.rs:1121-1159`   | Diagnostic output and analysis invocation              |
+| D1 integration (GrammarProfile)   | `cost_benefit.rs:109-206` | Profile extraction feeding A5 scoring                  |
+| Unit test: empty input            | `cost_benefit.rs:606-614` | Verifies empty WFST/first-set handling                 |
+| Unit test: structured result      | `cost_benefit.rs:616-682` | Verifies per-token analysis with PredictionWfstBuilder |
 
 ### See also
 

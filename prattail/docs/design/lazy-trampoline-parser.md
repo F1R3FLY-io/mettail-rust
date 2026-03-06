@@ -258,7 +258,7 @@ category, weighted by rule specificity via the tropical semiring.
                          │                 │   next_token_for_category(CATEGORY_ID_PROC)
                          │                 │        │
                          │                 │        ├─── DFA scan ──▶ ambiguous state?
-                         │                 │        │                      │
+                         │                 │        │                     │
                          │                 │        │              ┌──────┴──────┐
                          │                 │        │              │ Yes         │ No
                          │                 │        │              ▼             ▼
@@ -380,12 +380,12 @@ corresponding `Token` variant via `accept_token_by_kind()`.
   │ save pos        │                    │ Lexer resolves at        │
   │ try parse_Int   │                    │ accept-state time via    │
   │   ├── success?  │                    │ composed_dispatch()      │
-  │   │   ├── Y: check lookahead        │                          │
-  │   │   │   ├── match: commit         │ Category = PROC          │
-  │   │   │   └── no match: restore     │ ──▶ kind_id = Ident     │
-  │   │   └── N: restore               │                          │
-  │   └── try parse_Proc_own           │ Token already correct     │
-  │       └── commit or fail           │ ──▶ no backtracking      │
+  │   │   ├── Y: check lookahead         │                          │
+  │   │   │   ├── match: commit          │ Category = PROC          │
+  │   │   │   └── no match: restore      │ ──▶ kind_id = Ident      │
+  │   │   └── N: restore                 │                          │
+  │   └── try parse_Proc_own             │ Token already correct    │
+  │       └── commit or fail             │ ──▶ no backtracking      │
   └─────────────────┘                    └──────────────────────────┘
         Multiple                                 Single
         parse attempts                           token production
@@ -500,12 +500,12 @@ The binding power resets to 0 inside parentheses, allowing any operator.
 Categories with a `native_type` get a literal arm. The token variant depends
 on the native type:
 
-| Native type                | Token variant    | AST constructor  |
-|----------------------------|------------------|------------------|
-| `i32`, `i64`, `u32`, etc.  | `Token::Integer` | `Cat::NumLit`    |
-| `f32`, `f64`               | `Token::Float`   | `Cat::FloatLit`  |
-| `bool`                     | `Token::Boolean` | `Cat::BoolLit`   |
-| `str`, `String`            | `Token::StringLiteral` | `Cat::StringLit` |
+| Native type               | Token variant          | AST constructor  |
+|---------------------------|------------------------|------------------|
+| `i32`, `i64`, `u32`, etc. | `Token::Integer`       | `Cat::NumLit`    |
+| `f32`, `f64`              | `Token::Float`         | `Cat::FloatLit`  |
+| `bool`                    | `Token::Boolean`       | `Cat::BoolLit`   |
+| `str`, `String`           | `Token::StringLiteral` | `Cat::StringLit` |
 
 Example for `i32`:
 
@@ -777,17 +777,17 @@ omitted from the lazy parser's prefix dispatch. The comment at
 
 The following rule types are fully supported in the lazy path:
 
-| Rule Type               | Example                        | Handler Location       |
-|--------------------------|-------------------------------|------------------------|
-| Terminal-first RD rules  | `"error" Int -> Proc`         | trampoline.rs:2434-2537|
-| Unary prefix operators   | `"-" Int -> Int`              | trampoline.rs:2539-2558|
-| Grouped expressions      | `"(" Cat ")" -> Cat`          | trampoline.rs:2560-2578|
-| Native literals          | `42`, `true`, `3.14`, `"hi"`  | trampoline.rs:2580-2635|
-| Ident capture (variable) | `Ident -> Cat`                | trampoline.rs:2637-2708|
-| Ident + lookahead        | `Ident "=" Proc -> Proc`      | trampoline.rs:2670-2707|
-| Infix operators          | `Cat "+" Cat -> Cat`          | trampoline.rs:2750-2764|
-| Postfix operators        | `Cat "!" -> Cat`              | trampoline.rs:2736-2748|
-| Mixfix operators         | `Cat "?" Cat ":" Cat -> Cat`  | trampoline.rs:2766-2767|
+| Rule Type                | Example                      | Handler Location        |
+|--------------------------|------------------------------|-------------------------|
+| Terminal-first RD rules  | `"error" Int -> Proc`        | trampoline.rs:2434-2537 |
+| Unary prefix operators   | `"-" Int -> Int`             | trampoline.rs:2539-2558 |
+| Grouped expressions      | `"(" Cat ")" -> Cat`         | trampoline.rs:2560-2578 |
+| Native literals          | `42`, `true`, `3.14`, `"hi"` | trampoline.rs:2580-2635 |
+| Ident capture (variable) | `Ident -> Cat`               | trampoline.rs:2637-2708 |
+| Ident + lookahead        | `Ident "=" Proc -> Proc`     | trampoline.rs:2670-2707 |
+| Infix operators          | `Cat "+" Cat -> Cat`         | trampoline.rs:2750-2764 |
+| Postfix operators        | `Cat "!" -> Cat`             | trampoline.rs:2736-2748 |
+| Mixfix operators         | `Cat "?" Cat ":" Cat -> Cat` | trampoline.rs:2766-2767 |
 
 ### 6.3 No Trampolining (Stack Safety)
 

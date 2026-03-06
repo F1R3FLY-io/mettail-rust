@@ -70,11 +70,11 @@ category Proc {
 All three rules dispatch on `Token::Ident`, creating a 3-way NFA
 ambiguity.  However, the second tokens diverge completely:
 
-| Rule     | items[0] | items[1] | Distinct? |
-|----------|----------|----------|-----------|
-| PInput   | Ident    | `!`      | Yes       |
-| POutput  | Ident    | `?`      | Yes       |
-| PVar     | Ident    | (none)   | Yes (< 2 items) |
+| Rule    | items[0] | items[1] | Distinct?       |
+|---------|----------|----------|-----------------|
+| PInput  | Ident    | `!`      | Yes             |
+| POutput | Ident    | `?`      | Yes             |
+| PVar    | Ident    | (none)   | Yes (< 2 items) |
 
 Wait -- PVar has only one item, so it lacks a second terminal.  This
 disqualifies the group from B1.  But consider a revised grammar:
@@ -87,11 +87,11 @@ category Cmd {
 }
 ```
 
-| Rule    | items[0] | items[1] | Distinct? |
-|---------|----------|----------|-----------|
-| CmdGet  | KwCmd    | `get`    | Yes       |
-| CmdSet  | KwCmd    | `set`    | Yes       |
-| CmdDel  | KwCmd    | `del`    | Yes       |
+| Rule   | items[0] | items[1] | Distinct? |
+|--------|----------|----------|-----------|
+| CmdGet | KwCmd    | `get`    | Yes       |
+| CmdSet | KwCmd    | `set`    | Yes       |
+| CmdDel | KwCmd    | `del`    | Yes       |
 
 Here, every rule has at least 2 items, every `items[1]` is a terminal,
 and the three second-token variants (`KwGet`, `KwSet`, `KwDel`) are
@@ -125,9 +125,9 @@ fn second_token_lookahead(
 
 ### Parameters
 
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `rules` | `&[&RDRuleInfo]` | Slice of rules sharing the same dispatch token, within a single category |
+| Parameter | Type             | Description                                                              |
+|-----------|------------------|--------------------------------------------------------------------------|
+| `rules`   | `&[&RDRuleInfo]` | Slice of rules sharing the same dispatch token, within a single category |
 
 ### Algorithm
 
@@ -162,12 +162,12 @@ FUNCTION second_token_lookahead(rules):
 
 The function returns `None` (rejecting B1) in four cases:
 
-| Case | Condition | Rationale |
-|------|-----------|-----------|
-| Trivial | `rules.len() < 2` | No ambiguity exists; dispatch is already deterministic |
-| Short rule | Any rule has `items.len() < 2` | Cannot peek at `items[1]` because it does not exist |
-| Non-terminal second | Any rule's `items[1]` is not a `Terminal` variant | NonTerminal, IdentCapture, ZipMapSep, etc. cannot be matched via a token peek |
-| Collision | Two or more rules map to the same second-token variant | Ambiguity persists at depth 2; B1 does not help |
+| Case                | Condition                                              | Rationale                                                                     |
+|---------------------|--------------------------------------------------------|-------------------------------------------------------------------------------|
+| Trivial             | `rules.len() < 2`                                      | No ambiguity exists; dispatch is already deterministic                        |
+| Short rule          | Any rule has `items.len() < 2`                         | Cannot peek at `items[1]` because it does not exist                           |
+| Non-terminal second | Any rule's `items[1]` is not a `Terminal` variant      | NonTerminal, IdentCapture, ZipMapSep, etc. cannot be matched via a token peek |
+| Collision           | Two or more rules map to the same second-token variant | Ambiguity persists at depth 2; B1 does not help                               |
 
 ### Deterministic ordering
 
@@ -202,31 +202,34 @@ index is used to look up the full `RDRuleInfo` for code generation.
 ### Relationship to the NFA pipeline
 
 ```
-                    ┌──────────────────────────────────────────┐
-                    │  write_nfa_merged_prefix_arm()           │
-                    │                                          │
-                    │  inlineable: &[&RDRuleInfo]              │
-                    │  frame_pushing: &[&RDRuleInfo]           │
-                    │  config: &TrampolineConfig               │
-                    └──────────┬───────────────────────────────┘
-                               │
-                    ┌──────────▼───────────────────────────────┐
-                    │  Guard check:                            │
-                    │    frame_pushing.is_empty()              │
-                    │    && !config.needs_nfa_spillover        │
-                    └──────────┬───────────────────────────────┘
-                               │ pass
-                    ┌──────────▼───────────────────────────────┐
-                    │  second_token_lookahead(inlineable)      │
-                    └──────────┬───────────┬───────────────────┘
-                               │           │
-                          Some(la)       None
-                               │           │
-                    ┌──────────▼──┐  ┌─────▼──────────────────┐
-                    │ B1: nested  │  │ Fall through to        │
-                    │ match on    │  │ NFA try-all loop       │
-                    │ second tok  │  │ (F2 may still apply)   │
-                    └─────────────┘  └────────────────────────┘
+┌──────────────────────────────────────────┐
+│  write_nfa_merged_prefix_arm()           │
+│                                          │
+│  inlineable: &[&RDRuleInfo]              │
+│  frame_pushing: &[&RDRuleInfo]           │
+│  config: &TrampolineConfig               │
+└────────────────────┬─────────────────────┘
+                     │
+                     ▼
+┌──────────────────────────────────────────┐
+│  Guard check:                            │
+│    frame_pushing.is_empty()              │
+│    && !config.needs_nfa_spillover        │
+└────────────────────┬─────────────────────┘
+                     │ pass
+                     ▼
+┌──────────────────────────────────────────┐
+│  second_token_lookahead(inlineable)      │
+└───────┬───────────────────────┬──────────┘
+        │                       │
+   Some(la)                   None
+        │                       │
+        ▼                       ▼
+┌─────────────┐  ┌────────────────────────┐
+│ B1: nested  │  │ Fall through to        │
+│ match on    │  │ NFA try-all loop       │
+│ second tok  │  │ (F2 may still apply)   │
+└─────────────┘  └────────────────────────┘
 ```
 
 B1 is attempted before the NFA try-all loop.  If `second_token_lookahead()`
@@ -403,11 +406,11 @@ collect all alternatives via the NFA try-all loop.
 
 ### 5.3. Summary of guard conditions
 
-| Condition | Required value | Rationale |
-|-----------|---------------|-----------|
-| `frame_pushing.is_empty()` | `true` | All alternatives must be inlineable; no frame-pushing fallback needed |
-| `config.needs_nfa_spillover` | `false` | B1 commits to one alternative; cannot populate spillover buffer |
-| `second_token_lookahead(inlineable)` | `Some(la)` | Second tokens must be distinct terminals across all rules |
+| Condition                            | Required value | Rationale                                                             |
+|--------------------------------------|----------------|-----------------------------------------------------------------------|
+| `frame_pushing.is_empty()`           | `true`         | All alternatives must be inlineable; no frame-pushing fallback needed |
+| `config.needs_nfa_spillover`         | `false`        | B1 commits to one alternative; cannot populate spillover buffer       |
+| `second_token_lookahead(inlineable)` | `Some(la)`     | Second tokens must be distinct terminals across all rules             |
 
 All three must hold for B1 to emit its nested match.
 
@@ -544,14 +547,14 @@ Token::KwCmd => {
 
 **Improvements:**
 
-| Metric | NFA try-all | B1 nested match |
-|--------|-------------|-----------------|
-| Vec allocations | 3 (results, positions, weights) | 0 |
-| Save/restore cycles | 3 | 0 |
-| Parse attempts per dispatch | 3 (all alternatives) | 1 (committed rule) |
-| Redundant dispatch-token matching | 3x `expect_token!(KwCmd)` | 0 (consumed once) |
-| Redundant second-token matching | 2 (wrong alternatives fail at `expect_token!`) | 0 (matched once) |
-| Code branches | sequential try-all + result selection | single nested match |
+| Metric                            | NFA try-all                                    | B1 nested match     |
+|-----------------------------------|------------------------------------------------|---------------------|
+| Vec allocations                   | 3 (results, positions, weights)                | 0                   |
+| Save/restore cycles               | 3                                              | 0                   |
+| Parse attempts per dispatch       | 3 (all alternatives)                           | 1 (committed rule)  |
+| Redundant dispatch-token matching | 3x `expect_token!(KwCmd)`                      | 0 (consumed once)   |
+| Redundant second-token matching   | 2 (wrong alternatives fail at `expect_token!`) | 0 (matched once)    |
+| Code branches                     | sequential try-all + result selection          | single nested match |
 
 ### 6.3. Diff summary
 
@@ -587,13 +590,13 @@ are no `nfa_results` to check, no alternatives to guard, and no
 early termination to perform.  The nested match commits to a single
 rule immediately, achieving a stronger result than F2:
 
-| Property | F2 | B1 |
-|----------|----|----|
-| First alternative tried | Always | Only the correct one |
-| Other alternatives tried | Only if first fails | Never |
-| Vec allocations | 3 (results, positions, weights) | 0 |
-| Runtime overhead on success | One closure invocation + guard check | Bounds check + match |
-| Applicability | Weight-0.0 first alt, no spillover | Distinct second terminals, no frame-pushing, no spillover |
+| Property                    | F2                                   | B1                                                        |
+|-----------------------------|--------------------------------------|-----------------------------------------------------------|
+| First alternative tried     | Always                               | Only the correct one                                      |
+| Other alternatives tried    | Only if first fails                  | Never                                                     |
+| Vec allocations             | 3 (results, positions, weights)      | 0                                                         |
+| Runtime overhead on success | One closure invocation + guard check | Bounds check + match                                      |
+| Applicability               | Weight-0.0 first alt, no spillover   | Distinct second terminals, no frame-pushing, no spillover |
 
 B1 strictly dominates F2 on every metric when it applies.  However,
 B1 has stricter applicability requirements (distinct second terminals),
@@ -750,27 +753,27 @@ equivalent diagnostic information.
 
 ### Compile-time (analysis)
 
-| Operation | Cost |
-|-----------|------|
+| Operation                       | Cost                                    |
+|---------------------------------|-----------------------------------------|
 | `second_token_lookahead()` call | O(N) where N = number of rules in group |
-| Inner loop over rules | O(N) |
-| BTreeMap insertions | O(N log N) |
-| Uniqueness check | O(N) |
-| Total | O(N log N) |
+| Inner loop over rules           | O(N)                                    |
+| BTreeMap insertions             | O(N log N)                              |
+| Uniqueness check                | O(N)                                    |
+| Total                           | O(N log N)                              |
 
 For typical grammars, N is small (2-6 rules per dispatch token),
 making the analysis cost negligible.
 
 ### Runtime (generated code)
 
-| Operation | NFA try-all | B1 nested match |
-|-----------|-------------|-----------------|
-| Bounds check | 0 | 1 (`*pos < tokens.len()`) |
-| Match arms evaluated | Up to N (all alternatives) | 1 (committed rule) |
-| Position saves/restores | N | 0 |
-| Vec allocations | 3 | 0 |
-| Closure invocations | N | 0 |
-| Total work per dispatch | O(N * parse_cost) | O(1 + parse_cost) |
+| Operation               | NFA try-all                | B1 nested match           |
+|-------------------------|----------------------------|---------------------------|
+| Bounds check            | 0                          | 1 (`*pos < tokens.len()`) |
+| Match arms evaluated    | Up to N (all alternatives) | 1 (committed rule)        |
+| Position saves/restores | N                          | 0                         |
+| Vec allocations         | 3                          | 0                         |
+| Closure invocations     | N                          | 0                         |
+| Total work per dispatch | O(N * parse_cost)          | O(1 + parse_cost)         |
 
 The key improvement is from O(N * parse_cost) to O(parse_cost): the
 disambiguation overhead drops from linear in the number of alternatives
@@ -780,18 +783,18 @@ to constant (one bounds check + one match).
 
 ## 11. Source References
 
-| Component | Location | Description |
-|-----------|----------|-------------|
-| `TwoTokenLookahead` struct | `trampoline.rs:129-132` | B1 result struct with `groups: BTreeMap<String, usize>` |
-| `second_token_lookahead()` | `trampoline.rs:134-177` | Analysis function: checks distinct second terminals |
-| B1 guard + codegen | `trampoline.rs:426-516` | Guard conditions check and nested match emission |
-| `write_nfa_merged_prefix_arm()` | `trampoline.rs:277-733` | Enclosing function: A1, B1, NFA try-all with F2 |
-| `terminal_to_variant_name()` | `automata/codegen.rs` | Maps terminal string to Token enum variant name |
-| `split_rd_handler()` | `trampoline.rs` | Splits RD rule into handler segments for codegen |
-| `write_inline_items()` | `trampoline.rs` | Emits inline syntax item matching code |
-| `write_nfa_inline_constructor()` | `trampoline.rs:739-` | Emits `Ok(Cat::Label(...))` for NFA-inlined rules |
-| `TrampolineConfig` struct | `trampoline.rs:1007-1050` | Config including `needs_nfa_spillover` field |
-| `categories_needing_nfa_spillover()` | `trampoline.rs:251-266` | Determines which categories need spillover |
+| Component                            | Location                  | Description                                             |
+|--------------------------------------|---------------------------|---------------------------------------------------------|
+| `TwoTokenLookahead` struct           | `trampoline.rs:129-132`   | B1 result struct with `groups: BTreeMap<String, usize>` |
+| `second_token_lookahead()`           | `trampoline.rs:134-177`   | Analysis function: checks distinct second terminals     |
+| B1 guard + codegen                   | `trampoline.rs:426-516`   | Guard conditions check and nested match emission        |
+| `write_nfa_merged_prefix_arm()`      | `trampoline.rs:277-733`   | Enclosing function: A1, B1, NFA try-all with F2         |
+| `terminal_to_variant_name()`         | `automata/codegen.rs`     | Maps terminal string to Token enum variant name         |
+| `split_rd_handler()`                 | `trampoline.rs`           | Splits RD rule into handler segments for codegen        |
+| `write_inline_items()`               | `trampoline.rs`           | Emits inline syntax item matching code                  |
+| `write_nfa_inline_constructor()`     | `trampoline.rs:739-`      | Emits `Ok(Cat::Label(...))` for NFA-inlined rules       |
+| `TrampolineConfig` struct            | `trampoline.rs:1007-1050` | Config including `needs_nfa_spillover` field            |
+| `categories_needing_nfa_spillover()` | `trampoline.rs:251-266`   | Determines which categories need spillover              |
 
 ### See also
 

@@ -69,51 +69,51 @@ yielding:
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
 │                    generate_ascent_source()                           │
-│                        (macros/src/logic/mod.rs)                     │
+│                        (macros/src/logic/mod.rs)                      │
 ├───────────────────────────────────────────────────────────────────────┤
 │                                                                       │
-│  ┌─────────────────────────┐                                         │
-│  │  PatternIndex::build()  │  Encode all equation/rewrite LHS        │
-│  │  (pattern_trie.rs)      │  patterns to De Bruijn bytes            │
-│  └────────────┬────────────┘                                         │
+│  ┌─────────────────────────┐                                          │
+│  │  PatternIndex::build()  │  Encode all equation/rewrite LHS         │
+│  │  (pattern_trie.rs)      │  patterns to De Bruijn bytes             │
+│  └────────────┬────────────┘                                          │
 │               │                                                       │
 │               v                                                       │
-│  ┌─────────────────────────┐                                         │
+│  ┌─────────────────────────┐                                          │
 │  │  detect_subsumption()   │  O(n^2) pairwise structural comparison   │
-│  │  (pattern_trie.rs:362)  │  via is_pattern_generalization()        │
-│  └────────────┬────────────┘                                         │
-│               │ Vec<SubsumptionPair>                                 │
+│  │  (pattern_trie.rs:362)  │  via is_pattern_generalization()         │
+│  └────────────┬────────────┘                                          │
+│               │ Vec<SubsumptionPair>                                  │
 │               v                                                       │
-│  ┌─────────────────────────────────────┐                             │
-│  │  compute_subsumed_equations()       │  Filter: both general and   │
-│  │  (mod.rs:312)                       │  specific must be Equation  │
-│  │                                     │  (not Rewrite)              │
-│  └────────────┬────────────────────────┘                             │
-│               │ HashSet<usize>                                       │
+│  ┌─────────────────────────────────────┐                              │
+│  │  compute_subsumed_equations()       │  Filter: both general and    │
+│  │  (mod.rs:312)                       │  specific must be Equation   │
+│  │                                     │  (not Rewrite)               │
+│  └────────────┬────────────────────────┘                              │
+│               │ HashSet<usize>                                        │
 │               v                                                       │
-│  ┌────────────┴────────────────────────────────────────┐             │
-│  │                                                      │             │
-│  v                                                      v             │
-│  ┌─────────────────────────┐  ┌─────────────────────────┐           │
-│  │ generate_equation_rules │  │ generate_equation_rules  │           │
-│  │ (equations.rs)          │  │ (equations.rs) [core]    │           │
-│  │ cat_filter = None       │  │ cat_filter = Some(core)  │           │
-│  └────────────┬────────────┘  └────────────┬────────────┘           │
-│               │                             │                         │
-│               v                             v                         │
-│  ┌─────────────────────────┐  ┌─────────────────────────┐           │
-│  │ rules::generate_        │  │ rules::generate_         │           │
-│  │   equation_rules()      │  │   equation_rules()       │           │
-│  │ (rules.rs:487)          │  │ (rules.rs:487) [core]    │           │
-│  │                         │  │                           │           │
-│  │ if subsumed.contains(i) │  │ if subsumed.contains(i)  │           │
-│  │   → continue (skip)    │  │   → continue (skip)      │           │
-│  └─────────────────────────┘  └─────────────────────────┘           │
+│  ┌─────────────────────────────────────────────────────┐              │
+│  │                                                     │              │
+│  v                                                     v              │
+│  ┌─────────────────────────┐  ┌─────────────────────────┐             │
+│  │ generate_equation_rules │  │ generate_equation_rules │             │
+│  │ (equations.rs)          │  │ (equations.rs) [core]   │             │
+│  │ cat_filter = None       │  │ cat_filter = Some(core) │             │
+│  └────────────┬────────────┘  └────────────┬────────────┘             │
+│               │                            │                          │
+│               v                            v                          │
+│  ┌─────────────────────────┐  ┌─────────────────────────┐             │
+│  │ rules::generate_        │  │ rules::generate_        │             │
+│  │   equation_rules()      │  │   equation_rules()      │             │
+│  │ (rules.rs:487)          │  │ (rules.rs:487) [core]   │             │
+│  │                         │  │                         │             │
+│  │ if subsumed.contains(i) │  │ if subsumed.contains(i) │             │
+│  │   → continue (skip)     │  │   → continue (skip)     │             │
+│  └─────────────────────────┘  └─────────────────────────┘             │
 │                                                                       │
-│  Diagnostics (stderr):                                               │
-│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄   │
-│  "note: 3 subsumed equation(s) eliminated from Ascent codegen"       │
-│  "note: equation 'add_identity' eliminated -- subsumed by ..."       │
+│  Diagnostics (stderr):                                                │
+│  ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄         │
+│  "note: 3 subsumed equation(s) eliminated from Ascent codegen"        │
+│  "note: equation 'add_identity' eliminated -- subsumed by ..."        │
 │                                                                       │
 └───────────────────────────────────────────────────────────────────────┘
 ```
@@ -248,12 +248,12 @@ The `is_pattern_generalization()` function in `pattern_trie.rs:398-408` performs
 a structural walk over De Bruijn-encoded byte sequences. The encoding scheme
 (from `pattern_codec.rs`) uses a 2-bit prefix tag system:
 
-| Prefix      | Range         | Meaning                                    |
-|-------------|---------------|--------------------------------------------|
-| `0b00_aaaaaa` | `0x00`-`0x3F` | `Arity(a)` -- constructor application with `a` children |
-| `0b10_iiiiii` | `0x80`-`0xBF` | `VarRef(i)` -- reference to i-th bound variable |
-| `0b11_000000` | `0xC0`        | `NewVar` -- introduce a fresh variable     |
-| `0b11_ssssss` | `0xC1`-`0xFE` | `SymbolSize(s)` -- next `s` bytes are constructor name |
+| Prefix        | Range         | Meaning                                                  |
+|---------------|---------------|----------------------------------------------------------|
+| `0b00_aaaaaa` | `0x00`-`0x3F` | `Arity(a)` -- constructor application with `a` children  |
+| `0b10_iiiiii` | `0x80`-`0xBF` | `VarRef(i)` -- reference to i-th bound variable          |
+| `0b11_000000` | `0xC0`        | `NewVar` -- introduce a fresh variable                   |
+| `0b11_ssssss` | `0xC1`-`0xFE` | `SymbolSize(s)` -- next `s` bytes are constructor name   |
 | `0b01_tttttt` | `0x40`-`0x4B` | PraTTaIL extensions (collections, map, zip, lambda, ...) |
 
 The walk proceeds as follows:
@@ -559,12 +559,12 @@ generalizations of each other). Therefore, a chain `a ≥ b ≥ c` where both
 
 All 1,331 tests pass after N10 subsumption elimination:
 
-| Test Suite        | Count | Status |
-|-------------------|------:|--------|
-| PraTTaIL default  | 1,303 | Pass   |
-| wfst-log          | 1,322 | Pass   |
-| Edge case         |   220 | Pass   |
-| led-test          |   229 | Pass   |
+| Test Suite       | Count | Status |
+|------------------|------:|--------|
+| PraTTaIL default | 1,303 | Pass   |
+| wfst-log         | 1,322 | Pass   |
+| Edge case        |   220 | Pass   |
+| led-test         |   229 | Pass   |
 
 No new tests were required because the existing grammar test suites (calculator,
 lambda calculus, basemath, ambient, rhocalc) exercise the subsumption detection
@@ -650,23 +650,23 @@ warning: rule 'rw_specific' may be subsumed by more general rule 'rw_general'
 
 ### 11.3 Related Sprints
 
-| Sprint | Description | Relationship |
-|--------|-------------|--------------|
-| 6b | De Bruijn byte encoding (`pattern_codec.rs`) | Provides the encoding used by subsumption detection |
-| 6d | Fine-grained dependency groups | Shares the `PatternIndex` infrastructure |
-| 6e | Alpha-equivalent pattern grouping | Exact-match counterpart to subsumption's generalization |
-| 6f | Subsumption detection (`detect_subsumption()`) | Predecessor: detection only, no DCE |
-| Sprint 1 | Dead-rule DCE via WFST analysis | Complementary: eliminates rules by unreachable constructors |
-| Sprint 5 | Ground rewrite pre-stratum | Complementary: separates ground rules into faster pre-stratum |
+| Sprint   | Description                                    | Relationship                                                  |
+|----------|------------------------------------------------|---------------------------------------------------------------|
+| 6b       | De Bruijn byte encoding (`pattern_codec.rs`)   | Provides the encoding used by subsumption detection           |
+| 6d       | Fine-grained dependency groups                 | Shares the `PatternIndex` infrastructure                      |
+| 6e       | Alpha-equivalent pattern grouping              | Exact-match counterpart to subsumption's generalization       |
+| 6f       | Subsumption detection (`detect_subsumption()`) | Predecessor: detection only, no DCE                           |
+| Sprint 1 | Dead-rule DCE via WFST analysis                | Complementary: eliminates rules by unreachable constructors   |
+| Sprint 5 | Ground rewrite pre-stratum                     | Complementary: separates ground rules into faster pre-stratum |
 
 ### 11.4 File Index
 
-| File | Lines | Role |
-|------|------:|------|
-| `macros/src/logic/mod.rs` | 312-341 | `compute_subsumed_equations()` -- entry point |
-| `macros/src/logic/pattern_trie.rs` | 362-408 | `detect_subsumption()`, `is_pattern_generalization()` |
-| `macros/src/logic/pattern_trie.rs` | 410-499 | `generalization_walk()` -- recursive byte comparison |
-| `macros/src/logic/pattern_trie.rs` | 501-610 | `skip_pattern_element()` -- sub-pattern skipping |
-| `macros/src/logic/pattern_codec.rs` | 1-370 | De Bruijn byte encoding (`pattern_to_debruijn_bytes()`) |
-| `macros/src/logic/equations.rs` | 29-51 | Thread `subsumed_equations` to unified rule generator |
-| `macros/src/logic/rules.rs` | 487-555 | `generate_equation_rules()` with subsumption filtering |
+| File                                |   Lines | Role                                                    |
+|-------------------------------------|--------:|---------------------------------------------------------|
+| `macros/src/logic/mod.rs`           | 312-341 | `compute_subsumed_equations()` -- entry point           |
+| `macros/src/logic/pattern_trie.rs`  | 362-408 | `detect_subsumption()`, `is_pattern_generalization()`   |
+| `macros/src/logic/pattern_trie.rs`  | 410-499 | `generalization_walk()` -- recursive byte comparison    |
+| `macros/src/logic/pattern_trie.rs`  | 501-610 | `skip_pattern_element()` -- sub-pattern skipping        |
+| `macros/src/logic/pattern_codec.rs` |   1-370 | De Bruijn byte encoding (`pattern_to_debruijn_bytes()`) |
+| `macros/src/logic/equations.rs`     |   29-51 | Thread `subsumed_equations` to unified rule generator   |
+| `macros/src/logic/rules.rs`         | 487-555 | `generate_equation_rules()` with subsumption filtering  |

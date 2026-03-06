@@ -197,18 +197,24 @@ fn insert_method_str(kind: &CollectionKind) -> &'static str {
 /// Write the parsing body for a rule to `buf`, returning the list of captures.
 fn write_parse_body(buf: &mut String, rule: &RDRuleInfo) -> Vec<Capture> {
     let mut captures: Vec<Capture> = Vec::new();
-    write_parse_items(buf, &rule.items, rule.prefix_bp, &mut captures);
+    write_parse_items(buf, &rule.items, rule.prefix_bp, &mut captures, None);
     captures
 }
 
 /// Write parsing code for a list of syntax items to `buf`, accumulating captures.
+///
+/// `first_sets`: optional FIRST set map used for G1 Phase 4 (optional group
+/// LL(1) guard). When provided and backtracking elimination is possible,
+/// optional groups check the current token against FIRST(inner) before
+/// entering, skipping the save/restore when the token cannot start the inner.
 fn write_parse_items(
     buf: &mut String,
     items: &[RDSyntaxItem],
     prefix_bp: Option<u8>,
     captures: &mut Vec<Capture>,
+    first_sets: Option<&std::collections::HashMap<String, crate::prediction::FirstSet>>,
 ) {
-    for item in items {
+    for (item_idx, item) in items.iter().enumerate() {
         match item {
             RDSyntaxItem::Terminal(t) => {
                 let variant = terminal_to_variant_name(t);
@@ -419,7 +425,7 @@ fn write_parse_items(
             },
             // Standalone Map — inline body items
             RDSyntaxItem::Map { body_items } => {
-                write_parse_items(buf, body_items, prefix_bp, captures);
+                write_parse_items(buf, body_items, prefix_bp, captures, first_sets);
             },
             // Standalone Zip — dual accumulators without separator
             RDSyntaxItem::Zip { left_name, right_name, body, .. } => {
@@ -429,7 +435,7 @@ fn write_parse_items(
                     },
                     _ => {
                         // Single body item per zip iteration
-                        write_parse_items(buf, std::slice::from_ref(body.as_ref()), prefix_bp, captures);
+                        write_parse_items(buf, std::slice::from_ref(body.as_ref()), prefix_bp, captures, first_sets);
                     },
                 }
             },
@@ -460,7 +466,8 @@ fn write_parse_items(
                 });
             },
             RDSyntaxItem::Optional { inner } => {
-                write_optional_body(buf, inner, captures);
+                let suffix_after = &items[item_idx + 1..];
+                write_optional_body(buf, inner, captures, first_sets, suffix_after);
             },
         }
     }
@@ -848,19 +855,82 @@ fn write_constructor(buf: &mut String, rule: &RDRuleInfo, captures: &[Capture]) 
 }
 
 /// Write parsing code for an optional group.
-fn write_optional_body(buf: &mut String, items: &[RDSyntaxItem], captures: &mut Vec<Capture>) {
-    buf.push_str(
-        "let saved_pos = *pos; \
-        let opt_result = (|| -> Result<(), ParseError> {",
-    );
+///
+/// G1 Phase 4: When FIRST sets are available and FIRST(inner) is disjoint
+/// from FIRST(suffix_after), emit an LL(1) guard that checks the current
+/// token before entering the optional. This eliminates the save/restore.
+fn write_optional_body(
+    buf: &mut String,
+    items: &[RDSyntaxItem],
+    captures: &mut Vec<Capture>,
+    first_sets: Option<&std::collections::HashMap<String, crate::prediction::FirstSet>>,
+    suffix_after: &[RDSyntaxItem],
+) {
+    // G1 Phase 4: Check if LL(1) guard is possible
+    let ll1_guarded = if let Some(fs) = first_sets {
+        use crate::prediction::first_of_rd_suffix;
 
-    // Write the inner parsing code (captures are accumulated into the outer vec)
-    write_parse_items(buf, items, None, captures);
+        let (inner_first, _) = first_of_rd_suffix(items, fs);
+        let (suffix_first, _) = first_of_rd_suffix(suffix_after, fs);
 
-    buf.push_str(
-        "Ok(()) })(); \
-        if opt_result.is_err() { *pos = saved_pos; }",
-    );
+        // Disjoint: no token appears in both inner and suffix FIRST sets
+        if !inner_first.tokens.is_empty() && !suffix_first.tokens.is_empty() {
+            let overlap = inner_first.intersection(&suffix_first);
+            overlap.tokens.is_empty()
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+
+    if ll1_guarded {
+        // LL(1) guard: check current token against FIRST(inner) before entering
+        let fs = first_sets.expect("ll1_guarded implies first_sets is Some");
+        let (inner_first, _) = crate::prediction::first_of_rd_suffix(items, fs);
+
+        // Build match pattern for inner FIRST tokens
+        let mut patterns = Vec::new();
+        for token in &inner_first.tokens {
+            let mut pat = String::new();
+            match token.as_str() {
+                "Ident" => pat.push_str("Token::Ident(_)"),
+                "Integer" => pat.push_str("Token::Integer(_)"),
+                "Float" => pat.push_str("Token::Float(_)"),
+                "Boolean" => pat.push_str("Token::Boolean(_)"),
+                "StringLit" => pat.push_str("Token::StringLit(_)"),
+                _ => { use std::fmt::Write; write!(pat, "Token::{}", token).unwrap(); },
+            }
+            patterns.push(pat);
+        }
+
+        write!(
+            buf,
+            "if *pos < tokens.len() && matches!(&tokens[*pos].0, {}) {{",
+            patterns.join(" | "),
+        )
+        .unwrap();
+
+        // Parse the inner items directly (no save/restore needed)
+        write_parse_items(buf, items, None, captures, first_sets);
+
+        // If inner parse fails, it's an error (the token was in FIRST(inner))
+        // Note: we use a sub-closure to capture the error properly
+        buf.push_str("}");
+    } else {
+        // Original save/restore path
+        buf.push_str(
+            "let saved_pos = *pos; \
+            let opt_result = (|| -> Result<(), ParseError> {",
+        );
+
+        write_parse_items(buf, items, None, captures, first_sets);
+
+        buf.push_str(
+            "Ok(()) })(); \
+            if opt_result.is_err() { *pos = saved_pos; }",
+        );
+    }
 }
 
 /// Write dollar-syntax handlers for function application ($cat, $$cat( syntax).

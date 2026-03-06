@@ -27,16 +27,16 @@ delegates all operations to the matching sub-language.
        └──────┬──────┘                          └────┬─────┘  └────┬─────┘
               │                                      │             │
               ▼                                      └──────┬──────┘
-     ┌──────────────┐                                       │
+     ┌───────────────┐                                      │
      │ Merged Grammar│                                      ▼
-     │ (single parse)│                              ┌──────────────┐
-     └──────┬───────┘                               │ Wrapper      │
-            │                                       │ try A → try B│
-            ▼                                       └──────┬───────┘
-     ┌──────────────┐                                      │
-     │ Single Parser │                                     ▼
+     │ (single parse)│                               ┌──────────────┐
+     └───────┬───────┘                               │ Wrapper      │
+             │                                       │ try A → try B│
+             ▼                                       └──────┬───────┘
+     ┌───────────────┐                                      │
+     │ Single Parser │                                      ▼
      │ Single Ascent │                              ┌──────────────┐
-     └──────────────┘                               │ Delegation   │
+     └───────────────┘                              │ Delegation   │
                                                     │ (N parsers)  │
                                                     └──────────────┘
 ```
@@ -108,14 +108,14 @@ attempts are aggregated.
 
 ## Method Dispatch
 
-| Method Category | Strategy |
-|----------------|----------|
-| `parse_term()` | Sequential try-each, first success wins |
+| Method Category                                         | Strategy                                          |
+|---------------------------------------------------------|---------------------------------------------------|
+| `parse_term()`                                          | Sequential try-each, first success wins           |
 | `run_ascent()`, `try_direct_eval()`, `normalize_term()` | Match on variant, delegate to owning sub-language |
-| `add_to_env()`, `substitute_env()` | Route to correct sub-env based on term variant |
-| `remove_from_env()` | Try all sub-envs until success |
-| `list_env()` | Aggregate from all sub-envs |
-| `is_env_empty()` | All sub-envs must be empty |
+| `add_to_env()`, `substitute_env()`                      | Route to correct sub-env based on term variant    |
+| `remove_from_env()`                                     | Try all sub-envs until success                    |
+| `list_env()`                                            | Aggregate from all sub-envs                       |
+| `is_env_empty()`                                        | All sub-envs must be empty                        |
 
 ## Downcast Accessors
 

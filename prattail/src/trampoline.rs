@@ -37,6 +37,18 @@ use crate::recursive::{CollectionKind, RDRuleInfo, RDSyntaxItem};
 // Helpers
 // ══════════════════════════════════════════════════════════════════════════════
 
+/// Write a token match pattern string for a given token variant name.
+fn write_token_pattern_trampoline(buf: &mut String, token: &str) {
+    match token {
+        "Ident" => buf.push_str("Token::Ident(_)"),
+        "Integer" => buf.push_str("Token::Integer(_)"),
+        "Float" => buf.push_str("Token::Float(_)"),
+        "Boolean" => buf.push_str("Token::Boolean(_)"),
+        "StringLit" => buf.push_str("Token::StringLit(_)"),
+        _ => write!(buf, "Token::{}", token).unwrap(),
+    }
+}
+
 /// Check if a rule is a "simple collection" — one that can be trampolined
 /// as a CollectionElem frame with element-by-element parsing.
 ///
@@ -288,6 +300,58 @@ fn compute_shared_terminal_prefix(rules: &[&RDRuleInfo]) -> Vec<String> {
     shared
 }
 
+/// G1 Phase 2: Check whether the suffixes of NFA-merged rules (starting at
+/// position `skip`) have pairwise disjoint FIRST sets.
+///
+/// Returns `Some(map)` where map is `token_variant → rule_index` when every
+/// rule's suffix starts with a distinct terminal or nonterminal FIRST token.
+/// Returns `None` when suffixes overlap (at least two rules share a token).
+///
+/// This generalizes B1 (second_token_lookahead): B1 requires items[1] to be
+/// a Terminal for ALL rules, while this function handles NonTerminals by
+/// using the category's FIRST set.
+fn suffix_disjointness_check(
+    rules: &[&RDRuleInfo],
+    skip: usize,
+    first_sets: &std::collections::HashMap<String, FirstSet>,
+) -> Option<std::collections::BTreeMap<String, Vec<usize>>> {
+    use crate::prediction::first_of_rd_suffix;
+
+    if rules.len() < 2 {
+        return None;
+    }
+
+    // Compute FIRST set for each rule's suffix (items[skip..])
+    let mut per_rule_first: Vec<(usize, FirstSet)> = Vec::with_capacity(rules.len());
+    for (idx, rule) in rules.iter().enumerate() {
+        if rule.items.len() <= skip {
+            return None; // Rule has no suffix → can't disambiguate
+        }
+        let suffix_items = &rule.items[skip..];
+        let (first, _nullable) = first_of_rd_suffix(suffix_items, first_sets);
+        if first.tokens.is_empty() {
+            return None; // Empty FIRST set → can't disambiguate
+        }
+        per_rule_first.push((idx, first));
+    }
+
+    // Check pairwise disjointness: for each token, at most one rule should contain it
+    let mut token_to_rules: std::collections::BTreeMap<String, Vec<usize>> =
+        std::collections::BTreeMap::new();
+    for (idx, first) in &per_rule_first {
+        for token in &first.tokens {
+            token_to_rules.entry(token.clone()).or_default().push(*idx);
+        }
+    }
+
+    // If any token maps to more than one rule, suffixes are not disjoint
+    if token_to_rules.values().any(|indices| indices.len() > 1) {
+        return None;
+    }
+
+    Some(token_to_rules)
+}
+
 /// Public wrapper for `group_rd_by_dispatch_token` — used by the pipeline
 /// for ambiguity warning diagnostics.
 pub fn group_rd_by_dispatch_token_pub<'a>(
@@ -508,6 +572,76 @@ fn write_nfa_merged_prefix_arm(
             // The number of items to skip = 1 (dispatch token) + shared_prefix_len
             let skip_count = 1 + shared_terminal_prefix.len();
 
+            // G1 Phase 2: After left-factoring, check if remaining suffixes
+            // have disjoint FIRST sets. If so, emit deterministic dispatch
+            // instead of NFA try-all.
+            if config.optimization_gates.backtracking_elimination
+                && !config.needs_nfa_spillover
+            {
+                if let Some(suffix_map) = suffix_disjointness_check(inlineable, skip_count, &config.all_first_sets) {
+                    buf.push_str("if *pos < tokens.len() { match &tokens[*pos].0 {");
+
+                    for (suffix_token, rule_indices) in &suffix_map {
+                        let rule_idx = rule_indices[0];
+                        let rd_rule = inlineable[rule_idx];
+                        let segments = split_rd_handler(rd_rule);
+                        if segments.is_empty() {
+                            continue;
+                        }
+
+                        write!(buf, "Token::{} => {{", suffix_token).unwrap();
+
+                        let consumes_token = matches!(
+                            rd_rule.items.get(skip_count),
+                            Some(RDSyntaxItem::Terminal(_))
+                        );
+                        if consumes_token {
+                            buf.push_str("*pos += 1;");
+                        }
+
+                        let inner_skip = if consumes_token { skip_count + 1 } else { skip_count };
+                        let remaining_items: Vec<_> = segments[0]
+                            .inline_items
+                            .iter()
+                            .skip(inner_skip)
+                            .cloned()
+                            .collect();
+                        if !remaining_items.is_empty() {
+                            write_inline_items(buf, &remaining_items, false);
+                        }
+
+                        write_nfa_inline_constructor(buf, rd_rule, &segments);
+                        buf.push_str("},");
+                    }
+
+                    write!(
+                        buf,
+                        "_ => {{ return Err(ParseError::UnexpectedToken {{ \
+                            expected: Cow::Borrowed(\"{cat} expression\"), \
+                            found: format_token_friendly(&tokens[*pos].0), \
+                            range: tokens[*pos].1, \
+                            hint: None, \
+                        }}); }},",
+                    )
+                    .unwrap();
+
+                    buf.push_str("} } else {");
+                    write!(
+                        buf,
+                        "return Err(ParseError::UnexpectedEof {{ \
+                            expected: Cow::Borrowed(\"{cat} expression\"), \
+                            range: tokens[tokens.len() - 1].1, \
+                            hint: None, \
+                        }});",
+                    )
+                    .unwrap();
+                    buf.push_str("}");
+
+                    buf.push_str("},");
+                    return; // G1+A1 handled this arm
+                }
+            }
+
             buf.push_str("let nfa_saved = *pos;");
             write!(buf, "let mut nfa_results: Vec<{}> = Vec::new();", cat).unwrap();
             buf.push_str("let mut nfa_positions: Vec<usize> = Vec::new();");
@@ -654,6 +788,107 @@ fn write_nfa_merged_prefix_arm(
 
             buf.push_str("},"); // close outer arm
             return; // A1 handled this arm
+        }
+    }
+
+    // ── G1 Phase 2: Suffix disjointness check ───────────────────────────
+    // If all rules' suffixes (items after the dispatch token) have pairwise
+    // disjoint FIRST sets, emit a deterministic match on the next token
+    // instead of NFA try-all. This generalizes B1 to handle NonTerminals
+    // at position 1 (using category FIRST sets).
+    // Gated by `optimization_gates.backtracking_elimination`.
+    if config.optimization_gates.backtracking_elimination
+        && frame_pushing.is_empty()
+        && !config.needs_nfa_spillover
+    {
+        if let Some(suffix_map) = suffix_disjointness_check(inlineable, 1, &config.all_first_sets) {
+            write!(buf, "Token::{} => {{", variant).unwrap();
+            buf.push_str("*pos += 1;");
+            buf.push_str("if *pos < tokens.len() { match &tokens[*pos].0 {");
+
+            for (suffix_token, rule_indices) in &suffix_map {
+                let rule_idx = rule_indices[0]; // Guaranteed single by disjointness check
+                let rd_rule = inlineable[rule_idx];
+                let segments = split_rd_handler(rd_rule);
+                if segments.is_empty() {
+                    continue;
+                }
+
+                write!(buf, "Token::{} => {{", suffix_token).unwrap();
+
+                // Check if items[1] is a terminal (consume it) or nonterminal (don't consume — it's dispatched by FIRST)
+                let consumes_second = matches!(
+                    rd_rule.items.get(1),
+                    Some(RDSyntaxItem::Terminal(_))
+                );
+                if consumes_second {
+                    buf.push_str("*pos += 1;");
+                }
+
+                // Write remaining inline items
+                let skip_count = if consumes_second { 2 } else { 1 };
+                let remaining_items: Vec<_> = segments[0]
+                    .inline_items
+                    .iter()
+                    .skip(skip_count)
+                    .cloned()
+                    .collect();
+                if !remaining_items.is_empty() {
+                    write_inline_items(buf, &remaining_items, false);
+                }
+
+                if let Some(ref nt) = segments[0].nonterminal {
+                    write!(
+                        buf,
+                        "stack.push({}::{} {{",
+                        frame_info.enum_name, segments[0].frame_variant
+                    )
+                    .unwrap();
+                    write!(buf, "saved_bp: cur_bp,").unwrap();
+                    for capture in &segments[0].accumulated_captures {
+                        match capture {
+                            SegmentCapture::Ident { name }
+                            | SegmentCapture::Binder { name }
+                            | SegmentCapture::NonTerminal { name, .. } => {
+                                write!(buf, "{},", name).unwrap();
+                            },
+                            _ => {},
+                        }
+                    }
+                    buf.push_str("});");
+                    write!(buf, "cur_bp = {};", nt.bp).unwrap();
+                    buf.push_str("continue 'drive;");
+                } else {
+                    write_nfa_inline_constructor(buf, rd_rule, &segments);
+                }
+                buf.push_str("},");
+            }
+
+            // Fallback: no suffix token matched
+            write!(
+                buf,
+                "_ => {{ *pos -= 1; return Err(ParseError::UnexpectedToken {{ \
+                    expected: Cow::Borrowed(\"{cat} expression after {variant}\"), \
+                    found: format_token_friendly(&tokens[*pos + 1].0), \
+                    range: tokens[*pos + 1].1, \
+                    hint: None, \
+                }}); }},",
+            )
+            .unwrap();
+
+            buf.push_str("} } else {");
+            write!(
+                buf,
+                "*pos -= 1; return Err(ParseError::UnexpectedEof {{ \
+                    expected: Cow::Borrowed(\"{cat} expression\"), \
+                    range: tokens[tokens.len() - 1].1, \
+                    hint: None, \
+                }});",
+            )
+            .unwrap();
+            buf.push_str("}");
+            buf.push_str("},");
+            return; // G1 handled this arm
         }
     }
 
@@ -2241,58 +2476,152 @@ fn write_prefix_match_arms(
                     lparen_handled = true;
                     // Fall through to the normal singleton emission below
                 } else {
-                    // Standalone or fully-inline rule at LParen: save/restore +
-                    // grouping fallback.
+                    // Standalone or fully-inline rule at LParen.
                     lparen_handled = true;
+
+                    // G1 Phase 3: LL(2) check — can we distinguish the RD rule
+                    // from grouping by peeking at the token after `(`?
+                    //
+                    // RD rule suffix = items[1..] (items[0] is LParen)
+                    // Grouping suffix = FIRST(category)
+                    // If they're disjoint, a single lookahead resolves.
+                    let ll2_resolved = if config.optimization_gates.backtracking_elimination {
+                        use crate::prediction::first_of_rd_suffix;
+                        let rd_suffix = &rd_rule.items[1..]; // after LParen
+                        let (rd_first, _) = first_of_rd_suffix(rd_suffix, &config.all_first_sets);
+                        let cat_first = &config.own_first_set;
+                        // Disjoint: no token appears in both
+                        let overlap = rd_first.intersection(cat_first);
+                        overlap.tokens.is_empty()
+                    } else {
+                        false
+                    };
+
                     write!(buf, "Token::LParen => {{").unwrap();
-                    buf.push_str("let saved = *pos;");
 
-                    if should_use_standalone_fn(rd_rule) {
-                        let fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
-                        write!(
-                            buf,
-                            "if let Ok(result) = {}(tokens, pos) {{ \
-                                break 'prefix result; \
-                            }}",
-                            fn_name,
-                        )
-                        .unwrap();
-                    } else {
-                        // Fully inline (no frame-pushing nonterminal): wrap in closure
-                        let segments = split_rd_handler(rd_rule);
-                        if !segments.is_empty() {
-                            write!(buf, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
-                            write_inline_items(buf, &segments[0].inline_items, true);
-                            write_rd_constructor_inline(buf, rd_rule, &segments);
-                            buf.push_str("})() {");
-                            buf.push_str("Ok(v) => { break 'prefix v; },");
-                            buf.push_str("Err(_) => {},");
-                            buf.push_str("}");
+                    if ll2_resolved {
+                        // G1: LL(2) deterministic dispatch — peek at token after `(`
+                        buf.push_str("*pos += 1;");
+                        buf.push_str("if *pos < tokens.len() {");
+
+                        // Compute which tokens belong to the RD rule
+                        let rd_suffix = &rd_rule.items[1..];
+                        let (rd_first, _) = crate::prediction::first_of_rd_suffix(rd_suffix, &config.all_first_sets);
+
+                        // Build match arms for RD rule tokens
+                        let mut rd_patterns = Vec::new();
+                        for token in &rd_first.tokens {
+                            let mut pat = String::new();
+                            write_token_pattern_trampoline(&mut pat, token);
+                            rd_patterns.push(pat);
                         }
-                    }
 
-                    // Grouping fallback: restore position, emit grouping logic
-                    buf.push_str("*pos = saved;");
-                    if config.needs_dispatch {
+                        buf.push_str("match &tokens[*pos].0 {");
+                        // RD rule arm: all tokens from RD suffix FIRST set
+                        write!(buf, "{} => {{", rd_patterns.join(" | ")).unwrap();
+                        // Restore position to before LParen, call the rule
+                        buf.push_str("*pos -= 1;"); // restore to LParen position
+
+                        if should_use_standalone_fn(rd_rule) {
+                            let fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
+                            write!(buf, "break 'prefix {}(tokens, pos)?;", fn_name).unwrap();
+                        } else {
+                            let segments = split_rd_handler(rd_rule);
+                            if !segments.is_empty() {
+                                write_inline_items(buf, &segments[0].inline_items, true);
+                                write_rd_constructor_inline(buf, rd_rule, &segments);
+                            }
+                        }
+                        buf.push_str("},");
+
+                        // Grouping arm: everything else after `(`
+                        if config.needs_dispatch {
+                            write!(
+                                buf,
+                                "_ => {{ \
+                                    let expr = parse_{}(tokens, pos, 0)?; \
+                                    expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
+                                    break 'prefix expr; \
+                                }},",
+                                cat,
+                            )
+                            .unwrap();
+                        } else {
+                            write!(
+                                buf,
+                                "_ => {{ \
+                                    stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
+                                    cur_bp = 0; \
+                                    continue 'drive; \
+                                }},",
+                                frame_info.enum_name,
+                            )
+                            .unwrap();
+                        }
+
+                        buf.push_str("}"); // close match
+                        buf.push_str("} else {"); // no token after `(`
                         write!(
                             buf,
-                            "*pos += 1; \
-                            let expr = parse_{}(tokens, pos, 0)?; \
-                            expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
-                            break 'prefix expr;",
-                            cat,
+                            "return Err(ParseError::UnexpectedEof {{ \
+                                expected: Cow::Borrowed(\"{cat} expression\"), \
+                                range: tokens[tokens.len() - 1].1, \
+                                hint: None, \
+                            }});",
                         )
                         .unwrap();
+                        buf.push_str("}"); // close if
                     } else {
-                        write!(
-                            buf,
-                            "*pos += 1; \
-                            stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
-                            cur_bp = 0; \
-                            continue 'drive;",
-                            frame_info.enum_name,
-                        )
-                        .unwrap();
+                        // Save/restore fallback (original path)
+                        buf.push_str("let saved = *pos;");
+
+                        if should_use_standalone_fn(rd_rule) {
+                            let fn_name = format!("parse_{}", rd_rule.label.to_lowercase());
+                            write!(
+                                buf,
+                                "if let Ok(result) = {}(tokens, pos) {{ \
+                                    break 'prefix result; \
+                                }}",
+                                fn_name,
+                            )
+                            .unwrap();
+                        } else {
+                            // Fully inline (no frame-pushing nonterminal): wrap in closure
+                            let segments = split_rd_handler(rd_rule);
+                            if !segments.is_empty() {
+                                write!(buf, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
+                                write_inline_items(buf, &segments[0].inline_items, true);
+                                write_rd_constructor_inline(buf, rd_rule, &segments);
+                                buf.push_str("})() {");
+                                buf.push_str("Ok(v) => { break 'prefix v; },");
+                                buf.push_str("Err(_) => {},");
+                                buf.push_str("}");
+                            }
+                        }
+
+                        // Grouping fallback: restore position, emit grouping logic
+                        buf.push_str("*pos = saved;");
+                        if config.needs_dispatch {
+                            write!(
+                                buf,
+                                "*pos += 1; \
+                                let expr = parse_{}(tokens, pos, 0)?; \
+                                expect_token(tokens, pos, |t| matches!(t, Token::RParen), \")\")?; \
+                                break 'prefix expr;",
+                                cat,
+                            )
+                            .unwrap();
+                        } else {
+                            write!(
+                                buf,
+                                "*pos += 1; \
+                                stack.push({}::GroupClose {{ saved_bp: cur_bp }}); \
+                                cur_bp = 0; \
+                                continue 'drive;",
+                                frame_info.enum_name,
+                            )
+                            .unwrap();
+                        }
                     }
                     buf.push_str("},");
                     continue;

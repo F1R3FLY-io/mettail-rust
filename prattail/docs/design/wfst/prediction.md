@@ -58,41 +58,41 @@ action. Each transition from state 0 carries a token label, an action index
 into the action table, and a tropical weight.
 
 ```
-  +----------------------------------------------------------+
-  |  PredictionWfst for category Expr                        |
-  |                                                          |
-  |   Plus/0.0/Direct(Add)    +---------+                    |
-  |   +---------------------- | State 0 |                    |
-  |   v                       | (start) |                    |
-  |  +---+                    |         |                    |
-  |  | 1 | (final)            |         |                    |
-  |  +---+                    |         |                    |
-  |                           |         |                    |
-  |   Minus/0.0/Direct(Sub)   |         |                    |
-  |   +---------------------- |         |                    |
-  |   v                       |         |                    |
-  |  +---+                    |         | ---------+         |
-  |  | 2 | (final)            |         |          |         |
-  |  +---+                    |         |  Ident/  |         |
-  |                           |         |  0.5/    |         |
-  |   LParen/0.0/Grouping     |         |  Cross   |         |
-  |   +---------------------- |         |          v         |
-  |   v                       |         |         +---+      |
-  |  +---+                    |         |         | 3 |(fin) |
-  |  | 4 | (final)            +---------+         +---+      |
-  |  +---+                                                   |
-  |                                                          |
-  |   Ident/2.0/Variable      +---------+                    |
-  |   +---------------------- | State 0 | -- . . .           |
-  |   v                       +---------+                    |
-  |  +---+                                                   |
-  |  | 5 | (final)                                           |
-  |  +---+                                                   |
-  +----------------------------------------------------------+
+┌──────────────────────────────────────────────────────────┐
+│  PredictionWfst for category Expr                        │
+│                                                          │
+│   Plus/0.0/Direct(Add)    ┌─────────┐                    │
+│   ┌────────────────────── │ State 0 │                    │
+│   ▼                       │ (start) │                    │
+│  ┌───┐                    │         │                    │
+│  │ 1 │ (final)            │         │                    │
+│  └───┘                    │         │                    │
+│                           │         │                    │
+│   Minus/0.0/Direct(Sub)   │         │                    │
+│   ┌────────────────────── │         │                    │
+│   ▼                       │         │                    │
+│  ┌───┐                    │         │ ─────────┐         │
+│  │ 2 │ (final)            │         │          │         │
+│  └───┘                    │         │  Ident/  │         │
+│                           │         │  0.5/    │         │
+│   LParen/0.0/Grouping     │         │  Cross   │         │
+│   ┌────────────────────── │         │          ▼         │
+│   ▼                       │         │         ┌───┐      │
+│  ┌───┐                    │         │         │ 3 │(fin) │
+│  │ 4 │ (final)            └─────────┘         └───┘      │
+│  └───┘                                                   │
+│                                                          │
+│   Ident/2.0/Variable      ┌─────────┐                    │
+│   ┌────────────────────── │ State 0 │ ── . . .           │
+│   ▼                       └─────────┘                    │
+│  ┌───┐                                                   │
+│  │ 5 │ (final)                                           │
+│  └───┘                                                   │
+└──────────────────────────────────────────────────────────┘
 
-  -------------------- beam threshold (width 1.5) -----------
-  Actions with weight <= best + 1.5 pass through the beam.
-  Variable at 2.0 is pruned when best = 0.0 and beam = 1.5.
+-------------------- beam threshold (width 1.5) -----------
+Actions with weight <= best + 1.5 pass through the beam.
+Variable at 2.0 is pruned when best = 0.0 and beam = 1.5.
 ```
 
 The `states` vector always has exactly `1 + num_actions` entries: index 0 is
@@ -116,7 +116,7 @@ variant to a tropical weight. Lower weight means "try first."
 | Action Kind                       | Weight            | Rationale                                                                            |
 |-----------------------------------|-------------------|--------------------------------------------------------------------------------------|
 | `Direct`                          | 0.0               | Unambiguous token-to-rule mapping. No backtracking possible.                         |
-| `Grouping`                        | 0.0               | Structural delimiter -- always valid at this position.                                |
+| `Grouping`                        | 0.0               | Structural delimiter -- always valid at this position.                               |
 | `CrossCategory` (no backtrack)    | 0.0               | Unique token in source category; deterministic.                                      |
 | `CrossCategory` (needs backtrack) | 0.5               | Token shared between categories; try source path first.                              |
 | `Cast`                            | 0.5               | Type coercion; slightly penalized versus direct dispatch.                            |
@@ -404,27 +404,27 @@ best reachable final state.  This is the core operation of the
 
 ## 9. Source Reference
 
-| Symbol                                 | Location                   |
-|----------------------------------------|----------------------------|
-| `PredictionWfst`                       | `prattail/src/wfst.rs`     |
-| `PredictionWfstBuilder`                | `prattail/src/wfst.rs`     |
-| `WeightedAction`                       | `prattail/src/wfst.rs`     |
-| `WeightedTransition`                   | `prattail/src/wfst.rs`     |
-| `WfstState`                            | `prattail/src/wfst.rs`     |
-| `compute_action_weight`                | `prattail/src/wfst.rs`     |
-| `build_prediction_wfsts`               | `prattail/src/wfst.rs`     |
-| `generate_weighted_dispatch`           | `prattail/src/wfst.rs`     |
-| `PredictionWfst::from_flat`            | `prattail/src/wfst.rs`     |
-| `PredictionWfst::with_trained_weights` | `prattail/src/wfst.rs`     |
-| `PredictionWfst::state_count`          | `prattail/src/wfst.rs`     |
-| `PredictionWfst::reachable_state_count`| `prattail/src/wfst.rs`     |
-| `PredictionWfst::remove_unreachable_states` | `prattail/src/wfst.rs` |
-| `PredictionWfst::prune_by_beam`        | `prattail/src/wfst.rs`     |
-| `PredictionWfst::normalize_weights`    | `prattail/src/wfst.rs`     |
-| `emit_prediction_wfst_static`          | `prattail/src/pipeline.rs` |
-| `TrainedModel::from_embedded`          | `prattail/src/training.rs` |
-| `write_category_dispatch_weighted`     | `prattail/src/dispatch.rs` |
-| `BeamWidthConfig`                      | `prattail/src/lib.rs`      |
+| Symbol                                      | Location                   |
+|---------------------------------------------|----------------------------|
+| `PredictionWfst`                            | `prattail/src/wfst.rs`     |
+| `PredictionWfstBuilder`                     | `prattail/src/wfst.rs`     |
+| `WeightedAction`                            | `prattail/src/wfst.rs`     |
+| `WeightedTransition`                        | `prattail/src/wfst.rs`     |
+| `WfstState`                                 | `prattail/src/wfst.rs`     |
+| `compute_action_weight`                     | `prattail/src/wfst.rs`     |
+| `build_prediction_wfsts`                    | `prattail/src/wfst.rs`     |
+| `generate_weighted_dispatch`                | `prattail/src/wfst.rs`     |
+| `PredictionWfst::from_flat`                 | `prattail/src/wfst.rs`     |
+| `PredictionWfst::with_trained_weights`      | `prattail/src/wfst.rs`     |
+| `PredictionWfst::state_count`               | `prattail/src/wfst.rs`     |
+| `PredictionWfst::reachable_state_count`     | `prattail/src/wfst.rs`     |
+| `PredictionWfst::remove_unreachable_states` | `prattail/src/wfst.rs`     |
+| `PredictionWfst::prune_by_beam`             | `prattail/src/wfst.rs`     |
+| `PredictionWfst::normalize_weights`         | `prattail/src/wfst.rs`     |
+| `emit_prediction_wfst_static`               | `prattail/src/pipeline.rs` |
+| `TrainedModel::from_embedded`               | `prattail/src/training.rs` |
+| `write_category_dispatch_weighted`          | `prattail/src/dispatch.rs` |
+| `BeamWidthConfig`                           | `prattail/src/lib.rs`      |
 
 Test count: 16 (in `prattail/src/wfst.rs` `#[cfg(test)]` module).
 

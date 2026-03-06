@@ -66,20 +66,20 @@ where `Sorted_N(PathID x R+)` is the set of all sorted arrays of at most
 N entries `(path_id: u32, weight: TropicalWeight)`, sorted in ascending
 order by weight (lowest = best), with no duplicate path IDs.
 
-| Component                      | Symbol        | Concrete value                   | Meaning                                          |
-|--------------------------------|---------------|----------------------------------|--------------------------------------------------|
-| Carrier set                    | K             | Sorted_N(u32 x R+)              | Bounded sorted arrays of (path_id, weight) pairs |
-| Addition (⊕)                   | merge_nbest   | Two-pointer merge, dedup, top N  | Best N paths from either alternative             |
-| Multiplication (⊗)             | concat_nbest  | Cross-product, sort, top N       | Sequenced paths with combined costs              |
-| Additive identity (0̄)          | []            | Empty array (len = 0)            | No paths reachable                               |
-| Multiplicative identity (1̄)    | [(0, 0.0)]   | Single zero-cost identity path   | One path, zero additional cost                   |
+| Component                   | Symbol       | Concrete value                  | Meaning                                          |
+|-----------------------------|--------------|---------------------------------|--------------------------------------------------|
+| Carrier set                 | K            | Sorted_N(u32 x R+)              | Bounded sorted arrays of (path_id, weight) pairs |
+| Addition (⊕)                | merge_nbest  | Two-pointer merge, dedup, top N | Best N paths from either alternative             |
+| Multiplication (⊗)          | concat_nbest | Cross-product, sort, top N      | Sequenced paths with combined costs              |
+| Additive identity (0̄)       | []           | Empty array (len = 0)           | No paths reachable                               |
+| Multiplicative identity (1̄) | [(0, 0.0)]   | Single zero-cost identity path  | One path, zero additional cost                   |
 
 In WFST terms:
 
-- **⊕ = merge_nbest** combines parallel paths: merge two sorted N-best
+- **⊕  = merge_nbest** combines parallel paths: merge two sorted N-best
   lists, deduplicate by path_id (keeping the lower-weight occurrence),
   and truncate to the top N entries.
-- **⊗ = concat_nbest** sequences path segments: form the cross-product
+- **⊗  = concat_nbest** sequences path segments: form the cross-product
   of two N-best lists (adding weights, combining path IDs), then sort
   and truncate to the top N entries.
 - **0̄ = []** is the "no paths" weight -- the additive identity (merging
@@ -140,8 +140,8 @@ The `Option` wrapper serves as the sparse-array mechanism:
 │ len:      2                                          │
 │                                                      │
 │ Meaning: 2 valid entries, sorted by weight.          │
-│ entries[0..2] = Some(...)  (packed)                   │
-│ entries[2..4] = None       (unused capacity)          │
+│ entries[0..2] = Some(...)  (packed)                  │
+│ entries[2..4] = None       (unused capacity)         │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -150,10 +150,10 @@ The `Option` wrapper serves as the sparse-array mechanism:
 Common instantiations:
 
 | N | Size (bytes) | Use case                     |
-|---|-------------|------------------------------|
-| 2 | 40          | Confidence gap (best vs 2nd) |
-| 4 | 72          | Parse forest construction    |
-| 8 | 136         | Rich reranking input         |
+|---|--------------|------------------------------|
+| 2 | 40           | Confidence gap (best vs 2nd) |
+| 4 | 72           | Parse forest construction    |
+| 8 | 136          | Rich reranking input         |
 
 ---
 
@@ -260,21 +260,21 @@ concat_nbest(A, B):
 │ (1, 1.0)      │     │ (10, 0.5)     │
 │ (2, 2.0)      │     │ (20, 1.5)     │
 └───────┬───────┘     └───────┬───────┘
-        │     Cross-product    │
+        │     Cross-product   │
         └──────────┬──────────┘
                    ▼
-    ┌─────────────────────────────┐
-    │ Candidates (4 entries):     │
-    │ (1*31+10, 1.0+0.5) = (41, 1.5)  │
-    │ (1*31+20, 1.0+1.5) = (51, 2.5)  │
-    │ (2*31+10, 2.0+0.5) = (72, 2.5)  │
-    │ (2*31+20, 2.0+1.5) = (82, 3.5)  │
-    └───────────┬─────────────────┘
+    ┌────────────────────────────────┐
+    │ Candidates (4 entries):        │
+    │ (1*31+10, 1.0+0.5) = (41, 1.5) │
+    │ (1*31+20, 1.0+1.5) = (51, 2.5) │
+    │ (2*31+10, 2.0+0.5) = (72, 2.5) │
+    │ (2*31+20, 2.0+1.5) = (82, 3.5) │
+    └───────────┬────────────────────┘
                 │  Sort + Truncate to N
                 ▼
     ┌─────────────────────────────┐
     │ Result (top N by weight):   │
-    │ (41, 1.5), (51, 2.5), ...  │
+    │ (41, 1.5), (51, 2.5), ...   │
     └─────────────────────────────┘
 ```
 
@@ -283,7 +283,7 @@ concat_nbest(A, B):
 ## 6. Semiring Axiom Verification
 
 We verify all eight required semiring axioms.  The central challenge is
-that both ⊕ and ⊗ involve **truncation** to at most N entries, which is
+that both ⊕  and ⊗  involve **truncation** to at most N entries, which is
 a lossy operation.  We must show that the axioms hold *after* truncation.
 
 **Convention.**  Let A, B, C denote arbitrary elements of K (i.e.,
@@ -292,7 +292,7 @@ entries in X.
 
 ### 6.1 (K, ⊕, 0̄) is a commutative monoid
 
-#### 6.1.1 Additive identity: 0̄ ⊕ A = A ⊕ 0̄ = A
+#### 6.1.1 Additive identity: 0̄ ⊕  A = A ⊕  0̄ = A
 
 Proof.  `merge_nbest([], A)`: the two-pointer merge draws all entries
 from A (since the left list is empty), producing an output identical to
@@ -300,15 +300,15 @@ A.  No truncation occurs since |A| <= N.  Similarly `merge_nbest(A, [])`.
 QED.
 
 Concrete witness: A = [(1, 2.0), (2, 5.0)], N = 4.
-- [] ⊕ A = [(1, 2.0), (2, 5.0)].  Check.
-- A ⊕ [] = [(1, 2.0), (2, 5.0)].  Check.
+- [] ⊕  A = [(1, 2.0), (2, 5.0)].  Check.
+- A ⊕  [] = [(1, 2.0), (2, 5.0)].  Check.
 
-#### 6.1.2 Additive commutativity: A ⊕ B = B ⊕ A
+#### 6.1.2 Additive commutativity: A ⊕  B = B ⊕  A
 
 Proof.  The two-pointer merge produces a sorted sequence of the union of
 entries from A and B.  The merge is stable with respect to equal weights:
 when `A[i].weight == B[j].weight`, the algorithm takes from A first in
-`A ⊕ B` and from B first in `B ⊕ A`.  However, the *set* of entries and
+`A ⊕  B` and from B first in `B ⊕  A`.  However, the *set* of entries and
 their weights are identical in both cases.  Deduplication keeps the
 lower-weight occurrence, which is the same regardless of merge order
 (both occurrences have the same weight in the tie case, so either is
@@ -331,10 +331,10 @@ merge algorithm ensures the same set of best entries survives truncation
 regardless of operand order.  QED.
 
 Concrete witness: A = [(1, 1.0)], B = [(2, 3.0)], N = 4.
-- A ⊕ B = [(1, 1.0), (2, 3.0)].
-- B ⊕ A = [(1, 1.0), (2, 3.0)].  Check (same sorted order).
+- A ⊕  B = [(1, 1.0), (2, 3.0)].
+- B ⊕  A = [(1, 1.0), (2, 3.0)].  Check (same sorted order).
 
-#### 6.1.3 Additive associativity: (A ⊕ B) ⊕ C = A ⊕ (B ⊕ C)
+#### 6.1.3 Additive associativity: (A ⊕  B) ⊕  C = A ⊕  (B ⊕  C)
 
 Proof.  Both sides compute the top N entries from the union of A, B,
 and C (with deduplication).
@@ -344,7 +344,7 @@ sorted, deduplicated union of all input entries.  The union of sets is
 associative, and sorting is deterministic.
 
 *With truncation:* consider the set S = A ∪ B ∪ C (deduplicated, sorted
-by weight).  Both `(A ⊕ B) ⊕ C` and `A ⊕ (B ⊕ C)` compute the top N
+by weight).  Both `(A ⊕  B) ⊕  C` and `A ⊕  (B ⊕  C)` compute the top N
 elements of S, but via different intermediate truncations.
 
 Let S_left = top_N(A ∪ B), then left = top_N(S_left ∪ C).
@@ -360,11 +360,11 @@ quite right.  An entry from C could displace an entry from A ∪ B.
 **Refined argument.**  Truncation can violate strict associativity.
 Consider N = 2, A = [(1, 1.0)], B = [(2, 2.0)], C = [(3, 3.0), (4, 0.5)].
 
-- (A ⊕ B) ⊕ C: A ⊕ B = [(1, 1.0), (2, 2.0)].  Then ⊕ C =
+- (A ⊕  B) ⊕  C: A ⊕  B = [(1, 1.0), (2, 2.0)].  Then ⊕  C =
   merge of [(1, 1.0), (2, 2.0)] and [(3, 3.0), (4, 0.5)] =
   [(4, 0.5), (1, 1.0)] (top 2).
-- A ⊕ (B ⊕ C): B ⊕ C = merge of [(2, 2.0)] and [(3, 3.0), (4, 0.5)] =
-  [(4, 0.5), (2, 2.0)] (top 2).  Then A ⊕ (B ⊕ C) =
+- A ⊕  (B ⊕  C): B ⊕  C = merge of [(2, 2.0)] and [(3, 3.0), (4, 0.5)] =
+  [(4, 0.5), (2, 2.0)] (top 2).  Then A ⊕  (B ⊕  C) =
   merge of [(1, 1.0)] and [(4, 0.5), (2, 2.0)] =
   [(4, 0.5), (1, 1.0)] (top 2).
 
@@ -395,7 +395,7 @@ deduplicated, has at most N entries, and all entries have valid
 
 ### 6.2 (K, ⊗, 1̄) is a monoid
 
-#### 6.2.1 Multiplicative identity: 1̄ ⊗ A = A (up to path_id rehashing)
+#### 6.2.1 Multiplicative identity: 1̄ ⊗  A = A (up to path_id rehashing)
 
 Proof.  `concat_nbest([(0, 0.0)], A)`: the cross-product produces, for
 each `(p, w)` in A, the entry `(0 * 31 + p, 0.0 + w) = (p, w)`.
@@ -405,13 +405,13 @@ The weights are unchanged: `0.0 + w = w` (tropical multiplication by
 one adds zero cost).
 
 The result is the same N entries as A, in the same sorted order.
-Therefore `1̄ ⊗ A = A`.
+Therefore `1̄ ⊗  A = A`.
 
-For `A ⊗ 1̄`: the cross-product produces `(p * 31 + 0, w + 0.0) = (p * 31, w)`.
+For `A ⊗  1̄`: the cross-product produces `(p * 31 + 0, w + 0.0) = (p * 31, w)`.
 Here `p.wrapping_mul(31).wrapping_add(0) = p * 31`, which is NOT equal
 to p for p != 0.  The path IDs are rehashed.
 
-This means `A ⊗ 1̄` has the same weights as A but different path IDs.
+This means `A ⊗  1̄` has the same weights as A but different path IDs.
 The multiplicative identity is therefore a **right identity for weights
 but not for path IDs**.  Operationally, this is acceptable because:
 
@@ -423,22 +423,22 @@ but not for path IDs**.  Operationally, this is acceptable because:
    preserved.
 
 For the semiring axiom in the strict sense, we observe that the axiom
-requires `1̄ ⊗ A = A`, but NOT `A ⊗ 1̄ = A` (which is the additional
-requirement for a *unital* monoid).  Since `1̄ ⊗ A = A` holds exactly
+requires `1̄ ⊗  A = A`, but NOT `A ⊗  1̄ = A` (which is the additional
+requirement for a *unital* monoid).  Since `1̄ ⊗  A = A` holds exactly
 (including path IDs), the left-identity property is satisfied.
 
-For the right-identity `A ⊗ 1̄`: the weights are identical, and the
+For the right-identity `A ⊗  1̄`: the weights are identical, and the
 ordering is preserved.  The path_id rehash is a consistent bijection
 (wrapping_mul by 31 is invertible mod 2^32 since gcd(31, 2^32) = 1).
 Therefore path_id deduplication remains correct.  QED.
 
 Concrete witness: A = [(1, 2.0), (2, 5.0)], 1̄ = [(0, 0.0)], N = 4.
-- 1̄ ⊗ A: cross-product = [(0*31+1, 0+2.0), (0*31+2, 0+5.0)]
+- 1̄ ⊗  A: cross-product = [(0*31+1, 0+2.0), (0*31+2, 0+5.0)]
   = [(1, 2.0), (2, 5.0)] = A.  Check.
-- A ⊗ 1̄: cross-product = [(1*31+0, 2.0+0), (2*31+0, 5.0+0)]
+- A ⊗  1̄: cross-product = [(1*31+0, 2.0+0), (2*31+0, 5.0+0)]
   = [(31, 2.0), (62, 5.0)].  Weights match A.  Check.
 
-#### 6.2.2 Multiplicative associativity: (A ⊗ B) ⊗ C = A ⊗ (B ⊗ C)
+#### 6.2.2 Multiplicative associativity: (A ⊗  B) ⊗  C = A ⊗  (B ⊗  C)
 
 Proof.  Both sides compute the top N entries from the three-way
 cross-product A x B x C, with combined weights
@@ -454,7 +454,7 @@ For path IDs: `((p_a * 31 + p_b) * 31 + p_c)` vs
 
 These are NOT the same.  The path_id combination is therefore not
 associative.  However, this does not violate the semiring axiom for the
-following reason: the axiom requires `(A ⊗ B) ⊗ C = A ⊗ (B ⊗ C)` as
+following reason: the axiom requires `(A ⊗  B) ⊗  C = A ⊗  (B ⊗  C)` as
 elements of the carrier set K.  Two elements of K are equal (via
 `PartialEq`) when they have the same entries in the same positions.
 Since path IDs differ, strict equality may fail.
@@ -477,7 +477,7 @@ lists).  The current hash-based combination is chosen for performance
 The cross-product of two elements of K is an element of K: the result
 is sorted, deduplicated, has at most N entries.  QED.
 
-### 6.3 Zero annihilation: 0̄ ⊗ A = A ⊗ 0̄ = 0̄
+### 6.3 Zero annihilation: 0̄ ⊗  A = A ⊗  0̄ = 0̄
 
 Proof.  `concat_nbest([], A)`: the implementation checks
 `self.is_empty() || other.is_empty()` and returns `Self::empty()`
@@ -485,10 +485,10 @@ immediately.  No cross-product is computed.  Similarly for
 `concat_nbest(A, [])`.  QED.
 
 Concrete witness: A = [(1, 2.0)], N = 4.
-- [] ⊗ A = [].  Check.
-- A ⊗ [] = [].  Check.
+- [] ⊗  A = [].  Check.
+- A ⊗  [] = [].  Check.
 
-### 6.4 Left distributivity: A ⊗ (B ⊕ C) = (A ⊗ B) ⊕ (A ⊗ C)
+### 6.4 Left distributivity: A ⊗  (B ⊕  C) = (A ⊗  B) ⊕  (A ⊗  C)
 
 Proof.  Both sides produce the top N entries from the cross-products
 A x B and A x C.
@@ -502,7 +502,7 @@ Right side: cross-product A x B (keeping top N), cross-product A x C
 **Without truncation:**  A x (B ∪ C) = (A x B) ∪ (A x C) (set-theoretic
 distributivity of Cartesian product over union).  The weight combination
 distributes: `w_a + min(w_b, w_c)` vs `min(w_a + w_b, w_a + w_c)`.
-Since min is the tropical ⊕ and real addition distributes over min, the
+Since min is the tropical ⊕  and real addition distributes over min, the
 entry-wise distributivity holds.
 
 **With truncation:** the same argument as for associativity applies.
@@ -512,7 +512,7 @@ intermediate truncations, because:
 1. If `(p, w)` is in the top N of (A x B) ∪ (A x C), it comes from
    either A x B or A x C.
 2. In the left-side computation, the entry from B or C that generated
-   this cross-product entry must survive the B ⊕ C truncation (since
+   this cross-product entry must survive the B ⊕  C truncation (since
    its weight contributes to a top-N result of the full union).
 3. The subsequent A x (top-N of B ∪ C) cross-product then generates
    this entry.
@@ -521,7 +521,7 @@ The argument is symmetric for the right side.  Truncation may discard
 entries that are NOT in the final top N, but the final top N is the same
 on both sides.  QED.
 
-### 6.5 Right distributivity: (A ⊕ B) ⊗ C = (A ⊗ C) ⊕ (B ⊗ C)
+### 6.5 Right distributivity: (A ⊕  B) ⊗  C = (A ⊗  C) ⊕  (B ⊗  C)
 
 Proof.  By the same argument as Section 6.4, with the roles of left
 and right operands swapped.  The weight combination is
@@ -530,16 +530,16 @@ QED.
 
 ### 6.6 Summary
 
-| Axiom                   | Status      | Notes                                    |
-|-------------------------|-------------|------------------------------------------|
-| Additive identity       | Holds       | Empty list is neutral for merge          |
-| Additive commutativity  | Holds       | Merge produces same sorted set           |
-| Additive associativity  | Holds       | Top-N selection commutes with union      |
-| Multiplicative identity | Holds       | Left-identity exact; right rehashes IDs  |
-| Multiplicative assoc.   | Holds*      | *Up to path_id renaming (weights exact)  |
-| Left distributivity     | Holds       | Truncation preserves top-N invariant     |
-| Right distributivity    | Holds       | Symmetric to left distributivity         |
-| Zero annihilation       | Holds       | Short-circuit on empty operand           |
+| Axiom                   | Status | Notes                                   |
+|-------------------------|--------|-----------------------------------------|
+| Additive identity       | Holds  | Empty list is neutral for merge         |
+| Additive commutativity  | Holds  | Merge produces same sorted set          |
+| Additive associativity  | Holds  | Top-N selection commutes with union     |
+| Multiplicative identity | Holds  | Left-identity exact; right rehashes IDs |
+| Multiplicative assoc.   | Holds* | *Up to path_id renaming (weights exact) |
+| Left distributivity     | Holds  | Truncation preserves top-N invariant    |
+| Right distributivity    | Holds  | Symmetric to left distributivity        |
+| Zero annihilation       | Holds  | Short-circuit on empty operand          |
 
 All axioms hold, with the caveat that multiplicative associativity
 holds exactly for weights and positions, and up to renaming for the
@@ -624,7 +624,7 @@ confidence_gap(W) =
 │       Commit to best parse immediately                         │
 │       (skip NFA spillover)                                     │
 │   else:                                                        │
-│       Spill |W| - 1 alternatives for replay                   │
+│       Spill |W| - 1 alternatives for replay                    │
 │       (NFA disambiguation path)                                │
 └────────────────────────────────────────────────────────────────┘
 ```
@@ -661,7 +661,7 @@ W_concat    = NbestWeight<3>::singleton(3, 7.0)   = [(3, 7.0)]
 Merge all three via ⊕:
 
 ```
-Step 1: W_add_int ⊕ W_add_float
+Step 1: W_add_int ⊕  W_add_float
 
   Two-pointer merge of [(1, 1.0)] and [(2, 3.0)]:
     i=0, j=0: A[0].weight=1.0 <= B[0].weight=3.0 → take A[0]=(1, 1.0)
@@ -669,7 +669,7 @@ Step 1: W_add_int ⊕ W_add_float
 
   Result: [(1, 1.0), (2, 3.0)]    (len=2)
 
-Step 2: [(1, 1.0), (2, 3.0)] ⊕ W_concat
+Step 2: [(1, 1.0), (2, 3.0)] ⊕  W_concat
 
   Two-pointer merge of [(1, 1.0), (2, 3.0)] and [(3, 7.0)]:
     i=0, j=0: 1.0 <= 7.0 → take (1, 1.0)
@@ -694,7 +694,7 @@ Now add a fourth rule with N = 3:
 ```
 W_add_str = NbestWeight<3>::singleton(4, 2.0)   = [(4, 2.0)]
 
-W_dispatch ⊕ W_add_str:
+W_dispatch ⊕  W_add_str:
 
   Two-pointer merge of [(1, 1.0), (2, 3.0), (3, 7.0)] and [(4, 2.0)]:
     count=0: 1.0 <= 2.0 → take (1, 1.0)     count=1
@@ -715,7 +715,7 @@ Suppose AddInt appears via two different WFST paths:
 A = [(1, 1.0), (2, 3.0)]    (AddInt at cost 1.0, AddFloat at cost 3.0)
 B = [(1, 2.5), (3, 7.0)]    (AddInt at cost 2.5, Concat at cost 7.0)
 
-A ⊕ B:
+A ⊕  B:
   Two-pointer merge:
     i=0, j=0: 1.0 <= 2.5 → candidate (1, 1.0)
       path_id 1 not in merged → accept.    merged = [(1, 1.0)]
@@ -740,7 +740,7 @@ Two segments:
 A = [(1, 1.0), (2, 3.0)]    (segment 1: two alternatives)
 B = [(10, 0.5), (20, 1.5)]  (segment 2: two alternatives)
 
-A ⊗ B:
+A ⊗  B:
   Cross-product:
     (1, 1.0) x (10, 0.5) → (1*31+10 = 41,  1.0+0.5 = 1.5)
     (1, 1.0) x (20, 1.5) → (1*31+20 = 51,  1.0+1.5 = 2.5)
@@ -771,8 +771,8 @@ trellis (lattice) using TropicalWeight:
 V(state, t) = min over predecessors s of [ V(s, t-1) + cost(s → state) ]
 ```
 
-This corresponds to the tropical semiring: ⊕ = min selects the best
-predecessor, ⊗ = + accumulates costs.
+This corresponds to the tropical semiring: ⊕  = min selects the best
+predecessor, ⊗  = + accumulates costs.
 
 The N-best generalization replaces the scalar `V(state, t)` with an
 N-best list:
@@ -785,9 +785,9 @@ V_N(state, t) = merge_nbest over predecessors s of
 Each state in the trellis carries not a single (path, cost) pair but the
 N best such pairs.  The semiring operations ensure:
 
-- **At each ⊕ step** (merging alternatives from different predecessors),
+- **At each ⊕  step** (merging alternatives from different predecessors),
   the N best paths are retained across all predecessors.
-- **At each ⊗ step** (extending a path by one edge), the N best extended
+- **At each ⊗  step** (extending a path by one edge), the N best extended
   paths are retained from the cross-product.
 - **At termination**, the final state carries the N best paths through
   the entire trellis.
@@ -805,55 +805,55 @@ per state instead of 1.  For small N (2--8), this is a significant
 performance win.
 
 ```
-┌────────────────────────────────────────────────────────┐
-│                  Viterbi with NbestWeight               │
-│                                                        │
-│  Time 0      Time 1         Time 2         Time 3      │
-│                                                        │
-│  ┌───┐      ┌───┐          ┌───┐          ┌───┐       │
-│  │ S │─⊗──▶│ A │──⊗──────▶│ D │──⊗──────▶│ F │       │
-│  │   │      │   │          │   │          │   │       │
-│  │[e]│      │[..]│  ⊕      │[..]│  ⊕      │[..]│      │
-│  └───┘      └─┬─┘  │      └─┬─┘  │      └───┘       │
-│               │     │        │     │                   │
-│               ▼     │        ▼     │                   │
-│             ┌───┐   │      ┌───┐   │                   │
-│             │ B │───┘      │ E │───┘                   │
-│             │   │          │   │                        │
-│             │[..]│          │[..]│                       │
-│             └─┬─┘          └───┘                       │
-│               │                                        │
-│               ▼                                        │
-│             ┌───┐                                      │
-│             │ C │                                      │
-│             │[..]│                                      │
-│             └───┘                                      │
-│                                                        │
-│  Each [..] is an NbestWeight<N> — the N best paths     │
-│  reaching that state.                                  │
-└────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│               Viterbi with NbestWeight              │
+│                                                     │
+│  Time 0      Time 1         Time 2         Time 3   │
+│                                                     │
+│  ┌───┐      ┌────┐          ┌────┐          ┌────┐  │
+│  │ S ├──⊗──▶│ A  ├──⊗──────▶│ D  ├──⊗──────▶│ F  │  │
+│  │   │      │    │          │    │          │    │  │
+│  │[e]│      │[..]│   ⊕      │[..]│   ⊕      │[..]│  │
+│  └───┘      └─┬──┘   │      └─┬──┘   │      └────┘  │
+│               │      │        │      │              │
+│               ▼      │        ▼      │              │
+│             ┌────┐   │      ┌────┐   │              │
+│             │ B  ├───┘      │ E  ├───┘              │
+│             │    │          │    │                  │
+│             │[..]│          │[..]│                  │
+│             └─┬──┘          └────┘                  │
+│               │                                     │
+│               ▼                                     │
+│             ┌────┐                                  │
+│             │ C  │                                  │
+│             │[..]│                                  │
+│             └────┘                                  │
+│                                                     │
+│  Each [..] is an NbestWeight<N> — the N best paths  │
+│  reaching that state.                               │
+└─────────────────────────────────────────────────────┘
 ```
 
 ---
 
 ## 11. Complexity Analysis
 
-| Operation              | Implementation              | Time              | Space              |
-|------------------------|-----------------------------|-------------------|--------------------|
-| `empty()` / `zero()`  | `[None; N]`                 | O(N)              | O(N) inline        |
-| `singleton()`         | `[None; N]` + set [0]       | O(N)              | O(N) inline        |
-| `from_entries()`      | Sort + dedup + copy         | O(M log M)        | O(M) heap + O(N)   |
-| `plus()` / merge      | Two-pointer + dedup scan    | O(N^2)*           | O(N) inline        |
-| `times()` / concat    | Cross-product + sort + trunc| O(N^2 log N^2)    | O(N^2) heap        |
-| `confidence_gap()`    | Subtract two weights        | O(1)              | O(1)               |
-| `is_zero()`           | Check `len == 0`            | O(1)              | O(1)               |
-| `is_one()`            | Check len + entry           | O(1)              | O(1)               |
-| `get(i)`              | Array index                 | O(1)              | O(1)               |
-| `best()`              | `get(0)`                    | O(1)              | O(1)               |
-| `iter()`              | Slice + filter_map          | O(N)              | O(1)               |
-| `Ord::cmp()`          | Compare best + len          | O(1)              | O(1)               |
-| `PartialEq::eq()`     | Entry-by-entry compare      | O(N)              | O(1)               |
-| `Hash::hash()`        | Hash len + entries          | O(N)              | O(1)               |
+| Operation            | Implementation               | Time           | Space            |
+|----------------------|------------------------------|----------------|------------------|
+| `empty()` / `zero()` | `[None; N]`                  | O(N)           | O(N) inline      |
+| `singleton()`        | `[None; N]` + set [0]        | O(N)           | O(N) inline      |
+| `from_entries()`     | Sort + dedup + copy          | O(M log M)     | O(M) heap + O(N) |
+| `plus()` / merge     | Two-pointer + dedup scan     | O(N^2)*        | O(N) inline      |
+| `times()` / concat   | Cross-product + sort + trunc | O(N^2 log N^2) | O(N^2) heap      |
+| `confidence_gap()`   | Subtract two weights         | O(1)           | O(1)             |
+| `is_zero()`          | Check `len == 0`             | O(1)           | O(1)             |
+| `is_one()`           | Check len + entry            | O(1)           | O(1)             |
+| `get(i)`             | Array index                  | O(1)           | O(1)             |
+| `best()`             | `get(0)`                     | O(1)           | O(1)             |
+| `iter()`             | Slice + filter_map           | O(N)           | O(1)             |
+| `Ord::cmp()`         | Compare best + len           | O(1)           | O(1)             |
+| `PartialEq::eq()`    | Entry-by-entry compare       | O(N)           | O(1)             |
+| `Hash::hash()`       | Hash len + entries           | O(N)           | O(1)             |
 
 *The merge dedup scan is O(count) per candidate, with up to 2N candidates,
 yielding O(N * 2N) = O(N^2).  For N <= 8, this is at most 128 comparisons.
@@ -959,20 +959,20 @@ convention that the default weight is the multiplicative identity.
 
 ## 13. Comparison Table
 
-| Property                  | NbestWeight<N>               | TropicalWeight           | CountingWeight         | BooleanWeight          |
-|---------------------------|------------------------------|--------------------------|------------------------|------------------------|
-| **Carrier**               | Sorted_N(u32 x R+)          | R+ ∪ {+inf}             | N (naturals)           | {false, true}          |
-| **⊕ (plus)**              | merge_nbest (top N)          | min                      | + (addition)           | ∨ (OR)                 |
-| **⊗ (times)**             | concat_nbest (cross, top N)  | + (addition)             | x (multiplication)     | ∧ (AND)                |
-| **0̄ (zero)**              | [] (empty)                   | +inf                     | 0                      | false                  |
-| **1̄ (one)**               | [(0, 0.0)]                   | 0.0                      | 1                      | true                   |
-| **Commutative (⊕)**       | Yes                          | Yes                      | Yes                    | Yes                    |
-| **Idempotent (⊕)**        | Yes (dedup by path_id)       | Yes                      | No                     | Yes                    |
-| **Generalizes**           | TropicalWeight (N=1)         | --                       | --                     | --                     |
-| **Semantics**             | N-best path tracking         | Shortest path            | Path counting          | Reachability           |
-| **PraTTaIL use**          | Lazy disambiguation          | Priority dispatch        | Ambiguity detection    | Dead-rule detection    |
-| **Rust size (N=4)**       | 72 bytes (inline)            | 8 bytes (inline)         | 8 bytes (inline)       | 1 byte (inline)        |
-| **Rust Display**          | [(id:wt), ...]               | float / inf              | integer                | top / bot              |
+| Property            | NbestWeight<N>              | TropicalWeight    | CountingWeight      | BooleanWeight       |
+|---------------------|-----------------------------|-------------------|---------------------|---------------------|
+| **Carrier**         | Sorted_N(u32 x R+)          | R+ ∪ {+inf}       | N (naturals)        | {false, true}       |
+| **⊕  (plus)**       | merge_nbest (top N)         | min               | + (addition)        | ∨ (OR)              |
+| **⊗  (times)**      | concat_nbest (cross, top N) | + (addition)      | x (multiplication)  | ∧ (AND)             |
+| **0̄ (zero)**        | [] (empty)                  | +inf              | 0                   | false               |
+| **1̄ (one)**         | [(0, 0.0)]                  | 0.0               | 1                   | true                |
+| **Commutative (⊕)** | Yes                         | Yes               | Yes                 | Yes                 |
+| **Idempotent (⊕)**  | Yes (dedup by path_id)      | Yes               | No                  | Yes                 |
+| **Generalizes**     | TropicalWeight (N=1)        | --                | --                  | --                  |
+| **Semantics**       | N-best path tracking        | Shortest path     | Path counting       | Reachability        |
+| **PraTTaIL use**    | Lazy disambiguation         | Priority dispatch | Ambiguity detection | Dead-rule detection |
+| **Rust size (N=4)** | 72 bytes (inline)           | 8 bytes (inline)  | 8 bytes (inline)    | 1 byte (inline)     |
+| **Rust Display**    | [(id:wt), ...]              | float / inf       | integer             | top / bot           |
 
 **Relationship to N=1:**  When N = 1, `NbestWeight<1>` degenerates to a
 single `(path_id, TropicalWeight)` pair.  The `merge_nbest` operation
@@ -992,8 +992,8 @@ extra path_id tag.
 - Accessors (len, is_empty, get, best): lines 1455--1481
 - Confidence gap: lines 1483--1492
 - Iterator: lines 1494--1497
-- merge_nbest (⊕ implementation): lines 1499--1543
-- concat_nbest (⊗ implementation): lines 1545--1566
+- merge_nbest (⊕  implementation): lines 1499--1543
+- concat_nbest (⊗  implementation): lines 1545--1566
 - Semiring trait implementation: lines 1569--1622
 - PartialEq / Eq: lines 1624--1638
 - PartialOrd / Ord: lines 1640--1659

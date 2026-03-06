@@ -56,21 +56,21 @@ Without left-factoring, the NFA try-all loop performs 4 full save/restore
 cycles, each of which includes matching `"("` -- a terminal that is guaranteed
 to succeed for all alternatives or fail for all.  This produces:
 
-| Operation | Count (without A1) |
-|-----------|-------------------|
-| Save cursor | 4 |
-| Match `"("` | 4 (identical) |
-| Restore cursor | up to 3 (on failure) |
+| Operation              | Count (without A1)       |
+|------------------------|--------------------------|
+| Save cursor            | 4                        |
+| Match `"("`            | 4 (identical)            |
+| Restore cursor         | up to 3 (on failure)     |
 | Total terminal matches | 8 (4 dispatch + 4 paren) |
 
 With left-factoring, the shared `"("` is matched *once* before the NFA try-all
 begins.  The loop only saves/restores over the *divergent suffix* (items[2..]):
 
-| Operation | Count (with A1) |
-|-----------|----------------|
-| Match `"("` | 1 |
-| Save cursor | 4 (over suffixes only) |
-| Restore cursor | up to 3 |
+| Operation              | Count (with A1)          |
+|------------------------|--------------------------|
+| Match `"("`            | 1                        |
+| Save cursor            | 4 (over suffixes only)   |
+| Restore cursor         | up to 3                  |
 | Total terminal matches | 5 (4 dispatch + 1 paren) |
 
 For rules with deeper shared prefixes (e.g., `"kw" "(" "[" "{" ...`), the
@@ -160,13 +160,13 @@ items[0]     items[1]    items[2]     items[3]    items[4]
 
 The prefix walk stops at the first position where any of the following holds:
 
-| Condition | Reason |
-|-----------|--------|
+| Condition                                           | Reason                                      |
+|-----------------------------------------------------|---------------------------------------------|
 | The first rule has a `NonTerminal` at this position | Non-terminals cannot be compared statically |
-| A subsequent rule has a different terminal | Divergence point found |
-| A subsequent rule has a `NonTerminal` | Divergence point found |
-| A rule is too short (no items at this offset) | Cannot index further |
-| Only 1 rule in the group | No prefix to share |
+| A subsequent rule has a different terminal          | Divergence point found                      |
+| A subsequent rule has a `NonTerminal`               | Divergence point found                      |
+| A rule is too short (no items at this offset)       | Cannot index further                        |
+| Only 1 rule in the group                            | No prefix to share                          |
 
 The function returns an empty `Vec<String>` when no shared prefix exists,
 which causes the A1 code path to be skipped entirely.
@@ -187,14 +187,14 @@ suitable for sequences of `RDSyntaxItem` or terminal strings.
 
 The traversal API is inspired by two existing trie implementations:
 
-| Method | Analogous to | Description |
-|--------|-------------|-------------|
-| `descend(&K)` | PathMap `ZipperMoving::descend_to()` | Navigate to a child by key element |
-| `children()` | liblevenshtein `DictZipper::children()` | Iterate over (element, subtrie) pairs |
-| `shared_prefix_depth()` | -- | Depth of single-child chain from root |
-| `shared_prefix()` | -- | Elements and divergence node of single-child chain |
-| `count_values()` | PathMap `child_count()` | Total number of leaf values in subtrie |
-| `insert()` | -- | Insert a key sequence with associated value |
+| Method                  | Analogous to                            | Description                                        |
+|-------------------------|-----------------------------------------|----------------------------------------------------|
+| `descend(&K)`           | PathMap `ZipperMoving::descend_to()`    | Navigate to a child by key element                 |
+| `children()`            | liblevenshtein `DictZipper::children()` | Iterate over (element, subtrie) pairs              |
+| `shared_prefix_depth()` | --                                      | Depth of single-child chain from root              |
+| `shared_prefix()`       | --                                      | Elements and divergence node of single-child chain |
+| `count_values()`        | PathMap `child_count()`                 | Total number of leaf values in subtrie             |
+| `insert()`              | --                                      | Insert a key sequence with associated value        |
 
 ### Structure
 
@@ -522,38 +522,43 @@ the function returns an empty vector and A1 falls through to the B1
 ### Decision flow
 
 ```
-              ┌───────────────────────────────┐
-              │ Multiple rules share dispatch │
-              │ token (ambiguous group)       │
-              └──────────────┬────────────────┘
-                             │
-              ┌──────────────▼────────────────┐
-              │ frame_pushing.is_empty()?     │
-              └──────┬───────────────┬────────┘
-                yes  │               │ no
-                     │    ┌──────────▼──────────┐
-                     │    │ Single frame-pushing │
-                     │    │ rule → emit directly │
-                     │    │ Multiple → diagnostic│
-                     │    └─────────────────────┘
-              ┌──────▼────────────────┐
-              │ inlineable.len() >= 2?│
-              └──────┬──────────┬─────┘
-                yes  │          │ no
-                     │   ┌──────▼──────────────┐
-                     │   │ Single rule → emit  │
-                     │   │ standard arm        │
-                     │   └─────────────────────┘
-              ┌──────▼────────────────────────┐
-              │ compute_shared_terminal_      │
-              │ prefix() non-empty?           │
-              └──────┬──────────────┬─────────┘
-                yes  │              │ no
-         ┌───────────▼───────┐  ┌──▼─────────────────┐
-         │ A1: Left-factored │  │ B1: Two-token       │
-         │ prefix + NFA      │  │ lookahead check,    │
-         │ try-all suffixes  │  │ or general NFA      │
-         └───────────────────┘  └─────────────────────┘
+     ┌───────────────────────────────┐
+     │ Multiple rules share dispatch │
+     │ token (ambiguous group)       │
+     └──────────────┬────────────────┘
+                    │
+                    ▼
+     ┌───────────────────────────────┐
+     │ frame_pushing.is_empty()?     │
+     └──────┬───────────────┬────────┘
+       yes  │               │ no
+            │               ▼
+            │    ┌──────────────────────┐
+            │    │ Single frame-pushing │
+            │    │ rule → emit directly │
+            │    │ Multiple → diagnostic│
+            │    └──────────────────────┘
+     ┌──────▼────────────────┐
+     │ inlineable.len() >= 2?│
+     └──────┬──────────┬─────┘
+       yes  │          │ no
+            │          ▼
+            │   ┌─────────────────────┐
+            │   │ Single rule → emit  │
+            │   │ standard arm        │
+            │   └─────────────────────┘
+            ▼
+     ┌───────────────────────────────┐
+     │ compute_shared_terminal_      │
+     │ prefix() non-empty?           │
+     └──────┬──────────────┬─────────┘
+       yes  │              │ no
+            ▼              ▼
+┌───────────────────┐  ┌─────────────────────┐
+│ A1: Left-factored │  │ B1: Two-token       │
+│ prefix + NFA      │  │ lookahead check,    │
+│ try-all suffixes  │  │ or general NFA      │
+└───────────────────┘  └─────────────────────┘
 ```
 
 ---
@@ -756,13 +761,13 @@ checked first.  However, B1 produces strictly better code when it applies
 (deterministic dispatch vs NFA try-all).  The interaction is safe because
 the two optimizations target disjoint patterns:
 
-| Property | A1: Left-Factoring | B1: Two-Token Lookahead |
-|----------|-------------------|------------------------|
-| **Shared terminals at items[1]** | Yes (same terminal) | No (all distinct) |
-| **Divergence type** | Non-terminal | Terminal |
-| **Resolution strategy** | NFA try-all over suffixes | Nested `match` on second token |
-| **Save/restore needed** | Yes (for suffixes) | No |
-| **Result** | Best of N alternatives | Single deterministic rule |
+| Property                         | A1: Left-Factoring        | B1: Two-Token Lookahead        |
+|----------------------------------|---------------------------|--------------------------------|
+| **Shared terminals at items[1]** | Yes (same terminal)       | No (all distinct)              |
+| **Divergence type**              | Non-terminal              | Terminal                       |
+| **Resolution strategy**          | NFA try-all over suffixes | Nested `match` on second token |
+| **Save/restore needed**          | Yes (for suffixes)        | No                             |
+| **Result**                       | Best of N alternatives    | Single deterministic rule      |
 
 When items[1] is the same terminal for all rules, `second_token_lookahead()`
 returns `None` (the second tokens are identical, not distinct), and A1 is
@@ -866,24 +871,24 @@ be the first point of divergence.
 
 ### Compile-time cost
 
-| Operation | Cost |
-|-----------|------|
+| Operation                          | Cost                                            |
+|------------------------------------|-------------------------------------------------|
 | `compute_shared_terminal_prefix()` | O(N x P) where N = rules, P = max prefix length |
-| `nfa_alternative_order()` | O(N x A) where A = WFST actions for this token |
-| Codegen emission | O(N x I) where I = avg items per rule |
-| `PrefixTrie` insert (when used) | O(N x I) for N keys of length I |
-| `PrefixTrie` shared_prefix_depth | O(P) single traversal |
+| `nfa_alternative_order()`          | O(N x A) where A = WFST actions for this token  |
+| Codegen emission                   | O(N x I) where I = avg items per rule           |
+| `PrefixTrie` insert (when used)    | O(N x I) for N keys of length I                 |
+| `PrefixTrie` shared_prefix_depth   | O(P) single traversal                           |
 
 All operations are linear in the grammar size and execute once during pipeline
 compilation.
 
 ### Runtime cost
 
-| Operation | Cost (without A1) | Cost (with A1) |
-|-----------|-------------------|----------------|
-| Shared terminal matches | N x P | P |
-| Save/restore cycles | N | N |
-| Total terminal matches | N x (1 + P + S) | (1 + P) + N x S |
+| Operation               | Cost (without A1) | Cost (with A1)  |
+|-------------------------|-------------------|-----------------|
+| Shared terminal matches | N x P             | P               |
+| Save/restore cycles     | N                 | N               |
+| Total terminal matches  | N x (1 + P + S)   | (1 + P) + N x S |
 
 Where `S` = average number of suffix items per rule.  The saving is
 `(N - 1) x P` terminal matches, which for the Calculator Float example
@@ -898,27 +903,27 @@ calls from the generated code.
 
 ### Generated code volume
 
-| Metric | Without A1 | With A1 | Reduction |
-|--------|-----------|---------|-----------|
-| `expect_token("(")` calls | N | 1 | N - 1 |
-| Closure bodies | N (full) | N (suffix only) | P items each |
-| Save/restore | N | N | 0 (same) |
+| Metric                    | Without A1 | With A1         | Reduction    |
+|---------------------------|------------|-----------------|--------------|
+| `expect_token("(")` calls | N          | 1               | N - 1        |
+| Closure bodies            | N (full)   | N (suffix only) | P items each |
+| Save/restore              | N          | N               | 0 (same)     |
 
 ---
 
 ## 10. Source References
 
-| File | Lines | Description |
-|------|-------|-------------|
-| `prattail/src/trampoline.rs` | 190-231 | `compute_shared_terminal_prefix()` -- lockstep walk |
-| `prattail/src/trampoline.rs` | 277-423 | `write_nfa_merged_prefix_arm()` -- A1 codegen section |
-| `prattail/src/trampoline.rs` | 134-177 | `second_token_lookahead()` -- B1 for comparison |
-| `prattail/src/trampoline.rs` | 4196-4291 | A1 unit tests (`compute_shared_terminal_prefix`) |
-| `prattail/src/prefix_trie.rs` | 1-221 | `PrefixTrie<K,V>` full implementation and tests |
-| `prattail/src/wfst.rs` | 233-253 | `nfa_alternative_order()` -- WFST weight sorting |
-| `prattail/src/pratt.rs` | 706-726 | `expect_token()` helper function |
-| `prattail/src/recursive.rs` | 14-36 | `RDRuleInfo` struct definition |
-| `prattail/src/recursive.rs` | 40-65 | `RDSyntaxItem` enum definition |
+| File                          | Lines     | Description                                           |
+|-------------------------------|-----------|-------------------------------------------------------|
+| `prattail/src/trampoline.rs`  | 190-231   | `compute_shared_terminal_prefix()` -- lockstep walk   |
+| `prattail/src/trampoline.rs`  | 277-423   | `write_nfa_merged_prefix_arm()` -- A1 codegen section |
+| `prattail/src/trampoline.rs`  | 134-177   | `second_token_lookahead()` -- B1 for comparison       |
+| `prattail/src/trampoline.rs`  | 4196-4291 | A1 unit tests (`compute_shared_terminal_prefix`)      |
+| `prattail/src/prefix_trie.rs` | 1-221     | `PrefixTrie<K,V>` full implementation and tests       |
+| `prattail/src/wfst.rs`        | 233-253   | `nfa_alternative_order()` -- WFST weight sorting      |
+| `prattail/src/pratt.rs`       | 706-726   | `expect_token()` helper function                      |
+| `prattail/src/recursive.rs`   | 14-36     | `RDRuleInfo` struct definition                        |
+| `prattail/src/recursive.rs`   | 40-65     | `RDSyntaxItem` enum definition                        |
 
 ### Cross-references
 

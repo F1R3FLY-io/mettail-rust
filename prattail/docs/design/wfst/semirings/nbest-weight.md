@@ -35,11 +35,11 @@ TropicalWeight (Viterbi-1) computes the single lowest-cost parse path. This is
 correct and efficient, but it discards all runners-up at each `plus` (min)
 operation. Three scenarios demand awareness of alternatives:
 
-| Scenario | What Is Lost | Consequence |
-|----------|-------------|-------------|
-| **Lazy disambiguation** | If the best parse fails downstream (e.g., type error), there is no second-best to fall back to | Hard failure where soft recovery was possible |
-| **Confidence scoring** | Without the second-best weight, we cannot measure how decisively the best parse won | Cannot distinguish "clear winner" from "near-tie" |
-| **Parse forest** | N > 1 alternatives form a compact forest for downstream analysis | Cannot enumerate alternative readings |
+| Scenario                | What Is Lost                                                                                   | Consequence                                       |
+|-------------------------|------------------------------------------------------------------------------------------------|---------------------------------------------------|
+| **Lazy disambiguation** | If the best parse fails downstream (e.g., type error), there is no second-best to fall back to | Hard failure where soft recovery was possible     |
+| **Confidence scoring**  | Without the second-best weight, we cannot measure how decisively the best parse won            | Cannot distinguish "clear winner" from "near-tie" |
+| **Parse forest**        | N > 1 alternatives form a compact forest for downstream analysis                               | Cannot enumerate alternative readings             |
 
 NbestWeight solves all three by carrying the top N entries through every semiring
 operation. Each entry is a `(path_id, TropicalWeight)` pair identifying both
@@ -61,10 +61,10 @@ pub struct NbestEntry {
 }
 ```
 
-| Field | Type | Semantics |
-|-------|------|-----------|
-| `path_id` | `u32` | Unique identifier for the derivation path. Assigned at construction; combined via wrapping arithmetic during `concat_nbest` |
-| `weight` | `TropicalWeight` | Tropical cost of this derivation. Lower = better |
+| Field     | Type             | Semantics                                                                                                                   |
+|-----------|------------------|-----------------------------------------------------------------------------------------------------------------------------|
+| `path_id` | `u32`            | Unique identifier for the derivation path. Assigned at construction; combined via wrapping arithmetic during `concat_nbest` |
+| `weight`  | `TropicalWeight` | Tropical cost of this derivation. Lower = better                                                                            |
 
 The `path_id` enables deduplication: when two paths through different WFST arcs
 converge on the same derivation, `merge_nbest` keeps the lower-weight occurrence
@@ -82,10 +82,10 @@ pub struct NbestWeight<const N: usize> {
 }
 ```
 
-| Field | Type | Invariants |
-|-------|------|-----------|
+| Field     | Type                      | Invariants                                                                                                                              |
+|-----------|---------------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
 | `entries` | `[Option<NbestEntry>; N]` | Sorted by weight (ascending). `Some` values are packed at the front: `entries[0..len]` are all `Some`, `entries[len..N]` are all `None` |
-| `len` | `usize` | Count of valid entries. `0 <= len <= N` |
+| `len`     | `usize`                   | Count of valid entries. `0 <= len <= N`                                                                                                 |
 
 The array is **packed**: valid entries occupy contiguous positions `[0, len)`.
 This invariant is maintained by all constructors and operations, enabling
@@ -124,14 +124,14 @@ involvement.
 
 ```
  NbestWeight<4> memory layout (stack-allocated)
- ┌──────────────────────────────────────────────────────────┐
- │ entries[0]   entries[1]   entries[2]   entries[3]   len  │
+ ┌─────────────────────────────────────────────────────────┐
+ │ entries[0]   entries[1]   entries[2]   entries[3]   len │
  │ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐     │
  │ │Some(e0)  │ │Some(e1)  │ │None      │ │None      │  2  │
  │ └──────────┘ └──────────┘ └──────────┘ └──────────┘     │
- │  path_id=1    path_id=3                                  │
- │  weight=0.5   weight=2.0                                 │
- └──────────────────────────────────────────────────────────┘
+ │  path_id=1    path_id=3                                 │
+ │  weight=0.5   weight=2.0                                │
+ └─────────────────────────────────────────────────────────┘
 ```
 
 **Trade-off**: The fixed-size array wastes space when `len < N`. For small N
@@ -274,11 +274,11 @@ merge_nbest(self, other) -> NbestWeight<N>:
 
 ### 5b. Complexity
 
-| Component | Cost |
-|-----------|------|
-| Two-pointer scan | O(self.len + other.len) |
-| Dedup check per entry | O(count), where count <= N |
-| Total | O((self.len + other.len) x N) |
+| Component             | Cost                          |
+|-----------------------|-------------------------------|
+| Two-pointer scan      | O(self.len + other.len)       |
+| Dedup check per entry | O(count), where count <= N    |
+| Total                 | O((self.len + other.len) x N) |
 
 Since both `self.len` and `other.len` are bounded by N, the total complexity is
 **O(N^2)**. For typical N values (2-8), this is 4-64 operations -- entirely
@@ -347,12 +347,12 @@ assigned sequentially from small integers, and collisions are rare for N <= 8.
 
 ### 6c. Complexity
 
-| Component | Cost |
-|-----------|------|
+| Component                 | Cost                             |
+|---------------------------|----------------------------------|
 | Cross-product enumeration | O(self.len x other.len) = O(N^2) |
-| Sort candidates | O(N^2 log N^2) = O(N^2 log N) |
-| Dedup + truncate | O(N^2) |
-| Total | **O(N^2 log N)** |
+| Sort candidates           | O(N^2 log N^2) = O(N^2 log N)    |
+| Dedup + truncate          | O(N^2)                           |
+| Total                     | **O(N^2 log N)**                 |
 
 For N = 4, this is at most 16 candidates sorted -- effectively constant time.
 
@@ -383,24 +383,24 @@ identity and annihilation properties:
 
 ```
 Carrier:    Sorted arrays of up to N (path_id, TropicalWeight) pairs
-⊕ (plus):   merge_nbest — two-pointer merge, keep top N, dedup
-⊗ (times):  concat_nbest — cross-product, sort, truncate to N
+⊕  (plus):   merge_nbest — two-pointer merge, keep top N, dedup
+⊗  (times):  concat_nbest — cross-product, sort, truncate to N
 0̄ (zero):   [] (empty array, no paths)
 1̄ (one):    [(0, 0.0)] (single zero-cost path with id 0)
 ```
 
 ### 7b. Axiom Verification
 
-| Axiom | Holds | Justification |
-|-------|-------|--------------|
-| 0̄ ⊕ a = a | Yes | Merging empty with a produces a unchanged |
-| a ⊕ 0̄ = a | Yes | Symmetric case |
-| 1̄ ⊗ a = a | Yes | Cross-product of `[(0, 0.0)]` with a adds 0.0 to each weight, preserving order. Path IDs change (0*31 + id = id), preserving the entries |
-| a ⊗ 1̄ = a | Yes | Symmetric: `id*31 + 0 = id*31`. Weight preserved. Path ID transforms but remains unique |
-| 0̄ ⊗ a = 0̄ | Yes | Empty cross-product returns empty immediately (`semiring.rs:1548-1549`) |
-| a ⊗ 0̄ = 0̄ | Yes | Symmetric case |
-| ⊕ commutativity | Yes | Two-pointer merge produces same sorted result regardless of argument order (merge is stable on equal weights) |
-| ⊗ distributivity over ⊕ | Approximate | Due to truncation at N, `a ⊗ (b ⊕ c)` and `(a ⊗ b) ⊕ (a ⊗ c)` may differ when intermediate results exceed N entries. For exact (untruncated) arrays, distributivity holds. The truncation approximation is acceptable for the bounded-best semantics |
+| Axiom                    | Holds       | Justification                                                                                                                                                                                                                                             |
+|--------------------------|-------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 0̄ ⊕  a = a               | Yes         | Merging empty with a produces a unchanged                                                                                                                                                                                                                 |
+| a ⊕  0̄ = a               | Yes         | Symmetric case                                                                                                                                                                                                                                            |
+| 1̄ ⊗  a = a               | Yes         | Cross-product of `[(0, 0.0)]` with a adds 0.0 to each weight, preserving order. Path IDs change (0*31 + id = id), preserving the entries                                                                                                                  |
+| a ⊗  1̄ = a               | Yes         | Symmetric: `id*31 + 0 = id*31`. Weight preserved. Path ID transforms but remains unique                                                                                                                                                                   |
+| 0̄ ⊗  a = 0̄               | Yes         | Empty cross-product returns empty immediately (`semiring.rs:1548-1549`)                                                                                                                                                                                   |
+| a ⊗  0̄ = 0̄               | Yes         | Symmetric case                                                                                                                                                                                                                                            |
+| ⊕  commutativity         | Yes         | Two-pointer merge produces same sorted result regardless of argument order (merge is stable on equal weights)                                                                                                                                             |
+| ⊗  distributivity over ⊕ | Approximate | Due to truncation at N, `a ⊗  (b ⊕  c)` and `(a ⊗  b) ⊕  (a ⊗  c)` may differ when intermediate results exceed N entries. For exact (untruncated) arrays, distributivity holds. The truncation approximation is acceptable for the bounded-best semantics |
 
 ### 7c. Non-Exact Distributivity Note
 
@@ -408,8 +408,8 @@ The N-best semiring is technically a **truncated** semiring. Full distributivity
 requires unlimited capacity. With truncation:
 
 ```
-a ⊗ (b ⊕ c):  b ⊕ c may discard entries, then a ⊗ (truncated) misses some products
-(a ⊗ b) ⊕ (a ⊗ c):  products computed first (more entries), then merge truncates
+a ⊗  (b ⊕  c):  b ⊕  c may discard entries, then a ⊗  (truncated) misses some products
+(a ⊗  b) ⊕  (a ⊗  c):  products computed first (more entries), then merge truncates
 ```
 
 These may disagree when the intermediate sets exceed N. In practice, N is chosen
@@ -483,10 +483,10 @@ impl<const N: usize> fmt::Display for NbestWeight<N> {
 }
 ```
 
-| Value | Output | Meaning |
-|-------|--------|---------|
-| `zero()` | `[]` | Empty list (no paths) |
-| `one()` | `[(0:0.0)]` | Single zero-cost path |
+| Value     | Output               | Meaning                                |
+|-----------|----------------------|----------------------------------------|
+| `zero()`  | `[]`                 | Empty list (no paths)                  |
+| `one()`   | `[(0:0.0)]`          | Single zero-cost path                  |
 | 2 entries | `[(1:2.5), (3:4.0)]` | Path 1 at cost 2.5, path 3 at cost 4.0 |
 
 The format is intentionally compact for embedding in diagnostic messages and
@@ -562,13 +562,13 @@ binary confidence decisions.
 
 ```
  NbestWeight<2> — 28 bytes on stack
- ┌──────────────────────────────────────┐
- │ entries[0]      entries[1]      len  │
+ ┌─────────────────────────────────────┐
+ │ entries[0]      entries[1]      len │
  │ ┌─────────────┐ ┌─────────────┐     │
  │ │ path_id: u32│ │ path_id: u32│     │
  │ │ weight:  f64│ │ weight:  f64│  2  │
  │ └─────────────┘ └─────────────┘     │
- └──────────────────────────────────────┘
+ └─────────────────────────────────────┘
 ```
 
 With `Option<NbestEntry>` (12 bytes per entry with padding) + `len` (8 bytes),
@@ -620,23 +620,23 @@ The `test_nbest_n2_confidence` test (`semiring.rs:2844-2855`) verifies that
 
 Fifteen tests in `semiring.rs:2641-2864` cover NbestWeight:
 
-| Test | Lines | What It Verifies |
-|------|-------|------------------|
-| `test_nbest_semiring_laws` | 2645-2668 | Zero identity (0̄ ⊕ a = a), plus commutativity, one identity (1̄ ⊗ a preserves weight), zero annihilation (0̄ ⊗ a = 0̄) |
-| `test_nbest_merge_keeps_top_n` | 2672-2688 | Merging 4 entries with N=3 retains only the 3 lowest-weight entries; verifies best is path 4 (w=0.5) |
-| `test_nbest_merge_deduplicates` | 2692-2703 | Same `path_id` with different weights: keeps the lower weight (2.0), discards the higher (5.0) |
-| `test_nbest_cross_product` | 2707-2717 | Single x single: weight addition (1.0 + 3.0 = 4.0), single result entry |
-| `test_nbest_cross_product_multi` | 2721-2737 | 2x2 cross-product: up to 4 candidates, best is the pair with minimum combined weight (1.0 + 0.5 = 1.5) |
-| `test_nbest_empty_operations` | 2741-2747 | Zero element: `is_zero()`, `is_empty()`, `len() == 0`, `best().is_none()` |
-| `test_nbest_one` | 2751-2760 | One element: `is_one()`, `len() == 1`, `path_id == 0`, `weight == TropicalWeight::one()` |
-| `test_nbest_confidence_gap` | 2764-2777 | Gap = 4.0 for entries at 1.0 and 5.0; gap = infinity for single entry; gap = infinity for empty |
-| `test_nbest_ordering` | 2781-2788 | `(w=1.0) < (w=5.0) < empty`; lower best weight is better; empty is worst |
-| `test_nbest_display` | 2792-2802 | `"[]"` for zero, `"[(0:0.0)]"` for one, `"[(1:2.5), (3:4.0)]"` for two entries |
-| `test_nbest_hash` | 2806-2812 | `HashSet` insertion and lookup: same (path_id, weight) matches; different path_id does not |
-| `test_nbest_from_entries` | 2816-2828 | 4 unsorted entries with N=3: sorts by weight, truncates to 3, correct best/2nd/3rd ordering |
-| `test_nbest_iter` | 2832-2840 | `iter()` returns entries in weight-ascending order; correct count and first element |
-| `test_nbest_n2_confidence` | 2844-2854 | `NbestWeight<2>` with 3 inputs: retains top 2, correct best path_id and confidence gap (0.5) |
-| `test_nbest_approx_eq` | 2858-2863 | `approx_eq` with epsilon: matches within 1e-10 tolerance, does not match within 1e-15 |
+| Test                             | Lines     | What It Verifies                                                                                                       |
+|----------------------------------|-----------|------------------------------------------------------------------------------------------------------------------------|
+| `test_nbest_semiring_laws`       | 2645-2668 | Zero identity (0̄ ⊕  a = a), plus commutativity, one identity (1̄ ⊗  a preserves weight), zero annihilation (0̄ ⊗  a = 0̄) |
+| `test_nbest_merge_keeps_top_n`   | 2672-2688 | Merging 4 entries with N=3 retains only the 3 lowest-weight entries; verifies best is path 4 (w=0.5)                   |
+| `test_nbest_merge_deduplicates`  | 2692-2703 | Same `path_id` with different weights: keeps the lower weight (2.0), discards the higher (5.0)                         |
+| `test_nbest_cross_product`       | 2707-2717 | Single x single: weight addition (1.0 + 3.0 = 4.0), single result entry                                                |
+| `test_nbest_cross_product_multi` | 2721-2737 | 2x2 cross-product: up to 4 candidates, best is the pair with minimum combined weight (1.0 + 0.5 = 1.5)                 |
+| `test_nbest_empty_operations`    | 2741-2747 | Zero element: `is_zero()`, `is_empty()`, `len() == 0`, `best().is_none()`                                              |
+| `test_nbest_one`                 | 2751-2760 | One element: `is_one()`, `len() == 1`, `path_id == 0`, `weight == TropicalWeight::one()`                               |
+| `test_nbest_confidence_gap`      | 2764-2777 | Gap = 4.0 for entries at 1.0 and 5.0; gap = infinity for single entry; gap = infinity for empty                        |
+| `test_nbest_ordering`            | 2781-2788 | `(w=1.0) < (w=5.0) < empty`; lower best weight is better; empty is worst                                               |
+| `test_nbest_display`             | 2792-2802 | `"[]"` for zero, `"[(0:0.0)]"` for one, `"[(1:2.5), (3:4.0)]"` for two entries                                         |
+| `test_nbest_hash`                | 2806-2812 | `HashSet` insertion and lookup: same (path_id, weight) matches; different path_id does not                             |
+| `test_nbest_from_entries`        | 2816-2828 | 4 unsorted entries with N=3: sorts by weight, truncates to 3, correct best/2nd/3rd ordering                            |
+| `test_nbest_iter`                | 2832-2840 | `iter()` returns entries in weight-ascending order; correct count and first element                                    |
+| `test_nbest_n2_confidence`       | 2844-2854 | `NbestWeight<2>` with 3 inputs: retains top 2, correct best path_id and confidence gap (0.5)                           |
+| `test_nbest_approx_eq`           | 2858-2863 | `approx_eq` with epsilon: matches within 1e-10 tolerance, does not match within 1e-15                                  |
 
 ---
 

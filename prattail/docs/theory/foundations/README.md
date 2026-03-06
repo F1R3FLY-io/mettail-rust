@@ -11,9 +11,9 @@ code.
 
 ```
                     ┌─────────────────────┐
-                    │  01  Order Theory    │
-                    │  (posets, lattices,  │
-                    │   fixed-points)      │
+                    │  01  Order Theory   │
+                    │  (posets, lattices, │
+                    │   fixed-points)     │
                     └──┬──┬──┬──┬──┬──┬───┘
                        │  │  │  │  │  │
           ┌────────────┘  │  │  │  │  └────────────┐

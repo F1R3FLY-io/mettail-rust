@@ -122,12 +122,12 @@ that have no syntactic meaning in the current grammar.
 
 Different grammars use different delimiters:
 
-| Grammar | Uses `;`? | Uses `]`? | Uses `}`? |
-|---------|-----------|-----------|-----------|
-| Calculator | No | No | No |
-| RhoCalc | Yes | No | Yes |
-| Lambda calculus | No | No | No |
-| Full Rholang | Yes | Yes | Yes |
+| Grammar         | Uses `;`? | Uses `]`? | Uses `}`? |
+|-----------------|-----------|-----------|-----------|
+| Calculator      | No        | No        | No        |
+| RhoCalc         | Yes       | No        | Yes       |
+| Lambda calculus | No        | No        | No        |
+| Full Rholang    | Yes       | Yes       | Yes       |
 
 Hardcoding all delimiters would cause false positives in simple grammars.
 

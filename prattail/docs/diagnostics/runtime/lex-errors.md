@@ -51,13 +51,13 @@ between tokens. They are never part of the DFA transition graph.
 
 ## Common Causes and Resolutions
 
-| Symptom | Cause | Resolution |
-|---------|-------|------------|
-| `unexpected character '@'` | Operator not in grammar | Use a defined operator |
-| `unexpected character '#'` | Comment syntax not supported | PraTTaIL grammars have no comments |
-| `unexpected byte 0xC2` | Non-ASCII pasted text | Replace with ASCII equivalent |
-| `unexpected character '\\'` | Backslash not in terminal set | Add `\\` as a terminal if needed |
-| `unexpected character '"'` | No StringLiteral pattern | Add `native_type: String` or custom literal pattern |
+| Symptom                     | Cause                         | Resolution                                          |
+|-----------------------------|-------------------------------|-----------------------------------------------------|
+| `unexpected character '@'`  | Operator not in grammar       | Use a defined operator                              |
+| `unexpected character '#'`  | Comment syntax not supported  | PraTTaIL grammars have no comments                  |
+| `unexpected byte 0xC2`      | Non-ASCII pasted text         | Replace with ASCII equivalent                       |
+| `unexpected character '\\'` | Backslash not in terminal set | Add `\\` as a terminal if needed                    |
+| `unexpected character '"'`  | No StringLiteral pattern      | Add `native_type: String` or custom literal pattern |
 
 ## Custom Literal Patterns
 

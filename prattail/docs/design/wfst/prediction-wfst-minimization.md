@@ -285,7 +285,7 @@ states removed.
   ┌─────────────────────────────────────────────────────────────────────┐
   │ minimize()                                                          │
   │                                                                     │
-  │  states.len() ≤ 1 ──yes──→ return 0                                │
+  │  states.len() ≤ 1 ──yes──→ return 0                                 │
   │       │no                                                           │
   │       ▼                                                             │
   │  ┌──────────────────────────┐                                       │
@@ -417,19 +417,19 @@ each producing a `Direct` dispatch action at weight 0.0:
   ┌─────────────────────────────────────────────────────┐
   │  PredictionWfst for Expr  (11 states)               │
   │                                                     │
-  │              T0/0.0/0   ┌───┐                       │
-  │           ┌────────────→│ 1 │ (final, w=0.0)        │
-  │           │  T1/0.0/1   └───┘                       │
-  │           ├────────────→┌───┐                       │
-  │           │             │ 2 │ (final, w=0.0)        │
-  │           │  T2/0.0/2   └───┘                       │
-  │  ┌───┐   ├────────────→┌───┐                       │
-  │  │ 0 │───┤             │ 3 │ (final, w=0.0)        │
-  │  │   │   │  ...         └───┘                       │
+  │             T0/0.0/0   ┌───┐                        │
+  │          ┌────────────→│ 1 │ (final, w=0.0)         │
+  │          │             └───┘                        │
+  │          │  T1/0.0/1   ┌───┐                        │
+  │          ├────────────→│ 2 │ (final, w=0.0)         │
+  │          │             └───┘                        │
+  │  ┌───┐   │  T2/0.0/2   ┌───┐                        │
+  │  │ 0 │   ├────────────→│ 3 │ (final, w=0.0)         │
+  │  │   ├──→│  ...        └───┘                        │
   │  │   │   │                                          │
-  │  │   │   │  T9/0.0/9   ┌────┐                      │
-  │  └───┘   └────────────→│ 10 │ (final, w=0.0)       │
-  │  start                  └────┘                      │
+  │  │   │   │  T9/0.0/9   ┌────┐                       │
+  │  └───┘   └────────────→│ 10 │ (final, w=0.0)        │
+  │  start                 └────┘                       │
   └─────────────────────────────────────────────────────┘
 ```
 
@@ -437,14 +437,14 @@ State count: 11 (1 start + 10 finals).
 
 ### Signature analysis
 
-| State | is_final | final_weight_bits | transitions | Signature hash |
-|-------|----------|-------------------|-------------|----------------|
-| 0     | false    | `(+inf).to_bits()`| 10 entries  | H0 (unique)    |
-| 1     | true     | `0.0.to_bits()`   | []          | **H1**         |
-| 2     | true     | `0.0.to_bits()`   | []          | **H1**         |
-| 3     | true     | `0.0.to_bits()`   | []          | **H1**         |
-| ...   | ...      | ...               | ...         | **H1**         |
-| 10    | true     | `0.0.to_bits()`   | []          | **H1**         |
+| State | is_final | final_weight_bits  | transitions | Signature hash |
+|-------|----------|--------------------|-------------|----------------|
+| 0     | false    | `(+inf).to_bits()` | 10 entries  | H0 (unique)    |
+| 1     | true     | `0.0.to_bits()`    | []          | **H1**         |
+| 2     | true     | `0.0.to_bits()`    | []          | **H1**         |
+| 3     | true     | `0.0.to_bits()`    | []          | **H1**         |
+| ...   | ...      | ...                | ...         | **H1**         |
+| 10    | true     | `0.0.to_bits()`    | []          | **H1**         |
 
 All 10 final states (1-10) share signature **H1** =
 `StateSignature { is_final: true, final_weight_bits: 0, transitions: [] }`.
@@ -475,13 +475,13 @@ state 1 (merged final) gets ID 1.
   ┌───────────────────────────────────────────┐
   │  PredictionWfst for Expr  (2 states)      │
   │                                           │
-  │              T0/0.0/0                      │
-  │           ┌──────────┐                    │
-  │           │ T1/0.0/1 │                    │
-  │           │ T2/0.0/2 │   ┌───┐            │
-  │  ┌───┐   │ ...       ├──→│ 1 │ (final)    │
-  │  │ 0 │───┤ T9/0.0/9 │   └───┘            │
-  │  └───┘   └──────────┘                    │
+  │            T0/0.0/0                       │
+  │          ┌──────────┐                     │
+  │          │ T1/0.0/1 │                     │
+  │          │ T2/0.0/2 │   ┌───┐             │
+  │  ┌───┐   │ ...      ├──→│ 1 │ (final)     │
+  │  │ 0 │───┤ T9/0.0/9 │   └───┘             │
+  │  └───┘   └──────────┘                     │
   │  start                                    │
   └───────────────────────────────────────────┘
 ```
@@ -507,12 +507,12 @@ single representative, reducing the WFST from `1 + N` states to exactly
 2 states (start + 1 merged final), where N is the number of dispatch
 actions.
 
-| Scenario | States before | States after | Reduction |
-|----------|--------------|-------------|-----------|
-| 3 tokens, no ambiguity | 4 | 2 | 50% |
-| 10 tokens, all Direct | 11 | 2 | 82% |
-| 20 tokens, mixed weights | 21 | 2 | 90% |
-| 50 tokens (large grammar) | 51 | 2 | 96% |
+| Scenario                  | States before | States after | Reduction |
+|---------------------------|---------------|--------------|-----------|
+| 3 tokens, no ambiguity    | 4             | 2            | 50%       |
+| 10 tokens, all Direct     | 11            | 2            | 82%       |
+| 20 tokens, mixed weights  | 21            | 2            | 90%       |
+| 50 tokens (large grammar) | 51            | 2            | 96%       |
 
 ### After union(): duplicate elimination
 
@@ -536,10 +536,10 @@ static WFST_STATE_OFFSETS_Expr: &[(usize, usize, bool, f64)] = &[
 
 For a grammar with 5 categories averaging 15 tokens each:
 
-| Metric | Without B3 | With B3 | Savings |
-|--------|-----------|---------|---------|
-| State entries | 5 x 16 = 80 | 5 x 2 = 10 | 87% |
-| State data (bytes) | 80 x 32 = 2,560 | 10 x 32 = 320 | 87% |
+| Metric             | Without B3      | With B3       | Savings |
+|--------------------|-----------------|---------------|---------|
+| State entries      | 5 x 16 = 80     | 5 x 2 = 10    | 87%     |
+| State data (bytes) | 80 x 32 = 2,560 | 10 x 32 = 320 | 87%     |
 
 The transition arrays are unaffected (same number of transitions
 regardless of how many final states exist), so the overall WFST static
@@ -587,13 +587,13 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
 
 ### Why not use Hopcroft for PredictionWfst?
 
-| Property | Hopcroft | Signature-based (B3) |
-|----------|----------|---------------------|
-| Time complexity | O(n log n) | O(n) amortized |
-| Handles multi-level WFSTs | Yes | Yes (general signatures) |
-| Implementation complexity | High (partition refinement, inverse maps) | Low (HashMap insert) |
-| Weighted transitions | Requires extension | Native (weight bits in signature) |
-| Optimality guarantee | Minimal DFA | Minimal under signature equivalence |
+| Property                  | Hopcroft                                  | Signature-based (B3)                |
+|---------------------------|-------------------------------------------|-------------------------------------|
+| Time complexity           | O(n log n)                                | O(n) amortized                      |
+| Handles multi-level WFSTs | Yes                                       | Yes (general signatures)            |
+| Implementation complexity | High (partition refinement, inverse maps) | Low (HashMap insert)                |
+| Weighted transitions      | Requires extension                        | Native (weight bits in signature)   |
+| Optimality guarantee      | Minimal DFA                               | Minimal under signature equivalence |
 
 For the two-state star topology that `PredictionWfst` uses, Hopcroft's
 partition refinement loop is unnecessary overhead.  The initial partition
@@ -639,16 +639,16 @@ result.
 Eight tests in `wfst.rs` (under the `// -- B3: minimize() tests` section)
 validate the minimization algorithm:
 
-| # | Test | Scenario | Key assertions |
-|---|------|----------|----------------|
-| 1 | `test_minimize_empty_wfst` | No states to merge (empty builder) | `removed == 0` |
-| 2 | `test_minimize_single_state` | WFST with only start state | `removed == 0`, `num_states() == 1` |
-| 3 | `test_minimize_merges_all_simple_finals` | 3 tokens, 3 identical finals | `removed == 2`, `num_states() == 2`, prediction preserved |
-| 4 | `test_minimize_merges_identical_finals_after_union` | 2 tokens, union-created duplicates | `removed == 1`, `num_states() == 2`, both tokens predict correctly |
-| 5 | `test_minimize_after_union_with_overlapping_tokens` | Union with overlapping `Ident` token | `removed == 1`, `num_states() == 2`, both alternatives preserved (w=0.5, w=2.0) |
-| 6 | `test_minimize_preserves_beam_width` | Beam width 1.5 set before minimize | `beam_width() == Some(TropicalWeight::new(1.5))` after minimize |
-| 7 | `test_minimize_large_union_many_duplicates` | 10 tokens, all weight 0.0 | `removed == 9`, `num_states() == 2`, all 10 tokens predict correctly |
-| 8 | `test_minimize_mixed_weights_partial_merge` | 4 tokens (2 at w=0.0, 2 at w=1.0) | `removed == 3`, `num_states() == 2` (weights are on transitions, finals are still identical) |
+| # | Test                                                | Scenario                             | Key assertions                                                                               |
+|---|-----------------------------------------------------|--------------------------------------|----------------------------------------------------------------------------------------------|
+| 1 | `test_minimize_empty_wfst`                          | No states to merge (empty builder)   | `removed == 0`                                                                               |
+| 2 | `test_minimize_single_state`                        | WFST with only start state           | `removed == 0`, `num_states() == 1`                                                          |
+| 3 | `test_minimize_merges_all_simple_finals`            | 3 tokens, 3 identical finals         | `removed == 2`, `num_states() == 2`, prediction preserved                                    |
+| 4 | `test_minimize_merges_identical_finals_after_union` | 2 tokens, union-created duplicates   | `removed == 1`, `num_states() == 2`, both tokens predict correctly                           |
+| 5 | `test_minimize_after_union_with_overlapping_tokens` | Union with overlapping `Ident` token | `removed == 1`, `num_states() == 2`, both alternatives preserved (w=0.5, w=2.0)              |
+| 6 | `test_minimize_preserves_beam_width`                | Beam width 1.5 set before minimize   | `beam_width() == Some(TropicalWeight::new(1.5))` after minimize                              |
+| 7 | `test_minimize_large_union_many_duplicates`         | 10 tokens, all weight 0.0            | `removed == 9`, `num_states() == 2`, all 10 tokens predict correctly                         |
+| 8 | `test_minimize_mixed_weights_partial_merge`         | 4 tokens (2 at w=0.0, 2 at w=1.0)    | `removed == 3`, `num_states() == 2` (weights are on transitions, finals are still identical) |
 
 ### Test design principles
 
@@ -676,18 +676,18 @@ validate the minimization algorithm:
 
 ## 9. Source References
 
-| Symbol | File | Line |
-|--------|------|------|
-| `StateSignature` struct | `prattail/src/wfst.rs` | ~112 |
-| `StateSignature::from_state()` | `prattail/src/wfst.rs` | ~120 |
-| `PredictionWfst::minimize()` | `prattail/src/wfst.rs` | ~437 |
-| `PredictionWfst::union()` | `prattail/src/wfst.rs` | ~375 |
-| `PredictionWfst::num_states()` | `prattail/src/wfst.rs` | ~271 |
-| `WfstState::final_state()` | `prattail/src/wfst.rs` | ~83 |
-| B3 pipeline integration block | `prattail/src/pipeline.rs` | ~844 |
-| `build_prediction_wfsts()` | `prattail/src/wfst.rs` | ~653 |
-| `minimize_dfa()` (Hopcroft) | `prattail/src/automata/minimize.rs` | ~95 |
-| B3 minimize tests (8 tests) | `prattail/src/wfst.rs` | ~1483 |
+| Symbol                         | File                                | Line  |
+|--------------------------------|-------------------------------------|-------|
+| `StateSignature` struct        | `prattail/src/wfst.rs`              | ~112  |
+| `StateSignature::from_state()` | `prattail/src/wfst.rs`              | ~120  |
+| `PredictionWfst::minimize()`   | `prattail/src/wfst.rs`              | ~437  |
+| `PredictionWfst::union()`      | `prattail/src/wfst.rs`              | ~375  |
+| `PredictionWfst::num_states()` | `prattail/src/wfst.rs`              | ~271  |
+| `WfstState::final_state()`     | `prattail/src/wfst.rs`              | ~83   |
+| B3 pipeline integration block  | `prattail/src/pipeline.rs`          | ~844  |
+| `build_prediction_wfsts()`     | `prattail/src/wfst.rs`              | ~653  |
+| `minimize_dfa()` (Hopcroft)    | `prattail/src/automata/minimize.rs` | ~95   |
+| B3 minimize tests (8 tests)    | `prattail/src/wfst.rs`              | ~1483 |
 
 ### Cross-references
 

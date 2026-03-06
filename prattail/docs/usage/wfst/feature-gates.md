@@ -218,18 +218,28 @@ codegen backend. Benchmarks use the `bench` profile which inherits from
 
 ## 7. Semiring Summary
 
-| Semiring         | Feature Gate | Semiring Operations                                     | Primary Use                          |
-|------------------|--------------|---------------------------------------------------------|--------------------------------------|
-| `TropicalWeight` | (none)       | `(R+ u {+inf}, min, +, +inf, 0)`                       | Parse path cost, Viterbi best-path   |
-| `CountingWeight` | (none)       | `(N, +, x, 0, 1)`                                      | Ambiguity counting                   |
-| `BooleanWeight`  | (none)       | `({T,F}, or, and, F, T)`                                | Reachability, dead-rule detection    |
-| `EditWeight`     | (none)       | `(R+ u {+inf}, min, +, +inf, 0)`                       | Edit distance for repair actions     |
-| `ProductWeight`  | (none)       | Lexicographic product of `<L: Semiring, R: Semiring>`   | Multi-criteria optimization          |
-| `LogWeight`      | `wfst-log`   | `(R u {-inf}, log-sum-exp, +, +inf, 0)`                | Log-probability, training, pushing   |
+| Semiring         | Feature Gate | Semiring Operations                                   | Primary Use                        |
+|------------------|--------------|-------------------------------------------------------|------------------------------------|
+| `TropicalWeight` | (none)       | `(R+ u {+inf}, min, +, +inf, 0)`                      | Parse path cost, Viterbi best-path |
+| `CountingWeight` | (none)       | `(N, +, x, 0, 1)`                                     | Ambiguity counting                 |
+| `BooleanWeight`  | (none)       | `({T,F}, or, and, F, T)`                              | Reachability, dead-rule detection  |
+| `EditWeight`     | (none)       | `(R+ u {+inf}, min, +, +inf, 0)`                      | Edit distance for repair actions   |
+| `ProductWeight`  | (none)       | Lexicographic product of `<L: Semiring, R: Semiring>` | Multi-criteria optimization        |
+| `LogWeight`      | `wfst-log`   | `(R u {-inf}, log-sum-exp, +, +inf, 0)`               | Log-probability, training, pushing |
 
 ---
 
-## 8. Cross-References
+## 8. Environment Variables
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `PRATTAIL_LINT_VERBOSE` | unset | When set, disables diagnostic grouping — emits individual lint diagnostics instead of collapsed summaries. Useful for CI pipelines that grep for specific rule names or categories. |
+| `PRATTAIL_AUTO_OPTIMIZE` | unset | Comma-separated list of optimization gates to force-enable/disable (see `cost_benefit.rs`). |
+| `PRATTAIL_EBNF_DUMP` | unset | When set to a directory path, dumps EBNF grammar to that location. |
+
+---
+
+## 9. Cross-References
 
 - [dsl-configuration.md](dsl-configuration.md) -- `beam_width` and
   `log_semiring_model_path` options in the `language!` macro

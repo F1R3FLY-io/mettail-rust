@@ -98,25 +98,27 @@ and F1 falls back to position-only filtering (backward compatible).
 ### Codegen decision tree
 
 ```
-                    ┌──────────────────────────┐
-                    │ needs_nfa_spillover?     │
-                    └────────────┬─────────────┘
-                          yes    │    no
-                    ┌────────────┴────┐
-                    │                 │
-              ┌─────▼──────┐   ┌──────▼──────────────┐
-              │ beam_width │   │ No spill loop.      │
-              │ configured?│   │ Take first result,  │
-              └──┬─────────┘   │ break 'prefix.      │
-            yes  │   no        └─────────────────────┘
-         ┌───────┴────────┐
-         │                │
-   ┌─────▼──────┐  ┌──────▼─────────┐
-   │ Emit spill │  │ Emit spill     │
-   │ with pos + │  │ with pos-only  │
-   │ weight     │  │ filter         │
-   │ filter     │  │ (all matching) │
-   └────────────┘  └────────────────┘
+                 ┌──────────────────────────┐
+                 │ needs_nfa_spillover?     │
+                 └────────────┬─────────────┘
+                       yes    │    no
+                 ┌────────────┴────┐
+                 │                 │
+                 ▼                 ▼
+           ┌────────────┐   ┌─────────────────────┐
+           │ beam_width │   │ No spill loop.      │
+           │ configured?│   │ Take first result,  │
+           └──┬─────────┘   │ break 'prefix.      │
+         yes  │   no        └─────────────────────┘
+      ┌───────┴────────┐
+      │                │
+      ▼                ▼
+┌────────────┐  ┌────────────────┐
+│ Emit spill │  │ Emit spill     │
+│ with pos + │  │ with pos-only  │
+│ weight     │  │ filter         │
+│ filter     │  │ (all matching) │
+└────────────┘  └────────────────┘
 ```
 
 ---

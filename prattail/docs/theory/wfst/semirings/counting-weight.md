@@ -59,7 +59,7 @@ We verify all eight semiring axioms. Let a = 2, b = 3, c = 5.
 ### (A1) Associativity of ⊕
 
 ```
-(a ⊕  b) ⊕ c  =  (2 + 3) + 5  =  5 + 5  =  10
+(a ⊕  b) ⊕  c  =  (2 + 3) + 5  =  5 + 5  =  10
 a ⊕  (b ⊕  c)  =  2 + (3 + 5)  =  2 + 8  =  10   ✓
 ```
 
@@ -77,11 +77,11 @@ b ⊕  a  =  3 + 2  =  5   ✓
 Natural number addition is commutative. *Parsing interpretation:*
 rule ordering in the grammar file does not affect the ambiguity count.
 
-### (A3) ⊕ Identity
+### (A3) ⊕  Identity
 
 ```
-0̄ ⊕ a  =  0 + 2  =  2  =  a   ✓
-a ⊕ 0̄  =  2 + 0  =  2  =  a   ✓
+0̄ ⊕  a  =  0 + 2  =  2  =  a   ✓
+a ⊕  0̄  =  2 + 0  =  2  =  a   ✓
 ```
 
 Zero is the additive identity: a path count plus zero dead-rule
@@ -91,19 +91,19 @@ alternative contributes nothing to the total derivation count.
 ### (M1) Associativity of ⊗
 
 ```
-(a ⊗ b) ⊗ c  =  (2 × 3) × 5  =  6 × 5  =  30
-a ⊗ (b ⊗ c)  =  2 × (3 × 5)  =  2 × 15  =  30   ✓
+(a ⊗  b) ⊗  c  =  (2 × 3) × 5  =  6 × 5  =  30
+a ⊗  (b ⊗  c)  =  2 × (3 × 5)  =  2 × 15  =  30   ✓
 ```
 
 Natural number multiplication is associative. *Parsing interpretation:*
 grouping a three-segment parse as `(A·B)·C` or `A·(B·C)` produces the same
 combinatorial derivation count.
 
-### (M2) ⊗ Identity
+### (M2) ⊗  Identity
 
 ```
-1̄ ⊗ a  =  1 × 2  =  2  =  a   ✓
-a ⊗ 1̄  =  2 × 1  =  2  =  a   ✓
+1̄ ⊗  a  =  1 × 2  =  2  =  a   ✓
+a ⊗  1̄  =  2 × 1  =  2  =  a   ✓
 ```
 
 One is the multiplicative identity: one derivation of a prefix
@@ -114,8 +114,8 @@ multiply the suffix count — it passes through unchanged.
 ### (D1) Left Distributivity
 
 ```
-a ⊗ (b ⊕ c)  =  2 × (3 + 5)  =  2 × 8  =  16
-(a ⊗ b) ⊕ (a ⊗ c)  =  (2 × 3) + (2 × 5)  =  6 + 10  =  16   ✓
+a ⊗  (b ⊕  c)  =  2 × (3 + 5)  =  2 × 8  =  16
+(a ⊗  b) ⊕  (a ⊗  c)  =  (2 × 3) + (2 × 5)  =  6 + 10  =  16   ✓
 ```
 
 Standard distributivity of multiplication over addition. *Parsing
@@ -125,8 +125,8 @@ count: 2 prefix-ways × (3 + 5) suffix-ways = 6 + 10 = 16 total.
 ### (D2) Right Distributivity
 
 ```
-(a ⊕ b) ⊗ c  =  (2 + 3) × 5  =  5 × 5  =  25
-(a ⊗ c) ⊕ (b ⊗ c)  =  (2 × 5) + (3 × 5)  =  10 + 15  =  25   ✓
+(a ⊕  b) ⊗  c  =  (2 + 3) × 5  =  5 × 5  =  25
+(a ⊗  c) ⊕  (b ⊗  c)  =  (2 × 5) + (3 × 5)  =  10 + 15  =  25   ✓
 ```
 
 Symmetric to (D1). *Parsing interpretation:* shared suffixes can also be
@@ -135,8 +135,8 @@ factored without changing the total count.
 ### (Z) Zero Annihilation
 
 ```
-0̄ ⊗ a  =  0 × 2  =  0  =  0̄   ✓
-a ⊗ 0̄  =  2 × 0  =  0  =  0̄   ✓
+0̄ ⊗  a  =  0 × 2  =  0  =  0̄   ✓
+a ⊗  0̄  =  2 × 0  =  0  =  0̄   ✓
 ```
 
 If any segment along a derivation path is impossible (zero
@@ -155,12 +155,12 @@ All eight axioms are satisfied. C is a valid semiring.
 
 ### 4.1 Commutativity
 
-**Claim**: The counting semiring is commutative (⊗ is commutative).
+**Claim**: The counting semiring is commutative (⊗  is commutative).
 
 **Proof**: For all a, b in N:
 
 ```
-a ⊗ b  =  a × b  =  b × a  =  b ⊗ a
+a ⊗  b  =  a × b  =  b × a  =  b ⊗  a
 ```
 
 Natural number multiplication is commutative.   ∎
@@ -172,10 +172,10 @@ Natural number multiplication is commutative.   ∎
 **Proof by counterexample**: Let a = 3.
 
 ```
-a ⊕ a  =  3 + 3  =  6  ≠  3  =  a
+a ⊕  a  =  3 + 3  =  6  ≠  3  =  a
 ```
 
-Therefore there exists a ∈ N such that a ⊕ a ≠ a, so the
+Therefore there exists a ∈ N such that a ⊕  a ≠ a, so the
 semiring is not idempotent.   ∎
 
 Non-idempotency is the fundamental distinction between the counting
@@ -190,7 +190,7 @@ and diagnostic reporting.
 
 ### 4.3 Zero Divisor Freedom
 
-**Claim**: CountingWeight has no zero divisors: if a ⊗ b = 0̄, then
+**Claim**: CountingWeight has no zero divisors: if a ⊗  b = 0̄, then
 a = 0̄ or b = 0̄.
 
 **Proof**: If a × b = 0 in N, then a = 0 or b = 0 (standard
@@ -206,7 +206,7 @@ impossible segment -- there are no "phantom cancellations."
 The counting semiring tracks derivation counts through the standard
 WFST interpretation:
 
-### Parallel Alternatives (⊕ = addition)
+### Parallel Alternatives (⊕  = addition)
 
 When a token can be parsed by multiple rules in parallel, the total
 derivation count is the *sum* of each rule's count:
@@ -217,7 +217,7 @@ derivation count is the *sum* of each rule's count:
                       └─── Rule B: 3 derivations ───┘
 ```
 
-### Sequential Segments (⊗ = multiplication)
+### Sequential Segments (⊗  = multiplication)
 
 When a derivation consists of two sequential segments, the total
 count is the *product* of each segment's count (combinatorial
@@ -225,8 +225,8 @@ explosion):
 
 ```
     ┌── Prefix: 3 ways ──┐     ┌── Suffix: 4 ways ──┐
-    │                     │     │                     │     3 × 4 = 12 total
-    └─────────────────────┘     └─────────────────────┘
+    │                    │     │                    │     3 × 4 = 12 total
+    └────────────────────┘     └────────────────────┘
 ```
 
 ### Forward Pass
@@ -236,8 +236,8 @@ dispatch automaton) accumulates counts:
 
 ```
     q₀ ─── 1 ───▶ q₁ ─── 1 ───▶ q₂
-     │                              ▲
-     └──────── 1 ──────────────────┘
+     │                           ▲
+     └──────── 1 ────────────────┘
                                         total at q₂: 1 + (1 × 1) = 2
 ```
 
@@ -265,30 +265,30 @@ table for `(Proc, Name)` looks like:
 ```
     ┌────────────────────────────────────────────────────┐
     │       Ambiguity Detection for Token "Name"         │
-    │              (Category: Proc)                       │
+    │              (Category: Proc)                      │
     ├────────────────────────────────────────────────────┤
     │                                                    │
-    │   q₀ ──── Name ────▶ q₁ (Send)     count: 1       │
+    │   q₀ ──── Name ────▶ q₁ (Send)      count: 1       │
     │    │                                               │
     │    ├──── Name ────▶ q₂ (Lookup)     count: 1       │
     │    │                                               │
     │    └──── Name ────▶ q₃ (Invoke)     count: 1       │
     │                                                    │
-    │   Total: 1 ⊕ 1 ⊕ 1 = 3                           │
+    │   Total: 1 ⊕  1 ⊕  1 = 3                           │
     └────────────────────────────────────────────────────┘
 ```
 
 ### Per-Token Derivation Count Table
 
-| Token      | Proc rules applicable       | Count | Status      |
-|------------|-----------------------------|-------|-------------|
-| Name       | Send, Lookup, Invoke        | 3     | Ambiguous   |
-| LParen     | (none directly)             | 0     | Dead        |
-| Star       | (none directly)             | 0     | Dead        |
-| Bang       | (none directly)             | 0     | Dead        |
-| Integer    | NumLit                      | 1     | Unambiguous |
-| StringLit  | StrLit                      | 1     | Unambiguous |
-| True/False | BoolLit                     | 1     | Unambiguous |
+| Token      | Proc rules applicable | Count | Status      |
+|------------|-----------------------|-------|-------------|
+| Name       | Send, Lookup, Invoke  | 3     | Ambiguous   |
+| LParen     | (none directly)       | 0     | Dead        |
+| Star       | (none directly)       | 0     | Dead        |
+| Bang       | (none directly)       | 0     | Dead        |
+| Integer    | NumLit                | 1     | Unambiguous |
+| StringLit  | StrLit                | 1     | Unambiguous |
+| True/False | BoolLit               | 1     | Unambiguous |
 
 When `count > 1`, the pipeline emits a compile-time ambiguity
 warning and uses the composed dispatch table (tropical weights)
@@ -308,7 +308,7 @@ FUNCTION detect_ambiguity(composed_table, categories):
         count := CountingWeight::zero()        // 0 derivations
 
         FOR entry IN entries:
-            count := count ⊕ CountingWeight::one()     // count += 1
+            count := count ⊕  CountingWeight::one()     // count += 1
 
         MATCH count.count():
             0 => emit_dead_rule_warning(category, token)
@@ -457,19 +457,19 @@ is acceptable because:
 
 ## 9. Comparison Table
 
-| Property          | CountingWeight     | TropicalWeight      | LogWeight            | BooleanWeight       |
-|-------------------|--------------------|---------------------|----------------------|---------------------|
-| Carrier set       | N                  | R⁺ ∪ {+∞}          | R⁺ ∪ {+∞}           | {false, true}       |
-| ⊕ (addition)      | a + b              | min(a, b)           | −ln(e⁻ᵃ + e⁻ᵇ)     | a ∨ b               |
-| ⊗ (multiplication)| a × b              | a + b               | a + b                | a ∧ b               |
-| 0̄ (zero)          | 0                  | +∞                  | +∞                   | false               |
-| 1̄ (one)           | 1                  | 0.0                 | 0.0                  | true                |
-| Commutative?      | Yes                | Yes                 | Yes                  | Yes                 |
-| Idempotent?       | No (3+3=6)         | Yes (min(a,a)=a)    | No (lse(a,a)≠a)     | Yes (a∨a=a)         |
-| Semantics         | Derivation count   | Shortest path cost  | Neg-log probability  | Reachability        |
-| PraTTaIL use      | Ambiguity warnings | Dispatch ordering   | Training & scoring   | Dead-rule detection |
-| Feature gate      | Always on          | Always on           | `wfst-log`           | Always on           |
-| Rust type         | `u64`              | `f64`               | `f64`                | `bool`              |
+| Property            | CountingWeight     | TropicalWeight     | LogWeight           | BooleanWeight       |
+|---------------------|--------------------|--------------------|---------------------|---------------------|
+| Carrier set         | N                  | R⁺ ∪ {+∞}          | R⁺ ∪ {+∞}           | {false, true}       |
+| ⊕  (addition)       | a + b              | min(a, b)          | −ln(e⁻ᵃ + e⁻ᵇ)      | a ∨ b               |
+| ⊗  (multiplication) | a × b              | a + b              | a + b               | a ∧ b               |
+| 0̄ (zero)            | 0                  | +∞                 | +∞                  | false               |
+| 1̄ (one)             | 1                  | 0.0                | 0.0                 | true                |
+| Commutative?        | Yes                | Yes                | Yes                 | Yes                 |
+| Idempotent?         | No (3+3=6)         | Yes (min(a,a)=a)   | No (lse(a,a)≠a)     | Yes (a∨a=a)         |
+| Semantics           | Derivation count   | Shortest path cost | Neg-log probability | Reachability        |
+| PraTTaIL use        | Ambiguity warnings | Dispatch ordering  | Training & scoring  | Dead-rule detection |
+| Feature gate        | Always on          | Always on          | `wfst-log`          | Always on           |
+| Rust type           | `u64`              | `f64`              | `f64`               | `bool`              |
 
 ---
 
@@ -643,7 +643,7 @@ Example: two paths to parse `Name` in category `Proc`:
     Path 1:  (weight=0.5, count=1)     Send rule
     Path 2:  (weight=2.0, count=1)     Variable fallback
 
-    ⊕ result: (min(0.5, 2.0), 1 + 1) = (0.5, 2)
+    ⊕  result: (min(0.5, 2.0), 1 + 1) = (0.5, 2)
 ```
 
 The product tells us: best parse has weight 0.5, but there are 2

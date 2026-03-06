@@ -170,29 +170,39 @@ throughout.
 in declaration order.
 
 ```
-              ┌─────────────────┐
-              │  Input: "a + b" │
-              └────────┬────────┘
-                       │
-        ┌──────────────┼──────────────┬──────────────┐
-        ▼              ▼              ▼              ▼
-  Int::parse     Float::parse   Bool::parse    Str::parse
-  (Layers 1-5)   (Layers 1-5)  (Layers 1-5)  (Layers 1-5)
-        │              │              │              │
-        ▼              ▼              ▼              ▼
-  Ok(IntAdd(      Ok(FloatAdd(    Err(no "+"    Ok(StrConcat(
-   IVar,IVar))    FVar,FVar))    for Bool)      SVar,SVar))
-        │              │                             │
-        └──────────────┼─────────────────────────────┘
-                       ▼
-              from_alternatives([
-                Int(IntAdd(...)),       ← declaration order
-                Float(FloatAdd(...)),
-                Str(StrConcat(...))
-              ])
-                       │
-                       ▼
-              Ambiguous([Int(...), Float(...), Str(...)])
+                         ┌────────────────┐
+                         │ Input: "a + b" │
+                         └───────┬────────┘
+                                 │
+        ┌───────────────┬────────┴───────┬─────────────────┐
+        │               │                │                 │
+        ▼               ▼                ▼                 ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────┐
+│ Int::parse   │ │ Float::parse │ │ Bool::parse  │ │ Str::parse    │
+│ (Layers 1-5) │ │ (Layers 1-5) │ │ (Layers 1-5) │ │ (Layers 1-5)  │
+└───────┬──────┘ └──────┬───────┘ └──────┬───────┘ └───────┬───────┘
+        │               │                │                 │
+        ▼               ▼                ▼                 ▼
+┌──────────────┐ ┌──────────────┐ ┌──────────────┐ ┌───────────────┐
+│ Ok(IntAdd(   │ │ Ok(FloatAdd( │ │ Err(no "+"   │ │ Ok(StrConcat( │
+│ IVar,IVar))  │ │ FVar,FVar))  │ │ for Bool)    │ │ SVar,SVar))   │
+└───────┬──────┘ └──────┬───────┘ └──────────────┘ └───────┬───────┘
+        │               │                                  │
+        └───────────────┴────────┬─────────────────────────┘
+                                 │
+                                 ▼
+                    ┌─────────────────────────┐
+                    │ from_alternatives([     │
+                    │   Int(IntAdd(...)),     │
+                    │   Float(FloatAdd(...)), │  ← declaration order
+                    │   Str(StrConcat(...))   │
+                    │ ])                      │
+                    └────────────┬────────────┘
+                                 │
+                                 ▼
+          ┌─────────────────────────────────────────────┐
+          │ Ambiguous([Int(...), Float(...), Str(...)]) │
+          └─────────────────────────────────────────────┘
 ```
 
 **rhocalc (has non-native categories, lexer probe active):** `"p"` triggers the
@@ -200,37 +210,48 @@ lexer probe; `first_tok = Ident("p")` → native categories are skipped, leaving
 only `Proc` and `Name`.
 
 ```
-              ┌────────────────┐
-              │  Input: "p"    │
-              └───────┬────────┘
-                      │
-              ┌───────▼────────┐
-              │ Lexer probe:   │
-              │ first_tok =    │
-              │ Ident("p")     │
-              └───────┬────────┘
-                      │
-  ┌───────────┬───────┼───────┬───────────┬───────────┐
-  ▼           ▼       ▼       ▼           ▼           ▼
-Float       Int     Proc    Name        Bool        Str
-SKIP        SKIP   ::parse  ::parse     SKIP        SKIP
-(native+    (native (non-   (non-       (native+    (native+
- Ident)      +Ident) native) native)     Ident)      Ident)
-                    │       │
-                    ▼       ▼
-              Ok(ProcVar  Ok(NameVar
-               ("p"))      ("p"))
-                    │       │
-                    └───┬───┘
-                        ▼
-              from_alternatives([
-                Proc(ProcVar("p")),
-                Name(NameVar("p"))
-              ])
-                        │
-                        ▼
-              Ambiguous([Proc(...), Name(...)])
-              (2-way, not 6-way)
+                              ┌────────────────┐
+                              │ Input: "p"     │
+                              └───────┬────────┘
+                                      │
+                                      ▼
+                              ┌────────────────┐
+                              │ Lexer probe:   │
+                              │ first_tok =    │
+                              │ Ident("p")     │
+                              └───────┬────────┘
+                                      │
+     ┌────────────┬────────────┬──────┴─────┬────────────┬────────────┐
+     │            │            │            │            │            │
+     ▼            ▼            ▼            ▼            ▼            ▼
+┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐
+│ Float    │ │ Int      │ │ Proc     │ │ Name     │ │ Bool     │ │ Str      │
+│ SKIP     │ │ SKIP     │ │ ::parse  │ │ ::parse  │ │ SKIP     │ │ SKIP     │
+│ (native+ │ │ (native  │ │ (non-    │ │ (non-    │ │ (native+ │ │ (native+ │
+│  Ident)  │ │  +Ident) │ │  native) │ │  native) │ │  Ident)  │ │  Ident)  │
+└──────────┘ └──────────┘ └────┬─────┘ └─────┬────┘ └──────────┘ └──────────┘
+                               │             │
+                               ▼             ▼
+                        ┌────────────┐ ┌────────────┐
+                        │ Ok(ProcVar │ │ Ok(NameVar │
+                        │  ("p"))    │ │  ("p"))    │
+                        └──────┬─────┘ └─────┬──────┘
+                               │             │
+                               └──────┬──────┘
+                                      │
+                                      ▼
+                          ┌───────────────────────┐
+                          │ from_alternatives([   │
+                          │   Proc(ProcVar("p")), │
+                          │   Name(NameVar("p"))  │
+                          │ ])                    │
+                          └───────────┬───────────┘
+                                      │
+                                      ▼
+                    ┌───────────────────────────────────┐
+                    │ Ambiguous([Proc(...), Name(...)]) │
+                    │ (2-way, not 6-way)                │
+                    └───────────────────────────────────┘
 ```
 
 ### 2.3 Lexer-Guided Parse Filtering
@@ -485,22 +506,27 @@ expression never reaches Stage C.
   │  Stage A: PARSE-TIME (from_alternatives)                    │
   │  Ground-filter: exactly 1 ground alternative → select it    │
   │  Cost: O(alternatives) × O(is_ground per term)              │
-  └──────────────────────────┬──────────────────────────────────┘
-                             │ still Ambiguous?
-  ┌──────────────────────────▼──────────────────────────────────┐
+  └─────────────────────────────┬───────────────────────────────┘
+                                │ still Ambiguous?
+                                ▼
+  ┌─────────────────────────────────────────────────────────────┐
   │  Stage B: SUBSTITUTION-TIME (substitute_env)                │
   │  Substitute each alternative, keep progressed, dedup,       │
   │  re-run from_alternatives                                   │
   │  Cost: O(alternatives) × O(substitution per term)           │
-  └──────────────────────────┬──────────────────────────────────┘
-                             │ still Ambiguous?
-  ┌──────────────────────────▼──────────────────────────────────┐
+  └─────────────────────────────┬───────────────────────────────┘
+                                │ still Ambiguous?
+                                ▼
+  ┌─────────────────────────────────────────────────────────────┐
   │  Stage C: EVALUATION-TIME (run_ascent_typed)                │
   │  Declaration-order resolution: evaluate first alternative   │
   │  Cost: O(1) × O(Ascent fixpoint per term)                   │
-  └──────────────────────────┬──────────────────────────────────┘
-                             │
-                        Resolved term
+  └─────────────────────────────┬───────────────────────────────┘
+                                │
+                                ▼
+  ┌─────────────────────────────────────────────────────────────┐
+  │                     Resolved term                           │
+  └─────────────────────────────────────────────────────────────┘
 ```
 
 ### 5.1 Stage A: Parse-Time Ground-Filter
@@ -645,40 +671,45 @@ Every step uses order-preserving `Vec` operations — `iter().map().collect()`,
 `HashSet`, sorting, or shuffling ever touches the alternatives vector.
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │  Grammar: types { Int, Float, ... }     │
-                    │  language.types = Vec in decl order     │
-                    └──────────────┬──────────────────────────┘
-                                   │ .iter().map().collect()
-                    ┌──────────────▼──────────────────────────┐
-                    │  parse_order = [Int, Float, Bool, …]    │
-                    └──────────────┬──────────────────────────┘
-                                   │ .map() → sequential code blocks
-                    ┌──────────────▼──────────────────────────┐
-                    │  parse_preserving_vars:                 │
-                    │  successes.push() in parse_order        │
-                    │  (Vec::push preserves insertion order)  │
-                    └──────────────┬──────────────────────────┘
-                                   │ from_alternatives(successes)
-                    ┌──────────────▼──────────────────────────┐
-                    │  Stage A: from_alternatives             │
-                    │  flat_map + collect → Vec in order      │
-                    │  Ambiguous(flat) stores ordered Vec     │
-                    └──────────────┬──────────────────────────┘
-                                   │ substitute_env(Ambiguous(alts))
-                    ┌──────────────▼──────────────────────────┐
-                    │  Stage B: substitute_env                │
-                    │  alts.iter().map() → results (order)    │
-                    │  (0..n).filter() → ascending indices    │
-                    │  results[i] → subset in orig order      │
-                    │  dedup by Display → insertion order     │
-                    └──────────────┬──────────────────────────┘
-                                   │ run_ascent_typed(Ambiguous(alts))
-                    ┌──────────────▼──────────────────────────┐
-                    │  Stage C: run_ascent_typed              │
-                    │  alts.first() = alts[0]                 │
-                    │  = first-declared surviving category    │
-                    └─────────────────────────────────────────┘
+┌─────────────────────────────────────────┐
+│  Grammar: types { Int, Float, ... }     │
+│  language.types = Vec in decl order     │
+└────────────────────┬────────────────────┘
+                     │ .iter().map().collect()
+                     ▼
+┌─────────────────────────────────────────┐
+│  parse_order = [Int, Float, Bool, …]    │
+└────────────────────┬────────────────────┘
+                     │ .map() → sequential code blocks
+                     ▼
+┌─────────────────────────────────────────┐
+│  parse_preserving_vars:                 │
+│  successes.push() in parse_order        │
+│  (Vec::push preserves insertion order)  │
+└────────────────────┬────────────────────┘
+                     │ from_alternatives(successes)
+                     ▼
+┌─────────────────────────────────────────┐
+│  Stage A: from_alternatives             │
+│  flat_map + collect → Vec in order      │
+│  Ambiguous(flat) stores ordered Vec     │
+└────────────────────┬────────────────────┘
+                     │ substitute_env(Ambiguous(alts))
+                     ▼
+┌─────────────────────────────────────────┐
+│  Stage B: substitute_env                │
+│  alts.iter().map() → results (order)    │
+│  (0..n).filter() → ascending indices    │
+│  results[i] → subset in orig order      │
+│  dedup by Display → insertion order     │
+└────────────────────┬────────────────────┘
+                     │ run_ascent_typed(Ambiguous(alts))
+                     ▼
+┌─────────────────────────────────────────┐
+│  Stage C: run_ascent_typed              │
+│  alts.first() = alts[0]                 │
+│  = first-declared surviving category    │
+└─────────────────────────────────────────┘
 ```
 
 ### 6.2 Step-by-Step Verification
@@ -1012,12 +1043,12 @@ alternatives (typically 2–4).
 Layer 6 relies on four thread-locals that bridge Layer 2.5 (NFA intra-category
 disambiguation) with the semantic resolution pipeline:
 
-| Thread-Local                     | Type                                 | Scope      | Purpose                                                                |
-|----------------------------------|--------------------------------------|------------|------------------------------------------------------------------------|
-| `NFA_PREFIX_SPILL_CAT`           | `Cell<Vec<(Cat, usize, f64)>>`       | Per-cat    | N-1 NFA alternatives from merged prefix arm, drained in §2 drain loop  |
-| `NFA_FORCED_PREFIX_CAT`          | `Cell<Option<(Cat, usize, f64)>>`    | Per-cat    | Override: forces parser to use given prefix, skipping NFA try-all      |
-| `NFA_PRIMARY_WEIGHT_CAT`         | `Cell<f64>`                          | Per-cat    | WFST weight of primary NFA result (default 0.5 when unambiguous)       |
-| `AMBIGUOUS_WEIGHTS`              | `Cell<Vec<f64>>`                     | Per-lang   | Parallel to `successes`; carried to `from_alternatives` for tiebreaking |
+| Thread-Local             | Type                              | Scope    | Purpose                                                                 |
+|--------------------------|-----------------------------------|----------|-------------------------------------------------------------------------|
+| `NFA_PREFIX_SPILL_CAT`   | `Cell<Vec<(Cat, usize, f64)>>`    | Per-cat  | N-1 NFA alternatives from merged prefix arm, drained in §2 drain loop   |
+| `NFA_FORCED_PREFIX_CAT`  | `Cell<Option<(Cat, usize, f64)>>` | Per-cat  | Override: forces parser to use given prefix, skipping NFA try-all       |
+| `NFA_PRIMARY_WEIGHT_CAT` | `Cell<f64>`                       | Per-cat  | WFST weight of primary NFA result (default 0.5 when unambiguous)        |
+| `AMBIGUOUS_WEIGHTS`      | `Cell<Vec<f64>>`                  | Per-lang | Parallel to `successes`; carried to `from_alternatives` for tiebreaking |
 
 All four use `Cell` (not `RefCell`) because the trampoline's standalone
 functions may cause re-entrancy. `Cell::take()` and `Cell::set()` are safe

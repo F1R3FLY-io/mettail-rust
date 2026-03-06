@@ -84,8 +84,8 @@ been fully exploited.
 
 ```
 W₀  ──► T_normalize ──► T_dead_elim ──► T_minimize ──► T_beam_prune ──► W₁
-                                                                          │
-                               ┌──────────────────────────────────────────┘
+                                                                        │
+                               ┌────────────────────────────────────────┘
                                │
                                ▼  any changes?
                               ╱╲
@@ -513,14 +513,14 @@ specific structural properties.
 
 ### 6.1 T_normalize: Weight Normalization
 
-| Property         | Value                                            |
-|:-----------------|:-------------------------------------------------|
-| Priority         | 5 (runs first)                                   |
-| Applicability    | state_count > 0                                  |
-| Effect           | For each state s, subtract min_{t in s.transitions} w(t) from all w(t) |
-| Monotonicity     | mu unchanged, tau unchanged (weight-only transform) |
-| Idempotent       | Yes -- after normalization, min weight = 0.0, so re-normalization has no effect |
-| Implementation   | `WeightNormalization` (`transducer.rs`, line 234) |
+| Property       | Value                                                                           |
+|:---------------|:--------------------------------------------------------------------------------|
+| Priority       | 5 (runs first)                                                                  |
+| Applicability  | state_count > 0                                                                 |
+| Effect         | For each state s, subtract min_{t in s.transitions} w(t) from all w(t)          |
+| Monotonicity   | mu unchanged, tau unchanged (weight-only transform)                             |
+| Idempotent     | Yes -- after normalization, min weight = 0.0, so re-normalization has no effect |
+| Implementation | `WeightNormalization` (`transducer.rs`, line 234)                               |
 
 **Formal specification.** For each state s in W.states:
 
@@ -544,14 +544,14 @@ The implementation also updates the action table weights to match
 
 ### 6.2 T_dead_elim: Dead-State Elimination
 
-| Property         | Value                                            |
-|:-----------------|:-------------------------------------------------|
-| Priority         | 10 (runs after normalization)                    |
-| Applicability    | state_count > 2                                  |
-| Effect           | Remove states unreachable from the start state   |
-| Monotonicity     | mu strictly decreases (when dead states exist), tau decreases |
-| Idempotent       | Yes -- after elimination, all states are reachable, so re-elimination has no effect |
-| Implementation   | `DeadStateElimination` (`transducer.rs`, line 113) |
+| Property       | Value                                                                               |
+|:---------------|:------------------------------------------------------------------------------------|
+| Priority       | 10 (runs after normalization)                                                       |
+| Applicability  | state_count > 2                                                                     |
+| Effect         | Remove states unreachable from the start state                                      |
+| Monotonicity   | mu strictly decreases (when dead states exist), tau decreases                       |
+| Idempotent     | Yes -- after elimination, all states are reachable, so re-elimination has no effect |
+| Implementation | `DeadStateElimination` (`transducer.rs`, line 113)                                  |
 
 **Formal specification.** Compute the set of reachable states via
 forward BFS/DFS from the start state:
@@ -576,14 +576,14 @@ BooleanWeight is one().
 
 ### 6.3 T_minimize: State Minimization
 
-| Property         | Value                                            |
-|:-----------------|:-------------------------------------------------|
-| Priority         | 20 (runs after dead-state elimination)           |
-| Applicability    | state_count > 2                                  |
-| Effect           | Merge states with identical signatures           |
-| Monotonicity     | mu decreases (when equivalent states exist), tau may decrease |
-| Idempotent       | Yes -- after minimization, all remaining states have distinct signatures |
-| Implementation   | `StateMinimization` (`transducer.rs`, line 156)  |
+| Property       | Value                                                                    |
+|:---------------|:-------------------------------------------------------------------------|
+| Priority       | 20 (runs after dead-state elimination)                                   |
+| Applicability  | state_count > 2                                                          |
+| Effect         | Merge states with identical signatures                                   |
+| Monotonicity   | mu decreases (when equivalent states exist), tau may decrease            |
+| Idempotent     | Yes -- after minimization, all remaining states have distinct signatures |
+| Implementation | `StateMinimization` (`transducer.rs`, line 156)                          |
 
 **Formal specification.** Define the **state signature**:
 
@@ -613,14 +613,14 @@ O(|S| * |T| * log(|T|)) due to transition sorting within signatures.
 
 ### 6.4 T_beam_prune: Beam Pruning
 
-| Property         | Value                                            |
-|:-----------------|:-------------------------------------------------|
-| Priority         | 30 (runs after minimization)                     |
-| Applicability    | beam_width is finite and state_count > 0         |
-| Effect           | Remove transitions with weight > best + beam_width |
-| Monotonicity     | mu unchanged (no state removal), tau decreases   |
-| Idempotent       | Yes -- after pruning, all remaining transitions are within the beam |
-| Implementation   | `BeamPruning` (`transducer.rs`, line 187)        |
+| Property       | Value                                                               |
+|:---------------|:--------------------------------------------------------------------|
+| Priority       | 30 (runs after minimization)                                        |
+| Applicability  | beam_width is finite and state_count > 0                            |
+| Effect         | Remove transitions with weight > best + beam_width                  |
+| Monotonicity   | mu unchanged (no state removal), tau decreases                      |
+| Idempotent     | Yes -- after pruning, all remaining transitions are within the beam |
+| Implementation | `BeamPruning` (`transducer.rs`, line 187)                           |
 
 **Formal specification.** For each state s:
 
@@ -709,13 +709,13 @@ Consider a prediction WFST for category `Expr` with the following
 structure (constructed after union of two sub-WFSTs):
 
 ```
-                w=3.0             w=5.0              w=3.0
+               w=3.0            w=5.0             w=3.0
      ┌──────── Ident ──────► q1 [final]    ┌───── Ident ──────► q3 [final]
-     │                                      │
+     │                                     │
 q0 (start)                             q2 (start of unioned WFST)
-     │                                      │
-     └──────── Int ────────► q1 [final]     └───── Bool ───────► q4 [final]
-                w=1.0                               w=7.0
+     │                                     │
+     └──────── Int ────────► q1 [final]    └───── Bool ───────► q4 [final]
+               w=1.0                              w=7.0
 ```
 
 After the `union()` operation, the combined WFST has:
@@ -888,12 +888,12 @@ C_practical = O(2 * k * (|S| + |T| * log|T|))
 
 ### 9.3 Per-Pass Breakdown
 
-| Pass          | Time Complexity       | Space Complexity | Bottleneck          |
-|:--------------|:----------------------|:-----------------|:--------------------|
-| T_normalize   | O(|S| + |T|)         | O(1) extra       | Linear scan         |
-| T_dead_elim   | O(|S| + |T|)         | O(|S|) visited   | BFS/DFS traversal   |
-| T_minimize    | O(|S| * |T| * log|T|)| O(|S| + |T|)     | Signature hashing + sort |
-| T_beam_prune  | O(|S| + |T|)         | O(1) extra       | Linear scan + retain |
+| Pass         | Time Complexity             | Space Complexity | Bottleneck               |
+|:-------------|:----------------------------|:-----------------|:-------------------------|
+| T_normalize  | O(\|S\| + \|T\|)            | O(1) extra       | Linear scan              |
+| T_dead_elim  | O(\|S\| + \|T\|)            | O(\|S\|) visited | BFS/DFS traversal        |
+| T_minimize   | O(\|S\| * \|T\| * log\|T\|) | O(\|S\| + \|T\|) | Signature hashing + sort |
+| T_beam_prune | O(\|S\| + \|T\|)            | O(1) extra       | Linear scan + retain     |
 
 The dominant cost is T_minimize's signature computation and comparison.
 For the typical PraTTaIL prediction WFST (start state + N final states,
@@ -903,54 +903,54 @@ O(N) transitions), this reduces to O(N * log N).
 
 ## 10. Source References
 
-| Symbol / Function                      | Location                           | Line(s) |
-|:---------------------------------------|:-----------------------------------|--------:|
-| `OptimizationPass` trait               | `prattail/src/transducer.rs`       |      78 |
-| `OptimizationPass::name()`             | `prattail/src/transducer.rs`       |      80 |
-| `OptimizationPass::priority()`         | `prattail/src/transducer.rs`       |      84 |
-| `OptimizationPass::is_applicable()`    | `prattail/src/transducer.rs`       |      92 |
-| `OptimizationPass::apply()`            | `prattail/src/transducer.rs`       |     100 |
-| `PassResult`                           | `prattail/src/transducer.rs`       |      46 |
-| `PassResult::unchanged()`              | `prattail/src/transducer.rs`       |      55 |
-| `PassResult::changed()`               | `prattail/src/transducer.rs`       |      63 |
-| `WeightNormalization`                  | `prattail/src/transducer.rs`       |     234 |
-| `DeadStateElimination`                 | `prattail/src/transducer.rs`       |     113 |
-| `StateMinimization`                    | `prattail/src/transducer.rs`       |     156 |
-| `BeamPruning`                          | `prattail/src/transducer.rs`       |     187 |
-| `TransducerCascade`                    | `prattail/src/transducer.rs`       |     300 |
-| `TransducerCascade::new()`             | `prattail/src/transducer.rs`       |     309 |
-| `TransducerCascade::default_pipeline()`| `prattail/src/transducer.rs`       |     322 |
-| `TransducerCascade::with_beam()`       | `prattail/src/transducer.rs`       |     331 |
-| `TransducerCascade::add_pass()`        | `prattail/src/transducer.rs`       |     340 |
-| `TransducerCascade::run()`             | `prattail/src/transducer.rs`       |     353 |
-| `TransducerCascade::run_all()`         | `prattail/src/transducer.rs`       |     394 |
-| `PredictionWfst::state_count()`        | `prattail/src/wfst.rs`            |     532 |
-| `PredictionWfst::reachable_state_count()` | `prattail/src/wfst.rs`         |     537 |
-| `PredictionWfst::remove_unreachable_states()` | `prattail/src/wfst.rs`    |     555 |
-| `PredictionWfst::minimize()`           | `prattail/src/wfst.rs`            |     437 |
-| `PredictionWfst::prune_by_beam()`      | `prattail/src/wfst.rs`            |     598 |
-| `PredictionWfst::normalize_weights()`  | `prattail/src/wfst.rs`            |     624 |
-| Pipeline integration (E1 cascade call) | `prattail/src/pipeline.rs`         |     845 |
+| Symbol / Function                             | Location                     | Line(s) |
+|:----------------------------------------------|:-----------------------------|--------:|
+| `OptimizationPass` trait                      | `prattail/src/transducer.rs` |      78 |
+| `OptimizationPass::name()`                    | `prattail/src/transducer.rs` |      80 |
+| `OptimizationPass::priority()`                | `prattail/src/transducer.rs` |      84 |
+| `OptimizationPass::is_applicable()`           | `prattail/src/transducer.rs` |      92 |
+| `OptimizationPass::apply()`                   | `prattail/src/transducer.rs` |     100 |
+| `PassResult`                                  | `prattail/src/transducer.rs` |      46 |
+| `PassResult::unchanged()`                     | `prattail/src/transducer.rs` |      55 |
+| `PassResult::changed()`                       | `prattail/src/transducer.rs` |      63 |
+| `WeightNormalization`                         | `prattail/src/transducer.rs` |     234 |
+| `DeadStateElimination`                        | `prattail/src/transducer.rs` |     113 |
+| `StateMinimization`                           | `prattail/src/transducer.rs` |     156 |
+| `BeamPruning`                                 | `prattail/src/transducer.rs` |     187 |
+| `TransducerCascade`                           | `prattail/src/transducer.rs` |     300 |
+| `TransducerCascade::new()`                    | `prattail/src/transducer.rs` |     309 |
+| `TransducerCascade::default_pipeline()`       | `prattail/src/transducer.rs` |     322 |
+| `TransducerCascade::with_beam()`              | `prattail/src/transducer.rs` |     331 |
+| `TransducerCascade::add_pass()`               | `prattail/src/transducer.rs` |     340 |
+| `TransducerCascade::run()`                    | `prattail/src/transducer.rs` |     353 |
+| `TransducerCascade::run_all()`                | `prattail/src/transducer.rs` |     394 |
+| `PredictionWfst::state_count()`               | `prattail/src/wfst.rs`       |     532 |
+| `PredictionWfst::reachable_state_count()`     | `prattail/src/wfst.rs`       |     537 |
+| `PredictionWfst::remove_unreachable_states()` | `prattail/src/wfst.rs`       |     555 |
+| `PredictionWfst::minimize()`                  | `prattail/src/wfst.rs`       |     437 |
+| `PredictionWfst::prune_by_beam()`             | `prattail/src/wfst.rs`       |     598 |
+| `PredictionWfst::normalize_weights()`         | `prattail/src/wfst.rs`       |     624 |
+| Pipeline integration (E1 cascade call)        | `prattail/src/pipeline.rs`   |     845 |
 
 **Tests (in `transducer.rs`):**
 
-| Test                                     | What it verifies                              |
-|:-----------------------------------------|:----------------------------------------------|
-| `test_pass_result_unchanged`             | `PassResult::unchanged()` has zero changes    |
-| `test_pass_result_changed`               | `PassResult::changed()` carries count+summary |
-| `test_dead_state_elimination_not_applicable` | 2-state WFST: pass not applicable         |
-| `test_state_minimization_pass`           | Union-created duplicates get merged           |
-| `test_beam_pruning_pass`                 | Transitions outside beam are pruned           |
-| `test_beam_pruning_infinite_beam`        | Infinite beam: pass not applicable            |
-| `test_weight_normalization_pass`         | Best weight becomes 0.0 after normalization   |
-| `test_cascade_empty`                     | Empty cascade: 1 iteration, 0 changes         |
-| `test_cascade_default_pipeline`          | Default has 3 passes in priority order         |
-| `test_cascade_with_beam`                 | with_beam adds 4th pass                       |
-| `test_cascade_convergence`               | Union WFST converges in <= 3 iterations        |
-| `test_cascade_run_all`                   | Multi-category run produces summary            |
-| `test_cascade_max_iterations`            | Safety bound respected                         |
-| `test_cascade_priority_ordering`         | Reverse insertion still yields correct order   |
-| `test_cascade_debug_format`              | Debug output includes all pass names           |
+| Test                                         | What it verifies                              |
+|:---------------------------------------------|:----------------------------------------------|
+| `test_pass_result_unchanged`                 | `PassResult::unchanged()` has zero changes    |
+| `test_pass_result_changed`                   | `PassResult::changed()` carries count+summary |
+| `test_dead_state_elimination_not_applicable` | 2-state WFST: pass not applicable             |
+| `test_state_minimization_pass`               | Union-created duplicates get merged           |
+| `test_beam_pruning_pass`                     | Transitions outside beam are pruned           |
+| `test_beam_pruning_infinite_beam`            | Infinite beam: pass not applicable            |
+| `test_weight_normalization_pass`             | Best weight becomes 0.0 after normalization   |
+| `test_cascade_empty`                         | Empty cascade: 1 iteration, 0 changes         |
+| `test_cascade_default_pipeline`              | Default has 3 passes in priority order        |
+| `test_cascade_with_beam`                     | with_beam adds 4th pass                       |
+| `test_cascade_convergence`                   | Union WFST converges in <= 3 iterations       |
+| `test_cascade_run_all`                       | Multi-category run produces summary           |
+| `test_cascade_max_iterations`                | Safety bound respected                        |
+| `test_cascade_priority_ordering`             | Reverse insertion still yields correct order  |
+| `test_cascade_debug_format`                  | Debug output includes all pass names          |
 
 ---
 

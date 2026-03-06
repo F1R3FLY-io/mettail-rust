@@ -125,6 +125,7 @@ fn bench_dispatch(c: &mut Criterion) {
                                 None,
                                 &mettail_prattail::cost_benefit::OptimizationGates::all_enabled(),
                                 &std::collections::HashSet::new(),
+                                &[],
                             );
                         }
                     }

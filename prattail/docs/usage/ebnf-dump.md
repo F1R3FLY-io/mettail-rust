@@ -76,13 +76,13 @@ Quoted with double quotes:
 
 Angle brackets for parameterized token classes:
 
-| Token | Meaning |
-|---|---|
-| `<integer>` | Integer literal: `digit, { digit }` |
-| `<float>` | Float literal: `digit, { digit }, ".", digit, { digit }` |
-| `<boolean>` | Boolean literal: `"true" \| "false"` |
-| `<string>` | String literal (double-quoted with escapes) |
-| `<ident>` | Identifier: `letter \| "_", { letter \| digit \| "_" }` |
+| Token       | Meaning                                                  |
+|-------------|----------------------------------------------------------|
+| `<integer>` | Integer literal: `digit, { digit }`                      |
+| `<float>`   | Float literal: `digit, { digit }, ".", digit, { digit }` |
+| `<boolean>` | Boolean literal: `"true" \| "false"`                     |
+| `<string>`  | String literal (double-quoted with escapes)              |
+| `<ident>`   | Identifier: `letter \| "_", { letter \| digit \| "_" }`  |
 
 ### Optional Groups
 
@@ -139,18 +139,18 @@ Int = <integer>                       (* NumLit *)
     ;
 ```
 
-| Annotation | Meaning |
-|---|---|
-| `(* Label *)` | Constructor name |
-| `(* Label — (L, R) *)` | Infix with binding power pair (left_bp, right_bp) |
-| `(* Label — (L, R) — right *)` | Right-associative infix |
-| `(* Label — (L, R) — right — mixfix *)` | Right-associative mixfix (ternary, etc.) |
-| `(* Label — prefix bp=N *)` | Unary prefix with binding power N |
-| `(* Label — postfix bp=N *)` | Postfix with left binding power N |
-| `(* Label — cast Src → Tgt *)` | Cast rule (parse Src, wrap as Tgt) |
-| `(* Label — cross Src → Tgt *)` | Cross-category infix (operands from Src, result in Tgt) |
-| `(* Label — binder *)` | Rule with variable binder(s) |
-| `(* group *)` | Parenthesized grouping |
+| Annotation                              | Meaning                                                 |
+|-----------------------------------------|---------------------------------------------------------|
+| `(* Label *)`                           | Constructor name                                        |
+| `(* Label — (L, R) *)`                  | Infix with binding power pair (left_bp, right_bp)       |
+| `(* Label — (L, R) — right *)`          | Right-associative infix                                 |
+| `(* Label — (L, R) — right — mixfix *)` | Right-associative mixfix (ternary, etc.)                |
+| `(* Label — prefix bp=N *)`             | Unary prefix with binding power N                       |
+| `(* Label — postfix bp=N *)`            | Postfix with left binding power N                       |
+| `(* Label — cast Src → Tgt *)`          | Cast rule (parse Src, wrap as Tgt)                      |
+| `(* Label — cross Src → Tgt *)`         | Cross-category infix (operands from Src, result in Tgt) |
+| `(* Label — binder *)`                  | Rule with variable binder(s)                            |
+| `(* group *)`                           | Parenthesized grouping                                  |
 
 ### Precedence Tables
 

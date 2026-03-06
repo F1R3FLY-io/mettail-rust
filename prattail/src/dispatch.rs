@@ -10,6 +10,7 @@ use std::fmt::Write;
 
 use crate::automata::codegen::terminal_to_variant_name;
 use crate::prediction::{CrossCategoryOverlap, FirstSet};
+use crate::recursive::RDRuleInfo;
 
 /// Deterministic cross-category arms grouped by (source_category, token).
 /// Each entry maps to a list of (label, op_variant, operator) tuples.
@@ -54,12 +55,76 @@ fn write_token_pattern(buf: &mut String, token: &str) {
     }
 }
 
+/// G1 Phase 1: Check whether the fallback `parse_Cat_own` is dead code for a
+/// deterministic cross-category arm dispatching on token T.
+///
+/// Returns `true` when T cannot be handled by `parse_Cat_own` — meaning the
+/// save/restore can be eliminated and the arm can commit directly.
+///
+/// The fallback is dead when:
+/// 1. T ∉ FIRST(target_category) — already guaranteed by deterministic classification
+/// 2. T is not in any cast rule source's unique-to-source tokens for this target
+/// 3. T is not an RD rule dispatch token for this target category
+///
+/// When any of these fail, `parse_Cat_own` could handle T via a cast arm or
+/// RD rule, so save/restore must be retained.
+fn is_deterministic_fallback_dead(
+    token: &str,
+    target_category: &str,
+    cast_rules: &[CastRule],
+    first_sets: &HashMap<String, FirstSet>,
+    rd_rules: &[RDRuleInfo],
+) -> bool {
+    let target_first = match first_sets.get(target_category) {
+        Some(f) => f,
+        None => return true, // No FIRST set → nothing can catch T
+    };
+
+    // Check 1: T should not be in target's own FIRST set (already guaranteed
+    // by deterministic classification, but verify defensively)
+    if target_first.contains(token) {
+        return false;
+    }
+
+    // Check 2: Could any cast rule targeting this category catch T?
+    // A cast arm for source S is emitted when T ∈ FIRST(S) \ FIRST(target).
+    // Since T ∉ FIRST(target) (check 1), we only need T ∈ FIRST(S).
+    for cast in cast_rules {
+        if cast.target_category != target_category {
+            continue;
+        }
+        if let Some(source_first) = first_sets.get(&cast.source_category) {
+            if source_first.contains(token) {
+                return false; // Cast arm would catch T
+            }
+        }
+    }
+
+    // Check 3: Could an RD rule in the target category dispatch on T?
+    // RD rules dispatch on their first terminal, which appears in FIRST(target).
+    // Since we already checked T ∉ FIRST(target), this is redundant — but
+    // verify defensively in case FIRST set computation misses an RD token.
+    for rd_rule in rd_rules {
+        if rd_rule.category != target_category {
+            continue;
+        }
+        if let Some(crate::recursive::RDSyntaxItem::Terminal(t)) = rd_rule.items.first() {
+            if terminal_to_variant_name(t) == token {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
 /// Write weight-ordered dispatch code for a category using WFST prediction.
 ///
-/// Consults the prediction WFST to order and resolve ambiguous alternatives.
-/// When `composed_resolutions` is `Some`, ambiguous tokens are resolved
-/// deterministically via the precomputed composed dispatch table — no
-/// save/restore backtracking is emitted.
+/// Consults the prediction WFST to order dispatch arms by weight.
+/// `composed_resolutions` (when `Some`) provides weight lookups for ambiguous
+/// tokens; `weight_map` provides weights for deterministic tokens.  Both are
+/// used for arm ordering only — save/restore is always emitted for both
+/// deterministic (defense-in-depth) and ambiguous (backtracking) arms.
 pub fn write_category_dispatch(
     buf: &mut String,
     category: &str,
@@ -72,6 +137,7 @@ pub fn write_category_dispatch(
     weight_map: Option<&HashMap<(String, String), f64>>,
     optimization_gates: &crate::cost_benefit::OptimizationGates,
     dead_rules: &std::collections::HashSet<String>,
+    rd_rules: &[RDRuleInfo],
 ) {
     if cross_category_rules.is_empty() && cast_rules.is_empty() {
         return;
@@ -134,12 +200,10 @@ pub fn write_category_dispatch(
 
     // Emit deterministic arms — one arm per (source_category, token)
     //
-    // Defense-in-depth: deterministic arms use save/restore with fallback
-    // to parse_Cat_own. When FIRST set classification is correct, the fast
-    // path commits without backtracking (the source parse + operator peek
-    // always succeeds). When it doesn't hold (edge cases), position restores
-    // and own-category parsing handles the token. The save/restore cost is
-    // one pointer copy — negligible.
+    // G1 Phase 1: When backtracking_elimination is enabled and the fallback
+    // `parse_Cat_own` is provably dead (token T cannot be handled by any
+    // cast arm or RD rule in the target category), emit committed codegen
+    // without save/restore. Otherwise, retain defense-in-depth save/restore.
     for ((source_cat, token), rules) in &deterministic_by_token {
         // Look up weight from complete weight map, composed resolutions, or WFST
         let arm_weight = weight_map
@@ -157,62 +221,133 @@ pub fn write_category_dispatch(
         // C3: Thread parent weight into child category
         let src_upper = source_cat.to_uppercase();
 
+        // G1: Check if fallback is provably dead
+        let fallback_dead = optimization_gates.backtracking_elimination
+            && is_deterministic_fallback_dead(token, category, cast_rules, first_sets, rd_rules);
+
         if rules.len() == 1 {
             let (label, op_variant, _operator) = &rules[0];
-            write!(
-                arm,
-                " => {{ \
-                    let saved = *pos; \
-                    PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
-                    if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
-                        if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
+            if fallback_dead {
+                // G1: Committed codegen — no save/restore needed
+                write!(
+                    arm,
+                    " => {{ \
+                        PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                        let left = parse_{}(tokens, pos, 0)?; \
+                        expect_token(tokens, pos, |t| matches!(t, Token::{}), \"operator after cross-category expression\")?; \
+                        PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                        let right = parse_{}(tokens, pos, 0)?; \
+                        return Ok({}::{}(Box::new(left), Box::new(right))); \
+                    }}",
+                    source_cat, op_variant, source_cat, category, label,
+                )
+                .unwrap();
+            } else {
+                // Defense-in-depth: save/restore with fallback
+                write!(
+                    arm,
+                    " => {{ \
+                        let saved = *pos; \
+                        PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                        if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
+                            if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
+                                *pos += 1; \
+                                PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                                let right = parse_{}(tokens, pos, 0)?; \
+                                return Ok({}::{}(Box::new(left), Box::new(right))); \
+                            }} \
+                        }} \
+                        *pos = saved; \
+                        parse_{}_own(tokens, pos, min_bp) \
+                    }}",
+                    source_cat, op_variant, source_cat, category, label, category,
+                )
+                .unwrap();
+            }
+        } else {
+            if fallback_dead {
+                // G1: Committed codegen for multi-operator arms — no save/restore
+                write!(
+                    arm,
+                    " => {{ \
+                        PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                        let left = parse_{}(tokens, pos, 0)?; \
+                        if *pos < tokens.len() {{ \
+                            match &tokens[*pos].0 {{",
+                    source_cat,
+                )
+                .unwrap();
+
+                for (label, op_variant, _operator) in rules {
+                    write!(
+                        arm,
+                        "                Token::{} => {{ \
                             *pos += 1; \
                             PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
                             let right = parse_{}(tokens, pos, 0)?; \
                             return Ok({}::{}(Box::new(left), Box::new(right))); \
-                        }} \
-                    }} \
-                    *pos = saved; \
-                    parse_{}_own(tokens, pos, min_bp) \
-                }}",
-                source_cat, op_variant, source_cat, category, label, category,
-            )
-            .unwrap();
-        } else {
-            write!(
-                arm,
-                " => {{ \
-                    let saved = *pos; \
-                    PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
-                    if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
-                        if *pos < tokens.len() {{ \
-                            match &tokens[*pos].0 {{",
-                source_cat,
-            )
-            .unwrap();
+                        }},",
+                        op_variant, source_cat, category, label,
+                    )
+                    .unwrap();
+                }
 
-            for (label, op_variant, _operator) in rules {
                 write!(
                     arm,
-                    "                Token::{} => {{ \
-                        *pos += 1; \
-                        PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
-                        let right = parse_{}(tokens, pos, 0)?; \
-                        return Ok({}::{}(Box::new(left), Box::new(right))); \
-                    }},",
-                    op_variant, source_cat, category, label,
+                    "                _ => {{ return Err(ParseError::UnexpectedToken {{ \
+                        expected: Cow::Borrowed(\"operator after cross-category expression\"), \
+                        found: format_token_friendly(&tokens[*pos].0), \
+                        range: tokens[*pos].1, \
+                        hint: None, \
+                    }}); }} \
+                                }} \
+                            }} else {{ \
+                                return Err(ParseError::UnexpectedEof {{ \
+                                    expected: Cow::Borrowed(\"operator after cross-category expression\"), \
+                                    range: tokens[tokens.len()-1].1, \
+                                    hint: None, \
+                                }}); \
+                            }} \
+                        }}",
                 )
                 .unwrap();
-            }
+            } else {
+                // Defense-in-depth: save/restore with fallback
+                write!(
+                    arm,
+                    " => {{ \
+                        let saved = *pos; \
+                        PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                        if let Ok(left) = parse_{}(tokens, pos, 0) {{ \
+                            if *pos < tokens.len() {{ \
+                                match &tokens[*pos].0 {{",
+                    source_cat,
+                )
+                .unwrap();
 
-            arm.push_str(
-                "                _ => {} \
+                for (label, op_variant, _operator) in rules {
+                    write!(
+                        arm,
+                        "                Token::{} => {{ \
+                            *pos += 1; \
+                            PARENT_WEIGHT_{src_upper}.with(|c| c.set(running_weight_{category}())); \
+                            let right = parse_{}(tokens, pos, 0)?; \
+                            return Ok({}::{}(Box::new(left), Box::new(right))); \
+                        }},",
+                        op_variant, source_cat, category, label,
+                    )
+                    .unwrap();
+                }
+
+                arm.push_str(
+                    "                _ => {} \
+                                } \
                             } \
                         } \
-                    } \
-                    *pos = saved;",
-            );
-            write!(arm, " parse_{}_own(tokens, pos, min_bp) }}", category).unwrap();
+                        *pos = saved;",
+                );
+                write!(arm, " parse_{}_own(tokens, pos, min_bp) }}", category).unwrap();
+            }
         }
         dispatch_arms.push((arm, arm_weight));
     }

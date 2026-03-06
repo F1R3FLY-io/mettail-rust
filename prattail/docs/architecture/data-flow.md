@@ -560,14 +560,14 @@ FIRST sets + FOLLOW sets + DispatchTables + Overlaps
     │       Composed dispatch resolutions override arm ordering for ambiguous tokens
     │       Zero runtime cost — codegen-only arm reordering
     │
-    └───▶ [nfa_alternative_order()]
-            For categories with NFA spillover (intra-category ambiguity):
-              Query PredictionWfst for tropical weights of ambiguous rules
-              Sort by weight (lowest = most likely = tried first)
-              Default 0.5 for rules without explicit WFST weight
-            Feeds into NFA merged prefix arm generation (Phase 3, step 5g)
-
-    ───▶  Static CSR arrays + weight-ordered dispatch arms + NFA alternative ordering
+    ├───▶ [nfa_alternative_order()]
+    │       For categories with NFA spillover (intra-category ambiguity):
+    │         Query PredictionWfst for tropical weights of ambiguous rules
+    │         Sort by weight (lowest = most likely = tried first)
+    │         Default 0.5 for rules without explicit WFST weight
+    │       Feeds into NFA merged prefix arm generation (Phase 3, step 5g)
+    │
+    └──▶  Static CSR arrays + weight-ordered dispatch arms + NFA alternative ordering
           (embedded in generated TokenStream)
 ```
 
@@ -657,13 +657,14 @@ detect_grammar_warnings()
     ├───▶ Check LeftRecursion:
     │       For each rule, check if first syntax item is NonTerminal of same category
     │
-    └───▶ Check UnusedCategory:
-            Track which categories appear as NonTerminal in any rule
-            Flag categories that never appear
-
+    ├───▶ Check UnusedCategory:
+    │       Track which categories appear as NonTerminal in any rule
+    │       Flag categories that never appear
+    │
     ▼
 Vec<GrammarWarning>
     │
+    ▼
     emitted as compile-time warnings (don't block compilation)
 ```
 
@@ -678,7 +679,7 @@ All generated code is assembled in `pipeline.rs`:
                      │      Generated String      │
                      ├────────────────────────────┤
                      │                            │
-Phase 2 output ────▶ ┊ // Lexer                   │
+Phase 2 output ────▶ │ // Lexer                   │
                      │ enum Token<'a> { ... }     │
                      │ struct Position { ... }    │
                      │ struct Range { ... }       │
@@ -686,7 +687,7 @@ Phase 2 output ────▶ ┊ // Lexer                   │
                      │ static CHAR_CLASS = [...]; │
                      │ fn lex<'a>(input) -> ...   │
                      │                            │
-Phase 3 output ────▶ ┊ // Parser helpers          │
+Phase 3 output ────▶ │ // Parser helpers          │
                      │ fn expect_token(...)       │
                      │ fn expect_ident(...)       │
                      │ fn peek_token(...)         │
@@ -735,7 +736,7 @@ Phase 3 output ────▶ ┊ // Parser helpers          │
                      │     with_file_id()         │
                      │ }                          │
                      │ impl Int  { ... }          │
-                     └─────────────┊──────────────┘
+                     └─────────────┬──────────────┘
                                    │
                                    ▼
                       str::parse::<TokenStream>()
@@ -748,25 +749,25 @@ Phase 3 output ────▶ ┊ // Parser helpers          │
 
 ## Complexity
 
-| Phase                            | Time                                               | Space                    |
-|----------------------------------|------------------------------------------------------|--------------------------|
-| Extraction                       | O(R × T) where R = rules, T = terminals per rule    | O(R + T_total)           |
-| NFA construction (trie)          | O(T_total × L) where L = avg terminal length        | O(NFA states)            |
-| Alphabet partitioning            | O(256 × NFA states)                                 | O(256)                   |
-| Subset construction              | O(2^N × C) worst case, O(D × C) typical             | O(D × C)                 |
-| DFA minimization                 | O(D × C × log D)                                    | O(D)                     |
-| Lexer codegen                    | O(D × C)                                            | O(D × C)                 |
-| Binding power analysis           | O(R_infix) two-pass                                 | O(R_infix)               |
-| FIRST set computation            | O(R × Categories) iterations                        | O(Categories × Tokens)   |
-| FOLLOW set computation           | O(R × Categories) iterations                        | O(Categories × Tokens)   |
-| Dispatch table building          | O(R × Tokens)                                       | O(Categories × Tokens)   |
-| Grammar warnings                 | O(R × Categories)                                   | O(R)                     |
-| RD handler generation            | O(R_structural × Items)                             | O(R_structural)          |
-| Pratt parser generation          | O(Categories × R)                                   | O(Categories)            |
-| Recovery generation              | O(Categories × \|FOLLOW\|)                          | O(Categories)            |
-| Cross-category dispatch          | O(Categories^2 × Tokens)                            | O(Categories^2)          |
-| NFA spillover detection          | O(Categories × Tokens × R_per_token)                | O(Categories × R_ambig)  |
-| Final parse (str → TokenStream)  | O(\|generated code\|)                               | O(\|generated code\|)    |
+| Phase                           | Time                                             | Space                   |
+|---------------------------------|--------------------------------------------------|-------------------------|
+| Extraction                      | O(R × T) where R = rules, T = terminals per rule | O(R + T_total)          |
+| NFA construction (trie)         | O(T_total × L) where L = avg terminal length     | O(NFA states)           |
+| Alphabet partitioning           | O(256 × NFA states)                              | O(256)                  |
+| Subset construction             | O(2^N × C) worst case, O(D × C) typical          | O(D × C)                |
+| DFA minimization                | O(D × C × log D)                                 | O(D)                    |
+| Lexer codegen                   | O(D × C)                                         | O(D × C)                |
+| Binding power analysis          | O(R_infix) two-pass                              | O(R_infix)              |
+| FIRST set computation           | O(R × Categories) iterations                     | O(Categories × Tokens)  |
+| FOLLOW set computation          | O(R × Categories) iterations                     | O(Categories × Tokens)  |
+| Dispatch table building         | O(R × Tokens)                                    | O(Categories × Tokens)  |
+| Grammar warnings                | O(R × Categories)                                | O(R)                    |
+| RD handler generation           | O(R_structural × Items)                          | O(R_structural)         |
+| Pratt parser generation         | O(Categories × R)                                | O(Categories)           |
+| Recovery generation             | O(Categories × \|FOLLOW\|)                       | O(Categories)           |
+| Cross-category dispatch         | O(Categories^2 × Tokens)                         | O(Categories^2)         |
+| NFA spillover detection         | O(Categories × Tokens × R_per_token)             | O(Categories × R_ambig) |
+| Final parse (str → TokenStream) | O(\|generated code\|)                            | O(\|generated code\|)   |
 
 Where D = DFA states, C = equivalence classes, N = NFA states.
 

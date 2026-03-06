@@ -101,12 +101,12 @@ The `EditWeight` semiring provides a type-safe representation of edit costs
 for repair actions. The `RepairAction::edit_cost()` method (in `recovery.rs`)
 maps each repair action variant to an `EditWeight` value:
 
-| `RepairAction` Variant | `EditWeight` Value                                      |
-|------------------------|---------------------------------------------------------|
-| `SkipToSync`           | `EditWeight::new(skip_count as f64 * 0.5)`             |
-| `DeleteToken`          | `EditWeight::new(1.0)`                                 |
-| `SubstituteToken`      | `EditWeight::new(1.5)`                                 |
-| `InsertToken`          | `EditWeight::new(2.0)`                                 |
+| `RepairAction` Variant | `EditWeight` Value                         |
+|------------------------|--------------------------------------------|
+| `SkipToSync`           | `EditWeight::new(skip_count as f64 * 0.5)` |
+| `DeleteToken`          | `EditWeight::new(1.0)`                     |
+| `SubstituteToken`      | `EditWeight::new(1.5)`                     |
+| `InsertToken`          | `EditWeight::new(2.0)`                     |
 
 This integration allows repair costs to be composed with other semiring-valued
 computations. For example, a `ProductWeight<TropicalWeight, EditWeight>` can
@@ -126,22 +126,22 @@ current position and returns the one with the minimum tropical cost:
 
 ```
 parse error at pos P in category C
-        |
-        +-- SkipToSync: scan [P, P+1, ..., P+31] for first sync token
-        |   cost = skip_count x 0.5   (if sync at P: cost = 0.0)
-        |   -> RepairResult { SkipToSync, new_pos = P + skip_count }
-        |
-        +-- DeleteToken (if P < len):
-        |   cost = 1.0
-        |   -> RepairResult { DeleteToken, new_pos = P + 1 }
-        |
-        +-- InsertToken for each sync_id in sync_tokens:
-        |   cost = 2.0
-        |   -> RepairResult { InsertToken(sync_id), new_pos = P }
-        |
-        +-- SubstituteToken for each sync_id (if P < len):
-            cost = 1.5
-            -> RepairResult { SubstituteToken(sync_id), new_pos = P + 1 }
+╷
+├── SkipToSync: scan [P, P+1, ..., P+31] for first sync token
+│   cost = skip_count x 0.5   (if sync at P: cost = 0.0)
+│   -> RepairResult { SkipToSync, new_pos = P + skip_count }
+│
+├── DeleteToken (if P < len):
+│   cost = 1.0
+│   -> RepairResult { DeleteToken, new_pos = P + 1 }
+│
+├── InsertToken for each sync_id in sync_tokens:
+│   cost = 2.0
+│   -> RepairResult { InsertToken(sync_id), new_pos = P }
+│
+└── SubstituteToken for each sync_id (if P < len):
+    cost = 1.5
+    -> RepairResult { SubstituteToken(sync_id), new_pos = P + 1 }
 ```
 
 The function picks the globally minimum cost across all candidates using
@@ -239,8 +239,8 @@ The three multiplier methods on `RecoveryContext`:
 
 **`skip_multiplier()`** -- scales `SkipToSync` and `DeleteToken` costs:
 
-| Condition                | Multiplier                                          |
-|--------------------------|-----------------------------------------------------|
+| Condition                | Multiplier                                           |
+|--------------------------|------------------------------------------------------|
 | `depth > 1000`           | x 0.5 -- deep nesting; noise is likely, skip is safe |
 | `depth < 10`             | x 2.0 -- shallow; precise repair preferred           |
 | `frame_kind == InfixRHS` | x 0.75 -- bad operand; skip to next statement        |
@@ -251,16 +251,16 @@ frame with neutral binding power gives skip multiplier `2.0 x 0.75 = 1.5`.
 
 **`insert_multiplier()`** -- scales `InsertToken` costs:
 
-| Condition                  | Multiplier                                         |
-|----------------------------|----------------------------------------------------|
+| Condition                  | Multiplier                                          |
+|----------------------------|-----------------------------------------------------|
 | `frame_kind == Collection` | x 0.5 -- missing element/separator is common        |
 | `frame_kind == Group`      | x 0.5 -- missing closing delimiter is common        |
 | `binding_power > 20`       | x 1.5 -- deep tight-binding context; precise repair |
 
 **`substitute_multiplier()`** -- scales `SubstituteToken` costs:
 
-| Condition              | Multiplier                                  |
-|------------------------|---------------------------------------------|
+| Condition              | Multiplier                                   |
+|------------------------|----------------------------------------------|
 | `frame_kind == Mixfix` | x 0.75 -- wrong token in multi-part operator |
 
 ---
@@ -317,7 +317,7 @@ end-of-input or lookahead exhausted -> ValidContinuation
 
 | Result                     | Multiplier                                                               |
 |----------------------------|--------------------------------------------------------------------------|
-| `ValidContinuation`        | x 0.5 -- repair leads to good continuation                                |
+| `ValidContinuation`        | x 0.5 -- repair leads to good continuation                               |
 | `FailedAt { position: n }` | x (1.0 + (lookahead_depth - n) x 0.2) -- earlier failures penalized more |
 
 For example, with `lookahead_depth = 5`, a failure at position 4 (near the
@@ -398,43 +398,43 @@ operand of `+`. The result is the expression `a + b`.
 
   repair lattice from pos P:
 
-  +------------------------------------------------------------+
-  |                                                            |
-  |   skip 1 (0.5)    skip 2 (1.0)    sync at ;                |
-  |   P ----------- P+1 ------------ P+2 ----------- P+3       |
-  |   |              |                |               |        |
-  |   | delete(1.0)  | delete(1.0)    | delete(1.0)   |        |
-  |   |              |                |               |        |
-  |   P+1            P+2              P+3             P+4      |
-  |                                                            |
-  |   insert at P (2.0):  fabricate missing token, stay at P   |
-  |   substitute at P (1.5): replace *, advance to P+1         |
-  |                                                            |
-  +------------------------------------------------------------+
+  ┌────────────────────────────────────────────────────────────┐
+  │                                                            │
+  │   skip 1 (0.5)    skip 2 (1.0)    sync at ;                │
+  │   P ----------- P+1 ------------ P+2 ----------- P+3       │
+  │   |              |                |               |        │
+  │   | delete(1.0)  | delete(1.0)    | delete(1.0)   |        │
+  │   |              |                |               |        │
+  │   P+1            P+2              P+3             P+4      │
+  │                                                            │
+  │   insert at P (2.0):  fabricate missing token, stay at P   │
+  │   substitute at P (1.5): replace *, advance to P+1         │
+  │                                                            │
+  └────────────────────────────────────────────────────────────┘
 ```
 
 ### 11.2 Three-Tier Cost Pyramid
 
 ```
-  +-----------------------------------------------------+
-  |                  Tier 3                             |
-  |           Parse Simulation                          |
-  |    (simulate_after_repair, lookahead 5 tokens)      |
-  |    cost multiplier: 0.5x (valid) .. 2.0x (failed)   |
-  |    - - - - - - - - - - - - - - - - - - - - - - -      |
-  |                  Tier 2                             |
-  |            Bracket Balance                          |
-  |   (open_parens / open_braces / open_brackets)       |
-  |   insert matching closer: 0.3x (strongly preferred) |
-  |   - - - - - - - - - - - - - - - - - - - - - - -       |
-  |                  Tier 1                             |
-  |           Frame Context                             |
-  |   (FrameKind, depth, binding_power)                 |
-  |   skip_mult / insert_mult / substitute_mult         |
-  |   - - - - - - - - - - - - - - - - - - - - - - -       |
-  |              Base Costs                             |
-  |     Skip 0.5/tok . Delete 1.0 . Sub 1.5 . Ins 2.0   |
-  +-----------------------------------------------------+
+  ┌────────────────────────────────────────────────────────────┐
+  │                  Tier 3                                    │
+  │           Parse Simulation                                 │
+  │    (simulate_after_repair, lookahead 5 tokens)             │
+  │    cost multiplier: 0.5x (valid) .. 2.0x (failed)          │
+  ├────────────────────────────────────────────────────────────┤
+  │                  Tier 2                                    │
+  │            Bracket Balance                                 │
+  │   (open_parens / open_braces / open_brackets)              │
+  │   insert matching closer: 0.3x (strongly preferred)        │
+  ├────────────────────────────────────────────────────────────┤
+  │                  Tier 1                                    │
+  │           Frame Context                                    │
+  │   (FrameKind, depth, binding_power)                        │
+  │   skip_mult / insert_mult / substitute_mult                │
+  ├────────────────────────────────────────────────────────────┤
+  │              Base Costs                                    │
+  │     Skip 0.5/tok . Delete 1.0 . Sub 1.5 . Ins 2.0          │
+  └────────────────────────────────────────────────────────────┘
 ```
 
 Tier 1 is always applied (cheapest: simple multiplications from struct fields).

@@ -14,17 +14,17 @@ to reason about the **distribution** over all possible parses:
 - **Beam pruning** is only optimal when edge weights are locally normalized,
   which requires probability-preserving weight pushing.
 
-All of these require a semiring where ⊕ **sums probabilities** rather than
+All of these require a semiring where ⊕  **sums probabilities** rather than
 selecting the minimum. The log semiring provides exactly this capability by
 working in the negative-log-probability domain, where probability addition
 becomes the numerically stable `log-sum-exp` operation.
 
 ```
   ┌──────────────────────────────────────────────────────────┐
-  │  Tropical: "Which path is best?"   ⊕ = min              │
-  │  Log:      "What is the total?"    ⊕ = log-sum-exp      │
+  │  Tropical: "Which path is best?"   ⊕  = min              │
+  │  Log:      "What is the total?"    ⊕  = log-sum-exp      │
   │                                                          │
-  │  Same ⊗ = addition (probability multiplication)          │
+  │  Same ⊗  = addition (probability multiplication)         │
   │  Same algorithms (Viterbi, forward-backward, beam)       │
   │  Different semantics from one algebraic swap             │
   └──────────────────────────────────────────────────────────┘
@@ -44,13 +44,13 @@ S_log = (R+ u {+inf},  log-sum-exp,  +,  +inf,  0.0)
 
 where:
 
-| Component          | Symbol | Definition                                    | Interpretation                       |
-|--------------------|--------|-----------------------------------------------|--------------------------------------|
-| Carrier set        | K      | R+ u {+inf} = [0, +inf]                      | Negative log probabilities           |
-| Addition (⊕)       | lse    | lse(a, b) = -ln(exp(-a) + exp(-b))           | Sum probabilities                    |
-| Multiplication (⊗) | +      | a + b                                         | Multiply probabilities               |
-| Additive identity  | 0      | +inf                                          | Probability 0 (impossible)           |
-| Multiplicative id  | 1      | 0.0                                           | Probability 1 (certain)              |
+| Component          | Symbol | Definition                         | Interpretation             |
+|--------------------|--------|------------------------------------|----------------------------|
+| Carrier set        | K      | R+ u {+inf} = [0, +inf]            | Negative log probabilities |
+| Addition (⊕)       | lse    | lse(a, b) = -ln(exp(-a) + exp(-b)) | Sum probabilities          |
+| Multiplication (⊗) | +      | a + b                              | Multiply probabilities     |
+| Additive identity  | 0      | +inf                               | Probability 0 (impossible) |
+| Multiplicative id  | 1      | 0.0                                | Probability 1 (certain)    |
 
 ### 2.2 Negative Log Probability Encoding
 
@@ -134,7 +134,7 @@ This is the associativity of real addition. QED
 
 Since 0.0 is the additive identity for real numbers. QED
 
-### 3.6 (D1) Left Distributivity: a ⊗ (b ⊕ c) = (a ⊗ b) ⊕ (a ⊗ c)
+### 3.6 (D1) Left Distributivity: a ⊗  (b ⊕  c) = (a ⊗  b) ⊕  (a ⊗  c)
 
 In probability space:
 
@@ -166,7 +166,7 @@ yields +inf. In probability space: 0 * p = 0, which maps to -ln(0) = +inf. QED
 
 ### 4.1 Commutativity
 
-The log semiring is **commutative**: a ⊗ b = a + b = b + a = b ⊗ a. QED
+The log semiring is **commutative**: a ⊗  b = a + b = b + a = b ⊗  a. QED
 
 ### 4.2 Non-Idempotency
 
@@ -176,7 +176,7 @@ the tropical semiring.
 **Proof.** Let a be any finite weight in K. Then:
 
 ```
-a ⊕ a = lse(a, a)
+a ⊕  a = lse(a, a)
       = -ln(exp(-a) + exp(-a))
       = -ln(2 * exp(-a))
       = -ln(2) - ln(exp(-a))
@@ -184,7 +184,7 @@ a ⊕ a = lse(a, a)
       = a - ln(2)
 ```
 
-Since ln(2) ~ 0.6931 > 0, we have a - ln(2) < a, so a ⊕ a != a for any
+Since ln(2) ~ 0.6931 > 0, we have a - ln(2) < a, so a ⊕  a != a for any
 finite a. QED
 
 **Interpretation.** If two paths each carry probability p, combining them
@@ -228,23 +228,23 @@ impl LogWeight {
 
 ### 5.2 Reference Table
 
-| Weight w       | Probability p = exp(-w)  | Interpretation              |
-|----------------|--------------------------|------------------------------|
-| 0.0            | 1.0                      | Certain                      |
-| 0.6931 (ln 2)  | 0.5                      | Fair coin flip               |
-| 1.0            | 0.3679                   | Moderate                     |
-| 2.3026 (ln 10) | 0.1                      | Unlikely                     |
-| 4.6052 (ln 100)| 0.01                     | Very unlikely                |
-| 6.9078 (ln 1000)| 0.001                   | Rare                         |
-| +inf           | 0.0                      | Impossible                   |
+| Weight w         | Probability p = exp(-w) | Interpretation |
+|------------------|-------------------------|----------------|
+| 0.0              | 1.0                     | Certain        |
+| 0.6931 (ln 2)    | 0.5                     | Fair coin flip |
+| 1.0              | 0.3679                  | Moderate       |
+| 2.3026 (ln 10)   | 0.1                     | Unlikely       |
+| 4.6052 (ln 100)  | 0.01                    | Very unlikely  |
+| 6.9078 (ln 1000) | 0.001                   | Rare           |
+| +inf             | 0.0                     | Impossible     |
 
 ### 5.3 Useful Identities
 
 ```
-from_probability(p1 * p2)  =  from_probability(p1) ⊗ from_probability(p2)
+from_probability(p1 * p2)  =  from_probability(p1) ⊗  from_probability(p2)
                             =  -ln(p1) + (-ln(p2))
 
-from_probability(p1 + p2)  =  from_probability(p1) ⊕ from_probability(p2)
+from_probability(p1 + p2)  =  from_probability(p1) ⊕  from_probability(p2)
                             =  lse(-ln(p1), -ln(p2))
 ```
 
@@ -358,7 +358,7 @@ Consider a 4-node DAG with two paths:
   ┌───┐  1.0   ┌───┐  1.5   ┌───┐
   │ 0 │───────>│ 1 │───────>│ 3 │   Path A: weight 1.0 + 1.5 = 2.5
   └───┘        └───┘        └───┘
-    │                          ^
+    │                         ^
     │   2.0    ┌───┐   1.0    │
     └─────────>│ 2 │──────────┘     Path B: weight 2.0 + 1.0 = 3.0
                └───┘
@@ -405,10 +405,10 @@ Total probability:  0.08209 + 0.04979 = 0.13188
 
 ### 7.4 Interpretation
 
-| Semiring     | forward[3] | Probability Interpretation             |
-|-------------|------------|----------------------------------------|
-| Tropical    | 2.5        | Best path has probability exp(-2.5) = 0.082 |
-| Log         | 2.026      | Total probability of all paths = exp(-2.026) = 0.132 |
+| Semiring | forward[3] | Probability Interpretation                           |
+|----------|------------|------------------------------------------------------|
+| Tropical | 2.5        | Best path has probability exp(-2.5) = 0.082          |
+| Log      | 2.026      | Total probability of all paths = exp(-2.026) = 0.132 |
 
 The log-semiring result (2.026) is **lower** than the tropical result (2.5)
 because both paths contribute probability mass. The total probability 0.132 >
@@ -441,8 +441,8 @@ FUNCTION forward_scores(edges, num_nodes) -> Vec<LogWeight>
   FOR node IN 0..num_nodes DO
     IF alpha[node].is_zero() THEN CONTINUE
     FOR (target, weight) IN edges[node] DO
-      contribution := alpha[node] ⊗ weight    // log: alpha + w
-      alpha[target] := alpha[target] ⊕ contribution  // log: lse
+      contribution := alpha[node] ⊗  weight    // log: alpha + w
+      alpha[target] := alpha[target] ⊕  contribution  // log: lse
 ```
 
 ### 8.3 Backward Pass
@@ -456,8 +456,8 @@ FUNCTION backward_scores(edges, num_nodes, final_node) -> Vec<LogWeight>
 
   FOR node IN (0..num_nodes).rev() DO
     FOR (target, weight) IN edges[node] DO
-      contribution := weight ⊗ beta[target]
-      beta[node] := beta[node] ⊕ contribution
+      contribution := weight ⊗  beta[target]
+      beta[node] := beta[node] ⊕  contribution
 ```
 
 ### 8.4 Edge Posteriors
@@ -658,14 +658,14 @@ wfst-log = ["serde", "postcard"]
 
 ### 11.1 What is Gated
 
-| Module               | Feature Gate  | Purpose                          |
-|----------------------|---------------|----------------------------------|
-| `LogWeight`          | `wfst-log`    | Negative-log-probability weights |
-| `forward_backward.rs`| `wfst-log`*  | Forward-backward scoring         |
-| `log_push.rs`        | `wfst-log`    | Mohri weight normalization       |
-| `training.rs`        | `wfst-log`    | SGD training loop + serialization|
-| N-best paths         | `wfst-log`    | k-best path enumeration          |
-| `with_trained_weights()`| `wfst-log` | Load trained weights at runtime  |
+| Module                   | Feature Gate | Purpose                           |
+|--------------------------|--------------|-----------------------------------|
+| `LogWeight`              | `wfst-log`   | Negative-log-probability weights  |
+| `forward_backward.rs`    | `wfst-log`*  | Forward-backward scoring          |
+| `log_push.rs`            | `wfst-log`   | Mohri weight normalization        |
+| `training.rs`            | `wfst-log`   | SGD training loop + serialization |
+| N-best paths             | `wfst-log`   | k-best path enumeration           |
+| `with_trained_weights()` | `wfst-log`   | Load trained weights at runtime   |
 
 *Note: `forward_backward.rs` is generic over `W: Semiring` and compiles
 without `wfst-log`, but its LogWeight-specific tests are gated. The
@@ -686,36 +686,36 @@ without `wfst-log`, but its LogWeight-specific tests are gated. The
 
 ## 12. Comparison with TropicalWeight
 
-| Property             | TropicalWeight                | LogWeight                         |
-|----------------------|-------------------------------|-----------------------------------|
-| Carrier              | R+ u {+inf}                   | R+ u {+inf}                       |
-| ⊕ (plus)             | min(a, b)                     | -ln(exp(-a) + exp(-b))            |
-| ⊗ (times)            | a + b                         | a + b                             |
-| 0 (zero)             | +inf                          | +inf                              |
-| 1 (one)              | 0.0                           | 0.0                               |
-| Idempotent?          | **Yes**: min(a,a) = a          | **No**: lse(a,a) = a - ln(2)     |
-| Use case             | Best-path (Viterbi)           | Sum-over-paths (forward-backward) |
-| Training?            | No (no gradients)             | Yes (expected counts via FB)      |
-| Numerical complexity | Trivial (min, add)            | Moderate (exp, ln, stable form)   |
-| Feature gate         | Always available               | `wfst-log`                        |
+| Property             | TropicalWeight        | LogWeight                         |
+|----------------------|-----------------------|-----------------------------------|
+| Carrier              | R+ u {+inf}           | R+ u {+inf}                       |
+| ⊕  (plus)            | min(a, b)             | -ln(exp(-a) + exp(-b))            |
+| ⊗  (times)           | a + b                 | a + b                             |
+| 0 (zero)             | +inf                  | +inf                              |
+| 1 (one)              | 0.0                   | 0.0                               |
+| Idempotent?          | **Yes**: min(a,a) = a | **No**: lse(a,a) = a - ln(2)      |
+| Use case             | Best-path (Viterbi)   | Sum-over-paths (forward-backward) |
+| Training?            | No (no gradients)     | Yes (expected counts via FB)      |
+| Numerical complexity | Trivial (min, add)    | Moderate (exp, ln, stable form)   |
+| Feature gate         | Always available      | `wfst-log`                        |
 
 ### 12.1 The Critical Distinction: Idempotency
 
 The algebraic difference between the two semirings is exactly one axiom:
 
 ```
-Tropical:  a ⊕ a = min(a, a) = a           (idempotent)
-Log:       a ⊕ a = lse(a, a) = a - ln(2)   (NOT idempotent)
+Tropical:  a ⊕  a = min(a, a) = a           (idempotent)
+Log:       a ⊕  a = lse(a, a) = a - ln(2)   (NOT idempotent)
 ```
 
 This single difference changes the semantics of every algorithm:
 
-| Algorithm        | Tropical semantics               | Log semantics                    |
-|------------------|----------------------------------|----------------------------------|
-| Forward scores   | Min-cost path to each node       | Total probability to each node   |
-| Backward scores  | Min-cost path from each node     | Total probability from each node |
-| Forward[final]   | Viterbi best path weight         | Partition function Z             |
-| Beam pruning     | Prune paths worse than best + B  | Prune paths below P * exp(-B)   |
+| Algorithm       | Tropical semantics              | Log semantics                    |
+|-----------------|---------------------------------|----------------------------------|
+| Forward scores  | Min-cost path to each node      | Total probability to each node   |
+| Backward scores | Min-cost path from each node    | Total probability from each node |
+| Forward[final]  | Viterbi best path weight        | Partition function Z             |
+| Beam pruning    | Prune paths worse than best + B | Prune paths below P * exp(-B)    |
 
 ### 12.2 Same ⊗, Different ⊕
 
@@ -770,8 +770,8 @@ impl LogWeight {
     /// For |a-b| > 20, the correction term < 2e-9 and is dropped.
     #[inline]
     fn log_sum_exp(a: f64, b: f64) -> f64 {
-        if a == f64::INFINITY { return b; }  // 0 ⊕ b = b
-        if b == f64::INFINITY { return a; }  // a ⊕ 0 = a
+        if a == f64::INFINITY { return b; }  // 0 ⊕  b = b
+        if b == f64::INFINITY { return a; }  // a ⊕  0 = a
 
         let min_val = a.min(b);
         let diff = (a - b).abs();

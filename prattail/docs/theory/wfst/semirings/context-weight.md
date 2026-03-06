@@ -88,7 +88,7 @@ In WFST terms:
 
 ## 3. Semiring Axiom Verification
 
-We verify all required semiring axioms.  Since ⊕ and ⊗ are set union and
+We verify all required semiring axioms.  Since ⊕  and ⊗  are set union and
 intersection over a Boolean algebra, the axioms follow from classical set
 theory.  We provide explicit proofs with concrete witnesses for rigor.
 
@@ -141,7 +141,7 @@ Proof.  x in A ∩ U iff x in A and x in U.  Since U = Labels, x in U is
 always true for any x in Labels.  This reduces to x in A.  Therefore
 A ∩ U = A.  QED.
 
-### 3.3 Annihilation: 0̄ ⊗ A = A ⊗ 0̄ = 0̄
+### 3.3 Annihilation: 0̄ ⊗  A = A ⊗  0̄ = 0̄
 
 Proof.  ∅ ∩ A = {x | x in ∅ and x in A}.  Since x in ∅ is always false,
 the conjunction is false for all x, yielding ∅.  By commutativity of ∩,
@@ -151,7 +151,7 @@ Concrete witness: A = {1,2,3}.
 - ∅ ∩ {1,2,3} = ∅  Check.
 - {1,2,3} ∩ ∅ = ∅  Check.
 
-### 3.4 Distributivity: ⊗ distributes over ⊕
+### 3.4 Distributivity: ⊗  distributes over ⊕
 
 **Left distributivity**: A ∩ (B ∪ C) = (A ∩ B) ∪ (A ∩ C)
 
@@ -253,16 +253,16 @@ via rules {AddInt, SubInt} and segment 2 is reached via rules {MulFloat}:
   Segment 2: CW₂ = {MulFloat}           (float multiplication rule)
 ```
 
-With ⊗ = ∩ (intersection):
+With ⊗  = ∩ (intersection):
 ```
-  CW₁ ⊗ CW₂ = {AddInt, SubInt} ∩ {MulFloat} = ∅
+  CW₁ ⊗  CW₂ = {AddInt, SubInt} ∩ {MulFloat} = ∅
 ```
 The empty result correctly signals that no single rule contributed to both
 segments — this is a cross-category handoff, not a single-rule derivation.
 
-With ⊗ = ∪ (union — the wrong choice):
+With ⊗  = ∪ (union — the wrong choice):
 ```
-  CW₁ ⊗ CW₂ = {AddInt, SubInt} ∪ {MulFloat} = {AddInt, SubInt, MulFloat}
+  CW₁ ⊗  CW₂ = {AddInt, SubInt} ∪ {MulFloat} = {AddInt, SubInt, MulFloat}
 ```
 The union **grows monotonically** as segments are composed. Every rule that
 ever contributed to any segment would accumulate in the set, regardless of
@@ -425,7 +425,7 @@ If both are reachable via parallel WFST paths (e.g., the parser does not
 yet know the category):
 
 ```
-CW_combined = CW_Int ⊕ CW_Float
+CW_combined = CW_Int ⊕  CW_Float
             = 0b0000001 ∪ 0b0001000
             = 0b0001001
             = {AddInt, AddFloat}
@@ -454,7 +454,7 @@ CW_seg2 = {EqInt, EqFloat}    = 0b1100000
 Sequential composition:
 
 ```
-CW_path = CW_seg1 ⊗ CW_seg2
+CW_path = CW_seg1 ⊗  CW_seg2
         = 0b0000001 ∩ 0b1100000
         = 0b0000000
         = ∅
@@ -475,7 +475,7 @@ Float context:
 CW_int_ctx  = singleton(5) = 0b0100000   (EqInt)
 CW_float_ctx = singleton(6) = 0b1000000   (EqFloat)
 
-CW_dispatch = CW_int_ctx ⊕ CW_float_ctx
+CW_dispatch = CW_int_ctx ⊕  CW_float_ctx
             = 0b0100000 ∪ 0b1000000
             = 0b1100000
             = {EqInt, EqFloat}
@@ -491,18 +491,18 @@ replay while the parser tries the other.
 All ContextWeight operations reduce to single-instruction bitwise
 operations on `u128`:
 
-| Operation              | Implementation     | Time complexity | Space complexity |
-|------------------------|--------------------|-----------------|------------------|
-| `zero()`               | `0_u128`           | O(1)            | O(1) -- 16 bytes |
-| `one()`                | `u128::MAX`        | O(1)            | O(1) -- 16 bytes |
-| `plus(a, b)` (union)   | `a \| b`           | O(1)            | O(1) -- 16 bytes |
-| `times(a, b)` (intersect) | `a & b`         | O(1)            | O(1) -- 16 bytes |
-| `is_zero()`            | `bits == 0`        | O(1)            | --               |
-| `is_one()`             | `bits == u128::MAX`| O(1)            | --               |
-| `count()`              | `count_ones()`     | O(1)*           | --               |
-| `contains(id)`         | `(bits >> id) & 1` | O(1)            | --               |
-| `singleton(id)`        | `1 << id`          | O(1)            | O(1) -- 16 bytes |
-| `insert(id)`           | `bits \| (1 << id)`| O(1)            | O(1) -- 16 bytes |
+| Operation                 | Implementation      | Time complexity | Space complexity |
+|---------------------------|---------------------|-----------------|------------------|
+| `zero()`                  | `0_u128`            | O(1)            | O(1) -- 16 bytes |
+| `one()`                   | `u128::MAX`         | O(1)            | O(1) -- 16 bytes |
+| `plus(a, b)` (union)      | `a \| b`            | O(1)            | O(1) -- 16 bytes |
+| `times(a, b)` (intersect) | `a & b`             | O(1)            | O(1) -- 16 bytes |
+| `is_zero()`               | `bits == 0`         | O(1)            | --               |
+| `is_one()`                | `bits == u128::MAX` | O(1)            | --               |
+| `count()`                 | `count_ones()`      | O(1)*           | --               |
+| `contains(id)`            | `(bits >> id) & 1`  | O(1)            | --               |
+| `singleton(id)`           | `1 << id`           | O(1)            | O(1) -- 16 bytes |
+| `insert(id)`              | `bits \| (1 << id)` | O(1)            | O(1) -- 16 bytes |
 
 *`count_ones()` compiles to the hardware `popcnt` instruction on x86_64,
 which executes in a single cycle.
@@ -515,12 +515,12 @@ labels), at the cost of losing the `Copy` trait's zero-overhead semantics.
 
 **Comparison to alternative representations**:
 
-| Representation   | Plus (union)   | Times (intersect) | Space per weight  |
-|------------------|----------------|-------------------|-------------------|
-| `u128` bitset    | O(1)           | O(1)              | 16 bytes, inline  |
-| `HashSet<u8>`    | O(n)           | O(n)              | 24+ bytes, heap   |
-| `BTreeSet<u8>`   | O(n log n)     | O(n log n)        | 24+ bytes, heap   |
-| `Vec<bool>`      | O(n)           | O(n)              | n bytes, heap     |
+| Representation | Plus (union) | Times (intersect) | Space per weight |
+|----------------|--------------|-------------------|------------------|
+| `u128` bitset  | O(1)         | O(1)              | 16 bytes, inline |
+| `HashSet<u8>`  | O(n)         | O(n)              | 24+ bytes, heap  |
+| `BTreeSet<u8>` | O(n log n)   | O(n log n)        | 24+ bytes, heap  |
+| `Vec<bool>`    | O(n)         | O(n)              | n bytes, heap    |
 
 The bitset representation dominates in every metric for n <= 128.
 
@@ -689,20 +689,20 @@ value with zero overhead, same as a plain integer.
 
 ## 10. Comparison Table
 
-| Property                  | ContextWeight        | BooleanWeight        | CountingWeight       | TropicalWeight         |
-|---------------------------|----------------------|----------------------|----------------------|------------------------|
-| **Carrier**               | 𝒫({0..127}) via u128 | {false, true}       | N (natural numbers)  | R+ union {+inf}        |
-| **⊕ (plus)**              | ∪ (set union)        | ∨ (OR)              | + (addition)         | min                    |
-| **⊗ (times)**             | ∩ (set intersection) | ∧ (AND)             | x (multiplication)   | + (addition)           |
-| **0 (zero)**              | ∅                    | false               | 0                    | +inf                   |
-| **1 (one)**               | U (all bits set)     | true                | 1                    | 0.0                    |
-| **Commutative**           | Yes                  | Yes                 | Yes                  | Yes                    |
-| **Idempotent (⊕)**        | Yes (A ∪ A = A)      | Yes                 | No (3+3=6 != 3)     | Yes (min(a,a) = a)    |
-| **Size**                  | 2^128 elements       | 2 elements          | Countably infinite   | Uncountably infinite   |
-| **Semantics**             | Rule-set tracking    | Reachability        | Path counting        | Shortest path / cost   |
-| **PraTTaIL use**          | Ambiguity diagnosis  | Dead-rule detection | Ambiguity counting   | Priority dispatch      |
-| **Rust size**             | 16 bytes (inline)    | 1 byte (inline)     | 8 bytes (inline)     | 8 bytes (inline)       |
-| **Rust Display**          | ∅ / U / {nb\|bits}   | ⊤ / ⊥               | integer              | float / inf            |
+| Property           | ContextWeight        | BooleanWeight       | CountingWeight      | TropicalWeight       |
+|--------------------|----------------------|---------------------|---------------------|----------------------|
+| **Carrier**        | 𝒫({0..127}) via u128 | {false, true}       | N (natural numbers) | R+ union {+inf}      |
+| **⊕  (plus)**      | ∪ (set union)        | ∨ (OR)              | + (addition)        | min                  |
+| **⊗  (times)**     | ∩ (set intersection) | ∧ (AND)             | x (multiplication)  | + (addition)         |
+| **0 (zero)**       | ∅                    | false               | 0                   | +inf                 |
+| **1 (one)**        | U (all bits set)     | true                | 1                   | 0.0                  |
+| **Commutative**    | Yes                  | Yes                 | Yes                 | Yes                  |
+| **Idempotent (⊕)** | Yes (A ∪ A = A)      | Yes                 | No (3+3=6 != 3)     | Yes (min(a,a) = a)   |
+| **Size**           | 2^128 elements       | 2 elements          | Countably infinite  | Uncountably infinite |
+| **Semantics**      | Rule-set tracking    | Reachability        | Path counting       | Shortest path / cost |
+| **PraTTaIL use**   | Ambiguity diagnosis  | Dead-rule detection | Ambiguity counting  | Priority dispatch    |
+| **Rust size**      | 16 bytes (inline)    | 1 byte (inline)     | 8 bytes (inline)    | 8 bytes (inline)     |
+| **Rust Display**   | ∅ / U / {nb\|bits}   | ⊤ / ⊥               | integer             | float / inf          |
 
 ---
 
@@ -719,8 +719,8 @@ value with zero overhead, same as a plain integer.
 - `test_context_weight_semiring_laws` -- zero/one identity, annihilation, commutativity
 - `test_context_weight_union_intersection` -- concrete union/intersection with bit patterns
 - `test_context_weight_singleton_and_contains` -- singleton construction, membership, insert
-- `test_context_weight_idempotent_plus` -- ⊕ idempotency
-- `test_context_weight_distributivity` -- left distributivity of ⊗ over ⊕
+- `test_context_weight_idempotent_plus` -- ⊕  idempotency
+- `test_context_weight_distributivity` -- left distributivity of ⊗  over ⊕
 - `test_context_weight_ordering` -- cardinality-based ordering
 - `test_context_weight_display` -- Display format for ∅, U, and general sets
 - `test_context_weight_product_with_tropical` -- ProductWeight<TropicalWeight, ContextWeight> composition (lines 1719--1735)

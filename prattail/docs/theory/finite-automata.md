@@ -149,7 +149,7 @@ For `A|B` (match A or B):
 
 ```
               ┌── ε ──→ (A.start) ──...──→ (A.accept) ── ε ──┐
-  (new start) ┤                                               ├→ ((new accept))
+  (new start) ┤                                              ├→ ((new accept))
               └── ε ──→ (B.start) ──...──→ (B.accept) ── ε ──┘
 ```
 

@@ -35,11 +35,11 @@ intra-category FIRST-set status.
 The existing four-tier dead-rule detection (`pipeline.rs:detect_dead_rules`)
 analyzes each category in isolation:
 
-| Tier | Scope | What it finds |
-|------|-------|---------------|
-| 1 | Single category | Literal rule with no `native_type` |
-| 2 | Single category | Infix/var rule in category with no reachable prefix |
-| 3 | Single category | Prefix/cast/cross-cat rule with no FIRST-set dispatch |
+| Tier | Scope           | What it finds                                         |
+|------|-----------------|-------------------------------------------------------|
+| 1    | Single category | Literal rule with no `native_type`                    |
+| 2    | Single category | Infix/var rule in category with no reachable prefix   |
+| 3    | Single category | Prefix/cast/cross-cat rule with no FIRST-set dispatch |
 
 This per-category view misses three classes of dead paths that span
 multiple categories:
@@ -201,13 +201,13 @@ function build_inter_category_graph(rule_infos, categories, first_sets):
 The forward pass computes `alpha[i]` = total weight of all paths from the
 root (node 0) to node `i`.  With `BooleanWeight`:
 
-| Operation | Formula | Meaning |
-|-----------|---------|---------|
-| Initialize root | `alpha[root] = BooleanWeight::one()` | Root is reachable |
-| Initialize others | `alpha[i] = BooleanWeight::zero()` | Assume unreachable |
-| Propagate | `alpha[target] = alpha[target] ⊕ (alpha[source] ⊗ w)` | |
-| ⊕ = `plus` | `a ∨ b` | Any path makes reachable |
-| ⊗ = `times` | `a ∧ b` | Both segments must be reachable |
+| Operation         | Formula                                                 | Meaning                         |
+|-------------------|---------------------------------------------------------|---------------------------------|
+| Initialize root   | `alpha[root] = BooleanWeight::one()`                    | Root is reachable               |
+| Initialize others | `alpha[i] = BooleanWeight::zero()`                      | Assume unreachable              |
+| Propagate         | `alpha[target] = alpha[target] ⊕  (alpha[source] ⊗  w)` |                                 |
+| ⊕  = `plus`       | `a ∨ b`                                                 | Any path makes reachable        |
+| ⊗  = `times`      | `a ∧ b`                                                 | Both segments must be reachable |
 
 After the forward pass, `alpha[i] == BooleanWeight(true)` iff there
 exists at least one path from the root to category `i`.
@@ -223,11 +223,11 @@ V = categories, E = edges with BooleanWeight.  Then:
 The backward pass computes `beta[i]` = total weight of all paths from
 node `i` to the root.  Processing nodes in reverse index order:
 
-| Operation | Formula | Meaning |
-|-----------|---------|---------|
-| Initialize root | `beta[root] = BooleanWeight::one()` | Root is target |
-| Initialize others | `beta[i] = BooleanWeight::zero()` | Assume cannot reach root |
-| Propagate | `beta[source] = beta[source] ⊕ (w ⊗ beta[target])` | |
+| Operation         | Formula                                              | Meaning                  |
+|-------------------|------------------------------------------------------|--------------------------|
+| Initialize root   | `beta[root] = BooleanWeight::one()`                  | Root is target           |
+| Initialize others | `beta[i] = BooleanWeight::zero()`                    | Assume cannot reach root |
+| Propagate         | `beta[source] = beta[source] ⊕  (w ⊗  beta[target])` |                          |
 
 After the backward pass, `beta[i] == BooleanWeight(true)` iff there
 exists at least one path from category `i` to the root.
@@ -240,12 +240,12 @@ A category C is dead if the forward-backward conjunction is false:
 
 The direction field in the warning distinguishes three cases:
 
-| `forward[C]` | `backward[C]` | Direction | Interpretation |
-|--------------|---------------|-----------|----------------|
-| `false` | `false` | `"forward+backward"` | Completely isolated |
-| `false` | `true` | `"forward"` | Reachable from root but cannot return |
-| `true` | `false` | `"backward"` | Can return to root but not reachable |
-| `true` | `true` | -- | Live (no warning) |
+| `forward[C]` | `backward[C]` | Direction            | Interpretation                        |
+|--------------|---------------|----------------------|---------------------------------------|
+| `false`      | `false`       | `"forward+backward"` | Completely isolated                   |
+| `false`      | `true`        | `"forward"`          | Reachable from root but cannot return |
+| `true`       | `false`       | `"backward"`         | Can return to root but not reachable  |
+| `true`       | `true`        | --                   | Live (no warning)                     |
 
 ---
 
@@ -257,71 +257,76 @@ Tiers 1–3.
 ### Decision flow with Tier 4
 
 ```
-  Rule
-   │
-   ▼
-  ┌────────────────────────────────┐
-  │ Tier 1: Literal rule?          │
-  │ (rule_info.is_literal == true) │
-  └────────┬───────────────────────┘
-           │
-     ┌─────┴─────┐
-     │yes        │no
-     ▼            ▼
-  ┌──────────┐  ┌────────────────────────────────────────────┐
-  │ Check:   │  │ Tier 2: Same-category infix/var?           │
-  │ category │  │ (is_infix && !is_cross_category) || is_var │
-  │ has      │  └────────┬───────────────────────────────────┘
-  │ native_  │           │
-  │ type?    │     ┌─────┴─────┐
-  └────┬─────┘     │yes        │no
-       │           ▼            ▼
-  ┌────┴────┐  ┌──────────┐  ┌──────────────────────────┐
-  │no →DEAD │  │ Check:   │  │ Tier 3: WFST reachable?  │
-  │yes→LIVE │  │ category │  │ (prefix, cast, cross-cat)│
-  └─────────┘  │ reachable│  └────────┬─────────────────┘
-               │ ?        │           │
-               └────┬─────┘     ┌─────┴─────┐
-                    │           │yes        │no
-               ┌────┴────┐     ▼            ▼
-               │no →DEAD │  ┌──────┐    ┌──────┐
-               │yes→LIVE │  │ LIVE │    │ DEAD │
-               └─────────┘  └──────┘    └──────┘
-                                │
-                    (all rules collected from Tiers 1-3)
-                                │
-                                ▼
-                  ┌─────────────────────────────────────┐
-                  │ Tier 4: Inter-category reachability │
-                  │ (forward-backward with BooleanWeight│
-                  │  over inter-category dispatch graph)│
-                  └────────────┬────────────────────────┘
-                               │
-                         ┌─────┴─────┐
-                         │per rule:  │
-                         │already    │
-                         │flagged?   │
-                         ▼           ▼
-                       ┌────┐    ┌───────────────────────┐
-                       │skip│    │ forward[cat] ∧         │
-                       └────┘    │ backward[cat] == false?│
-                                 └────────┬──────────────┘
-                                    ┌─────┴─────┐
-                                    │yes        │no
-                                    ▼            ▼
-                                 ┌──────┐    ┌──────┐
-                                 │ DEAD │    │ LIVE │
-                                 └──────┘    └──────┘
+             ┌──────┐
+             │ Rule │
+             └──┬───┘
+                │
+                ▼
+┌────────────────────────────────┐
+│ Tier 1: Literal rule?          │
+│ (rule_info.is_literal == true) │
+└───────────────┬────────────────┘
+     ┌──────────┴──────────┐
+     │yes                  │no
+     ▼                     ▼
+┌──────────┐  ┌────────────────────────────────────────────┐
+│ Check:   │  │ Tier 2: Same-category infix/var?           │
+│ category │  │ (is_infix && !is_cross_category) || is_var │
+│ has      │  └────────┬───────────────────────────────────┘
+│ native_  │           │
+│ type?    │     ┌─────┴─────┐
+└────┬─────┘     │yes        │no
+     ▼           ▼           ▼
+┌─────────┐  ┌──────────┐  ┌──────────────────────────┐
+│no →DEAD │  │ Check:   │  │ Tier 3: WFST reachable?  │
+│yes→LIVE │  │ category │  │ (prefix, cast, cross-cat)│
+└─────────┘  │ reachable│  └────────┬─────────────────┘
+             │ ?        │           │
+             └────┬─────┘     ┌─────┴─────┐
+                  ▼           │yes        │no
+             ┌─────────┐      ▼           ▼
+             │no →DEAD │  ┌──────┐    ┌──────┐
+             │yes→LIVE │  │ LIVE │    │ DEAD │
+             └─────────┘  └──────┘    └──────┘
+                              │
+                  (all rules collected from Tiers 1-3)
+                              │
+                              ▼
+                ┌─────────────────────────────────────┐
+                │ Tier 4: Inter-category reachability │
+                │ (forward-backward with BooleanWeight│
+                │  over inter-category dispatch graph)│
+                └─────────────┬───────────────────────┘
+                              │
+                              ▼
+                        ┌───────────┐
+                        │ per rule: │
+                        │ already   │
+                        │ flagged?  │
+                        └─────┬─────┘
+                        ┌─────┴─────┐
+                        │yes        │no
+                        ▼           ▼
+                     ┌────┐    ┌─────────────────────────┐
+                     │skip│    │ forward[cat] ∧          │
+                     └────┘    │ backward[cat] == false? │
+                               └────────┬────────────────┘
+                                  ┌─────┴─────┐
+                                  │yes        │no
+                                  ▼           ▼
+                               ┌──────┐    ┌──────┐
+                               │ DEAD │    │ LIVE │
+                               └──────┘    └──────┘
 ```
 
 ### Tier summary
 
-| Tier | Variant | Condition | Scope |
-|------|---------|-----------|-------|
-| 1 | `LiteralNoNativeType` | Literal rule, no `native_type` | Single category |
-| 2 | `UnreachableCategory` | Infix/var in category with no prefix | Single category |
-| 3 | `WfstUnreachable` | No FIRST token dispatches via WFST | Single category |
-| 4 (A4) | `InterCategoryDeadPath` | Category isolated from root | Inter-category |
+| Tier   | Variant                 | Condition                            | Scope           |
+|--------|-------------------------|--------------------------------------|-----------------|
+| 1      | `LiteralNoNativeType`   | Literal rule, no `native_type`       | Single category |
+| 2      | `UnreachableCategory`   | Infix/var in category with no prefix | Single category |
+| 3      | `WfstUnreachable`       | No FIRST token dispatches via WFST   | Single category |
+| 4 (A4) | `InterCategoryDeadPath` | Category isolated from root          | Inter-category  |
 
 ### Deduplication
 
@@ -349,17 +354,17 @@ categories: Proc (primary), Int, Float, Ghost
 
 Rules:
 
-| Rule | Category | Type | Connects |
-|------|----------|------|----------|
-| Nil | Proc | prefix | -- |
-| Par | Proc | infix | -- |
-| NumLit | Int | literal | -- |
-| Add | Int | infix | -- |
-| IntToProc | Int | cast | Int -> Proc |
-| IntToFloat | Int | cast | Int -> Float |
-| FAdd | Float | infix | -- |
-| Haunt | Ghost | prefix | -- |
-| GhostMul | Ghost | infix | -- |
+| Rule       | Category | Type    | Connects     |
+|------------|----------|---------|--------------|
+| Nil        | Proc     | prefix  | --           |
+| Par        | Proc     | infix   | --           |
+| NumLit     | Int      | literal | --           |
+| Add        | Int      | infix   | --           |
+| IntToProc  | Int      | cast    | Int -> Proc  |
+| IntToFloat | Int      | cast    | Int -> Float |
+| FAdd       | Float    | infix   | --           |
+| Haunt      | Ghost    | prefix  | --           |
+| GhostMul   | Ghost    | infix   | --           |
 
 ### Step 1: Build the inter-category graph
 
@@ -438,22 +443,22 @@ Adjacency list:
 
 ### Step 4: Forward AND backward conjunction
 
-| Category | forward | backward | forward ∧ backward | Status |
-|----------|---------|----------|---------------------|--------|
-| Proc | ⊤ | ⊤ | ⊤ | Live |
-| Int | ⊤ | ⊤ | ⊤ | Live |
-| Float | ⊤ | ⊥ | ⊥ | **Dead** (backward) |
-| Ghost | ⊥ | ⊥ | ⊥ | **Dead** (forward+backward) |
+| Category | forward | backward | forward ∧ backward | Status                      |
+|----------|---------|----------|--------------------|-----------------------------|
+| Proc     | ⊤       | ⊤        | ⊤                  | Live                        |
+| Int      | ⊤       | ⊤        | ⊤                  | Live                        |
+| Float    | ⊤       | ⊥        | ⊥                  | **Dead** (backward)         |
+| Ghost    | ⊥       | ⊥        | ⊥                  | **Dead** (forward+backward) |
 
 ### Step 5: Warnings generated
 
 **Before deduplication** (Tier 4 raw output):
 
-| Rule | Category | Direction |
-|------|----------|-----------|
-| FAdd | Float | backward |
-| Haunt | Ghost | forward+backward |
-| GhostMul | Ghost | forward+backward |
+| Rule     | Category | Direction        |
+|----------|----------|------------------|
+| FAdd     | Float    | backward         |
+| Haunt    | Ghost    | forward+backward |
+| GhostMul | Ghost    | forward+backward |
 
 **After deduplication** against Tiers 1--3: assume Tiers 1--3 produced no
 warnings for FAdd, Haunt, or GhostMul.  All three Tier 4 warnings are
@@ -524,42 +529,50 @@ lint_w01_dead_rule(ctx, diagnostics):
 
 ### LintDiagnostic mapping
 
-| Variant | Hint |
-|---------|------|
-| `LiteralNoNativeType` | "add a native_type to the category or remove the literal rule" |
-| `UnreachableCategory` | "add a prefix rule to make the category reachable" |
-| `WfstUnreachable` | "remove the rule or add a unique dispatch token" |
+| Variant                 | Hint                                                              |
+|-------------------------|-------------------------------------------------------------------|
+| `LiteralNoNativeType`   | "add a native_type to the category or remove the literal rule"    |
+| `UnreachableCategory`   | "add a prefix rule to make the category reachable"                |
+| `WfstUnreachable`       | "remove the rule or add a unique dispatch token"                  |
 | `InterCategoryDeadPath` | "check inter-category connections; this category may be isolated" |
 
 ### Data flow
 
 ```
-  pipeline.rs: generate_parser_code()
-       │
-       ▼
-  ┌──────────────────────────────────────────────────────┐
-  │ lint::LintContext                                    │
-  │ { categories, rules, first_sets, prediction_wfsts } │
-  └──────────────────┬───────────────────────────────────┘
-                     │
-                     ▼
-  lint::run_lints(&ctx)
-       │
-       ├─ W01: lint_w01_dead_rule
-       │       │
-       │       ├─ detect_dead_rules()           ◄── Tiers 1-3
-       │       │
-       │       ├─ detect_inter_category_dead_paths()  ◄── Tier 4 (A4)
-       │       │
-       │       └─ deduplication + LintDiagnostic emission
-       │
-       ├─ W02..W06, G01..G10, R01..R07, C01..C04, P02..P04
-       │
-       ▼
-  Vec<LintDiagnostic>
-       │
-       ▼
-  lint::emit_diagnostics()  →  stderr
+              ┌─────────────────────────────────────┐
+              │ pipeline.rs: generate_parser_code() │
+              └─────────────────┬───────────────────┘
+                                │
+                                ▼
+      ┌─────────────────────────────────────────────────────┐
+      │ lint::LintContext                                   │
+      │ { categories, rules, first_sets, prediction_wfsts } │
+      └─────────────────────────┬───────────────────────────┘
+                                │
+                                ▼
+┌────────────────────────────────────────────────────────────────┐
+│ lint::run_lints(&ctx)                                          │
+│ │                                                              │
+│ ├─ W01: lint_w01_dead_rule                                     │
+│ │       │                                                      │
+│ │       ├─ detect_dead_rules()           ◄── Tiers 1-3         │
+│ │       │                                                      │
+│ │       ├─ detect_inter_category_dead_paths()  ◄── Tier 4 (A4) │
+│ │       │                                                      │
+│ │       └─ deduplication + LintDiagnostic emission             │
+│ │                                                              │
+│ └─ W02..W06, G01..G10, R01..R07, C01..C04, P02..P04            │
+└───────────────────────────────┬────────────────────────────────┘
+                                │
+                                ▼
+                     ┌─────────────────────┐
+                     │ Vec<LintDiagnostic> │
+                     └──────────┬──────────┘
+                                │
+                                ▼
+             ┌─────────────────────────────────────┐
+             │ lint::emit_diagnostics()  →  stderr │
+             └─────────────────────────────────────┘
 ```
 
 ---
@@ -650,13 +663,13 @@ for all practical grammars.
 
 ## 10. Source References
 
-| Component | File | Description |
-|-----------|------|-------------|
-| `detect_inter_category_dead_paths()` | `pipeline.rs` | Tier 4 graph construction + forward-backward + warning collection |
-| `forward_scores()` | `forward_backward.rs` | Generic forward pass over adjacency list |
-| `backward_scores()` | `forward_backward.rs` | Generic backward pass over adjacency list |
-| `BooleanWeight` | `automata/semiring.rs` | Boolean semiring: `(∨, ∧, false, true)` |
-| `Semiring` trait | `automata/semiring.rs` | Generic semiring interface |
-| `DeadRuleWarning::InterCategoryDeadPath` | `pipeline.rs` | Warning variant with direction field |
-| `lint_w01_dead_rule()` | `lint.rs` | Tier 4 invocation and deduplication logic |
-| `CategoryInfo` | `pipeline.rs` | Category metadata including `is_primary` flag |
+| Component                                | File                   | Description                                                       |
+|------------------------------------------|------------------------|-------------------------------------------------------------------|
+| `detect_inter_category_dead_paths()`     | `pipeline.rs`          | Tier 4 graph construction + forward-backward + warning collection |
+| `forward_scores()`                       | `forward_backward.rs`  | Generic forward pass over adjacency list                          |
+| `backward_scores()`                      | `forward_backward.rs`  | Generic backward pass over adjacency list                         |
+| `BooleanWeight`                          | `automata/semiring.rs` | Boolean semiring: `(∨, ∧, false, true)`                           |
+| `Semiring` trait                         | `automata/semiring.rs` | Generic semiring interface                                        |
+| `DeadRuleWarning::InterCategoryDeadPath` | `pipeline.rs`          | Warning variant with direction field                              |
+| `lint_w01_dead_rule()`                   | `lint.rs`              | Tier 4 invocation and deduplication logic                         |
+| `CategoryInfo`                           | `pipeline.rs`          | Category metadata including `is_primary` flag                     |

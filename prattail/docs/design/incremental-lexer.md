@@ -276,7 +276,7 @@ with the adapter rather than the lexer directly.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                    LexerAdapter<'a>                               │
+│                    LexerAdapter<'a>                              │
 ├──────────────────────────────────────────────────────────────────┤
 │  lexer:       Lexer<'a>                Underlying incremental    │
 │                                        lexer                     │
@@ -627,12 +627,12 @@ This means:
 │                        Generated Module                              │
 │                                                                      │
 │  ┌─────────────────────┐       ┌──────────────────────────────────┐  │
-│  │  Standard Path       │       │  Context-Sensitive Path          │  │
+│  │  Standard Path      │       │  Context-Sensitive Path          │  │
 │  │                     │       │                                  │  │
 │  │  lex()              │       │  Lexer::new(input, file_id)      │  │
-│  │    ▼                │       │    ▼                              │  │
+│  │    ▼                │       │    ▼                             │  │
 │  │  Vec<(Token, Range)>│       │  LexerAdapter::new(lexer)        │  │
-│  │    ▼                │       │    ▼                              │  │
+│  │    ▼                │       │    ▼                             │  │
 │  │  parse_Cat(         │       │  parse_Cat_lazy(                 │  │
 │  │    &tokens, &mut pos│       │    &mut adapter, min_bp)         │  │
 │  │    min_bp)          │       │                                  │  │

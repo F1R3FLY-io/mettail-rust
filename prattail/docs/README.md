@@ -49,16 +49,16 @@ adds probabilistic training via the log semiring.
 
 **Theory — Per-Semiring:**
 
-| Semiring | Feature | Document |
-|----------|---------|----------|
-| TropicalWeight | always | [theory/wfst/semirings/tropical-weight.md](theory/wfst/semirings/tropical-weight.md) |
-| CountingWeight | always | [theory/wfst/semirings/counting-weight.md](theory/wfst/semirings/counting-weight.md) |
-| BooleanWeight | always | [theory/wfst/semirings/boolean-weight.md](theory/wfst/semirings/boolean-weight.md) |
-| EditWeight | always | [theory/wfst/semirings/edit-weight.md](theory/wfst/semirings/edit-weight.md) |
-| ProductWeight | always | [theory/wfst/semirings/product-weight.md](theory/wfst/semirings/product-weight.md) |
-| LogWeight | wfst-log | [theory/wfst/semirings/log-weight.md](theory/wfst/semirings/log-weight.md) |
-| EntropyWeight | wfst-log | [theory/wfst/semirings/entropy-weight.md](theory/wfst/semirings/entropy-weight.md) |
-| NbestWeight | always | [theory/wfst/semirings/nbest-weight.md](theory/wfst/semirings/nbest-weight.md) |
+| Semiring       | Feature  | Document                                                                             |
+|----------------|----------|--------------------------------------------------------------------------------------|
+| TropicalWeight | always   | [theory/wfst/semirings/tropical-weight.md](theory/wfst/semirings/tropical-weight.md) |
+| CountingWeight | always   | [theory/wfst/semirings/counting-weight.md](theory/wfst/semirings/counting-weight.md) |
+| BooleanWeight  | always   | [theory/wfst/semirings/boolean-weight.md](theory/wfst/semirings/boolean-weight.md)   |
+| EditWeight     | always   | [theory/wfst/semirings/edit-weight.md](theory/wfst/semirings/edit-weight.md)         |
+| ProductWeight  | always   | [theory/wfst/semirings/product-weight.md](theory/wfst/semirings/product-weight.md)   |
+| LogWeight      | wfst-log | [theory/wfst/semirings/log-weight.md](theory/wfst/semirings/log-weight.md)           |
+| EntropyWeight  | wfst-log | [theory/wfst/semirings/entropy-weight.md](theory/wfst/semirings/entropy-weight.md)   |
+| NbestWeight    | always   | [theory/wfst/semirings/nbest-weight.md](theory/wfst/semirings/nbest-weight.md)       |
 
 **Theory — Optimization:**
 
@@ -84,16 +84,16 @@ adds probabilistic training via the log semiring.
 
 **Design — Per-Semiring:**
 
-| Semiring | Document |
-|----------|----------|
+| Semiring       | Document                                                                             |
+|----------------|--------------------------------------------------------------------------------------|
 | TropicalWeight | [design/wfst/semirings/tropical-weight.md](design/wfst/semirings/tropical-weight.md) |
 | CountingWeight | [design/wfst/semirings/counting-weight.md](design/wfst/semirings/counting-weight.md) |
-| BooleanWeight | [design/wfst/semirings/boolean-weight.md](design/wfst/semirings/boolean-weight.md) |
-| EditWeight | [design/wfst/semirings/edit-weight.md](design/wfst/semirings/edit-weight.md) |
-| ProductWeight | [design/wfst/semirings/product-weight.md](design/wfst/semirings/product-weight.md) |
-| LogWeight | [design/wfst/semirings/log-weight.md](design/wfst/semirings/log-weight.md) |
-| EntropyWeight | [design/wfst/semirings/entropy-weight.md](design/wfst/semirings/entropy-weight.md) |
-| NbestWeight | [design/wfst/semirings/nbest-weight.md](design/wfst/semirings/nbest-weight.md) |
+| BooleanWeight  | [design/wfst/semirings/boolean-weight.md](design/wfst/semirings/boolean-weight.md)   |
+| EditWeight     | [design/wfst/semirings/edit-weight.md](design/wfst/semirings/edit-weight.md)         |
+| ProductWeight  | [design/wfst/semirings/product-weight.md](design/wfst/semirings/product-weight.md)   |
+| LogWeight      | [design/wfst/semirings/log-weight.md](design/wfst/semirings/log-weight.md)           |
+| EntropyWeight  | [design/wfst/semirings/entropy-weight.md](design/wfst/semirings/entropy-weight.md)   |
+| NbestWeight    | [design/wfst/semirings/nbest-weight.md](design/wfst/semirings/nbest-weight.md)       |
 
 **Usage:**
 
@@ -126,13 +126,13 @@ For a comprehensive guide with examples, diagrams, and decision flowcharts:
 
 ## Documentation by Category
 
-| Directory                      | Contents                                                    |
-|--------------------------------|-------------------------------------------------------------|
-| [architecture/](architecture/) | Crate structure, data flow, generated code anatomy, WFST module map |
-| [benchmarks/](benchmarks/)     | Parse performance comparison, optimization ledger           |
-| [design/](design/)             | Pipeline, engines, generators, disambiguation, WFST design  |
-| [diagnostics/](diagnostics/)   | Per-lint documentation, runtime error catalog               |
-| [theory/](theory/)             | Formal foundations: automata, prediction, Pratt, semirings   |
+| Directory                      | Contents                                                                                     |
+|--------------------------------|----------------------------------------------------------------------------------------------|
+| [architecture/](architecture/) | Crate structure, data flow, generated code anatomy, WFST module map                          |
+| [benchmarks/](benchmarks/)     | Parse performance comparison, optimization ledger                                            |
+| [design/](design/)             | Pipeline, engines, generators, disambiguation, WFST design                                   |
+| [diagnostics/](diagnostics/)   | Per-lint documentation, runtime error catalog                                                |
+| [theory/](theory/)             | Formal foundations: automata, prediction, Pratt, semirings                                   |
 | [usage/](usage/)               | Quick start, grammar features, language unification, EBNF dump, troubleshooting, WFST config |
 
 ---

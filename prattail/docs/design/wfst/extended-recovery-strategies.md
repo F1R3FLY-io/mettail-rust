@@ -31,15 +31,15 @@ evaluates 4 repair strategies: SkipToSync, DeleteToken, InsertToken,
 SubstituteToken. The 15-sprint error recovery expansion added 3 new
 strategies and a multi-step evaluation mechanism:
 
-| # | Strategy          | Original or New | When Introduced    |
-|---|-------------------|-----------------|--------------------|
-| 1 | SkipToSync        | Original        | Sprint 1           |
-| 2 | DeleteToken       | Original        | Sprint 1           |
-| 3 | InsertToken       | Original        | Sprint 1           |
-| 4 | SubstituteToken   | Original        | Sprint 1           |
-| 5 | **SwapTokens**    | **New**         | Sprint 8           |
-| 6 | **CategorySwitch**| **New**         | Sprint 10          |
-| 7 | **viterbi_multi_step** | **New**    | Sprint 9           |
+| # | Strategy               | Original or New | When Introduced |
+|---|------------------------|-----------------|-----------------|
+| 1 | SkipToSync             | Original        | Sprint 1        |
+| 2 | DeleteToken            | Original        | Sprint 1        |
+| 3 | InsertToken            | Original        | Sprint 1        |
+| 4 | SubstituteToken        | Original        | Sprint 1        |
+| 5 | **SwapTokens**         | **New**         | Sprint 8        |
+| 6 | **CategorySwitch**     | **New**         | Sprint 10       |
+| 7 | **viterbi_multi_step** | **New**         | Sprint 9        |
 
 Strategies 1–4 are documented in [error-recovery.md §4](error-recovery.md#4-single-step-recovery).
 This document covers strategies 5–7 and the 7-strategy evaluation order.
@@ -383,14 +383,14 @@ RepairSequence {
 
 Every cost in the lattice comes from `RecoveryConfig`:
 
-| Edge     | Config Field          | Default |
-|----------|-----------------------|---------|
-| Skip     | `skip_per_token`      | 0.5     |
-| Delete   | `delete_cost`         | 1.0     |
-| Substitute| `substitute_cost`    | 1.5     |
-| Insert   | `insert_cost`         | 2.0     |
-| Swap     | `swap_cost`           | 1.25    |
-| Sync     | (fixed)               | 0.0     |
+| Edge       | Config Field      | Default |
+|------------|-------------------|---------|
+| Skip       | `skip_per_token`  | 0.5     |
+| Delete     | `delete_cost`     | 1.0     |
+| Substitute | `substitute_cost` | 1.5     |
+| Insert     | `insert_cost`     | 2.0     |
+| Swap       | `swap_cost`       | 1.25    |
+| Sync       | (fixed)           | 0.0     |
 
 ---
 
@@ -494,15 +494,15 @@ Brackets: all balanced (0, 0, 0).
 - frame_skip_mult = 0.75 (InfixRHS)
 - combined_skip_mult = 1.0 × 0.75 × 0.75 = 0.5625
 
-| # | Strategy        | Computation                                       | Raw Cost | Adjusted Cost |
-|---|-----------------|---------------------------------------------------|----------|---------------|
-| 1 | SkipToSync      | nearest sync: Star at skip=1 → 1 × 0.5 × 0.5625  | 0.5      | 0.281         |
-| 2 | DeleteToken     | 1.0 × 0.5625                                      | 1.0      | 0.5625        |
-| 3 | InsertToken     | 2.0 × 1.0 (no frame discount) × 1.0 (balanced)    | 2.0      | 2.0           |
-| 4 | SubstituteToken | 1.5 × 1.0 (not Mixfix)                            | 1.5      | 1.5           |
-| 5 | SwapTokens      | remaining[1]=Star ∈ sync → 1.25 × 0.5625          | 1.25     | 0.703         |
-| 6 | CategorySwitch  | @ not in any cast source FIRST set                 | ∞        | ∞             |
-| 7 | MultiStep       | Viterbi: skip(0.5) → sync at Star                 | 0.5      | 0.5           |
+| # | Strategy        | Computation                                     | Raw Cost | Adjusted Cost |
+|---|-----------------|-------------------------------------------------|----------|---------------|
+| 1 | SkipToSync      | nearest sync: Star at skip=1 → 1 × 0.5 × 0.5625 | 0.5      | 0.281         |
+| 2 | DeleteToken     | 1.0 × 0.5625                                    | 1.0      | 0.5625        |
+| 3 | InsertToken     | 2.0 × 1.0 (no frame discount) × 1.0 (balanced)  | 2.0      | 2.0           |
+| 4 | SubstituteToken | 1.5 × 1.0 (not Mixfix)                          | 1.5      | 1.5           |
+| 5 | SwapTokens      | remaining[1]=Star ∈ sync → 1.25 × 0.5625        | 1.25     | 0.703         |
+| 6 | CategorySwitch  | @ not in any cast source FIRST set              | ∞        | ∞             |
+| 7 | MultiStep       | Viterbi: skip(0.5) → sync at Star               | 0.5      | 0.5           |
 
 **Tier 3 rescoring** of strategy 1 (the current winner at 0.281):
 - Simulate from pos=3 (Star): Star ∈ infix(Int) → valid continuation.
@@ -525,15 +525,15 @@ Result: `ParseError::RecoveryApplied` wrapping the original
 
 ## 8. Cost Hierarchy Table
 
-| # | Action         | Base Cost | Config Field      | Edit Distance | Position Effect |
-|---|----------------|-----------|-------------------|---------------|-----------------|
-| 1 | SkipToSync     | 0.5/token | `skip_per_token`  | 1 per skipped | pos + skip_count|
-| 2 | DeleteToken    | 1.0       | `delete_cost`     | 1             | pos + 1         |
-| 3 | InsertToken    | 2.0       | `insert_cost`     | 2             | pos (phantom)   |
-| 4 | SubstituteToken| 1.5       | `substitute_cost` | 2             | pos + 1         |
-| 5 | SwapTokens     | 1.25      | `swap_cost`       | 1             | pos + 2         |
-| 6 | CategorySwitch | 0.75      | sub_cost × 0.5    | 2             | pos (switch)    |
-| 7 | Composite      | Σ steps   | (per-step config) | Σ step edits  | per-step        |
+| # | Action          | Base Cost | Config Field      | Edit Distance | Position Effect  |
+|---|-----------------|-----------|-------------------|---------------|------------------|
+| 1 | SkipToSync      | 0.5/token | `skip_per_token`  | 1 per skipped | pos + skip_count |
+| 2 | DeleteToken     | 1.0       | `delete_cost`     | 1             | pos + 1          |
+| 3 | InsertToken     | 2.0       | `insert_cost`     | 2             | pos (phantom)    |
+| 4 | SubstituteToken | 1.5       | `substitute_cost` | 2             | pos + 1          |
+| 5 | SwapTokens      | 1.25      | `swap_cost`       | 1             | pos + 2          |
+| 6 | CategorySwitch  | 0.75      | sub_cost × 0.5    | 2             | pos (switch)     |
+| 7 | Composite       | Σ steps   | (per-step config) | Σ step edits  | per-step         |
 
 **Ordering by default base cost:**
 ```
@@ -549,19 +549,19 @@ cheaper than single-token skip (0.5) for skip ≥ 2.
 
 ## 9. Source Reference
 
-| Symbol                            | Location                            |
-|-----------------------------------|-------------------------------------|
-| `RepairAction::SwapTokens`        | `prattail/src/recovery.rs:266–271`  |
-| `RepairAction::Composite`         | `prattail/src/recovery.rs:277–280`  |
-| `RepairAction::CategorySwitch`    | `prattail/src/recovery.rs:288–293`  |
-| `RepairAction::describe()`        | `prattail/src/recovery.rs:332–361`  |
-| `RepairAction::edit_cost()`       | `prattail/src/recovery.rs:374–388`  |
-| `find_best_recovery()`            | `prattail/src/recovery.rs:487–567`  |
-| `find_best_recovery_contextual()` | `prattail/src/recovery.rs:1528–1679`|
-| `viterbi_multi_step()`            | `prattail/src/recovery.rs:840–1072` |
-| `generate_wfst_recovery_fn()`     | `prattail/src/pipeline.rs:1831–2060`|
-| `CROSS_CAT_CASTS_Cat`             | `prattail/src/pipeline.rs:1180`     |
-| `cast_suggestions`                | `prattail/src/trampoline.rs:677`    |
+| Symbol                            | Location                             |
+|-----------------------------------|--------------------------------------|
+| `RepairAction::SwapTokens`        | `prattail/src/recovery.rs:266–271`   |
+| `RepairAction::Composite`         | `prattail/src/recovery.rs:277–280`   |
+| `RepairAction::CategorySwitch`    | `prattail/src/recovery.rs:288–293`   |
+| `RepairAction::describe()`        | `prattail/src/recovery.rs:332–361`   |
+| `RepairAction::edit_cost()`       | `prattail/src/recovery.rs:374–388`   |
+| `find_best_recovery()`            | `prattail/src/recovery.rs:487–567`   |
+| `find_best_recovery_contextual()` | `prattail/src/recovery.rs:1528–1679` |
+| `viterbi_multi_step()`            | `prattail/src/recovery.rs:840–1072`  |
+| `generate_wfst_recovery_fn()`     | `prattail/src/pipeline.rs:1831–2060` |
+| `CROSS_CAT_CASTS_Cat`             | `prattail/src/pipeline.rs:1180`      |
+| `cast_suggestions`                | `prattail/src/trampoline.rs:677`     |
 
 **Cross-references:**
 

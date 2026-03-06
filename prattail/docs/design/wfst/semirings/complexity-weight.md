@@ -34,12 +34,12 @@ lookahead optimization. It answers the gating question: "Does this dispatch
 point benefit from extended lookahead, or is single-token dispatch
 sufficient?"
 
-| Function | Location | Description |
-|----------|----------|-------------|
-| **Dispatch complexity annotation** | `semiring.rs:781-888` | Assigns complexity levels to WFST transitions based on ambiguity degree |
-| **Lookahead budget gating** | D1 framework (`cost_benefit.rs`) | ComplexityWeight > threshold triggers B1 multi-token lookahead |
-| **Bottleneck identification** | Via `times = max` | Path complexity = worst segment, identifying dispatch bottlenecks |
-| **Product composition** | `ProductWeight<TropicalWeight, ComplexityWeight>` | Joint optimization: best priority AND least-complex path |
+| Function                           | Location                                          | Description                                                             |
+|------------------------------------|---------------------------------------------------|-------------------------------------------------------------------------|
+| **Dispatch complexity annotation** | `semiring.rs:781-888`                             | Assigns complexity levels to WFST transitions based on ambiguity degree |
+| **Lookahead budget gating**        | D1 framework (`cost_benefit.rs`)                  | ComplexityWeight > threshold triggers B1 multi-token lookahead          |
+| **Bottleneck identification**      | Via `times = max`                                 | Path complexity = worst segment, identifying dispatch bottlenecks       |
+| **Product composition**            | `ProductWeight<TropicalWeight, ComplexityWeight>` | Joint optimization: best priority AND least-complex path                |
 
 ComplexityWeight is a **codegen-time analysis type**. It is not embedded in
 generated parser code or consulted at runtime. Its purpose is to inform
@@ -106,12 +106,12 @@ Named constructors serve as **self-documenting API**. Rather than scattering
 magic constants (`ComplexityWeight::new(0)`, `ComplexityWeight::new(1)`)
 throughout pipeline code, the intent is explicit:
 
-| Constructor | Value | Dispatch Behavior |
-|-------------|-------|-------------------|
-| `deterministic()` | 0 | Unique token dispatches to exactly one rule. No ambiguity. |
-| `single_lookahead()` | 1 | Token is shared by 2+ rules, but the next token resolves the ambiguity. |
-| `multi_lookahead(n)` | n | Requires examining n tokens ahead to disambiguate. |
-| `infinite()` | u32::MAX | No finite lookahead can resolve; requires backtracking or NFA spillover. |
+| Constructor          | Value    | Dispatch Behavior                                                        |
+|----------------------|----------|--------------------------------------------------------------------------|
+| `deterministic()`    | 0        | Unique token dispatches to exactly one rule. No ambiguity.               |
+| `single_lookahead()` | 1        | Token is shared by 2+ rules, but the next token resolves the ambiguity.  |
+| `multi_lookahead(n)` | n        | Requires examining n tokens ahead to disambiguate.                       |
+| `infinite()`         | u32::MAX | No finite lookahead can resolve; requires backtracking or NFA spillover. |
 
 The `multi_lookahead(n)` constructor takes an explicit depth parameter
 because multi-token lookahead cost is proportional to the number of tokens
@@ -174,12 +174,12 @@ impl fmt::Display for ComplexityWeight {
 
 Examples:
 
-| Value | Display |
-|-------|---------|
-| `ComplexityWeight::deterministic()` | `0` |
-| `ComplexityWeight::single_lookahead()` | `1` |
-| `ComplexityWeight::multi_lookahead(3)` | `3` |
-| `ComplexityWeight::infinite()` | `∞` |
+| Value                                  | Display |
+|----------------------------------------|---------|
+| `ComplexityWeight::deterministic()`    | `0`     |
+| `ComplexityWeight::single_lookahead()` | `1`     |
+| `ComplexityWeight::multi_lookahead(3)` | `3`     |
+| `ComplexityWeight::infinite()`         | `∞`     |
 
 This format is consistent with EditWeight's display (integer for finite,
 `∞` for the zero element) and enables readable diagnostic output in
@@ -209,11 +209,11 @@ for each (category, token) in dispatch table:
 The key insight is that ComplexityWeight directly mirrors the
 `predict().len()` ambiguity count already computed by the WFST:
 
-| `predict().len()` | ComplexityWeight | Interpretation |
-|--------------------|------------------|----------------|
-| 0 | `infinite()` | Dead token -- no rule handles it |
-| 1 | `deterministic()` | Single dispatch target, no lookahead needed |
-| 2+ | `single_lookahead()` (initial) | Ambiguous -- may need extended lookahead |
+| `predict().len()` | ComplexityWeight               | Interpretation                              |
+|-------------------|--------------------------------|---------------------------------------------|
+| 0                 | `infinite()`                   | Dead token -- no rule handles it            |
+| 1                 | `deterministic()`              | Single dispatch target, no lookahead needed |
+| 2+                | `single_lookahead()` (initial) | Ambiguous -- may need extended lookahead    |
 
 The initial assignment is conservative: all ambiguous dispatch points
 start at `single_lookahead()`. The B1 multi-token lookahead pass
@@ -225,12 +225,12 @@ actual disambiguation depth analysis.
 ComplexityWeight and CountingWeight provide complementary views of
 ambiguity:
 
-| Property | CountingWeight | ComplexityWeight |
-|----------|---------------|------------------|
-| **Question** | "How many rules compete?" | "How hard is it to resolve?" |
-| **Domain** | Derivation count (N) | Lookahead depth (N) |
-| **times** | Multiplication (path count product) | Max (bottleneck) |
-| **Grows with** | Grammar size (combinatorial) | Ambiguity depth (bounded) |
+| Property       | CountingWeight                      | ComplexityWeight             |
+|----------------|-------------------------------------|------------------------------|
+| **Question**   | "How many rules compete?"           | "How hard is it to resolve?" |
+| **Domain**     | Derivation count (N)                | Lookahead depth (N)          |
+| **times**      | Multiplication (path count product) | Max (bottleneck)             |
+| **Grows with** | Grammar size (combinatorial)        | Ambiguity depth (bounded)    |
 
 CountingWeight measures **breadth** of ambiguity (how many alternatives).
 ComplexityWeight measures **depth** (how many tokens of lookahead to
@@ -270,10 +270,10 @@ for a given grammar.
 
 The threshold determines when lookahead effort is worthwhile:
 
-| Threshold | Meaning |
-|-----------|---------|
-| `ComplexityWeight::deterministic()` (0) | All categories are fully deterministic -- B1 is inapplicable |
-| `ComplexityWeight::single_lookahead()` (1) | At least one category has single-token ambiguity -- B1 may help |
+| Threshold                                  | Meaning                                                           |
+|--------------------------------------------|-------------------------------------------------------------------|
+| `ComplexityWeight::deterministic()` (0)    | All categories are fully deterministic -- B1 is inapplicable      |
+| `ComplexityWeight::single_lookahead()` (1) | At least one category has single-token ambiguity -- B1 may help   |
 | `ComplexityWeight::multi_lookahead(k)` (k) | At least one category needs k-token lookahead -- B1 is beneficial |
 
 The D1 framework's B1 applicability predicate (`cost_benefit.rs:281`) uses
@@ -306,12 +306,12 @@ type PriorityComplexity = ProductWeight<TropicalWeight, ComplexityWeight>;
 
 The product semiring applies operations component-wise:
 
-| Operation | Left (Tropical) | Right (Complexity) | Combined |
-|-----------|-----------------|-------------------|----------|
-| **plus** | min (best priority) | min (least complex) | `(min, min)` -- best weight AND least-complex alternative |
-| **times** | add (accumulated cost) | max (bottleneck) | `(add, max)` -- accumulated cost AND bottleneck complexity |
-| **zero** | +inf (unreachable) | u32::MAX (infinite) | `(+inf, ∞)` -- fully unreachable |
-| **one** | 0.0 (zero cost) | 0 (deterministic) | `(0.0, 0)` -- no cost, no complexity |
+| Operation | Left (Tropical)        | Right (Complexity)  | Combined                                                   |
+|-----------|------------------------|---------------------|------------------------------------------------------------|
+| **plus**  | min (best priority)    | min (least complex) | `(min, min)` -- best weight AND least-complex alternative  |
+| **times** | add (accumulated cost) | max (bottleneck)    | `(add, max)` -- accumulated cost AND bottleneck complexity |
+| **zero**  | +inf (unreachable)     | u32::MAX (infinite) | `(+inf, ∞)` -- fully unreachable                           |
+| **one**   | 0.0 (zero cost)        | 0 (deterministic)   | `(0.0, 0)` -- no cost, no complexity                       |
 
 ### Worked example
 
@@ -408,28 +408,28 @@ structure beyond the standard semiring axioms:
 
 Eight tests in `semiring.rs:1615-1717` cover ComplexityWeight:
 
-| Test | Lines | Validates |
-|------|-------|-----------|
-| `test_complexity_weight_semiring_laws` | 1616-1640 | Zero identity, one identity, zero annihilation, commutativity |
-| `test_complexity_weight_min_max` | 1643-1652 | `plus = min`, `times = max` with concrete values (3, 7) |
-| `test_complexity_weight_idempotent_plus` | 1655-1659 | `min(5, 5) = 5` -- idempotency of plus |
-| `test_complexity_weight_constructors` | 1662-1670 | All 4 named constructors: values and identity properties |
-| `test_complexity_weight_distributivity` | 1673-1681 | `max(a, min(b, c)) = min(max(a, b), max(a, c))` |
-| `test_complexity_weight_ordering` | 1685-1692 | `2 < 5 < inf` -- natural ordering with zero as largest |
-| `test_complexity_weight_display` | 1695-1699 | `"3"`, `"∞"`, `"0"` -- integer and infinity formatting |
+| Test                                           | Lines     | Validates                                                        |
+|------------------------------------------------|-----------|------------------------------------------------------------------|
+| `test_complexity_weight_semiring_laws`         | 1616-1640 | Zero identity, one identity, zero annihilation, commutativity    |
+| `test_complexity_weight_min_max`               | 1643-1652 | `plus = min`, `times = max` with concrete values (3, 7)          |
+| `test_complexity_weight_idempotent_plus`       | 1655-1659 | `min(5, 5) = 5` -- idempotency of plus                           |
+| `test_complexity_weight_constructors`          | 1662-1670 | All 4 named constructors: values and identity properties         |
+| `test_complexity_weight_distributivity`        | 1673-1681 | `max(a, min(b, c)) = min(max(a, b), max(a, c))`                  |
+| `test_complexity_weight_ordering`              | 1685-1692 | `2 < 5 < inf` -- natural ordering with zero as largest           |
+| `test_complexity_weight_display`               | 1695-1699 | `"3"`, `"∞"`, `"0"` -- integer and infinity formatting           |
 | `test_complexity_weight_product_with_tropical` | 1702-1717 | `ProductWeight<TropicalWeight, ComplexityWeight>` plus and times |
 
 ### Axiom coverage
 
-| Axiom | Test |
-|-------|------|
-| Additive identity: `zero + a = a` | `test_complexity_weight_semiring_laws` |
-| Multiplicative identity: `one * a = a` | `test_complexity_weight_semiring_laws` |
-| Zero annihilation: `zero * a = zero` | `test_complexity_weight_semiring_laws` |
-| Commutativity of plus | `test_complexity_weight_semiring_laws` |
-| Commutativity of times | `test_complexity_weight_semiring_laws` |
-| Distributivity: `a * (b + c) = a*b + a*c` | `test_complexity_weight_distributivity` |
-| Idempotency of plus | `test_complexity_weight_idempotent_plus` |
+| Axiom                                     | Test                                     |
+|-------------------------------------------|------------------------------------------|
+| Additive identity: `zero + a = a`         | `test_complexity_weight_semiring_laws`   |
+| Multiplicative identity: `one * a = a`    | `test_complexity_weight_semiring_laws`   |
+| Zero annihilation: `zero * a = zero`      | `test_complexity_weight_semiring_laws`   |
+| Commutativity of plus                     | `test_complexity_weight_semiring_laws`   |
+| Commutativity of times                    | `test_complexity_weight_semiring_laws`   |
+| Distributivity: `a * (b + c) = a*b + a*c` | `test_complexity_weight_distributivity`  |
+| Idempotency of plus                       | `test_complexity_weight_idempotent_plus` |
 
 ---
 

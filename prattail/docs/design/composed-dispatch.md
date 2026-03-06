@@ -70,7 +70,7 @@ weight-ranked list of resolution candidates:
 ```
 TABLE[(C, S)] : [(tokᵢ, rule, w_composed)]
 
-    where  w_composed = wᵢ ⊗ w_rule    (tropical times = f64 addition)
+    where  w_composed = wᵢ ⊗  w_rule    (tropical times = f64 addition)
 ```
 
 Entries are sorted by `w_composed` ascending.  The entry at index 0 is the
@@ -79,12 +79,14 @@ that the generated parser will try first.
 
 ### Formal Signature
 
+```
 Let:
 - S = { s₁, ..., sₘ }  be the set of ambiguous DFA states
 - C = { c₁, ..., cₙ }  be the set of grammar categories
 - A(s) = { (tok₁, w₁), ..., (tokₖ, wₖ) }  be the alternatives at state s
 - P(c, tok) = { (r₁, w₁), ..., (rⱼ, wⱼ) }  be the prediction entries
 - FIRST(c) be the FIRST set of category c
+```
 
 Then the composed dispatch table is:
 
@@ -147,7 +149,7 @@ function compute_composed_dispatch(
                         rule_weight ← specificity_weight(specificity)
                             ── i.e., 1.0 / (1.0 + specificity) ──
 
-                        composed_weight ← lexer_weight ⊗ rule_weight
+                        composed_weight ← lexer_weight ⊗  rule_weight
                             ── tropical times = addition ──
                             ── i.e., lexer_weight.value() + rule_weight ──
 

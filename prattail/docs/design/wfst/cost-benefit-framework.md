@@ -123,18 +123,18 @@ while `plus` defines the algebraic structure.
 
 ```
 compile cost (right component)
-     ^
-     |
-  1.0|    A1                       B3
-     |    (0.40, 0.40)             (-ln(s), 0.15)
-     |
-  0.5|         B1
-     |         (-ln(a), a_count*0.5)
-     |
-  0.1|  A2          B2        F1
-     |  (-ln(c), 0.05)  (0.3, 0.1) (0.2, 0.01)
-     |
-  0.0+─────────────────────────────────────────→ speedup (left)
+     ▲
+     │
+  1.0│    A1                       B3
+     │    (0.40, 0.40)             (-ln(s), 0.15)
+     │
+  0.5│         B1
+     │         (-ln(a), a_count*0.5)
+     │
+  0.1│  A2          B2        F1
+     │  (-ln(c), 0.05)  (0.3, 0.1) (0.2, 0.01)
+     │
+  0.0└─────────────────────────────────────────▶ speedup (left)
      0.0   0.1   0.2   0.3   0.5   1.0    +inf
      ◂── better                     worse ──▸
 ```
@@ -152,17 +152,17 @@ grammar after WFST construction.  It is computed once by
 
 ### Fields
 
-| Field | Type | Source | Description |
-|---|---|---|---|
-| `shared_prefix_ratio` | `f64` | `nfa_spillover_cats.len() / category_count` | Fraction of categories requiring NFA spillover -- a proxy for prefix sharing potential. Higher ratio means more categories have multiple rules sharing dispatch tokens. |
-| `cold_fraction` | `f64` | Actions with `weight.value() >= 1.0` / total actions | Fraction of WFST dispatch actions that are "cold" (low priority / high tropical weight). High cold fraction indicates many dispatch arms that are rarely taken, making hot/cold splitting beneficial. |
-| `ambiguous_fraction` | `f64` | Tokens with `predict().len() > 1` / total dispatch tokens | Fraction of dispatch tokens that resolve to multiple actions. Measures overall grammar ambiguity at the single-token lookahead level. |
-| `ambiguous_count` | `usize` | Count of ambiguous tokens | Absolute count of ambiguous dispatch tokens across all categories. Used to gate passes whose cost scales with ambiguity count (e.g., multi-token lookahead). |
-| `category_count` | `usize` | `prediction_wfsts.len()` | Number of grammar categories. Directly reflects grammar size. |
-| `rule_count` | `usize` | `bundle.rule_infos.len()` | Total number of rules across all categories. |
-| `nfa_spillover_categories` | `usize` | `categories_needing_nfa_spillover()` | Number of categories with NFA-ambiguous prefix groups requiring thread-local spillover buffers and forced-prefix replay. |
-| `has_beam_width` | `bool` | `bundle.beam_width.is_enabled()` | Whether beam pruning is configured (via `BeamWidthConfig::Explicit` or auto). |
-| `total_wfst_states` | `usize` | `sum(wfst.states.len())` | Total number of WFST states across all categories. Proxy for WFST complexity and minimization benefit. |
+| Field                      | Type    | Source                                                    | Description                                                                                                                                                                                           |
+|----------------------------|---------|-----------------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `shared_prefix_ratio`      | `f64`   | `nfa_spillover_cats.len() / category_count`               | Fraction of categories requiring NFA spillover -- a proxy for prefix sharing potential. Higher ratio means more categories have multiple rules sharing dispatch tokens.                               |
+| `cold_fraction`            | `f64`   | Actions with `weight.value() >= 1.0` / total actions      | Fraction of WFST dispatch actions that are "cold" (low priority / high tropical weight). High cold fraction indicates many dispatch arms that are rarely taken, making hot/cold splitting beneficial. |
+| `ambiguous_fraction`       | `f64`   | Tokens with `predict().len() > 1` / total dispatch tokens | Fraction of dispatch tokens that resolve to multiple actions. Measures overall grammar ambiguity at the single-token lookahead level.                                                                 |
+| `ambiguous_count`          | `usize` | Count of ambiguous tokens                                 | Absolute count of ambiguous dispatch tokens across all categories. Used to gate passes whose cost scales with ambiguity count (e.g., multi-token lookahead).                                          |
+| `category_count`           | `usize` | `prediction_wfsts.len()`                                  | Number of grammar categories. Directly reflects grammar size.                                                                                                                                         |
+| `rule_count`               | `usize` | `bundle.rule_infos.len()`                                 | Total number of rules across all categories.                                                                                                                                                          |
+| `nfa_spillover_categories` | `usize` | `categories_needing_nfa_spillover()`                      | Number of categories with NFA-ambiguous prefix groups requiring thread-local spillover buffers and forced-prefix replay.                                                                              |
+| `has_beam_width`           | `bool`  | `bundle.beam_width.is_enabled()`                          | Whether beam pruning is configured (via `BeamWidthConfig::Explicit` or auto).                                                                                                                         |
+| `total_wfst_states`        | `usize` | `sum(wfst.states.len())`                                  | Total number of WFST states across all categories. Proxy for WFST complexity and minimization benefit.                                                                                                |
 
 ### Data flow
 
@@ -257,33 +257,33 @@ formula, a compile cost formula, and an applicability predicate.
 
 ### Optimization roster
 
-| ID | Optimization | Description |
-|---|---|---|
-| A1 | `LeftFactoring` | Grammar left-factoring via shared prefix extraction |
-| A2 | `HotColdSplitting` | Separate hot (low-weight) and cold (high-weight) dispatch arms |
-| A4 | `EnhancedDeadCodeElimination` | Full dispatch graph analysis to remove unreachable codegen |
-| A5 | `AmbiguityTargeting` | CountingWeight-guided identification of ambiguous dispatch points |
-| B1 | `MultiTokenLookahead` | Extended PredictionWfst with k-token lookahead for ambiguous tokens |
-| B2 | `AdaptiveRecovery` | Runtime weight accumulation for error recovery cost tuning |
-| B3 | `WfstMinimization` | State reduction on PredictionWfst via Hopcroft-style minimization |
-| F1 | `SpilloverPruning` | Weight-based pruning of NFA spillover alternatives below beam width |
-| F2 | `EarlyTermination` | Short-circuit dispatch on deterministic (single-prediction) token hit |
-| F3 | `LazySpillover` | Demand-driven replay of NFA alternatives (defer until needed) |
+| ID | Optimization                  | Description                                                           |
+|----|-------------------------------|-----------------------------------------------------------------------|
+| A1 | `LeftFactoring`               | Grammar left-factoring via shared prefix extraction                   |
+| A2 | `HotColdSplitting`            | Separate hot (low-weight) and cold (high-weight) dispatch arms        |
+| A4 | `EnhancedDeadCodeElimination` | Full dispatch graph analysis to remove unreachable codegen            |
+| A5 | `AmbiguityTargeting`          | CountingWeight-guided identification of ambiguous dispatch points     |
+| B1 | `MultiTokenLookahead`         | Extended PredictionWfst with k-token lookahead for ambiguous tokens   |
+| B2 | `AdaptiveRecovery`            | Runtime weight accumulation for error recovery cost tuning            |
+| B3 | `WfstMinimization`            | State reduction on PredictionWfst via Hopcroft-style minimization     |
+| F1 | `SpilloverPruning`            | Weight-based pruning of NFA spillover alternatives below beam width   |
+| F2 | `EarlyTermination`            | Short-circuit dispatch on deterministic (single-prediction) token hit |
+| F3 | `LazySpillover`               | Demand-driven replay of NFA alternatives (defer until needed)         |
 
 ### Scoring formulas
 
-| Opt | Speedup (left) | Cost (right) | Apply When |
-|---|---|---|---|
-| A1 | `-ln(shared_prefix_ratio)` | `category_count * 0.1` | `shared_prefix_ratio > 0.3` |
-| A2 | `-ln(cold_fraction)` | `0.05` (fixed) | `cold_fraction > 0.4` |
-| A4 | `0.5` (fixed) | `0.2` (fixed) | `rule_count > 5` |
-| A5 | `-ln(ambiguous_fraction)` | `0.1` (fixed) | `ambiguous_fraction > 0.1` |
-| B1 | `-ln(ambiguous_fraction)` | `ambiguous_count * 0.5` | `ambiguous_fraction > 0.1 AND ambiguous_count < 10` |
-| B2 | `0.3` (fixed) | `0.1` (fixed) | always |
-| B3 | `-ln(total_wfst_states)` | `0.15` (fixed) | `total_wfst_states > 20` |
-| F1 | `0.2` (fixed) | `0.01` (fixed) | `has_beam_width AND nfa_spillover_categories > 0` |
-| F2 | `0.1` (fixed) | `0.01` (fixed) | `nfa_spillover_categories == 0 AND ambiguous_count > 0` |
-| F3 | `0.3` (fixed) | `0.3` (fixed) | `nfa_spillover_categories > 0` |
+| Opt | Speedup (left)             | Cost (right)            | Apply When                                              |
+|-----|----------------------------|-------------------------|---------------------------------------------------------|
+| A1  | `-ln(shared_prefix_ratio)` | `category_count * 0.1`  | `shared_prefix_ratio > 0.3`                             |
+| A2  | `-ln(cold_fraction)`       | `0.05` (fixed)          | `cold_fraction > 0.4`                                   |
+| A4  | `0.5` (fixed)              | `0.2` (fixed)           | `rule_count > 5`                                        |
+| A5  | `-ln(ambiguous_fraction)`  | `0.1` (fixed)           | `ambiguous_fraction > 0.1`                              |
+| B1  | `-ln(ambiguous_fraction)`  | `ambiguous_count * 0.5` | `ambiguous_fraction > 0.1 AND ambiguous_count < 10`     |
+| B2  | `0.3` (fixed)              | `0.1` (fixed)           | always                                                  |
+| B3  | `-ln(total_wfst_states)`   | `0.15` (fixed)          | `total_wfst_states > 20`                                |
+| F1  | `0.2` (fixed)              | `0.01` (fixed)          | `has_beam_width AND nfa_spillover_categories > 0`       |
+| F2  | `0.1` (fixed)              | `0.01` (fixed)          | `nfa_spillover_categories == 0 AND ambiguous_count > 0` |
+| F3  | `0.3` (fixed)              | `0.3` (fixed)           | `nfa_spillover_categories > 0`                          |
 
 ### Interpretation of `-ln(x)` speedup
 
@@ -307,18 +307,18 @@ which also returns `false` in such cases.
 
 ### Applicability predicates: rationale
 
-| Predicate | Rationale |
-|---|---|
-| `shared_prefix_ratio > 0.3` | Below 30% NFA spillover, left-factoring saves negligible dispatch work |
-| `cold_fraction > 0.4` | Below 40% cold arms, hot/cold splitting adds a branch with no measurable I-cache benefit |
-| `rule_count > 5` | Trivial grammars cannot have meaningful dead code |
-| `ambiguous_fraction > 0.1` | Below 10% ambiguity, lookahead overhead exceeds disambiguation benefit |
-| `ambiguous_count < 10` | With 10+ ambiguous tokens, lookahead cost grows linearly and may dominate |
-| always (B2) | Adaptive recovery has zero overhead on the happy path (separate `_recovering` functions) |
-| `total_wfst_states > 20` | Below 20 states, WFST minimization's Hopcroft pass is more expensive than the potential state reduction |
-| `beam AND spillover > 0` | Pruning requires both beam width configuration and spillover to exist |
+| Predicate                        | Rationale                                                                                                                          |
+|----------------------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| `shared_prefix_ratio > 0.3`      | Below 30% NFA spillover, left-factoring saves negligible dispatch work                                                             |
+| `cold_fraction > 0.4`            | Below 40% cold arms, hot/cold splitting adds a branch with no measurable I-cache benefit                                           |
+| `rule_count > 5`                 | Trivial grammars cannot have meaningful dead code                                                                                  |
+| `ambiguous_fraction > 0.1`       | Below 10% ambiguity, lookahead overhead exceeds disambiguation benefit                                                             |
+| `ambiguous_count < 10`           | With 10+ ambiguous tokens, lookahead cost grows linearly and may dominate                                                          |
+| always (B2)                      | Adaptive recovery has zero overhead on the happy path (separate `_recovering` functions)                                           |
+| `total_wfst_states > 20`         | Below 20 states, WFST minimization's Hopcroft pass is more expensive than the potential state reduction                            |
+| `beam AND spillover > 0`         | Pruning requires both beam width configuration and spillover to exist                                                              |
 | `no spillover AND ambiguity > 0` | Early termination is only meaningful when all dispatch is deterministic (no NFA) but some tokens are ambiguous at the weight level |
-| `spillover > 0` | Lazy spillover defers NFA replay; without spillover, there is nothing to defer |
+| `spillover > 0`                  | Lazy spillover defers NFA replay; without spillover, there is nothing to defer                                                     |
 
 ---
 
@@ -449,31 +449,31 @@ GrammarProfile {
 
 Each optimization is scored against this profile:
 
-| Opt | Speedup | Cost | Score (left, right) | Applicable? | Reason |
-|---|---|---|---|---|---|
-| A1 | `+inf` (ratio=0.0) | `4 * 0.1 = 0.4` | `(+inf, 0.4)` | No | `shared_prefix_ratio=0.00 <= 0.3` |
-| A2 | `-ln(0.3) = 1.20` | `0.05` | `(1.20, 0.05)` | No | `cold_fraction=0.30 <= 0.4` |
-| A4 | `0.50` | `0.20` | `(0.50, 0.20)` | Yes | `rule_count=20 > 5` |
-| A5 | `-ln(0.15) = 1.90` | `0.10` | `(1.90, 0.10)` | Yes | `ambiguous_fraction=0.15 > 0.1` |
-| B1 | `-ln(0.15) = 1.90` | `3 * 0.5 = 1.50` | `(1.90, 1.50)` | Yes | `ambiguous_fraction=0.15 > 0.1 AND count=3 < 10` |
-| B2 | `0.30` | `0.10` | `(0.30, 0.10)` | Yes | always applicable |
-| B3 | `+inf` (states=12) | `0.15` | `(+inf, 0.15)` | No | `total_wfst_states=12 <= 20` |
-| F1 | `0.20` | `0.01` | `(0.20, 0.01)` | No | `has_beam_width=false` |
-| F2 | `0.10` | `0.01` | `(0.10, 0.01)` | Yes | `nfa_spillover=0 AND ambiguous_count=3 > 0` |
-| F3 | `0.30` | `0.30` | `(0.30, 0.30)` | No | `nfa_spillover_categories=0` |
+| Opt | Speedup            | Cost             | Score (left, right) | Applicable? | Reason                                           |
+|-----|--------------------|------------------|---------------------|-------------|--------------------------------------------------|
+| A1  | `+inf` (ratio=0.0) | `4 * 0.1 = 0.4`  | `(+inf, 0.4)`       | No          | `shared_prefix_ratio=0.00 <= 0.3`                |
+| A2  | `-ln(0.3) = 1.20`  | `0.05`           | `(1.20, 0.05)`      | No          | `cold_fraction=0.30 <= 0.4`                      |
+| A4  | `0.50`             | `0.20`           | `(0.50, 0.20)`      | Yes         | `rule_count=20 > 5`                              |
+| A5  | `-ln(0.15) = 1.90` | `0.10`           | `(1.90, 0.10)`      | Yes         | `ambiguous_fraction=0.15 > 0.1`                  |
+| B1  | `-ln(0.15) = 1.90` | `3 * 0.5 = 1.50` | `(1.90, 1.50)`      | Yes         | `ambiguous_fraction=0.15 > 0.1 AND count=3 < 10` |
+| B2  | `0.30`             | `0.10`           | `(0.30, 0.10)`      | Yes         | always applicable                                |
+| B3  | `+inf` (states=12) | `0.15`           | `(+inf, 0.15)`      | No          | `total_wfst_states=12 <= 20`                     |
+| F1  | `0.20`             | `0.01`           | `(0.20, 0.01)`      | No          | `has_beam_width=false`                           |
+| F2  | `0.10`             | `0.01`           | `(0.10, 0.01)`      | Yes         | `nfa_spillover=0 AND ambiguous_count=3 > 0`      |
+| F3  | `0.30`             | `0.30`           | `(0.30, 0.30)`      | No          | `nfa_spillover_categories=0`                     |
 
 ### Sorted recommendation list
 
 After filtering to applicable candidates and sorting by
 `ProductWeight` lexicographic ordering (lower is better):
 
-| Rank | Optimization | Score | Reason |
-|---|---|---|---|
-| 1 | F2:EarlyTermination | `(0.10, 0.01)` | Best speedup, trivial cost |
-| 2 | B2:AdaptiveRecovery | `(0.30, 0.10)` | Always-on, zero happy-path overhead |
-| 3 | A4:EnhancedDCE | `(0.50, 0.20)` | Moderate benefit for 20-rule grammar |
-| 4 | A5:AmbiguityTargeting | `(1.90, 0.10)` | Modest benefit (low ambiguity) |
-| 5 | B1:MultiTokenLookahead | `(1.90, 1.50)` | Same speedup as A5, but 15x the cost |
+| Rank | Optimization           | Score          | Reason                               |
+|------|------------------------|----------------|--------------------------------------|
+| 1    | F2:EarlyTermination    | `(0.10, 0.01)` | Best speedup, trivial cost           |
+| 2    | B2:AdaptiveRecovery    | `(0.30, 0.10)` | Always-on, zero happy-path overhead  |
+| 3    | A4:EnhancedDCE         | `(0.50, 0.20)` | Moderate benefit for 20-rule grammar |
+| 4    | A5:AmbiguityTargeting  | `(1.90, 0.10)` | Modest benefit (low ambiguity)       |
+| 5    | B1:MultiTokenLookahead | `(1.90, 1.50)` | Same speedup as A5, but 15x the cost |
 
 ### Analysis
 
@@ -531,11 +531,11 @@ jumps.
 The applicability thresholds are chosen to align with meaningful points
 on the `-ln(x)` curve:
 
-| Threshold | `-ln(threshold)` | Interpretation |
-|---|---|---|
-| `x > 0.1` | `-ln(0.1) = 2.30` | High speedup weight -- only apply if analysis cost is low |
+| Threshold | `-ln(threshold)`  | Interpretation                                               |
+|-----------|-------------------|--------------------------------------------------------------|
+| `x > 0.1` | `-ln(0.1) = 2.30` | High speedup weight -- only apply if analysis cost is low    |
 | `x > 0.3` | `-ln(0.3) = 1.20` | Moderate speedup -- apply when prefix sharing is substantial |
-| `x > 0.4` | `-ln(0.4) = 0.92` | Good speedup -- apply when nearly half of dispatch is cold |
+| `x > 0.4` | `-ln(0.4) = 0.92` | Good speedup -- apply when nearly half of dispatch is cold   |
 
 Optimizations with thresholds at `x > 0.1` produce large speedup
 weights (~2.3), meaning they are ranked lower than fixed-speedup
@@ -576,18 +576,18 @@ corpus of grammars.
 
 ## 8. Source Reference
 
-| Component | Location |
-|---|---|
-| `GrammarProfile` struct | `cost_benefit.rs:109-129` |
-| `build_grammar_profile()` | `cost_benefit.rs:135-206` |
-| `Optimization` enum (10 variants) | `cost_benefit.rs:26-48` |
-| `OptimizationCandidate` struct | `cost_benefit.rs:68-103` |
-| `evaluate_optimizations()` | `cost_benefit.rs:213-357` |
-| `recommended_optimizations()` | `cost_benefit.rs:360-365` |
-| Pipeline integration block | `pipeline.rs:963-991` |
-| `ProductWeight` type + lexicographic `Ord` | `semiring.rs:492-594` |
-| `TropicalWeight` semiring | `semiring.rs:57-198` |
-| Unit tests (7 tests) | `cost_benefit.rs:372-508` |
+| Component                                  | Location                  |
+|--------------------------------------------|---------------------------|
+| `GrammarProfile` struct                    | `cost_benefit.rs:109-129` |
+| `build_grammar_profile()`                  | `cost_benefit.rs:135-206` |
+| `Optimization` enum (10 variants)          | `cost_benefit.rs:26-48`   |
+| `OptimizationCandidate` struct             | `cost_benefit.rs:68-103`  |
+| `evaluate_optimizations()`                 | `cost_benefit.rs:213-357` |
+| `recommended_optimizations()`              | `cost_benefit.rs:360-365` |
+| Pipeline integration block                 | `pipeline.rs:963-991`     |
+| `ProductWeight` type + lexicographic `Ord` | `semiring.rs:492-594`     |
+| `TropicalWeight` semiring                  | `semiring.rs:57-198`      |
+| Unit tests (7 tests)                       | `cost_benefit.rs:372-508` |
 
 ### See also
 

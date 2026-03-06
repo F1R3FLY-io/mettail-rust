@@ -95,13 +95,13 @@ R.items = [item₀, item₁, item₂, ..., itemₘ]
 
 where each itemᵢ is one of:
 
-| Variant                  | Description                           |
-|:-------------------------|:--------------------------------------|
-| Terminal(t)              | A fixed token to match (e.g. `(`, `)`, `float`) |
-| NonTerminal(cat, param)  | A recursive parse of category *cat*   |
-| IdentCapture(param)      | A raw identifier capture              |
-| Binder(param, cat)       | A binder position                     |
-| Collection(param, cat, sep) | A delimited collection             |
+| Variant                     | Description                                     |
+|:----------------------------|:------------------------------------------------|
+| Terminal(t)                 | A fixed token to match (e.g. `(`, `)`, `float`) |
+| NonTerminal(cat, param)     | A recursive parse of category *cat*             |
+| IdentCapture(param)         | A raw identifier capture                        |
+| Binder(param, cat)          | A binder position                               |
+| Collection(param, cat, sep) | A delimited collection                          |
 
 By convention, item₀ is the **dispatch token** -- the terminal that
 triggers this rule's match arm in the Pratt/trampoline dispatch. The
@@ -167,14 +167,14 @@ pub struct PrefixTrie<K, V> {
 
 Key operations:
 
-| Method              | Signature                            | Description                          |
-|:--------------------|:-------------------------------------|:-------------------------------------|
-| `insert`            | `(&mut self, key, value)`            | Insert a key sequence with a value   |
-| `shared_prefix_depth` | `(&self) -> usize`                 | Depth of the longest single-child chain from root |
-| `shared_prefix`     | `(&self) -> (Vec<&K>, &Self)`        | Walk the single-child chain, return elements and divergence node |
-| `descend`           | `(&self, &K) -> Option<&Self>`       | Navigate to a child by element       |
-| `children`          | `(&self) -> Iterator<(&K, &Self)>`   | Iterate over (element, subtrie) pairs |
-| `count_values`      | `(&self) -> usize`                   | Count total values (leaves) in the trie |
+| Method                | Signature                          | Description                                                      |
+|:----------------------|:-----------------------------------|:-----------------------------------------------------------------|
+| `insert`              | `(&mut self, key, value)`          | Insert a key sequence with a value                               |
+| `shared_prefix_depth` | `(&self) -> usize`                 | Depth of the longest single-child chain from root                |
+| `shared_prefix`       | `(&self) -> (Vec<&K>, &Self)`      | Walk the single-child chain, return elements and divergence node |
+| `descend`             | `(&self, &K) -> Option<&Self>`     | Navigate to a child by element                                   |
+| `children`            | `(&self) -> Iterator<(&K, &Self)>` | Iterate over (element, subtrie) pairs                            |
+| `count_values`        | `(&self) -> usize`                 | Count total values (leaves) in the trie                          |
 
 The traversal API is inspired by two existing projects:
 
@@ -423,10 +423,10 @@ Terminal("float"), so they form one group.
 **Step 2:** Compute shared terminal prefix. Walk items[1..] in
 lockstep:
 
-| Offset | item_idx | IntToFloat        | BoolToFloat       | StrToFloat        | Same? |
-|:------:|:--------:|:------------------|:------------------|:------------------|:-----:|
-| 0      | 1        | Terminal("(")     | Terminal("(")     | Terminal("(")     | Yes   |
-| 1      | 2        | NonTerminal(Int)  | NonTerminal(Bool) | NonTerminal(Str)  | Stop  |
+| Offset | item_idx | IntToFloat       | BoolToFloat       | StrToFloat       | Same? |
+|:------:|:--------:|:-----------------|:------------------|:-----------------|:-----:|
+|   0    |    1     | Terminal("(")    | Terminal("(")     | Terminal("(")    |  Yes  |
+|   1    |    2     | NonTerminal(Int) | NonTerminal(Bool) | NonTerminal(Str) | Stop  |
 
 **Result:** `shared_terminal_prefix = ["("]`, depth = 1.
 
@@ -499,17 +499,17 @@ Tokens:  Float  LParen  Integer(42)  RParen
          pos=0  pos=1   pos=2        pos=3
 ```
 
-| Step | Action                     | pos | Note                        |
-|:----:|:---------------------------|:---:|:----------------------------|
-| 1    | Match Token::Float         | 0   | Dispatch token              |
-| 2    | *pos += 1                  | 1   | Consume dispatch token      |
-| 3    | expect_token LParen        | 1   | Shared prefix (A1)          |
-| 4    | (LParen matched, *pos += 1)| 2   | Shared prefix consumed      |
-| 5    | nfa_saved = 2              | 2   | Save for NFA try-all        |
-| 6    | Try IntToFloat: parse_Int  | 2   | Parses Integer(42), pos -> 3|
-| 7    | expect_token RParen        | 3   | Matches, pos -> 4           |
-| 8    | Ok(Float::Cast(Int(42)))   | 4   | First success               |
-| 9    | Return result              | 4   | Skip remaining alternatives |
+| Step | Action                      | pos | Note                         |
+|:----:|:----------------------------|:---:|:-----------------------------|
+|  1   | Match Token::Float          |  0  | Dispatch token               |
+|  2   | *pos += 1                   |  1  | Consume dispatch token       |
+|  3   | expect_token LParen         |  1  | Shared prefix (A1)           |
+|  4   | (LParen matched, *pos += 1) |  2  | Shared prefix consumed       |
+|  5   | nfa_saved = 2               |  2  | Save for NFA try-all         |
+|  6   | Try IntToFloat: parse_Int   |  2  | Parses Integer(42), pos -> 3 |
+|  7   | expect_token RParen         |  3  | Matches, pos -> 4            |
+|  8   | Ok(Float::Cast(Int(42)))    |  4  | First success                |
+|  9   | Return result               |  4  | Skip remaining alternatives  |
 
 Without A1, steps 3-4 would be repeated inside each alternative's
 closure, adding 2 redundant operations (for this example with depth 1
@@ -686,14 +686,14 @@ A' and restructures the productions.
 PraTTaIL's left-factoring is analogous but operates at the codegen
 level rather than the grammar level:
 
-| Aspect            | Classical LL           | PraTTaIL A1                    |
-|:------------------|:-----------------------|:-------------------------------|
-| Level             | Grammar transformation | Code generation                |
-| Input             | Productions (CFG)      | RDRuleInfo (syntax items)      |
-| Output            | Factored grammar       | Factored dispatch code         |
-| New non-terminal  | A' introduced          | None (NFA closure at divergence)|
-| Determinism       | LL(1) required after   | NFA try-all at divergence      |
-| Scope             | All productions        | Same-dispatch-token groups     |
+| Aspect           | Classical LL           | PraTTaIL A1                      |
+|:-----------------|:-----------------------|:---------------------------------|
+| Level            | Grammar transformation | Code generation                  |
+| Input            | Productions (CFG)      | RDRuleInfo (syntax items)        |
+| Output           | Factored grammar       | Factored dispatch code           |
+| New non-terminal | A' introduced          | None (NFA closure at divergence) |
+| Determinism      | LL(1) required after   | NFA try-all at divergence        |
+| Scope            | All productions        | Same-dispatch-token groups       |
 
 The key difference: classical left-factoring requires the factored
 grammar to be LL(1)-parseable after transformation. PraTTaIL does not
@@ -722,42 +722,42 @@ determinization.
 
 ## 10. Source Reference
 
-| Symbol / Function                  | Location                        |
-|:-----------------------------------|:--------------------------------|
-| `compute_shared_terminal_prefix()` | `prattail/src/trampoline.rs`    |
-| `write_nfa_merged_prefix_arm()`    | `prattail/src/trampoline.rs`    |
-| `PrefixTrie<K, V>`                | `prattail/src/prefix_trie.rs`   |
-| `PrefixTrie::shared_prefix()`     | `prattail/src/prefix_trie.rs`   |
-| `PrefixTrie::shared_prefix_depth()` | `prattail/src/prefix_trie.rs` |
-| `PrefixTrie::insert()`            | `prattail/src/prefix_trie.rs`   |
-| `PrefixTrie::descend()`           | `prattail/src/prefix_trie.rs`   |
-| `RDRuleInfo`                       | `prattail/src/recursive.rs`     |
-| `RDSyntaxItem`                     | `prattail/src/recursive.rs`     |
-| `split_rd_handler()`              | `prattail/src/trampoline.rs`    |
-| `terminal_to_variant_name()`      | `prattail/src/automata/codegen.rs` |
+| Symbol / Function                   | Location                           |
+|:------------------------------------|:-----------------------------------|
+| `compute_shared_terminal_prefix()`  | `prattail/src/trampoline.rs`       |
+| `write_nfa_merged_prefix_arm()`     | `prattail/src/trampoline.rs`       |
+| `PrefixTrie<K, V>`                  | `prattail/src/prefix_trie.rs`      |
+| `PrefixTrie::shared_prefix()`       | `prattail/src/prefix_trie.rs`      |
+| `PrefixTrie::shared_prefix_depth()` | `prattail/src/prefix_trie.rs`      |
+| `PrefixTrie::insert()`              | `prattail/src/prefix_trie.rs`      |
+| `PrefixTrie::descend()`             | `prattail/src/prefix_trie.rs`      |
+| `RDRuleInfo`                        | `prattail/src/recursive.rs`        |
+| `RDSyntaxItem`                      | `prattail/src/recursive.rs`        |
+| `split_rd_handler()`                | `prattail/src/trampoline.rs`       |
+| `terminal_to_variant_name()`        | `prattail/src/automata/codegen.rs` |
 
 **Tests (in `trampoline.rs`):**
 
-| Test                                               | What it verifies                                |
-|:---------------------------------------------------|:------------------------------------------------|
+| Test                                                  | What it verifies                                |
+|:------------------------------------------------------|:------------------------------------------------|
 | `test_shared_prefix_two_rules_shared_second_terminal` | `float ( a:Int )` / `float ( a:Bool )` -> ["("] |
-| `test_shared_prefix_no_shared_terminals`           | Immediate divergence -> []                       |
-| `test_shared_prefix_nonterminal_at_second_position` | NonTerminal stops sharing -> []                 |
-| `test_shared_prefix_deep_sharing`                  | 3 shared terminals -> ["(", "[", "{"]            |
-| `test_shared_prefix_single_rule`                   | Single rule -> [] (no factoring needed)          |
+| `test_shared_prefix_no_shared_terminals`              | Immediate divergence -> []                      |
+| `test_shared_prefix_nonterminal_at_second_position`   | NonTerminal stops sharing -> []                 |
+| `test_shared_prefix_deep_sharing`                     | 3 shared terminals -> ["(", "[", "{"]           |
+| `test_shared_prefix_single_rule`                      | Single rule -> [] (no factoring needed)         |
 
 **Tests (in `prefix_trie.rs`):**
 
-| Test                                      | What it verifies                             |
-|:------------------------------------------|:---------------------------------------------|
-| `test_empty_trie`                         | Empty trie properties                        |
-| `test_single_key`                         | Single key: depth = key length               |
-| `test_shared_prefix_two_keys`             | Two keys: shared depth = common prefix       |
-| `test_no_shared_prefix`                   | Immediate divergence: depth = 0              |
-| `test_descend`                            | Zipper-style navigation                      |
-| `test_children_iteration`                 | DictZipper-style child enumeration           |
-| `test_prefix_value_at_intermediate_node`  | Value at non-leaf stops prefix chain         |
-| `test_with_integer_keys`                  | Generic key type (integers, not strings)     |
+| Test                                     | What it verifies                         |
+|:-----------------------------------------|:-----------------------------------------|
+| `test_empty_trie`                        | Empty trie properties                    |
+| `test_single_key`                        | Single key: depth = key length           |
+| `test_shared_prefix_two_keys`            | Two keys: shared depth = common prefix   |
+| `test_no_shared_prefix`                  | Immediate divergence: depth = 0          |
+| `test_descend`                           | Zipper-style navigation                  |
+| `test_children_iteration`                | DictZipper-style child enumeration       |
+| `test_prefix_value_at_intermediate_node` | Value at non-leaf stops prefix chain     |
+| `test_with_integer_keys`                 | Generic key type (integers, not strings) |
 
 ---
 

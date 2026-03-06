@@ -752,10 +752,17 @@ pub fn compose_with_wfst(
         for result in &cvt_report.results {
             if !result.holds {
                 for violation in &result.violations {
-                    eprintln!(
-                        "warning: composition verification [{}]: {}",
-                        result.property, violation
-                    );
+                    crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+                        id: "X06",
+                        name: "composition-verification-violation",
+                        severity: crate::lint::LintSeverity::Warning,
+                        category: None,
+                        rule: None,
+                        message: format!("composition verification [{}]: {}", result.property, violation),
+                        hint: Some("review the composed grammar for property violations".to_string()),
+                        grammar_name: None,
+                        source_location: None,
+                    });
                 }
             }
         }

@@ -51,13 +51,13 @@ for the comprehensive unification guide covering all five mechanisms.
 
 ### Mechanism Comparison
 
-| Mechanism | Level | Merges | New Parser? | Duplicate Strategy | Source |
-|-----------|-------|--------|-------------|-------------------|--------|
-| `extends:` | LanguageDef | types+terms+eqs+rw+logic | Yes (merged) | Error | `macros/src/ast/merge.rs` |
-| `includes:` | LanguageDef | types+terms only | Yes (merged) | Override | `macros/src/ast/merge.rs` |
-| `mixins:` | LanguageDef | types+terms only | Yes (merged) | Override | `macros/src/ast/merge.rs` |
-| `compose_languages!` | Delegation | None (delegation) | No (per-sub-lang) | N/A | `macros/src/gen/compose_gen.rs` |
-| `compose_languages()` | LanguageSpec | types+terms | Yes (merged) | Error | `prattail/src/compose.rs` |
+| Mechanism             | Level        | Merges                   | New Parser?       | Duplicate Strategy | Source                          |
+|-----------------------|--------------|--------------------------|-------------------|--------------------|---------------------------------|
+| `extends:`            | LanguageDef  | types+terms+eqs+rw+logic | Yes (merged)      | Error              | `macros/src/ast/merge.rs`       |
+| `includes:`           | LanguageDef  | types+terms only         | Yes (merged)      | Override           | `macros/src/ast/merge.rs`       |
+| `mixins:`             | LanguageDef  | types+terms only         | Yes (merged)      | Override           | `macros/src/ast/merge.rs`       |
+| `compose_languages!`  | Delegation   | None (delegation)        | No (per-sub-lang) | N/A                | `macros/src/gen/compose_gen.rs` |
+| `compose_languages()` | LanguageSpec | types+terms              | Yes (merged)      | Error              | `prattail/src/compose.rs`       |
 
 ---
 
@@ -249,90 +249,111 @@ Composed 'A_B': 3 categories (2 from A, 2 from B, 1 shared), 2 rules (1 + 1)
 ### 8.1 Merge Steps
 
 ```
-  +---------------------+      +---------------------+
-  |   Grammar A         |      |   Grammar B         |
-  |                     |      |                     |
-  |  categories:        |      |  categories:        |
-  |    Expr {Int} *     |      |    Expr {Bool} *    |  <- mismatch!
-  |                     |      |    Val  {Int}       |
-  |  rules:             |      |  rules:             |
-  |    Add, Mul, Num    |      |    And, Or, True    |
-  +---------------------+      +---------------------+
-             |                          |
-             +----------+---------------+
-                        v
-          compose_languages(A, B)
-                        |
-          +-------------+-----------------+
-          |             |                 |
-          v             v                 v
-    merge_categories  merge_rules    validate
-          |
-          v
-    ERROR: CategoryNativeTypeMismatch
-    category = "Expr", native_type_a = Some("Int"),
-                        native_type_b = Some("Bool")
+┌─────────────────────┐      ┌─────────────────────┐
+│   Grammar A         │      │   Grammar B         │
+│                     │      │                     │
+│  categories:        │      │  categories:        │
+│    Expr {Int} *     │      │    Expr {Bool} *    │  <- mismatch!
+│                     │      │    Val  {Int}       │
+│  rules:             │      │  rules:             │
+│    Add, Mul, Num    │      │    And, Or, True    │
+└──────────┬──────────┘      └──────────┬──────────┘
+           │                            │
+           └────────────────┬───────────┘
+                            │
+                            ▼
+               ┌─────────────────────────┐
+               │ compose_languages(A, B) │
+               └────────────┬────────────┘
+                            │
+          ┌─────────────────┼─────────────┐
+          │                 │             │
+          ▼                 ▼             ▼
+┌──────────────────┐ ┌─────────────┐ ┌──────────┐
+│ merge_categories │ │ merge_rules │ │ validate │
+└─────────┬────────┘ └─────────────┘ └──────────┘
+          │
+          ▼
+┌──────────────────────────────────────────────────┐
+│ ERROR: CategoryNativeTypeMismatch                │
+│ category = "Expr", native_type_a = Some("Int"),  │
+│                     native_type_b = Some("Bool") │
+└──────────────────────────────────────────────────┘
 ```
 
 The fix: grammar B should use a distinct category name.
 
 ```
-  +---------------------+      +---------------------+
-  |   Grammar A (Calc)  |      |   Grammar B (Logic) |
-  |                     |      |                     |
-  |  categories:        |      |  categories:        |
-  |    Expr {Int} *     |      |    BoolExpr {Bool} *|
-  |                     |      |                     |
-  |  rules:             |      |  rules:             |
-  |    Add, Mul, Num    |      |    And, Or, True    |
-  +---------------------+      +---------------------+
-             |                          |
-             +----------+---------------+
-                        v
-          compose_languages(A, B)
-                        |
-          merged grammar "Calc_Logic":
-          +-------------v----------------------+
-          |  categories:                       |
-          |    Expr     {Int}  is_primary=true |  <- from A
-          |    BoolExpr {Bool} is_primary=false|  <- from B (demoted)
-          |                                    |
-          |  rules (A first, then B):          |
-          |    Add, Mul, Num                   |
-          |    And, Or, True                   |
-          +------------------------------------+
+┌─────────────────────┐      ┌─────────────────────┐
+│ Grammar A (Calc)    │      │ Grammar B (Logic)   │
+│                     │      │                     │
+│ categories:         │      │ categories:         │
+│   Expr {Int} *      │      │   BoolExpr {Bool} * │
+│                     │      │                     │
+│ rules:              │      │ rules:              │
+│   Add, Mul, Num     │      │   And, Or, True     │
+└──────────┬──────────┘      └────────┬────────────┘
+           │                          │
+           └────────────┬─────────────┘
+                        │
+                        ▼
+           ┌─────────────────────────┐
+           │ compose_languages(A, B) │
+           └────────────┬────────────┘
+                        │
+                        ▼
+         ┌──────────────────────────────┐
+         │ merged grammar "Calc_Logic": │
+         └──────────────┬───────────────┘
+                        │
+                        ▼
+        ┌────────────────────────────────────┐
+        │ categories:                        │
+        │   Expr     {Int}  is_primary=true  │  <- from A
+        │   BoolExpr {Bool} is_primary=false │  <- from B (demoted)
+        │                                    │
+        │ rules (A first, then B):           │
+        │   Add, Mul, Num                    │
+        │   And, Or, True                    │
+        └────────────────────────────────────┘
 ```
 
 ### 8.2 Composition Data-Flow
 
 ```
-  spec_a --------------------------------------------------+
-                                                           |
-  spec_b --------------------------------------------------+
-                                                           |
-                                                           v
+  spec_a ─────────────────────────────────┐
+                                          │
+  spec_b ─────────────────────────────────┤
+                                          │
+                                          ▼
                                   compose_languages(a, b)
-                                          |
-              +---------------------------+------------------------+
-              |                           |                        |
-              v                           v                        v
-      merge_categories            merge_rules              validate refs
-      (name -> CategorySpec)       (label collision)        + associativity
-              |                           |                        |
-              +---------------------------+------------------------+
-                                          |
-                                   errors? --- yes --> Err(Vec<CompositionError>)
-                                          | no
-                                          v
-                                 LanguageSpec::new(
-                                   name = "A_B",
-                                   types = merged_types,
-                                   rules = merged_inputs   <- reclassified
-                                 )
-                                          |
-                                          v
-                                  generate_parser()
-                                  (normal pipeline)
+                                          │
+              ┌───────────────────────────┼────────────────────────┐
+              │                           │                        │
+              ▼                           ▼                        ▼
+    ┌────────────────────────┐  ┌────────────────────┐   ┌──────────────────┐
+    │ merge_categories       │  │ merge_rules        │   │ validate refs    │
+    │ (name -> CategorySpec) │  │  (label collision) │   │  + associativity │
+    └─────────┬──────────────┘  └─────────┬──────────┘   └─────────┬────────┘
+              │                           │                        │
+              └───────────────────────────┼────────────────────────┘
+                                          │
+                                   errors? ─── yes ───▶ Err(Vec<CompositionError>)
+                                          │ no
+                                          ▼
+                             ┌─────────────────────────┐
+                             │ LanguageSpec::new(      │
+                             │   name = "A_B",         │
+                             │   types = merged_types, │
+                             │   rules = merged_inputs │  <- reclassified
+                             │ )                       │
+                             └────────────┬────────────┘
+                                          │
+                                          ▼
+                                ┌───────────────────┐
+                                │ generate_parser() │
+                                │ (normal pipeline) │
+                                └───────────────────┘
 ```
 
 ---

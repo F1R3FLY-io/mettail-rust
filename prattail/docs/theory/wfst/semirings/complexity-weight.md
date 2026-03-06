@@ -134,8 +134,8 @@ c = 7.
 ### (A1) Associativity of ⊕
 
 ```
-(a ⊕ b) ⊕ c  =  min(min(2, 5), 7)  =  min(2, 7)  =  2
-a ⊕ (b ⊕ c)  =  min(2, min(5, 7))  =  min(2, 5)  =  2   ✓
+(a ⊕  b) ⊕  c  =  min(min(2, 5), 7)  =  min(2, 7)  =  2
+a ⊕  (b ⊕  c)  =  min(2, min(5, 7))  =  min(2, 5)  =  2   ✓
 ```
 
 **General proof.** For all x, y, z in N ∪ {∞}, consider cases on
@@ -154,8 +154,8 @@ ordered set.   ∎
 ### (A2) Commutativity of ⊕
 
 ```
-a ⊕ b  =  min(2, 5)  =  2
-b ⊕ a  =  min(5, 2)  =  2   ✓
+a ⊕  b  =  min(2, 5)  =  2
+b ⊕  a  =  min(5, 2)  =  2   ✓
 ```
 
 **General proof.** For all x, y in N ∪ {∞}: min(x, y) = min(y, x)
@@ -164,11 +164,11 @@ which they are presented. Formally, min(x, y) = x if x ≤ y and
 min(x, y) = y if y < x; in both cases the result is the same
 regardless of argument order.   ∎
 
-### (A3) ⊕ Identity
+### (A3) ⊕  Identity
 
 ```
-0̄ ⊕ a  =  min(∞, 2)  =  2  =  a   ✓
-a ⊕ 0̄  =  min(2, ∞)  =  2  =  a   ✓
+0̄ ⊕  a  =  min(∞, 2)  =  2  =  a   ✓
+a ⊕  0̄  =  min(2, ∞)  =  2  =  a   ✓
 ```
 
 **General proof.** For all x in N ∪ {∞}: x ≤ ∞ (since ∞ is the
@@ -178,8 +178,8 @@ Therefore ∞ is the two-sided identity for min.   ∎
 ### (M1) Associativity of ⊗
 
 ```
-(a ⊗ b) ⊗ c  =  max(max(2, 5), 7)  =  max(5, 7)  =  7
-a ⊗ (b ⊗ c)  =  max(2, max(5, 7))  =  max(2, 7)  =  7   ✓
+(a ⊗  b) ⊗  c  =  max(max(2, 5), 7)  =  max(5, 7)  =  7
+a ⊗  (b ⊗  c)  =  max(2, max(5, 7))  =  max(2, 7)  =  7   ✓
 ```
 
 **General proof.** Symmetric to (A1). For all x, y, z in N ∪ {∞},
@@ -193,22 +193,22 @@ max(x, max(y, z))  =  max(x, z)  =  z
 Both reduce to the maximum element. Since this holds for all
 orderings, max is associative over any totally ordered set.   ∎
 
-### (M2) ⊗ Identity
+### (M2) ⊗  Identity
 
 ```
-1̄ ⊗ a  =  max(0, 2)  =  2  =  a   ✓
-a ⊗ 1̄  =  max(2, 0)  =  2  =  a   ✓
+1̄ ⊗  a  =  max(0, 2)  =  2  =  a   ✓
+a ⊗  1̄  =  max(2, 0)  =  2  =  a   ✓
 ```
 
 **General proof.** For all x in N ∪ {∞}: x ≥ 0 (since 0 is the
 minimum element of N ∪ {∞}), so max(0, x) = max(x, 0) = x.
 Therefore 0 is the two-sided identity for max.   ∎
 
-### (D1) Left Distributivity: ⊗ distributes over ⊕ from the left
+### (D1) Left Distributivity: ⊗  distributes over ⊕  from the left
 
 ```
-a ⊗ (b ⊕ c)  =  max(2, min(5, 7))  =  max(2, 5)  =  5
-(a ⊗ b) ⊕ (a ⊗ c)  =  min(max(2, 5), max(2, 7))  =  min(5, 7)  =  5   ✓
+a ⊗  (b ⊕  c)  =  max(2, min(5, 7))  =  max(2, 5)  =  5
+(a ⊗  b) ⊕  (a ⊗  c)  =  min(max(2, 5), max(2, 7))  =  min(5, 7)  =  5   ✓
 ```
 
 **General proof.** We must show that for all x, y, z in N ∪ {∞}:
@@ -247,11 +247,11 @@ by case analysis.
 
 All six orderings satisfy the identity.   ∎
 
-### (D2) Right Distributivity: ⊗ distributes over ⊕ from the right
+### (D2) Right Distributivity: ⊗  distributes over ⊕  from the right
 
 ```
-(a ⊕ b) ⊗ c  =  max(min(2, 5), 7)  =  max(2, 7)  =  7
-(a ⊗ c) ⊕ (b ⊗ c)  =  min(max(2, 7), max(5, 7))  =  min(7, 7)  =  7   ✓
+(a ⊕  b) ⊗  c  =  max(min(2, 5), 7)  =  max(2, 7)  =  7
+(a ⊗  c) ⊕  (b ⊗  c)  =  min(max(2, 7), max(5, 7))  =  min(7, 7)  =  7   ✓
 ```
 
 **General proof.** We must show:
@@ -273,8 +273,8 @@ elements, D2 holds as well.   ∎
 ### (Z) Zero Annihilation
 
 ```
-0̄ ⊗ a  =  max(∞, 2)  =  ∞  =  0̄   ✓
-a ⊗ 0̄  =  max(2, ∞)  =  ∞  =  0̄   ✓
+0̄ ⊗  a  =  max(∞, 2)  =  ∞  =  0̄   ✓
+a ⊗  0̄  =  max(2, ∞)  =  ∞  =  0̄   ✓
 ```
 
 **General proof.** For all x in N ∪ {∞}: ∞ ≥ x (since ∞ is the
@@ -285,7 +285,7 @@ Therefore ∞ annihilates under max. An unreachable segment (complexity
 ### (I) Idempotence of ⊕
 
 ```
-a ⊕ a  =  min(2, 2)  =  2  =  a   ✓
+a ⊕  a  =  min(2, 2)  =  2  =  a   ✓
 ```
 
 **General proof.** For all x in N ∪ {∞}: min(x, x) = x. The
@@ -303,12 +303,12 @@ idempotent semiring.
 
 ### 4.1 Commutativity of ⊗
 
-**Claim**: The bottleneck semiring is commutative (⊗ is commutative).
+**Claim**: The bottleneck semiring is commutative (⊗  is commutative).
 
 **Proof**: For all a, b in N ∪ {∞}:
 
 ```
-a ⊗ b  =  max(a, b)  =  max(b, a)  =  b ⊗ a
+a ⊗  b  =  max(a, b)  =  max(b, a)  =  b ⊗  a
 ```
 
 The max function is symmetric.   ∎
@@ -319,20 +319,20 @@ B then A.
 
 ### 4.2 Idempotency of ⊗
 
-**Claim**: The ⊗ operation is also idempotent.
+**Claim**: The ⊗  operation is also idempotent.
 
 **Proof**: For all a in N ∪ {∞}:
 
 ```
-a ⊗ a  =  max(a, a)  =  a
+a ⊗  a  =  max(a, a)  =  a
 ```
 
 The maximum of any value with itself is that value.   ∎
 
 Both operations are idempotent, making this a **doubly idempotent
 semiring** (also called a *bounded distributive lattice*). This
-distinguishes ComplexityWeight from TropicalWeight (where ⊗ = + is
-not idempotent: 2 + 2 = 4 /= 2) and from CountingWeight (where ⊕ = +
+distinguishes ComplexityWeight from TropicalWeight (where ⊗  = + is
+not idempotent: 2 + 2 = 4 /= 2) and from CountingWeight (where ⊕  = +
 is not idempotent: 3 + 3 = 6 /= 3).
 
 ### 4.3 Lattice Structure
@@ -401,7 +401,7 @@ optimal path  =  argmin   bottleneck(P)
 ```
 
 This is exactly the optimization problem that the bottleneck semiring
-solves: ⊗ = max computes the bottleneck of a path, and ⊕ = min
+solves: ⊗  = max computes the bottleneck of a path, and ⊕  = min
 selects the best (least-bottlenecked) alternative.
 
 ### 5.2 Relationship to Other Path Problems
@@ -415,7 +415,7 @@ selects the best (least-bottlenecked) alternative.
 | Counting paths     | Counting    | +   | ×   | Count distinct paths         |
 
 The bottleneck semiring is the *dual* of the widest-path (max-min)
-semiring obtained by swapping ⊕ and ⊗. In network routing, the
+semiring obtained by swapping ⊕  and ⊗. In network routing, the
 widest-path problem finds the path with maximum bandwidth
 (bottleneck = minimum capacity edge). In parsing, we solve the
 dual: find the path with minimum complexity (bottleneck = maximum
@@ -519,25 +519,25 @@ Path 3 (cross-cat from Int): q₀ ──3── q₄ ──1── q₃     (3-t
 **Path 1** (variable reference -- fully deterministic):
 
 ```
-w₁  =  0 ⊗ 0  =  max(0, 0)  =  0
+w₁  =  0 ⊗  0  =  max(0, 0)  =  0
 ```
 
 **Path 2** (function call -- needs 2-token lookahead at q₂):
 
 ```
-w₂  =  1 ⊗ 2  =  max(1, 2)  =  2
+w₂  =  1 ⊗  2  =  max(1, 2)  =  2
 ```
 
 **Path 3** (cross-category from Int -- 3-token shared prefix):
 
 ```
-w₃  =  3 ⊗ 1  =  max(3, 1)  =  3
+w₃  =  3 ⊗  1  =  max(3, 1)  =  3
 ```
 
 ### 7.3 Selecting the Best Alternative
 
 ```
-w*  =  w₁ ⊕ w₂ ⊕ w₃
+w*  =  w₁ ⊕  w₂ ⊕  w₃
     =  min(0, min(2, 3))
     =  min(0, 2)
     =  0
@@ -557,13 +557,13 @@ If the parser must explore all three paths (e.g., for error
 recovery), the required lookahead budget is:
 
 ```
-budget  =  w₁ ⊕ w₂ ⊕ w₃  =  0    (best path needs 0)
+budget  =  w₁ ⊕  w₂ ⊕  w₃  =  0    (best path needs 0)
 ```
 
 But if Path 1 fails and the parser falls back to alternatives:
 
 ```
-budget  =  w₂ ⊕ w₃  =  min(2, 3)  =  2
+budget  =  w₂ ⊕  w₃  =  min(2, 3)  =  2
 ```
 
 The parser needs at most 2 tokens of lookahead buffer for the
@@ -589,8 +589,8 @@ ProductWeight<TropicalWeight, ComplexityWeight>
   =  ( (R⁺ ∪ {+∞}) × (N ∪ {∞}),  ⊕,  ⊗,  0,  1 )
 
 where:
-  ⊕  :  (a₁, a₂) ⊕ (b₁, b₂)  =  (min(a₁, b₁),  min(a₂, b₂))
-  ⊗  :  (a₁, a₂) ⊗ (b₁, b₂)  =  (a₁ + b₁,       max(a₂, b₂))
+  ⊕  :  (a₁, a₂) ⊕  (b₁, b₂)  =  (min(a₁, b₁),  min(a₂, b₂))
+  ⊗  :  (a₁, a₂) ⊗  (b₁, b₂)  =  (a₁ + b₁,       max(a₂, b₂))
   0  =  (+∞, ∞)
   1  =  (0.0, 0)
 ```
@@ -614,20 +614,20 @@ Path B: own-category variable (priority 2.0, deterministic)
 **Selecting the best alternative (⊕):**
 
 ```
-(0.5, 2) ⊕ (2.0, 0)
+(0.5, 2) ⊕  (2.0, 0)
   = (min(0.5, 2.0), min(2, 0))
   = (0.5, 0)
 ```
 
 Under component-wise ⊕, the result says: the best priority is 0.5
-and the least complexity is 0. Note that ⊕ selects independently
+and the least complexity is 0. Note that ⊕  selects independently
 in each component -- it does not indicate which single path achieves
 both.
 
 **Sequencing two segments (⊗):**
 
 ```
-(0.5, 2) ⊗ (1.0, 1)
+(0.5, 2) ⊗  (1.0, 1)
   = (0.5 + 1.0, max(2, 1))
   = (1.5, 2)
 ```
@@ -916,12 +916,12 @@ casts both at weight 0.5), the one with lower complexity is preferred
 - [Semiring Algebra Overview](../semirings.md) -- Axiom
   definitions, classification, and comparison of all semirings
 - [Tropical Weight Theory](tropical-weight.md) -- The tropical
-  semiring for shortest-path dispatch ordering; shares the same ⊕ = min
-  but uses ⊗ = + (cost accumulation) instead of ⊗ = max (bottleneck)
+  semiring for shortest-path dispatch ordering; shares the same ⊕  = min
+  but uses ⊗  = + (cost accumulation) instead of ⊗  = max (bottleneck)
 - [Edit Weight Theory](edit-weight.md) -- The edit-distance semiring;
-  also uses ⊕ = min but with ⊗ = + (edit count accumulation)
+  also uses ⊕  = min but with ⊗  = + (edit count accumulation)
 - [Counting Weight Theory](counting-weight.md) -- The counting
-  semiring for ambiguity detection; uses ⊕ = + (sum) and ⊗ = ×
+  semiring for ambiguity detection; uses ⊕  = + (sum) and ⊗  = ×
   (product), neither of which is idempotent
 - [Product Weight Theory](product-weight.md) -- The product semiring
   construction for composing TropicalWeight with ComplexityWeight

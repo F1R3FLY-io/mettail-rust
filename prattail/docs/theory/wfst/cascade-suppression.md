@@ -315,13 +315,13 @@ independent.
 
 ## 6. Source Reference
 
-| Symbol                 | Location                     |
-|------------------------|------------------------------|
-| `RecoveryConfig`       | `prattail/src/recovery.rs:109`  |
-| `cascade_window` field | `prattail/src/recovery.rs:165`  |
-| `LAST_ERROR_POS_Cat`   | `prattail/src/pipeline.rs:2101` |
+| Symbol                 | Location                             |
+|------------------------|--------------------------------------|
+| `RecoveryConfig`       | `prattail/src/recovery.rs:109`       |
+| `cascade_window` field | `prattail/src/recovery.rs:165`       |
+| `LAST_ERROR_POS_Cat`   | `prattail/src/pipeline.rs:2101`      |
 | Cascade check logic    | `prattail/src/pipeline.rs:2117–2123` |
-| Reset on `min_bp == 0` | `prattail/src/pipeline.rs:2112` |
+| Reset on `min_bp == 0` | `prattail/src/pipeline.rs:2112`      |
 
 ---
 

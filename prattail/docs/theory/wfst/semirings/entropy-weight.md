@@ -78,13 +78,13 @@ E  =  ( R x R,  ⊕,  ⊗,  0̄,  1̄ )
 
 where:
 
-| Component                      | Symbol | Definition                                          | Interpretation                                |
-|--------------------------------|--------|-----------------------------------------------------|-----------------------------------------------|
-| Carrier set                    | K      | R x R = {(w, e) : w in R+ u {+inf}, e in R}        | (neg-log-prob, expectation) pairs             |
-| Addition (⊕)                   | plus   | (w₁,e₁) ⊕ (w₂,e₂) = (lse(w₁,w₂), mix(e₁,e₂))    | Combine parallel paths                        |
-| Multiplication (⊗)             | times  | (w₁,e₁) ⊗ (w₂,e₂) = (w₁+w₂, e₁+e₂)               | Sequence path segments                        |
-| Additive identity (0̄)          | zero   | (∞, 0)                                              | No paths (probability 0, zero expectation)    |
-| Multiplicative identity (1̄)    | one    | (0, 0)                                              | Single certain path, zero expectation         |
+| Component                   | Symbol | Definition                                    | Interpretation                             |
+|-----------------------------|--------|-----------------------------------------------|--------------------------------------------|
+| Carrier set                 | K      | R x R = {(w, e) : w in R+ u {+inf}, e in R}   | (neg-log-prob, expectation) pairs          |
+| Addition (⊕)                | plus   | (w₁,e₁) ⊕  (w₂,e₂) = (lse(w₁,w₂), mix(e₁,e₂)) | Combine parallel paths                     |
+| Multiplication (⊗)          | times  | (w₁,e₁) ⊗  (w₂,e₂) = (w₁+w₂, e₁+e₂)           | Sequence path segments                     |
+| Additive identity (0̄)       | zero   | (∞, 0)                                        | No paths (probability 0, zero expectation) |
+| Multiplicative identity (1̄) | one    | (0, 0)                                        | Single certain path, zero expectation      |
 
 ### 2.2 The Plus Operation in Detail
 
@@ -93,7 +93,7 @@ component uses log-sum-exp (identical to LogWeight), while the
 expectation component computes a probability-weighted mixture:
 
 ```
-(w₁, e₁) ⊕ (w₂, e₂)  =  ( lse(w₁, w₂),  (p₁ e₁ + p₂ e₂) / (p₁ + p₂) )
+(w₁, e₁) ⊕  (w₂, e₂)  =  ( lse(w₁, w₂),  (p₁ e₁ + p₂ e₂) / (p₁ + p₂) )
 ```
 
 where `pᵢ = exp(-wᵢ)` and `lse(a, b) = -ln(exp(-a) + exp(-b))`.
@@ -107,7 +107,7 @@ in log-space for numerical stability (see Section 7).
 The times operation sequences two path segments. Both components add:
 
 ```
-(w₁, e₁) ⊗ (w₂, e₂)  =  ( w₁ + w₂,  e₁ + e₂ )
+(w₁, e₁) ⊗  (w₂, e₂)  =  ( w₁ + w₂,  e₁ + e₂ )
 ```
 
 In probability space, `w₁ + w₂` corresponds to `p₁ * p₂` (probability
@@ -126,10 +126,10 @@ arbitrary elements of K.
 
 ### 3.1 (A1) Associativity of ⊕
 
-**Claim**: (a ⊕ b) ⊕ c = a ⊕ (b ⊕ c).
+**Claim**: (a ⊕  b) ⊕  c = a ⊕  (b ⊕  c).
 
 *Weight component.* lse is associative (proven in the LogWeight theory
-doc, Section 3.1). The weight component of (a ⊕ b) ⊕ c and a ⊕ (b ⊕ c)
+doc, Section 3.1). The weight component of (a ⊕  b) ⊕  c and a ⊕  (b ⊕  c)
 are both equal to lse(wₐ, w_b, w_c) = -ln(pₐ + p_b + p_c).
 
 *Expectation component.* In probability space, both orderings compute:
@@ -138,16 +138,16 @@ are both equal to lse(wₐ, w_b, w_c) = -ln(pₐ + p_b + p_c).
 new_e = (pₐ eₐ + p_b e_b + p_c e_c) / (pₐ + p_b + p_c)
 ```
 
-For the left association (a ⊕ b) ⊕ c: let d = a ⊕ b = (w_d, e_d). Then
+For the left association (a ⊕  b) ⊕  c: let d = a ⊕  b = (w_d, e_d). Then
 p_d = pₐ + p_b and e_d = (pₐ eₐ + p_b e_b) / (pₐ + p_b). Now:
 
 ```
-d ⊕ c has expectation = (p_d e_d + p_c e_c) / (p_d + p_c)
+d ⊕  c has expectation = (p_d e_d + p_c e_c) / (p_d + p_c)
      = ((pₐ + p_b) * (pₐ eₐ + p_b e_b)/(pₐ + p_b) + p_c e_c) / (pₐ + p_b + p_c)
      = (pₐ eₐ + p_b e_b + p_c e_c) / (pₐ + p_b + p_c)
 ```
 
-The right association a ⊕ (b ⊕ c) yields the same by symmetric argument.
+The right association a ⊕  (b ⊕  c) yields the same by symmetric argument.
 QED.
 
 **Concrete witness**: a = (2.0, 1.5), b = (3.0, 2.0), c = (1.0, 0.5).
@@ -156,24 +156,24 @@ QED.
 pₐ = exp(-2.0) = 0.13534,  p_b = exp(-3.0) = 0.04979,  p_c = exp(-1.0) = 0.36788
 p_total = 0.55301
 
-Left:  a ⊕ b = (lse(2,3), (0.13534*1.5 + 0.04979*2.0)/(0.13534+0.04979))
+Left:  a ⊕  b = (lse(2,3), (0.13534*1.5 + 0.04979*2.0)/(0.13534+0.04979))
              = (lse(2,3), (0.20301 + 0.09958)/0.18513)
              = (lse(2,3), 1.6339)
-       (a ⊕ b) ⊕ c: e = (0.18513*1.6339 + 0.36788*0.5)/0.55301
+       (a ⊕  b) ⊕  c: e = (0.18513*1.6339 + 0.36788*0.5)/0.55301
                        = (0.30244 + 0.18394)/0.55301
                        = 0.87938
 
-Right: b ⊕ c = (lse(3,1), (0.04979*2.0 + 0.36788*0.5)/(0.04979+0.36788))
+Right: b ⊕  c = (lse(3,1), (0.04979*2.0 + 0.36788*0.5)/(0.04979+0.36788))
              = (lse(3,1), (0.09958 + 0.18394)/0.41767)
              = (lse(3,1), 0.67886)
-       a ⊕ (b ⊕ c): e = (0.13534*1.5 + 0.41767*0.67886)/0.55301
+       a ⊕  (b ⊕  c): e = (0.13534*1.5 + 0.41767*0.67886)/0.55301
                        = (0.20301 + 0.28356)/0.55301
                        = 0.87938   Check.
 ```
 
 ### 3.2 (A2) Commutativity of ⊕
 
-**Claim**: a ⊕ b = b ⊕ a.
+**Claim**: a ⊕  b = b ⊕  a.
 
 See Section 8 for the full commutativity proof. The weight component
 commutes because lse(wₐ, w_b) = lse(w_b, wₐ) (commutativity of real
@@ -185,9 +185,9 @@ addition under -ln). The expectation component commutes because
 
 by commutativity of real addition in both numerator and denominator. QED.
 
-### 3.3 (A3) Additive Identity: 0̄ ⊕ a = a
+### 3.3 (A3) Additive Identity: 0̄ ⊕  a = a
 
-**Claim**: (∞, 0) ⊕ (wₐ, eₐ) = (wₐ, eₐ).
+**Claim**: (∞, 0) ⊕  (wₐ, eₐ) = (wₐ, eₐ).
 
 *Weight component*: lse(∞, wₐ) = -ln(exp(-∞) + exp(-wₐ)) = -ln(0 + exp(-wₐ)) = wₐ. Check.
 
@@ -197,7 +197,7 @@ by commutativity of real addition in both numerator and denominator. QED.
 (0 * 0 + pₐ * eₐ) / (0 + pₐ) = pₐ eₐ / pₐ = eₐ
 ```
 
-Check. By commutativity, a ⊕ 0̄ = a also. QED.
+Check. By commutativity, a ⊕  0̄ = a also. QED.
 
 **Concrete witness**: a = (2.0, 1.5), z = (∞, 0).
 
@@ -206,14 +206,14 @@ returning a directly. The result is (2.0, 1.5). Check.
 
 ### 3.4 (M1) Associativity of ⊗
 
-**Claim**: (a ⊗ b) ⊗ c = a ⊗ (b ⊗ c).
+**Claim**: (a ⊗  b) ⊗  c = a ⊗  (b ⊗  c).
 
 Both components use real addition, which is associative:
 
 ```
-(a ⊗ b) ⊗ c = ((wₐ + w_b) + w_c, (eₐ + e_b) + e_c)
+(a ⊗  b) ⊗  c = ((wₐ + w_b) + w_c, (eₐ + e_b) + e_c)
              = (wₐ + (w_b + w_c), eₐ + (e_b + e_c))
-             = a ⊗ (b ⊗ c)
+             = a ⊗  (b ⊗  c)
 ```
 
 QED.
@@ -221,33 +221,33 @@ QED.
 **Concrete witness**: a = (1.0, 0.5), b = (2.0, 1.0), c = (3.0, 1.5).
 
 ```
-(a ⊗ b) ⊗ c = (1+2, 0.5+1.0) ⊗ (3, 1.5) = (3, 1.5) ⊗ (3, 1.5) = (6, 3.0)
-a ⊗ (b ⊗ c) = (1, 0.5) ⊗ (2+3, 1.0+1.5) = (1, 0.5) ⊗ (5, 2.5) = (6, 3.0)  Check.
+(a ⊗  b) ⊗  c = (1+2, 0.5+1.0) ⊗  (3, 1.5) = (3, 1.5) ⊗  (3, 1.5) = (6, 3.0)
+a ⊗  (b ⊗  c) = (1, 0.5) ⊗  (2+3, 1.0+1.5) = (1, 0.5) ⊗  (5, 2.5) = (6, 3.0)  Check.
 ```
 
-### 3.5 (M2) Multiplicative Identity: 1̄ ⊗ a = a
+### 3.5 (M2) Multiplicative Identity: 1̄ ⊗  a = a
 
-**Claim**: (0, 0) ⊗ (wₐ, eₐ) = (wₐ, eₐ).
+**Claim**: (0, 0) ⊗  (wₐ, eₐ) = (wₐ, eₐ).
 
 ```
-(0, 0) ⊗ (wₐ, eₐ) = (0 + wₐ, 0 + eₐ) = (wₐ, eₐ)
+(0, 0) ⊗  (wₐ, eₐ) = (0 + wₐ, 0 + eₐ) = (wₐ, eₐ)
 ```
 
-QED. Right identity holds symmetrically: a ⊗ 1̄ = (wₐ + 0, eₐ + 0) = a.
+QED. Right identity holds symmetrically: a ⊗  1̄ = (wₐ + 0, eₐ + 0) = a.
 
 **Concrete witness**: a = (2.0, 1.5), one = (0, 0).
 
 ```
-one ⊗ a = (0 + 2.0, 0 + 1.5) = (2.0, 1.5) = a   Check.
-a ⊗ one = (2.0 + 0, 1.5 + 0) = (2.0, 1.5) = a   Check.
+one ⊗  a = (0 + 2.0, 0 + 1.5) = (2.0, 1.5) = a   Check.
+a ⊗  one = (2.0 + 0, 1.5 + 0) = (2.0, 1.5) = a   Check.
 ```
 
-### 3.6 (Z) Zero Annihilation: 0̄ ⊗ a = 0̄
+### 3.6 (Z) Zero Annihilation: 0̄ ⊗  a = 0̄
 
-**Claim**: (∞, 0) ⊗ (wₐ, eₐ) = (∞, 0).
+**Claim**: (∞, 0) ⊗  (wₐ, eₐ) = (∞, 0).
 
 ```
-(∞, 0) ⊗ (wₐ, eₐ) = (∞ + wₐ, 0 + eₐ) = (∞, eₐ)
+(∞, 0) ⊗  (wₐ, eₐ) = (∞ + wₐ, 0 + eₐ) = (∞, eₐ)
 ```
 
 Wait -- the expectation component is eₐ, not 0. However, by convention
@@ -266,8 +266,8 @@ so the expectation on a zero-weight element is never propagated.
 Therefore, for all practical purposes in WFST algorithms:
 
 ```
-0̄ ⊗ a   is observationally equivalent to   0̄
-a ⊗ 0̄   is observationally equivalent to   0̄
+0̄ ⊗  a   is observationally equivalent to   0̄
+a ⊗  0̄   is observationally equivalent to   0̄
 ```
 
 because any subsequent `⊕` with a non-zero element discards the
@@ -281,9 +281,9 @@ z.times(&a).is_zero() = true  (weight is +∞)
 z.times(&a).plus(&b) for any b = b  (zero short-circuit)   Check.
 ```
 
-### 3.7 (D1) Left Distributivity: a ⊗ (b ⊕ c) = (a ⊗ b) ⊕ (a ⊗ c)
+### 3.7 (D1) Left Distributivity: a ⊗  (b ⊕  c) = (a ⊗  b) ⊕  (a ⊗  c)
 
-**Claim**: (wₐ, eₐ) ⊗ ((w_b, e_b) ⊕ (w_c, e_c)) = ((wₐ, eₐ) ⊗ (w_b, e_b)) ⊕ ((wₐ, eₐ) ⊗ (w_c, e_c)).
+**Claim**: (wₐ, eₐ) ⊗  ((w_b, e_b) ⊕  (w_c, e_c)) = ((wₐ, eₐ) ⊗  (w_b, e_b)) ⊕  ((wₐ, eₐ) ⊗  (w_c, e_c)).
 
 *Weight component.* Left side: wₐ + lse(w_b, w_c). Right side:
 lse(wₐ + w_b, wₐ + w_c).
@@ -301,15 +301,15 @@ back via -ln preserves equality. Check.
 *Expectation component.* Left side:
 
 ```
-b ⊕ c has expectation e_bc = (p_b e_b + p_c e_c) / (p_b + p_c)
-a ⊗ (b ⊕ c) has expectation eₐ + e_bc = eₐ + (p_b e_b + p_c e_c) / (p_b + p_c)
+b ⊕  c has expectation e_bc = (p_b e_b + p_c e_c) / (p_b + p_c)
+a ⊗  (b ⊕  c) has expectation eₐ + e_bc = eₐ + (p_b e_b + p_c e_c) / (p_b + p_c)
 ```
 
-Right side: a ⊗ b = (wₐ + w_b, eₐ + e_b), a ⊗ c = (wₐ + w_c, eₐ + e_c).
+Right side: a ⊗  b = (wₐ + w_b, eₐ + e_b), a ⊗  c = (wₐ + w_c, eₐ + e_c).
 The probabilities are pₐ p_b and pₐ p_c respectively.
 
 ```
-(a ⊗ b) ⊕ (a ⊗ c) has expectation:
+(a ⊗  b) ⊕  (a ⊗  c) has expectation:
   = (pₐ p_b (eₐ + e_b) + pₐ p_c (eₐ + e_c)) / (pₐ p_b + pₐ p_c)
   = pₐ (p_b (eₐ + e_b) + p_c (eₐ + e_c)) / (pₐ (p_b + p_c))
   = (p_b eₐ + p_b e_b + p_c eₐ + p_c e_c) / (p_b + p_c)
@@ -327,23 +327,23 @@ commutativity of real addition and multiplication.
 ```
 pₐ = 0.36788,  p_b = 0.13534,  p_c = 0.04979
 
-Left:  b ⊕ c: e_bc = (0.13534*1.0 + 0.04979*1.5) / (0.13534 + 0.04979)
+Left:  b ⊕  c: e_bc = (0.13534*1.0 + 0.04979*1.5) / (0.13534 + 0.04979)
                     = (0.13534 + 0.07469) / 0.18513 = 1.1340
-       a ⊗ (b ⊕ c): e = 0.5 + 1.1340 = 1.6340
+       a ⊗  (b ⊕  c): e = 0.5 + 1.1340 = 1.6340
 
-Right: a ⊗ b = (3.0, 1.5),  a ⊗ c = (4.0, 2.0)
+Right: a ⊗  b = (3.0, 1.5),  a ⊗  c = (4.0, 2.0)
        p_ab = exp(-3) = 0.04979,  p_ac = exp(-4) = 0.01832
-       (a ⊗ b) ⊕ (a ⊗ c): e = (0.04979*1.5 + 0.01832*2.0) / (0.04979 + 0.01832)
+       (a ⊗  b) ⊕  (a ⊗  c): e = (0.04979*1.5 + 0.01832*2.0) / (0.04979 + 0.01832)
                               = (0.07469 + 0.03664) / 0.06811
                               = 1.6340   Check.
 ```
 
 ### 3.8 (A4) Commutativity of ⊗
 
-**Claim**: a ⊗ b = b ⊗ a.
+**Claim**: a ⊗  b = b ⊗  a.
 
 ```
-(wₐ, eₐ) ⊗ (w_b, e_b) = (wₐ + w_b, eₐ + e_b) = (w_b + wₐ, e_b + eₐ) = (w_b, e_b) ⊗ (wₐ, eₐ)
+(wₐ, eₐ) ⊗  (w_b, e_b) = (wₐ + w_b, eₐ + e_b) = (w_b + wₐ, e_b + eₐ) = (w_b, e_b) ⊗  (wₐ, eₐ)
 ```
 
 By commutativity of real addition in both components. QED.
@@ -370,9 +370,9 @@ pi(w, e)  =  w
 
 This projection is a **full semiring homomorphism**:
 
-**Plus preservation**: pi((w₁,e₁) ⊕ (w₂,e₂)) = pi(lse(w₁,w₂), mix(e₁,e₂)) = lse(w₁,w₂) = pi(w₁,e₁) ⊕_log pi(w₂,e₂). QED.
+**Plus preservation**: pi((w₁,e₁) ⊕  (w₂,e₂)) = pi(lse(w₁,w₂), mix(e₁,e₂)) = lse(w₁,w₂) = pi(w₁,e₁) ⊕_log pi(w₂,e₂). QED.
 
-**Times preservation**: pi((w₁,e₁) ⊗ (w₂,e₂)) = pi(w₁+w₂, e₁+e₂) = w₁+w₂ = pi(w₁,e₁) ⊗_log pi(w₂,e₂). QED.
+**Times preservation**: pi((w₁,e₁) ⊗  (w₂,e₂)) = pi(w₁+w₂, e₁+e₂) = w₁+w₂ = pi(w₁,e₁) ⊗_log pi(w₂,e₂). QED.
 
 **Identity preservation**: pi(0̄_E) = pi(∞, 0) = ∞ = 0̄_L. pi(1̄_E) = pi(0, 0) = 0 = 1̄_L. QED.
 
@@ -396,28 +396,28 @@ per-arc quantity under the path distribution?"
 
 ### 4.1 Shared Properties
 
-| Property           | LogWeight         | EntropyWeight                        |
-|--------------------|-------------------|--------------------------------------|
-| Weight ⊕           | lse               | lse (identical)                      |
-| Weight ⊗           | +                 | + (identical)                        |
-| Commutative        | Yes               | Yes                                  |
-| Idempotent (⊕)     | No                | No                                   |
-| Feature gate       | `wfst-log`        | `wfst-log`                           |
-| Carrier            | R+ u {+inf}       | (R+ u {+inf}) x R                    |
-| Rust size          | 8 bytes           | 16 bytes                             |
+| Property       | LogWeight   | EntropyWeight     |
+|----------------|-------------|-------------------|
+| Weight ⊕       | lse         | lse (identical)   |
+| Weight ⊗       | +           | + (identical)     |
+| Commutative    | Yes         | Yes               |
+| Idempotent (⊕) | No          | No                |
+| Feature gate   | `wfst-log`  | `wfst-log`        |
+| Carrier        | R+ u {+inf} | (R+ u {+inf}) x R |
+| Rust size      | 8 bytes     | 16 bytes          |
 
 ### 4.2 Non-Idempotency
 
 Like LogWeight, EntropyWeight is **not idempotent**:
 
 ```
-(w, e) ⊕ (w, e) = (lse(w, w), (p*e + p*e)/(p + p))
+(w, e) ⊕  (w, e) = (lse(w, w), (p*e + p*e)/(p + p))
                  = (w - ln(2), e)
 ```
 
 The weight decreases by ln(2) (the combined probability doubles), and the
 expectation stays the same (the weighted average of identical values is
-unchanged). Since w - ln(2) != w for finite w, ⊕ is not idempotent. QED.
+unchanged). Since w - ln(2) != w for finite w, ⊕  is not idempotent. QED.
 
 ---
 
@@ -438,7 +438,7 @@ with operations:
 
 ```
 (k₁, v₁) ⊕_E (k₂, v₂)  =  (k₁ ⊕_K k₂,  v₁ ⊕_V v₂)
-(k₁, v₁) ⊗_E (k₂, v₂)  =  (k₁ ⊗_K k₂,  k₁ ⊗ v₂ ⊕_V v₁ ⊗ k₂)
+(k₁, v₁) ⊗_E (k₂, v₂)  =  (k₁ ⊗_K k₂,  k₁ ⊗  v₂ ⊕_V v₁ ⊗  k₂)
 ```
 
 This formulation carries *unnormalized expected values* `v = p * e` rather
@@ -457,13 +457,13 @@ the unnormalized formulation of Li & Eisner. The carrier is
 The key difference appears in ⊕. In Li & Eisner's unnormalized form:
 
 ```
-(k₁, p₁*e₁) ⊕ (k₂, p₂*e₂)  =  (k₁ ⊕ k₂,  p₁*e₁ + p₂*e₂)
+(k₁, p₁*e₁) ⊕  (k₂, p₂*e₂)  =  (k₁ ⊕  k₂,  p₁*e₁ + p₂*e₂)
 ```
 
 In PraTTaIL's normalized form:
 
 ```
-(w₁, e₁) ⊕ (w₂, e₂)  =  (lse(w₁,w₂),  (p₁*e₁ + p₂*e₂) / (p₁ + p₂))
+(w₁, e₁) ⊕  (w₂, e₂)  =  (lse(w₁,w₂),  (p₁*e₁ + p₂*e₂) / (p₁ + p₂))
 ```
 
 The normalization divides by the total probability (p₁ + p₂). This keeps
@@ -488,12 +488,12 @@ phi((w₁,e₁) ⊗_norm (w₂,e₂))
   = (w₁+w₂,  exp(-w₁)*exp(-w₂) * e₁ + exp(-w₁)*exp(-w₂) * e₂)
 ```
 
-Under Li & Eisner's ⊗: (k₁,v₁) ⊗ (k₂,v₂) = (k₁⊗k₂, k₁⊗v₂ + v₁⊗k₂).
+Under Li & Eisner's ⊗: (k₁,v₁) ⊗  (k₂,v₂) = (k₁⊗k₂, k₁⊗v₂ + v₁⊗k₂).
 With (k₁,v₁) = phi(w₁,e₁) = (w₁, exp(-w₁)*e₁) and (k₂,v₂) = phi(w₂,e₂):
 
 ```
-k₁ ⊗ v₂ = exp(-w₁) * exp(-w₂) * e₂   (multiplication = exp(-sum))
-v₁ ⊗ k₂ = exp(-w₁) * e₁ * exp(-w₂)
+k₁ ⊗  v₂ = exp(-w₁) * exp(-w₂) * e₂   (multiplication = exp(-sum))
+v₁ ⊗  k₂ = exp(-w₁) * e₁ * exp(-w₂)
 sum = exp(-w₁)*exp(-w₂) * (e₁ + e₂)
 ```
 
@@ -547,10 +547,10 @@ log-probability of the arc itself).
 
 ### 6.3 Forward-Backward Gives H
 
-After combining all arcs via ⊕ (forward pass at a single dispatch point):
+After combining all arcs via ⊕  (forward pass at a single dispatch point):
 
 ```
-result = arc_1 ⊕ arc_2 ⊕ ... ⊕ arc_N
+result = arc_1 ⊕  arc_2 ⊕  ... ⊕  arc_N
        = (lse(w₁,...,w_N),  (p₁ w₁ + p₂ w₂ + ... + p_N w_N) / (p₁ + ... + p_N))
 ```
 
@@ -717,13 +717,13 @@ Section 6.
 for all a = (wₐ, eₐ) and b = (w_b, e_b):
 
 ```
-a ⊕ b  =  b ⊕ a
+a ⊕  b  =  b ⊕  a
 ```
 
 **Proof.**
 
-*Case 1: wₐ = ∞.* Then a ⊕ b = b (by additive identity), and
-b ⊕ a also returns b when the implementation detects `other.weight == ∞`.
+*Case 1: wₐ = ∞.* Then a ⊕  b = b (by additive identity), and
+b ⊕  a also returns b when the implementation detects `other.weight == ∞`.
 Both sides equal b. QED for this case.
 
 *Case 2: w_b = ∞.* Symmetric to Case 1. Both sides equal a. QED.
@@ -732,8 +732,8 @@ Both sides equal b. QED for this case.
 suppose wₐ < w_b (a has higher probability). Then diff_self = wₐ - w_min = 0,
 diff_other = w_b - w_min = w_b - wₐ > 20.
 
-For a ⊕ b: diff_other > 20, so the result is (new_weight, eₐ).
-For b ⊕ a: diff_self = w_b - min(w_b, wₐ) = w_b - wₐ > 20, so the
+For a ⊕  b: diff_other > 20, so the result is (new_weight, eₐ).
+For b ⊕  a: diff_self = w_b - min(w_b, wₐ) = w_b - wₐ > 20, so the
 result is (new_weight, eₐ). Both return eₐ. QED for this case.
 
 *Case 4: both finite, |wₐ - w_b| <= 20.* Both orderings compute:
@@ -741,7 +741,7 @@ result is (new_weight, eₐ). Both return eₐ. QED for this case.
 **Weight:** lse(wₐ, w_b) = -ln(exp(-wₐ) + exp(-w_b)). Since real
 addition is commutative, lse(wₐ, w_b) = lse(w_b, wₐ).
 
-**Expectation (a ⊕ b):**
+**Expectation (a ⊕  b):**
 
 ```
 w_min = min(wₐ, w_b)
@@ -749,7 +749,7 @@ rₐ = exp(-(wₐ - w_min)),   r_b = exp(-(w_b - w_min))
 e_{a⊕b} = (rₐ eₐ + r_b e_b) / (rₐ + r_b)
 ```
 
-**Expectation (b ⊕ a):**
+**Expectation (b ⊕  a):**
 
 ```
 w_min' = min(w_b, wₐ) = w_min      (min is commutative)
@@ -769,12 +769,12 @@ QED.
 **Concrete witness**: a = (1.0, 3.0), b = (2.0, 5.0).
 
 ```
-a ⊕ b: w_min = 1.0, rₐ = 1.0, r_b = exp(-1) = 0.36788
+a ⊕  b: w_min = 1.0, rₐ = 1.0, r_b = exp(-1) = 0.36788
        e = (1.0*3.0 + 0.36788*5.0) / (1.0 + 0.36788)
          = (3.0 + 1.8394) / 1.36788
          = 3.5396
 
-b ⊕ a: w_min = 1.0, r_b = exp(-1) = 0.36788, rₐ = 1.0
+b ⊕  a: w_min = 1.0, r_b = exp(-1) = 0.36788, rₐ = 1.0
        e = (0.36788*5.0 + 1.0*3.0) / (0.36788 + 1.0)
          = (1.8394 + 3.0) / 1.36788
          = 3.5396   Check.
@@ -816,7 +816,7 @@ arc_3 = EntropyWeight::from_arc_weight(2.5)  = (2.5, 2.5)     [PVar]
 
 ### 9.2 Step-by-Step Plus Accumulation
 
-**Step 1: arc_1 ⊕ arc_2**
+**Step 1: arc_1 ⊕  arc_2**
 
 ```
 w_min = min(0.5, 1.2) = 0.5
@@ -840,7 +840,7 @@ Expectation:
 partial = (0.0956, 0.7323)
 ```
 
-**Step 2: partial ⊕ arc_3**
+**Step 2: partial ⊕  arc_3**
 
 ```
 w_min = min(0.0956, 2.5) = 0.0956
@@ -924,26 +924,26 @@ parser more room to explore alternatives.
 
 ## 10. Complexity Analysis
 
-| Operation                 | Implementation                          | Time     | Space         |
-|---------------------------|-----------------------------------------|----------|---------------|
-| `zero()`                  | `(f64::INFINITY, 0.0)`                  | O(1)     | O(1) -- 16 B  |
-| `one()`                   | `(0.0, 0.0)`                            | O(1)     | O(1) -- 16 B  |
-| `times(a, b)`             | `(w₁+w₂, e₁+e₂)` -- 2 additions        | O(1)     | O(1) -- 16 B  |
-| `plus(a, b)` fast path    | min + comparison + copy                 | O(1)     | O(1) -- 16 B  |
-| `plus(a, b)` slow path    | min + 2 exp + 1 ln + 4 mul + 2 add + 1 div | O(1) | O(1) -- 16 B  |
-| `is_zero()`               | `is_infinite() && is_sign_positive()`   | O(1)     | --            |
-| `is_one()`                | `w == 0.0 && e == 0.0`                  | O(1)     | --            |
-| `from_arc_weight(w)`      | copy w to both fields                   | O(1)     | O(1) -- 16 B  |
-| `entropy_bits()`          | division by ln(2)                       | O(1)     | --            |
-| `approx_eq(other, eps)`   | 2 abs-differences + 2 comparisons       | O(1)     | --            |
+| Operation               | Implementation                             | Time | Space        |
+|-------------------------|--------------------------------------------|------|--------------|
+| `zero()`                | `(f64::INFINITY, 0.0)`                     | O(1) | O(1) -- 16 B |
+| `one()`                 | `(0.0, 0.0)`                               | O(1) | O(1) -- 16 B |
+| `times(a, b)`           | `(w₁+w₂, e₁+e₂)` -- 2 additions            | O(1) | O(1) -- 16 B |
+| `plus(a, b)` fast path  | min + comparison + copy                    | O(1) | O(1) -- 16 B |
+| `plus(a, b)` slow path  | min + 2 exp + 1 ln + 4 mul + 2 add + 1 div | O(1) | O(1) -- 16 B |
+| `is_zero()`             | `is_infinite() && is_sign_positive()`      | O(1) | --           |
+| `is_one()`              | `w == 0.0 && e == 0.0`                     | O(1) | --           |
+| `from_arc_weight(w)`    | copy w to both fields                      | O(1) | O(1) -- 16 B |
+| `entropy_bits()`        | division by ln(2)                          | O(1) | --           |
+| `approx_eq(other, eps)` | 2 abs-differences + 2 comparisons          | O(1) | --           |
 
 **Comparison with LogWeight:**
 
-| Operation   | LogWeight        | EntropyWeight    | Overhead     |
-|-------------|------------------|------------------|--------------|
-| `times`     | 1 addition       | 2 additions      | +1 add       |
-| `plus`      | log_sum_exp      | log_sum_exp + mixture | +2 exp, +4 mul, +1 div |
-| Memory      | 8 bytes          | 16 bytes         | +8 bytes     |
+| Operation | LogWeight   | EntropyWeight         | Overhead               |
+|-----------|-------------|-----------------------|------------------------|
+| `times`   | 1 addition  | 2 additions           | +1 add                 |
+| `plus`    | log_sum_exp | log_sum_exp + mixture | +2 exp, +4 mul, +1 div |
+| Memory    | 8 bytes     | 16 bytes              | +8 bytes               |
 
 The `plus` slow path is ~3x more expensive than LogWeight's `plus` due to
 the mixture computation, but the fast path (|w₁ - w₂| > 20) has identical
@@ -1126,11 +1126,11 @@ and negative zero correctly, consistent with the LogWeight implementation.
 - `test_entropy_weight_times_is_addition` -- times = componentwise addition (line 2492)
 - `test_entropy_weight_plus_equal_weights` -- equal-weight mixture averages expectations (line 2501)
 - `test_entropy_weight_plus_unequal_weights` -- dominant path's expectation wins (line 2523)
-- `test_entropy_weight_plus_commutativity` -- commutativity of ⊕ (line 2537)
+- `test_entropy_weight_plus_commutativity` -- commutativity of ⊕  (line 2537)
 - `test_entropy_weight_from_arc_weight` -- from_arc_weight sets e = w (line 2546)
 - `test_entropy_weight_entropy_bits` -- nats-to-bits conversion (line 2553)
 - `test_entropy_weight_plus_large_diff` -- fast path for large weight differences (line 2564)
-- `test_entropy_weight_distributivity_approx` -- a ⊗ (b ⊕ c) = (a ⊗ b) ⊕ (a ⊗ c) (line 2578)
+- `test_entropy_weight_distributivity_approx` -- a ⊗  (b ⊕  c) = (a ⊗  b) ⊕  (a ⊗  c) (line 2578)
 - `test_entropy_weight_ordering` -- lower weight < higher weight < zero (line 2596)
 - `test_entropy_weight_display` -- Display formatting (line 2605)
 - `test_entropy_weight_hash` -- HashSet insertion and lookup (line 2613)

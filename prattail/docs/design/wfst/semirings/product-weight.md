@@ -15,10 +15,10 @@ ProductWeight enables multi-objective optimization via `viterbi_generic()` in
 metric) and reconciling results, a single pass over the product semiring yields
 the jointly optimal path.
 
-| Instantiation | Semantics | Use Case |
-|---------------|-----------|----------|
+| Instantiation                                   | Semantics                     | Use Case                                 |
+|-------------------------------------------------|-------------------------------|------------------------------------------|
 | `ProductWeight<TropicalWeight, CountingWeight>` | Best parse + "was it unique?" | Confidence metric for dispatch decisions |
-| `ProductWeight<TropicalWeight, EditWeight>` | Best parse + fewest repairs | Optimal error recovery |
+| `ProductWeight<TropicalWeight, EditWeight>`     | Best parse + fewest repairs   | Optimal error recovery                   |
 
 Both instantiations compose naturally because ProductWeight satisfies all
 semiring axioms when its components do.
@@ -189,10 +189,10 @@ tokens) over a simpler one (skip 2 tokens) when both reach the same sync point.
 
 It is important to distinguish the `plus` operation from the `Ord` comparison:
 
-| Operation | Behavior | Used By |
-|-----------|----------|---------|
-| `plus` | Component-wise: `(min(L), min(R))` for Tropical x Edit | Semiring algebra, path merging |
-| `Ord::cmp` | Lexicographic: left first, then right | Viterbi relaxation, sorting |
+| Operation  | Behavior                                               | Used By                        |
+|------------|--------------------------------------------------------|--------------------------------|
+| `plus`     | Component-wise: `(min(L), min(R))` for Tropical x Edit | Semiring algebra, path merging |
+| `Ord::cmp` | Lexicographic: left first, then right                  | Viterbi relaxation, sorting    |
 
 For `plus`, the result may not be a "real" weight seen on any single path -- it
 is the component-wise best. This is the standard product semiring definition and

@@ -73,13 +73,13 @@ runtime language selection.
 
 ## Comparison Table
 
-| Mechanism | Level | What Merges | Duplicate Strategy | Generates Parser? | When to Use |
-|-----------|-------|-------------|--------------------|--------------------|-------------|
-| `extends:` | LanguageDef | types+terms+eqs+rw+logic | Error | Yes (merged) | Language families, additive extensions |
-| `includes:` | LanguageDef | types+terms only | Override | Yes (merged) | Import syntax, provide own semantics |
-| `mixins:` | LanguageDef | types+terms only | Override | Yes (merged) | Reusable operator sets from fragments |
-| `compose_languages!` | Delegation | None | N/A | No (per-sub-lang) | Independent languages, late binding |
-| `compose_languages()` | LanguageSpec | types+terms | Error | Yes (merged) | Programmatic/tooling composition |
+| Mechanism             | Level        | What Merges              | Duplicate Strategy | Generates Parser? | When to Use                            |
+|-----------------------|--------------|--------------------------|--------------------|-------------------|----------------------------------------|
+| `extends:`            | LanguageDef  | types+terms+eqs+rw+logic | Error              | Yes (merged)      | Language families, additive extensions |
+| `includes:`           | LanguageDef  | types+terms only         | Override           | Yes (merged)      | Import syntax, provide own semantics   |
+| `mixins:`             | LanguageDef  | types+terms only         | Override           | Yes (merged)      | Reusable operator sets from fragments  |
+| `compose_languages!`  | Delegation   | None                     | N/A                | No (per-sub-lang) | Independent languages, late binding    |
+| `compose_languages()` | LanguageSpec | types+terms              | Error              | Yes (merged)      | Programmatic/tooling composition       |
 
 Key distinctions:
 
@@ -220,26 +220,26 @@ detection operates across both the inherited and locally defined rules.
 
 Each mechanism is covered in depth in its own sub-document:
 
-| Document | Title | Description |
-|----------|-------|-------------|
-| [01-extends.md](01-extends.md) | `extends:` -- Full Inheritance | Inheriting types, terms, equations, rewrites, and logic from a base language. Error-on-duplicate semantics. |
-| [02-includes.md](02-includes.md) | `includes:` -- Grammar-Only Import | Importing types and terms without inheriting semantic rules. Override-on-duplicate semantics. |
-| [03-mixins.md](03-mixins.md) | `mixins:` -- Fragment Import | Composing reusable operator fragments defined with `language_fragment!`. |
-| [04-compose.md](04-compose.md) | `compose_languages!` -- Delegation | Runtime dispatch across independently compiled sub-language parsers. |
-| [05-spec-level-composition.md](05-spec-level-composition.md) | `compose_languages()` API | Programmatic `LanguageSpec`-level composition for tooling and IDE integration. |
-| [06-cross-category.md](06-cross-category.md) | Cross-Category Dispatch | Implicit unification via FIRST set overlap analysis and WFST-weighted dispatch. |
-| [07-cast-rules.md](07-cast-rules.md) | Category Embeddings | Cast rules for type coercion, reachability graphs, and dead-rule interaction. |
-| [08-best-practices.md](08-best-practices.md) | Best Practices | Decision tree, anti-patterns, performance considerations, migration guide. |
+| Document                                                     | Title                              | Description                                                                                                 |
+|--------------------------------------------------------------|------------------------------------|-------------------------------------------------------------------------------------------------------------|
+| [01-extends.md](01-extends.md)                               | `extends:` -- Full Inheritance     | Inheriting types, terms, equations, rewrites, and logic from a base language. Error-on-duplicate semantics. |
+| [02-includes.md](02-includes.md)                             | `includes:` -- Grammar-Only Import | Importing types and terms without inheriting semantic rules. Override-on-duplicate semantics.               |
+| [03-mixins.md](03-mixins.md)                                 | `mixins:` -- Fragment Import       | Composing reusable operator fragments defined with `language_fragment!`.                                    |
+| [04-compose.md](04-compose.md)                               | `compose_languages!` -- Delegation | Runtime dispatch across independently compiled sub-language parsers.                                        |
+| [05-spec-level-composition.md](05-spec-level-composition.md) | `compose_languages()` API          | Programmatic `LanguageSpec`-level composition for tooling and IDE integration.                              |
+| [06-cross-category.md](06-cross-category.md)                 | Cross-Category Dispatch            | Implicit unification via FIRST set overlap analysis and WFST-weighted dispatch.                             |
+| [07-cast-rules.md](07-cast-rules.md)                         | Category Embeddings                | Cast rules for type coercion, reachability graphs, and dead-rule interaction.                               |
+| [08-best-practices.md](08-best-practices.md)                 | Best Practices                     | Decision tree, anti-patterns, performance considerations, migration guide.                                  |
 
 ---
 
 ## Source Reference
 
-| Purpose | File |
-|---------|------|
-| Merge semantics | `macros/src/ast/merge.rs` |
-| Fragment definition | `macros/src/ast/language.rs` |
-| Compose codegen | `macros/src/gen/compose_gen.rs` |
-| LanguageSpec composition | `prattail/src/compose.rs` |
-| Pipeline | `prattail/src/pipeline.rs` |
-| WFST prediction | `prattail/src/wfst.rs` |
+| Purpose                  | File                            |
+|--------------------------|---------------------------------|
+| Merge semantics          | `macros/src/ast/merge.rs`       |
+| Fragment definition      | `macros/src/ast/language.rs`    |
+| Compose codegen          | `macros/src/gen/compose_gen.rs` |
+| LanguageSpec composition | `prattail/src/compose.rs`       |
+| Pipeline                 | `prattail/src/pipeline.rs`      |
+| WFST prediction          | `prattail/src/wfst.rs`          |

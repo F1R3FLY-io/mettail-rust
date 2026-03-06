@@ -13,9 +13,10 @@
 3. [The Seven Conversion Points](#3-the-seven-conversion-points)
 4. [The Five Implicit Lattice Structures](#4-the-five-implicit-lattice-structures)
 5. [When Does Each Path Activate?](#5-when-does-each-path-activate)
-6. [Worked Example: End-to-End](#6-worked-example-end-to-end)
-7. [Relationship to Semiring Composition](#7-relationship-to-semiring-composition)
-8. [See Also](#8-see-also)
+6. [Weight Assignment Methods](#6-weight-assignment-methods)
+7. [Worked Example: End-to-End](#7-worked-example-end-to-end)
+8. [Relationship to Semiring Composition](#8-relationship-to-semiring-composition)
+9. [See Also](#9-see-also)
 
 ---
 
@@ -214,7 +215,7 @@ This is a **forward trellis** — edges only go left-to-right (or to SINK).
 
 ```
                     ╭── Alt₁ (w=0.3) ──╮
-     parse point ───┤── Alt₂ (w=0.5) ──├─── continue
+     parse point ───┼── Alt₂ (w=0.5) ──┼─── continue
                     ╰── Alt₃ (w=0.8) ──╯
 ```
 
@@ -308,7 +309,723 @@ Feature gates are annotated where applicable.
 
 ---
 
-## 6. Worked Example: End-to-End
+## 6. Weight Assignment Methods
+
+PraTTaIL assigns weights to lattice edges, dispatch alternatives, and repair
+actions using **14 distinct methods** across **10 semiring types**. These
+methods span three lifecycle phases: compile-time pipeline processing (A1–A9),
+runtime parsing and recovery (B1–B5), and offline weight training (C1–C2).
+
+### Taxonomy
+
+| Phase        | # Methods | Semirings Used                                                                              |
+|--------------|-----------|---------------------------------------------------------------------------------------------|
+| Compile-time | 9         | TropicalWeight, CountingWeight, BooleanWeight, ContextWeight, ComplexityWeight, NbestWeight |
+| Runtime      | 5         | TropicalWeight, EditWeight, ProductWeight, any W: Semiring                                  |
+| Training     | 2         | LogWeight, EntropyWeight                                                                    |
+
+### Lifecycle Diagram
+
+```
+                  ┌───────────────────────────────────────────────────┐
+                  │                    Compile Time                   │
+                  │                                                   │
+Grammar DSL ────► │  Pipeline: A1–A9                                  │
+                  │  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐  │
+                  │  │ A1  │ │ A2  │ │ A3  │ │ A5  │ │ A6  │ │ A7  │  │
+                  │  │Prio │ │Act  │ │Spec │ │Count│ │Reach│ │Ctx  │  │
+                  │  └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘  │
+                  │     └───┬───┘       │       │       │       │     │
+                  │    A4 Compose       │    ┌──┴──┐ ┌──┴──┐ ┌──┴──┐  │
+                  │    w_action+w_spec  │    │ A8  │ │ A9  │ │diag │  │
+                  │         │           │    │Cmplx│ │Nbest│ │     │  │
+                  │         ▼           │    └──┬──┘ └──┬──┘ └──┬──┘  │
+                  │    Generated Code ◄─┘       ▼       ▼       ▼     │
+                  │                          Diagnostics              │
+                  └─────────┊─────────────────────────────────────────┘
+                            │
+                  ┌─────────┊─────────────────────────────────────────┐
+                  │         ▼              Runtime                    │
+                  │                                                   │
+                  │  Parser: B1–B5                                    │
+                  │  ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐ ┌─────┐          │
+                  │  │ B1  │ │ B2  │ │ B3  │ │ B4  │ │ B5  │          │
+                  │  │Repai│ │Edit │ │Dual │ │Ident│ │Pos  │          │
+                  │  └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘ └──┬──┘          │
+                  │     └───┬───┘       │       │       │             │
+                  │     Recovery        │    Lattice  NFA disambig    │
+                  │         │           │       │       │             │
+                  │         ▼           ▼       ▼       ▼             │
+                  │                    AST                            │
+                  │                     │                             │
+                  │           WEIGHT_CORRECTIONS                      │
+                  └─────────────────────┊─────────────────────────────┘
+                                        │
+                  ┌─────────────────────┊──────────────────────────────┐
+                  │                     ▼       Training (wfst-log)    │
+                  │  ┌─────┐ ┌─────┐                                   │
+                  │  │ C1  │ │ C2  │                                   │
+                  │  │ Log │ │Entro│                                   │
+                  │  └──┬──┘ └──┬──┘                                   │
+                  │     └───┬───┘                                      │
+                  │         ▼                                          │
+                  │   Retrained Weights ─ ─ ─► Compile Time            │
+                  └────────────────────────────────────────────────────┘
+```
+
+---
+
+### 6.1 Compile-Time Methods (Pipeline)
+
+#### 6.1.1 Lexical Priority Mapping (A1)
+
+**Semiring**: TropicalWeight
+
+**Formula**:
+
+> w = 10.0 − p, where p ∈ {0, 1, 2, …, 10} is the token's `priority()` value.
+
+The function `priority()` is a method on `TokenKind` (`automata/mod.rs:62`) that
+returns a `u8` disambiguation priority for each token class. Higher values
+indicate more specific (less ambiguous) token kinds. The weight conversion
+`TropicalWeight::from_priority(p)` computes `10.0 − p` (`semiring.rs:101`).
+
+Higher priority (larger `p`) maps to lower weight (better under tropical
+`⊕  = min`). The constant `MAX_PRIORITY = 10` ensures all weights are
+non-negative.
+
+**Priority-to-weight table**:
+
+| Token Class | Priority (p) | Weight (w) | Rationale                           |
+|-------------|:------------:|:----------:|-------------------------------------|
+| Keywords    |      10      |    0.0     | Exact match, zero ambiguity         |
+| Operators   |     8–9      |  1.0–2.0   | Fixed symbols, low ambiguity        |
+| Literals    |     5–7      |  3.0–5.0   | Pattern-matched, moderate ambiguity |
+| Ident       |      1       |    9.0     | Wildcard, high ambiguity            |
+
+**Rationale.** Keywords and operators are deterministic lexical anchors: they
+match exactly one token class and eliminate entire branches of the parse search
+space. Identifiers, by contrast, are lexical wildcards — `float` is
+simultaneously `KwFloat` (keyword, p=10) and `Ident` (identifier, p=1). The
+priority-to-weight mapping ensures the keyword interpretation (w=0.0) is always
+preferred over the identifier interpretation (w=9.0) in any tropical
+shortest-path computation.
+
+The function `accept_weight(state: u32) -> f64` is generated per-grammar by
+`write_accept_weight_arms()` (`codegen.rs:480`). It returns the tropical weight
+for the highest-priority token kind accepted at the given DFA state, or
+`f64::INFINITY` (tropical zero) for non-accepting states. At runtime, it is
+passed as a closure to `lex_weighted_core()` (`runtime_types.rs:356`).
+
+**Example.** In the Calculator grammar, the input `float` at a multi-accept
+DFA state produces:
+
+```
+    DFA state 17 ──► accept_weight(17)      [generated: codegen.rs:564]
+      KwFloat (priority 10) → w = 10.0 − 10 = 0.0  ← selected
+      Ident   (priority  1) → w = 10.0 −  1 = 9.0
+```
+
+**Source**: `semiring.rs:101–103`
+
+#### 6.1.2 Action Type Weight (A2)
+
+**Semiring**: TropicalWeight
+
+**Formula**: Fixed table mapping `DispatchAction` variant to weight:
+
+| Action Type                  | w_action | Rationale                           |
+|------------------------------|:--------:|-------------------------------------|
+| Direct                       |   0.0    | Deterministic, no backtracking      |
+| Grouping                     |   0.0    | Delimiter-driven, deterministic     |
+| CrossCategory (no backtrack) |   0.0    | Deterministic cross-category        |
+| CrossCategory (backtrack)    |   0.5    | Speculative try, may fail and retry |
+| Cast                         |   0.5    | Cross-category type coercion        |
+| Lookahead                    | 1.0 + k  | k = lookahead order (extra tokens)  |
+| Variable                     |   2.0    | Pure wildcard, matches anything     |
+
+**Rationale.** Action type weights encode the **parsing effort cost** — the
+computational overhead of the dispatch mechanism itself. This is a separate
+axis from specificity (A3). Direct dispatch resolves in O(1) with zero
+backtracking; backtracking cross-category dispatch may require a full
+speculative parse attempt that fails; variable dispatch accepts any token
+unconditionally but provides no structural information. The weights are
+ordered by expected parsing cost, and they compose additively under tropical
+`⊗  = +` because Bellman's principle guarantees that the optimal multi-step
+dispatch path minimizes accumulated weight (see
+[Optimization Theory](../foundations/06-optimization-theory.md) §1).
+
+**Example.** In RhoCalc, the token `float` at the `Proc` dispatch point:
+
+```
+    FloatCast:   DispatchAction::Direct { .. }    → w_action = 0.0
+    FuncCall:    DispatchAction::CrossCategory { needs_backtrack: true, .. }
+                                                  → w_action = 0.5
+```
+
+**Source**: `wfst.rs:1264–1286`
+
+#### 6.1.3 Rule Specificity Weight (A3)
+
+**Semiring**: TropicalWeight
+
+**Formula**:
+
+> w_specificity = 1 / (1 + t + 0.5n)
+>
+> where t = number of terminal items, n = number of nonterminal items
+> (Ident items count as 0.5 nonterminals).
+
+**Rationale (specificity as inverse structural entropy).** A grammar rule
+constrains the language it accepts. More terminal symbols means more fixed
+constraints, fewer accepted strings, and lower structural entropy. The formula
+`1/(1 + structure)` is a monotone decreasing function mapping structural
+complexity to weight: the more constrained a rule, the lower its weight, and
+therefore the higher its priority under tropical `⊕  = min`.
+
+*Terminal/nonterminal asymmetry.* Terminals count 1.0 because each terminal is
+a fixed constraint — it matches exactly one token class, deterministically
+reducing the language. Nonterminals count 0.5 because each nonterminal is a
+free variable admitting any derivation of the referenced category. The 2:1
+ratio reflects this asymmetry. The `1 +` base in the denominator ensures
+epsilon productions get weight 1.0 (maximum, least specific) and that the
+weight is always in (0, 1].
+
+*Ident items.* An `Ident` in the rule's FIRST set counts as 0.5 nonterminals
+rather than 1.0 terminal, because `Ident` is a lexical wildcard that matches
+any identifier string — it provides less structural constraint than a fixed
+keyword but more than a full nonterminal category.
+
+**Example.** In RhoCalc:
+
+```
+    FloatCast: float( Expr )
+      t = 1 (KwFloat), n = 1 (Expr)
+      specificity = 1 + 0.5×1 = 1.5
+      w_specificity = 1/(1 + 1.5) = 1/2.5 = 0.40
+
+    FunctionCall: Ident( Args )
+      t = 1 (LParen — counted from FIRST items), n_ident = 0.5, n_nt = 1 (Args)
+      specificity = 1 + 0.5×1.5 = 1.75
+      w_specificity = 1/(1 + 1.75) = 1/2.75 ≈ 0.36
+```
+
+Note: lower `w_specificity` means *more* specific. `FunctionCall` has slightly
+lower specificity weight (0.36 vs 0.40) because it has more structural items,
+but it loses on action type weight (A2).
+
+**Source**: `prediction.rs:1685–1701`
+
+#### 6.1.4 Dispatch Weight Composition (A4)
+
+**Semiring**: TropicalWeight
+
+**Formula**:
+
+> w_final = w_action ⊗  w_specificity = w_action + w_specificity
+
+The final dispatch weight for a rule is the tropical product (addition) of its
+action type weight (A2) and its specificity weight (A3). This is the weight
+baked into generated `match` arms and stored in `AMBIGUOUS_WEIGHTS` for NFA
+disambiguation.
+
+**Rationale.** Tropical `⊗  = +` decomposes the total dispatch cost into two
+independent axes: *mechanism cost* (how expensive is the dispatch path?) and
+*structural cost* (how specific is the rule?). Additivity ensures that the
+composed weight respects Bellman's optimality principle: the best composed
+weight is the one that minimizes the sum of both components.
+
+**Example.** Continuing from A2 and A3:
+
+```
+    FloatCast:    w = 0.0 + 0.40 = 0.40
+    FunctionCall: w = 0.5 + 0.36 ≈ 0.86
+```
+
+FloatCast wins because its zero action cost more than compensates for its
+slightly higher specificity weight.
+
+**Source**: `prediction.rs:1546`
+
+#### 6.1.5 Derivation Counting (A5)
+
+**Semiring**: CountingWeight
+
+**Formula**:
+
+> count = |{r ∈ Rules(C) : token ∈ FIRST(r)}|
+
+For each (category, token) pair, the derivation count is the number of grammar
+rules in category `C` whose FIRST set contains the given token. The count is computed by
+`PredictionWfst::predict_with_confidence(&self, token_name: &str)`
+(`wfst.rs:362`), which returns `Vec<(&WeightedAction, CountingWeight)>` —
+each dispatch action paired with the total number of alternatives.
+
+**Interpretation**:
+
+| Count | Meaning                                     | Diagnostic Action       |
+|:-----:|---------------------------------------------|-------------------------|
+|   0   | Dead dispatch (no rule handles this token)  | Dead-rule warning       |
+|   1   | Unambiguous dispatch                        | Deterministic arm       |
+|  > 1  | Ambiguous dispatch (NFA exploration needed) | Ambiguity warning (W05) |
+
+**Example.** In RhoCalc, the token `Ident` in category `Proc`:
+
+```
+    PInput:  Ident ∈ FIRST(PInput)   ✓
+    POutput: Ident ∈ FIRST(POutput)  ✓
+    PQuote:  Ident ∉ FIRST(PQuote)   ✗
+    ───────────────────────────────────
+    count = CountingWeight(2)
+```
+
+Two rules compete for `Ident` in `Proc`, triggering NFA merged-prefix dispatch.
+
+**Source**: `wfst.rs:362–366`
+
+#### 6.1.6 Reachability Analysis (A6)
+
+**Semiring**: BooleanWeight
+
+**Formula**:
+
+> reachable(C) = ∃ path from root category to C via FIRST + cross-cat + cast edges
+
+Category reachability is computed as a fixed-point over the category graph
+using BooleanWeight, where `⊕  = ∨` (OR) and `⊗  = ∧` (AND). A category is
+reachable if it has a non-empty FIRST set or is transitively reachable from a
+reachable category via cross-category or cast edges. A rule is dead (Tier 2)
+if its entire category is unreachable.
+
+**Reachability graph** (small example):
+
+```
+    Expr ──cross-cat──► Proc ──cast──► Name
+     │                                  │
+     └────────cross-cat─────────────────┘
+                                        ╳
+                                   Unreachable
+                                  (no inbound edges)
+```
+
+In the example above, `Unreachable` is a category with no inbound edges from
+any reachable category, so `reachable(Unreachable) = false` and all its rules
+receive dead-rule warnings.
+
+The companion analysis
+`detect_nearly_dead_paths(rule_infos, categories, first_sets)`
+(`pipeline.rs:450`) extends this with
+`ProductWeight<BooleanWeight, CountingWeight>` to jointly compute reachability
+*and* derivation counts in a single forward-backward pass, identifying paths
+that are technically reachable but carry negligible derivation flow.
+
+**Source**: `pipeline.rs:141`
+
+#### 6.1.7 Rule Context Tracking (A7)
+
+**Semiring**: ContextWeight
+
+**Formula**:
+
+> context(s) = ⊕{singleton(label_i) : transition_i reaches s}
+
+The function `singleton(id)` is `ContextWeight::singleton(label_id: u8) -> Self`
+(`semiring.rs:654`), which returns a `u128` bitset with exactly bit `label_id`
+set: `ContextWeight(1u128 << label_id)`.
+
+Here `⊕  = ∪` (bitwise OR over 128-bit bitsets). Each rule label is assigned a
+unique bit position (0–127). When a WFST state is reachable by transitions
+from multiple rules, its ContextWeight accumulates all contributing rule labels.
+
+**Capacity**: 128 distinct rule labels per grammar (sufficient for all current
+PraTTaIL grammars). The bitset representation is `Copy` and allocation-free.
+
+**Example.** A WFST state `s₃` reachable by PInput (bit 3) and POutput
+(bit 5):
+
+```
+    singleton(3) = 0b...001000
+    singleton(5) = 0b...100000
+    context(s₃) = 0b...001000 ⊕  0b...100000 = 0b...101000
+    count = context(s₃).count_ones() = 2
+```
+
+A context count of 1 means the state is unambiguous (single rule). A count > 1
+identifies states that participate in multiple rules, helping diagnose
+structural overlap in the grammar.
+
+**Source**: `semiring.rs:654`
+
+#### 6.1.8 Lookahead Bottleneck (A8)
+
+**Semiring**: ComplexityWeight
+
+**Formula**:
+
+> bottleneck(path) = ⊗{complexity(arc_i)} = max(complexity_i)
+
+where `complexity(arc)` extracts the `ComplexityWeight` value from arc — the
+lookahead depth required at that dispatch point — and `⊗  = max` is the
+tropical-max semiring on non-negative integers (dual to the standard tropical
+semiring). Lookahead depth is assigned via `ComplexityWeight` constructors
+(`semiring.rs:798–817`):
+
+| Constructor              | Value      | Meaning                            |
+|--------------------------|:----------:|------------------------------------|
+| `deterministic()`        |     0      | No ambiguity, single rule          |
+| `single_lookahead()`     |     1      | Two alternatives, 1-token resolve  |
+| `multi_lookahead(k)`     |     k      | k-token lookahead required         |
+| `infinite()`             | `u32::MAX` | Dead/unreachable dispatch point    |
+
+Per-group complexity is computed by `compute_group_complexity()`
+(`trampoline.rs:132`) as `|rules| × max_depth`. The bottleneck complexity of a
+path is the maximum over all arc complexities.
+
+**Rationale.** The bottleneck complexity identifies the hardest dispatch point
+along any path — the point requiring the deepest lookahead. Paths with lower
+bottleneck are preferred because they make fewer speculative parsing decisions.
+
+**Example.** A dispatch path through three WFST arcs:
+
+```
+    arc₁: deterministic     → complexity = 0
+    arc₂: 2-token lookahead → complexity = 2
+    arc₃: deterministic     → complexity = 0
+    ─────────────────────────────────────────
+    bottleneck = max(0, 2, 0) = ComplexityWeight(2)
+```
+
+**Source**: `semiring.rs:810–812`
+
+#### 6.1.9 N-Best Path Tracking (A9)
+
+**Semiring**: NbestWeight\<N\>
+
+**Formula**:
+
+> top_N = merge(A, B): two-pointer merge of sorted entry lists,
+> deduplicate by `path_id`, keep the N entries with lowest weight.
+
+Each `NbestEntry` is a `(path_id: u32, weight: TropicalWeight)` pair.
+The `⊕` operation merges two N-best lists, and `⊗` extends paths by weight
+accumulation.
+
+**Confidence gap**:
+
+> Δ = w₂ − w₁
+
+The weight difference between the best and second-best entries measures
+disambiguation confidence. A large gap means the best path is significantly
+better; a small gap indicates near-ambiguity.
+
+**Example** (N=2):
+
+```
+    NbestWeight { entries: [(path_0, w=0.3), (path_1, w=1.7)] }
+    confidence_gap = 1.7 − 0.3 = 1.4  → high confidence
+
+    NbestWeight { entries: [(path_0, w=0.3), (path_1, w=0.35)] }
+    confidence_gap = 0.35 − 0.3 = 0.05  → near-ambiguous
+```
+
+Returns `f64::INFINITY` if fewer than 2 entries exist (single or no
+alternative = infinite confidence).
+
+**Source**: `semiring.rs:1437–1441, 1487`
+
+---
+
+### 6.2 Runtime Methods (Parser)
+
+#### 6.2.1 Recovery Repair Costs (B1)
+
+**Semiring**: TropicalWeight
+
+**Base cost table**:
+
+| Repair Action | Base Cost | Rationale                                      |
+|---------------|:---------:|------------------------------------------------|
+| Skip          | 0.5/token | Cheapest: consume and discard unexpected input |
+| Delete        |    1.0    | Remove one token from the stream               |
+| Swap          |   1.25    | Reorder two adjacent tokens                    |
+| Substitute    |    1.5    | Replace wrong token with expected one          |
+| Insert        |    2.0    | Fabricate a missing token (most expensive)     |
+
+**Context multipliers** (3-tier system):
+
+| Tier | Context Signal          | Multiplier        | Effect                                          |
+|------|-------------------------|-------------------|-------------------------------------------------|
+| 1    | Deep nesting (> 1000)   | skip × 0.5        | Discount skip in deeply nested constructs       |
+| 1    | Shallow depth (< 10)    | skip × 2.0        | Penalize skip at top level                      |
+| 1    | Low binding power (< 4) | skip × 0.75       | Slight skip discount for loose operators        |
+| 1    | Collection frame        | insert × 0.5      | Encourage insertion in lists/arrays             |
+| 1    | Group frame             | insert × 0.5      | Encourage insertion for balanced delimiters     |
+| 1    | Unmatched bracket       | insert × 0.3      | Strongly encourage bracket insertion            |
+| 1    | Mixfix frame            | substitute × 0.75 | Favor substitution in ternary operators         |
+| 3    | Simulation succeeds     | cost × 0.5        | Reward repairs that lead to valid continuations |
+| 3    | Simulation fails        | cost + 0.2/token  | Penalize repairs that lead to more errors       |
+
+**Adaptive recovery** (B2 extension):
+
+| Parse Confidence     | Condition            | Adjustment                     |
+|----------------------|----------------------|--------------------------------|
+| Deterministic regime | running_weight < 1.0 | skip × 0.75 (confident → skip) |
+| Ambiguous regime     | running_weight ≥ 1.0 | insert × 0.5 (unsure → insert) |
+
+**Worked example.** Input `INT INT PLUS INT` where `INT PLUS INT` was
+expected (extra `INT` at position 1):
+
+```
+    node 0       node 1       node 2       SINK
+      │            │            │            │
+      ├─skip(0.5)─►│            │            │
+      ├─del(1.0)──►│            │            │
+      ├─sub(1.5)──►│            │            │
+      ├─ins(2.0)───┼────────────┼────────────►
+      ├─swap(1.25)─┼────────────►            │
+      │            ├─skip(0.5)─►│            │
+      │            │            ├─sync(0.0)──►
+      │            ├─sync(0.0)──┼────────────►
+
+    Viterbi: node 0 →[skip, 0.5]→ node 1 →[sync, 0.0]→ SINK
+    Total cost: 0.5 (skip the extra INT, sync at PLUS)
+```
+
+**Source**: `recovery.rs:128–228`
+
+#### 6.2.2 Edit Distance Counting (B2)
+
+**Semiring**: EditWeight
+
+**Discrete cost table**:
+
+| Operation  | Edit Count | Rationale                                                 |
+|------------|:----------:|-----------------------------------------------------------|
+| Skip       |     1      | Consume one unexpected token                              |
+| Delete     |     1      | Remove one token                                          |
+| Insert     |     2      | Fabricate a token (asymmetric: fabrication > consumption) |
+| Substitute |     2      | Replace one token (equivalent to delete + insert)         |
+
+**Rationale.** The edit count is an integer-valued metric tracking the *number*
+of editing operations, independent of their tropical cost. The asymmetry
+between consumption (1) and fabrication (2) reflects the principle that
+fabricating tokens from nothing is structurally more invasive than consuming
+or removing existing tokens. Edit counts compose under `⊗  = +` (accumulate
+along a path).
+
+**Example.** A repair sequence "skip 2 tokens + insert 1 token":
+
+```
+    edit_total = skip(1) + skip(1) + insert(2) = EditWeight(4)
+```
+
+**Source**: `semiring.rs:405–425`
+
+#### 6.2.3 Dual-Cost Recovery (B3)
+
+**Semiring**: ProductWeight\<TropicalWeight, EditWeight\>
+
+**Formula**:
+
+> RecoveryCost = (w_tropical, n_edits)
+
+The recovery Viterbi operates over `ProductWeight<TropicalWeight, EditWeight>`,
+jointly tracking tropical cost (for optimality) and edit count (for
+diagnostics). The lexicographic ordering of `ProductWeight` ensures:
+
+1. **Primary**: Minimize tropical cost (continuous, fine-grained)
+2. **Tiebreak**: Minimize edit count (discrete, for human readability)
+
+**Example.** Two repair paths reaching the same sync point:
+
+```
+    Path A: (1.5, 3)  — cost 1.5, 3 edits
+    Path B: (1.5, 2)  — cost 1.5, 2 edits
+    ─────────────────────────────────────────
+    Lexicographic comparison: same tropical → fewer edits wins
+    Winner: Path B
+```
+
+**Source**: `recovery.rs` (type alias `RecoveryCost`)
+
+#### 6.2.4 Identity Assignment (B4)
+
+**Semiring**: any `W: Semiring`
+
+**Formula**:
+
+> ∀ token tᵢ : w(tᵢ) = W::one()
+
+When converting a linear (unambiguous) token stream to a generic lattice via
+`linear_to_lattice_generic<W>()`, every edge receives the semiring
+multiplicative identity `W::one()`. For TropicalWeight, `one() = 0.0`; for
+CountingWeight, `one() = 1`; for BooleanWeight, `one() = true`.
+
+**Rationale.** Unambiguous linear streams have no weight differentiation —
+all tokens are equally valid. The multiplicative identity preserves under
+composition: for any weight `w`, `w ⊗  one() = w`. This ensures that injecting
+a linear stream into a generic lattice framework does not distort weights
+computed by upstream or downstream methods.
+
+**Source**: `lattice.rs:568–576`
+
+#### 6.2.5 Position Weight Penalty (B5)
+
+**Semiring**: TropicalWeight
+
+**Formula**:
+
+> w_adjusted = w_original + |Δpos| × 0.5
+>
+> where Δpos = alt_pos − primary_pos (token positions consumed)
+
+When an NFA alternative parse consumed a different number of tokens than the
+primary parse, its weight is adjusted by a position-proportional penalty. This
+implements a "longest match" preference analogous to maximal-munch lexing.
+
+**Rationale.** Alternatives that consume more input are generally preferable
+(they explain more of the token stream). Alternatives that consume less input
+leave unconsumed tokens that may cause downstream parse failures. The symmetric
+penalty `|Δpos| × 0.5` ensures that a shorter match must have a proportionally
+lower raw weight to remain competitive against the primary interpretation.
+
+**Example.** Primary parse consumed to position 13 (13 tokens). An alternative
+consumed to position 11:
+
+```
+    Δpos = |11 − 13| = 2
+    penalty = 2 × 0.5 = 1.0
+    w_adjusted = w_original + 1.0
+```
+
+If the alternative's raw weight was 0.3 and the primary's weight was 0.4, the
+adjusted weight becomes 1.3 — the primary (0.4) now wins despite having higher
+raw weight.
+
+**Constant**: `POSITION_WEIGHT_PENALTY = 0.5`
+
+**Source**: `wfst.rs:1124`
+
+---
+
+### 6.3 Training Methods (wfst-log gated)
+
+#### 6.3.1 Probabilistic Weights (C1)
+
+**Semiring**: LogWeight
+
+**Feature gate**: `wfst-log`
+
+**Formula**:
+
+> w = −ln(p), where p ∈ (0, 1] is the estimated probability.
+
+The log semiring represents probabilities in negative-log space. Lower weight
+= higher probability. The semiring operations are:
+
+| Operation  | Formula                | Probability-Space Equivalent |
+|------------|------------------------|------------------------------|
+| ⊕  (plus)  | −ln(exp(−a) + exp(−b)) | p_a + p_b (sum)              |
+| ⊗  (times) | a + b                  | p_a × p_b (product)          |
+| zero       | +∞                     | 0 (impossible)               |
+| one        | 0.0                    | 1 (certain)                  |
+
+**Conversion**:
+- Probability → weight: `w = −ln(p)`
+- Weight → probability: `p = exp(−w)`
+
+**SGD update.** During training, weights are updated by stochastic gradient
+descent on the log-likelihood:
+
+> w ← w − η(expected_correct − expected_all)
+
+where `expected_correct` and `expected_all` are computed via forward-backward
+over the training corpus. Weight corrections recorded in `WEIGHT_CORRECTIONS`
+during parsing provide the gradient signal.
+
+**Source**: `semiring.rs:936–939`
+
+#### 6.3.2 Entropy / Information Content (C2)
+
+**Semiring**: EntropyWeight
+
+**Feature gate**: `wfst-log`
+
+**Formula**:
+
+> (w, e) = (−ln(p), −ln(p))
+
+For Shannon entropy computation, the expectation component is set equal to the
+weight for each arc. After forward-backward propagation, the final expectation
+gives the entropy H of the parse distribution:
+
+> H = −Σᵢ pᵢ ln(pᵢ) (in nats)
+
+Divide by `ln(2)` to convert to bits.
+
+The EntropyWeight semiring composes as:
+
+| Operation  | Weight Component           | Expectation Component                                     |
+|------------|----------------------------|-----------------------------------------------------------|
+| ⊕  (plus)  | −ln(exp(−w_a) + exp(−w_b)) | (e_a·exp(−w_a) + e_b·exp(−w_b)) / (exp(−w_a) + exp(−w_b)) |
+| ⊗  (times) | w_a + w_b                  | e_a + e_b                                                 |
+
+**Application**: High entropy → widen beam width (many plausible alternatives);
+low entropy → narrow beam (single dominant alternative). This drives the
+adaptive beam thresholds `ENTROPY_BEAM_LOW_THRESHOLD = 0.5` and
+`ENTROPY_BEAM_MAX = 10.0`.
+
+**Source**: `semiring.rs:1141`
+
+---
+
+### 6.4 Weight Flow Summary
+
+The following diagram traces how weights flow between the three lifecycle
+phases. Compile-time weights (A1–A4) are baked into generated match arms;
+runtime methods (B1–B5) operate over those baked-in values; training methods
+(C1–C2) can update the compile-time weights via the feedback loop.
+
+```
+    ┌──────────────────── Compile Time ─────────────────────┐
+    │                                                       │
+    │  A1 (priority) ─► DFA accept_weight()                 │
+    │  A2 (action)  ─┐                                      │
+    │  A3 (specific) ┴► A4 (compose) ─► AMBIGUOUS_WEIGHTS   │
+    │  A5 (count)   ─► ambiguity diagnostics (W05)          │
+    │  A6 (reach)   ─► dead-rule diagnostics                │
+    │  A7 (context) ─► grammar overlap analysis             │
+    │  A8 (complex) ─► bottleneck diagnostics               │
+    │  A9 (nbest)   ─► confidence_gap diagnostics           │
+    │                       │                               │
+    └───────────────────────┊───────────────────────────────┘
+                            │ baked into generated code
+    ┌───────────────────────┊───────────────────────────────┐
+    │                       ▼         Runtime               │
+    │                                                       │
+    │  B1 (repair costs) ──► viterbi_multi_step()           │
+    │  B2 (edit counts)  ──► RecoveryCost right component   │
+    │  B3 (dual-cost)    ──► lexicographic Viterbi          │
+    │  B4 (identity)     ──► linear_to_lattice_generic()    │
+    │  B5 (position)     ──► NFA replay weight adjustment   │
+    │                                                       │
+    │  WEIGHT_CORRECTIONS ◄── from_alternatives() feedback  │
+    │         │                                             │
+    └─────────┊─────────────────────────────────────────────┘
+              │ drain after parsing
+    ┌─────────┊─────────────────────────────────────────────┐
+    │         ▼       Training (wfst-log)                   │
+    │                                                       │
+    │  C1 (log prob) ──► SGD weight update                  │
+    │  C2 (entropy)  ──► adaptive beam width                │
+    │         │                                             │
+    │         └──► updated weights ──► re-pipeline          │
+    └───────────────────────────────────────────────────────┘
+```
+
+---
+
+## 7. Worked Example: End-to-End
 
 Trace the input `float(1 == 1)` through the RhoCalc grammar, which has both
 a `float()` cast rule and function-call syntax.
@@ -318,7 +1035,7 @@ a `float()` cast rule and function-call syntax.
 `lex_weighted_core()` produces a flat weighted stream:
 
 ```
-Token          Range        Weight
+Token           Range        Weight
 ──────────────  ───────────  ──────
 Ident("float")  0:0–0:5      0.0
 LParen          0:5–0:6      0.0
@@ -334,80 +1051,28 @@ No lexical ambiguity — all weights are 0.0.
 
 `from_weighted()` strips weights → `TokenSource::Linear`.
 
-### Interlude: Where Do Dispatch Weights Come From?
+### Interlude: Dispatch Weight Origin
 
 Step 1 showed all lex weights at 0.0 — the input is lexically unambiguous.
-But Step 3 (below) introduces non-zero **dispatch weights** that determine
-which parse interpretation wins. These are a separate weight system:
+But Step 3 (below) introduces non-zero **dispatch weights** from compile-time
+methods A2–A4. For the full weight assignment formulae and rationale, see
+[§6.1 Compile-Time Methods](#61-compile-time-methods-pipeline) — specifically
+A2 (action type), A3 (rule specificity), and A4 (composition). The computed
+values for this example are:
 
-| Weight System   | Source                    | When Assigned           | Purpose           | Example                           |
-|-----------------|---------------------------|-------------------------|-------------------|-----------------------------------|
-| Lex weight      | `from_priority()`         | Runtime (DFA)           | Lexical ambiguity | 0.0 (all tokens unambiguous here) |
-| Dispatch weight | Specificity + action type | Compile time (pipeline) | Parse ambiguity   | 0.40 (FloatCast)                  |
-
-**Dispatch weight formula.** Each rule's weight is:
-
-```
-w_final = w_action + w_specificity        (tropical ⊗  = addition)
-```
-
-**Action type weight** (`wfst.rs:1264–1286`):
-
-| Action Type                 | w_action | Rationale                                       |
-|-----------------------------|----------|-------------------------------------------------|
-| Direct                      | 0.0      | Deterministic, no backtracking                  |
-| Grouping                    | 0.0      | Delimiter-driven                                |
-| CrossCategory (no backtrack)| 0.0      | Deterministic cross-category                    |
-| CrossCategory (backtrack)   | 0.5      | Speculative try, may fail                       |
-| Cast                        | 0.5      | Cross-category type coercion validation         |
-| Lookahead                   | 1.0 + k  | Each extra lookahead token adds cost            |
-| Variable                    | 2.0      | Pure wildcard, matches anything                 |
-
-**Rule specificity weight** (`prediction.rs:1671–1692`):
-
-```
-w_specificity = 1 / (1 + terminals + 0.5 × nonterminals)
-```
-
-**Theoretical rationale.**
-
-*Specificity as inverse structural entropy.* A grammar rule constrains the
-language it accepts. More terminal symbols means more fixed constraints, fewer
-accepted strings, and lower structural entropy. The formula `1/(1 + structure)`
-is a monotone decreasing function mapping structural complexity to weight: the
-more constrained a rule, the lower its weight, and therefore the higher its
-priority under tropical `⊕  = min`. A keyword-driven rule like `float(Expr)` is
-more informative than generic `Ident(Args)` because the keyword eliminates an
-entire space of possible interpretations.
-
-*Terminal/nonterminal asymmetry.* Terminals count 1.0 because each terminal is
-a fixed constraint — it matches exactly one token class, deterministically
-reducing the language. Nonterminals count 0.5 because each nonterminal is a
-free variable admitting any derivation of the referenced category. The 2:1
-ratio reflects this asymmetry. The `1 +` base in the denominator ensures
-epsilon productions get weight 1.0 (maximum, least specific) and that the
-weight is always in (0, 1].
-
-*Action type as parsing effort cost.* Action type weights encode the
-computational cost of the dispatch mechanism — a separate axis from specificity.
-Direct dispatch has zero overhead; backtracking and wildcards incur measurable
-cost. These compose additively under tropical ⊗  because Bellman's principle
-guarantees that the optimal multi-step dispatch path minimizes accumulated
-weight (see [Optimization Theory](../foundations/06-optimization-theory.md) §1).
-
-> For the full specificity formula derivation, see
-> [Rule Specificity Weights](semirings.md#17-rule-specificity-weights).
-> For the Bellman composition guarantee, see
-> [Optimization Theory](../foundations/06-optimization-theory.md) §1.
+| Alt  | Rule                          | w_action (A2) | w_specificity (A3) | w_final (A4) |
+|------|-------------------------------|:-------------:|:------------------:|:------------:|
+| Alt₁ | `FloatCast: float( Expr )`    |      0.0      |        0.40        |   **0.40**   |
+| Alt₂ | `FunctionCall: Ident( Args )` |      0.5      |       ≈ 0.36       |  **≈ 0.86**  |
 
 ### Step 3: Parsing with NFA Ambiguity
 
 The parser encounters `float` at the dispatch point for category `Expr`. Two
 NFA alternatives exist:
 
-| Alt | Rule | Structure | w_specificity | w_action | w_final |
-|-----|------|-----------|---------------|----------|---------|
-| Alt₁ | `FloatCast: float( Expr )` | 1 term + 1 NT | 1/(1+1.5) = 0.40 | 0.0 (Direct) | **0.40** |
+| Alt  | Rule                          | Structure       | w_specificity     | w_action                 | w_final    |
+|------|-------------------------------|-----------------|-------------------|--------------------------|------------|
+| Alt₁ | `FloatCast: float( Expr )`    | 1 term + 1 NT   | 1/(1+1.5) = 0.40  | 0.0 (Direct)             | **0.40**   |
 | Alt₂ | `FunctionCall: Ident( Args )` | 1 term + 1.5 NT | 1/(1+1.75) ≈ 0.36 | 0.5 (CrossCat+backtrack) | **≈ 0.86** |
 
 FloatCast wins on both axes: its keyword gives it slightly higher structural
@@ -430,8 +1095,8 @@ spillover = [(FunctionCall(float, [EqExpr(1, 1)]), pos=13, w≈0.86)]
 `from_alternatives()` receives both results:
 
 ```
-                    ╭── FloatCast(EqExpr(1,1))    w=0.40  accepting ──╮
-  parse point ──────┤                                                 ├── result
+                    ╭── FloatCast(EqExpr(1,1))     w=0.40  accepting ──╮
+  parse point ──────┤                                                  ├── result
                     ╰── FunctionCall(float,[...])  w≈0.86  accepting ──╯
 ```
 
@@ -441,7 +1106,7 @@ Both are accepting. Stage 2 tiebreaks on WFST weight:
 argmin_weight(accepting_alternatives):
   Alt₁ (FloatCast):     w = 0.40
   Alt₂ (FunctionCall):  w ≈ 0.86
-  ⊕ = min(0.40, 0.86) = 0.40 → Alt₁ wins
+  ⊕  = min(0.40, 0.86) = 0.40 → Alt₁ wins
 ```
 
 **Result**: `FloatCast(EqExpr(Int(1), Int(1)))` — the `1 == 1` is parsed as an
@@ -463,7 +1128,7 @@ only parallel edges.
 
 ---
 
-## 7. Relationship to Semiring Composition
+## 8. Relationship to Semiring Composition
 
 The stream-to-lattice conversion points are **consumers** of semiring
 operations. The [semiring composition framework](semiring-composition.md)
@@ -494,9 +1159,28 @@ in one or more:
   originate from compile-time WFST construction (Structure E) and flow into
   runtime parse disambiguation.
 
+### How the Modes Map to Weight Assignment Methods
+
+Each of the 14 weight assignment methods from [§6](#6-weight-assignment-methods)
+participates in one or more semiring composition modes:
+
+| Mode | Weight Methods     | Composition Pattern                                           |
+|------|--------------------|---------------------------------------------------------------|
+| 1    | A1, B4, C1, C2     | Single-semiring operations (priority, identity, log, entropy) |
+| 2    | B1, B2, B3         | ProductWeight joint tracking (tropical + edit)                |
+| 3    | A2, A3, A4, B5     | Cross-structure flow (pipeline → runtime disambiguation)      |
+| —    | A5, A6, A7, A8, A9 | Diagnostic-only (not consumed by lattice structures)          |
+
 ---
 
-## 8. See Also
+## 9. See Also
+
+### Weight Assignment Methods
+
+- [§6 Weight Assignment Methods](#6-weight-assignment-methods): All 14 methods
+  with formulae, rationale, examples, and diagrams
+- [Weight Assignment Method Catalog — Architecture](../../architecture/wfst/stream-to-lattice.md#10-weight-assignment-method-catalog):
+  Code-path walkthrough with source-line references for all 14 methods
 
 ### Token Lattice Documentation (Theory / Design / Architecture)
 

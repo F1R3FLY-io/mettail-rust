@@ -46,6 +46,50 @@ pub use relations::{generate_relations, list_all_relations_for_extraction};
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
 
+/// Build a structured lint diagnostic for the PraTTaIL lint system.
+///
+/// Returns the diagnostic for local collection. Callers accumulate diagnostics
+/// and emit them in batch (with optional grouping) at the end of each analysis section.
+fn build_lint(
+    id: &'static str,
+    name: &'static str,
+    severity: mettail_prattail::lint::LintSeverity,
+    message: String,
+    hint: Option<String>,
+    grammar_name: Option<String>,
+) -> mettail_prattail::lint::LintDiagnostic {
+    mettail_prattail::lint::LintDiagnostic {
+        id,
+        name,
+        severity,
+        category: None,
+        rule: None,
+        message,
+        hint,
+        grammar_name,
+        source_location: None,
+    }
+}
+
+/// Group and emit a batch of collected diagnostics.
+///
+/// When `PRATTAIL_LINT_VERBOSE` is set, emits individual diagnostics.
+/// Otherwise, groups repeated lint IDs into compact summaries.
+fn emit_collected_diagnostics(diagnostics: Vec<mettail_prattail::lint::LintDiagnostic>) {
+    if diagnostics.is_empty() {
+        return;
+    }
+    let verbose = std::env::var("PRATTAIL_LINT_VERBOSE").is_ok();
+    let to_emit = if verbose {
+        diagnostics
+    } else {
+        mettail_prattail::lint::group_diagnostics(diagnostics)
+    };
+    for diag in &to_emit {
+        mettail_prattail::lint::emit_diagnostic(diag);
+    }
+}
+
 /// Output from Ascent source generation
 pub struct AscentSourceOutput {
     /// Full output including helper functions and ascent_source! wrapper (for debug dump & backward compat)
@@ -78,21 +122,22 @@ pub fn generate_ascent_source(
     language: &LanguageDef,
     analysis: Option<&mettail_prattail::PipelineAnalysis>,
 ) -> AscentSourceOutput {
-    let theory_name = language.name.to_string().to_lowercase();
+    let grammar_name = language.name.to_string();
+    let theory_name = grammar_name.to_lowercase();
     let source_name = format_ident!("{}_source", theory_name);
 
     // Sprint A (N10): Compute subsumed equation set for DCE.
     // Only equations are eligible for subsumption elimination because equations
     // are symmetric (LHS ≡ RHS), so RHS subsumption is automatic.
     // Rewrite subsumption would require separate RHS analysis (deferred).
-    let subsumed_equations = compute_subsumed_equations(language);
+    let subsumed_equations = compute_subsumed_equations(language, &grammar_name);
 
     // Detect cancellation pairs: equations of the form Outer(Inner(X)) = X.
     // These are suppressed from eqrel generation (would cause non-convergence)
     // and handled by normalize arms + directional rewrites instead.
     let (cancellation_pairs, cancellation_equations) =
         crate::ast::pattern::detect_cancellation_pairs(language);
-    emit_cancellation_pair_lints(&cancellation_pairs, language);
+    emit_cancellation_pair_lints(&cancellation_pairs, language, &grammar_name);
 
     let helper_fns = helpers::generate_helper_functions(language);
     let relations = generate_relations(language);
@@ -158,8 +203,15 @@ pub fn generate_ascent_source(
     );
 
     // Write to file for inspection
-    if let Err(e) = writer::write_ascent_file(&language.name.to_string(), &formatted_source) {
-        eprintln!("Warning: Failed to write Ascent Datalog file: {}", e);
+    if let Err(e) = writer::write_ascent_file(&grammar_name, &theory_name, &formatted_source) {
+        // I10 emits immediately (one-off infrastructure diagnostic, not groupable)
+        mettail_prattail::lint::emit_diagnostic(&build_lint(
+            "I10", "ascent-file-write-failed",
+            mettail_prattail::lint::LintSeverity::Warning,
+            format!("failed to write Ascent Datalog file: {}", e),
+            Some("check directory permissions".to_string()),
+            Some(grammar_name.clone()),
+        ));
     }
 
     // Sprint 6: Pattern trie analysis for fine-grained dependency stratification
@@ -173,7 +225,9 @@ pub fn generate_ascent_source(
         let alpha_groups = pattern_trie::find_alpha_equivalent_groups(&pattern_index);
         let subsumptions = pattern_trie::detect_subsumption(&pattern_index);
 
-        // Emit diagnostics to stderr (compile-time warnings)
+        // Collect diagnostics locally for batch grouping
+        let mut macro_diagnostics = Vec::new();
+
         if !subsumptions.is_empty() {
             for sub in &subsumptions {
                 let general_name = rule_id_name(sub.general, language);
@@ -187,16 +241,25 @@ pub fn generate_ascent_source(
                     false
                 };
                 if eliminated {
-                    eprintln!(
-                        "note: equation '{}' eliminated — subsumed by more general equation '{}'",
-                        specific_name, general_name,
-                    );
+                    macro_diagnostics.push(build_lint(
+                        "G26", "equation-subsumed",
+                        mettail_prattail::lint::LintSeverity::Note,
+                        format!("equation `{}` eliminated — subsumed by more general equation `{}`", specific_name, general_name),
+                        Some(format!("the more general equation `{}` covers all cases", general_name)),
+                        Some(grammar_name.clone()),
+                    ));
                 } else {
-                    eprintln!(
-                        "warning: rule '{}' may be subsumed by more general rule '{}' \
-                         (both LHS patterns match the same terms, but '{}' is more general)",
-                        specific_name, general_name, general_name,
-                    );
+                    macro_diagnostics.push(build_lint(
+                        "G27", "rule-subsumption-candidate",
+                        mettail_prattail::lint::LintSeverity::Warning,
+                        format!(
+                            "rule `{}` may be subsumed by more general rule `{}` \
+                             (both LHS patterns match the same terms, but `{}` is more general)",
+                            specific_name, general_name, general_name,
+                        ),
+                        Some(format!("review whether rule `{}` can be removed or merged with `{}`", specific_name, general_name)),
+                        Some(grammar_name.clone()),
+                    ));
                 }
             }
         }
@@ -204,23 +267,35 @@ pub fn generate_ascent_source(
         if !alpha_groups.is_empty() {
             let group_count = alpha_groups.len();
             let total_rules: usize = alpha_groups.iter().map(|g| g.len()).sum();
-            eprintln!(
-                "note: {} alpha-equivalent LHS pattern group(s) detected ({} rules total) \
-                 — these rules share identical matching structure",
-                group_count, total_rules,
-            );
+            macro_diagnostics.push(build_lint(
+                "G28", "alpha-equivalent-groups",
+                mettail_prattail::lint::LintSeverity::Note,
+                format!(
+                    "{} alpha-equivalent LHS pattern group(s) detected ({} rules total) \
+                     — these rules share identical matching structure",
+                    group_count, total_rules,
+                ),
+                Some("these rules share identical matching structure and may benefit from consolidation".to_string()),
+                Some(grammar_name.clone()),
+            ));
         }
 
         // Log dependency group analysis
         let independent = dep_groups.iter().filter(|g| g.len() == 1).count();
         if dep_groups.len() > 1 {
-            eprintln!(
-                "note: {} fine-grained dependency group(s) detected ({} independent, {} cross-group)",
-                dep_groups.len(),
-                independent,
-                dep_groups.len() - independent,
-            );
+            macro_diagnostics.push(build_lint(
+                "G29", "dependency-groups",
+                mettail_prattail::lint::LintSeverity::Note,
+                format!(
+                    "{} fine-grained dependency group(s) detected ({} independent, {} cross-group)",
+                    dep_groups.len(), independent, dep_groups.len() - independent,
+                ),
+                Some("independent groups can be evaluated in separate strata for performance".to_string()),
+                Some(grammar_name.clone()),
+            ));
         }
+
+        emit_collected_diagnostics(macro_diagnostics);
 
         // Sprint 6g/6h Extension Point: Multi-stratum codegen
         //
@@ -259,19 +334,20 @@ pub fn generate_ascent_source(
     if let Some(ref a) = analysis {
         if !a.isomorphic_groups.is_empty() {
             let total_cats: usize = a.isomorphic_groups.iter().map(|g| g.len()).sum();
-            eprintln!(
-                "note: {} isomorphic WFST group(s) detected ({} categories total) \
-                 — these categories share identical dispatch topology",
-                a.isomorphic_groups.len(),
-                total_cats,
-            );
-            for (i, group) in a.isomorphic_groups.iter().enumerate() {
-                eprintln!(
-                    "  group {}: [{}]",
-                    i,
-                    group.join(", "),
-                );
-            }
+            let group_lines: Vec<String> = a.isomorphic_groups.iter().enumerate()
+                .map(|(i, group)| format!("  group {}: [{}]", i, group.join(", ")))
+                .collect();
+            mettail_prattail::lint::emit_diagnostic(&build_lint(
+                "G30", "isomorphic-wfst-groups",
+                mettail_prattail::lint::LintSeverity::Note,
+                format!(
+                    "{} isomorphic WFST group(s) detected ({} categories total) \
+                     — these categories share identical dispatch topology\n{}",
+                    a.isomorphic_groups.len(), total_cats, group_lines.join("\n"),
+                ),
+                Some("categories with identical topology can share a single WFST".to_string()),
+                Some(grammar_name.clone()),
+            ));
         }
     }
 
@@ -316,7 +392,7 @@ fn rule_id_name(id: pattern_trie::RuleId, language: &LanguageDef) -> String {
 /// analysis because rewrites are directional (deferred to future sprint).
 ///
 /// Returns a `HashSet<usize>` of equation indices into `language.equations`.
-fn compute_subsumed_equations(language: &LanguageDef) -> HashSet<usize> {
+fn compute_subsumed_equations(language: &LanguageDef, grammar_name: &str) -> HashSet<usize> {
     if language.equations.is_empty() && language.rewrites.is_empty() {
         return HashSet::new();
     }
@@ -338,10 +414,13 @@ fn compute_subsumed_equations(language: &LanguageDef) -> HashSet<usize> {
     }
 
     if !subsumed.is_empty() {
-        eprintln!(
-            "note: {} subsumed equation(s) eliminated from Ascent codegen",
-            subsumed.len(),
-        );
+        mettail_prattail::lint::emit_diagnostic(&build_lint(
+            "G31", "subsumed-equations-eliminated",
+            mettail_prattail::lint::LintSeverity::Note,
+            format!("{} subsumed equation(s) eliminated from Ascent codegen", subsumed.len()),
+            Some("subsumed equations are redundant and have been removed from Ascent codegen".to_string()),
+            Some(grammar_name.to_string()),
+        ));
     }
 
     subsumed
@@ -362,6 +441,7 @@ fn compute_subsumed_equations(language: &LanguageDef) -> HashSet<usize> {
 fn emit_cancellation_pair_lints(
     pairs: &[crate::ast::pattern::CancellationPair],
     language: &LanguageDef,
+    grammar_name: &str,
 ) {
     use crate::ast::pattern::{Pattern, PatternTerm};
 
@@ -369,14 +449,16 @@ fn emit_cancellation_pair_lints(
         let eq_rel = pair.outer_category.to_string().to_lowercase();
 
         // G25: note — cancellation pair detected and suppressed
-        eprintln!(
-            "note[G25]: equation `{}` is a cancellation pair and has been suppressed",
-            pair.equation_name
-        );
-        eprintln!(
-            "  = note: {}({}(X)) = X is handled by normalize() instead of eq_{}",
-            pair.outer_constructor, pair.inner_constructor, eq_rel
-        );
+        mettail_prattail::lint::emit_diagnostic(&build_lint(
+            "G25", "cancellation-pair-detected",
+            mettail_prattail::lint::LintSeverity::Note,
+            format!("equation `{}` is a cancellation pair and has been suppressed", pair.equation_name),
+            Some(format!(
+                "{}({}(X)) = X is handled by normalize() instead of eq_{}",
+                pair.outer_constructor, pair.inner_constructor, eq_rel,
+            )),
+            Some(grammar_name.to_string()),
+        ));
 
         // W09: check if a corresponding directional rewrite exists
         let has_corresponding_rewrite = language.rewrites.iter().any(|rw| {
@@ -425,18 +507,18 @@ fn emit_cancellation_pair_lints(
             });
 
             if has_congruence_rewrites {
-                eprintln!(
-                    "warning[W09]: cancellation pair `{}` has no corresponding rewrite",
-                    pair.equation_name
-                );
-                eprintln!(
-                    "  = note: add `|- ({} ({} X)) ~> X ;` to ensure runtime reduction",
-                    pair.outer_constructor, pair.inner_constructor
-                );
-                eprintln!(
-                    "  = note: without this rewrite, {}({}(X)) can only be collapsed by normalize()",
-                    pair.outer_constructor, pair.inner_constructor
-                );
+                mettail_prattail::lint::emit_diagnostic(&build_lint(
+                    "W09", "cancellation-pair-missing-rewrite",
+                    mettail_prattail::lint::LintSeverity::Warning,
+                    format!("cancellation pair `{}` has no corresponding rewrite", pair.equation_name),
+                    Some(format!(
+                        "add `|- ({} ({} X)) ~> X ;` to ensure runtime reduction; \
+                         without this rewrite, {}({}(X)) can only be collapsed by normalize()",
+                        pair.outer_constructor, pair.inner_constructor,
+                        pair.outer_constructor, pair.inner_constructor,
+                    )),
+                    Some(grammar_name.to_string()),
+                ));
             }
         }
     }

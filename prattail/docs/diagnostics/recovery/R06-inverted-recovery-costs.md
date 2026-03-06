@@ -7,13 +7,13 @@
 
 Detects violations of the expected cost hierarchy in the `RecoveryConfig` for error recovery strategies. The recovery system uses a Viterbi minimum-cost search to select the cheapest repair action when a parse error occurs. The repair actions are ranked by a cost hierarchy that reflects the intrusiveness of each repair:
 
-| Rank | Strategy     | Default Cost | Rationale |
-|------|-------------|-------------|-----------|
-| 1    | Skip         | 0.5/token   | Least intrusive: advance past unexpected tokens to a sync point |
-| 2    | Delete       | 1.0         | Low cost: pretend the token was not there |
-| 3    | Swap         | 1.25        | Moderate: preserves all tokens, just reordered |
-| 4    | Substitute   | 1.5         | Moderate: replace with something valid |
-| 5    | Insert       | 2.0         | Most intrusive: fabricate a token that was not in the input |
+| Rank | Strategy   | Default Cost | Rationale                                                       |
+|------|------------|--------------|-----------------------------------------------------------------|
+| 1    | Skip       | 0.5/token    | Least intrusive: advance past unexpected tokens to a sync point |
+| 2    | Delete     | 1.0          | Low cost: pretend the token was not there                       |
+| 3    | Swap       | 1.25         | Moderate: preserves all tokens, just reordered                  |
+| 4    | Substitute | 1.5          | Moderate: replace with something valid                          |
+| 5    | Insert     | 2.0          | Most intrusive: fabricate a token that was not in the input     |
 
 When a cost earlier in the hierarchy exceeds a cost later in the hierarchy (e.g., `delete_cost > insert_cost`), the Viterbi search will prefer the more intrusive action over the less intrusive one, which typically produces lower-quality error messages and less intuitive repairs. For example, if `insert_cost < skip_per_token`, the recovery system will prefer fabricating tokens over simply skipping unexpected ones, leading to confusing "expected X" messages when the real issue is extraneous input.
 

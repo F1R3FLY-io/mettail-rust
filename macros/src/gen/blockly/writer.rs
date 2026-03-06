@@ -13,7 +13,7 @@ pub fn write_blockly_blocks(language_name: &str, output: &BlocklyOutput) -> std:
     let content = generate_blocks_typescript(output);
 
     std::fs::write(&path, content)?;
-    eprintln!("Generated Blockly blocks: {}", path.display());
+    eprintln!("  ({}) Generated Blockly blocks: {}", language_name, path.display());
 
     Ok(())
 }
@@ -29,7 +29,7 @@ pub fn write_blockly_categories(
     let content = generate_categories_typescript(output);
 
     std::fs::write(&path, content)?;
-    eprintln!("Generated Blockly categories: {}", path.display());
+    eprintln!("  ({}) Generated Blockly categories: {}", language_name, path.display());
 
     Ok(())
 }

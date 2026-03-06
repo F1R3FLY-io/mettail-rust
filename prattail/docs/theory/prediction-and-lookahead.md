@@ -718,17 +718,17 @@ Overall parsing remains O(n) in the input length.
 
 ## 10. Summary
 
-| Concept | Role in PraTTaIL |
-|---|---|
-| FIRST sets | Determine which tokens can start each category |
-| FOLLOW sets | Implicit in collection delimiters and Pratt loop termination |
-| Dispatch tables | Map first token to parse action per category |
-| Direct dispatch | O(1) when FIRST sets are disjoint |
-| Lookahead dispatch | Peek at token+1 when FIRST sets overlap within a category |
-| Cross-category overlap | FIRST set intersection analysis across categories |
-| Deterministic cross-category | Unique tokens trigger direct cross-category parse |
-| Backtracking cross-category | Ambiguous tokens use save/restore |
-| Memoization | Not currently needed; targeted memoization is a future option |
+| Concept                      | Role in PraTTaIL                                              |
+|------------------------------|---------------------------------------------------------------|
+| FIRST sets                   | Determine which tokens can start each category                |
+| FOLLOW sets                  | Implicit in collection delimiters and Pratt loop termination  |
+| Dispatch tables              | Map first token to parse action per category                  |
+| Direct dispatch              | O(1) when FIRST sets are disjoint                             |
+| Lookahead dispatch           | Peek at token+1 when FIRST sets overlap within a category     |
+| Cross-category overlap       | FIRST set intersection analysis across categories             |
+| Deterministic cross-category | Unique tokens trigger direct cross-category parse             |
+| Backtracking cross-category  | Ambiguous tokens use save/restore                             |
+| Memoization                  | Not currently needed; targeted memoization is a future option |
 
 The prediction engine transforms what would be trial-and-error parsing into
 mostly-deterministic dispatch. By analyzing FIRST set overlaps at compile

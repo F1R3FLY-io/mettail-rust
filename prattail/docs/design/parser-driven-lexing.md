@@ -395,23 +395,23 @@ context. No backtracking, no save/restore. O(1) per token.
 
 ### 3.3 Component Inventory
 
-| Component | Location | Phase | Description |
-|-----------|----------|-------|-------------|
-| `AmbiguityInfo` | `automata/codegen.rs` | Codegen | DFA states with multiple accept tokens |
-| `TokenVariantMap` | `automata/codegen.rs` | Codegen | Maps token names to numeric kind IDs |
-| `compute_composed_dispatch()` | `prediction.rs` | Codegen | FIRST-set x DFA-state composition |
-| `emit_composed_dispatch_table()` | `prediction.rs` | Codegen | Emits `composed_dispatch()` function |
-| `write_lexer_struct()` | `automata/codegen.rs` | Codegen | Emits `Lexer<'a>` struct |
-| `write_lexer_adapter()` | `automata/codegen.rs` | Codegen | Emits `LexerAdapter<'a>` struct |
-| `write_accept_token_by_kind()` | `automata/codegen.rs` | Codegen | Emits `accept_token_by_kind()` function |
-| `write_expected_category_descriptions()` | `automata/codegen.rs` | Codegen | Emits `EXPECTED_<CAT>` constants |
-| `write_trampolined_parser_lazy()` | `trampoline.rs` | Codegen | Emits `parse_Cat_lazy()` functions |
-| `Lexer<'a>` | Generated | Runtime | Incremental lexer with category context |
-| `LexerAdapter<'a>` | Generated | Runtime | Buffered peek-ahead wrapper |
-| `composed_dispatch()` | Generated | Runtime | Static dispatch table lookup |
-| `accept_token_by_kind()` | Generated | Runtime | Token construction by kind ID |
-| `parse_Cat_lazy()` | Generated | Runtime | Category parser using adapter |
-| `parse_context_sensitive()` | Generated | Runtime | Top-level entry point |
+| Component                                | Location              | Phase   | Description                             |
+|------------------------------------------|-----------------------|---------|-----------------------------------------|
+| `AmbiguityInfo`                          | `automata/codegen.rs` | Codegen | DFA states with multiple accept tokens  |
+| `TokenVariantMap`                        | `automata/codegen.rs` | Codegen | Maps token names to numeric kind IDs    |
+| `compute_composed_dispatch()`            | `prediction.rs`       | Codegen | FIRST-set x DFA-state composition       |
+| `emit_composed_dispatch_table()`         | `prediction.rs`       | Codegen | Emits `composed_dispatch()` function    |
+| `write_lexer_struct()`                   | `automata/codegen.rs` | Codegen | Emits `Lexer<'a>` struct                |
+| `write_lexer_adapter()`                  | `automata/codegen.rs` | Codegen | Emits `LexerAdapter<'a>` struct         |
+| `write_accept_token_by_kind()`           | `automata/codegen.rs` | Codegen | Emits `accept_token_by_kind()` function |
+| `write_expected_category_descriptions()` | `automata/codegen.rs` | Codegen | Emits `EXPECTED_<CAT>` constants        |
+| `write_trampolined_parser_lazy()`        | `trampoline.rs`       | Codegen | Emits `parse_Cat_lazy()` functions      |
+| `Lexer<'a>`                              | Generated             | Runtime | Incremental lexer with category context |
+| `LexerAdapter<'a>`                       | Generated             | Runtime | Buffered peek-ahead wrapper             |
+| `composed_dispatch()`                    | Generated             | Runtime | Static dispatch table lookup            |
+| `accept_token_by_kind()`                 | Generated             | Runtime | Token construction by kind ID           |
+| `parse_Cat_lazy()`                       | Generated             | Runtime | Category parser using adapter           |
+| `parse_context_sensitive()`              | Generated             | Runtime | Top-level entry point                   |
 
 ---
 
@@ -761,19 +761,19 @@ acoustic signals into word sequences by composing three transducers:
   Acoustic Signal
        │
        ▼
-  ┌─────────────────┐
-  │  H: Acoustic     │   HMM states ──► phone labels
+  ┌───────────────────┐
+  │  H: Acoustic      │   HMM states ──► phone labels
   │     Model         │   Weight: P(observation | phone state)
   └────────┬──────────┘
            │
            ▼
-  ┌─────────────────┐
-  │  C: Pronunciation│   Phone sequences ──► word labels
+  ┌───────────────────┐
+  │  C: Pronunciation │   Phone sequences ──► word labels
   │     Model         │   Weight: P(pronunciation | word)
   └────────┬──────────┘
            │
            ▼
-  ┌─────────────────┐
+  ┌───────────────────┐
   │  G: Language      │   Word sequences ──► sentences
   │     Model         │   Weight: P(word sequence) from n-gram LM
   └────────┬──────────┘
@@ -795,7 +795,7 @@ PraTTaIL's parser-driven lexing composes two transducers:
   Character Sequence
        │
        ▼
-  ┌─────────────────┐
+  ┌───────────────────┐
   │  L: Lexer WFST    │   Characters ──► token kinds
   │                   │   Weight: TokenKind::priority()
   │                   │   States: DFA states (after minimization)
@@ -803,7 +803,7 @@ PraTTaIL's parser-driven lexing composes two transducers:
   └────────┬──────────┘
            │
            ▼
-  ┌─────────────────┐
+  ┌───────────────────┐
   │  P: Prediction    │   Token kinds ──► parse rules
   │     WFST          │   Weight: rule specificity / training weight
   │                   │   States: per-category dispatch states
@@ -825,23 +825,23 @@ runtime.
 The correspondence between the two domains is precise:
 
 ```
-┌──────────────────────┬───────────────────────────┬───────────────────────────┐
-│  Concept              │  Speech Recognition        │  PraTTaIL                  │
-├──────────────────────┼───────────────────────────┼───────────────────────────┤
-│  Input signal         │  Acoustic feature vectors  │  Character sequence        │
-│  First transducer     │  H (Acoustic model)        │  L (Lexer DFA)             │
-│  Intermediate labels  │  Phone labels              │  Token kinds               │
-│  Second transducer    │  C (Pronunciation model)   │  P (Prediction WFST)       │
-│  Output labels        │  Word labels               │  Parse rule labels         │
-│  Third transducer     │  G (Language model)        │  (not needed -- grammar    │
-│                       │                            │   is finite)               │
-│  Composition          │  H ∘ C ∘ G                  │  L ∘ P                      │
-│  Runtime operation    │  Viterbi best path         │  Table lookup [cat][state]  │
-│  Semiring             │  Tropical (min, +, inf, 0) │  Tropical (min, +, inf, 0) │
-│  Weight interpretation│  -log P(observation|phone)  │  -log P(rule|token,cat)     │
-│  Training             │  EM (Baum-Welch)           │  SGD on parse examples     │
-│  Pruning              │  Beam search               │  BeamWidthConfig            │
-└──────────────────────┴───────────────────────────┴───────────────────────────┘
+┌───────────────────────┬───────────────────────────┬───────────────────────────┐
+│ Concept               │ Speech Recognition        │ PraTTaIL                  │
+├───────────────────────┼───────────────────────────┼───────────────────────────┤
+│ Input signal          │ Acoustic feature vectors  │ Character sequence        │
+│ First transducer      │ H (Acoustic model)        │ L (Lexer DFA)             │
+│ Intermediate labels   │ Phone labels              │ Token kinds               │
+│ Second transducer     │ C (Pronunciation model)   │ P (Prediction WFST)       │
+│ Output labels         │ Word labels               │ Parse rule labels         │
+│ Third transducer      │ G (Language model)        │ (not needed -- grammar    │
+│                       │                           │  is finite)               │
+│ Composition           │ H ∘ C ∘ G                 │ L ∘ P                     │
+│ Runtime operation     │ Viterbi best path         │ Table lookup [cat][state] │
+│ Semiring              │ Tropical (min, +, inf, 0) │ Tropical (min, +, inf, 0) │
+│ Weight interpretation │ -log P(observation|phone) │ -log P(rule|token,cat)    │
+│ Training              │ EM (Baum-Welch)           │ SGD on parse examples     │
+│ Pruning               │ Beam search               │ BeamWidthConfig           │
+└───────────────────────┴───────────────────────────┴───────────────────────────┘
 ```
 
 ### 6.4 What the Analogy Buys Us
@@ -1177,9 +1177,9 @@ emitted — saving ~2,000-4,000 lines per grammar and eliminating icache polluti
 
 ### 10.3 Dual Entry Points
 
-| Entry Point | Lexing Strategy | Feature Required | Use Case |
-|-------------|----------------|------------------|----------|
-| `Cat::parse(input)` | Batch lex (all tokens up front) | None (always available) | Standard parsing, maximum throughput |
+| Entry Point                           | Lexing Strategy                     | Feature Required        | Use Case                                       |
+|---------------------------------------|-------------------------------------|-------------------------|------------------------------------------------|
+| `Cat::parse(input)`                   | Batch lex (all tokens up front)     | None (always available) | Standard parsing, maximum throughput           |
 | `Cat::parse_context_sensitive(input)` | Parser-driven (one token at a time) | `context-sensitive-lex` | Ambiguous grammars, context-dependent keywords |
 
 The standard `parse()` path uses the composed dispatch resolutions at codegen
@@ -1192,10 +1192,10 @@ for incremental, context-aware tokenization with runtime dispatch.
 The composed dispatch table uses different weight sources depending on the
 `wfst-log` feature gate. WFST-weighted dispatch is always active.
 
-| Configuration | Weight Source | Disambiguation Quality |
-|---------------|--------------|----------------------|
-| Default (no features) | Priority + rule specificity | Good (always-on WFST) |
-| `wfst-log` | Trained weights from `TrainedModel` | Best (learned from parse examples) |
+| Configuration         | Weight Source                       | Disambiguation Quality             |
+|-----------------------|-------------------------------------|------------------------------------|
+| Default (no features) | Priority + rule specificity         | Good (always-on WFST)              |
+| `wfst-log`            | Trained weights from `TrainedModel` | Best (learned from parse examples) |
 
 The `compute_composed_dispatch()` function always produces WFST-weighted dispatch
 tables using FIRST-set filtering, priority-based weights, and rule specificity
@@ -1244,13 +1244,13 @@ parse_Cat_lazy                     LexerAdapter                  Lexer
                                       fill_buffer()
                                    ─→ lexer.next_token_for_category(cat_id)
                                                                 ─→ run DFA from current offset
-                                                                   ┌──────────────────────────┐
+                                                                   ┌───────────────────────────┐
                                                                    │ DFA state ∈ ambiguous?    │
                                                                    │ ┌─ No:  accept_token()    │
                                                                    │ └─ Yes: composed_dispatch │
                                                                    │         (cat_id, state)   │
                                                                    │         → accept_by_kind  │
-                                                                   └──────────────────────────┘
+                                                                   └───────────────────────────┘
                                    ← (Token, Range)
                                    store in buffer[0]
                                 ← &Token
@@ -1329,9 +1329,9 @@ Key observations:
 ### 11.5 Relationship Between Entry Points
 
 ```
-                        ┌─────────────────────────────────┐
+                        ┌──────────────────────────────────┐
                         │          language! { ... }       │
-                        └────────────┬────────────────────┘
+                        └────────────┬─────────────────────┘
                                      │ macro expansion
                           ┌──────────┴──────────┐
                           ▼                     ▼

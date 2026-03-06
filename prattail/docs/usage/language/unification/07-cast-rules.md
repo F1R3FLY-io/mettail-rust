@@ -106,7 +106,7 @@ Int ──cast──▶ Float ──cast──▶ Str
      │ FloatToStr cast
      ▼
   ┌─────┐
-  │ Str  │  FIRST = {Integer, Ident, StringLit}  ← reachable via transitive cast
+  │ Str │  FIRST = {Integer, Ident, StringLit}  ← reachable via transitive cast
   └─────┘
 
   Fixed-point: 2 iterations (cast propagation stabilizes)
@@ -118,8 +118,8 @@ Int ──cast──▶ Float ──cast──▶ Str
   ┌───────────────────────────────────────┐
   │ Dispatch for Str category:            │
   │                                       │
-  │  1. StrLit  (direct, w=0.1)     ← hot│
-  │  2. IntToStr (1 cast, w=0.5)         │
+  │  1. StrLit  (direct, w=0.1)     ← hot │
+  │  2. IntToStr (1 cast, w=0.5)          │
   │  3. FloatToStr (2 casts, w=0.9) ← cold│
   └───────────────────────────────────────┘
 ```
@@ -140,11 +140,11 @@ operators following a cast expression are handled correctly.
 
 ## Source Reference
 
-| Component | File |
-|-----------|------|
-| Cast rule classification | `prattail/src/lib.rs` (RuleSpec.is_cast) |
-| Category reachability | `prattail/src/pipeline.rs` |
-| WFST weight assignment | `prattail/src/pipeline.rs` |
-| Cast cycle detection (C01) | `prattail/src/lint.rs` |
-| Transitive redundancy (C02) | `prattail/src/lint.rs` |
-| Dispatch generation | `prattail/src/dispatch.rs` |
+| Component                   | File                                     |
+|-----------------------------|------------------------------------------|
+| Cast rule classification    | `prattail/src/lib.rs` (RuleSpec.is_cast) |
+| Category reachability       | `prattail/src/pipeline.rs`               |
+| WFST weight assignment      | `prattail/src/pipeline.rs`               |
+| Cast cycle detection (C01)  | `prattail/src/lint.rs`                   |
+| Transitive redundancy (C02) | `prattail/src/lint.rs`                   |
+| Dispatch generation         | `prattail/src/dispatch.rs`               |

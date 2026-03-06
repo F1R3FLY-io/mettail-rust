@@ -133,12 +133,12 @@ The WFST-Informed Ascent Optimization pipeline uses data extracted from the WFST
 │                              │  ● isomorphic_groups (Sprint 8)        │    │
 │                              └───────────────┬────────────────────────┘    │
 │                                              │                             │
-│                              ┌───────────────┼──────────────────────┐      │
-│                              │  Lint Layer   │  (Sprint C: G24)     │      │
-│                              │  G01-G10, G24,│W01-W06, R01-R07     │       │
-│                              │  C01-C04, P02-│P04                   │      │
-│                              └───────────────┼──────────────────────┘      │
-└──────────────────────────────────────────────┼─────────────────────────────┘
+│                              ┌───────────────┊──────────────────────┐      │
+│                              │  Lint Layer      (Sprint C: G24)     │      │
+│                              │  G01-G10, G24, W01-W06, R01-R07      │      │
+│                              │  C01-C04, P02- P04                   │      │
+│                              └───────────────┊──────────────────────┘      │
+└──────────────────────────────────────────────┊─────────────────────────────┘
                                                │
                                                ▼
 ┌────────────────────────────────────────────────────────────────────────────┐
@@ -159,8 +159,8 @@ The WFST-Informed Ascent Optimization pipeline uses data extracted from the WFST
 │  │ Dead-Rule DCE      │  │ Premise Ordering   │  │ Rule Ordering      │    │
 │  │ (Sprint 1)         │  │ (Sprint 2)         │  │ (Sprint 3)         │    │
 │  └────────┬───────────┘  └────────┬───────────┘  └────────┬───────────┘    │
-│           │                       │                        │               │
-│           └───────────────┬───────┘────────────────────────┘               │
+│           │                       │                       │                │
+│           └───────────────┬───────┴───────────────────────┘                │
 │                           ▼                                                │
 │  ┌────────────────────────────────────────────┐                            │
 │  │ Body Clause Ordering (Sprint 4)            │                            │
@@ -189,37 +189,37 @@ The WFST-Informed Ascent Optimization pipeline uses data extracted from the WFST
 │  ┌──────────────────────┐   ┌──────────────────────┐                       │
 │  │ Pre-Stratum Run      │──▶│ Main Fixpoint Run    │                       │
 │  │ (ground rules only)  │   │ (seeded with ground  │                       │
-│  │ O(depth) iterations  │   │  results)             │                      │
+│  │ O(depth) iterations  │   │  results)            │                       │
 │  └──────────────────────┘   └──────────┬───────────┘                       │
 │                                        │                                   │
-│                              ┌─────────┴─────────┐                         │
-│                              │ Term Equality Cache│  Sprint B: cached      │
-│                              │ (TLS HashMap)      │  Scope::term_eq()      │
-│                              └───────────────────┘                         │
+│                              ┌─────────┴───────────┐                       │
+│                              │ Term Equality Cache │  Sprint B: cached     │
+│                              │ (TLS HashMap)       │  Scope::term_eq()     │
+│                              └─────────────────────┘                       │
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Decision Matrix
 
-| ID | Optimization | Status | Sprint | Tier | Activation Condition |
-|----|-------------|--------|--------|------|---------------------|
-| S0 | Pipeline Analysis Export | Implemented | 0 | — | Always active |
-| S1 | Dead-Rule DCE | Implemented | 1 | — | When `PipelineAnalysis` available |
-| S2 | Premise Cost Ordering | Implemented | 2 | — | Always active (≥2 conditions) |
-| S3 | Rule Ordering (Cache Locality) | Implemented | 3 | — | When constructor_weights available |
-| S4 | Body Clause Ordering | Implemented | 4 | — | When category_weights available |
-| S5 | Ground Rewrite Pre-Stratum | Implemented | 5 | — | When ground HOL step rules exist |
-| S6a-f | De Bruijn Pattern Trie | Implemented | 6 | — | When equations/rewrites exist |
-| S7 | Variable Binding Selectivity | Implemented | 7 | — | Always active (duplicate vars) |
-| S8a-b | Isomorphic WFST Detection | Implemented | 8 | — | Always active |
-| S9a-g | Integration Testing | Implemented | 9 | — | Test infrastructure |
-| N10 | Subsumption Exploitation | Implemented | A | A | When equation subsumption detected |
-| R1 | Term Equality Cache | Implemented | B | A | Always active (runtime) |
-| C1 | α-Equivalence Lint (G24) | Implemented | C | A | Always active (lint layer) |
-| 6g/6h | Multi-Stratum Ascent | Deferred | — | D | ≥2 independent groups with ≥5 rules each |
-| 8c-8g | Template Instantiation | Deferred | — | D | 5+ isomorphic category sets |
-| 9h/9i | Benchmark CI | Deferred | — | D | When runtime monitoring needed |
-| R2 | Lazy binder construction | Rejected | — | — | Proven unsound (Sprint 5 analysis) |
+| ID    | Optimization                   | Status      | Sprint | Tier | Activation Condition                     |
+|-------|--------------------------------|-------------|--------|------|------------------------------------------|
+| S0    | Pipeline Analysis Export       | Implemented | 0      | —    | Always active                            |
+| S1    | Dead-Rule DCE                  | Implemented | 1      | —    | When `PipelineAnalysis` available        |
+| S2    | Premise Cost Ordering          | Implemented | 2      | —    | Always active (≥2 conditions)            |
+| S3    | Rule Ordering (Cache Locality) | Implemented | 3      | —    | When constructor_weights available       |
+| S4    | Body Clause Ordering           | Implemented | 4      | —    | When category_weights available          |
+| S5    | Ground Rewrite Pre-Stratum     | Implemented | 5      | —    | When ground HOL step rules exist         |
+| S6a-f | De Bruijn Pattern Trie         | Implemented | 6      | —    | When equations/rewrites exist            |
+| S7    | Variable Binding Selectivity   | Implemented | 7      | —    | Always active (duplicate vars)           |
+| S8a-b | Isomorphic WFST Detection      | Implemented | 8      | —    | Always active                            |
+| S9a-g | Integration Testing            | Implemented | 9      | —    | Test infrastructure                      |
+| N10   | Subsumption Exploitation       | Implemented | A      | A    | When equation subsumption detected       |
+| R1    | Term Equality Cache            | Implemented | B      | A    | Always active (runtime)                  |
+| C1    | α-Equivalence Lint (G24)       | Implemented | C      | A    | Always active (lint layer)               |
+| 6g/6h | Multi-Stratum Ascent           | Deferred    | —      | D    | ≥2 independent groups with ≥5 rules each |
+| 8c-8g | Template Instantiation         | Deferred    | —      | D    | 5+ isomorphic category sets              |
+| 9h/9i | Benchmark CI                   | Deferred    | —      | D    | When runtime monitoring needed           |
+| R2    | Lazy binder construction       | Rejected    | —      | —    | Proven unsound (Sprint 5 analysis)       |
 
 ## Optimization Pipeline Flow
 

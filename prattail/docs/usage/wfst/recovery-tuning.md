@@ -74,28 +74,28 @@ All values are inlined as constants in the generated parser.
 
 ### 2.2 Per-Field Reference Table
 
-| Field                     | Default    | Valid Range     | Effect                              |
-|---------------------------|------------|-----------------|-------------------------------------|
-| `skip_per_token`          | 0.5        | (0, ∞)          | Cost per skipped token              |
-| `delete_cost`             | 1.0        | (0, ∞)          | Cost to delete one token            |
-| `substitute_cost`         | 1.5        | (0, ∞)          | Cost to substitute one token        |
-| `insert_cost`             | 2.0        | (0, ∞)          | Cost to insert a phantom token      |
-| `swap_cost`               | 1.25       | (0, ∞)          | Cost to swap two adjacent tokens    |
-| `max_skip_lookahead`      | 32         | [1, ∞)          | Maximum skip search window          |
-| `deep_nesting_threshold`  | 1000       | [0, ∞)          | Depth for skip discount             |
-| `deep_nesting_skip_mult`  | 0.5        | (0, ∞)          | Skip multiplier when deep           |
-| `shallow_depth_threshold` | 10         | [0, ∞)          | Depth for skip penalty              |
-| `shallow_depth_skip_mult` | 2.0        | (0, ∞)          | Skip multiplier when shallow        |
-| `low_bp_threshold`        | 4          | [0, 255]        | BP for skip discount                |
-| `low_bp_skip_mult`        | 0.75       | (0, ∞)          | Skip multiplier at low BP           |
-| `collection_insert_mult`  | 0.5        | (0, ∞)          | Insert discount in collections      |
-| `group_insert_mult`       | 0.5        | (0, ∞)          | Insert discount in groups           |
-| `bracket_insert_mult`     | 0.3        | (0, ∞)          | Insert discount for bracket repair  |
-| `mixfix_substitute_mult`  | 0.75       | (0, ∞)          | Substitute discount in mixfix       |
-| `simulation_valid_mult`   | 0.5        | (0, ∞)          | Discount when simulation succeeds   |
-| `simulation_fail_penalty` | 0.2        | [0, ∞)          | Penalty per sim failure token       |
-| `beam_width`              | Some(3.0)  | None or (0, ∞)  | Viterbi beam width                  |
-| `cascade_window`          | 3          | [0, ∞)          | Cascade suppression window          |
+| Field                     | Default   | Valid Range    | Effect                             |
+|---------------------------|-----------|----------------|------------------------------------|
+| `skip_per_token`          | 0.5       | (0, ∞)         | Cost per skipped token             |
+| `delete_cost`             | 1.0       | (0, ∞)         | Cost to delete one token           |
+| `substitute_cost`         | 1.5       | (0, ∞)         | Cost to substitute one token       |
+| `insert_cost`             | 2.0       | (0, ∞)         | Cost to insert a phantom token     |
+| `swap_cost`               | 1.25      | (0, ∞)         | Cost to swap two adjacent tokens   |
+| `max_skip_lookahead`      | 32        | [1, ∞)         | Maximum skip search window         |
+| `deep_nesting_threshold`  | 1000      | [0, ∞)         | Depth for skip discount            |
+| `deep_nesting_skip_mult`  | 0.5       | (0, ∞)         | Skip multiplier when deep          |
+| `shallow_depth_threshold` | 10        | [0, ∞)         | Depth for skip penalty             |
+| `shallow_depth_skip_mult` | 2.0       | (0, ∞)         | Skip multiplier when shallow       |
+| `low_bp_threshold`        | 4         | [0, 255]       | BP for skip discount               |
+| `low_bp_skip_mult`        | 0.75      | (0, ∞)         | Skip multiplier at low BP          |
+| `collection_insert_mult`  | 0.5       | (0, ∞)         | Insert discount in collections     |
+| `group_insert_mult`       | 0.5       | (0, ∞)         | Insert discount in groups          |
+| `bracket_insert_mult`     | 0.3       | (0, ∞)         | Insert discount for bracket repair |
+| `mixfix_substitute_mult`  | 0.75      | (0, ∞)         | Substitute discount in mixfix      |
+| `simulation_valid_mult`   | 0.5       | (0, ∞)         | Discount when simulation succeeds  |
+| `simulation_fail_penalty` | 0.2       | [0, ∞)         | Penalty per sim failure token      |
+| `beam_width`              | Some(3.0) | None or (0, ∞) | Viterbi beam width                 |
+| `cascade_window`          | 3         | [0, ∞)         | Cascade suppression window         |
 
 See [recovery-config.md](../../design/wfst/recovery-config.md) for
 detailed semantics.
@@ -174,15 +174,15 @@ The `Display` implementation produces:
 
 ### 3.2 Repair Description Strings
 
-| Message Pattern                                           | Strategy          |
-|-----------------------------------------------------------|-------------------|
-| `"skip N token(s) to 'X'"`                                | SkipToSync        |
-| `"delete unexpected token"`                                | DeleteToken       |
-| `"insert missing 'X'"`                                     | InsertToken       |
-| `"expected 'X' here"`                                      | SubstituteToken   |
-| `"swap adjacent tokens"`                                   | SwapTokens        |
-| `"try parsing as Cat (cast Cat → Target)"`                 | CategorySwitch    |
-| `"delete unexpected token, skip 1 token(s) to ';'"`       | Composite         |
+| Message Pattern                                     | Strategy        |
+|-----------------------------------------------------|-----------------|
+| `"skip N token(s) to 'X'"`                          | SkipToSync      |
+| `"delete unexpected token"`                         | DeleteToken     |
+| `"insert missing 'X'"`                              | InsertToken     |
+| `"expected 'X' here"`                               | SubstituteToken |
+| `"swap adjacent tokens"`                            | SwapTokens      |
+| `"try parsing as Cat (cast Cat → Target)"`          | CategorySwitch  |
+| `"delete unexpected token, skip 1 token(s) to ';'"` | Composite       |
 
 **Notes:**
 - Token names in messages (e.g. `'Semi'`, `'RParen'`) come from the

@@ -37,13 +37,13 @@ T  =  ( R+ ∪ {+∞},  min,  +,  +∞,  0.0 )
 
 where:
 
-| Component        | Symbol | Concrete value      | Meaning                         |
-|------------------|--------|---------------------|---------------------------------|
-| Carrier set      | K      | R+ ∪ {+∞}          | Non-negative reals plus infinity|
-| Addition (⊕)     | min    | min(a, b)           | Select best alternative         |
-| Multiplication (⊗)| +    | a + b               | Accumulate cost along a path    |
-| Additive identity (0̄) | +∞ | `f64::INFINITY` | Unreachable path                |
-| Multiplicative identity (1̄) | 0.0 | `0.0_f64` | Zero-cost transition           |
+| Component                   | Symbol | Concrete value  | Meaning                          |
+|-----------------------------|--------|-----------------|----------------------------------|
+| Carrier set                 | K      | R+ ∪ {+∞}       | Non-negative reals plus infinity |
+| Addition (⊕)                | min    | min(a, b)       | Select best alternative          |
+| Multiplication (⊗)          | +      | a + b           | Accumulate cost along a path     |
+| Additive identity (0̄)       | +∞     | `f64::INFINITY` | Unreachable path                 |
+| Multiplicative identity (1̄) | 0.0    | `0.0_f64`       | Zero-cost transition             |
 
 The name "tropical" comes from the replacement of ordinary addition
 with `min` (or `max` in the max-plus variant). In the parsing
@@ -60,8 +60,8 @@ Let a = 2.0, b = 5.0, c = 3.0.
 ### (A1) Associativity of ⊕
 
 ```
-(a ⊕ b) ⊕ c  =  min(min(2.0, 5.0), 3.0)  =  min(2.0, 3.0)  =  2.0
-a ⊕ (b ⊕ c)  =  min(2.0, min(5.0, 3.0))  =  min(2.0, 3.0)  =  2.0   ✓
+(a ⊕  b) ⊕  c  =  min(min(2.0, 5.0), 3.0)  =  min(2.0, 3.0)  =  2.0
+a ⊕  (b ⊕  c)  =  min(2.0, min(5.0, 3.0))  =  min(2.0, 3.0)  =  2.0   ✓
 ```
 
 Holds in general because `min` is associative over totally ordered sets.
@@ -69,17 +69,17 @@ Holds in general because `min` is associative over totally ordered sets.
 ### (A2) Commutativity of ⊕
 
 ```
-a ⊕ b  =  min(2.0, 5.0)  =  2.0
-b ⊕ a  =  min(5.0, 2.0)  =  2.0   ✓
+a ⊕  b  =  min(2.0, 5.0)  =  2.0
+b ⊕  a  =  min(5.0, 2.0)  =  2.0   ✓
 ```
 
 Holds because `min` is symmetric: `min(x, y) = min(y, x)` for all x, y.
 
-### (A3) ⊕ Identity
+### (A3) ⊕  Identity
 
 ```
-0̄ ⊕ a  =  min(+∞, 2.0)  =  2.0  =  a   ✓
-a ⊕ 0̄  =  min(2.0, +∞)  =  2.0  =  a   ✓
+0̄ ⊕  a  =  min(+∞, 2.0)  =  2.0  =  a   ✓
+a ⊕  0̄  =  min(2.0, +∞)  =  2.0  =  a   ✓
 ```
 
 Positive infinity is the identity for `min` because every real number
@@ -88,36 +88,36 @@ is less than `+∞`.
 ### (M1) Associativity of ⊗
 
 ```
-(a ⊗ b) ⊗ c  =  (2.0 + 5.0) + 3.0  =  7.0 + 3.0  =  10.0
-a ⊗ (b ⊗ c)  =  2.0 + (5.0 + 3.0)  =  2.0 + 8.0  =  10.0   ✓
+(a ⊗  b) ⊗  c  =  (2.0 + 5.0) + 3.0  =  7.0 + 3.0  =  10.0
+a ⊗  (b ⊗  c)  =  2.0 + (5.0 + 3.0)  =  2.0 + 8.0  =  10.0   ✓
 ```
 
 Holds because real addition is associative.
 
-### (M2) ⊗ Identity
+### (M2) ⊗  Identity
 
 ```
-1̄ ⊗ a  =  0.0 + 2.0  =  2.0  =  a   ✓
-a ⊗ 1̄  =  2.0 + 0.0  =  2.0  =  a   ✓
+1̄ ⊗  a  =  0.0 + 2.0  =  2.0  =  a   ✓
+a ⊗  1̄  =  2.0 + 0.0  =  2.0  =  a   ✓
 ```
 
 Zero is the identity for real addition.
 
-### (D1) Left Distributivity: ⊗ distributes over ⊕ from the left
+### (D1) Left Distributivity: ⊗  distributes over ⊕  from the left
 
 ```
-a ⊗ (b ⊕ c)  =  2.0 + min(5.0, 3.0)  =  2.0 + 3.0  =  5.0
-(a ⊗ b) ⊕ (a ⊗ c)  =  min(2.0 + 5.0, 2.0 + 3.0)  =  min(7.0, 5.0)  =  5.0   ✓
+a ⊗  (b ⊕  c)  =  2.0 + min(5.0, 3.0)  =  2.0 + 3.0  =  5.0
+(a ⊗  b) ⊕  (a ⊗  c)  =  min(2.0 + 5.0, 2.0 + 3.0)  =  min(7.0, 5.0)  =  5.0   ✓
 ```
 
 In general: `x + min(y, z) = min(x + y, x + z)` because addition by
 a constant preserves the ordering of the operands.
 
-### (D2) Right Distributivity: ⊗ distributes over ⊕ from the right
+### (D2) Right Distributivity: ⊗  distributes over ⊕  from the right
 
 ```
-(a ⊕ b) ⊗ c  =  min(2.0, 5.0) + 3.0  =  2.0 + 3.0  =  5.0
-(a ⊗ c) ⊕ (b ⊗ c)  =  min(2.0 + 3.0, 5.0 + 3.0)  =  min(5.0, 8.0)  =  5.0   ✓
+(a ⊕  b) ⊗  c  =  min(2.0, 5.0) + 3.0  =  2.0 + 3.0  =  5.0
+(a ⊗  c) ⊕  (b ⊗  c)  =  min(2.0 + 3.0, 5.0 + 3.0)  =  min(5.0, 8.0)  =  5.0   ✓
 ```
 
 Symmetric argument to (D1).
@@ -125,8 +125,8 @@ Symmetric argument to (D1).
 ### (Z) Zero Annihilation
 
 ```
-0̄ ⊗ a  =  +∞ + 2.0  =  +∞  =  0̄   ✓
-a ⊗ 0̄  =  2.0 + ∞   =  +∞  =  0̄   ✓
+0̄ ⊗  a  =  +∞ + 2.0  =  +∞  =  0̄   ✓
+a ⊗  0̄  =  2.0 + ∞   =  +∞  =  0̄   ✓
 ```
 
 Any finite value added to `+∞` yields `+∞`. An unreachable state
@@ -143,12 +143,12 @@ All eight axioms are satisfied. T is a valid semiring.
 
 ### 4.1 Commutativity
 
-**Claim**: The tropical semiring is commutative (⊗ is commutative).
+**Claim**: The tropical semiring is commutative (⊗  is commutative).
 
 **Proof**: For all a, b in R+ ∪ {+∞}:
 
 ```
-a ⊗ b  =  a + b  =  b + a  =  b ⊗ a
+a ⊗  b  =  a + b  =  b + a  =  b ⊗  a
 ```
 
 Real addition is commutative, and `+∞ + x = x + +∞ = +∞` for all x.   ∎
@@ -159,12 +159,12 @@ C → B → A.
 
 ### 4.2 Idempotency
 
-**Claim**: The tropical semiring is idempotent (⊕ is idempotent).
+**Claim**: The tropical semiring is idempotent (⊕  is idempotent).
 
 **Proof**: For all a in R+ ∪ {+∞}:
 
 ```
-a ⊕ a  =  min(a, a)  =  a
+a ⊕  a  =  min(a, a)  =  a
 ```
 
 The minimum of any value with itself is that value.   ∎
@@ -247,8 +247,8 @@ The zero element `+∞` represents an *unreachable* state or
 unreachable paths remain unreachable regardless of concatenation:
 
 ```
-+∞ ⊗ x  =  +∞ + x  =  +∞     for all x ∈ R+ ∪ {+∞}
-x ⊗ +∞  =  x + +∞  =  +∞     for all x ∈ R+ ∪ {+∞}
++∞ ⊗  x  =  +∞ + x  =  +∞     for all x ∈ R+ ∪ {+∞}
+x ⊗  +∞  =  x + +∞  =  +∞     for all x ∈ R+ ∪ {+∞}
 ```
 
 This is the correct semantic for dispatch: if any transition along a
@@ -277,8 +277,8 @@ alternative paths upon seeing token `Ident`:
 
 ```
                         ┌─────────────────────────────────┐
-                        │          Dispatch Graph          │
-                        │        (category: Bool)          │
+                        │          Dispatch Graph         │
+                        │        (category: Bool)         │
                         └─────────────────────────────────┘
 
   Path 1 (cross-category):   q₀ ──0.5──▶ q₁ ──0.5──▶ q₃
@@ -308,19 +308,19 @@ alternative paths upon seeing token `Ident`:
 **Path 1** (cross-category: parse `Int`, expect `==`, parse `Int`):
 
 ```
-w₁  =  0.5 ⊗ 0.5  =  0.5 + 0.5  =  1.0
+w₁  =  0.5 ⊗  0.5  =  0.5 + 0.5  =  1.0
 ```
 
 **Path 2** (own-category: parse `Bool` directly via identifier):
 
 ```
-w₂  =  2.0 ⊗ 0.0  =  2.0 + 0.0  =  2.0
+w₂  =  2.0 ⊗  0.0  =  2.0 + 0.0  =  2.0
 ```
 
 **Selecting the best alternative** (⊕):
 
 ```
-w*  =  w₁ ⊕ w₂  =  min(1.0, 2.0)  =  1.0
+w*  =  w₁ ⊕  w₂  =  min(1.0, 2.0)  =  1.0
 ```
 
 The parser tries Path 1 (cross-category comparison) first, because
@@ -334,16 +334,16 @@ The following weights are assigned to dispatch actions during
 PraTTaIL pipeline codegen. They determine the order of match arms
 in generated `parse_<Cat>()` functions:
 
-| Dispatch Type    | Weight | Rationale                                           |
-|------------------|--------|-----------------------------------------------------|
-| Direct           | 0.0    | Unique token in FIRST set -- deterministic, no ambiguity |
-| Grouping (`(`)   | 0.0    | Parenthesized expressions are unambiguous            |
-| CrossCategory    | 0.0    | Unique to source category -- deterministic dispatch  |
-| CrossCategory    | 0.5    | Shared token -- source tried first, fallback to own  |
-| Cast             | 0.5    | Embedding rule -- lower than own-category fallback   |
-| Lookahead        | 1.0+n  | Nth lookahead alternative (1.0, 1.1, 1.2, ...)      |
-| Variable/Ident   | 2.0    | Identifier -- most ambiguous, highest weight         |
-| Fallback         | +∞     | Always-last catch-all `_ => parse_Cat_own()`         |
+| Dispatch Type  | Weight | Rationale                                                |
+|----------------|--------|----------------------------------------------------------|
+| Direct         | 0.0    | Unique token in FIRST set -- deterministic, no ambiguity |
+| Grouping (`(`) | 0.0    | Parenthesized expressions are unambiguous                |
+| CrossCategory  | 0.0    | Unique to source category -- deterministic dispatch      |
+| CrossCategory  | 0.5    | Shared token -- source tried first, fallback to own      |
+| Cast           | 0.5    | Embedding rule -- lower than own-category fallback       |
+| Lookahead      | 1.0+n  | Nth lookahead alternative (1.0, 1.1, 1.2, ...)           |
+| Variable/Ident | 2.0    | Identifier -- most ambiguous, highest weight             |
+| Fallback       | +∞     | Always-last catch-all `_ => parse_Cat_own()`             |
 
 **Design principle**: More specific matches (fewer ambiguous
 continuations) get lower weight. The fallback arm at `+∞` ensures it
@@ -360,22 +360,22 @@ generated `match` statement.
 The tropical and log semirings share the same multiplicative operation
 (real addition) but differ in how they combine alternatives:
 
-| Property          | TropicalWeight                | LogWeight                            |
-|-------------------|-------------------------------|--------------------------------------|
-| Carrier set       | R+ ∪ {+∞}                    | R+ ∪ {+∞}                           |
-| ⊕ (addition)      | min(a, b)                     | −ln(e⁻ᵃ + e⁻ᵇ) (log-sum-exp)      |
-| ⊗ (multiplication)| a + b                         | a + b                                |
-| 0̄ (zero)          | +∞                            | +∞                                   |
-| 1̄ (one)           | 0.0                           | 0.0                                  |
-| Idempotent?       | Yes: min(a, a) = a            | No: lse(a, a) = a − ln 2 ≠ a       |
-| Interpretation    | Best single path              | Sum over all paths (probabilities)   |
-| Use case          | Dispatch ordering, Viterbi    | Forward-backward, training           |
-| Feature gate      | Always available              | `wfst-log`                           |
+| Property            | TropicalWeight             | LogWeight                          |
+|---------------------|----------------------------|------------------------------------|
+| Carrier set         | R+ ∪ {+∞}                  | R+ ∪ {+∞}                          |
+| ⊕  (addition)       | min(a, b)                  | −ln(e⁻ᵃ + e⁻ᵇ) (log-sum-exp)       |
+| ⊗  (multiplication) | a + b                      | a + b                              |
+| 0̄ (zero)            | +∞                         | +∞                                 |
+| 1̄ (one)             | 0.0                        | 0.0                                |
+| Idempotent?         | Yes: min(a, a) = a         | No: lse(a, a) = a − ln 2 ≠ a       |
+| Interpretation      | Best single path           | Sum over all paths (probabilities) |
+| Use case            | Dispatch ordering, Viterbi | Forward-backward, training         |
+| Feature gate        | Always available           | `wfst-log`                         |
 
-The key distinction is **idempotency**. Because tropical ⊕ is
+The key distinction is **idempotency**. Because tropical ⊕  is
 idempotent, merging duplicate paths is a no-op -- exactly what is
 needed for shortest-path selection. The log semiring's non-idempotent
-⊕ sums probabilities, which is needed for forward-backward scoring
+⊕  sums probabilities, which is needed for forward-backward scoring
 and expectation-maximization training.
 
 The tropical semiring can be viewed as the *zero-temperature limit* of
@@ -410,9 +410,9 @@ ALGORITHM ViterbiShortestPath(G, start, final)
   5.  for each node u ∈ V in topological order do
   6.      if dist[u] = +∞ then continue   // skip unreachable nodes
   7.      for each edge (u, v, w_uv) ∈ E do
-  8.          candidate ← dist[u] ⊗ w_uv  // = dist[u] + w_uv
-  9.          if candidate ⊕ dist[v] ≠ dist[v] then  // min improves
- 10.              dist[v] ← candidate ⊕ dist[v]      // = min(candidate, dist[v])
+  8.          candidate ← dist[u] ⊗  w_uv  // = dist[u] + w_uv
+  9.          if candidate ⊕  dist[v] ≠ dist[v] then  // min improves
+ 10.              dist[v] ← candidate ⊕  dist[v]      // = min(candidate, dist[v])
  11.              pred[v] ← u
 
  12.  if dist[f] = +∞ then return UNREACHABLE
@@ -641,8 +641,8 @@ lattice with weighted edges:
 
 The `viterbi_best_path_beam()` function in `lattice.rs` finds the
 minimum-cost repair sequence through this lattice. Edge weights are
-accumulated via ⊗ (addition); alternative repair strategies are
-compared via ⊕ (min).
+accumulated via ⊗  (addition); alternative repair strategies are
+compared via ⊕  (min).
 
 ### 12.4 Token Lattice (lattice.rs)
 

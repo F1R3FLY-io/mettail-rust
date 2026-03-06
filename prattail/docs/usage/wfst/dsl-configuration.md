@@ -29,11 +29,11 @@ weights are computed for all grammars.
 
 ### 1.1 Syntax
 
-| DSL value              | Meaning                                          |
-|------------------------|--------------------------------------------------|
-| `none` or `disabled`   | Pruning disabled (default)                       |
-| Float literal (`1.5`)  | Prune actions with weight > best + width         |
-| `auto`                 | Use `recommended_beam_width` from trained model  |
+| DSL value             | Meaning                                         |
+|-----------------------|-------------------------------------------------|
+| `none` or `disabled`  | Pruning disabled (default)                      |
+| Float literal (`1.5`) | Prune actions with weight > best + width        |
+| `auto`                | Use `recommended_beam_width` from trained model |
 
 ### 1.2 Mapping to `BeamWidthConfig`
 
@@ -61,11 +61,11 @@ auto             ->  BeamWidthConfig::Auto
 `BeamWidthConfig::to_option()` converts the enum to the `Option<f64>` used
 by `predict_pruned()` and `viterbi_recovery_beam()`:
 
-| Variant             | `to_option()` result                           |
-|---------------------|------------------------------------------------|
-| `Disabled`          | `None` -- no pruning applied                    |
-| `Explicit(w)`       | `Some(w)` -- passed directly to beam functions |
-| `Auto`              | `None` -- pipeline resolves from model later    |
+| Variant       | `to_option()` result                           |
+|---------------|------------------------------------------------|
+| `Disabled`    | `None` -- no pruning applied                   |
+| `Explicit(w)` | `Some(w)` -- passed directly to beam functions |
+| `Auto`        | `None` -- pipeline resolves from model later   |
 
 For `Auto`, the pipeline reads `TrainedModel::recommended_beam_width` from
 the JSON file specified in `log_semiring_model_path` and replaces `Auto` with
@@ -254,14 +254,14 @@ below shows the resolution path.
 
 ## 7. Source Locations
 
-| Component                    | File                                          |
-|------------------------------|-----------------------------------------------|
-| `AttributeValue` enum        | `macros/src/ast/language.rs`                  |
-| `parse_options()` function   | `macros/src/ast/language.rs`                  |
-| `BeamWidthConfig` enum       | `prattail/src/lib.rs`                         |
-| `LanguageSpec` struct        | `prattail/src/lib.rs`                         |
-| `predict_pruned()`           | `prattail/src/wfst.rs`                        |
-| `viterbi_recovery_beam()`    | `prattail/src/recovery.rs`                    |
+| Component                  | File                         |
+|----------------------------|------------------------------|
+| `AttributeValue` enum      | `macros/src/ast/language.rs` |
+| `parse_options()` function | `macros/src/ast/language.rs` |
+| `BeamWidthConfig` enum     | `prattail/src/lib.rs`        |
+| `LanguageSpec` struct      | `prattail/src/lib.rs`        |
+| `predict_pruned()`         | `prattail/src/wfst.rs`       |
+| `viterbi_recovery_beam()`  | `prattail/src/recovery.rs`   |
 
 ---
 

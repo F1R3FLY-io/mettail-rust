@@ -49,11 +49,11 @@ NFA merged-prefix emitter inspects the weight-ordered alternative list
 and decides whether to emit an early-exit guard around the remaining
 alternatives.  Three conditions must all hold:
 
-| # | Condition | Rationale |
-|---|-----------|-----------|
+| # | Condition                                | Rationale                                           |
+|---|------------------------------------------|-----------------------------------------------------|
 | 1 | First alternative has weight exactly 0.0 | Only weight-0.0 is provably optimal (see Section 4) |
-| 2 | More than one alternative exists | A single alternative has nothing to skip |
-| 3 | `needs_nfa_spillover == false` | Spillover requires all alternatives (see Section 3) |
+| 2 | More than one alternative exists         | A single alternative has nothing to skip            |
+| 3 | `needs_nfa_spillover == false`           | Spillover requires all alternatives (see Section 3) |
 
 When all three hold, the code generator wraps every alternative after
 the first in an `if nfa_results.is_empty() { ... }` guard.  At
@@ -184,25 +184,25 @@ Let (R^+ ∪ {+∞}, ⊕, ⊗, +∞, 0.0) be the tropical semiring, where:
 Let w(aᵢ) denote the tropical weight assigned to alternative aᵢ by
 `compute_action_weight()`.
 
-**Lemma 1 (Non-negativity).**  For all alternatives aᵢ,
-w(aᵢ) ≥ 0.0.
+**Lemma 1 (Non-negativity).**  For all alternatives `aᵢ`,
+`w(aᵢ) ≥ 0.0`.
 
 *Proof.*  By inspection of `compute_action_weight()`:
 
-| DispatchAction      | Weight   |
-|---------------------|----------|
-| Direct              | 0.0      |
-| Grouping            | 0.0      |
-| CrossCategory (det) | 0.0      |
-| CrossCategory (bt)  | 0.5      |
-| Cast                | 0.5      |
-| Lookahead           | 1.0 + n  |
-| Variable            | 2.0      |
+| DispatchAction      | Weight    |
+|---------------------|-----------|
+| Direct              | `0.0`     |
+| Grouping            | `0.0`     |
+| CrossCategory (det) | `0.0`     |
+| CrossCategory (bt)  | `0.5`     |
+| Cast                | `0.5`     |
+| Lookahead           | `1.0 + n` |
+| Variable            | `2.0`     |
 
 Every assigned weight is in R^+ (non-negative reals).  ∎
 
 **Lemma 2 (Weight ordering).**  The alternative list is sorted by
-weight: w(a₀) ≤ w(a₁) ≤ ... ≤ w(aₙ₋₁).
+weight: `w(a₀) ≤ w(a₁) ≤ ... ≤ w(aₙ₋₁)`.
 
 *Proof.*  `nfa_alternative_order()` sorts the indexed list by
 `TropicalWeight::cmp`, which delegates to `f64::total_cmp`.
@@ -214,12 +214,12 @@ a₀ succeeds, then a₀ is the optimal parse result under ⊕ = min.
 
 *Proof.*
 
-1. By Lemma 1, w(aᵢ) ≥ 0.0 for all i.
-2. By Lemma 2, w(a₀) ≤ w(aᵢ) for all i ≥ 1.
-3. Since w(a₀) = 0.0 = one (the multiplicative identity), and
-   w(aᵢ) ≥ 0.0 for all i, we have:
-   ⊕{w(aᵢ) | aᵢ succeeds} = min{w(aᵢ) | aᵢ succeeds} = w(a₀) = 0.0.
-4. Therefore a₀ is an optimal alternative.  ∎
+1. By Lemma 1, `w(aᵢ) ≥ 0.0` for all `i`.
+2. By Lemma 2, `w(a₀) ≤ w(aᵢ)` for all `i ≥ 1`.
+3. Since `w(a₀) = 0.0 = 1̄` (the multiplicative identity), and
+   `w(aᵢ) ≥ 0.0` for all `i`, we have:
+   `⊕{w(aᵢ) | aᵢ succeeds} = min{w(aᵢ) | aᵢ succeeds} = w(a₀) = 0.0`.
+4. Therefore `a₀` is an optimal alternative.  ∎
 
 **Lemma 4 (Spillover independence).**  When `needs_nfa_spillover` is
 false, the result selection depends only on `nfa_results[0]`.
@@ -241,16 +241,16 @@ populated.  ∎
 
 **Proof of Theorem.**
 
-1. By the F2 preconditions: w(a₀) = 0.0, a₀ succeeds (since the
+1. By the F2 preconditions: `w(a₀) = 0.0`, `a₀` succeeds (since the
    guard `nfa_results.is_empty()` evaluates to false), and
    `needs_nfa_spillover` is false.
-2. By Lemma 3, a₀ is the optimal alternative.
+2. By Lemma 3, `a₀` is the optimal alternative.
 3. By Lemma 4, only `nfa_results[0]` is consumed by result selection.
-4. F2 prevents alternatives a₁ ... aₙ₋₁ from executing, so
+4. F2 prevents alternatives `a₁ ... aₙ₋₁` from executing, so
    `nfa_results` contains exactly one element: a₀'s result.
 5. `nfa_results[0]` is the same value that would be selected by the
    unoptimised loop (where all alternatives are tried but only
-   index 0 is consumed).
+   index `0` is consumed).
 6. Therefore F2 preserves parse correctness.  ∎
 
 ---
@@ -408,15 +408,15 @@ The following table lists the weight assigned to each `DispatchAction`
 variant by `compute_action_weight()`.  F2 applies when alternatives
 with weight 0.0 are mixed with alternatives carrying higher weights.
 
-| DispatchAction                  | Weight | Description                           | F2 Eligible |
-|---------------------------------|--------|---------------------------------------|-------------|
-| `Direct`                        | 0.0    | Unambiguous, single-rule dispatch     | Yes         |
-| `Grouping`                      | 0.0    | Delimiter-driven (parens, braces)     | Yes         |
-| `CrossCategory` (deterministic) | 0.0    | Cross-cat, no backtrack needed        | Yes         |
-| `CrossCategory` (backtracking)  | 0.5    | Cross-cat, tries source first         | No          |
-| `Cast`                          | 0.5    | Type coercion between categories      | No          |
-| `Lookahead`                     | 1.0+n  | Needs extra tokens to disambiguate    | No          |
-| `Variable`                      | 2.0    | Last-resort variable capture          | No          |
+| DispatchAction                  | Weight | Description                        | F2 Eligible |
+|---------------------------------|--------|------------------------------------|-------------|
+| `Direct`                        | 0.0    | Unambiguous, single-rule dispatch  | Yes         |
+| `Grouping`                      | 0.0    | Delimiter-driven (parens, braces)  | Yes         |
+| `CrossCategory` (deterministic) | 0.0    | Cross-cat, no backtrack needed     | Yes         |
+| `CrossCategory` (backtracking)  | 0.5    | Cross-cat, tries source first      | No          |
+| `Cast`                          | 0.5    | Type coercion between categories   | No          |
+| `Lookahead`                     | 1.0+n  | Needs extra tokens to disambiguate | No          |
+| `Variable`                      | 2.0    | Last-resort variable capture       | No          |
 
 "F2 Eligible" means this action type can appear as the first
 alternative and trigger the F2 guard.  Actions with weight > 0.0
@@ -429,11 +429,11 @@ are the ones being skipped.
 In the rhocalc grammar, the `Proc` category dispatches `Token::LParen`
 to three rules:
 
-| Alternative | Rule        | Action     | Weight |
-|-------------|-------------|------------|--------|
-| a₀          | PGroup      | Grouping   | 0.0    |
-| a₁          | IntToProc   | Cast       | 0.5    |
-| a₂          | FloatToProc | Cast       | 0.5    |
+| Alternative | Rule        | Action   | Weight |
+|-------------|-------------|----------|--------|
+| a₀          | PGroup      | Grouping | 0.0    |
+| a₁          | IntToProc   | Cast     | 0.5    |
+| a₂          | FloatToProc | Cast     | 0.5    |
 
 Since `Proc` does not need NFA spillover and w(a₀) = 0.0, F2 applies.
 When `PGroup` succeeds (the common case -- most `(` tokens begin
@@ -444,10 +444,10 @@ saving two position-save/restore cycles and two closure invocations.
 
 ## 7. Source References
 
-| File | Location | Description |
-|------|----------|-------------|
-| `trampoline.rs` | lines 244-257 | `first_is_deterministic` computation |
-| `trampoline.rs` | lines 259-305 | NFA try-all loop with F2 guard emission |
-| `wfst.rs` | lines 559-581 | `compute_action_weight()` weight table |
-| `wfst.rs` | lines 198-218 | `nfa_alternative_order()` weight sorting |
-| `semiring.rs` | lines 57-100 | `TropicalWeight` definition and semiring axioms |
+| File            | Location      | Description                                     |
+|-----------------|---------------|-------------------------------------------------|
+| `trampoline.rs` | lines 244-257 | `first_is_deterministic` computation            |
+| `trampoline.rs` | lines 259-305 | NFA try-all loop with F2 guard emission         |
+| `wfst.rs`       | lines 559-581 | `compute_action_weight()` weight table          |
+| `wfst.rs`       | lines 198-218 | `nfa_alternative_order()` weight sorting        |
+| `semiring.rs`   | lines 57-100  | `TropicalWeight` definition and semiring axioms |

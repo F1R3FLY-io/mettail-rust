@@ -88,12 +88,12 @@ resolve_accept(nfa, nfa_states) -> ResolvedAccept:
 
 ### 2.4. Key Properties
 
-| Property | Description |
-|---|---|
-| **Primary unchanged** | `DfaState.accept` and `DfaState.weight` are identical to the standard algorithm. Existing code that only reads `accept` is unaffected. |
-| **Deduplication by kind** | If multiple NFA states produce the same `TokenKind`, only the best (lowest) weight is kept for that kind. |
-| **Sorted by weight** | `alt_accepts` is sorted ascending by tropical weight, so `alt_accepts[0]` is always the primary winner. The parser can iterate from index 1 to find fallback alternatives. |
-| **Empty when unambiguous** | `alt_accepts` is the empty `Vec` when 0 or 1 distinct `TokenKind`s exist, adding zero allocation overhead for unambiguous states. |
+| Property                   | Description                                                                                                                                                                |
+|----------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **Primary unchanged**      | `DfaState.accept` and `DfaState.weight` are identical to the standard algorithm. Existing code that only reads `accept` is unaffected.                                     |
+| **Deduplication by kind**  | If multiple NFA states produce the same `TokenKind`, only the best (lowest) weight is kept for that kind.                                                                  |
+| **Sorted by weight**       | `alt_accepts` is sorted ascending by tropical weight, so `alt_accepts[0]` is always the primary winner. The parser can iterate from index 1 to find fallback alternatives. |
+| **Empty when unambiguous** | `alt_accepts` is the empty `Vec` when 0 or 1 distinct `TokenKind`s exist, adding zero allocation overhead for unambiguous states.                                          |
 
 ### 2.5. Data Structures
 
@@ -167,10 +167,10 @@ indistinguishable from the lexer's perspective.
 
 Consider two DFA states after subset construction:
 
-| State | `accept` | `alt_accepts` |
-|---|---|---|
-| q7 | `Fixed("error")` | `[(Fixed("error"), 0.0), (Ident, 9.0)]` |
-| q12 | `Fixed("error")` | `[]` (unambiguous) |
+| State | `accept`         | `alt_accepts`                           |
+|-------|------------------|-----------------------------------------|
+| q7    | `Fixed("error")` | `[(Fixed("error"), 0.0), (Ident, 9.0)]` |
+| q12   | `Fixed("error")` | `[]` (unambiguous)                      |
 
 Under standard minimization, both states have `accept = Some(Fixed("error"))`,
 so they would be placed in the same initial partition and potentially merged.
@@ -254,10 +254,10 @@ Consider a grammar with:
 
 Token priorities map to tropical weights via `weight = 10.0 - priority`:
 
-| TokenKind | Priority | Tropical Weight |
-|---|---|---|
-| `Fixed("error")` | 10 | 0.0 |
-| `Ident` | 1 | 9.0 |
+| TokenKind        | Priority | Tropical Weight |
+|------------------|----------|-----------------|
+| `Fixed("error")` | 10       | 0.0             |
+| `Ident`          | 1        | 9.0             |
 
 Lower weight = higher priority. The tropical semiring `plus` operation (min)
 selects `Fixed("error")` when both converge.
@@ -267,19 +267,18 @@ selects `Fixed("error")` when both converge.
 The NFA has two parallel recognition paths from the global start state:
 
 ```
-                    ┌─────────────── Keyword trie path ──────────────────┐
-                    │                                                     │
-  NFA start ──eps──>├──'e'──>q1──'r'──>q2──'r'──>q3──'o'──>q4──'r'──>q5│
-     (q0)          │   accept: Fixed("error"), weight: 0.0              │
-                    │                                                     │
-                    ├─────────────── Ident regex path ───────────────────┤
-                    │                                                     │
-                    └──eps──>q6──[a-z]──>q7─┐                            │
-                              accept: Ident │                            │
-                              weight: 9.0   │                            │
-                                    ┌───────┘                            │
-                                    │ [a-z] (self-loop)                  │
-                                    └──>q7                               │
+                     Keyword trie path
+         ε       'e'      'r'      'r'      'o'      'r'
+  q0 ───────> ● ─────> q1 ─────> q2 ─────> q3 ─────> q4 ─────> q5
+  start       │                                                  accept: Fixed("error")
+              │                                                  weight: 0.0
+              │
+              │  Ident regex path
+              │   ε           [a-z]
+              └───────> q6 ──────────> q7 ──┐
+                                            │ [a-z]
+                               accept: Ident│
+                               weight: 9.0 <┘
 ```
 
 After lexing the input `"error"`:
@@ -311,21 +310,26 @@ The resulting DFA state:
 ### 4.5. DFA Diagram
 
 ```
-                                     e           r           r           o           r
-  d0 ─────────> d1 ─────────> d2 ─────────> d3 ─────────> d4 ─────────> d5
-  start       [a-z]         [a-z]         [a-z]         [a-z]         [a-z]
-  (no accept)  Ident         Ident         Ident         Ident        ╔═══════════════╗
-               w=9.0         w=9.0         w=9.0         w=9.0        ║  accept:       ║
-                 │             │             │             │           ║  Fixed("error")║
-                 │             │             │             │           ║  w=0.0         ║
-                 │             │             │             │           ║  alt_accepts:  ║
-                 │             │             │             │           ║  [Fixed, Ident]║
-                 │             │             │             │           ╚═══════════════╝
-                 │             │             │             │                  │
-                 └─[a-z]──>d_ident   (all [a-z] self-loops on d_ident)      │
-                           Ident                                            │
-                           w=9.0              <───── [a-z] ─────────────────┘
-                           alt_accepts=[]             (continues to d_ident)
+        e           r           r           o           r
+  d0 ───────> d1 ───────> d2 ───────> d3 ───────> d4 ───────> d5
+  start       [a-z]       [a-z]       [a-z]       [a-z]       [a-z]
+  (no accept) Ident       Ident       Ident       Ident       ╔════════════════╗
+              w=9.0       w=9.0       w=9.0       w=9.0       ║ accept:        ║
+               │           │           │           │          ║ Fixed("error") ║
+               │           │           │           │          ║ w=0.0          ║
+               │           │           │           │          ║ alt_accepts:   ║
+               │           │           │           │          ║ [Fixed, Ident] ║
+               │           │           │           │          ╚═══════╤════════╝
+               │           │           │           │                  │
+               └───────────┴───────────┴─────┬─────┴──────────────────┘
+                                             │
+                                           [a-z]
+                                             │
+                                             ▼
+                                         d_ident ──┐
+                                         Ident     │ [a-z]
+                                         w=9.0 <───┘
+                                         alt_accepts=[]
 ```
 
 Key observations:
@@ -368,12 +372,12 @@ machine words of inline storage: pointer, length, capacity).
 Ambiguous states arise only when a keyword's character sequence also matches a
 character-class pattern (identifier, integer, etc.). In practice:
 
-| Grammar property | Typical count |
-|---|---|
-| Keywords per grammar | 5-30 |
-| Keywords overlapping identifiers | 5-30 (most keywords are identifier-shaped) |
-| Alternatives per ambiguous state | 2 (keyword + ident) |
-| DFA states per keyword | 1 (only the final character position is ambiguous) |
+| Grammar property                 | Typical count                                      |
+|----------------------------------|----------------------------------------------------|
+| Keywords per grammar             | 5-30                                               |
+| Keywords overlapping identifiers | 5-30 (most keywords are identifier-shaped)         |
+| Alternatives per ambiguous state | 2 (keyword + ident)                                |
+| DFA states per keyword           | 1 (only the final character position is ambiguous) |
 
 **Memory per ambiguous state:**
 
@@ -391,11 +395,11 @@ under 3 KB even for large grammars.
 
 Let a = number of accepting NFA states in the powerset set.
 
-| Operation | Complexity |
-|---|---|
-| Collect into `BTreeMap` | O(a log a) |
+| Operation                   | Complexity |
+|-----------------------------|------------|
+| Collect into `BTreeMap`     | O(a log a) |
 | Sort alternatives by weight | O(a log a) |
-| Total per DFA state | O(a log a) |
+| Total per DFA state         | O(a log a) |
 
 Since a is typically 1-2 (at most one keyword + one regex pattern), this is
 effectively O(1) per DFA state.
@@ -406,11 +410,11 @@ The extended partition key adds the `alt_accepts` comparison to the initial
 partitioning step. This increases the number of initial partitions by at most k
 (the number of ambiguous states with distinct alternative sets).
 
-| Phase | Standard | Extended |
-|---|---|---|
-| Initial partitions | O(token_kinds) | O(token_kinds + ambiguous_variants) |
-| Worklist iterations | O(n k log n) | O(n k log n) (unchanged) |
-| Per-iteration work | O(1) compare | O(1) compare (alt_accepts in partition key is pre-computed) |
+| Phase               | Standard       | Extended                                                    |
+|---------------------|----------------|-------------------------------------------------------------|
+| Initial partitions  | O(token_kinds) | O(token_kinds + ambiguous_variants)                         |
+| Worklist iterations | O(n k log n)   | O(n k log n) (unchanged)                                    |
+| Per-iteration work  | O(1) compare   | O(1) compare (alt_accepts in partition key is pre-computed) |
 
 The worklist complexity is unchanged because the number of additional initial
 partitions is bounded by the number of keywords, which is a grammar-level
@@ -419,13 +423,13 @@ map traversal.
 
 ### 5.5. Summary Table
 
-| Metric | Unambiguous State | Ambiguous State |
-|---|---|---|
-| Additional memory | 0 bytes (empty Vec) | ~104 bytes |
-| `resolve_accept` overhead | O(1) | O(a log a), a ~ 2 |
-| Minimization overhead | 0 | O(1) per additional partition |
-| Typical ambiguous states per grammar | 0 | 2-30 |
-| Total overhead for 20-keyword grammar | -- | ~2 KB memory, ~microseconds |
+| Metric                                | Unambiguous State   | Ambiguous State               |
+|---------------------------------------|---------------------|-------------------------------|
+| Additional memory                     | 0 bytes (empty Vec) | ~104 bytes                    |
+| `resolve_accept` overhead             | O(1)                | O(a log a), a ~ 2             |
+| Minimization overhead                 | 0                   | O(1) per additional partition |
+| Typical ambiguous states per grammar  | 0                   | 2-30                          |
+| Total overhead for 20-keyword grammar | --                  | ~2 KB memory, ~microseconds   |
 
 
 ## 6. Source References
@@ -433,25 +437,25 @@ map traversal.
 All file paths are relative to the `prattail/src/` directory within the
 workspace root.
 
-| Component | File | Lines |
-|---|---|---|
-| `DfaState` struct with `alt_accepts` field | `automata/mod.rs` | 197-237 |
-| `DfaState::is_ambiguous()` | `automata/mod.rs` | 234-236 |
-| `Dfa::has_ambiguous_accepts()` | `automata/mod.rs` | 278-280 |
-| `Dfa::ambiguous_states()` | `automata/mod.rs` | 286-294 |
-| `TokenKind::priority()` | `automata/mod.rs` | 62-74 |
-| `TropicalWeight::from_priority()` | `automata/semiring.rs` | 101-103 |
-| `ResolvedAccept` struct | `automata/subset.rs` | 152-160 |
-| `resolve_accept()` function | `automata/subset.rs` | 167-210 |
-| `subset_construction()` (uses `resolve_accept`) | `automata/subset.rs` | 48-145 |
-| Hopcroft `PartitionKey` with `alt_accepts` | `automata/minimize.rs` | 87-91 |
-| Initial partition grouping (Step 2) | `automata/minimize.rs` | 78-117 |
-| Minimized state construction (Step 5) | `automata/minimize.rs` | 255-306 |
-| BFS canonical reordering (propagates `alt_accepts`) | `automata/minimize.rs` | 326-386 |
-| `NfaState::accepting()` (weight from priority) | `automata/mod.rs` | 137-146 |
-| `build_keyword_trie()` (NFA keyword construction) | `automata/nfa.rs` | 246-333 |
-| Test: `test_multi_accept_keyword_ident` | `automata/subset.rs` | 301-355 |
-| Test: `test_minimize_preserves_multi_accept` | `automata/minimize.rs` | 537-595 |
+| Component                                                       | File                   | Lines   |
+|-----------------------------------------------------------------|------------------------|---------|
+| `DfaState` struct with `alt_accepts` field                      | `automata/mod.rs`      | 197-237 |
+| `DfaState::is_ambiguous()`                                      | `automata/mod.rs`      | 234-236 |
+| `Dfa::has_ambiguous_accepts()`                                  | `automata/mod.rs`      | 278-280 |
+| `Dfa::ambiguous_states()`                                       | `automata/mod.rs`      | 286-294 |
+| `TokenKind::priority()`                                         | `automata/mod.rs`      | 62-74   |
+| `TropicalWeight::from_priority()`                               | `automata/semiring.rs` | 101-103 |
+| `ResolvedAccept` struct                                         | `automata/subset.rs`   | 152-160 |
+| `resolve_accept()` function                                     | `automata/subset.rs`   | 167-210 |
+| `subset_construction()` (uses `resolve_accept`)                 | `automata/subset.rs`   | 48-145  |
+| Hopcroft `PartitionKey` with `alt_accepts`                      | `automata/minimize.rs` | 87-91   |
+| Initial partition grouping (Step 2)                             | `automata/minimize.rs` | 78-117  |
+| Minimized state construction (Step 5)                           | `automata/minimize.rs` | 255-306 |
+| BFS canonical reordering (propagates `alt_accepts`)             | `automata/minimize.rs` | 326-386 |
+| `NfaState::accepting()` (weight from priority)                  | `automata/mod.rs`      | 137-146 |
+| `build_keyword_trie()` (NFA keyword construction)               | `automata/nfa.rs`      | 246-333 |
+| Test: `test_multi_accept_keyword_ident`                         | `automata/subset.rs`   | 301-355 |
+| Test: `test_minimize_preserves_multi_accept`                    | `automata/minimize.rs` | 537-595 |
 | Test: `test_minimize_does_not_merge_ambiguous_with_unambiguous` | `automata/minimize.rs` | 597-652 |
 
 

@@ -28,18 +28,18 @@ semirings interact across the pipeline.
 
 Each semiring answers a **different question** about the same automaton:
 
-| Semiring | Question |
-|:---------|:---------|
-| `TropicalWeight` | What is the lowest-cost parse? |
-| `BooleanWeight` | Is this path reachable at all? |
-| `CountingWeight` | How many derivations exist? |
-| `EditWeight` | What is the minimum edit distance? |
-| `ContextWeight` | Which rules contribute to this path? |
-| `ComplexityWeight` | How much lookahead does this path need? |
-| `ProductWeight<S₁, S₂>` | Answer two questions simultaneously |
-| `LogWeight` | What is the real-valued (log-space) probability? |
-| `EntropyWeight` | What is the entropy of the derivation distribution? |
-| `NbestWeight<N>` | What are the N-best alternatives? |
+| Semiring                | Question                                            |
+|:------------------------|:----------------------------------------------------|
+| `TropicalWeight`        | What is the lowest-cost parse?                      |
+| `BooleanWeight`         | Is this path reachable at all?                      |
+| `CountingWeight`        | How many derivations exist?                         |
+| `EditWeight`            | What is the minimum edit distance?                  |
+| `ContextWeight`         | Which rules contribute to this path?                |
+| `ComplexityWeight`      | How much lookahead does this path need?             |
+| `ProductWeight<S₁, S₂>` | Answer two questions simultaneously                 |
+| `LogWeight`             | What is the real-valued (log-space) probability?    |
+| `EntropyWeight`         | What is the entropy of the derivation distribution? |
+| `NbestWeight<N>`        | What are the N-best alternatives?                   |
 
 The grammar topology (states, transitions, accept states) is computed **once**.
 Only the **weight algebra** changes between analyses. This "shared topology,
@@ -63,8 +63,8 @@ allocated — the projection is implicit in the query predicate.
 φ: K₁ → K₂   such that:
     φ(0_K₁) = 0_K₂
     φ(1_K₁) = 1_K₂
-    φ(a ⊕ b) = φ(a) ⊕ φ(b)
-    φ(a ⊗ b) = φ(a) ⊗ φ(b)
+    φ(a ⊕  b) = φ(a) ⊕  φ(b)
+    φ(a ⊗  b) = φ(a) ⊗  φ(b)
 ```
 
 The homomorphism is never explicitly constructed as a function. Instead, the
@@ -72,13 +72,13 @@ query collapses the original weight to a boolean or counting value inline.
 
 ### Concrete Instances
 
-| Instance | K₁ | K₂ | Homomorphism | Source |
-|:---------|:---|:---|:-------------|:-------|
-| Tier 3 dead-rule detection | `TropicalWeight` | `BooleanWeight` | `w ↦ (w ≠ +∞)` | `pipeline.rs:216–232` |
-| CountingWeight in dispatch | `TropicalWeight` | `CountingWeight` | `entries.len() as u64` | `prediction.rs:1640` |
-| NFA spillover diagnostics | `TropicalWeight` | `BooleanWeight` | `w ↦ (w < threshold)` | `trampoline.rs` |
-| DeadStateElimination | `TropicalWeight` | `BooleanWeight` | forward ∧ backward reachability | `transducer.rs:107–122` |
-| confidence_gap | `TropicalWeight` | ℝ (not a semiring) | second − first weight | `wfst.rs:422–428` |
+| Instance                   | K₁               | K₂                 | Homomorphism                    | Source                  |
+|:---------------------------|:-----------------|:-------------------|:--------------------------------|:------------------------|
+| Tier 3 dead-rule detection | `TropicalWeight` | `BooleanWeight`    | `w ↦ (w ≠ +∞)`                  | `pipeline.rs:216–232`   |
+| CountingWeight in dispatch | `TropicalWeight` | `CountingWeight`   | `entries.len() as u64`          | `prediction.rs:1640`    |
+| NFA spillover diagnostics  | `TropicalWeight` | `BooleanWeight`    | `w ↦ (w < threshold)`           | `trampoline.rs`         |
+| DeadStateElimination       | `TropicalWeight` | `BooleanWeight`    | forward ∧ backward reachability | `transducer.rs:107–122` |
+| confidence_gap             | `TropicalWeight` | ℝ (not a semiring) | second − first weight           | `wfst.rs:422–428`       |
 
 ### When to Use
 
@@ -99,8 +99,8 @@ applies `plus` and `times` component-wise:
 
 ```
 (K₁ × K₂, ⊕, ⊗, 0, 1)  where:
-    (a₁, a₂) ⊕ (b₁, b₂) = (a₁ ⊕₁ b₁, a₂ ⊕₂ b₂)
-    (a₁, a₂) ⊗ (b₁, b₂) = (a₁ ⊗₁ b₁, a₂ ⊗₂ b₂)
+    (a₁, a₂) ⊕  (b₁, b₂) = (a₁ ⊕₁ b₁, a₂ ⊕₂ b₂)
+    (a₁, a₂) ⊗  (b₁, b₂) = (a₁ ⊗₁ b₁, a₂ ⊗₂ b₂)
     0 = (0₁, 0₂)
     1 = (1₁, 1₂)
 ```
@@ -111,24 +111,24 @@ first optimizes parse priority, then minimizes edit distance among tied paths.
 
 ### Concrete Instances
 
-| Instance | S₁ | S₂ | Purpose | Source |
-|:---------|:---|:---|:--------|:-------|
-| `RecoveryCost` | `TropicalWeight` | `EditWeight` | Joint priority + min-edit recovery | `recovery.rs:58` |
-| Nearly-dead detection | `BooleanWeight` | `CountingWeight` | Reachability + derivation count in one pass | `pipeline.rs:450–574` |
-| `ProductWeight<Tropical, Counting>` | `TropicalWeight` | `CountingWeight` | Best parse + uniqueness (confidence) | `lattice.rs` tests, `product-weight.md` |
-| `ProductWeight<Boolean, Counting>` | `BooleanWeight` | `CountingWeight` | Reachability + path count | `pipeline.rs:458` |
+| Instance                            | S₁               | S₂               | Purpose                                     | Source                                  |
+|:------------------------------------|:-----------------|:-----------------|:--------------------------------------------|:----------------------------------------|
+| `RecoveryCost`                      | `TropicalWeight` | `EditWeight`     | Joint priority + min-edit recovery          | `recovery.rs:58`                        |
+| Nearly-dead detection               | `BooleanWeight`  | `CountingWeight` | Reachability + derivation count in one pass | `pipeline.rs:450–574`                   |
+| `ProductWeight<Tropical, Counting>` | `TropicalWeight` | `CountingWeight` | Best parse + uniqueness (confidence)        | `lattice.rs` tests, `product-weight.md` |
+| `ProductWeight<Boolean, Counting>`  | `BooleanWeight`  | `CountingWeight` | Reachability + path count                   | `pipeline.rs:458`                       |
 
 ### Viterbi Compatibility Note
 
 `viterbi_generic<W>()` requires `W: Semiring + Ord` and assumes `W::zero()`
 is the **largest** (worst) element under `Ord`.  This holds for:
 
-| Weight | `zero()` | Ord-largest? |
-|:-------|:---------|:-------------|
-| `TropicalWeight` | `+∞` | Yes |
-| `EditWeight` | `u32::MAX` | Yes |
-| `ProductWeight<Tropical, Edit>` | `(+∞, MAX)` | Yes (lexicographic) |
-| `CountingWeight` | `0` | **No** — zero is the *smallest* |
+| Weight                          | `zero()`    | Ord-largest?                    |
+|:--------------------------------|:------------|:--------------------------------|
+| `TropicalWeight`                | `+∞`        | Yes                             |
+| `EditWeight`                    | `u32::MAX`  | Yes                             |
+| `ProductWeight<Tropical, Edit>` | `(+∞, MAX)` | Yes (lexicographic)             |
+| `CountingWeight`                | `0`         | **No** — zero is the *smallest* |
 
 `CountingWeight` is NOT Viterbi-compatible standalone. Use it via
 `ProductWeight<TropicalWeight, CountingWeight>` or forward-backward algorithms.
@@ -328,15 +328,15 @@ external parameters.  Therefore, the target semiring's algebraic properties
 
 ## 8. See Also
 
-| Document | Scope |
-|:---------|:------|
-| [`semiring-orchestration.md`](../../architecture/wfst/semiring-orchestration.md) | Full pipeline annotation with source references |
-| [`semirings.md`](semirings.md) | Semiring trait definition and all 10 concrete types |
-| [`semirings/product-weight.md`](semirings/product-weight.md) | ProductWeight composition catalog |
-| [`semirings/boolean-weight.md`](semirings/boolean-weight.md) | BooleanWeight reachability analysis |
-| [`semirings/context-weight.md`](semirings/context-weight.md) | ContextWeight set-semiring details |
-| [`semirings/complexity-weight.md`](semirings/complexity-weight.md) | ComplexityWeight bottleneck analysis |
-| [`dead-rule-detection.md`](../../design/wfst/dead-rule-detection.md) | Four-tier dead-rule analysis (Modes 1 + 4) |
-| [`pipeline-integration.md`](../../architecture/wfst/pipeline-integration.md) | Pipeline step-by-step data flow |
-| [`composed-dispatch.md`](../../design/composed-dispatch.md) | Composed dispatch table construction |
-| [`stream-to-lattice.md`](stream-to-lattice.md) | Stream-to-Lattice Conversion — the lattice structures that Mode 1/2/3 operate over |
+| Document                                                                         | Scope                                                                              |
+|:---------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------|
+| [`semiring-orchestration.md`](../../architecture/wfst/semiring-orchestration.md) | Full pipeline annotation with source references                                    |
+| [`semirings.md`](semirings.md)                                                   | Semiring trait definition and all 10 concrete types                                |
+| [`semirings/product-weight.md`](semirings/product-weight.md)                     | ProductWeight composition catalog                                                  |
+| [`semirings/boolean-weight.md`](semirings/boolean-weight.md)                     | BooleanWeight reachability analysis                                                |
+| [`semirings/context-weight.md`](semirings/context-weight.md)                     | ContextWeight set-semiring details                                                 |
+| [`semirings/complexity-weight.md`](semirings/complexity-weight.md)               | ComplexityWeight bottleneck analysis                                               |
+| [`dead-rule-detection.md`](../../design/wfst/dead-rule-detection.md)             | Four-tier dead-rule analysis (Modes 1 + 4)                                         |
+| [`pipeline-integration.md`](../../architecture/wfst/pipeline-integration.md)     | Pipeline step-by-step data flow                                                    |
+| [`composed-dispatch.md`](../../design/composed-dispatch.md)                      | Composed dispatch table construction                                               |
+| [`stream-to-lattice.md`](stream-to-lattice.md)                                   | Stream-to-Lattice Conversion — the lattice structures that Mode 1/2/3 operate over |

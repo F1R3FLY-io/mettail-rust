@@ -96,12 +96,12 @@ disambiguation.
 
 Let **G** = (C, R, T, N) be a PraTTaIL grammar where:
 
-| Symbol | Type | Description |
-|:------:|:----:|:------------|
-| C      | set  | Categories (nonterminals at the top level) |
-| R      | set  | Rules, partitioned by category |
-| T      | set  | Terminal tokens |
-| N      | set  | Nonterminal references (cross-category or same-category) |
+| Symbol | Type | Description                                              |
+|:------:|:----:|:---------------------------------------------------------|
+|   C    | set  | Categories (nonterminals at the top level)               |
+|   R    | set  | Rules, partitioned by category                           |
+|   T    | set  | Terminal tokens                                          |
+|   N    | set  | Nonterminal references (cross-category or same-category) |
 
 Each rule r ∈ R has a **syntax sequence** s(r) = [s₀, s₁, ..., sₘ₋₁]
 where each sᵢ is either a terminal (sᵢ ∈ T) or a nonterminal reference
@@ -135,14 +135,14 @@ M₂ = (Σ, Q, q₀, F, δ)
 
 where:
 
-| Component | Value |
-|:---------:|:------|
-| Σ         | T ∪ {ε} — the terminal alphabet |
-| Q         | {q₀} ∪ {q_mid} ∪ {f₁, f₂, ..., fₙ} — start, middle, n final states |
-| q₀        | Start state |
-| q_mid     | Intermediate state after consuming the shared dispatch token t |
-| F         | {f₁, ..., fₙ} — one final state per rule |
-| δ         | δ(q₀, t) = q_mid;  δ(q_mid, s₁(rᵢ)) = fᵢ for each rᵢ ∈ D(c, t) |
+| Component | Value                                                              |
+|:---------:|:-------------------------------------------------------------------|
+|     Σ     | T ∪ {ε} — the terminal alphabet                                    |
+|     Q     | {q₀} ∪ {q_mid} ∪ {f₁, f₂, ..., fₙ} — start, middle, n final states |
+|    q₀     | Start state                                                        |
+|   q_mid   | Intermediate state after consuming the shared dispatch token t     |
+|     F     | {f₁, ..., fₙ} — one final state per rule                           |
+|     δ     | δ(q₀, t) = q_mid;  δ(q_mid, s₁(rᵢ)) = fᵢ for each rᵢ ∈ D(c, t)     |
 
 The first transition consumes the shared dispatch token t; the second
 transition consumes the (distinct) second terminal of each rule. Each
@@ -285,14 +285,14 @@ with condition (1) is B1_APPLICABLE.  ∎
 
 ### 4.3 Differences from Classical LL(k)
 
-| Aspect | Classical LL(k) | PraTTaIL B1 |
-|:-------|:----------------|:------------|
-| Scope | Entire grammar | Per dispatch group |
-| k | Fixed for the grammar | k = 2 for qualifying groups; k = 1 (standard dispatch) for the rest |
-| Nonterminal expansion | FIRST_k expands through nonterminals | B1 requires terminal second items only; nonterminals are rejected |
-| Fallback | Grammar must be LL(k) globally | Non-qualifying groups fall back to NFA try-all |
-| Weight ordering | N/A | NFA fallback uses WFST weight-ordered dispatch |
-| Integration | Standalone parser generator | Embedded in Pratt + trampoline framework |
+| Aspect                | Classical LL(k)                      | PraTTaIL B1                                                         |
+|:----------------------|:-------------------------------------|:--------------------------------------------------------------------|
+| Scope                 | Entire grammar                       | Per dispatch group                                                  |
+| k                     | Fixed for the grammar                | k = 2 for qualifying groups; k = 1 (standard dispatch) for the rest |
+| Nonterminal expansion | FIRST_k expands through nonterminals | B1 requires terminal second items only; nonterminals are rejected   |
+| Fallback              | Grammar must be LL(k) globally       | Non-qualifying groups fall back to NFA try-all                      |
+| Weight ordering       | N/A                                  | NFA fallback uses WFST weight-ordered dispatch                      |
+| Integration           | Standalone parser generator          | Embedded in Pratt + trampoline framework                            |
 
 The key distinction is that B1 is a **local optimization** within the
 Pratt framework, not a global grammar property. A grammar can have some
@@ -421,7 +421,7 @@ The 2-token PredictionWfst for the same group:
   q₀ (start)
 ```
 
-Path weight for rule A: 1̄ ⊗ 0.0 ⊗ 1̄ = 0.0 (under TropicalWeight).
+Path weight for rule A: 1̄ ⊗  0.0 ⊗  1̄ = 0.0 (under TropicalWeight).
 All paths have equal weight since the grammar is unambiguous at depth 2.
 
 ---
@@ -544,12 +544,12 @@ For n alternatives, worst case is n-1 failed trials before success.
 The `second_token_lookahead` function runs once per ambiguous dispatch
 group during pipeline code generation.
 
-| Operation | Cost |
-|:----------|:-----|
-| Iterate rules, extract items[1] | O(n) where n = |D(c, t)| |
-| Insert into BTreeMap | O(n log n) |
-| Check all values have length 1 | O(n) |
-| **Total** | **O(n log n)** |
+| Operation                       | Cost                       |
+|:--------------------------------|:---------------------------|
+| Iterate rules, extract items[1] | O(n) where n = \|D(c, t)\| |
+| Insert into BTreeMap            | O(n log n)                 |
+| Check all values have length 1  | O(n)                       |
+| **Total**                       | **O(n log n)**             |
 
 Since n is typically 2-5 (number of rules sharing a dispatch token),
 the analysis is effectively O(1) in practice.
@@ -558,13 +558,13 @@ the analysis is effectively O(1) in practice.
 
 With B1:
 
-| Operation | Cost |
-|:----------|:-----|
-| Match on first token (dispatch) | O(1) — existing match arm |
-| Bounds check: `*pos < tokens.len()` | O(1) |
-| Match on second token | O(1) — compiler-generated jump table |
-| Advance position (`*pos += 1`) | O(1) |
-| **Total per dispatch** | **O(1)** |
+| Operation                           | Cost                                 |
+|:------------------------------------|:-------------------------------------|
+| Match on first token (dispatch)     | O(1) — existing match arm            |
+| Bounds check: `*pos < tokens.len()` | O(1)                                 |
+| Match on second token               | O(1) — compiler-generated jump table |
+| Advance position (`*pos += 1`)      | O(1)                                 |
+| **Total per dispatch**              | **O(1)**                             |
 
 The second-token match is a standard Rust `match` on an enum, which the
 compiler emits as a jump table or binary search over discriminants. For
@@ -573,15 +573,15 @@ effectively a single indexed jump.
 
 ### 8.3 Comparison with NFA Try-All
 
-| Metric | NFA Try-All | B1 Lookahead |
-|:-------|:------------|:-------------|
-| Best case | O(1) — first alternative succeeds | O(1) — always |
-| Worst case | O(n) — last alternative succeeds or all fail | O(1) — always |
-| Backtracking | Yes — save/restore per failed trial | None |
-| Code size per group | O(n) closures + selection logic | O(n) match arms (smaller per-arm) |
-| Position saves | n save/restore pairs | 0 |
-| Spillover state | Writes to thread-local Vec | No thread-local access |
-| Weight accumulation | Per-alternative weight tracking | No weight tracking needed |
+| Metric              | NFA Try-All                                  | B1 Lookahead                      |
+|:--------------------|:---------------------------------------------|:----------------------------------|
+| Best case           | O(1) — first alternative succeeds            | O(1) — always                     |
+| Worst case          | O(n) — last alternative succeeds or all fail | O(1) — always                     |
+| Backtracking        | Yes — save/restore per failed trial          | None                              |
+| Code size per group | O(n) closures + selection logic              | O(n) match arms (smaller per-arm) |
+| Position saves      | n save/restore pairs                         | 0                                 |
+| Spillover state     | Writes to thread-local Vec                   | No thread-local access            |
+| Weight accumulation | Per-alternative weight tracking              | No weight tracking needed         |
 
 For a dispatch group with n = 3 alternatives:
 
@@ -723,26 +723,26 @@ strictly better than the NFA fallback for their qualifying groups.
 
 ## 10. Source References
 
-| Symbol | Location |
-|:-------|:---------|
-| `TwoTokenLookahead` struct | `prattail/src/trampoline.rs:129` |
-| `second_token_lookahead()` | `prattail/src/trampoline.rs:134` |
+| Symbol                                        | Location                             |
+|:----------------------------------------------|:-------------------------------------|
+| `TwoTokenLookahead` struct                    | `prattail/src/trampoline.rs:129`     |
+| `second_token_lookahead()`                    | `prattail/src/trampoline.rs:134`     |
 | B1 codegen in `write_nfa_merged_prefix_arm()` | `prattail/src/trampoline.rs:426–516` |
-| `compute_shared_terminal_prefix()` (A1) | `prattail/src/trampoline.rs:190` |
-| `TrampolineConfig.needs_nfa_spillover` | `prattail/src/trampoline.rs:1041` |
-| `RDRuleInfo` | `prattail/src/recursive.rs:14` |
-| `RDSyntaxItem` | `prattail/src/recursive.rs:40` |
+| `compute_shared_terminal_prefix()` (A1)       | `prattail/src/trampoline.rs:190`     |
+| `TrampolineConfig.needs_nfa_spillover`        | `prattail/src/trampoline.rs:1041`    |
+| `RDRuleInfo`                                  | `prattail/src/recursive.rs:14`       |
+| `RDSyntaxItem`                                | `prattail/src/recursive.rs:40`       |
 
 ### Tests
 
-| Test | What it verifies |
-|:-----|:----------------|
-| `test_second_token_lookahead_distinct_second_terminals` | 2 rules, distinct items[1] → `Some` |
-| `test_second_token_lookahead_single_rule` | 1 rule → `None` (no ambiguity) |
-| `test_second_token_lookahead_shared_second_terminal` | shared items[1] → `None` |
-| `test_second_token_lookahead_nonterminal_second_item` | NonTerminal items[1] → `None` |
-| `test_second_token_lookahead_single_item_rule` | 1-item rule → `None` |
-| `test_second_token_lookahead_three_rules_all_distinct` | 3 rules, all distinct → `Some` with 3 entries |
+| Test                                                    | What it verifies                              |
+|:--------------------------------------------------------|:----------------------------------------------|
+| `test_second_token_lookahead_distinct_second_terminals` | 2 rules, distinct items[1] → `Some`           |
+| `test_second_token_lookahead_single_rule`               | 1 rule → `None` (no ambiguity)                |
+| `test_second_token_lookahead_shared_second_terminal`    | shared items[1] → `None`                      |
+| `test_second_token_lookahead_nonterminal_second_item`   | NonTerminal items[1] → `None`                 |
+| `test_second_token_lookahead_single_item_rule`          | 1-item rule → `None`                          |
+| `test_second_token_lookahead_three_rules_all_distinct`  | 3 rules, all distinct → `Some` with 3 entries |
 
 ---
 

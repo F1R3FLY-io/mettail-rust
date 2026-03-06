@@ -187,9 +187,9 @@ This ensures L is acyclic.
 **Example:** The `>>` ambiguity produces the following 3-node lattice:
 
 ```
-                 GtGt (w = 0.0)
-    ┌───────────────────────────────┐
-    │                               ▼
+          GtGt (w = 0.0)
+    ┌────────────────────────┐
+    │                        ▼
   ┌───┐    Gt (w = 1.0)    ┌───┐   Gt (w = 1.0)     ┌───┐
   │ 0 │ ──────────────────►│ 1 │ ──────────────────►│ 2 │
   └───┘                    └───┘                    └───┘
@@ -224,7 +224,7 @@ A **path** π = (e₁, e₂, ..., eₖ) in L is a sequence of edges where
 the target of eᵢ equals the source of eᵢ₊₁. The **path weight** is:
 
 ```
-w(π) = w(e₁) ⊗ w(e₂) ⊗ ··· ⊗ w(eₖ)
+w(π) = w(e₁) ⊗  w(e₂) ⊗  ··· ⊗  w(eₖ)
 ```
 
 Under TropicalWeight, this is ordinary addition:
@@ -241,7 +241,7 @@ The **lattice weight** (or string weight) ‖L‖ is the ⊕-combination of
 all s→f path weights:
 
 ```
-‖L‖ = ⊕ { w(π) : π is an s→f path in L }
+‖L‖ = ⊕  { w(π) : π is an s→f path in L }
 ```
 
 Under TropicalWeight, ‖L‖ is the minimum-cost tokenization. Under
@@ -320,7 +320,7 @@ from s to v:
 
 ```
 α[s] = 1̄
-α[v] = ⊕ { α[u] ⊗ w(u, v) : (u, v) ∈ E }    for v ≠ s
+α[v] = ⊕  { α[u] ⊗  w(u, v) : (u, v) ∈ E }    for v ≠ s
 ```
 
 Under TropicalWeight:
@@ -349,7 +349,7 @@ identity).
 When we process node v, we compute:
 
 ```
-α[v] = ⊕ { α[u] ⊗ w(u, v) : (u, v) ∈ E }
+α[v] = ⊕  { α[u] ⊗  w(u, v) : (u, v) ∈ E }
 ```
 
 By the DAG constraint, every edge (u, v) ∈ E has u < v, so α[u] is
@@ -367,7 +367,7 @@ To reconstruct the optimal path (not just its weight), we maintain a
 idx* is the edge index that achieved the minimum:
 
 ```
-pred[v] = argmin { α[u] ⊗ w(u, v) }
+pred[v] = argmin { α[u] ⊗  w(u, v) }
            (u, idx)
 ```
 
@@ -394,9 +394,9 @@ Consider a 5-node lattice for the arithmetic expression `1 + 2`:
   ┌───┐ ──────────►┌───┐ ──────────►┌───┐ ──────────►┌───┐ ──────────►┌───┐
   │ 0 │            │ 1 │            │ 2 │            │ 3 │            │ 4 │
   └───┘            └───┘            └───┘            └───┘            └───┘
-    │                                  ▲
-    │          Num12(w=2.0)            │
-    └──────────────────────────────────┘
+    │                                 ▲
+    │          Num12(w=2.0)           │
+    └─────────────────────────────────┘
 ```
 
 The alternative edge 0 → 2 with token `Num12` (weight 2.0) represents a
@@ -437,7 +437,7 @@ Step 0:       Step 1:       Step 2:       Step 3:       Step 4:
 
 At step 2, node 2 receives two contributions: the canonical path
 (0→1→2 via Int+Plus, cost 0.0) and the alternative (0→2 via Num12,
-cost 2.0). The ⊕ = min operation selects 0.0, finalizing node 2 and
+cost 2.0). The ⊕  = min operation selects 0.0, finalizing node 2 and
 effectively discarding the Num12 hypothesis.
 
 ### 5.6 Generic Viterbi
@@ -484,7 +484,7 @@ where α_best_final is the best distance to f found so far (or +∞ if f
 is not yet reached).
 
 **Edge-level pruning:** For edge (v, u) with candidate distance d =
-α[v] ⊗ w(v, u), skip if:
+α[v] ⊗  w(v, u), skip if:
 
 ```
 d > α_best_final + B
@@ -590,7 +590,7 @@ while HEAP is not empty and |results| < N:
         results.append((path, w))
         continue
     for each edge (v, u, t, σ) in edges_from(v):
-        push (w ⊗ w(e), u, path ++ [(v, edge_idx)]) onto HEAP
+        push (w ⊗  w(e), u, path ++ [(v, edge_idx)]) onto HEAP
 
 return results
 ```
@@ -651,7 +651,7 @@ to v:
 
 ```
 α[s] = 1̄ = 0.0                   (log-probability 1)
-α[v] = ⊕ { α[u] ⊗ w(u, v) }    (⊕ = log-sum-exp, ⊗ = addition)
+α[v] = ⊕  { α[u] ⊗  w(u, v) }    (⊕  = log-sum-exp, ⊗  = addition)
 ```
 
 Computed in a single left-to-right pass (same DAG ordering as Viterbi).
@@ -663,7 +663,7 @@ to f:
 
 ```
 β[f] = 1̄ = 0.0
-β[u] = ⊕ { w(u, v) ⊗ β[v] }    (computed right-to-left)
+β[u] = ⊕  { w(u, v) ⊗  β[v] }    (computed right-to-left)
 ```
 
 ### 8.3 Arc Posterior
@@ -671,7 +671,7 @@ to f:
 The posterior probability of edge e = (u, v) is:
 
 ```
-P(e) = exp(−(α[u] ⊗ w(e) ⊗ β[v] − Z))
+P(e) = exp(−(α[u] ⊗  w(e) ⊗  β[v] − Z))
 ```
 
 where Z = α[f] is the partition function (total log-probability of all
@@ -689,7 +689,7 @@ Edges:
   C: 1→2 Gt   (w=1.0)
 ```
 
-Under LogWeight (⊕ = log-sum-exp, ⊗ = addition):
+Under LogWeight (⊕  = log-sum-exp, ⊗  = addition):
 
 ```
 Forward scores:

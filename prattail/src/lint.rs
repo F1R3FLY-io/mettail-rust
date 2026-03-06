@@ -1,33 +1,51 @@
-//! Unified compile-time lint layer for PraTTaIL grammars.
+//! Unified compile-time lint and diagnostic layer for PraTTaIL grammars.
 //!
-//! Consolidates all grammar warnings and adds new grammar-level lints into a
-//! single module with structured diagnostics. Lints leverage data already
-//! computed during the Generate phase (FIRST/FOLLOW sets, prediction WFSTs,
-//! recovery WFSTs, BP table, RecoveryConfig) — no separate analysis passes.
+//! Routes **all** diagnostic output through [`LintDiagnostic`] structs and
+//! [`format_diagnostic_colored()`] for consistent, ANSI-colorized, Rust-compiler-style
+//! output. No diagnostic bypasses this system.
 //!
 //! ## Lint Categories
 //!
 //! | Prefix | Category | Source Data |
 //! |--------|----------|-------------|
-//! | G | Grammar structure | ParserBundle (pre-WFST) |
+//! | G | Grammar structure | ParserBundle (pre-WFST) + macros crate |
 //! | W | WFST-specific | Prediction WFSTs |
 //! | R | Recovery | Recovery WFSTs + RecoveryConfig |
 //! | C | Cross-category | Cast rules + FIRST sets |
+//! | X | Composition | Composed grammar verification |
 //! | P | Performance | DFA stats + WFST metrics |
+//! | I | Infrastructure | Pipeline progress, env overrides, I/O |
+//!
+//! ## Severity Levels
+//!
+//! | Level | Color | Description |
+//! |-------|-------|-------------|
+//! | `Info` | Bold cyan | Infrastructure progress — pipeline status |
+//! | `Note` | Bold cyan | Informational — no action required |
+//! | `Warning` | Bold yellow | Possible issue — review recommended |
+//! | `Error` | Bold red | Correctness bug — compilation may fail |
 //!
 //! ## Macro-Phase Lints
 //!
-//! The following lints are emitted by the macros crate (not this module) because
-//! they require access to equation/rewrite data unavailable in the PraTTaIL pipeline:
+//! The following lints are emitted by the macros crate via [`emit_diagnostic()`]
+//! because they require access to equation/rewrite data unavailable in the
+//! PraTTaIL pipeline:
 //!
 //! | ID | Severity | Name | Description |
 //! |----|----------|------|-------------|
 //! | G25 | note | cancellation-pair-detected | Equation `Outer(Inner(X)) = X` suppressed from eqrel |
+//! | G26 | note | equation-subsumed | Equation eliminated by subsumption |
+//! | G27 | warning | rule-subsumption-candidate | Rule may be subsumed by more general rule |
+//! | G28 | note | alpha-equivalent-groups | Alpha-equivalent LHS pattern groups |
+//! | G29 | note | dependency-groups | Fine-grained dependency groups |
+//! | G30 | note | isomorphic-wfst-groups | Isomorphic WFST dispatch topology |
+//! | G31 | note | subsumed-equations-eliminated | N equations eliminated from codegen |
 //! | W09 | warning | cancellation-pair-missing-rewrite | Suppressed equation has no corresponding rewrite |
+//! | I10 | warning | ascent-file-write-failed | Ascent Datalog file I/O error |
 //!
 //! ## Display Format
 //!
-//! Rust-compiler-style diagnostics to stderr:
+//! Rust-compiler-style diagnostics to stderr with ANSI colors:
 //!
 //! ```text
 //! error[C01]: cast cycle detected: Int -> Proc -> Int
@@ -35,6 +53,8 @@
 //!
 //! warning[W01]: rule `FloatToStr` in category `Str` is unreachable (dead code)
 //!   = hint: remove the rule or add a unique dispatch token
+//!
+//! info[I01] (Ambient): transducer cascade: 8 change(s) across 3 categories (12 total iterations)
 //! ```
 
 use std::collections::{HashMap, HashSet};
@@ -57,6 +77,8 @@ use crate::SyntaxItemSpec;
 /// Lint severity level.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum LintSeverity {
+    /// Infrastructure informational — pipeline progress messages.
+    Info,
     /// Informational note — no action required.
     Note,
     /// Compile-time warning — possible issue.
@@ -68,6 +90,7 @@ pub enum LintSeverity {
 impl fmt::Display for LintSeverity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            LintSeverity::Info => write!(f, "info"),
             LintSeverity::Note => write!(f, "note"),
             LintSeverity::Warning => write!(f, "warning"),
             LintSeverity::Error => write!(f, "error"),
@@ -160,6 +183,9 @@ pub struct LintContext<'a> {
     pub follow_inputs: &'a [FollowSetInput],
     /// Dependency groups from equations/rewrites/logic for transitive liveness analysis.
     pub semantic_dependency_groups: &'a [HashSet<String>],
+    /// Pre-collected diagnostics from pipeline phases that emit before lint context
+    /// is constructed (e.g., W05 from composed dispatch resolution).
+    pub pre_collected_diagnostics: &'a [LintDiagnostic],
 }
 
 /// Run all lints and return structured diagnostics.
@@ -191,6 +217,8 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_w02_nfa_ambiguous_prefix(ctx, &mut diagnostics);
     lint_w03_high_ambiguity_token(ctx, &mut diagnostics);
     lint_w04_weight_gap_anomaly(ctx, &mut diagnostics);
+    // W05: Insert pre-collected composed-dispatch-ambiguity diagnostics
+    diagnostics.extend(ctx.pre_collected_diagnostics.iter().cloned());
     lint_w06_weight_inversion(ctx, &mut diagnostics);
 
     // ── Recovery lints ──
@@ -220,12 +248,17 @@ pub fn emit_diagnostics(diagnostics: &[LintDiagnostic]) {
     }
 }
 
+/// Emit a single diagnostic to stderr with ANSI-colorized output.
+pub fn emit_diagnostic(diag: &LintDiagnostic) {
+    eprintln!("{}", format_diagnostic_colored(diag));
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ANSI color constants (no external dependency — matches pipeline.rs style)
 // ══════════════════════════════════════════════════════════════════════════════
 
 #[allow(dead_code)]
-mod ansi {
+pub mod ansi {
     pub const RESET: &str = "\x1b[0m";
     pub const BOLD: &str = "\x1b[1m";
     pub const DIM: &str = "\x1b[2m";
@@ -245,12 +278,13 @@ mod ansi {
 /// Color scheme:
 /// - Error: bold red label + ID
 /// - Warning: bold yellow label + ID
-/// - Note: bold cyan label + ID
+/// - Note / Info: bold cyan label + ID
+/// - Grammar name: dim parentheses after `[ID]` when present
 /// - Source location (`-->`): bold blue
 /// - Category/rule context (`= in`): dim
 /// - Hint (`= hint:`): green
 /// - Backtick-quoted identifiers: bold
-fn format_diagnostic_colored(diag: &LintDiagnostic) -> String {
+pub fn format_diagnostic_colored(diag: &LintDiagnostic) -> String {
     use std::fmt::Write;
     let mut out = String::with_capacity(256);
 
@@ -258,7 +292,7 @@ fn format_diagnostic_colored(diag: &LintDiagnostic) -> String {
     let (label_color, id_color) = match diag.severity {
         LintSeverity::Error => (ansi::BOLD_RED, ansi::BOLD_RED),
         LintSeverity::Warning => (ansi::BOLD_YELLOW, ansi::BOLD_YELLOW),
-        LintSeverity::Note => (ansi::BOLD_CYAN, ansi::BOLD_CYAN),
+        LintSeverity::Note | LintSeverity::Info => (ansi::BOLD_CYAN, ansi::BOLD_CYAN),
     };
 
     // Colorize backtick-quoted identifiers in the message
@@ -266,11 +300,17 @@ fn format_diagnostic_colored(diag: &LintDiagnostic) -> String {
 
     write!(
         out,
-        "{}{}{}[{}{}{}]: {}",
+        "{}{}{}[{}{}{}]",
         label_color, diag.severity, ansi::RESET,
         id_color, diag.id, ansi::RESET,
-        message,
     ).expect("write to String");
+
+    // Grammar name in dim parentheses after [ID]
+    if let Some(ref grammar) = diag.grammar_name {
+        write!(out, " {}({}){}",  ansi::DIM, grammar, ansi::RESET).expect("write to String");
+    }
+
+    write!(out, ": {}", message).expect("write to String");
 
     // Source location (rustc-style `-->` pointer)
     if let Some(ref loc) = diag.source_location {
@@ -319,7 +359,7 @@ fn format_diagnostic_colored(diag: &LintDiagnostic) -> String {
 ///
 /// Scans for matching pairs of backticks and wraps the enclosed text
 /// (including backticks) with the given ANSI start/end codes.
-fn colorize_backtick_spans(text: &str, start: &str, end: &str) -> String {
+pub fn colorize_backtick_spans(text: &str, start: &str, end: &str) -> String {
     let mut result = String::with_capacity(text.len() + 64);
     let mut chars = text.char_indices().peekable();
 
@@ -346,6 +386,9 @@ fn colorize_backtick_spans(text: &str, start: &str, end: &str) -> String {
 }
 
 /// Emit all lint diagnostics to stderr with ANSI-colorized output and a grammar-name header.
+///
+/// When `PRATTAIL_LINT_VERBOSE` is set, emits individual diagnostics (useful for CI/filtering).
+/// Otherwise, groups repeated lint IDs into compact summaries via [`group_diagnostics()`].
 pub fn emit_diagnostics_for_grammar(grammar_name: &str, diagnostics: &[LintDiagnostic]) {
     if diagnostics.is_empty() {
         return;
@@ -354,14 +397,447 @@ pub fn emit_diagnostics_for_grammar(grammar_name: &str, diagnostics: &[LintDiagn
         "  {}linting{} grammar `{}`",
         ansi::BOLD_CYAN, ansi::RESET, grammar_name,
     );
-    for diag in diagnostics {
-        eprintln!("{}", format_diagnostic_colored(diag));
+    let verbose = std::env::var("PRATTAIL_LINT_VERBOSE").is_ok();
+    if verbose {
+        for diag in diagnostics {
+            eprintln!("{}", format_diagnostic_colored(diag));
+        }
+    } else {
+        let grouped = group_diagnostics(diagnostics.to_vec());
+        for diag in &grouped {
+            eprintln!("{}", format_diagnostic_colored(diag));
+        }
     }
 }
 
 /// Returns true if any diagnostic has Error severity.
 pub fn has_errors(diagnostics: &[LintDiagnostic]) -> bool {
     diagnostics.iter().any(|d| d.severity == LintSeverity::Error)
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Diagnostic Grouping
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Known lint IDs eligible for grouping.
+const GROUPABLE_IDS: &[&str] = &["W01", "W02", "W03", "W05", "W07", "G03", "G08", "G27"];
+
+/// Group repeated lint diagnostics into compact summaries.
+///
+/// Partitions input by lint ID. Known groupable IDs delegate to per-ID
+/// groupers; all other IDs pass through unchanged. Single-item groups
+/// always pass through unchanged. Grouped results replace the **first
+/// occurrence** position of each grouped ID, preserving relative ordering.
+pub fn group_diagnostics(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    use std::collections::BTreeMap;
+
+    if diagnostics.len() <= 1 {
+        return diagnostics;
+    }
+
+    // Partition by lint ID, tracking first-occurrence index per ID
+    let mut by_id: BTreeMap<&str, Vec<LintDiagnostic>> = BTreeMap::new();
+    let mut first_index: HashMap<&str, usize> = HashMap::new();
+    let mut non_groupable: Vec<(usize, LintDiagnostic)> = Vec::new();
+
+    for (i, diag) in diagnostics.into_iter().enumerate() {
+        if GROUPABLE_IDS.contains(&diag.id) {
+            first_index.entry(diag.id).or_insert(i);
+            by_id.entry(diag.id).or_default().push(diag);
+        } else {
+            non_groupable.push((i, diag));
+        }
+    }
+
+    // Build grouped results with their first-occurrence index
+    let mut indexed: Vec<(usize, Vec<LintDiagnostic>)> = Vec::new();
+
+    for (id, items) in by_id {
+        let idx = first_index[id];
+        if items.len() == 1 {
+            indexed.push((idx, items));
+        } else {
+            let grouped = match id {
+                "W01" => group_w01(items),
+                "W02" => group_w02(items),
+                "W03" => group_w03(items),
+                "W05" => group_w05(items),
+                "W07" => group_w07(items),
+                "G03" => group_g03(items),
+                "G08" => group_g08(items),
+                "G27" => group_g27(items),
+                _ => items, // unreachable due to GROUPABLE_IDS check
+            };
+            indexed.push((idx, grouped));
+        }
+    }
+
+    // Merge non-groupable items
+    for (i, diag) in non_groupable {
+        indexed.push((i, vec![diag]));
+    }
+
+    // Sort by first-occurrence index to preserve relative ordering
+    indexed.sort_by_key(|(i, _)| *i);
+    indexed.into_iter().flat_map(|(_, diags)| diags).collect()
+}
+
+/// Group W01 (dead-rule) diagnostics by hint text (= warning type), then by category.
+///
+/// Output: `"N rules are unreachable...\n  Cat1: R1, R2\n  Cat2: R3"`
+fn group_w01(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    use std::collections::BTreeMap;
+
+    // Group by hint text (each hint corresponds to a different dead-rule tier)
+    let mut by_hint: BTreeMap<String, Vec<LintDiagnostic>> = BTreeMap::new();
+    for diag in diagnostics {
+        let key = diag.hint.clone().unwrap_or_default();
+        by_hint.entry(key).or_default().push(diag);
+    }
+
+    let mut result = Vec::new();
+    for (hint_key, items) in by_hint {
+        if items.len() == 1 {
+            result.extend(items);
+            continue;
+        }
+
+        // Sub-group by category
+        let mut by_cat: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for diag in &items {
+            let cat = diag.category.clone().unwrap_or_else(|| "unknown".to_string());
+            let rule = diag.rule.clone().unwrap_or_else(|| "?".to_string());
+            by_cat.entry(cat).or_default().push(rule);
+        }
+
+        let total = items.len();
+        let cat_lines: Vec<String> = by_cat
+            .iter()
+            .map(|(cat, rules)| format!("  {}: {}", cat, rules.join(", ")))
+            .collect();
+
+        let first = &items[0];
+        result.push(LintDiagnostic {
+            id: first.id,
+            name: first.name,
+            severity: first.severity,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} rules are unreachable (dead code)\n{}",
+                total,
+                cat_lines.join("\n"),
+            ),
+            hint: Some(hint_key),
+            grammar_name: first.grammar_name.clone(),
+            source_location: None,
+        });
+    }
+    result
+}
+
+/// Group W02 (nfa-ambiguous-prefix) by category.
+///
+/// Output: `"ambiguous prefix dispatch in N categories\n  Cat: token matches [R1, R2]; ..."`
+fn group_w02(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    group_ambiguity_by_category("W02", "nfa-ambiguous-prefix", "ambiguous NFA prefix dispatch", diagnostics)
+}
+
+/// Group W03 (high-ambiguity-token) by category.
+fn group_w03(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    group_ambiguity_by_category("W03", "high-ambiguity-token", "high-ambiguity tokens", diagnostics)
+}
+
+/// Group W05 (composed-dispatch-ambiguity) by category.
+///
+/// Output: `"N ambiguities resolved by tropical shortest path\n  Cat: details..."`
+fn group_w05(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    use std::collections::BTreeMap;
+
+    let mut by_cat: BTreeMap<String, Vec<LintDiagnostic>> = BTreeMap::new();
+    for diag in diagnostics {
+        let cat = diag.category.clone().unwrap_or_else(|| "unknown".to_string());
+        by_cat.entry(cat).or_default().push(diag);
+    }
+
+    // If only one category with one item, pass through
+    if by_cat.len() == 1 && by_cat.values().next().map_or(false, |v| v.len() == 1) {
+        return by_cat.into_values().flatten().collect();
+    }
+
+    let total: usize = by_cat.values().map(|v| v.len()).sum();
+    let first = by_cat.values().next().and_then(|v| v.first());
+    let (grammar_name, hint) = match first {
+        Some(d) => (d.grammar_name.clone(), d.hint.clone()),
+        None => return Vec::new(),
+    };
+
+    // Build per-category summary lines
+    let mut cat_lines: Vec<String> = Vec::new();
+    for (cat, items) in &by_cat {
+        let summaries: Vec<String> = items
+            .iter()
+            .filter_map(|d| {
+                // Extract winner from message: "Resolved by tropical shortest path → WINNER"
+                let msg = &d.message;
+                let winner = msg.rsplit("→ ").next().unwrap_or("?").trim();
+                // Extract token entries: lines starting with "  - Token::"
+                let entries: Vec<&str> = msg
+                    .lines()
+                    .filter(|l| l.trim_start().starts_with("- Token::"))
+                    .collect();
+                if entries.is_empty() {
+                    return None;
+                }
+                // Summarize: "Token1→Rule1, Token2→Rule2 (vs Loser, wt X.XX)"
+                let mut parts = Vec::new();
+                let mut losers = Vec::new();
+                for entry in &entries {
+                    // Format: "  - Token::Variant → rule Label (weight X.XX)"
+                    let trimmed = entry.trim_start().trim_start_matches("- Token::");
+                    if let Some((variant_rule, weight_part)) = trimmed.split_once(" (weight ") {
+                        let weight = weight_part.trim_end_matches(')');
+                        if let Some((variant, rule)) = variant_rule.split_once(" → rule ") {
+                            if rule.trim() == winner {
+                                parts.push(format!("{}→{}", variant.trim(), rule.trim()));
+                            } else {
+                                losers.push(format!("{} wt {}", rule.trim(), weight));
+                            }
+                        }
+                    }
+                }
+                let vs_str = if losers.is_empty() {
+                    String::new()
+                } else {
+                    format!(" (vs {})", losers.join(", "))
+                };
+                if parts.is_empty() {
+                    Some(format!("→ {}{}", winner, vs_str))
+                } else {
+                    Some(format!("{}{}", parts.join(", "), vs_str))
+                }
+            })
+            .collect();
+        cat_lines.push(format!("  {}: {}", cat, summaries.join("; ")));
+    }
+
+    vec![LintDiagnostic {
+        id: "W05",
+        name: "composed-dispatch-ambiguity",
+        severity: LintSeverity::Warning,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} ambiguities resolved by tropical shortest path\n{}",
+            total,
+            cat_lines.join("\n"),
+        ),
+        hint,
+        grammar_name,
+        source_location: None,
+    }]
+}
+
+/// Group W07 (nearly-dead-path) by category.
+///
+/// Output: `"N rules on nearly-dead paths\n  Cat: R1, R2"`
+fn group_w07(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    use std::collections::BTreeMap;
+
+    let mut by_cat: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for diag in &diagnostics {
+        let cat = diag.category.clone().unwrap_or_else(|| "unknown".to_string());
+        let rule = diag.rule.clone().unwrap_or_else(|| "?".to_string());
+        by_cat.entry(cat).or_default().push(rule);
+    }
+
+    let total = diagnostics.len();
+    let first = &diagnostics[0];
+
+    let cat_lines: Vec<String> = by_cat
+        .iter()
+        .map(|(cat, rules)| format!("  {}: {}", cat, rules.join(", ")))
+        .collect();
+
+    vec![LintDiagnostic {
+        id: first.id,
+        name: first.name,
+        severity: first.severity,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} rules on nearly-dead paths\n{}",
+            total,
+            cat_lines.join("\n"),
+        ),
+        hint: first.hint.clone(),
+        grammar_name: first.grammar_name.clone(),
+        source_location: None,
+    }]
+}
+
+/// Group G03 (ambiguous-prefix) by category.
+///
+/// Output: `"ambiguous prefix dispatch in N categories\n  Cat: token1 matches [R1, R2]; ..."`
+fn group_g03(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    group_ambiguity_by_category("G03", "ambiguous-prefix", "ambiguous prefix dispatch", diagnostics)
+}
+
+/// Group G08 (missing-cast-to-root) into a single diagnostic listing all isolated categories.
+///
+/// Output: `"N categories have no cast path to primary\n  isolated: Cat1, Cat2, Cat3"`
+fn group_g08(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    let cats: Vec<String> = diagnostics
+        .iter()
+        .filter_map(|d| d.category.clone())
+        .collect();
+
+    let first = &diagnostics[0];
+
+    // Extract primary category from the first diagnostic's message
+    let primary = first
+        .message
+        .rsplit("to primary category `")
+        .next()
+        .and_then(|s| s.strip_suffix('`'))
+        .unwrap_or("?");
+
+    vec![LintDiagnostic {
+        id: first.id,
+        name: first.name,
+        severity: first.severity,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} categories have no cast path to primary category `{}`\n  isolated: {}",
+            cats.len(),
+            primary,
+            cats.join(", "),
+        ),
+        hint: Some(format!(
+            "add cast rules from these categories to `{}` or an intermediate category",
+            primary,
+        )),
+        grammar_name: first.grammar_name.clone(),
+        source_location: None,
+    }]
+}
+
+/// Group G27 (rule-subsumption-candidate) by general rule name (from the `rule` field).
+///
+/// Output: `"N rules may be subsumed by more general rule `General`\n  candidates: R1, R2"`
+fn group_g27(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    use std::collections::BTreeMap;
+
+    // Group by general rule name (extracted from message)
+    let mut by_general: BTreeMap<String, Vec<LintDiagnostic>> = BTreeMap::new();
+    for diag in diagnostics {
+        // Extract general rule name: "... subsumed by more general rule `GENERAL` ..."
+        let general = diag
+            .message
+            .split("more general rule `")
+            .nth(1)
+            .and_then(|s| s.split('`').next())
+            .unwrap_or("?")
+            .to_string();
+        by_general.entry(general).or_default().push(diag);
+    }
+
+    let mut result = Vec::new();
+    for (general_name, items) in by_general {
+        if items.len() == 1 {
+            result.extend(items);
+            continue;
+        }
+
+        // Collect specific rule names from messages
+        let specific_names: Vec<String> = items
+            .iter()
+            .filter_map(|d| {
+                // "rule `SPECIFIC` may be subsumed..."
+                d.message
+                    .split("rule `")
+                    .nth(1)
+                    .and_then(|s| s.split('`').next())
+                    .map(|s| s.to_string())
+            })
+            .collect();
+
+        let first = &items[0];
+        result.push(LintDiagnostic {
+            id: first.id,
+            name: first.name,
+            severity: first.severity,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} rules may be subsumed by more general rule `{}`\n  candidates: {}",
+                items.len(),
+                general_name,
+                specific_names.join(", "),
+            ),
+            hint: Some(format!(
+                "review whether these rules can be removed or merged with `{}`",
+                general_name,
+            )),
+            grammar_name: first.grammar_name.clone(),
+            source_location: None,
+        });
+    }
+    result
+}
+
+/// Shared helper for grouping ambiguity-style diagnostics (W02, W03, G03) by category.
+///
+/// Each diagnostic's message is preserved as a sub-item under its category.
+fn group_ambiguity_by_category(
+    id: &'static str,
+    name: &'static str,
+    description: &str,
+    diagnostics: Vec<LintDiagnostic>,
+) -> Vec<LintDiagnostic> {
+    use std::collections::BTreeMap;
+
+    let mut by_cat: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for diag in &diagnostics {
+        let cat = diag.category.clone().unwrap_or_else(|| "unknown".to_string());
+        by_cat.entry(cat).or_default().push(diag.message.clone());
+    }
+
+    let total = diagnostics.len();
+    let first = &diagnostics[0];
+
+    let cat_lines: Vec<String> = by_cat
+        .iter()
+        .map(|(cat, msgs)| {
+            if msgs.len() == 1 {
+                format!("  {}: {}", cat, msgs[0])
+            } else {
+                let items: Vec<String> = msgs.iter().enumerate().map(|(i, m)| {
+                    format!("  {}[{}]: {}", cat, i + 1, m)
+                }).collect();
+                items.join("\n")
+            }
+        })
+        .collect();
+
+    vec![LintDiagnostic {
+        id,
+        name,
+        severity: first.severity,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} {} in {} categories\n{}",
+            total,
+            description,
+            by_cat.len(),
+            cat_lines.join("\n"),
+        ),
+        hint: first.hint.clone(),
+        grammar_name: first.grammar_name.clone(),
+        source_location: None,
+    }]
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -2856,6 +3332,7 @@ mod tests {
         all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)>,
         follow_inputs: Vec<FollowSetInput>,
         semantic_dependency_groups: Vec<HashSet<String>>,
+        pre_collected_diagnostics: Vec<LintDiagnostic>,
     }
 
     impl CtxBuilder {
@@ -2878,6 +3355,7 @@ mod tests {
                 all_syntax: Vec::new(),
                 follow_inputs: Vec::new(),
                 semantic_dependency_groups: Vec::new(),
+                pre_collected_diagnostics: Vec::new(),
             }
         }
 
@@ -2900,6 +3378,7 @@ mod tests {
                 all_syntax: &self.all_syntax,
                 follow_inputs: &self.follow_inputs,
                 semantic_dependency_groups: &self.semantic_dependency_groups,
+                pre_collected_diagnostics: &self.pre_collected_diagnostics,
             }
         }
     }
@@ -4630,5 +5109,308 @@ mod tests {
             syntax_item_debruijn_bytes(&syntax_c),
             "different binding structure must produce different bytes"
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Info severity and format_diagnostic_colored tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn info_severity_display() {
+        assert_eq!(format!("{}", LintSeverity::Info), "info");
+    }
+
+    #[test]
+    fn info_severity_ord() {
+        assert!(LintSeverity::Info < LintSeverity::Note);
+        assert!(LintSeverity::Note < LintSeverity::Warning);
+        assert!(LintSeverity::Warning < LintSeverity::Error);
+    }
+
+    #[test]
+    fn format_diagnostic_colored_info_with_grammar_name() {
+        let diag = LintDiagnostic {
+            id: "I01",
+            name: "transducer-cascade",
+            severity: LintSeverity::Info,
+            category: None,
+            rule: None,
+            message: "transducer cascade: 8 change(s) across 3 categories".to_string(),
+            hint: None,
+            grammar_name: Some("Ambient".to_string()),
+            source_location: None,
+        };
+        let output = format_diagnostic_colored(&diag);
+        // Should contain the severity, lint code, grammar name, and message
+        assert!(output.contains("info"), "should contain 'info' severity");
+        assert!(output.contains("I01"), "should contain lint code I01");
+        assert!(output.contains("(Ambient)"), "should contain grammar name in parens");
+        assert!(output.contains("transducer cascade"), "should contain message");
+    }
+
+    #[test]
+    fn format_diagnostic_colored_no_grammar_name() {
+        let diag = LintDiagnostic {
+            id: "I08",
+            name: "env-override-active",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: "PRATTAIL_AUTO_OPTIMIZE override active".to_string(),
+            hint: Some("unset PRATTAIL_AUTO_OPTIMIZE".to_string()),
+            grammar_name: None,
+            source_location: None,
+        };
+        let output = format_diagnostic_colored(&diag);
+        // Should NOT contain grammar name parens
+        assert!(!output.contains("()"), "should not contain empty parens");
+        assert!(output.contains("warning"), "should contain 'warning' severity");
+        assert!(output.contains("I08"), "should contain lint code I08");
+        assert!(output.contains("hint:"), "should contain hint");
+    }
+
+    #[test]
+    fn format_diagnostic_colored_info_with_hint() {
+        let diag = LintDiagnostic {
+            id: "I04",
+            name: "beam-feature-required",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: "beam_width: auto requires `wfst-log`".to_string(),
+            hint: Some("enable `wfst-log` feature or use explicit beam_width".to_string()),
+            grammar_name: Some("TestGrammar".to_string()),
+            source_location: None,
+        };
+        let output = format_diagnostic_colored(&diag);
+        assert!(output.contains("I04"), "should contain lint code");
+        assert!(output.contains("(TestGrammar)"), "should contain grammar name");
+        assert!(output.contains("hint:"), "should contain hint line");
+        assert!(output.contains("wfst-log"), "hint should mention wfst-log");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Diagnostic Grouping Tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    fn make_diag(
+        id: &'static str,
+        name: &'static str,
+        severity: LintSeverity,
+        category: Option<&str>,
+        rule: Option<&str>,
+        message: &str,
+        hint: Option<&str>,
+    ) -> LintDiagnostic {
+        LintDiagnostic {
+            id,
+            name,
+            severity,
+            category: category.map(|s| s.to_string()),
+            rule: rule.map(|s| s.to_string()),
+            message: message.to_string(),
+            hint: hint.map(|s| s.to_string()),
+            grammar_name: Some("TestGrammar".to_string()),
+            source_location: None,
+        }
+    }
+
+    #[test]
+    fn group_empty_input() {
+        let result = group_diagnostics(Vec::new());
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn group_w01_single_passes_through() {
+        let diag = make_diag(
+            "W01", "dead-rule", LintSeverity::Warning,
+            Some("Int"), Some("FloatToStr"),
+            "rule `FloatToStr` in category `Int` is unreachable",
+            Some("remove the rule or add a unique dispatch token"),
+        );
+        let result = group_diagnostics(vec![diag.clone()]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "W01");
+        assert_eq!(result[0].category.as_deref(), Some("Int"));
+    }
+
+    #[test]
+    fn group_w01_multiple_same_type() {
+        let hint = "remove the rule or add a unique dispatch token";
+        let diags = vec![
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("FloatToStr"), "rule `FloatToStr` unreachable", Some(hint)),
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("BoolToStr"), "rule `BoolToStr` unreachable", Some(hint)),
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Bool"), Some("IntToBool"), "rule `IntToBool` unreachable", Some(hint)),
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Int"), Some("FloatToInt"), "rule `FloatToInt` unreachable", Some(hint)),
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Int"), Some("StrToInt"), "rule `StrToInt` unreachable", Some(hint)),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1, "5 W01 with same hint should become 1 grouped diagnostic");
+        assert_eq!(result[0].id, "W01");
+        assert!(result[0].message.contains("5 rules are unreachable"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Str: FloatToStr, BoolToStr"), "should list Str rules: {}", result[0].message);
+        assert!(result[0].message.contains("Bool: IntToBool"), "should list Bool rules: {}", result[0].message);
+        assert!(result[0].message.contains("Int: FloatToInt, StrToInt"), "should list Int rules: {}", result[0].message);
+        assert!(result[0].category.is_none(), "grouped diagnostic has no single category");
+    }
+
+    #[test]
+    fn group_w01_mixed_types_separate() {
+        let diags = vec![
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("FloatToStr"), "rule unreachable", Some("hint A")),
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("BoolToStr"), "rule unreachable", Some("hint A")),
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Int"), Some("BadRule"), "rule unreachable", Some("hint B")),
+        ];
+        let result = group_diagnostics(diags);
+        // Two different hints → two groups (one grouped, one pass-through)
+        assert_eq!(result.len(), 2, "different hints produce separate groups");
+        assert_eq!(result[0].id, "W01");
+        assert_eq!(result[1].id, "W01");
+    }
+
+    #[test]
+    fn group_g03_multiple_categories() {
+        let diags = vec![
+            make_diag("G03", "ambiguous-prefix", LintSeverity::Warning, Some("Int"), None, "ambiguous prefix for token `kw` in Int", Some("add unique dispatch tokens")),
+            make_diag("G03", "ambiguous-prefix", LintSeverity::Warning, Some("Float"), None, "ambiguous prefix for token `kw` in Float", Some("add unique dispatch tokens")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "G03");
+        assert!(result[0].message.contains("2 ambiguous prefix dispatch"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_g08_all_merged() {
+        let diags = vec![
+            make_diag("G08", "missing-cast-to-root", LintSeverity::Warning, Some("Float"), None, "no cast path from category `Float` to primary category `Proc`", Some("add a cast rule")),
+            make_diag("G08", "missing-cast-to-root", LintSeverity::Warning, Some("Bool"), None, "no cast path from category `Bool` to primary category `Proc`", Some("add a cast rule")),
+            make_diag("G08", "missing-cast-to-root", LintSeverity::Warning, Some("Str"), None, "no cast path from category `Str` to primary category `Proc`", Some("add a cast rule")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "G08");
+        assert!(result[0].message.contains("3 categories have no cast path"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("isolated: Float, Bool, Str"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_preserves_non_grouped_ids() {
+        let diags = vec![
+            make_diag("G01", "left-recursion", LintSeverity::Warning, Some("Int"), Some("Bad"), "left recursive", None),
+            make_diag("C01", "cast-cycle", LintSeverity::Error, None, None, "cycle detected", None),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, "G01");
+        assert_eq!(result[1].id, "C01");
+    }
+
+    #[test]
+    fn group_mixed_ids_preserves_order() {
+        let diags = vec![
+            make_diag("G01", "left-recursion", LintSeverity::Warning, Some("Int"), None, "left recursive", None),
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("R1"), "dead", Some("hint")),
+            make_diag("C01", "cast-cycle", LintSeverity::Error, None, None, "cycle", None),
+            make_diag("W01", "dead-rule", LintSeverity::Warning, Some("Str"), Some("R2"), "dead", Some("hint")),
+        ];
+        let result = group_diagnostics(diags);
+        // G01 at index 0, W01 grouped at index 1 (first occurrence position), C01 at index 2
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0].id, "G01");
+        assert_eq!(result[1].id, "W01");
+        assert!(result[1].message.contains("2 rules are unreachable"), "W01 should be grouped");
+        assert_eq!(result[2].id, "C01");
+    }
+
+    #[test]
+    fn group_g27_by_general_rule() {
+        let diags = vec![
+            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `AmbNew` may be subsumed by more general rule `AmbCong`", Some("review")),
+            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `OutRule` may be subsumed by more general rule `AmbCong`", Some("review")),
+            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `FooRule` may be subsumed by more general rule `AmbCong`", Some("review")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "G27");
+        assert!(result[0].message.contains("3 rules may be subsumed"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("candidates: AmbNew, OutRule, FooRule"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_g27_different_generals() {
+        let diags = vec![
+            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `A` may be subsumed by more general rule `Gen1`", Some("review")),
+            make_diag("G27", "rule-subsumption-candidate", LintSeverity::Warning, None, None, "rule `B` may be subsumed by more general rule `Gen2`", Some("review")),
+        ];
+        let result = group_diagnostics(diags);
+        // Two different general rules → each passes through individually (single-item groups)
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0].id, "G27");
+        assert_eq!(result[1].id, "G27");
+    }
+
+    #[test]
+    fn group_w05_by_category() {
+        let diags: Vec<LintDiagnostic> = (0..5)
+            .map(|i| make_diag(
+                "W05", "composed-dispatch-ambiguity", LintSeverity::Warning,
+                Some("Float"), None,
+                &format!(
+                    "2-way ambiguity at DFA state {}: 2 derivations\n\
+                     \x20 - Token::KwFn → rule FnFloat (weight 1.00)\n\
+                     \x20 - Token::KwFn → rule Ident (weight 11.00)\n\
+                     \x20 Resolved by tropical shortest path → FnFloat",
+                    i
+                ),
+                Some("assign distinct WFST weights to disambiguate"),
+            ))
+            .chain((0..3).map(|i| make_diag(
+                "W05", "composed-dispatch-ambiguity", LintSeverity::Warning,
+                Some("Int"), None,
+                &format!(
+                    "2-way ambiguity at DFA state {}: 2 derivations\n\
+                     \x20 - Token::KwInt → rule IntCast (weight 1.00)\n\
+                     \x20 - Token::KwInt → rule Ident (weight 11.00)\n\
+                     \x20 Resolved by tropical shortest path → IntCast",
+                    i + 10
+                ),
+                Some("assign distinct WFST weights to disambiguate"),
+            )))
+            .collect();
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1, "8 W05 should become 1 grouped: {:#?}", result.iter().map(|d| &d.message).collect::<Vec<_>>());
+        assert_eq!(result[0].id, "W05");
+        assert!(result[0].message.contains("8 ambiguities resolved"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Float:"), "should list Float: {}", result[0].message);
+        assert!(result[0].message.contains("Int:"), "should list Int: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_w05_single_passes_through() {
+        let diag = make_diag(
+            "W05", "composed-dispatch-ambiguity", LintSeverity::Warning,
+            Some("Float"), None, "2-way ambiguity at DFA state 0", Some("hint"),
+        );
+        let result = group_diagnostics(vec![diag]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].category.as_deref(), Some("Float"));
+    }
+
+    #[test]
+    fn group_w07_multiple() {
+        let diags = vec![
+            make_diag("W07", "nearly-dead-path", LintSeverity::Note, Some("Str"), Some("R1"), "nearly dead", Some("hint")),
+            make_diag("W07", "nearly-dead-path", LintSeverity::Note, Some("Str"), Some("R2"), "nearly dead", Some("hint")),
+            make_diag("W07", "nearly-dead-path", LintSeverity::Note, Some("Bool"), Some("R3"), "nearly dead", Some("hint")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "W07");
+        assert!(result[0].message.contains("3 rules on nearly-dead paths"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Bool: R3"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Str: R1, R2"), "message: {}", result[0].message);
     }
 }

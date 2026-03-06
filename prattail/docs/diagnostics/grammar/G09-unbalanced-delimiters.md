@@ -11,9 +11,9 @@ syntax. The lint checks three delimiter pairs:
 
 | Open | Close |
 |------|-------|
-| `(` | `)` |
-| `{` | `}` |
-| `[` | `]` |
+| `(`  | `)`   |
+| `{`  | `}`   |
+| `[`  | `]`   |
 
 Counting is performed at the character level within each terminal string, not at the
 terminal-string level. This means compound terminals like `"in("` contribute 1 to

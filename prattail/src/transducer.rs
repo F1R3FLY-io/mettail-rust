@@ -410,7 +410,7 @@ impl TransducerCascade {
 
         if total_changes > 0 {
             format!(
-                "E1 transducer cascade: {} change(s) across {} categories ({} total iterations)",
+                "transducer cascade: {} change(s) across {} categories ({} total iterations)",
                 total_changes, categories_optimized, total_iterations
             )
         } else {

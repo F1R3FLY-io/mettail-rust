@@ -325,58 +325,6 @@ uses the rule weights to initialize the prediction WFSTs.
 
 ---
 
-## 11. Training Data-Flow Pipeline
-
-```
-  Corpus of source files
-       |
-       v
-  Vec<TrainingExample>
-  { input: String,
-    expected_rule_labels: Vec<String> }
-       |
-       v
-  RuleWeights::uniform(labels)
-  (all weights = LogWeight(0.0) = probability 1.0)
-       |
-       v
-  rw.set_learning_rate(lr)
-       |
-       v
-  rw.train(examples, epochs)
-       |
-       +-- per-epoch SGD:
-       |   correct_weight --- log-semiring x
-       |   total_weight   --- log-sum-exp
-       |   gradient       --- count(correct) - count(all)
-       |   update         --- w -= lr x gradient, clamp >= 0
-       |
-       v
-  TrainingStats
-  { epoch_losses, final_loss,
-    converged, recommended_beam_width }
-       |
-       v
-  rw.to_trained_model(&stats)
-       |
-       v
-  TrainedModel
-  { rule_weights, recommended_beam_width, metadata }
-       |
-       +---- [optional] log_push_weights(&mut edges, ...)
-       |     <- normalize via backward_scores()
-       |
-       v
-  model.save("grammar_weights.json")
-       |
-       v
-  grammar_weights.json
-  <- loaded at compile time by language! { options {
-      log_semiring_model_path: "grammar_weights.json" } }
-```
-
----
-
 ## 12. Example: 3-Epoch Trace
 
 A tiny grammar with rules `{Add, Mul, Lit}`, two training examples, learning
@@ -431,19 +379,71 @@ distributions (some rules much more frequent than others).
 
 ---
 
+## 11. Training Data-Flow Pipeline
+
+```
+  Corpus of source files
+       │
+       ▼
+  Vec<TrainingExample>
+  { input: String,
+    expected_rule_labels: Vec<String> }
+       │
+       ▼
+  RuleWeights::uniform(labels)
+  (all weights = LogWeight(0.0) = probability 1.0)
+       │
+       ▼
+  rw.set_learning_rate(lr)
+       │
+       ▼
+  rw.train(examples, epochs)
+       │
+       ├── per-epoch SGD:
+       │   correct_weight ─── log-semiring x
+       │   total_weight   ─── log-sum-exp
+       │   gradient       ─── count(correct) - count(all)
+       │   update         ─── w -= lr x gradient, clamp >= 0
+       │
+       ▼
+  TrainingStats
+  { epoch_losses, final_loss,
+    converged, recommended_beam_width }
+       │
+       ▼
+  rw.to_trained_model(&stats)
+       │
+       ▼
+  TrainedModel
+  { rule_weights, recommended_beam_width, metadata }
+       │
+       ├──── [optional] log_push_weights(&mut edges, ...)
+       │     <- normalize via backward_scores()
+       │
+       ▼
+  model.save("grammar_weights.json")
+       │
+       ▼
+  grammar_weights.json
+  <- loaded at compile time by language! { options {
+      log_semiring_model_path: "grammar_weights.json" } }
+```
+
+---
+
 ## 13. Source Reference
 
-| Symbol | Location |
-|--------|----------|
-| `RuleWeights` | `prattail/src/training.rs` |
-| `TrainingExample` | `prattail/src/training.rs` |
-| `TrainingStats` | `prattail/src/training.rs` |
-| `TrainedModel` | `prattail/src/training.rs` |
-| `TrainedModelMetadata` | `prattail/src/training.rs` |
-| `log_push_weights` | `prattail/src/log_push.rs` |
-| `check_normalization` | `prattail/src/log_push.rs` |
-| `backward_scores` | `prattail/src/forward_backward.rs` |
-| `LogWeight` | `prattail/src/automata/semiring.rs` |
+| Symbol                 | Location                            |
+|------------------------|-------------------------------------|
+| `RuleWeights`          | `prattail/src/training.rs`          |
+| `TrainingExample`      | `prattail/src/training.rs`          |
+| `TrainingStats`        | `prattail/src/training.rs`          |
+| `TrainedModel`         | `prattail/src/training.rs`          |
+| `TrainedModelMetadata` | `prattail/src/training.rs`          |
+| `log_push_weights`     | `prattail/src/log_push.rs`          |
+| `check_normalization`  | `prattail/src/log_push.rs`          |
+| `backward_scores`      | `prattail/src/forward_backward.rs`  |
+| `LogWeight`            | `prattail/src/automata/semiring.rs` |
 
 Test counts: 12 (training.rs) + 2 (log_push.rs).
 

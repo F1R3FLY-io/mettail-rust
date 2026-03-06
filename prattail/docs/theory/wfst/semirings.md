@@ -55,19 +55,19 @@ in the input:
 
 These two questions demand exactly two operations:
 
-- **⊕ (plus)** — choosing among alternatives (parallel / branching arcs)
-- **⊗ (times)** — combining sequential steps (chained arcs)
+- **⊕  (plus)** — choosing among alternatives (parallel / branching arcs)
+- **⊗  (times)** — combining sequential steps (chained arcs)
 
 Consider a simple 3-node dispatch graph:
 
 ```
          ┌─── w₁ ───▶ B ─── w₃ ───┐
-    q₀ ──┤                        ├──▶ q_f    ⊗ chains steps: w₁ ⊗ w₃
-         └─── w₂ ───▶ C ─── w₄ ───┘           ⊕ picks winner: path₁ ⊕ path₂
+    q₀ ──┤                        ├──▶ q_f    ⊗  chains steps: w₁ ⊗  w₃
+         └─── w₂ ───▶ C ─── w₄ ───┘           ⊕  picks winner: path₁ ⊕  path₂
 
-    path₁ = w₁ ⊗ w₃     (cost of going through B)
-    path₂ = w₂ ⊗ w₄     (cost of going through C)
-    winner = path₁ ⊕ path₂
+    path₁ = w₁ ⊗  w₃     (cost of going through B)
+    path₂ = w₂ ⊗  w₄     (cost of going through C)
+    winner = path₁ ⊕  path₂
 ```
 
 The semiring axioms are not arbitrary mathematical requirements — they are
@@ -81,21 +81,21 @@ regardless of:
 Without these guarantees, the same grammar could produce different parse
 results depending on implementation details that should be irrelevant.
 
-**Different choices of ⊕ and ⊗ answer different questions about the same
+**Different choices of ⊕  and ⊗  answer different questions about the same
 parse graph.** PraTTaIL's ten semirings provide ten distinct lenses:
 
-| Semiring | ⊕ answers | ⊗ answers |
-|----------|-----------|-----------|
-| TropicalWeight | "which path is cheapest?" | "what does this path cost in total?" |
-| LogWeight | "what is the combined probability?" | "what is this path's probability?" |
-| CountingWeight | "how many paths exist?" | "how many combined derivations?" |
-| BooleanWeight | "is any path reachable?" | "is this entire path reachable?" |
-| EditWeight | "which repair has fewest edits?" | "how many edits on this path?" |
-| ContextWeight | "which rules contribute?" | "which rules span both segments?" |
-| ComplexityWeight | "which path has the simplest bottleneck?" | "what is this path's bottleneck?" |
-| NbestWeight | "what are the top N paths?" | "what are the combined top N?" |
-| ProductWeight | (combines two ⊕ answers) | (combines two ⊗ answers) |
-| EntropyWeight | "how uncertain is the distribution?" | "what is the joint uncertainty?" |
+| Semiring         | ⊕  answers                                | ⊗  answers                           |
+|------------------|-------------------------------------------|--------------------------------------|
+| TropicalWeight   | "which path is cheapest?"                 | "what does this path cost in total?" |
+| LogWeight        | "what is the combined probability?"       | "what is this path's probability?"   |
+| CountingWeight   | "how many paths exist?"                   | "how many combined derivations?"     |
+| BooleanWeight    | "is any path reachable?"                  | "is this entire path reachable?"     |
+| EditWeight       | "which repair has fewest edits?"          | "how many edits on this path?"       |
+| ContextWeight    | "which rules contribute?"                 | "which rules span both segments?"    |
+| ComplexityWeight | "which path has the simplest bottleneck?" | "what is this path's bottleneck?"    |
+| NbestWeight      | "what are the top N paths?"               | "what are the combined top N?"       |
+| ProductWeight    | (combines two ⊕  answers)                 | (combines two ⊗  answers)            |
+| EntropyWeight    | "how uncertain is the distribution?"      | "what is the joint uncertainty?"     |
 
 ---
 
@@ -112,14 +112,14 @@ A semiring **S = (K, ⊕, ⊗, 0̄, 1̄)** consists of:
 ### 3.1 Required Properties
 
 ```
-(A1)  (a ⊕ b) ⊕ c  =  a ⊕ (b ⊕ c)          [⊕ associative]
-(A2)  a ⊕ b        =  b ⊕ a                [⊕ commutative]
-(A3)  0̄ ⊕ a        =  a ⊕ 0̄  =  a          [⊕ identity]
-(M1)  (a ⊗ b) ⊗ c  =  a ⊗ (b ⊗ c)          [⊗ associative]
-(M2)  1̄ ⊗ a        =  a ⊗ 1̄  =  a          [⊗ identity]
-(D1)  a ⊗ (b ⊕ c)  =  (a ⊗ b) ⊕ (a ⊗ c)    [⊗ left-distributes over ⊕]
-(D2)  (a ⊕ b) ⊗ c  =  (a ⊗ c) ⊕ (b ⊗ c)    [⊗ right-distributes over ⊕]
-(Z)   0̄ ⊗ a        =  a ⊗ 0̄  =  0̄          [0̄ annihilates ⊗]
+(A1)  (a ⊕  b) ⊕  c  =  a ⊕  (b ⊕  c)           [⊕  associative]
+(A2)  a ⊕  b         =  b ⊕  a                  [⊕  commutative]
+(A3)  0̄ ⊕  a         =  a ⊕  0̄  =  a            [⊕  identity]
+(M1)  (a ⊗  b) ⊗  c  =  a ⊗  (b ⊗  c)           [⊗  associative]
+(M2)  1̄ ⊗  a         =  a ⊗  1̄  =  a            [⊗  identity]
+(D1)  a ⊗  (b ⊕  c)  =  (a ⊗  b) ⊕  (a ⊗  c)    [⊗  left-distributes over ⊕]
+(D2)  (a ⊕  b) ⊗  c  =  (a ⊗  c) ⊕  (b ⊗  c)    [⊗  right-distributes over ⊕]
+(Z)   0̄ ⊗  a         =  a ⊗  0̄  =  0̄            [0̄ annihilates ⊗]
 ```
 
 ### 3.2 Additional Classifications
@@ -127,13 +127,13 @@ A semiring **S = (K, ⊕, ⊗, 0̄, 1̄)** consists of:
 A semiring is **commutative** if:
 
 ```
-(MC)  a ⊗ b  =  b ⊗ a
+(MC)  a ⊗  b  =  b ⊗  a
 ```
 
 A semiring is **idempotent** if:
 
 ```
-(I)   a ⊕ a  =  a
+(I)   a ⊕  a  =  a
 ```
 
 Idempotent semirings support *tropical-style* best-path extraction.
@@ -165,7 +165,7 @@ The axioms above are not an abstract checklist — each one prevents a specific
 class of parsing bug. This section explains, for every axiom, what goes wrong
 in a parser if the property fails.
 
-### 4.1 (A1) ⊕ Associativity — Discovery Order Must Not Change the Winner
+### 4.1 (A1) ⊕  Associativity — Discovery Order Must Not Change the Winner
 
 **Parsing interpretation.** The order in which the parser discovers alternatives
 must not affect which parse wins. If the parser evaluates rule A first, then
@@ -177,20 +177,20 @@ parser behavior. Reordering rules in the `.mettail` file — a change that shoul
 be purely cosmetic — could produce different parse trees for the same input.
 
 ```
-Without (A1):   (A ⊕ B) ⊕ C  ≠  A ⊕ (B ⊕ C)
+Without (A1):   (A ⊕  B) ⊕  C  ≠  A ⊕  (B ⊕  C)
 
-     Evaluate left-first:                Evaluate right-first:
-     ┌─ A ─┐                            ┌─ A ─────────────────┐
-     │     ├──⊕──┐                      │                     │
-     └─ B ─┘     ├──⊕── winner₁        └──⊕──┐              │
-                  │                            ├──⊕── winner₂
-            ┌─ C ─┘                      ┌─ B ─┘
-                                         └─ C ─┘
+    Left-first: (A ⊕  B) ⊕  C             Right-first: A ⊕  (B ⊕  C)
 
-     winner₁ ≠ winner₂  ←  BUG: rule ordering changes the parse
+          ⊕  ── winner₁                        ⊕  ── winner₂
+         ╱ ╲                                  ╱ ╲
+        ⊕   C                                A   ⊕
+       ╱ ╲                                       ╱ ╲
+      A   B                                     B   C
+
+    winner₁ ≠ winner₂  ←  BUG: rule ordering changes the parse
 ```
 
-### 4.2 (A2) ⊕ Commutativity — Scanning Direction Must Not Matter
+### 4.2 (A2) ⊕  Commutativity — Scanning Direction Must Not Matter
 
 **Parsing interpretation.** Scanning alternatives left-to-right versus
 right-to-left yields the same winner. The grammar author should not need to
@@ -200,7 +200,7 @@ care about rule ordering for correctness.
 different order produce different parsers. Refactoring tools that sort rules
 alphabetically would change behavior.
 
-### 4.3 (A3) ⊕ Identity (Zero) — Unreachable Alternatives Contribute Nothing
+### 4.3 (A3) ⊕  Identity (Zero) — Unreachable Alternatives Contribute Nothing
 
 **Parsing interpretation.** There must be an "impossible" weight meaning "no
 path exists." Combining any weight with "impossible" yields the original
@@ -211,7 +211,7 @@ parser cannot represent "no valid parse exists for this token" — every dispatc
 point would be forced to have at least one candidate, making dead-rule
 detection impossible.
 
-### 4.4 (M1) ⊗ Associativity — Segment Grouping Must Not Change Path Cost
+### 4.4 (M1) ⊗  Associativity — Segment Grouping Must Not Change Path Cost
 
 **Parsing interpretation.** Grouping sequential parse segments differently
 must not change the total path weight. `parse(A) then parse(B) then parse(C)`
@@ -223,20 +223,20 @@ weights for the same input. The choice of parsing strategy would become
 semantically visible rather than being an implementation detail.
 
 ```
-Without (M1):   (w₁ ⊗ w₂) ⊗ w₃  ≠  w₁ ⊗ (w₂ ⊗ w₃)
+Without (M1):   (w₁ ⊗  w₂) ⊗  w₃  ≠  w₁ ⊗  (w₂ ⊗  w₃)
 
-    Left-recursive grouping:           Right-recursive grouping:
-    ┌──w₁──┐                           ┌──w₁──────────────────┐
-    │      ├──⊗──┐                     │                      │
-    └──w₂──┘     ├──⊗── cost₁         └──⊗──┐               │
-                 │                           ├──⊗── cost₂
-           ┌──w₃──┘                    ┌──w₂──┘
-                                       └──w₃──┘
+    Left-recursive: (w₁ ⊗  w₂) ⊗  w₃     Right-recursive: w₁ ⊗  (w₂ ⊗  w₃)
+
+          ⊗  ── cost₁                           ⊗  ── cost₂
+         ╱ ╲                                   ╱ ╲
+        ⊗   w₃                               w₁   ⊗
+       ╱ ╲                                        ╱ ╲
+      w₁  w₂                                    w₂  w₃
 
     cost₁ ≠ cost₂  ←  BUG: parser architecture changes the weights
 ```
 
-### 4.5 (M2) ⊗ Identity (One) — Free Transitions Add No Cost
+### 4.5 (M2) ⊗  Identity (One) — Free Transitions Add No Cost
 
 **Parsing interpretation.** There must be a "free" weight adding no cost.
 A direct rule match (no dispatch overhead) or a zero-cost epsilon transition
@@ -265,10 +265,10 @@ Without distributivity:
 
     Before factoring:             After factoring (SHOULD be equivalent):
     q₀ ──w₁──▶ A ──w₃──▶ q_f    q₀ ──w₁──▶ A ──┬─w₃─▶ q_f
-    q₀ ──w₁──▶ A ──w₄──▶ q_f                    └─w₄─▶ q_f
+    q₀ ──w₁──▶ A ──w₄──▶ q_f                   └─w₄─▶ q_f
 
-    Before: path₁ = w₁⊗w₃, path₂ = w₁⊗w₄, result = (w₁⊗w₃) ⊕ (w₁⊗w₄)
-    After:  result = w₁ ⊗ (w₃ ⊕ w₄)
+    Before: path₁ = w₁ ⊗  w₃, path₂ = w₁ ⊗  w₄, result = (w₁ ⊗  w₃) ⊕  (w₁ ⊗  w₄)
+    After:  result = w₁ ⊗  (w₃ ⊕  w₄)
 
     D1 guarantees these are equal.
     Without D1: factoring changes the dispatch winner  ←  BUG
@@ -286,24 +286,24 @@ by a valid suffix, producing a path that appears live but contains an
 impossible segment. The parser would attempt to dispatch through unreachable
 rules, generating nonsensical parse trees or runtime errors.
 
-### 4.8 (I) ⊕ Idempotency (Optional) — Rediscovery Changes Nothing
+### 4.8 (I) ⊕  Idempotency (Optional) — Rediscovery Changes Nothing
 
 **Parsing interpretation.** Discovering the same alternative twice is the same
 as discovering it once. This separates two fundamentally different kinds of
 semiring:
 
-| Property | Idempotent (a ⊕ a = a) | Non-idempotent (a ⊕ a ≠ a) |
-|----------|------------------------|---------------------------|
-| Semantics | "select best" | "count/sum all" |
-| Semirings | Tropical, Edit, Boolean, Context, Complexity | Log, Counting |
-| Algorithm | Viterbi (best path) | Forward-backward (all paths) |
+| Property  | Idempotent (a ⊕  a = a)                      | Non-idempotent (a ⊕  a ≠ a)  |
+|-----------|----------------------------------------------|------------------------------|
+| Semantics | "select best"                                | "count/sum all"              |
+| Semirings | Tropical, Edit, Boolean, Context, Complexity | Log, Counting                |
+| Algorithm | Viterbi (best path)                          | Forward-backward (all paths) |
 
 Idempotent semirings support Viterbi-style best-path extraction because
 re-encountering a state does not change its weight. Non-idempotent semirings
 support forward-backward because they correctly accumulate probability mass
 (or derivation counts) from multiple paths.
 
-### 4.9 (MC) ⊗ Commutativity (Optional) — Direction Independence
+### 4.9 (MC) ⊗  Commutativity (Optional) — Direction Independence
 
 **Parsing interpretation.** Path weight is independent of traversal direction.
 Parsing left-to-right produces the same path weight as a hypothetical
@@ -322,11 +322,11 @@ IDs (used for deduplication) combine asymmetrically.
 The **tropical semiring** over R+ union {+inf}:
 
 ```
-K   =  ℝ⁺ ∪ {+∞}
-a ⊕ b  =  min(a, b)
-a ⊗ b  =  a + b
-0̄      =  +∞           (unreachable; identity for min)
-1̄      =  0.0          (zero cost; identity for addition)
+K       =  ℝ⁺ ∪ {+∞}
+a ⊕  b  =  min(a, b)
+a ⊗  b  =  a + b
+0̄       =  +∞           (unreachable; identity for min)
+1̄       =  0.0          (zero cost; identity for addition)
 ```
 
 Properties:
@@ -361,10 +361,10 @@ pub fn from_priority(priority: u8) -> Self {
 
 ### 5.3 Zero-Annihilation
 
-Because 0̄ = +inf and ⊗ = addition:
+Because 0̄ = +inf and ⊗  = addition:
 
 ```
-+∞ + 5.0  =  +∞   (unreachable path stays unreachable)
++∞ + 5.0 = +∞   (unreachable path stays unreachable)
 ```
 
 This correctly models "if any segment is impossible, the whole path is
@@ -406,7 +406,7 @@ a ⊗  b  =  a + b                (log-domain multiplication)
 
 Properties:
 - **Commutative**: log-sum-exp is symmetric; addition commutes.
-- **NOT idempotent**: a ⊕ a = -ln(2e^-a) = a - ln 2 != a (in general).
+- **NOT idempotent**: a ⊕  a = -ln(2e^-a) = a - ln 2 != a (in general).
 
 The non-idempotency is the key distinction: LogWeight sums *all* path
 probabilities rather than selecting only the best.
@@ -487,16 +487,16 @@ The ten semirings relate to broader families as follows:
   ║  ContextWeight               ║                                        ║       ║
   ║  (∪, ∩, ∅, U)                ║                                        ║       ║
   ║                              ║                                        ║       ║
-  ║  ComplexityWeight             ║                                        ║       ║
+  ║  ComplexityWeight            ║                                        ║       ║
   ║  (min, max, ∞, 0)            ║                                        ║       ║
   ╚══════════════════════════════╝                                        ║       ║
         ║                                                                 ║       ║
         ╚═════════════════════════════════════════════════════════════════╝       ║
               ║                                                                   ║
-              ║  NbestWeight<N> (NOT commutative, NOT idempotent)                  ║
-              ║  (merge_nbest, concat_nbest, [], [(0,0.0)])                        ║
+              ║  NbestWeight<N> (NOT commutative, NOT idempotent)                 ║
+              ║  (merge_nbest, concat_nbest, [], [(0,0.0)])                       ║
               ║                                                                   ║
-              ║  ProductWeight<S1, S2>  (inherits properties from S1 and S2)       ║
+              ║  ProductWeight<S1, S2>  (inherits properties from S1 and S2)      ║
               ║                                                                   ║
               ╚═══════════════════════════════════════════════════════════════════╝
 ```
@@ -522,7 +522,7 @@ can be recovered from which:
                                              ▼
      CountingWeight ── φ(n) = (n>0) ──▶ BooleanWeight
                                              ▲
-     ContextWeight ─── ψ(S) = (|S|>0) ──────┘
+     ContextWeight ─── ψ(S) = (|S|>0) ───────┘
 
      TropicalWeight ┄┄ structural iso ┄┄▶ EditWeight
          (ℝ⁺, min, +)                      (ℕ, min, +)
@@ -557,7 +557,7 @@ PraTTaIL's compilation pipeline:
 
 ```
 Pipeline Stage                        Active Semirings
-────────────────────────────────────────────────────────────────
+─────────────────────────────────────────────────────────────────────────────
  1. FIRST/FOLLOW set analysis         (set-theoretic, unweighted)
  2. Dispatch action tables            TropicalWeight
  3. PredictionWfst construction       TropicalWeight
@@ -566,7 +566,7 @@ Pipeline Stage                        Active Semirings
  6. Dead-rule detection               BooleanWeight (projected from Tropical)
  7. Lint analysis                     CountingWeight, TropicalWeight
  8. Codegen dispatch ordering         TropicalWeight
- 9. Error recovery WFST              TropicalWeight, EditWeight
+ 9. Error recovery WFST               TropicalWeight, EditWeight
 10. Token lattice / Viterbi           Generic W (default: TropicalWeight)
 11. Forward-backward [wfst-log]       LogWeight, EntropyWeight
 12. Cost-benefit analysis             ProductWeight<Tropical, Tropical>
@@ -593,8 +593,8 @@ Consider a graph with four nodes **A, B, C, D** and the following arcs:
 
 ```
   A ──(1.0)──► B ──(3.0)──► D
-  │                          ▲
-  └──(2.0)──► C ──(0.5)──────┘
+  │                         ▲
+  └──(2.0)──► C ──(0.5)─────┘
 ```
 
 Path weights:
@@ -603,14 +603,14 @@ Path weights:
 
 ### 8.1 TropicalWeight (shortest path)
 
-Segment weights combined with ⊗ = addition:
+Segment weights combined with ⊗  = addition:
 
 ```
 w(A→B→D) = 1.0 + 3.0 = 4.0
 w(A→C→D) = 2.0 + 0.5 = 2.5
 ```
 
-Parallel alternatives combined with ⊕ = min:
+Parallel alternatives combined with ⊕  = min:
 
 ```
 w(A→D)  = min(4.0, 2.5) = 2.5
@@ -630,14 +630,14 @@ p(A→B→D) = 0.3679 × 0.0498 ≈ 0.01832
 p(A→C→D) = 0.1353 × 0.6065 ≈ 0.08206
 ```
 
-Log-weight ⊗ = addition (multiplies probabilities in log-domain):
+Log-weight ⊗  = addition (multiplies probabilities in log-domain):
 
 ```
 w(A→B→D) = 1.0 + 3.0 = 4.0   (log-domain: same as tropical times)
 w(A→C→D) = 2.0 + 0.5 = 2.5
 ```
 
-Log-weight ⊕ = log-sum-exp (sums probabilities):
+Log-weight ⊕  = log-sum-exp (sums probabilities):
 
 ```
 total probability  = 0.01832 + 0.08206 ≈ 0.10038
@@ -680,12 +680,12 @@ implementations. The following is a representative sample:
 |:--------------------------------------|:-----------------------------|
 | `test_tropical_zero_is_infinity`      | 0̄ = +inf                     |
 | `test_tropical_one_is_zero_cost`      | 1̄ = 0.0                      |
-| `test_tropical_plus_is_min`           | ⊕ = min, commutative         |
-| `test_tropical_times_is_add`          | ⊗ = addition                 |
-| `test_tropical_zero_annihilates`      | 0̄ ⊗ a = 0̄                    |
-| `test_tropical_one_is_identity`       | 1̄ ⊗ a = a                    |
-| `test_tropical_zero_is_plus_identity` | 0̄ ⊕ a = a                    |
-| `test_tropical_plus_idempotent`       | a ⊕ a = a                    |
+| `test_tropical_plus_is_min`           | ⊕  = min, commutative        |
+| `test_tropical_times_is_add`          | ⊗  = addition                |
+| `test_tropical_zero_annihilates`      | 0̄ ⊗  a = 0̄                   |
+| `test_tropical_one_is_identity`       | 1̄ ⊗  a = a                   |
+| `test_tropical_zero_is_plus_identity` | 0̄ ⊕  a = a                   |
+| `test_tropical_plus_idempotent`       | a ⊕  a = a                   |
 | `test_tropical_from_priority`         | Priority -> weight inversion |
 | `test_tropical_ordering`              | Total order a < b < +inf     |
 | `test_tropical_approx_eq`             | Epsilon comparison           |
@@ -717,10 +717,10 @@ ProductWeight<TropicalWeight, ComplexityWeight> composition.
 |:----------------------------------------|:------------------------------------------|
 | `test_log_weight_semiring_laws`         | All six axioms                            |
 | `test_log_weight_probability_roundtrip` | from_probability / to_probability inverse |
-| `test_log_weight_non_idempotent`        | a ⊕ a = a - ln 2 != a                     |
+| `test_log_weight_non_idempotent`        | a ⊕  a = a - ln 2 != a                    |
 | `test_log_weight_numerical_stability`   | No NaN/Inf for large inputs               |
 | `test_log_sum_exp_large_diff`           | Fast path when \|a-b\| > 20               |
-| `test_log_weight_times_is_addition`     | ⊗ = addition                              |
+| `test_log_weight_times_is_addition`     | ⊗  = addition                             |
 | `test_log_weight_ordering`              | Total order preserved                     |
 | `test_log_weight_display`               | Display formatting                        |
 
@@ -761,35 +761,35 @@ parser generator construction. Each row specifies the algebraic structure,
 primary application domain, key properties, and current implementation status
 within PraTTaIL.
 
-| # | Semiring              | Carrier Set K   | ⊕              | ⊗        | 0̄        | 1̄         | Application                                                      | Properties                  | PraTTaIL Status                                   |
-|:-:|:----------------------|:----------------|:---------------|:---------|:---------|:----------|:-----------------------------------------------------------------|:----------------------------|:--------------------------------------------------|
-| 1 | **Tropical**          | R+ union {+inf} | min            | +        | +inf     | 0.0       | Shortest-path dispatch, beam pruning                             | commutative, idempotent     | **Implemented** (`TropicalWeight`)                |
-| 2 | **Log**               | R+ union {+inf} | -ln(e^-a+e^-b) | +        | +inf     | 0.0       | Probabilistic parsing, forward-backward, training                | commutative, NOT idempotent | **Implemented** (`LogWeight`, feature `wfst-log`) |
-| 3 | **Counting**          | N               | +              | x        | 0        | 1         | Parse-tree counting, ambiguity detection                         | commutative, NOT idempotent | **Implemented** (`CountingWeight`)                |
-| 4 | **Boolean**           | {0, 1}          | ∨              | ∧        | 0        | 1         | Reachability, dead-rule detection, emptiness                     | commutative, idempotent     | **Implemented** (`BooleanWeight`)                 |
-| 5 | **Edit Distance**     | N union {+inf}  | min            | +        | +inf     | 0         | Minimum-repair parsing, error correction                         | commutative, idempotent     | **Implemented** (`EditWeight`)                    |
-| 6 | **Product**           | S1 x S2         | (⊕1, ⊕2)       | (⊗1, ⊗2) | (0̄1, 0̄2) | (1̄1, 1̄2)  | Multi-objective optimization (weight + count, weight + distance) | inherits from components    | **Implemented** (`ProductWeight`)                 |
-| 7 | **Context (Set)**     | 𝒫(Labels)       | ∪              | ∩        | ∅        | U         | Rule-set reachability, ambiguity diagnosis, follow-set tightening | commutative, idempotent     | **Implemented** (`ContextWeight`, BitSet<u128>)   |
-| 8 | **Complexity (Bottleneck)** | ℕ ∪ {∞}   | min            | max      | ∞        | 0         | Lookahead budget allocation, backtrack depth bounding             | commutative, idempotent     | **Implemented** (`ComplexityWeight`)              |
-| 9 | **N-Best (Viterbi-N)** | Sorted_N(u32 × ℝ⁺) | merge_nbest | concat_nbest | []  | [(0, 0.0)] | Lazy disambiguation, confidence scoring, N-best parse forest     | NOT commutative, NOT idempotent | **Implemented** (`NbestWeight<N>`)            |
-| 10 | **Entropy (Expectation)** | ℝ⁺ × ℝ⁺        | log-sum-exp + weighted mixture | componentwise + | (+∞, 0) | (0, 0) | Shannon entropy of parse distributions, adaptive beam width | commutative, NOT idempotent | **Implemented** (`EntropyWeight`, feature `wfst-log`) |
-| 11 | **Set/Forest**        | 2^(Parse Trees) | union          | lift(⊗)  | {}       | {epsilon} | All-parses enumeration, parse forest construction                | commutative, idempotent     | Not planned                                       |
-| 12 | **Max-Plus (Arctic)** | R union {-inf} | max            | +        | -inf     | 0.0       | Maximum-reward parsing, longest path                             | commutative, idempotent     | Not planned                                       |
+| #  | Semiring                    | Carrier Set K      | ⊕                              | ⊗               | 0̄        | 1̄          | Application                                                       | Properties                      | PraTTaIL Status                                       |
+|:--:|:----------------------------|:-------------------|:-------------------------------|:----------------|:---------|:-----------|:------------------------------------------------------------------|:--------------------------------|:------------------------------------------------------|
+| 1  | **Tropical**                | R+ union {+inf}    | min                            | +               | +inf     | 0.0        | Shortest-path dispatch, beam pruning                              | commutative, idempotent         | **Implemented** (`TropicalWeight`)                    |
+| 2  | **Log**                     | R+ union {+inf}    | -ln(e^-a+e^-b)                 | +               | +inf     | 0.0        | Probabilistic parsing, forward-backward, training                 | commutative, NOT idempotent     | **Implemented** (`LogWeight`, feature `wfst-log`)     |
+| 3  | **Counting**                | N                  | +                              | x               | 0        | 1          | Parse-tree counting, ambiguity detection                          | commutative, NOT idempotent     | **Implemented** (`CountingWeight`)                    |
+| 4  | **Boolean**                 | {0, 1}             | ∨                              | ∧               | 0        | 1          | Reachability, dead-rule detection, emptiness                      | commutative, idempotent         | **Implemented** (`BooleanWeight`)                     |
+| 5  | **Edit Distance**           | N union {+inf}     | min                            | +               | +inf     | 0          | Minimum-repair parsing, error correction                          | commutative, idempotent         | **Implemented** (`EditWeight`)                        |
+| 6  | **Product**                 | S1 x S2            | (⊕1, ⊕2)                       | (⊗1, ⊗2)        | (0̄1, 0̄2) | (1̄1, 1̄2)   | Multi-objective optimization (weight + count, weight + distance)  | inherits from components        | **Implemented** (`ProductWeight`)                     |
+| 7  | **Context (Set)**           | 𝒫(Labels)          | ∪                              | ∩               | ∅        | U          | Rule-set reachability, ambiguity diagnosis, follow-set tightening | commutative, idempotent         | **Implemented** (`ContextWeight`, BitSet<u128>)       |
+| 8  | **Complexity (Bottleneck)** | ℕ ∪ {∞}            | min                            | max             | ∞        | 0          | Lookahead budget allocation, backtrack depth bounding             | commutative, idempotent         | **Implemented** (`ComplexityWeight`)                  |
+| 9  | **N-Best (Viterbi-N)**      | Sorted_N(u32 × ℝ⁺) | merge_nbest                    | concat_nbest    | []       | [(0, 0.0)] | Lazy disambiguation, confidence scoring, N-best parse forest      | NOT commutative, NOT idempotent | **Implemented** (`NbestWeight<N>`)                    |
+| 10 | **Entropy (Expectation)**   | ℝ⁺ × ℝ⁺            | log-sum-exp + weighted mixture | componentwise + | (+∞, 0)  | (0, 0)     | Shannon entropy of parse distributions, adaptive beam width       | commutative, NOT idempotent     | **Implemented** (`EntropyWeight`, feature `wfst-log`) |
+| 11 | **Set/Forest**              | 2^(Parse Trees)    | union                          | lift(⊗)         | {}       | {epsilon}  | All-parses enumeration, parse forest construction                 | commutative, idempotent         | Not planned                                           |
+| 12 | **Max-Plus (Arctic)**       | R union {-inf}     | max                            | +               | -inf     | 0.0        | Maximum-reward parsing, longest path                              | commutative, idempotent         | Not planned                                           |
 
 ### 11.1 Extended Comparison
 
-| # | Semiring | ⊗ Commutative? | Copy size | Feature gate | Key algorithms | Homomorphism target |
-|:-:|:---------|:--------------:|:---------:|:------------:|:---------------|:--------------------|
-| 1 | Tropical | Yes | 8 B (`f64`) | always | Viterbi, beam pruning, dispatch ordering | — |
-| 2 | Log | Yes | 8 B (`f64`) | `wfst-log` | Forward-backward, EM training, N-best | Tropical (T→0⁺ limit) |
-| 3 | Counting | Yes | 8 B (`u64`) | always | Ambiguity counting, confidence scoring | Boolean (φ(n)=(n>0)) |
-| 4 | Boolean | Yes | 1 B (`bool`) | always | Dead-rule detection, reachability | — |
-| 5 | Edit | Yes | 4 B (`u32`) | always | Minimum-repair Viterbi, edit transducer | — |
-| 6 | Product | iff both | varies | always | Joint Viterbi, multi-objective DP | component projections |
-| 7 | Context | Yes | 16 B (`u128`) | always | Follow-set tightening, ambiguity diagnosis | Boolean (ψ(S)=(|S|>0)) |
-| 8 | Complexity | Yes | 4 B (`u32`) | always | Bottleneck path, lookahead budget | — |
-| 9 | N-Best | **No** | 4+8N B | always | Lazy disambiguation, confidence gap | Tropical (N=1 proj) |
-| 10 | Entropy | Yes | 16 B (`f64`×2) | `wfst-log` | Shannon entropy, adaptive beam width | Log (discard entropy) |
+| #  | Semiring   | ⊗  Commutative? |   Copy size    | Feature gate | Key algorithms                             | Homomorphism target          |
+|:--:|:-----------|:---------------:|:--------------:|:------------:|:-------------------------------------------|:-----------------------------|
+| 1  | Tropical   |       Yes       |  8 B (`f64`)   |    always    | Viterbi, beam pruning, dispatch ordering   | —                            |
+| 2  | Log        |       Yes       |  8 B (`f64`)   |  `wfst-log`  | Forward-backward, EM training, N-best      | Tropical (T→0⁺ limit)        |
+| 3  | Counting   |       Yes       |  8 B (`u64`)   |    always    | Ambiguity counting, confidence scoring     | Boolean (φ(n)=(n>0))         |
+| 4  | Boolean    |       Yes       |  1 B (`bool`)  |    always    | Dead-rule detection, reachability          | —                            |
+| 5  | Edit       |       Yes       |  4 B (`u32`)   |    always    | Minimum-repair Viterbi, edit transducer    | —                            |
+| 6  | Product    |    iff both     |     varies     |    always    | Joint Viterbi, multi-objective DP          | component projections        |
+| 7  | Context    |       Yes       | 16 B (`u128`)  |    always    | Follow-set tightening, ambiguity diagnosis | Boolean (ψ(S) = (\|S\| > 0)) |
+| 8  | Complexity |       Yes       |  4 B (`u32`)   |    always    | Bottleneck path, lookahead budget          | —                            |
+| 9  | N-Best     |     **No**      |     4+8N B     |    always    | Lazy disambiguation, confidence gap        | Tropical (N=1 proj)          |
+| 10 | Entropy    |       Yes       | 16 B (`f64`×2) |  `wfst-log`  | Shannon entropy, adaptive beam width       | Log (discard entropy)        |
 
 ### 11.2 Practical Usefulness Ranking
 
@@ -802,7 +802,7 @@ useful:
    all grammars receive WFST-weighted dispatch.
 
 2. **Log** — Essential for any system that trains weights from data. The
-   non-idempotent ⊕ preserves probability mass across alternatives, enabling
+   non-idempotent ⊕  preserves probability mass across alternatives, enabling
    forward-backward, EM training, and N-best extraction. Implemented
    behind `wfst-log`.
 
@@ -874,8 +874,8 @@ The **counting semiring** over the natural numbers:
 S  =  (ℕ, +, x, 0, 1)
 
 K   =  ℕ  =  {0, 1, 2, 3, ...}
-a ⊕ b  =  a + b       (sum counts from parallel alternatives)
-a ⊗ b  =  a x b       (multiply counts across sequential segments)
+a ⊕  b  =  a + b       (sum counts from parallel alternatives)
+a ⊗  b  =  a x b       (multiply counts across sequential segments)
 0̄      =  0            (no paths; identity for addition)
 1̄      =  1            (one path; identity for multiplication)
 ```
@@ -883,14 +883,14 @@ a ⊗ b  =  a x b       (multiply counts across sequential segments)
 ### 12.2 Properties
 
 - **Commutative**: a + b = b + a and a x b = b x a.
-- **NOT idempotent**: a ⊕ a = a + a = 2a != a (for a != 0). This is correct:
+- **NOT idempotent**: a ⊕  a = a + a = 2a != a (for a != 0). This is correct:
   two distinct paths contributing the same sub-count should double the total.
 
 ### 12.3 Parse-Tree Counting Semantics
 
 Each WFST arc carries a count weight equal to the number of distinct parse trees
-that traverse that arc. When two paths merge at a state, their counts add (⊕ = +).
-When a path traverses two arcs in sequence, their counts multiply (⊗ = x) because
+that traverse that arc. When two paths merge at a state, their counts add (⊕  = +).
+When a path traverses two arcs in sequence, their counts multiply (⊗  = x) because
 each tree through the first arc can combine with each tree through the second.
 
 The total weight at the accept state equals the total number of distinct parse
@@ -937,9 +937,9 @@ Step 1: Each rule contributes count 1 to the (state 7, Ident) entry.
   count(Lookup) = 1
   count(Invoke) = 1
 
-Step 2: Parallel alternatives combined with ⊕ = +:
+Step 2: Parallel alternatives combined with ⊕  = +:
 
-  total = 1 ⊕ 1 ⊕ 1 = 1 + 1 + 1 = 3
+  total = 1 ⊕  1 ⊕  1 = 1 + 1 + 1 = 3
 
 Step 3: count = 3 > 1  →  emit codegen warning:
 
@@ -973,7 +973,7 @@ additionally provides *how many* paths exist, not merely *whether* one does.
 | Aspect       | Counting            | Tropical                   | Log                              |
 |:-------------|:--------------------|:---------------------------|:---------------------------------|
 | Answers      | "how many parses?"  | "which parse is cheapest?" | "what is the total probability?" |
-| ⊕ semantics  | sum counts          | select minimum             | sum probabilities (log-domain)   |
+| ⊕  semantics  | sum counts          | select minimum             | sum probabilities (log-domain)   |
 | Idempotent   | No                  | Yes                        | No                               |
 | Codegen use  | ambiguity detection | dispatch ordering          | weight training                  |
 | Runtime cost | O(1) per operation  | O(1) per operation         | O(1) per operation (with exp/ln) |
@@ -990,8 +990,8 @@ The **Boolean semiring** over the two-element set:
 S  =  ({0, 1}, ∨, ∧, 0, 1)
 
 K   =  {0, 1}  =  {false, true}
-a ⊕ b  =  a ∨ b       (logical OR: reachable if either path is reachable)
-a ⊗ b  =  a ∧ b       (logical AND: reachable only if both segments are)
+a ⊕  b  =  a ∨ b       (logical OR: reachable if either path is reachable)
+a ⊗  b  =  a ∧ b       (logical AND: reachable only if both segments are)
 0̄      =  0 (false)    (unreachable; identity for OR)
 1̄      =  1 (true)     (reachable; identity for AND)
 ```
@@ -1015,7 +1015,7 @@ all others are *dead*.
   ┌──────────────────────────────────────────────────────┐
   │                                                      │
   │  start ──(1)──► s1 ──(1)──► s2 ──(1)──► accept       │
-  │    │                         ▲                       │
+  │    │                        ▲                        │
   │    └──(1)──► s3 ──(0)───────┘                        │
   │              │                                       │
   │              └──(1)──► s4  (dead: no path to accept) │
@@ -1053,7 +1053,7 @@ tables. Boolean analysis identifies these for removal during WFST minimization.
 | Aspect              | Boolean                  | Counting                    |
 |:--------------------|:-------------------------|:----------------------------|
 | Question answered   | "is it reachable?"       | "how many ways?"            |
-| ⊕ semantics         | a v b                    | a + b                       |
+| ⊕  semantics        | a v b                    | a + b                       |
 | Idempotent          | Yes: 1 v 1 = 1           | No: 1 + 1 = 2               |
 | Information content | 1 bit per state          | Unbounded integer per state |
 | Computational cost  | Bitwise operations       | Integer arithmetic          |
@@ -1087,8 +1087,8 @@ extended real numbers:
 S  =  (ℝ ∪ {-∞}, max, +, -∞, 0)
 
 K   =  ℝ ∪ {-∞}
-a ⊕ b  =  max(a, b)    (select the maximum-reward alternative)
-a ⊗ b  =  a + b        (accumulate reward along a path)
+a ⊕  b  =  max(a, b)    (select the maximum-reward alternative)
+a ⊗  b  =  a + b        (accumulate reward along a path)
 0̄      =  -∞           (no reward; identity for max)
 1̄      =  0.0          (zero reward; identity for addition)
 ```
@@ -1104,7 +1104,7 @@ a ⊗ b  =  a + b        (accumulate reward along a path)
 Where the tropical semiring finds the *cheapest* (minimum cost) path, the
 max-plus semiring finds the *most rewarding* (maximum reward) path. The ⊗
 operation is identical — addition accumulates along sequential segments — but
-the ⊕ operation takes max instead of min, selecting the path with highest
+the ⊕  operation takes max instead of min, selecting the path with highest
 total reward.
 
 ### 14.4 Negation Duality with Tropical
@@ -1150,7 +1150,7 @@ reward-based rather than cost-based:
 - **Longest-match lexing.** The reward is the number of characters consumed.
   The lexer should select the token that consumes the most input (maximal munch).
   Under max-plus, the longest match has the highest reward and is naturally
-  selected by ⊕ = max.
+  selected by ⊕  = max.
 
 - **Maximum-specificity dispatch.** When multiple rules match, prefer the most
   specific rule. Specificity can be modeled as a reward (more terminals = more
@@ -1168,7 +1168,7 @@ makes the intent explicit in the algebra.
 
 | Aspect                 | Max-Plus (Arctic)        | Tropical                | Log                             |
 |:-----------------------|:-------------------------|:------------------------|:--------------------------------|
-| ⊕ operation            | max (select best reward) | min (select least cost) | log-sum-exp (sum probabilities) |
+| ⊕  operation           | max (select best reward) | min (select least cost) | log-sum-exp (sum probabilities) |
 | Optimization direction | maximize                 | minimize                | N/A (sums, not optimizes)       |
 | Idempotent             | Yes                      | Yes                     | No                              |
 | Dual of                | Tropical (via negation)  | Max-Plus (via negation) | N/A                             |
@@ -1186,8 +1186,8 @@ The **edit distance semiring** over the extended natural numbers:
 S  =  (ℕ ∪ {+∞}, min, +, +∞, 0)
 
 K   =  ℕ ∪ {+∞}
-a ⊕ b  =  min(a, b)    (select the repair with fewest edits)
-a ⊗ b  =  a + b        (accumulate edits along a path)
+a ⊕  b  =  min(a, b)    (select the repair with fewest edits)
+a ⊗  b  =  a + b        (accumulate edits along a path)
 0̄      =  +∞           (no valid repair; identity for min)
 1̄      =  0            (zero edits; identity for addition)
 ```
@@ -1231,8 +1231,8 @@ yields a composed transducer **E o P** that, for any input string:
 
 1. Finds all possible edits that transform the input into a string accepted
    by **P**.
-2. Weights each edit sequence by the total number of operations (via ⊗ = +).
-3. Selects the minimum-edit sequence (via ⊕ = min).
+2. Weights each edit sequence by the total number of operations (via ⊗  = +).
+3. Selects the minimum-edit sequence (via ⊕  = min).
 
 The shortest-path through **E o P** gives the *closest valid parse* — the
 accepted string reachable from the input with the fewest insertions, deletions,
@@ -1255,9 +1255,9 @@ and substitutions.
   │                                                           │
   │  Composed result (shortest path, distance 2):             │
   │                                                           │
-  │  "eror"  →  "error"    (insert 'r' at pos 3)     cost 1   │
+  │  "eror"  →  "error"    (insert 'r' at pos 3)      cost 1  │
   │  " == "  →  " == "     (match)                    cost 0  │
-  │  "tru"   →  "true"     (insert 'e' at end)       cost 1   │
+  │  "tru"   →  "true"     (insert 'e' at end)        cost 1  │
   │                                                   ─────   │
   │  Total edit distance:                             2       │
   │                                                           │
@@ -1319,8 +1319,8 @@ Given two semirings **S1 = (K1, ⊕1, ⊗1, 0̄1, 1̄1)** and
 S₁ x S₂  =  (K₁ x K₂, ⊕, ⊗, 0̄, 1̄)
 
 K   =  K₁ x K₂  =  { (a, b) | a ∈ K₁, b ∈ K₂ }
-(a₁, a₂) ⊕ (b₁, b₂)  =  (a₁ ⊕₁ b₁,  a₂ ⊕₂ b₂)    [componentwise ⊕]
-(a₁, a₂) ⊗ (b₁, b₂)  =  (a₁ ⊗₁ b₁,  a₂ ⊗₂ b₂)    [componentwise ⊗]
+(a₁, a₂) ⊕  (b₁, b₂)  =  (a₁ ⊕₁ b₁,  a₂ ⊕₂ b₂)    [componentwise ⊕]
+(a₁, a₂) ⊗  (b₁, b₂)  =  (a₁ ⊗₁ b₁,  a₂ ⊗₂ b₂)    [componentwise ⊗]
 0̄  =  (0̄₁, 0̄₂)
 1̄  =  (1̄₁, 1̄₂)
 ```
@@ -1356,8 +1356,8 @@ priority, user annotation) is needed.
   ┌───────────────────────────────────────────────────────┐
   │                                                       │
   │  Product operations:                                  │
-  │    (w₁, n₁) ⊕ (w₂, n₂) = (min(w₁,w₂), n₁+n₂)          │
-  │    (w₁, n₁) ⊗ (w₂, n₂) = (w₁+w₂,     n₁xn₂)           │
+  │    (w₁, n₁) ⊕  (w₂, n₂) = (min(w₁,w₂), n₁+n₂)         │
+  │    (w₁, n₁) ⊗  (w₂, n₂) = (w₁+w₂,     n₁xn₂)          │
   │                                                       │
   │  Example dispatch entry for (Proc, state 7, Ident):   │
   │                                                       │
@@ -1366,9 +1366,9 @@ priority, user annotation) is needed.
   │    Rule Invoke:  weight 1.0  →  contributes (1.0, 1)  │
   │                                                       │
   │    Combined via ⊕:                                    │
-  │      (1.0, 1) ⊕ (0.5, 1) = (min(1.0,0.5), 1+1)        │
+  │      (1.0, 1) ⊕  (0.5, 1) = (min(1.0,0.5), 1+1)       │
   │                           = (0.5, 2)                  │
-  │      (0.5, 2) ⊕ (1.0, 1) = (min(0.5,1.0), 2+1)        │
+  │      (0.5, 2) ⊕  (1.0, 1) = (min(0.5,1.0), 2+1)       │
   │                           = (0.5, 3)                  │
   │                                                       │
   │    Result: (0.5, 3)                                   │
@@ -1400,8 +1400,8 @@ best parse *and* reports how much input repair was needed.
   ┌───────────────────────────────────────────────────────┐
   │                                                       │
   │  Product operations:                                  │
-  │    (w₁, d₁) ⊕ (w₂, d₂) = (min(w₁,w₂), min(d₁,d₂))     │
-  │    (w₁, d₁) ⊗ (w₂, d₂) = (w₁+w₂,      d₁+d₂)          │
+  │    (w₁, d₁) ⊕  (w₂, d₂) = (min(w₁,w₂), min(d₁,d₂))    │
+  │    (w₁, d₁) ⊗  (w₂, d₂) = (w₁+w₂,      d₁+d₂)         │
   │                                                       │
   │  Example: parsing "x +* y" (spurious '*')             │
   │                                                       │
@@ -1415,7 +1415,7 @@ best parse *and* reports how much input repair was needed.
   │      edit distance d = 0 + 1 + 0 = 1                  │
   │      product weight: (3.0, 1)                         │
   │                                                       │
-  │    Combined: (1.5, 1) ⊕ (3.0, 1) = (1.5, 1)           │
+  │    Combined: (1.5, 1) ⊕  (3.0, 1) = (1.5, 1)          │
   │      → best parse cost 1.5 with 1 edit                │
   │      → the "delete '*'" repair is chosen              │
   │                                                       │
@@ -1447,10 +1447,10 @@ a *default* weight strategy for rules that have no explicit priority annotation
 and no trained weights. The strategy must satisfy three properties:
 
 1. **More specific rules should have lower weight** (higher priority under
-   Tropical ⊕ = min).
+   Tropical ⊕  = min).
 2. **The strategy must be deterministic** — the same grammar always produces
    the same weights.
-3. **Weights must compose correctly** under Tropical ⊗ = addition, so that
+3. **Weights must compose correctly** under Tropical ⊗  = addition, so that
    multi-step dispatch paths accumulate specificity naturally.
 
 ### 17.2 Specificity Formula
@@ -1505,11 +1505,11 @@ model is loaded. The three strategies form a hierarchy:
 
 ### 17.4 Composition Under Tropical ⊗
 
-Under the tropical semiring, ⊗ = addition. When a parse path traverses
+Under the tropical semiring, ⊗  = addition. When a parse path traverses
 multiple dispatch entries, the specificity weights accumulate:
 
 ```
-w(path) = w(rule₁) ⊗ w(rule₂) ⊗ ... ⊗ w(ruleₙ)
+w(path) = w(rule₁) ⊗  w(rule₂) ⊗  ... ⊗  w(ruleₙ)
         = w(rule₁) + w(rule₂) + ... + w(ruleₙ)
 ```
 
@@ -1532,7 +1532,7 @@ Path B: rule₂ (0 terminals, 2 NTs) → rule₄ (1 terminal, 1 NT)
   w₄ = 1/(1 + 1 + 0.5x1) = 1/2.5 = 0.400
   w(B) = 0.500 + 0.400 = 0.900
 
-⊕ = min: w(A) < w(B), so Path A (more specific) is preferred.
+⊕  = min: w(A) < w(B), so Path A (more specific) is preferred.
 ```
 
 ### 17.5 Worked Example: Compare vs Var Dispatch
@@ -1561,14 +1561,14 @@ Specificity weights:
              = 0.500
 ```
 
-Under Tropical ⊕ = min:
+Under Tropical ⊕  = min:
 
 ```
   Dispatch for (Proc, Ident lookahead):
     Compare contributes weight 0.333
     Var     contributes weight 0.500
 
-    ⊕ = min(0.333, 0.500) = 0.333  →  Compare wins
+    ⊕  = min(0.333, 0.500) = 0.333  →  Compare wins
 ```
 
 This is the correct disambiguation: when the lookahead is an identifier and
@@ -1597,15 +1597,15 @@ weight strategy is most valuable.
 
 ### 17.6 Comparison with Other Semirings
 
-| Aspect              | Specificity Weights           | Token Priority                 | Trained (LogWeight)         |
-|:--------------------|:------------------------------|:-------------------------------|:----------------------------|
-| Semiring            | Tropical                      | Tropical                       | Log                         |
-| Source              | Automated from rule structure | Manual annotation              | Corpus training             |
-| Range               | (0, 1]                        | {0, ..., 10} mapped to [0, 10] | R+ union {+inf}             |
-| Composition         | ⊗ = + (accumulates)           | ⊗ = + (accumulates)            | ⊗ = + (log-domain multiply) |
-| Multi-rule paths    | Lower total = more specific   | Lower total = higher priority  | Lower total = more probable |
-| Requires user input | No                            | Yes (annotations)              | Yes (training corpus)       |
-| Granularity         | Per-rule                      | Per-token                      | Per-arc                     |
+| Aspect              | Specificity Weights           | Token Priority                 | Trained (LogWeight)          |
+|:--------------------|:------------------------------|:-------------------------------|:-----------------------------|
+| Semiring            | Tropical                      | Tropical                       | Log                          |
+| Source              | Automated from rule structure | Manual annotation              | Corpus training              |
+| Range               | (0, 1]                        | {0, ..., 10} mapped to [0, 10] | R+ union {+inf}              |
+| Composition         | ⊗  = + (accumulates)          | ⊗  = + (accumulates)           | ⊗  = + (log-domain multiply) |
+| Multi-rule paths    | Lower total = more specific   | Lower total = higher priority  | Lower total = more probable  |
+| Requires user input | No                            | Yes (annotations)              | Yes (training corpus)        |
+| Granularity         | Per-rule                      | Per-token                      | Per-arc                      |
 
 ---
 

@@ -211,10 +211,10 @@ It is a direct application of dynamic programming:
 
 ```
 α[0]   = 1̄              (zero cost / probability 1 at start)
-α[v]   = ⊕  { α[u] ⊗ w(u,v) : (u,v) ∈ E }      (forward pass)
+α[v]   = ⊕  { α[u] ⊗  w(u,v) : (u,v) ∈ E }      (forward pass)
 ```
 
-Under TropicalWeight, ⊕ = min and ⊗ = addition, so:
+Under TropicalWeight, ⊕  = min and ⊗  = addition, so:
 
 ```
 α[v]   = min { α[u] + w(u,v) : (u,v) ∈ E }
@@ -229,7 +229,7 @@ we need no priority queue — a single left-to-right pass suffices.
 Alongside α, the algorithm records the predecessor:
 
 ```
-pred[v] = argmin_{(u,v) ∈ E} α[u] ⊗ w(u,v)
+pred[v] = argmin_{(u,v) ∈ E} α[u] ⊗  w(u,v)
 ```
 
 The best path is reconstructed by following `pred` pointers from
@@ -258,7 +258,7 @@ for node in 0..n {
     if dist[node].is_zero() { continue; }        // skip unreachable nodes
     // [beam check here — see §4]
     for (edge_idx, edge) in lattice.edges_from(node).iter().enumerate() {
-        let new_dist = dist[node].times(&edge.weight);  // ⊗ = add
+        let new_dist = dist[node].times(&edge.weight);  // ⊗  = add
         if new_dist < dist[edge.target] {
             dist[edge.target] = new_dist;
             pred[edge.target] = Some((node, edge_idx));
@@ -331,7 +331,7 @@ zero()."
 #### Why CountingWeight Breaks Viterbi
 
 CountingWeight counts the number of derivation paths. Its semiring
-operations are ⊕ = addition (combine path counts) and ⊗ = multiplication
+operations are ⊕  = addition (combine path counts) and ⊗  = multiplication
 (sequence path counts). Critically, `zero() = 0` is the _smallest_
 element under natural ordering, not the largest. This means:
 
@@ -470,21 +470,21 @@ Edge B: 0→1 Gt   (w=1.0)
 Edge C: 1→2 Gt   (w=1.0)
 ```
 
-Under LogWeight (⊕ = log-sum-exp, ⊗ = addition):
+Under LogWeight (⊕  = log-sum-exp, ⊗  = addition):
 
 ```
 Forward:
   α[0] = 0.0                                         (log-probability 1)
-  α[1] = α[0] ⊗ w(B) = 0.0 + 1.0 = 1.0
-  α[2] = logsumexp(α[0] ⊗ w(A), α[1] ⊗ w(C))
+  α[1] = α[0] ⊗  w(B) = 0.0 + 1.0 = 1.0
+  α[2] = logsumexp(α[0] ⊗  w(A), α[1] ⊗  w(C))
        = logsumexp(0.0 + 0.0, 1.0 + 1.0)
        = logsumexp(0.0, 2.0)
        = 0.0 + ln(1 + e⁻²) ≈ 0.127
 
 Backward:
   β[2] = 0.0
-  β[1] = w(C) ⊗ β[2] = 1.0 + 0.0 = 1.0
-  β[0] = logsumexp(w(A) ⊗ β[2], w(B) ⊗ β[1])
+  β[1] = w(C) ⊗  β[2] = 1.0 + 0.0 = 1.0
+  β[0] = logsumexp(w(A) ⊗  β[2], w(B) ⊗  β[1])
        = logsumexp(0.0 + 0.0, 1.0 + 1.0)
        = logsumexp(0.0, 2.0) ≈ 0.127
 
@@ -535,11 +535,11 @@ node 0 to each node v:
 
 ```
 α[0]   = 1̄
-α[v]   = ⊕_{(u,v) ∈ E}  α[u] ⊗ w(u,v)
+α[v]   = ⊕_{(u,v) ∈ E}  α[u] ⊗  w(u,v)
 ```
 
 Under TropicalWeight this is the same as Viterbi (picks the minimum-cost
-path to each node). Under LogWeight, ⊕ = log-sum-exp, so α[v] accumulates
+path to each node). Under LogWeight, ⊕  = log-sum-exp, so α[v] accumulates
 the total probability mass reaching node v from all paths.
 
 ### 5.2 Implementation
@@ -580,7 +580,7 @@ each node u to the final node:
 
 ```
 β[final]  = 1̄
-β[u]      = ⊕_{(u,v) ∈ E}  w(u,v) ⊗ β[v]
+β[u]      = ⊕_{(u,v) ∈ E}  w(u,v) ⊗  β[v]
 ```
 
 Nodes are processed in **reverse** topological order (descending index).
@@ -656,7 +656,7 @@ while heap not empty and |results| < n:
         results.push(ViterbiPath { tokens: path, total_weight: w })
     else:
         for each edge (u, v, w_e):
-            heap.push( (w ⊗ w_e, v, path ++ [(u, edge_idx)]) )
+            heap.push( (w ⊗  w_e, v, path ++ [(u, edge_idx)]) )
 ```
 
 The heap is a `BinaryHeap` with `Reverse` ordering for min-heap semantics.
@@ -689,42 +689,42 @@ Step-by-step heap state for the 6-node lattice from §8, with N=3:
 ```
 Step 0: push initial
 ┌─────────────────────────────────────────┐
-│ (w=0.0, node=0, path=[])               │
+│ (w=0.0, node=0, path=[])                │
 └─────────────────────────────────────────┘
 
 Step 1: pop (0.0, node=0), expand 3 outgoing edges
 ┌─────────────────────────────────────────┐
-│ (1.0, node=1, [0→1])                   │ ← via 0→1 (w=1.0)
-│ (1.5, node=3, [0→3])                   │ ← via 0→3 (w=1.5)
-│ (3.0, node=2, [0→2])                   │ ← via 0→2 (w=3.0)
+│ (1.0, node=1, [0→1])                    │ ← via 0→1 (w=1.0)
+│ (1.5, node=3, [0→3])                    │ ← via 0→3 (w=1.5)
+│ (3.0, node=2, [0→2])                    │ ← via 0→2 (w=3.0)
 └─────────────────────────────────────────┘
 
 Step 2: pop (1.0, node=1), expand edge 1→5
 ┌─────────────────────────────────────────┐
-│ (1.5, node=3, [0→3])                   │
-│ (3.0, node=2, [0→2])                   │
-│ (3.0, node=5, [0→1→5])                 │ ← RESULT 1: w=3.0
+│ (1.5, node=3, [0→3])                    │
+│ (3.0, node=2, [0→2])                    │
+│ (3.0, node=5, [0→1→5])                  │ ← RESULT 1: w=3.0
 └─────────────────────────────────────────┘
 
 Step 3: pop (1.5, node=3), expand edge 3→4
 ┌─────────────────────────────────────────┐
-│ (2.5, node=4, [0→3→4])                 │ ← via 3→4 (w=1.0)
-│ (3.0, node=2, [0→2])                   │
-│ (3.0, node=5, [0→1→5])                 │
+│ (2.5, node=4, [0→3→4])                  │ ← via 3→4 (w=1.0)
+│ (3.0, node=2, [0→2])                    │
+│ (3.0, node=5, [0→1→5])                  │
 └─────────────────────────────────────────┘
 
 Step 4: pop (2.5, node=4), expand edge 4→5
 ┌─────────────────────────────────────────┐
-│ (3.0, node=2, [0→2])                   │
-│ (3.0, node=5, [0→1→5])                 │
-│ (3.0, node=5, [0→3→4→5])              │ ← RESULT 2: w=3.0
+│ (3.0, node=2, [0→2])                    │
+│ (3.0, node=5, [0→1→5])                  │
+│ (3.0, node=5, [0→3→4→5])                │ ← RESULT 2: w=3.0
 └─────────────────────────────────────────┘
 
 Step 5: pop (3.0, node=2), expand edge 2→5
 ┌─────────────────────────────────────────┐
-│ (3.0, node=5, [0→1→5])                 │
-│ (3.0, node=5, [0→3→4→5])              │
-│ (3.5, node=5, [0→2→5])                │ ← RESULT 3: w=3.5
+│ (3.0, node=5, [0→1→5])                  │
+│ (3.0, node=5, [0→3→4→5])                │
+│ (3.5, node=5, [0→2→5])                  │ ← RESULT 3: w=3.5
 └─────────────────────────────────────────┘
 
 Results (N=3):
@@ -765,11 +765,11 @@ Drawn with crossing arcs annotated:
 ```
         w=1.0         w=2.0
   0 ────────────► 1 ────────────────────────────► 5
-  │                                                ▲
+  │                                               ▲
   │   w=3.0                         w=0.5         │
   ├────────────► 2 ─────────────────────────────► │
-  │              ┊                                 │
-  │   w=1.5      ┊ w=1.0         w=0.5             │
+  │              ┊                                │
+  │   w=1.5      ┊ w=1.0         w=0.5            │
   └────────────► 3 ──────────────► 4 ─────────────┘
                  ┊
            (crossing of

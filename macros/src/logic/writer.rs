@@ -8,7 +8,7 @@ use std::path::Path;
 ///
 /// This writes the generated Datalog to src/generated/ directory for inspection.
 /// The file is not compiled - it's just for documentation/debugging.
-pub fn write_ascent_file(theory_name: &str, ascent_content: &str) -> std::io::Result<()> {
+pub fn write_ascent_file(grammar_name: &str, theory_name: &str, ascent_content: &str) -> std::io::Result<()> {
     // Get the manifest directory of the crate that's using the macro
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
 
@@ -33,6 +33,6 @@ pub fn write_ascent_file(theory_name: &str, ascent_content: &str) -> std::io::Re
 
     fs::write(&file_path, ascent_content)?;
 
-    eprintln!("Generated Ascent Datalog: {}", file_path.display());
+    eprintln!("  ({}) Generated Ascent Datalog: {}", grammar_name, file_path.display());
     Ok(())
 }

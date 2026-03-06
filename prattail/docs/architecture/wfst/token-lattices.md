@@ -64,19 +64,22 @@ over them). This document maps every edge in that dependency graph.
   │  Compile-time pipeline                                             │
   │                                                                    │
   │  ┌─────────────────┐                                               │
-  │  │   pipeline.rs    │                                              │
-  │  │ (state machine)  │                                              │
+  │  │ pipeline.rs     │                                               │
+  │  ├─────────────────┤                                               │
+  │  │ (state machine) │                                               │
   │  └────────┬────────┘                                               │
   │           │ generate_parser_code()                                 │
   │           ▼                                                        │
-  │  ┌─────────────────┐   FIRST/FOLLOW   ┌──────────────────┐         │
-  │  │  prediction.rs   │ ───────────────►│     wfst.rs       │        │
-  │  │ (sets, overlap)  │                 │ (PredictionWfst)  │        │
+  │  ┌─────────────────┐                  ┌──────────────────┐         │
+  │  │ prediction.rs   │   FIRST/FOLLOW   │ wfst.rs          │         │
+  │  ├─────────────────┤ ───────────────► ├──────────────────┤         │
+  │  │ (sets, overlap) │                  │ (PredictionWfst) │         │
   │  └─────────────────┘                  └──────────────────┘         │
   │                                                                    │
   │  ┌─────────────────┐                  ┌──────────────────┐         │
-  │  │  compose.rs      │                 │   dispatch.rs     │        │
-  │  │ (grammar union)  │                 │ (codegen match)   │        │
+  │  │ compose.rs      │                  │ dispatch.rs      │         │
+  │  ├─────────────────┤                  ├──────────────────┤         │
+  │  │ (grammar union) │                  │ (codegen match)  │         │
   │  └─────────────────┘                  └──────────────────┘         │
   └────────────────────────────────────────────────────────────────────┘
 
@@ -191,15 +194,15 @@ would add unnecessary indirection.
   │         ▼                                                        │
   │  token_ids[P..P+32]  ──► viterbi_multi_step()                    │
   │                          │                                       │
-  │                          ├── Build implicit repair lattice       │
-  │                          │   ┌───┐ skip ┌───┐ skip ┌───┐        │
-  │                          │   │ 0 │─────►│ 1 │─────►│ 2 │───►SINK│
-  │                          │   └───┘      └───┘      └───┘        │
-  │                          │     │  delete  │  insert ▲            │
-  │                          │     └──────────┘────────┘             │
+  │                          ├─▶ Build implicit repair lattice       │
+  │                          │   ┌───┐ skip ┌───┐ skip ┌───┐         │
+  │                          │   │ 0 │─────►│ 1 │─────►│ 2 │───►SINK │
+  │                          │   └───┘      └───┘      └───┘         │
+  │                          │     │  delete  ▲  insert ▲            │
+  │                          │     └──────────┴─────────┘            │
   │                          │                                       │
-  │                          ├── Viterbi forward pass (O(nodes))     │
-  │                          ├── Backtrace: optimal repair sequence  │
+  │                          ├─▶ Viterbi forward pass (O(nodes))     │
+  │                          ├─▶ Backtrace: optimal repair sequence  │
   │                          │                                       │
   │                          ▼                                       │
   │  RepairSequence { actions, total_cost, new_pos }                 │
@@ -243,13 +246,13 @@ This is the only function in the codebase that explicitly connects
 `RepairAction::edit_cost()` in `recovery.rs` maps each repair action
 to an `EditWeight` value:
 
-| Action     | EditWeight | Semantic                                |
-|:-----------|:-----------|:----------------------------------------|
-| Skip(n)    | n          | Skip n tokens (1 edit per token)        |
-| Delete     | 1          | Remove one unexpected token             |
-| Insert     | 2          | Fabricate a missing token               |
-| Substitute | 2          | Replace wrong token with correct one    |
-| Swap       | 2          | Swap two adjacent tokens                |
+| Action     | EditWeight | Semantic                             |
+|:-----------|:-----------|:-------------------------------------|
+| Skip(n)    | n          | Skip n tokens (1 edit per token)     |
+| Delete     | 1          | Remove one unexpected token          |
+| Insert     | 2          | Fabricate a missing token            |
+| Substitute | 2          | Replace wrong token with correct one |
+| Swap       | 2          | Swap two adjacent tokens             |
 
 This enables future `ProductWeight<TropicalWeight, EditWeight>` lattices
 that jointly optimize parse priority and edit distance.
@@ -288,12 +291,12 @@ But this lattice is never materialized as a `TokenLattice` object.
 dispatch is token-oriented (key = (category, token)). The data models
 are orthogonal:
 
-| Dimension        | TokenLattice                | Dispatch table          |
-|:-----------------|:----------------------------|:------------------------|
-| Node semantics   | Input position (char offset)| Grammar category        |
-| Edge semantics   | Token + span + weight       | Rule + weight           |
-| Query pattern    | "edges from position P"     | "rule for (Cat, Token)" |
-| Size             | O(input length)             | O(categories × tokens)  |
+| Dimension      | TokenLattice                 | Dispatch table          |
+|:---------------|:-----------------------------|:------------------------|
+| Node semantics | Input position (char offset) | Grammar category        |
+| Edge semantics | Token + span + weight        | Rule + weight           |
+| Query pattern  | "edges from position P"      | "rule for (Cat, Token)" |
+| Size           | O(input length)              | O(categories × tokens)  |
 
 Using `TokenLattice` for dispatch would require a mapping layer that
 adds complexity without benefit.
@@ -346,11 +349,11 @@ among competing parses.
 Each NFA spillover can be viewed as an implicit 2-node lattice:
 
 ```
-  ┌───┐  alt₁(w₁)  ┌───┐
+  ┌───┐  alt₁(w₁)   ┌───┐
   │ 0 │────────────►│ 1 │
-  │   │  alt₂(w₂)  │   │
+  │   │  alt₂(w₂)   │   │
   │   │────────────►│   │
-  │   │  alt₃(w₃)  │   │
+  │   │  alt₃(w₃)   │   │
   │   │────────────►│   │
   └───┘             └───┘
 ```
@@ -403,9 +406,9 @@ implemented.
   │    ▼                                                   │
   │  Parse lattice construction (multiple parse trees)     │
   │    │                                                   │
-  │    ├── forward_backward() → arc posteriors             │
+  │    ├─▶ forward_backward() → arc posteriors             │
   │    │                                                   │
-  │    ├── Compare: oracle parse vs. predicted parse       │
+  │    ├─▶ Compare: oracle parse vs. predicted parse       │
   │    │                                                   │
   │    ▼                                                   │
   │  SGD weight update → updated PredictionWfst weights    │
@@ -484,24 +487,24 @@ lexing unnecessary. The `from_weighted()` function always produces the
   │       ▼                                                             │
   │  run_pipeline()                                                     │
   │       │                                                             │
-  │       ├── extract_from_spec()  → LexerBundle, ParserBundle          │
+  │       ├─▶ extract_from_spec()  → LexerBundle, ParserBundle          │
   │       │                                                             │
-  │       ├── generate_lexer_code()                                     │
-  │       │   └── Emits: lex_weighted(), accept_weight()                │
+  │       ├─▶ generate_lexer_code()                                     │
+  │       │   └─▶ Emits: lex_weighted(), accept_weight()                │
   │       │       Types: Vec<(Token<'a>, Range, f64)>                   │
   │       │                                                             │
-  │       ├── generate_parser_code()                                    │
-  │       │   ├── FIRST/FOLLOW sets                                     │
-  │       │   ├── build_prediction_wfsts()                              │
-  │       │   │   └── PredictionWfst per category                       │
-  │       │   ├── compute_composed_dispatch()                           │
-  │       │   │   └── CountingWeight ambiguity warnings                 │
-  │       │   ├── Dead-rule detection (BooleanWeight)                   │
-  │       │   └── Emits: parse_Cat(), match arms (weight-ordered)       │
+  │       ├─▶ generate_parser_code()                                    │
+  │       │   ├─▶ FIRST/FOLLOW sets                                     │
+  │       │   ├─▶ build_prediction_wfsts()                              │
+  │       │   │   └─▶ PredictionWfst per category                       │
+  │       │   ├─▶ compute_composed_dispatch()                           │
+  │       │   │   └─▶ CountingWeight ambiguity warnings                 │
+  │       │   ├─▶ Dead-rule detection (BooleanWeight)                   │
+  │       │   └─▶ Emits: parse_Cat(), match arms (weight-ordered)       │
   │       │                                                             │
-  │       └── Complete: single TokenStream                              │
+  │       └─▶ Complete: single TokenStream                              │
   │                                                                     │
-  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤
+  ├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤
   │                                                                     │
   │                      RUNTIME                                        │
   │                                                                     │
@@ -516,28 +519,28 @@ lexing unnecessary. The `from_weighted()` function always produces the
   │       ▼                                                             │
   │  TokenSource::from_weighted()                                       │
   │       │                                                             │
-  │       ├── Linear (always, currently)                                │
-  │       │   └── resolve() → identity → Vec<(Token, Range)>           │
+  │       ├─▶ Linear (always, currently)                                │
+  │       │   └─▶ resolve() → identity → Vec<(Token, Range)>            │
   │       │                                                             │
-  │       └── Lattice (removed: was context-sensitive-lex)               │
-  │           └── resolve() → viterbi_best_path() → Vec<(Token, Range)>│
-  │                                                                     │
+  │       ├─▶ Lattice (removed: was context-sensitive-lex)              │
+  │       │   └─▶ resolve() → viterbi_best_path() → Vec<(Token, Range)> │
+  │       │                                                             │
   │       ▼                                                             │
   │  parse_Cat(tokens)                                                  │
+  │       ╷                                                             │
+  │       ├─▶ Success → AST                                             │
   │       │                                                             │
-  │       ├── Success → AST                                             │
-  │       │                                                             │
-  │       └── Error → RecoveryWfst                                      │
+  │       └─▶ Error → RecoveryWfst                                      │
   │                   │                                                 │
-  │                   ├── viterbi_multi_step()                           │
+  │                   ├─▶ viterbi_multi_step()                          │
   │                   │   (implicit repair lattice)                     │
   │                   │                                                 │
-  │                   ├── lattice_recovery()‡                           │
+  │                   ├─▶ lattice_recovery()‡                           │
   │                   │   (alternative tokenizations from lattice)      │
   │                   │                                                 │
-  │                   └── RepairResult → continue parsing               │
+  │                   └─▶ RepairResult → continue parsing               │
   │                                                                     │
-  │  ‡ = removed (was context-sensitive-lex)                              │
+  │  ‡ = removed (was context-sensitive-lex)                            │
   └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -545,24 +548,24 @@ lexing unnecessary. The `from_weighted()` function always produces the
 
 ## 11. Source Map
 
-| Integration concept                 | File                        | Function / Lines            |
-|:------------------------------------|:----------------------------|:----------------------------|
-| TokenSource enum                    | `src/lattice.rs`            | `TokenSource<T, S>` (51)   |
-| TokenLattice struct                 | `src/lattice.rs`            | `TokenLattice<T, S, W>` (240) |
-| Viterbi (tropical + beam)           | `src/lattice.rs`            | `viterbi_best_path_beam()` (371) |
-| Viterbi (generic semiring)          | `src/lattice.rs`            | `viterbi_generic()` (484)  |
-| N-best paths                        | `src/lattice.rs`            | `n_best_paths()` (598)     |
-| Alternative paths                   | `src/lattice.rs`            | `alternative_paths()` (708) |
-| Implicit repair lattice             | `src/recovery.rs`           | `viterbi_multi_step()` (816) |
-| Lattice-aware recovery              | `src/recovery.rs`           | `lattice_recovery()` (1685) |
-| RepairAction edit cost              | `src/recovery.rs`           | `RepairAction::edit_cost()` |
-| Semiring trait + 10 impls           | `src/automata/semiring.rs`  | `Semiring` (36)             |
-| Forward-backward scores             | `src/forward_backward.rs`   | `forward()`, `backward()`  |
-| Training (parse lattice, planned)   | `src/training.rs`           | (line 133, planned)         |
-| lex_weighted() codegen              | `src/automata/codegen.rs`   | `write_lex_weighted_via_core()` (525) |
-| lex_weighted_core() runtime         | `src/runtime_types.rs`      | `lex_weighted_core()` (200+) |
-| NFA spillover weights               | `src/dispatch.rs`           | `AMBIGUOUS_WEIGHTS` thread-local |
-| Lattice module declaration          | `src/lib.rs`                | `pub mod lattice;` (53)    |
+| Integration concept               | File                       | Function / Lines                      |
+|:----------------------------------|:---------------------------|:--------------------------------------|
+| TokenSource enum                  | `src/lattice.rs`           | `TokenSource<T, S>` (51)              |
+| TokenLattice struct               | `src/lattice.rs`           | `TokenLattice<T, S, W>` (240)         |
+| Viterbi (tropical + beam)         | `src/lattice.rs`           | `viterbi_best_path_beam()` (371)      |
+| Viterbi (generic semiring)        | `src/lattice.rs`           | `viterbi_generic()` (484)             |
+| N-best paths                      | `src/lattice.rs`           | `n_best_paths()` (598)                |
+| Alternative paths                 | `src/lattice.rs`           | `alternative_paths()` (708)           |
+| Implicit repair lattice           | `src/recovery.rs`          | `viterbi_multi_step()` (816)          |
+| Lattice-aware recovery            | `src/recovery.rs`          | `lattice_recovery()` (1685)           |
+| RepairAction edit cost            | `src/recovery.rs`          | `RepairAction::edit_cost()`           |
+| Semiring trait + 10 impls         | `src/automata/semiring.rs` | `Semiring` (36)                       |
+| Forward-backward scores           | `src/forward_backward.rs`  | `forward()`, `backward()`             |
+| Training (parse lattice, planned) | `src/training.rs`          | (line 133, planned)                   |
+| lex_weighted() codegen            | `src/automata/codegen.rs`  | `write_lex_weighted_via_core()` (525) |
+| lex_weighted_core() runtime       | `src/runtime_types.rs`     | `lex_weighted_core()` (200+)          |
+| NFA spillover weights             | `src/dispatch.rs`          | `AMBIGUOUS_WEIGHTS` thread-local      |
+| Lattice module declaration        | `src/lib.rs`               | `pub mod lattice;` (53)               |
 
 ---
 

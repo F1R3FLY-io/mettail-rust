@@ -45,9 +45,9 @@ where:
 
 In WFST terms:
 
-- **⊕ = ∨** combines parallel paths: if *any* alternative is reachable, the
+- **⊕  = ∨** combines parallel paths: if *any* alternative is reachable, the
   result is reachable.
-- **⊗ = ∧** sequences path segments: a path is reachable only if *both* of
+- **⊗  = ∧** sequences path segments: a path is reachable only if *both* of
   its segments are reachable.
 - **0 = false** is the "unreachable" weight -- the additive identity
   (false ∨ x = x).
@@ -78,14 +78,14 @@ quantified statement reduces to at most 4 or 8 concrete cases.
 | true  | true  | false | true        | true        | yes   |
 | true  | true  | true  | true        | true        | yes   |
 
-**Identity**: 0 ⊕ a = a ⊕ 0 = a
+**Identity**: 0 ⊕  a = a ⊕  0 = a
 
 | a     | false ∨ a | a ∨ false | equal |
 |-------|-----------|-----------|-------|
 | false | false     | false     | yes   |
 | true  | true      | true      | yes   |
 
-**Commutativity**: a ⊕ b = b ⊕ a
+**Commutativity**: a ⊕  b = b ⊕  a
 
 | a     | b     | a ∨ b | b ∨ a | equal |
 |-------|-------|-------|-------|-------|
@@ -111,16 +111,16 @@ quantified statement reduces to at most 4 or 8 concrete cases.
 | true  | true  | false | false       | false       | yes   |
 | true  | true  | true  | true        | true        | yes   |
 
-**Identity**: 1 ⊗ a = a ⊗ 1 = a
+**Identity**: 1 ⊗  a = a ⊗  1 = a
 
 | a     | true ∧ a | a ∧ true | equal |
 |-------|----------|----------|-------|
 | false | false    | false    | yes   |
 | true  | true     | true     | yes   |
 
-### 3.3 Distributivity: ⊗ distributes over ⊕
+### 3.3 Distributivity: ⊗  distributes over ⊕
 
-**Left**: a ⊗ (b ⊕ c) = (a ⊗ b) ⊕ (a ⊗ c), i.e., a ∧ (b ∨ c) = (a ∧ b) ∨ (a ∧ c)
+**Left**: a ⊗  (b ⊕  c) = (a ⊗  b) ⊕  (a ⊗  c), i.e., a ∧ (b ∨ c) = (a ∧ b) ∨ (a ∧ c)
 
 | a     | b     | c     | a ∧ (b ∨ c) | (a ∧ b) ∨ (a ∧ c) | equal |
 |-------|-------|-------|-------------|-------------------|-------|
@@ -133,10 +133,10 @@ quantified statement reduces to at most 4 or 8 concrete cases.
 | true  | true  | false | true        | true              | yes   |
 | true  | true  | true  | true        | true              | yes   |
 
-**Right**: (b ⊕  c) ⊗ a = (b ⊗ a) ⊕ (c ⊗ a) follows identically by
+**Right**: (b ⊕  c) ⊗  a = (b ⊗  a) ⊕  (c ⊗  a) follows identically by
 commutativity of ∧.
 
-### 3.4 Zero annihilation: 0 ⊗ a = a ⊗ 0 = 0
+### 3.4 Zero annihilation: 0 ⊗  a = a ⊗  0 = 0
 
 | a     | false ∧ a | a ∧ false | both false |
 |-------|-----------|-----------|------------|
@@ -154,7 +154,7 @@ All semiring axioms hold.  QED.
 
 ### 4.1 Commutativity of ⊗
 
-The multiplication ⊗ = ∧ is commutative, as verified by the full truth table:
+The multiplication ⊗  = ∧ is commutative, as verified by the full truth table:
 
 | a     | b     | a ∧ b | b ∧ a | equal |
 |-------|-------|-------|-------|-------|
@@ -188,7 +188,7 @@ semiring, making it the cheapest carrier for reachability analysis.
 
 ### 4.4 Boolean ring structure
 
-Observe that ⊗ also distributes over a derived "subtraction" operation
+Observe that ⊗  also distributes over a derived "subtraction" operation
 (XOR / symmetric difference), making ({false, true}, XOR, ∧, false, true)
 a Boolean ring (in fact, the field GF(2)).  However, the semiring structure
 ({false, true}, ∨, ∧, false, true) is the one used for WFST reachability, not
@@ -305,16 +305,16 @@ all transitions.
 
 **Calculator language** (8 dead rules, all Tier 3):
 
-| Rule | Category | Reason |
-|------|----------|--------|
-| FloatToStr | Str | Cast shadowed by higher-priority alternatives |
-| FloatToBool | Bool | Cast shadowed by higher-priority alternatives |
-| StrToBool | Bool | Cast shadowed by higher-priority alternatives |
-| IntId | Int | Identity rule shadowed by direct parse |
-| FloatId | Float | Identity rule shadowed by direct parse |
-| BoolId | Bool | Identity rule shadowed by direct parse |
-| StrId | Str | Identity rule shadowed by direct parse |
-| POutput | Proc | Output rule unreachable via prefix dispatch |
+| Rule        | Category | Reason                                        |
+|-------------|----------|-----------------------------------------------|
+| FloatToStr  | Str      | Cast shadowed by higher-priority alternatives |
+| FloatToBool | Bool     | Cast shadowed by higher-priority alternatives |
+| StrToBool   | Bool     | Cast shadowed by higher-priority alternatives |
+| IntId       | Int      | Identity rule shadowed by direct parse        |
+| FloatId     | Float    | Identity rule shadowed by direct parse        |
+| BoolId      | Bool     | Identity rule shadowed by direct parse        |
+| StrId       | Str      | Identity rule shadowed by direct parse        |
+| POutput     | Proc     | Output rule unreachable via prefix dispatch   |
 
 **RhoCalc language** (36 dead rules, all Tier 3):
 
@@ -417,19 +417,19 @@ Convergence is guaranteed because:
 
 ## 9. Comparison Table
 
-| Property                  | BooleanWeight      | CountingWeight       | TropicalWeight         |
-|---------------------------|--------------------|----------------------|------------------------|
-| **Carrier**               | {false, true}      | N (natural numbers)  | R+ union {+infinity}   |
-| **⊕ (plus)**              | ∨ (OR)             | + (addition)         | min                    |
-| **⊗ (times)**             | ∧ (AND)            | x (multiplication)   | + (addition)           |
-| **0 (zero)**              | false              | 0                    | +infinity              |
-| **1 (one)**               | true               | 1                    | 0.0                    |
-| **Commutative**           | Yes                | Yes                  | Yes                    |
-| **Idempotent (⊕)**        | Yes                | No (3+3=6 != 3)     | Yes (min(a,a) = a)    |
-| **Size**                  | 2 elements         | Countably infinite   | Uncountably infinite   |
-| **Semantics**             | Reachability       | Path counting        | Shortest path / cost   |
-| **PraTTaIL use**          | Dead-rule detection| Ambiguity counting   | Priority dispatch      |
-| **Rust Display**          | ⊤ / ⊥              | integer              | float / inf            |
+| Property           | BooleanWeight       | CountingWeight      | TropicalWeight       |
+|--------------------|---------------------|---------------------|----------------------|
+| **Carrier**        | {false, true}       | N (natural numbers) | R+ union {+infinity} |
+| **⊕  (plus)**      | ∨ (OR)              | + (addition)        | min                  |
+| **⊗  (times)**     | ∧ (AND)             | x (multiplication)  | + (addition)         |
+| **0 (zero)**       | false               | 0                   | +infinity            |
+| **1 (one)**        | true                | 1                   | 0.0                  |
+| **Commutative**    | Yes                 | Yes                 | Yes                  |
+| **Idempotent (⊕)** | Yes                 | No (3+3=6 != 3)     | Yes (min(a,a) = a)   |
+| **Size**           | 2 elements          | Countably infinite  | Uncountably infinite |
+| **Semantics**      | Reachability        | Path counting       | Shortest path / cost |
+| **PraTTaIL use**   | Dead-rule detection | Ambiguity counting  | Priority dispatch    |
+| **Rust Display**   | ⊤ / ⊥               | integer             | float / inf          |
 
 ---
 
@@ -580,7 +580,7 @@ for rule_info in &bundle.rule_infos {
 The pipeline's dead-rule check operates at the *rule* level rather than the
 *state* level.  It asks "does any FIRST-set token route to this rule?" rather
 than "is this WFST state reachable?"  The `any()` iterator combinator is
-semantically equivalent to Boolean ⊕ (disjunction), and the label equality
+semantically equivalent to Boolean ⊕  (disjunction), and the label equality
 check is a predicate filter.  Using the `BooleanWeight` struct would add no
 benefit here since the query is already naturally expressed as a boolean
 expression.
@@ -622,5 +622,5 @@ rule is `true` or `false`.
   - `test_boolean_semiring_laws` -- zero/one identity, zero annihilation
   - `test_boolean_plus_is_or` -- exhaustive ∨ truth table
   - `test_boolean_times_is_and` -- exhaustive ∧ truth table
-  - `test_boolean_idempotent` -- ⊕ idempotency
+  - `test_boolean_idempotent` -- ⊕  idempotency
   - `test_boolean_reachability` -- `is_reachable()` accessor

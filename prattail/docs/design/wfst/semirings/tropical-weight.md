@@ -11,15 +11,15 @@ beam pruning, Viterbi shortest-path, and error-recovery costing -- flows through
 
 TropicalWeight participates in every major pipeline stage:
 
-| Stage | Role |
-|-------|------|
-| **Prediction WFST** | Transition weights rank dispatch alternatives |
-| **Dispatch arm ordering** | Arms sorted by weight; lowest emitted first |
-| **Beam pruning** | Threshold = `best + beam_width` prunes unlikely actions |
-| **Viterbi best-path** | Shortest path through token lattice |
-| **Error recovery** | Repair action costs (skip, delete, insert, substitute) |
-| **Static CSR embedding** | Weights serialized as `f64` in codegen arrays |
-| **Trained model override** | Log-probabilities from training replace heuristics |
+| Stage                      | Role                                                    |
+|----------------------------|---------------------------------------------------------|
+| **Prediction WFST**        | Transition weights rank dispatch alternatives           |
+| **Dispatch arm ordering**  | Arms sorted by weight; lowest emitted first             |
+| **Beam pruning**           | Threshold = `best + beam_width` prunes unlikely actions |
+| **Viterbi best-path**      | Shortest path through token lattice                     |
+| **Error recovery**         | Repair action costs (skip, delete, insert, substitute)  |
+| **Static CSR embedding**   | Weights serialized as `f64` in codegen arrays           |
+| **Trained model override** | Log-probabilities from training replace heuristics      |
 
 ---
 
@@ -100,15 +100,15 @@ pub fn from_priority(priority: u8) -> Self {
 
 Exhaustive file and line references for TropicalWeight usage:
 
-| File | Lines | Usage |
-|------|-------|-------|
-| `semiring.rs` | 57-198 | Type definition, Semiring impl, Ord, Hash, Default |
-| `wfst.rs` | 55, 66, 95-100, 131, 272, 378-379 | WeightedTransition.weight, WfstState.final_weight, WeightedAction.weight, beam_width field, with_trained_weights |
-| `recovery.rs` | 176, 394, 402 | RepairResult.cost, viterbi_recovery, viterbi_recovery_beam |
-| `lattice.rs` | 37, 240, 343, 359, 371, 449 | Default generic param on TokenLattice/LatticeEdge/ViterbiPath, viterbi_best_path, viterbi_best_path_beam |
-| `prediction.rs` | 1540-1543, 1718-1738, 1749-1777 | Composed entry weight sorting, resolve_dispatch_winners weight propagation, build_complete_weight_map |
-| `pipeline.rs` | 545-548, 638-643, 1137-1147, 1187-1278 | Beam width application, static CSR emission, format_f64 helper, LazyLock constructors |
-| `dispatch.rs` | 55, 79, 162-169, 226-238, 309-310 | WeightedAction references, dispatch_arms Vec<(String, f64)>, WFST predict() for ambiguous arm sorting, final sort by weight |
+| File            | Lines                                  | Usage                                                                                                                       |
+|-----------------|----------------------------------------|-----------------------------------------------------------------------------------------------------------------------------|
+| `semiring.rs`   | 57-198                                 | Type definition, Semiring impl, Ord, Hash, Default                                                                          |
+| `wfst.rs`       | 55, 66, 95-100, 131, 272, 378-379      | WeightedTransition.weight, WfstState.final_weight, WeightedAction.weight, beam_width field, with_trained_weights            |
+| `recovery.rs`   | 176, 394, 402                          | RepairResult.cost, viterbi_recovery, viterbi_recovery_beam                                                                  |
+| `lattice.rs`    | 37, 240, 343, 359, 371, 449            | Default generic param on TokenLattice/LatticeEdge/ViterbiPath, viterbi_best_path, viterbi_best_path_beam                    |
+| `prediction.rs` | 1540-1543, 1718-1738, 1749-1777        | Composed entry weight sorting, resolve_dispatch_winners weight propagation, build_complete_weight_map                       |
+| `pipeline.rs`   | 545-548, 638-643, 1137-1147, 1187-1278 | Beam width application, static CSR emission, format_f64 helper, LazyLock constructors                                       |
+| `dispatch.rs`   | 55, 79, 162-169, 226-238, 309-310      | WeightedAction references, dispatch_arms Vec<(String, f64)>, WFST predict() for ambiguous arm sorting, final sort by weight |
 
 ---
 
@@ -116,15 +116,15 @@ Exhaustive file and line references for TropicalWeight usage:
 
 Weights assigned during `build_prediction_wfsts()` (`wfst.rs:483-498`):
 
-| DispatchAction | Weight | Rationale |
-|----------------|--------|-----------|
-| `Direct` (unique token) | 0.0 | Deterministic -- no alternatives to consider |
-| `Grouping` | 0.0 | Structural grouping `(`, `{`, `[` is always deterministic |
-| `CrossCategory` (unique to source) | 0.0 | Token uniquely identifies cross-category path |
-| `CrossCategory` (shared) | 0.5 | Ambiguous -- try cross-category first (explicit rule) |
-| `Cast` (unique to source) | 0.5 | Cast less specific than direct; try after direct |
-| `Lookahead` (ident) | 1.0 + order | Multi-rule ident-lookahead; order breaks ties |
-| `Variable` (fallback) | 2.0 | Last resort when no structural token matches |
+| DispatchAction                     | Weight      | Rationale                                                 |
+|------------------------------------|-------------|-----------------------------------------------------------|
+| `Direct` (unique token)            | 0.0         | Deterministic -- no alternatives to consider              |
+| `Grouping`                         | 0.0         | Structural grouping `(`, `{`, `[` is always deterministic |
+| `CrossCategory` (unique to source) | 0.0         | Token uniquely identifies cross-category path             |
+| `CrossCategory` (shared)           | 0.5         | Ambiguous -- try cross-category first (explicit rule)     |
+| `Cast` (unique to source)          | 0.5         | Cast less specific than direct; try after direct          |
+| `Lookahead` (ident)                | 1.0 + order | Multi-rule ident-lookahead; order breaks ties             |
+| `Variable` (fallback)              | 2.0         | Last resort when no structural token matches              |
 
 The hierarchy ensures that during codegen, `dispatch_arms.sort_by(weight)`
 places the most-likely arms first, improving CPU branch prediction hit rate

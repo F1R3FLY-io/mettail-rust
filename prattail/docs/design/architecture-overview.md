@@ -30,91 +30,97 @@ enum in `pipeline.rs`.
 
 ```
   language! { ... }       language_fragment! { ... }       compose_languages! { ... }
-        |                         |                                |
-        |   extends:/includes:/   |   mixins:                      |
-        |   mixins: resolution    |   registry                     |
-        v                         v                                v
+        │                         │                                   │
+        │   extends:/includes:/   │   mixins:                         │
+        │   mixins: resolution    │   registry                        │
+        ▼                         ▼                                   ▼
   ┌───────────────────────────────────┐                   ┌───────────────────────┐
-  |         macros crate              |                   | compose_gen.rs        |
-  |         (proc-macro)              |                   | {Name}TermInner enum  |
-  |                                   |                   | {Name}Term wrapper    |
-  |  Parse DSL syntax                 |                   | {Name}Env struct      |
-  |  Resolve extends/includes/mixins  |                   | {Name}Language impl   |
-  |  merge_language_defs()            |                   | Delegation parsing    |
-  |  Build LanguageDef                |                   └───────────┬───────────┘
-  |  Project to LanguageSpec          |                               |
-  └────────────────┬──────────────────┘                               v
-                   |                                           TokenStream
-                   v                                        (composed runtime)
-          LanguageSpec {
-            name, types, rules,
-            beam_width, literal_patterns,
-            recovery_config,
-            semantic_dependency_groups,
-          }
-                   |
-   ================|===============================================
-   |  PraTTaIL Pipeline State Machine (pipeline.rs)               |
-   |                                                               |
-   |               v                                               |
-   |    ┌─────────────────────┐                                    |
-   |    |   [Extract Phase]   |  extract_from_spec()               |
-   |    |                     |                                    |
-   |    |  Single pass over   |                                    |
-   |    |  LanguageSpec.rules |                                    |
-   |    └──────────┬──────────┘                                    |
-   |               |                                               |
-   |               v                                               |
-   |    PipelineState::Ready {                                     |
-   |      lexer_bundle: LexerBundle,                               |
-   |      parser_bundle: ParserBundle,                             |
-   |    }                                                          |
-   |               |                                               |
-   |               v                                               |
-   |    ┌─────────────────────────────────────────┐                |
-   |    |          [Generate Phase]                |                |
-   |    |                                          |                |
-   |    |  ┌──────────────────┐ ┌────────────────┐ |                |
-   |    |  | Lexer Pipeline   | | Parser Pipeline| |                |
-   |    |  |                  | |                | |                |
-   |    |  | Terminal Extract | | FIRST/FOLLOW   | |                |
-   |    |  | NFA -> DFA ->    | | BP Table       | |                |
-   |    |  | Minimize ->      | | Prediction     | |                |
-   |    |  | Equiv Classes -> | | WFST           | |                |
-   |    |  | Codegen          | | Dead-rule      | |                |
-   |    |  |        |         | | Lint layer     | |                |
-   |    |  |        v         | | Trampoline     | |                |
-   |    |  | lexer_code: Str  | | Dispatch       | |                |
-   |    |  | variant_map      | |        |       | |                |
-   |    |  | ambiguity_info   | |        v       | |                |
-   |    |  └──────────────────┘ | parser_code    | |                |
-   |    |                       └────────────────┘ |                |
-   |    └──────────────────┬──────────────────────┘                |
-   |                       |                                       |
-   |                       v                                       |
-   |    PipelineState::Generated {                                 |
-   |      lexer_code: String,                                      |
-   |      parser_code: String,                                     |
-   |    }                                                          |
-   |                       |                                       |
-   |                       v                                       |
-   |    ┌──────────────────────────────┐                           |
-   |    |     [Finalize Phase]         |                           |
-   |    |                              |                           |
-   |    |  combined = lexer_code       |                           |
-   |    |           + parser_code      |                           |
-   |    |  combined.parse::<           |                           |
-   |    |    TokenStream>()            |                           |
-   |    └──────────────┬───────────────┘                           |
-   |                   |                                           |
-   |                   v                                           |
-   |    PipelineState::Complete(TokenStream)                       |
-   |                                                               |
-   ================================================================
-                   |
-                   v
-            TokenStream
-         (Rust source code)
+  │         macros crate              │                   │ compose_gen.rs        │
+  │         (proc-macro)              │                   │ {Name}TermInner enum  │
+  │                                   │                   │ {Name}Term wrapper    │
+  │  Parse DSL syntax                 │                   │ {Name}Env struct      │
+  │  Resolve extends/includes/mixins  │                   │ {Name}Language impl   │
+  │  merge_language_defs()            │                   │ Delegation parsing    │
+  │  Build LanguageDef                │                   └───────────┬───────────┘
+  │  Project to LanguageSpec          │                               │
+  └────────────────┬──────────────────┘                               ▼
+                   │                                           TokenStream
+                   ▼                                        (composed runtime)
+        ┌─────────────────────────────────┐
+        │ LanguageSpec {                  │
+        │   name, types, rules,           │
+        │   beam_width, literal_patterns, │
+        │   recovery_config,              │
+        │   semantic_dependency_groups,   │
+        │ }                               │
+        └──────────┬──────────────────────┘
+                   │
+                   ▼
+   ┌───────────────────────────────────────────────────────────────┐
+   │  PraTTaIL Pipeline State Machine (pipeline.rs)                │
+   │                                                               │
+   │    ┌─────────────────────┐                                    │
+   │    │   [Extract Phase]   │  extract_from_spec()               │
+   │    │                     │                                    │
+   │    │  Single pass over   │                                    │
+   │    │  LanguageSpec.rules │                                    │
+   │    └──────────┬──────────┘                                    │
+   │               │                                               │
+   │               ▼                                               │
+   │  ┌────────────────────────────────┐                           │
+   │  │ PipelineState::Ready {         │                           │
+   │  │   lexer_bundle: LexerBundle,   │                           │
+   │  │   parser_bundle: ParserBundle, │                           │
+   │  │ }                              │                           │
+   │  └────────────┬───────────────────┘                           │
+   │               │                                               │
+   │               ▼                                               │
+   │    ┌──────────────────────────────────────────┐               │
+   │    │          [Generate Phase]                │               │
+   │    │                                          │               │
+   │    │  ┌──────────────────┐ ┌────────────────┐ │               │
+   │    │  │ Lexer Pipeline   │ │ Parser Pipeline│ │               │
+   │    │  │                  │ │                │ │               │
+   │    │  │ Terminal Extract │ │ FIRST/FOLLOW   │ │               │
+   │    │  │ NFA -> DFA ->    │ │ BP Table       │ │               │
+   │    │  │ Minimize ->      │ │ Prediction     │ │               │
+   │    │  │ Equiv Classes -> │ │ WFST           │ │               │
+   │    │  │ Codegen          │ │ Dead-rule      │ │               │
+   │    │  │        │         │ │ Lint layer     │ │               │
+   │    │  │        ▼         │ │ Trampoline     │ │               │
+   │    │  │ lexer_code: Str  │ │ Dispatch       │ │               │
+   │    │  │ variant_map      │ │        │       │ │               │
+   │    │  │ ambiguity_info   │ │        ▼       │ │               │
+   │    │  └──────────────────┘ │ parser_code    │ │               │
+   │    │                       └────────────────┘ │               │
+   │    └───────────────────┬──────────────────────┘               │
+   │                        │                                      │
+   │                        ▼                                      │
+   │  ┌────────────────────────────┐                               │
+   │  │ PipelineState::Generated { │                               │
+   │  │   lexer_code: String,      │                               │
+   │  │   parser_code: String,     │                               │
+   │  │ }                          │                               │
+   │  └────────────────────┬───────┘                               │
+   │                       │                                       │
+   │                       ▼                                       │
+   │    ┌──────────────────────────────┐                           │
+   │    │     [Finalize Phase]         │                           │
+   │    │                              │                           │
+   │    │  combined = lexer_code       │                           │
+   │    │           + parser_code      │                           │
+   │    │  combined.parse::<           │                           │
+   │    │    TokenStream>()            │                           │
+   │    └──────────────┬───────────────┘                           │
+   │                   │                                           │
+   │                   ▼                                           │
+   │    PipelineState::Complete(TokenStream)                       │
+   │                                                               │
+   └───────────────────────────────┬───────────────────────────────┘
+                                   │
+                                   ▼
+                             TokenStream
+                          (Rust source code)
 ```
 
 ## 2. Pipeline Stages
@@ -185,13 +191,13 @@ State transition: `PipelineState::Generated` -> `PipelineState::Complete(TokenSt
 
 ```
   Lexer Codegen (NFA -> DFA -> Minimize -> Equiv Classes)
-         |
-         |  variant_map, ambiguity_info
-         |
-         v
+         │
+         │  variant_map, ambiguity_info
+         │
+         ▼
   Parser Codegen (FIRST/FOLLOW -> BP -> WFST -> Lint -> Trampoline -> Dispatch)
-         |
-         v
+         │
+         ▼
   Finalize (concatenate + parse into TokenStream)
 ```
 
@@ -400,18 +406,18 @@ The `SyntaxItemSpec` enum defines the building blocks of rule syntax.
 The decomposed `Sep`, `Map`, and `Zip` variants replace the former monolithic
 `ZipMapSep` and enable new compositions:
 
-| Variant | Purpose |
-|---------|---------|
-| `Terminal(String)` | Literal token to match |
-| `NonTerminal { category, param_name }` | Recursive parse of another category |
-| `IdentCapture { param_name }` | Capture an identifier |
-| `Binder { param_name, category, is_multi }` | Lambda binder position |
-| `Collection { param_name, element_category, separator, kind }` | Simple separated collection |
-| `Sep { body, separator, kind }` | Repeat body with separator; body can be NonTerminal, Map, or Zip |
-| `Map { body_items }` | Structured body pattern (multi-item sequence) |
-| `Zip { left_name, right_name, left_category, right_category, body }` | Dual-accumulator parallel collection |
-| `BinderCollection { param_name, separator }` | Separated list of binder identifiers |
-| `Optional { inner }` | Save/restore block; continues if inner fails |
+| Variant                                                              | Purpose                                                          |
+|----------------------------------------------------------------------|------------------------------------------------------------------|
+| `Terminal(String)`                                                   | Literal token to match                                           |
+| `NonTerminal { category, param_name }`                               | Recursive parse of another category                              |
+| `IdentCapture { param_name }`                                        | Capture an identifier                                            |
+| `Binder { param_name, category, is_multi }`                          | Lambda binder position                                           |
+| `Collection { param_name, element_category, separator, kind }`       | Simple separated collection                                      |
+| `Sep { body, separator, kind }`                                      | Repeat body with separator; body can be NonTerminal, Map, or Zip |
+| `Map { body_items }`                                                 | Structured body pattern (multi-item sequence)                    |
+| `Zip { left_name, right_name, left_category, right_category, body }` | Dual-accumulator parallel collection                             |
+| `BinderCollection { param_name, separator }`                         | Separated list of binder identifiers                             |
+| `Optional { inner }`                                                 | Save/restore block; continues if inner fails                     |
 
 Composition examples enabled by the decomposition:
 - `Sep(Map(...))` -- structured separated list (single accumulator)
@@ -619,11 +625,11 @@ language! {
 
 **Composition clauses** within `language!`:
 
-| Clause | Strategy | Source | Duplicate Handling |
-|--------|----------|--------|--------------------|
-| `extends:` | `DuplicateStrategy::Error` | Other `language!` definitions | Reject duplicate labels |
-| `includes:` | `DuplicateStrategy::Override` | Other `language!` definitions | Extension label replaces base |
-| `mixins:` | `DuplicateStrategy::Override` | `language_fragment!` definitions | Fragment label replaces base |
+| Clause      | Strategy                      | Source                           | Duplicate Handling            |
+|-------------|-------------------------------|----------------------------------|-------------------------------|
+| `extends:`  | `DuplicateStrategy::Error`    | Other `language!` definitions    | Reject duplicate labels       |
+| `includes:` | `DuplicateStrategy::Override` | Other `language!` definitions    | Extension label replaces base |
+| `mixins:`   | `DuplicateStrategy::Override` | `language_fragment!` definitions | Fragment label replaces base  |
 
 Resolution order: `apply_extends()` -> `apply_includes()` -> `apply_mixins()`.
 All three call `merge_language_defs(base, extension, strategy)` at the
@@ -633,14 +639,14 @@ exactly once on the merged result.
 
 Merge strategy per component:
 
-| Component | Strategy |
-|-----------|----------|
-| **types** | Union by name; `native_type` must match if both present |
-| **terms** | `Error`: concatenate, reject same label. `Override`: extension replaces base |
-| **equations** | Same as terms (keyed by equation name) |
-| **rewrites** | Same as terms (keyed by rewrite name) |
-| **logic** | Relations: union by name, error if param types differ. Content: concatenate |
-| **options** | Extension values override base for matching keys |
+| Component     | Strategy                                                                     |
+|---------------|------------------------------------------------------------------------------|
+| **types**     | Union by name; `native_type` must match if both present                      |
+| **terms**     | `Error`: concatenate, reject same label. `Override`: extension replaces base |
+| **equations** | Same as terms (keyed by equation name)                                       |
+| **rewrites**  | Same as terms (keyed by rewrite name)                                        |
+| **logic**     | Relations: union by name, error if param types differ. Content: concatenate  |
+| **options**   | Extension values override base for matching keys                             |
 
 ### `language_fragment!` Macro
 

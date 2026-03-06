@@ -32,18 +32,18 @@ The PraTTaIL pipeline is a three-state machine. Each call to `advance()`
 moves it one step forward; it cannot go backwards.
 
 ```
-  ┌──────────────────────────────────────────────────────────────────────┐
-  │  PipelineState                                                       │
-  │                                                                      │
-  │  ┌───────────┐   advance()   ┌─────────────┐   advance()             │
-  │  │  Ready    │ ─────────────►│  Generated  │ ─────────────►Complete  │
-  │  │           │               │             │                         │
-  │  │ lexer_    │               │ lexer_code  │               Token-    │
-  │  │  bundle   │               │             │               Stream    │
-  │  │ parser_   │               │ parser_code │                         │
-  │  │  bundle   │               │             │                         │
-  │  └───────────┘               └─────────────┘                         │
-  └──────────────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  PipelineState                                                          │
+  │                                                                         │
+  │  ┌───────────┐               ┌─────────────┐               ┌──────────┐ │
+  │  │ Ready     │               │ Generated   │               │ Complete │ │
+  │  ├───────────┤   advance()   ├─────────────┤   advance()   ├──────────┤ │
+  │  │ lexer_    │──────────────►│ lexer_code  │──────────────►│ Token-   │ │
+  │  │  bundle   │               │             │               │ Stream   │ │
+  │  │ parser_   │               │ parser_code │               │          │ │
+  │  │  bundle   │               │             │               │          │ │
+  │  └───────────┘               └─────────────┘               └──────────┘ │
+  └─────────────────────────────────────────────────────────────────────────┘
 ```
 
 `Ready -> Generated` calls `generate_lexer_code()` and
@@ -66,7 +66,7 @@ output is written to the output buffer. The overall sequence is:
 
 ```
   generate_parser_code(bundle: &ParserBundle)
-  │
+  ╷
   ├─ 1. compute_first_sets()          ← FIRST sets per category
   │
   ├─ 2. augment FIRST with native     ← Integer/Float/Boolean/StringLit
@@ -91,9 +91,9 @@ output is written to the output buffer. The overall sequence is:
   ├─ 6. resolve_dispatch_winners() ← composed dispatch resolution       │
   │                                                                     │
   ├─ 7. write_rd_handler() × N        ← RD prefix handlers              │
-  │                                                                     │
-  ├─ 8. write_trampolined_parser() ←───── uses prediction_wfst per cat ─┘
-  │      per category
+  │                                     ┌──────────────────────────────┐│
+  ├─ 8. write_trampolined_parser() ←────┤ uses prediction_wfst per cat ├┘
+  │      per category                   └──────────────────────────────┘
   │
   ├─ 9. write_category_dispatch_weighted()  (dispatch.rs)
   │
@@ -125,7 +125,7 @@ This section traces every input and output of the WFST construction block
     overlaps             BTreeMap<(String,  — cross-category overlaps,
                            String),           including ambiguous tokens
                            OverlapInfo>
-    rd_rules             &[RDRuleInfo]       — recursive-descent rules
+    rd_rules             &[RDRuleInfo]      — recursive-descent rules
     cross_rules          &[CrossCategoryRule]
     cast_rules           &[CastRule]
     native_types         BTreeMap<String,   — category → Rust type (opt)
@@ -414,7 +414,7 @@ the pipeline together with the WFST-specific fields added by each step.
   ┌──────────────────────────────────────────────────────────────────────┐
   │  Generated parser code (String)                                      │
   │                                                                      │
-  │  * RD prefix handlers      ← write_rd_handler() × N                  │
+  │  * RD prefix handlers       ← write_rd_handler() × N                 │
   │  * Trampolined parsers      ← write_trampolined_parser()             │
   │      ↳ prediction_wfst injected into TrampolineConfig per category   │
   │  * Cross-cat dispatch       ← write_category_dispatch_weighted()     │
@@ -673,50 +673,50 @@ to see exactly what the `wfst-log` subsystem adds.
 The following table maps each concept in this document to its primary
 source location.
 
-| Concept | File |
-|---------|------|
-| `PipelineState` state machine | `pipeline.rs` |
-| `run_pipeline()` entry point | `pipeline.rs` |
-| `generate_parser_code()` | `pipeline.rs` |
-| WFST construction block | `pipeline.rs` |
-| `build_dispatch_action_tables()` | `prediction.rs` |
-| `resolve_dispatch_winners()` | `prediction.rs` |
-| `build_prediction_wfsts()` | `wfst.rs` |
-| `generate_weighted_dispatch()` | `wfst.rs` |
-| E1 TransducerCascade application | `pipeline.rs` + `transducer.rs` |
-| `OptimizationPass` trait | `transducer.rs` |
-| `TransducerCascade` | `transducer.rs` |
-| `WeightNormalization` / `DeadStateElimination` / `StateMinimization` / `BeamPruning` | `transducer.rs` |
-| `TokenIdMap::from_names()` | `token_id.rs` |
-| `build_recovery_wfsts()` | `recovery.rs` |
-| `write_category_dispatch_weighted()` | `dispatch.rs` |
-| `build_complete_weight_map()` | `dispatch.rs` / `prediction.rs` |
-| Weighted ident-lookahead sort | `trampoline.rs` |
-| `emit_prediction_wfst_static()` | `pipeline.rs` |
-| `emit_recovery_wfst_static()` | `pipeline.rs` |
-| `generate_wfst_recovery_fn()` | `pipeline.rs` |
-| `write_trampolined_parser_recovering_wfst()` | `pipeline.rs` |
-| `PredictionWfst::from_flat()` | `wfst.rs` |
-| `PredictionWfst::with_trained_weights()` | `wfst.rs` (wfst-log) |
-| `RecoveryWfst::from_flat()` | `recovery.rs` |
-| `ParseSimulator::from_flat()` | `recovery.rs` |
-| `TrainedModel::from_embedded()` | `training.rs` (wfst-log) |
-| `RepairAction::edit_cost()` | `recovery.rs` |
-| `detect_dead_rules()` (four-tier) | `pipeline.rs` |
-| `DeadRuleWarning` enum | `pipeline.rs` |
-| `lint_w01_dead_rule()` | `lint.rs` |
-| `run_lints()` (23 lints) | `lint.rs` |
-| NFA spillover detection | `pipeline.rs` + `trampoline.rs` |
-| `categories_needing_nfa_spillover()` | `trampoline.rs` |
-| `group_rd_by_dispatch_token()` | `trampoline.rs` |
-| `write_nfa_merged_prefix_arm()` | `trampoline.rs` |
-| `write_nfa_inline_constructor()` | `trampoline.rs` |
-| `nfa_alternative_order()` | `wfst.rs` |
-| NFA thread-local declarations | `trampoline.rs` (codegen) |
-| Forced-prefix check | `trampoline.rs` (codegen) |
-| `AMBIGUOUS_WEIGHTS` thread-local | `language.rs` (macros) |
-| `PRATTAIL_DUMP_EBNF` handler | `pipeline.rs` |
-| `PRATTAIL_DUMP_PARSER` handler | `pipeline.rs` |
+| Concept                                                                              | File                            |
+|--------------------------------------------------------------------------------------|---------------------------------|
+| `PipelineState` state machine                                                        | `pipeline.rs`                   |
+| `run_pipeline()` entry point                                                         | `pipeline.rs`                   |
+| `generate_parser_code()`                                                             | `pipeline.rs`                   |
+| WFST construction block                                                              | `pipeline.rs`                   |
+| `build_dispatch_action_tables()`                                                     | `prediction.rs`                 |
+| `resolve_dispatch_winners()`                                                         | `prediction.rs`                 |
+| `build_prediction_wfsts()`                                                           | `wfst.rs`                       |
+| `generate_weighted_dispatch()`                                                       | `wfst.rs`                       |
+| E1 TransducerCascade application                                                     | `pipeline.rs` + `transducer.rs` |
+| `OptimizationPass` trait                                                             | `transducer.rs`                 |
+| `TransducerCascade`                                                                  | `transducer.rs`                 |
+| `WeightNormalization` / `DeadStateElimination` / `StateMinimization` / `BeamPruning` | `transducer.rs`                 |
+| `TokenIdMap::from_names()`                                                           | `token_id.rs`                   |
+| `build_recovery_wfsts()`                                                             | `recovery.rs`                   |
+| `write_category_dispatch_weighted()`                                                 | `dispatch.rs`                   |
+| `build_complete_weight_map()`                                                        | `dispatch.rs` / `prediction.rs` |
+| Weighted ident-lookahead sort                                                        | `trampoline.rs`                 |
+| `emit_prediction_wfst_static()`                                                      | `pipeline.rs`                   |
+| `emit_recovery_wfst_static()`                                                        | `pipeline.rs`                   |
+| `generate_wfst_recovery_fn()`                                                        | `pipeline.rs`                   |
+| `write_trampolined_parser_recovering_wfst()`                                         | `pipeline.rs`                   |
+| `PredictionWfst::from_flat()`                                                        | `wfst.rs`                       |
+| `PredictionWfst::with_trained_weights()`                                             | `wfst.rs` (wfst-log)            |
+| `RecoveryWfst::from_flat()`                                                          | `recovery.rs`                   |
+| `ParseSimulator::from_flat()`                                                        | `recovery.rs`                   |
+| `TrainedModel::from_embedded()`                                                      | `training.rs` (wfst-log)        |
+| `RepairAction::edit_cost()`                                                          | `recovery.rs`                   |
+| `detect_dead_rules()` (four-tier)                                                    | `pipeline.rs`                   |
+| `DeadRuleWarning` enum                                                               | `pipeline.rs`                   |
+| `lint_w01_dead_rule()`                                                               | `lint.rs`                       |
+| `run_lints()` (23 lints)                                                             | `lint.rs`                       |
+| NFA spillover detection                                                              | `pipeline.rs` + `trampoline.rs` |
+| `categories_needing_nfa_spillover()`                                                 | `trampoline.rs`                 |
+| `group_rd_by_dispatch_token()`                                                       | `trampoline.rs`                 |
+| `write_nfa_merged_prefix_arm()`                                                      | `trampoline.rs`                 |
+| `write_nfa_inline_constructor()`                                                     | `trampoline.rs`                 |
+| `nfa_alternative_order()`                                                            | `wfst.rs`                       |
+| NFA thread-local declarations                                                        | `trampoline.rs` (codegen)       |
+| Forced-prefix check                                                                  | `trampoline.rs` (codegen)       |
+| `AMBIGUOUS_WEIGHTS` thread-local                                                     | `language.rs` (macros)          |
+| `PRATTAIL_DUMP_EBNF` handler                                                         | `pipeline.rs`                   |
+| `PRATTAIL_DUMP_PARSER` handler                                                       | `pipeline.rs`                   |
 
 ---
 

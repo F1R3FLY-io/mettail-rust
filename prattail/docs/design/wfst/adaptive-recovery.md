@@ -26,11 +26,11 @@ The WFST error recovery system (documented in
 [error-recovery.md](error-recovery.md)) assigns repair costs using static
 multipliers drawn from three tiers of context:
 
-| Tier | Signal             | Source                 |
-|------|--------------------|------------------------|
-| 1    | Frame depth & kind | `FRAME_STATE_CAT`      |
+| Tier | Signal             | Source                      |
+|------|--------------------|-----------------------------|
+| 1    | Frame depth & kind | `FRAME_STATE_CAT`           |
 | 2    | Bracket balance    | Incremental bracket counter |
-| 3    | Parse simulation   | Forward look-ahead     |
+| 3    | Parse simulation   | Forward look-ahead          |
 
 All three tiers reflect *structural* context -- how deep the parser is,
 what kind of frame it occupies, and whether a proposed repair leads to
@@ -191,10 +191,10 @@ fn parse_proc_own_recovering<'a>(
 
 The accumulated weight partitions into two strategy regimes:
 
-| Accumulated Weight | Regime         | Preferred Strategy | Rationale |
-|--------------------|----------------|--------------------|-----------|
-| < 1.0              | Deterministic  | Skip               | Parse prefix is reliable; discard erroneous input |
-| >= 1.0             | Ambiguous      | Insert             | Parse prefix may be wrong; preserve context for replay |
+| Accumulated Weight | Regime        | Preferred Strategy | Rationale                                              |
+|--------------------|---------------|--------------------|--------------------------------------------------------|
+| < 1.0              | Deterministic | Skip               | Parse prefix is reliable; discard erroneous input      |
+| >= 1.0             | Ambiguous     | Insert             | Parse prefix may be wrong; preserve context for replay |
 
 ### 3.1 Low Weight (Deterministic) -- Prefer Skip
 
@@ -231,11 +231,11 @@ uncertainty:
 The adaptive recovery mechanism has effectively zero overhead on the
 happy path (no parse errors):
 
-| Operation | When | Cost | Frequency |
-|-----------|------|------|-----------|
-| `Cell::set(0.0)` | Wrapper entry | Atomic pointer store | Once per `parse_<cat>` call |
-| `Cell::set(cell.get() + w)` | NFA dispatch | Load + f64 add + store | Once per NFA merged arm |
-| `Cell::get()` | Error recovery | Atomic pointer load | Only on parse error |
+| Operation                   | When           | Cost                   | Frequency                   |
+|-----------------------------|----------------|------------------------|-----------------------------|
+| `Cell::set(0.0)`            | Wrapper entry  | Atomic pointer store   | Once per `parse_<cat>` call |
+| `Cell::set(cell.get() + w)` | NFA dispatch   | Load + f64 add + store | Once per NFA merged arm     |
+| `Cell::get()`               | Error recovery | Atomic pointer load    | Only on parse error         |
 
 ### 4.1 Why Cell, Not RefCell
 
@@ -279,15 +279,15 @@ The WFST pipeline assigns tropical weights to dispatch actions based
 on their ambiguity cost.  These weights flow directly into
 `RUNNING_WEIGHT` during accumulation.
 
-| Dispatch Action           | Tropical Weight   | Accumulates |
-|---------------------------|-------------------|-------------|
-| `Direct`                  | 0.0               | No effect   |
-| `Grouping`                | 0.0               | No effect   |
-| `CrossCategory` (no BT)   | 0.0               | No effect   |
-| `CrossCategory` (with BT) | 0.5               | +0.5        |
-| `Cast`                    | 0.5               | +0.5        |
-| `Lookahead` (order *k*)   | 1.0 + *k*         | +1.0+       |
-| `Variable`                | 2.0               | +2.0        |
+| Dispatch Action           | Tropical Weight | Accumulates |
+|---------------------------|-----------------|-------------|
+| `Direct`                  | 0.0             | No effect   |
+| `Grouping`                | 0.0             | No effect   |
+| `CrossCategory` (no BT)   | 0.0             | No effect   |
+| `CrossCategory` (with BT) | 0.5             | +0.5        |
+| `Cast`                    | 0.5             | +0.5        |
+| `Lookahead` (order *k*)   | 1.0 + *k*       | +1.0+       |
+| `Variable`                | 2.0             | +2.0        |
 
 **Source:** `wfst.rs:compute_action_weight()`
 
@@ -326,17 +326,17 @@ The existing `FRAME_STATE_<CAT>` thread-local stores a `(u16, u8)` pair
 encoding the current trampoline stack depth and the `FrameKind`
 discriminant of the top-of-stack frame:
 
-| FrameKind Value | Name         | Example Frame Variant       |
-|-----------------|--------------|-----------------------------|
-| 0               | Prefix       | `UnaryPrefix_Neg`           |
-| 1               | InfixRHS     | `InfixRHS`                  |
-| 3               | Collection   | `CollectionElem_Tuple`      |
-| 4               | Group        | `GroupClose`                 |
-| 5               | Mixfix       | `Mixfix_Ternary_P2`         |
-| 6               | Lambda       | `LambdaBody_Abs`            |
-| 7               | Dollar       | `Dollar_Apply`              |
-| 8               | CastWrap     | `CastWrap_IntToProc`        |
-| 9               | Other        | RD segment frames           |
+| FrameKind Value | Name       | Example Frame Variant  |
+|-----------------|------------|------------------------|
+| 0               | Prefix     | `UnaryPrefix_Neg`      |
+| 1               | InfixRHS   | `InfixRHS`             |
+| 3               | Collection | `CollectionElem_Tuple` |
+| 4               | Group      | `GroupClose`           |
+| 5               | Mixfix     | `Mixfix_Ternary_P2`    |
+| 6               | Lambda     | `LambdaBody_Abs`       |
+| 7               | Dollar     | `Dollar_Apply`         |
+| 8               | CastWrap   | `CastWrap_IntToProc`   |
+| 9               | Other      | RD segment frames      |
 
 `FRAME_STATE` provides **structural** context: *where* in the grammar's
 nesting structure the error occurred.  `RUNNING_WEIGHT` provides
@@ -348,24 +348,25 @@ When both dimensions are available, the recovery engine can make
 more nuanced decisions:
 
 ```
-                      Accumulated Weight
-                     Low (< 1.0)     High (>= 1.0)
-                  ┌────────────────┬────────────────┐
-  Shallow         │ Skip           │ Insert         │
-  (depth < 10)    │ (reliable ctx, │ (ambiguous     │
-                  │  discard noise)│  path, keep    │
-                  │                │  ctx for replay)│
-                  ├────────────────┼────────────────┤
-  Deep            │ Skip (discount)│ Insert (prefer)│
-  (depth >= 1000) │ (reliable deep │ (ambiguous deep│
-                  │  nesting, skip │  nesting, must │
-                  │  is cheap)     │  preserve ctx) │
-                  ├────────────────┼────────────────┤
-  Collection/     │ Insert         │ Insert (strong)│
-  Group frame     │ (structural    │ (structural +  │
-                  │  bracket       │  semantic both │
-                  │  recovery)     │  favor insert) │
-                  └────────────────┴────────────────┘
+                  Accumulated Weight
+
+                    Low (< 1.0)       High (>= 1.0)
+                  ┌─────────────────┬──────────────────┐
+  Shallow         │ Skip            │ Insert           │
+  (depth < 10)    │ (reliable ctx,  │ (ambiguous       │
+                  │  discard noise) │  path, keep      │
+                  │                 │  ctx for replay) │
+                  ├─────────────────┼──────────────────┤
+  Deep            │ Skip (discount) │ Insert (prefer)  │
+  (depth >= 1000) │ (reliable deep  │ (ambiguous deep  │
+                  │  nesting, skip  │  nesting, must   │
+                  │  is cheap)      │  preserve ctx)   │
+                  ├─────────────────┼──────────────────┤
+  Collection/     │ Insert          │ Insert (strong)  │
+  Group frame     │ (structural     │ (structural +    │
+                  │  bracket        │  semantic both   │
+                  │  recovery)      │  favor insert)   │
+                  └─────────────────┴──────────────────┘
 ```
 
 The frame-kind multipliers from `RecoveryConfig` (Tier 1) continue to
@@ -524,49 +525,49 @@ x ! ( y + | )
 
 ```
   parse_<cat> wrapper
-  ┌─────────────────────────────────────────────────────────┐
-  │  RUNNING_WEIGHT_CAT.set(0.0)          // reset          │
-  │                                                         │
-  │  parse_<cat>_impl                                       │
-  │  ┌───────────────────────────────────────────────────┐  │
-  │  │  'drive loop                                      │  │
-  │  │  ┌─────────────────────────────────────────────┐  │  │
-  │  │  │  Prefix dispatch                            │  │  │
-  │  │  │  ┌───────────────────────────────────────┐  │  │  │
-  │  │  │  │  NFA merged arms                      │  │  │  │
-  │  │  │  │  ┌─────────────────────────────────┐  │  │  │  │
-  │  │  │  │  │  Try alternative 1 (weight w1)  │  │  │  │  │
-  │  │  │  │  │  Try alternative 2 (weight w2)  │  │  │  │  │
-  │  │  │  │  │  ...                            │  │  │  │  │
-  │  │  │  │  │  Sort by weight (ascending)     │  │  │  │  │
-  │  │  │  │  │  Select best: nfa_weights[0]    │  │  │  │  │
-  │  │  │  │  │                                 │  │  │  │  │
-  │  │  │  │  │  RUNNING_WEIGHT_CAT +=          │  │  │  │  │
-  │  │  │  │  │      nfa_weights[0]       ──────┼──┼──┼──┼──┤
-  │  │  │  │  └─────────────────────────────────┘  │  │  │  │
-  │  │  │  └───────────────────────────────────────┘  │  │  │
-  │  │  │                                             │  │  │  accumulated
-  │  │  │  'unwind loop (infix / continuation)        │  │  │  weight
-  │  │  └─────────────────────────────────────────────┘  │  │  (f64)
-  │  └───────────────────────────────────────────────────┘  │    │
-  └─────────────────────────────────────────────────────────┘    │
-                                                                 │
-  parse_<cat>_own_recovering                                     │
-  ┌─────────────────────────────────────────────────────────┐    │
-  │  match parse_<cat>_own(tokens, pos, min_bp) {           │    │
-  │      Ok(v) => Some(v),                                  │    │
-  │      Err(e) => {                                        │    │
-  │          let w = RUNNING_WEIGHT_CAT.get()  ◄────────────┼────┘
-  │                                                         │
-  │          if w < 1.0 { /* deterministic: prefer skip */ }│
-  │          else       { /* ambiguous: prefer insert */    }│
-  │                                                         │
-  │          errors.push(e);                                │
-  │          sync_to(tokens, pos, &|t| is_sync_<cat>(t));   │
-  │          None                                           │
-  │      }                                                  │
-  │  }                                                      │
-  └─────────────────────────────────────────────────────────┘
+  ┌───────────────────────────────────────────────────────────┐
+  │  RUNNING_WEIGHT_CAT.set(0.0)          // reset            │
+  │                                                           │
+  │  parse_<cat>_impl                                         │
+  │  ┌───────────────────────────────────────────────────┐    │
+  │  │  'drive loop                                      │    │
+  │  │  ┌─────────────────────────────────────────────┐  │    │
+  │  │  │  Prefix dispatch                            │  │    │
+  │  │  │  ┌───────────────────────────────────────┐  │  │    │
+  │  │  │  │  NFA merged arms                      │  │  │    │
+  │  │  │  │  ┌─────────────────────────────────┐  │  │  │    │
+  │  │  │  │  │  Try alternative 1 (weight w1)  │  │  │  │    │
+  │  │  │  │  │  Try alternative 2 (weight w2)  │  │  │  │    │
+  │  │  │  │  │  ...                            │  │  │  │    │
+  │  │  │  │  │  Sort by weight (ascending)     │  │  │  │    │
+  │  │  │  │  │  Select best: nfa_weights[0]    │  │  │  │    │
+  │  │  │  │  │                                 │  │  │  │    │
+  │  │  │  │  │  RUNNING_WEIGHT_CAT +=          │  │  │  │    │
+  │  │  │  │  │      nfa_weights[0]       ──────┼──┼──┼──┼────┤
+  │  │  │  │  └─────────────────────────────────┘  │  │  │    │
+  │  │  │  └───────────────────────────────────────┘  │  │    │
+  │  │  │                                             │  │    │  accumulated
+  │  │  │  'unwind loop (infix / continuation)        │  │    │  weight
+  │  │  └─────────────────────────────────────────────┘  │    │  (f64)
+  │  └───────────────────────────────────────────────────┘    ├────┐
+  └───────────────────────────────────────────────────────────┘    │
+                                                                   │
+  parse_<cat>_own_recovering                                       │
+  ┌───────────────────────────────────────────────────────────┐    │
+  │  match parse_<cat>_own(tokens, pos, min_bp) {             │    │
+  │      Ok(v) => Some(v),                                    │    │
+  │      Err(e) => {                                          │    │
+  │          let w = RUNNING_WEIGHT_CAT.get()  ◄──────────────┈────┘
+  │                                                           │
+  │          if w < 1.0 { /* deterministic: prefer skip */ }  │
+  │          else       { /* ambiguous: prefer insert */    } │
+  │                                                           │
+  │          errors.push(e);                                  │
+  │          sync_to(tokens, pos, &|t| is_sync_<cat>(t));     │
+  │          None                                             │
+  │      }                                                    │
+  │  }                                                        │
+  └───────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -578,14 +579,14 @@ x ! ( y + | )
 The threshold value 1.0 was chosen to correspond to approximately
 two ambiguous dispatch decisions:
 
-| Scenario | Running Weight | Regime |
-|----------|---------------|--------|
-| All Direct/Grouping | 0.0 | Deterministic |
-| One Cast | 0.5 | Deterministic |
-| One Cast + one CrossCategory(BT) | 1.0 | Ambiguous |
-| Two Casts | 1.0 | Ambiguous |
-| One Lookahead (order 0) | 1.0 | Ambiguous |
-| One Variable | 2.0 | Ambiguous |
+| Scenario                         | Running Weight | Regime        |
+|----------------------------------|----------------|---------------|
+| All Direct/Grouping              | 0.0            | Deterministic |
+| One Cast                         | 0.5            | Deterministic |
+| One Cast + one CrossCategory(BT) | 1.0            | Ambiguous     |
+| Two Casts                        | 1.0            | Ambiguous     |
+| One Lookahead (order 0)          | 1.0            | Ambiguous     |
+| One Variable                     | 2.0            | Ambiguous     |
 
 Two ambiguous dispatches represent a meaningful branching point in the
 parse.  After two such decisions, the probability that the parser is on
@@ -637,11 +638,11 @@ multiplier chain.
 
 A future extension could add the following fields to `RecoveryConfig`:
 
-| Field | Type | Default | Semantics |
-|-------|------|---------|-----------|
-| `adaptive_weight_threshold` | `f64` | 1.0 | Running weight above which insert is preferred |
-| `deterministic_skip_discount` | `f64` | 0.75 | Skip cost multiplier when below threshold |
-| `ambiguous_insert_discount` | `f64` | 0.5 | Insert cost multiplier when above threshold |
+| Field                         | Type  | Default | Semantics                                      |
+|-------------------------------|-------|---------|------------------------------------------------|
+| `adaptive_weight_threshold`   | `f64` | 1.0     | Running weight above which insert is preferred |
+| `deterministic_skip_discount` | `f64` | 0.75    | Skip cost multiplier when below threshold      |
+| `ambiguous_insert_discount`   | `f64` | 0.5     | Insert cost multiplier when above threshold    |
 
 These fields would allow the threshold and the cost modulation to be
 tuned per grammar, trained via the SGD loop in `train_recovery_weights()`,
@@ -661,15 +662,15 @@ optimal threshold and discount values.
 
 ## 11. Source Reference
 
-| Component | Location |
-|-----------|----------|
-| Thread-local declarations | `trampoline.rs:write_trampolined_parser()` lines 1143--1173 |
-| Weight reset in wrapper | `trampoline.rs:write_trampolined_parser()` line 1200 |
-| Accumulation in NFA dispatch | `trampoline.rs:write_nfa_merged_arms()` line 395 |
-| Accessor function | `trampoline.rs:write_trampolined_parser()` lines 1175--1184 |
-| Recovery reading | `trampoline.rs:write_recovering_function()` lines 3019--3039 |
-| Dispatch weight assignment | `wfst.rs:compute_action_weight()` lines 567--579 |
-| RecoveryConfig struct | `recovery.rs:RecoveryConfig` lines 108--166 |
-| Frame state thread-local | `trampoline.rs:write_trampolined_parser()` lines 1083--1095 |
-| Frame-kind classifier | `trampoline.rs:write_trampolined_parser()` lines 1097--1141 |
-| Frame state update in drive loop | `trampoline.rs:write_trampoline_body()` lines 1257--1270 |
+| Component                        | Location                                                     |
+|----------------------------------|--------------------------------------------------------------|
+| Thread-local declarations        | `trampoline.rs:write_trampolined_parser()` lines 1143--1173  |
+| Weight reset in wrapper          | `trampoline.rs:write_trampolined_parser()` line 1200         |
+| Accumulation in NFA dispatch     | `trampoline.rs:write_nfa_merged_arms()` line 395             |
+| Accessor function                | `trampoline.rs:write_trampolined_parser()` lines 1175--1184  |
+| Recovery reading                 | `trampoline.rs:write_recovering_function()` lines 3019--3039 |
+| Dispatch weight assignment       | `wfst.rs:compute_action_weight()` lines 567--579             |
+| RecoveryConfig struct            | `recovery.rs:RecoveryConfig` lines 108--166                  |
+| Frame state thread-local         | `trampoline.rs:write_trampolined_parser()` lines 1083--1095  |
+| Frame-kind classifier            | `trampoline.rs:write_trampolined_parser()` lines 1097--1141  |
+| Frame state update in drive loop | `trampoline.rs:write_trampoline_body()` lines 1257--1270     |

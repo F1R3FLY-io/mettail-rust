@@ -136,8 +136,8 @@ Steps inside `generate_parser_code()`:
   │     │                          write_category_
   │     │                          dispatch_weighted()
   │     │                                │
-  │     │                                ▼
-  │     └────────────────────────────────┼──► wfst.rs [core] ──► token_id.rs [core]
+  │     │                                │
+  │     └────────────────────────────────┊──► wfst.rs [core] ──► token_id.rs [core]
   │                                      │         │
   │                                      │         ▼
   │                                      │    PredictionWfst

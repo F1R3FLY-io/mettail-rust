@@ -87,11 +87,11 @@ language! {
 
 ## Error Cases
 
-| Error | Condition | Example |
-|-------|-----------|---------|
-| `CategoryNativeTypeMismatch` | Same category name, different native types | Base: `![i32] as Num`, Ext: `![i64] as Num` |
-| `DuplicateRuleLabel` | Same rule label in both | Base has `Add`, Ext also defines `Add` |
-| `DuplicateEquationName` | Same equation name in both | Base has `CommAdd`, Ext also defines `CommAdd` |
+| Error                        | Condition                                  | Example                                        |
+|------------------------------|--------------------------------------------|------------------------------------------------|
+| `CategoryNativeTypeMismatch` | Same category name, different native types | Base: `![i32] as Num`, Ext: `![i64] as Num`    |
+| `DuplicateRuleLabel`         | Same rule label in both                    | Base has `Add`, Ext also defines `Add`         |
+| `DuplicateEquationName`      | Same equation name in both                 | Base has `CommAdd`, Ext also defines `CommAdd` |
 
 ## Diagram: Merge Data Flow
 
@@ -113,14 +113,14 @@ language! {
     merge_language_defs(base, ext, Error)
                  │
                  ▼
-    ┌────────────────────────────────┐
+    ┌───────────────────────────────┐
     │ Merged LanguageDef            │
     │                               │
-    │ types: Num{i32}              │
-    │ terms: Add, Sub              │
-    │ rewrites: AddCongL, AddCongR,│
-    │           SubCongL, SubCongR │
-    └──────────────┬───────────────┘
+    │ types: Num{i32}               │
+    │ terms: Add, Sub               │
+    │ rewrites: AddCongL, AddCongR, │
+    │           SubCongL, SubCongR  │
+    └──────────────┬────────────────┘
                    │
                    ▼
            run_pipeline()

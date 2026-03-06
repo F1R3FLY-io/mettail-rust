@@ -78,13 +78,13 @@ pub struct WfstCompositionSummary {
 
 ## `CompositionError` Variants
 
-| Variant | Condition | Fields |
-|---------|-----------|--------|
+| Variant                      | Condition                               | Fields                                       |
+|------------------------------|-----------------------------------------|----------------------------------------------|
 | `CategoryNativeTypeMismatch` | Shared category, different native types | `category`, `native_type_a`, `native_type_b` |
-| `DuplicateRuleLabel` | Same constructor label in both | `label`, `category_a`, `category_b` |
-| `InvalidCategoryReference` | Rule references unknown category | `rule_label`, `referenced_category` |
-| `AssociativityConflict` | Same infix operator, different assoc | `terminal`, `category`, `assoc_a`, `assoc_b` |
-| `BindingPowerConflict` | Same prefix operator, different BP | `terminal`, `category`, `bp_a`, `bp_b` |
+| `DuplicateRuleLabel`         | Same constructor label in both          | `label`, `category_a`, `category_b`          |
+| `InvalidCategoryReference`   | Rule references unknown category        | `rule_label`, `referenced_category`          |
+| `AssociativityConflict`      | Same infix operator, different assoc    | `terminal`, `category`, `assoc_a`, `assoc_b` |
+| `BindingPowerConflict`       | Same prefix operator, different BP      | `terminal`, `category`, `bp_a`, `bp_b`       |
 
 All errors are collected and returned together (no early exit).
 
@@ -149,14 +149,14 @@ Merges another WFST into `self`:
 
 ## Source Reference
 
-| Symbol | Location |
-|--------|----------|
-| `compose_languages` | `prattail/src/compose.rs` |
-| `compose_many` | `prattail/src/compose.rs` |
-| `compose_with_wfst` | `prattail/src/compose.rs` |
-| `composition_summary` | `prattail/src/compose.rs` |
-| `CompositionError` | `prattail/src/compose.rs` |
+| Symbol                   | Location                     |
+|--------------------------|------------------------------|
+| `compose_languages`      | `prattail/src/compose.rs`    |
+| `compose_many`           | `prattail/src/compose.rs`    |
+| `compose_with_wfst`      | `prattail/src/compose.rs`    |
+| `composition_summary`    | `prattail/src/compose.rs`    |
+| `CompositionError`       | `prattail/src/compose.rs`    |
 | `incremental_first_sets` | `prattail/src/prediction.rs` |
-| `PredictionWfst::union` | `prattail/src/wfst.rs` |
+| `PredictionWfst::union`  | `prattail/src/wfst.rs`       |
 
 Test count: 19 tests (13 core + 6 WFST composition).

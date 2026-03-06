@@ -135,14 +135,48 @@ pub fn write_ebnf_output(ebnf: &str, language_name: &str, dump_target: &str) {
     };
 
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        eprintln!("warning: PRATTAIL_DUMP_EBNF: failed to create directory {:?}: {}", dir, e);
+        crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+            id: "I11",
+            name: "ebnf-dump-failed",
+            severity: crate::lint::LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!("PRATTAIL_DUMP_EBNF: failed to create directory {:?}: {}", dir, e),
+            hint: Some("check directory permissions and path validity".to_string()),
+            grammar_name: None,
+            source_location: None,
+        });
         return;
     }
 
     let path = dir.join(format!("{}.ebnf", language_name));
     match std::fs::write(&path, ebnf) {
-        Ok(()) => eprintln!("info: PRATTAIL_DUMP_EBNF: wrote {}", path.display()),
-        Err(e) => eprintln!("warning: PRATTAIL_DUMP_EBNF: failed to write {:?}: {}", path, e),
+        Ok(()) => {
+            crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+                id: "I12",
+                name: "ebnf-dump-success",
+                severity: crate::lint::LintSeverity::Info,
+                category: None,
+                rule: None,
+                message: format!("PRATTAIL_DUMP_EBNF: wrote {}", path.display()),
+                hint: None,
+                grammar_name: None,
+                source_location: None,
+            });
+        }
+        Err(e) => {
+            crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+                id: "I11",
+                name: "ebnf-dump-failed",
+                severity: crate::lint::LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: format!("PRATTAIL_DUMP_EBNF: failed to write {:?}: {}", path, e),
+                hint: Some("check file permissions and disk space".to_string()),
+                grammar_name: None,
+                source_location: None,
+            });
+        }
     }
 }
 

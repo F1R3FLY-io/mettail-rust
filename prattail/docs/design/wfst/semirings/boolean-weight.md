@@ -17,11 +17,11 @@ Tier 3 performs the implicit BooleanWeight projection — checking whether
 any token in the category's FIRST set dispatches to the rule through the
 prediction WFST.
 
-| Stage | File | Lines | Description |
-|-------|------|-------|-------------|
-| Four-tier dead-rule analysis | `pipeline.rs` | 106–207 | `detect_dead_rules()` returns `Vec<DeadRuleWarning>` |
-| W01 lint wrapper | `lint.rs` | 786–832 | `lint_w01_dead_rule()` maps warnings to `LintDiagnostic` |
-| Type definition | `semiring.rs` | 283–363 | BooleanWeight struct, Semiring impl |
+| Stage                        | File          | Lines   | Description                                              |
+|------------------------------|---------------|---------|----------------------------------------------------------|
+| Four-tier dead-rule analysis | `pipeline.rs` | 106–207 | `detect_dead_rules()` returns `Vec<DeadRuleWarning>`     |
+| W01 lint wrapper             | `lint.rs`     | 786–832 | `lint_w01_dead_rule()` maps warnings to `LintDiagnostic` |
+| Type definition              | `semiring.rs` | 283–363 | BooleanWeight struct, Semiring impl                      |
 
 Dead-rule detection runs unconditionally during the Generate phase (no feature
 gate).  It executes after prediction WFST construction, surfaced through the
@@ -105,11 +105,11 @@ Warnings are surfaced via the unified lint layer: `lint_w01_dead_rule()` in
 The four-tier system covers **all** rule types — no rule is excluded from
 detection.  Each tier handles a specific subset:
 
-| Tier | Rule Types Covered | Detection Method |
-|------|--------------------|------------------|
-| **1** | Literal rules (`is_literal`) | Structural: category has `native_type`? |
+| Tier  | Rule Types Covered                                                                 | Detection Method                          |
+|-------|------------------------------------------------------------------------------------|-------------------------------------------|
+| **1** | Literal rules (`is_literal`)                                                       | Structural: category has `native_type`?   |
 | **2** | Same-cat infix (`is_infix && !is_cross_category`), postfix, mixfix, var (`is_var`) | Graph: category in reachable fixed-point? |
-| **3** | Prefix, cast (`is_cast`), cross-category (`is_cross_category`) | WFST: any FIRST token dispatches to rule? |
+| **3** | Prefix, cast (`is_cast`), cross-category (`is_cross_category`)                     | WFST: any FIRST token dispatches to rule? |
 
 This replaces the previous single-pass implementation that skipped 5 rule
 types (infix, var, literal, cross-category, cast).  The four-tier design
@@ -169,11 +169,13 @@ a desirable property for fixed-point reachability analysis.
 It is the simplest semiring in PraTTaIL's hierarchy:
 
 ```
-Boolean  <--project--  Tropical  --embed-->  Log
-  |                       |
-  |                       +-- EditWeight (isomorphic over N)
-  |
-  +-- "is there any path?"
+            ┌─────────┐                ┌───────┐
+Boolean  ◀──┤ project ├──  Tropical  ──┤ embed ├──▶  Log
+   ▲        └─────────┘       ▲        └───────┘
+   │                          │
+   │                          └── EditWeight (isomorphic over N)
+   │
+   └── "is there any path?"
 ```
 
 ---

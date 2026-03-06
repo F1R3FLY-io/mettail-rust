@@ -143,9 +143,9 @@ language! {
 
 | Clause     | Merges Types | Merges Terms | Merges Equations | Merges Rewrites | Merges Logic | On Duplicate       |
 |------------|:------------:|:------------:|:----------------:|:---------------:|:------------:|--------------------|
-| `extends`  | Yes          | Yes          | Yes              | Yes             | Yes          | Error (no overlap) |
-| `includes` | Yes          | Yes          | No               | No              | No           | Override (shadow)  |
-| `mixins`   | Yes          | Yes          | No               | No              | No           | Override (shadow)  |
+| `extends`  |     Yes      |     Yes      |       Yes        |       Yes       |     Yes      | Error (no overlap) |
+| `includes` |     Yes      |     Yes      |        No        |       No        |      No      | Override (shadow)  |
+| `mixins`   |     Yes      |     Yes      |        No        |       No        |      No      | Override (shadow)  |
 
 ### 1.2 Language Fragments
 
@@ -540,11 +540,11 @@ This produces the binding hierarchy: **infix < prefix < postfix**.
 
 #### Parsing Examples
 
-| Expression | Parse Tree                          | Notes                                     |
-|------------|-------------------------------------|--------------------------------------------|
-| `3!`       | `Fact(NumLit(3))`                   | Simple postfix application                 |
-| `3! + 5`   | `Add(Fact(NumLit(3)), NumLit(5))`   | Postfix binds tighter than infix `+`       |
-| `-3!`      | `Neg(Fact(NumLit(3)))`              | Postfix binds tighter than prefix `-`      |
+| Expression | Parse Tree                              | Notes                                   |
+|------------|-----------------------------------------|-----------------------------------------|
+| `3!`       | `Fact(NumLit(3))`                       | Simple postfix application              |
+| `3! + 5`   | `Add(Fact(NumLit(3)), NumLit(5))`       | Postfix binds tighter than infix `+`    |
+| `-3!`      | `Neg(Fact(NumLit(3)))`                  | Postfix binds tighter than prefix `-`   |
 | `3! * 2!`  | `Mul(Fact(NumLit(3)), Fact(NumLit(2)))` | Both operands get postfix applied first |
 
 ### 5.2 Mixfix (N-ary) Operators
@@ -816,15 +816,15 @@ Variables are always identifiers.
 The following table shows which combinations of outer and inner pattern operations
 are valid:
 
-| Outer | Inner        | Valid | Example                                         |
-|-------|--------------|:-----:|--------------------------------------------------|
-| Sep   | NonTerminal  | Yes   | `ps.*sep("\|")`                                  |
-| Sep   | Map          | Yes   | `ns.*map(\|n\| n "!" q).*sep(",")`               |
-| Sep   | Zip          | Yes   | `*zip(ns,xs).*sep(",")`                          |
-| Sep   | Zip(Map)     | Yes   | `*zip(ns,xs).*map(\|n,x\| n "?" x).*sep(",")` |
-| Zip   | Map          | Yes   | `*zip(ns,xs).*map(\|n,x\| n "?" x)`             |
-| Map   | (standalone) | Yes   | Element-level structured pattern                 |
-| Zip   | (standalone) | Yes   | Dual-accumulator collection without separator    |
+| Outer | Inner        | Valid | Example                                       |
+|-------|--------------|:-----:|-----------------------------------------------|
+| Sep   | NonTerminal  |  Yes  | `ps.*sep("\|")`                               |
+| Sep   | Map          |  Yes  | `ns.*map(\|n\| n "!" q).*sep(",")`            |
+| Sep   | Zip          |  Yes  | `*zip(ns,xs).*sep(",")`                       |
+| Sep   | Zip(Map)     |  Yes  | `*zip(ns,xs).*map(\|n,x\| n "?" x).*sep(",")` |
+| Zip   | Map          |  Yes  | `*zip(ns,xs).*map(\|n,x\| n "?" x)`           |
+| Map   | (standalone) |  Yes  | Element-level structured pattern              |
+| Zip   | (standalone) |  Yes  | Dual-accumulator collection without separator |
 
 ---
 
@@ -1053,11 +1053,11 @@ dollar application variant for beta-reduction to succeed. `ApplyName`
 checks for `LamName`; `ApplyProc` checks for `LamProc`. A mismatch
 causes the normalizer to return the un-reduced term.
 
-| Expression                    | Inferred Type       | Lambda Variant | Result                                                                    |
-|-------------------------------|---------------------|----------------|---------------------------------------------------------------------------|
-| `$proc(^x.{x}, {})`           | `VarCategory::Proc` | `LamProc`      | `{}`                                                                      |
-| `$name(^loc.{loc!(init)}, n)` | `VarCategory::Name` | `LamName`      | `n!(init)`                                                                |
-| `$int(^x.{x + 1}, 5)`         | `VarCategory::Int`  | `LamInt`       | `6`                                                                       |
+| Expression                    | Inferred Type       | Lambda Variant | Result                                                                     |
+|-------------------------------|---------------------|----------------|----------------------------------------------------------------------------|
+| `$proc(^x.{x}, {})`           | `VarCategory::Proc` | `LamProc`      | `{}`                                                                       |
+| `$name(^loc.{loc!(init)}, n)` | `VarCategory::Name` | `LamName`      | `n!(init)`                                                                 |
+| `$int(^x.{x + 1}, 5)`         | `VarCategory::Int`  | `LamInt`       | `6`                                                                        |
 | `$proc(^x.{*(x)}, {})`        | `VarCategory::Name` | `LamName`      | `*(x)` (no reduction -- `ApplyProc` expects `LamProc` but finds `LamName`) |
 
 Note: In the last case, `x` appears in `*(x)` which uses `x` as a
@@ -1083,9 +1083,9 @@ Add . a:Int, b:Int |- a "+" b : Int ![a + b] step;
 
 ### Evaluation Modes
 
-| Mode | Behavior |
-|---|---|
-| `step` | Single-step evaluation: apply once, return result |
+| Mode   | Behavior                                                  |
+|--------|-----------------------------------------------------------|
+| `step` | Single-step evaluation: apply once, return result         |
 | `fold` | Recursive fold: apply repeatedly until no more reductions |
 
 ### Examples
@@ -1188,36 +1188,36 @@ The `S` and `T` variables are bound by the premise.
 
 ## Complete Grammar Feature Summary
 
-| Feature              | Syntax                                       | Module                      |
-|----------------------|----------------------------------------------|-----------------------------|
-| Type declaration     | `types { Cat }` or `types { ![T] as Cat }`   | lib.rs                      |
-| Infix operator       | `a OP b : Cat`                               | binding_power.rs + pratt.rs |
-| Right-assoc infix    | `a OP b : Cat right`                         | binding_power.rs + pratt.rs |
-| Unary prefix op      | `OP a : Cat` (same-category, tight binding)  | recursive.rs (prefix_bp)    |
-| Postfix operator     | `a OP : Cat` (same-category, tightest)       | binding_power.rs + pratt.rs |
+| Feature              | Syntax                                      | Module                      |
+|----------------------|---------------------------------------------|-----------------------------|
+| Type declaration     | `types { Cat }` or `types { ![T] as Cat }`  | lib.rs                      |
+| Infix operator       | `a OP b : Cat`                              | binding_power.rs + pratt.rs |
+| Right-assoc infix    | `a OP b : Cat right`                        | binding_power.rs + pratt.rs |
+| Unary prefix op      | `OP a : Cat` (same-category, tight binding) | recursive.rs (prefix_bp)    |
+| Postfix operator     | `a OP : Cat` (same-category, tightest)      | binding_power.rs + pratt.rs |
 | Mixfix operator      | `a OP1 b OP2 c : Cat` (3+ items, 2+ terms)  | binding_power.rs + pratt.rs |
-| Structural prefix    | `OP "(" a ")" : Cat`                         | recursive.rs                |
-| Unit constructor     | `\|- "token" : Cat`                          | recursive.rs                |
-| Structural rule      | `\|- term1 "op" term2 : Cat`                 | recursive.rs                |
-| Single binder        | `^x.p:[Type -> Type]`                        | recursive.rs                |
-| Multi-binder         | `^[xs].p:[Type* -> Type]`                    | recursive.rs                |
-| HashBag collection   | `ps:HashBag(Cat)`                            | recursive.rs                |
-| HashSet collection   | `ps:HashSet(Cat)`                            | recursive.rs                |
-| Vec collection       | `ns:Vec(Cat)`                                | recursive.rs                |
-| Separator list       | `*sep("delim")`                              | recursive.rs                |
-| Map pattern          | `*map(\|x\| ...)`                            | recursive.rs                |
-| Zip collection       | `*zip(a,b)`                                  | recursive.rs                |
+| Structural prefix    | `OP "(" a ")" : Cat`                        | recursive.rs                |
+| Unit constructor     | `\|- "token" : Cat`                         | recursive.rs                |
+| Structural rule      | `\|- term1 "op" term2 : Cat`                | recursive.rs                |
+| Single binder        | `^x.p:[Type -> Type]`                       | recursive.rs                |
+| Multi-binder         | `^[xs].p:[Type* -> Type]`                   | recursive.rs                |
+| HashBag collection   | `ps:HashBag(Cat)`                           | recursive.rs                |
+| HashSet collection   | `ps:HashSet(Cat)`                           | recursive.rs                |
+| Vec collection       | `ns:Vec(Cat)`                               | recursive.rs                |
+| Separator list       | `*sep("delim")`                             | recursive.rs                |
+| Map pattern          | `*map(\|x\| ...)`                           | recursive.rs                |
+| Zip collection       | `*zip(a,b)`                                 | recursive.rs                |
 | Zip+Map+Sep          | `*zip(a,b).*map(\|x,y\| ...).*sep(",")`     | recursive.rs                |
-| Optional             | `#opt(...)`                                  | recursive.rs                |
+| Optional             | `#opt(...)`                                 | recursive.rs                |
 | Cross-category       | `a:CatA, b:CatA \|- a OP b : CatB`          | dispatch.rs                 |
 | Cast                 | `k:CatA \|- k : CatB`                       | dispatch.rs                 |
 | Lambda               | `^x.{body}` (auto-generated)                | pratt.rs + recursive.rs     |
-| Application          | `$type(lam, arg)` (auto-generated)           | pratt.rs                    |
-| HOL native           | `![rust_expr] mode`                          | recursive.rs                |
-| Equation             | `\|- lhs = rhs`                              | (macro crate)               |
-| Rewrite              | `\| premise \|- lhs ~> rhs`                  | (macro crate)               |
-| `extends`            | `extends: [Base1, Base2]`                    | merge.rs + registry.rs      |
-| `includes`           | `includes: [Lang1, Lang2]`                   | merge.rs + registry.rs      |
-| `mixins`             | `mixins: [Frag1, Frag2]`                     | merge.rs + registry.rs      |
-| `language_fragment!` | `language_fragment! { name: F, ... }`        | fragment.rs + registry.rs   |
-| `compose_languages!` | `compose_languages! { name: C, ... }`        | compose.rs + compose_gen.rs |
+| Application          | `$type(lam, arg)` (auto-generated)          | pratt.rs                    |
+| HOL native           | `![rust_expr] mode`                         | recursive.rs                |
+| Equation             | `\|- lhs = rhs`                             | (macro crate)               |
+| Rewrite              | `\| premise \|- lhs ~> rhs`                 | (macro crate)               |
+| `extends`            | `extends: [Base1, Base2]`                   | merge.rs + registry.rs      |
+| `includes`           | `includes: [Lang1, Lang2]`                  | merge.rs + registry.rs      |
+| `mixins`             | `mixins: [Frag1, Frag2]`                    | merge.rs + registry.rs      |
+| `language_fragment!` | `language_fragment! { name: F, ... }`       | fragment.rs + registry.rs   |
+| `compose_languages!` | `compose_languages! { name: C, ... }`       | compose.rs + compose_gen.rs |

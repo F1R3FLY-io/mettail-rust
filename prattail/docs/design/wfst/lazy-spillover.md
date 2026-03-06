@@ -44,13 +44,13 @@ successful parse of an ambiguous token triggers (A-1) replay invocations,
 each running the full parser.  For a typical expression like `float(3)` in
 the Calculator grammar:
 
-| Component           | Count | Cost per replay          |
-|---------------------|-------|--------------------------|
+| Component            | Count | Cost per replay                                              |
+|----------------------|-------|--------------------------------------------------------------|
 | Spilled alternatives | 3     | (FloatId, IntToFloat, BoolToFloat, StrToFloat minus primary) |
-| Lex pass per replay | 1     | Full re-lex of input     |
-| Prefix dispatch     | 1     | Token match + rule body  |
-| Infix loop          | 1     | BP comparison + possible continuation |
-| Total per parse     | 3     | 3 full parser invocations |
+| Lex pass per replay  | 1     | Full re-lex of input                                         |
+| Prefix dispatch      | 1     | Token match + rule body                                      |
+| Infix loop           | 1     | BP comparison + possible continuation                        |
+| Total per parse      | 3     | 3 full parser invocations                                    |
 
 When the primary result is `3.0` (a ground float literal), all three
 replays produce results that `from_alternatives` would discard in favor
@@ -107,15 +107,15 @@ Inner::Ambiguous(_)      => false
 `is_ground()` is a generated per-category method that recursively traverses
 the term:
 
-| Variant kind   | `is_ground()` result |
-|----------------|----------------------|
-| Var            | `false` (always)     |
-| Literal        | `true` (always)      |
-| Nullary        | `true` (always)      |
-| Regular        | `f0.is_ground() && f1.is_ground() && ...` |
-| Collection     | `coll.iter().all(\|x\| x.is_ground())` |
-| Binder         | pre-scope fields ground `&&` scope body ground |
-| Ambiguous      | `false` (always)     |
+| Variant kind | `is_ground()` result                           |
+|--------------|------------------------------------------------|
+| Var          | `false` (always)                               |
+| Literal      | `true` (always)                                |
+| Nullary      | `true` (always)                                |
+| Regular      | `f0.is_ground() && f1.is_ground() && ...`      |
+| Collection   | `coll.iter().all(\|x\| x.is_ground())`         |
+| Binder       | pre-scope fields ground `&&` scope body ground |
+| Ambiguous    | `false` (always)                               |
 
 ---
 
@@ -134,38 +134,44 @@ for a single category parse attempt, with F3's decision point highlighted:
 │     │ Cat::parse(input)                                       │     │
 │     └──────────────┬──────────────────────────────────────────┘     │
 │                    │                                                │
-│              ┌─────┴──────┐                                         │
+│                    ▼                                                │
+│              ┌────────────┐                                         │
 │              │  Result?   │                                         │
-│              └──┬──────┬──┘                                         │
-│            Ok   │      │ Err                                        │
-│     ┌───────────▼┐  ┌──▼───────────────────────────────┐            │
-│     │ Push to    │  │ Clear spillover, record first_err │            │
-│     │ successes  │  └──────────────────────────────────┘            │
+│              └┬──────────┬┘                                         │
+│            Ok │          │ Err                                      │
+│               ▼          ▼                                          │
+│     ┌────────────┐  ┌───────────────────────────────────┐           │
+│     │ Push to    │  │ Clear spillover, record first_err │           │
+│     │ successes  │  └───────────────────────────────────┘           │
 │     └──────┬─────┘                                                  │
 │            │                                                        │
-│     ┌──────▼──────────────────────────────────┐                     │
+│            ▼                                                        │
+│     ┌─────────────────────────────────────────┐                     │
 │     │ Drain spillover buffer:                 │                     │
 │     │ spilled = NFA_PREFIX_SPILL_CAT.take()   │                     │
 │     └──────┬──────────────────────────────────┘                     │
 │            │                                                        │
-│     ┌──────▼──────────────────────────────────┐                     │
+│            ▼                                                        │
+│     ┌─────────────────────────────────────────┐                     │
 │     │ F3 DECISION POINT                       │                     │
 │     │ primary_is_accepting =                  │                     │
 │     │   successes.last().is_accepting()       │                     │
 │     └──────┬──────────────────────────────────┘                     │
 │            │                                                        │
-│       ┌────┴────────────┐                                           │
+│            ▼                                                        │
+│       ┌─────────────────┐                                           │
 │       │ is_accepting()? │                                           │
-│       └──┬───────────┬──┘                                           │
-│    true  │           │ false                                        │
-│   ┌──────▼────────┐  ┌──────▼──────────────────────────────────┐    │
+│       └┬───────────────┬┘                                           │
+│   true │               │ false                                      │
+│        ▼               ▼                                            │
+│   ┌───────────────┐  ┌─────────────────────────────────────────┐    │
 │   │ SKIP REPLAY   │  │ FULL REPLAY                             │    │
 │   │               │  │                                         │    │
 │   │ Discard all   │  │ for each (alt, pos, weight) in spilled: │    │
 │   │ N-1 spilled   │  │   NFA_FORCED_PREFIX_CAT.set(alt)        │    │
 │   │ alternatives. │  │   Cat::parse(input)                     │    │
-│   │               │  │   push Ok result to successes            │    │
-│   │ Zero replays. │  │   clear nested spillover                 │    │
+│   │               │  │   push Ok result to successes           │    │
+│   │ Zero replays. │  │   clear nested spillover                │    │
 │   └───────────────┘  └─────────────────────────────────────────┘    │
 │                                                                     │
 │   match successes.len():                                            │
@@ -249,13 +255,13 @@ replay loop therefore produces the same result as performing it.  **QED**
 
 ### Edge cases
 
-| Case | Behavior |
-|------|----------|
-| Primary is `Ambiguous(...)` | `is_accepting()` returns false; replay proceeds (correct) |
-| Primary is a Var term | `is_ground()` returns false; replay proceeds (correct) |
-| Primary is a nested term with a deep Var | `is_ground()` recursively finds it; replay proceeds (correct) |
+| Case                                       | Behavior                                                                      |
+|--------------------------------------------|-------------------------------------------------------------------------------|
+| Primary is `Ambiguous(...)`                | `is_accepting()` returns false; replay proceeds (correct)                     |
+| Primary is a Var term                      | `is_ground()` returns false; replay proceeds (correct)                        |
+| Primary is a nested term with a deep Var   | `is_ground()` recursively finds it; replay proceeds (correct)                 |
 | No spillover occurred (empty spill buffer) | The `for` loop body executes 0 times; F3 adds only the `is_accepting()` check |
-| Binder with ground body | `is_ground()` traverses into scope; returns true; replay skipped (correct) |
+| Binder with ground body                    | `is_ground()` traverses into scope; returns true; replay skipped (correct)    |
 
 ---
 
@@ -268,14 +274,13 @@ substitution as follows:
 ### Timeline
 
 ```
-         parse time                    eval time
-        ───────────────────────────  ───────────────────
-        Cat::parse(input)            substitute_env(env)
-              │                            │
-              ├─ primary result            ├─ variables resolved
-              ├─ F3 check: is_accepting?   ├─ may become ground
-              ├─ replay or skip            ├─ from_alternatives
-              └─ successes collected       └─ final term
+parse time                        eval time
+───────────────────────────────   ───────────────────
+Cat::parse(input)                 substitute_env(env)
+├─ primary result                 ├─ variables resolved
+├─ F3 check: is_accepting?        ├─ may become ground
+├─ replay or skip                 ├─ from_alternatives
+└─ successes collected            └─ final term
 ```
 
 ### Why F3 is correct despite deferred substitution
@@ -324,12 +329,12 @@ Input: `"float(3)"` in the Calculator grammar.
 
 **NFA try-all phase:**
 
-| Alternative   | Rule        | Weight | Result          | Accepting? |
-|---------------|-------------|--------|-----------------|------------|
-| a_0 (primary) | FloatId     | 0.0    | `Float::NumLit(3.0)` | Yes   |
-| a_1 (spilled) | IntToFloat  | 0.3    | `Int::NumLit(3)`     | --    |
-| a_2 (spilled) | BoolToFloat | 0.8    | (parse fails)        | --    |
-| a_3 (spilled) | StrToFloat  | 1.5    | (parse fails)        | --    |
+| Alternative   | Rule        | Weight | Result               | Accepting? |
+|---------------|-------------|--------|----------------------|------------|
+| a_0 (primary) | FloatId     | 0.0    | `Float::NumLit(3.0)` | Yes        |
+| a_1 (spilled) | IntToFloat  | 0.3    | `Int::NumLit(3)`     | --         |
+| a_2 (spilled) | BoolToFloat | 0.8    | (parse fails)        | --         |
+| a_3 (spilled) | StrToFloat  | 1.5    | (parse fails)        | --         |
 
 **F3 decision:**
 
@@ -351,12 +356,12 @@ Input: `"float(x)"` in the Calculator grammar, with environment
 
 **NFA try-all phase:**
 
-| Alternative   | Rule        | Weight | Result               | Accepting? |
-|---------------|-------------|--------|----------------------|------------|
-| a_0 (primary) | FloatId     | 0.0    | `Float::FVar("x")`  | No         |
-| a_1 (spilled) | IntToFloat  | 0.3    | `Int::IVar("x")`    | --         |
-| a_2 (spilled) | BoolToFloat | 0.8    | (parse fails)        | --         |
-| a_3 (spilled) | StrToFloat  | 1.5    | (parse fails)        | --         |
+| Alternative   | Rule        | Weight | Result             | Accepting? |
+|---------------|-------------|--------|--------------------|------------|
+| a_0 (primary) | FloatId     | 0.0    | `Float::FVar("x")` | No         |
+| a_1 (spilled) | IntToFloat  | 0.3    | `Int::IVar("x")`   | --         |
+| a_2 (spilled) | BoolToFloat | 0.8    | (parse fails)      | --         |
+| a_3 (spilled) | StrToFloat  | 1.5    | (parse fails)      | --         |
 
 **F3 decision:**
 
@@ -369,11 +374,11 @@ Result: **full replay** of all spilled alternatives.
 
 **Replay results:**
 
-| Replay | Forced prefix | Result                    | Weight |
-|--------|---------------|---------------------------|--------|
-| a_1    | IntToFloat    | `Inner::Float(IntToFloat(Int::IVar("x")))` | 0.3 |
-| a_2    | BoolToFloat   | Err (parse fails)         | --     |
-| a_3    | StrToFloat    | Err (parse fails)         | --     |
+| Replay | Forced prefix | Result                                     | Weight |
+|--------|---------------|--------------------------------------------|--------|
+| a_1    | IntToFloat    | `Inner::Float(IntToFloat(Int::IVar("x")))` | 0.3    |
+| a_2    | BoolToFloat   | Err (parse fails)                          | --     |
+| a_3    | StrToFloat    | Err (parse fails)                          | --     |
 
 **Post-substitution:** `substitute_env({x -> 42})` resolves `FVar("x")`
 to `42`.  `from_alternatives` selects the accepting result with the
@@ -431,14 +436,14 @@ The only added operation on the critical path is a single `is_accepting()`
 call after the primary parse succeeds.  This call delegates to `is_ground()`,
 whose cost depends on the term structure:
 
-| Term structure        | `is_ground()` cost | Notes |
-|-----------------------|-------------------|-------|
-| Literal (`NumLit`)    | O(1) | Single pattern match |
-| Nullary constructor   | O(1) | Single pattern match |
-| Var (`FVar`, `IVar`)  | O(1) | Single pattern match, returns false immediately |
-| Regular (N fields)    | O(N) | Short-circuit on first non-ground field |
-| Collection (M elems)  | O(M) | Short-circuit via `.all()` |
-| Nested depth D        | O(D) | Recursive traversal |
+| Term structure       | `is_ground()` cost | Notes                                           |
+|----------------------|--------------------|-------------------------------------------------|
+| Literal (`NumLit`)   | O(1)               | Single pattern match                            |
+| Nullary constructor  | O(1)               | Single pattern match                            |
+| Var (`FVar`, `IVar`) | O(1)               | Single pattern match, returns false immediately |
+| Regular (N fields)   | O(N)               | Short-circuit on first non-ground field         |
+| Collection (M elems) | O(M)               | Short-circuit via `.all()`                      |
+| Nested depth D       | O(D)               | Recursive traversal                             |
 
 For the common case of ground literals (the majority of real-world
 expressions), the cost is O(1) -- a single pattern match arm.
@@ -457,11 +462,11 @@ with A alternatives, F3 saves (A-1) full parser calls.
 
 ### Expected benefit by grammar profile
 
-| Grammar profile                    | Primary ground? | F3 benefit |
-|------------------------------------|-----------------|------------|
-| Arithmetic on literals (e.g., `3 + 4 * 2`) | Yes | Eliminates all replay |
-| Programs with bound variables (e.g., `let x = 3 in x + 1`) | Mixed | Replay only for variable subexpressions |
-| Purely symbolic (e.g., `f(x, y)`)  | No | No benefit (replay still needed) |
+| Grammar profile                                            | Primary ground? | F3 benefit                              |
+|------------------------------------------------------------|-----------------|-----------------------------------------|
+| Arithmetic on literals (e.g., `3 + 4 * 2`)                 | Yes             | Eliminates all replay                   |
+| Programs with bound variables (e.g., `let x = 3 in x + 1`) | Mixed           | Replay only for variable subexpressions |
+| Purely symbolic (e.g., `f(x, y)`)                          | No              | No benefit (replay still needed)        |
 
 For the Calculator grammar's benchmark suite, the majority of expressions
 are ground (literal arithmetic).  F3 eliminates replay for all of these,
@@ -473,11 +478,11 @@ reducing the per-parse cost to a single primary invocation plus one O(1)
 F3 is **complementary** to both F1 (Spillover Pruning) and F2 (Early
 Termination).  The three optimizations target different phases:
 
-| Optimization | Phase | When it helps |
-|-------------|-------|---------------|
-| F2 (Early Termination) | NFA try-all loop | First alt is deterministic (w=0.0), no spillover |
-| F1 (Spillover Pruning) | Spill loop (before replay) | High-weight alternatives pruned by beam |
-| F3 (Lazy Spillover) | Replay loop (after primary) | Primary is ground, all replay skipped |
+| Optimization           | Phase                       | When it helps                                    |
+|------------------------|-----------------------------|--------------------------------------------------|
+| F2 (Early Termination) | NFA try-all loop            | First alt is deterministic (w=0.0), no spillover |
+| F1 (Spillover Pruning) | Spill loop (before replay)  | High-weight alternatives pruned by beam          |
+| F3 (Lazy Spillover)    | Replay loop (after primary) | Primary is ground, all replay skipped            |
 
 When F1 has already pruned some alternatives and F3 determines the primary
 is ground, the remaining (post-F1) alternatives are also skipped.  The
@@ -488,11 +493,11 @@ skip the reduced buffer entirely.
 
 ## 8. Source References
 
-| File | Location | Description |
-|------|----------|-------------|
+| File                                 | Location        | Description                                          |
+|--------------------------------------|-----------------|------------------------------------------------------|
 | `macros/src/gen/runtime/language.rs` | lines 1136-1156 | F3 lazy spillover in `parse_preserving_vars` codegen |
-| `macros/src/gen/runtime/language.rs` | lines 270-278 | `is_accepting()` method on inner enum |
-| `macros/src/gen/runtime/language.rs` | lines 284-326 | `from_alternatives()` disambiguation logic |
-| `macros/src/gen/runtime/language.rs` | lines 205-207 | `is_accepting` delegation to `is_ground()` |
-| `macros/src/gen/term_ops/ground.rs` | lines 31-59 | `is_ground()` generation for all categories |
-| `macros/src/gen/term_ops/ground.rs` | lines 62-85 | Per-variant `is_ground` arm generation |
+| `macros/src/gen/runtime/language.rs` | lines 270-278   | `is_accepting()` method on inner enum                |
+| `macros/src/gen/runtime/language.rs` | lines 284-326   | `from_alternatives()` disambiguation logic           |
+| `macros/src/gen/runtime/language.rs` | lines 205-207   | `is_accepting` delegation to `is_ground()`           |
+| `macros/src/gen/term_ops/ground.rs`  | lines 31-59     | `is_ground()` generation for all categories          |
+| `macros/src/gen/term_ops/ground.rs`  | lines 62-85     | Per-variant `is_ground` arm generation               |

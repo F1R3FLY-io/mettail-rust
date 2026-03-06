@@ -45,8 +45,8 @@ inspecting the next token. The FIRST sets of `Int`, `Float`, `Bool`, and `Str`
 all include `Ident` (any variable name can belong to any type), so two-token
 lookahead does not help:
 
-| Token     | Candidate Rules                                  | Decision           |
-|-----------|--------------------------------------------------|--------------------|
+| Token     | Candidate Rules                                      | Decision          |
+|-----------|------------------------------------------------------|-------------------|
 | `KwFloat` | `FloatId`, `IntToFloat`, `BoolToFloat`, `StrToFloat` | AMBIGUOUS (4-way) |
 
 Before the NFA disambiguation pipeline, this ambiguity triggered a compile-time
@@ -70,12 +70,12 @@ disambiguation pipeline introduces a structured mechanism to:
 
 The weight domain is the tropical semiring T = (R+ union {+inf}, min, +, +inf, 0.0):
 
-| Operation | Symbol | Definition         | Interpretation             |
-|-----------|--------|--------------------|----------------------------|
-| Plus      | a ⊕ b  | min(a, b)          | Select best alternative    |
-| Times     | a ⊗ b  | a + b              | Accumulate cost along path |
-| Zero      | 0̄      | +∞                 | Unreachable                |
-| One       | 1̄      | 0.0                | Zero cost (deterministic)  |
+| Operation | Symbol | Definition | Interpretation             |
+|-----------|--------|------------|----------------------------|
+| Plus      | a ⊕  b  | min(a, b)  | Select best alternative    |
+| Times     | a ⊗  b  | a + b      | Accumulate cost along path |
+| Zero      | 0̄      | +∞         | Unreachable                |
+| One       | 1̄      | 0.0        | Zero cost (deterministic)  |
 
 The ordering `a < b` means "a is more likely than b" (lower weight = higher
 priority). The tropical semiring satisfies the required semiring axioms --
@@ -104,7 +104,7 @@ for the same dispatch token. The NFA disambiguation pipeline resolves G(t) by:
 Given beam width beta in T and best weight w* = min{w(r) : r in G(t)}, the
 compile-time beam predicate is:
 
-  P_beam(r) = (w(r) <= w* ⊗ beta)  =  (w(r) <= w* + beta)
+  P_beam(r) = (w(r) <= w* ⊗  beta)  =  (w(r) <= w* + beta)
 
 Alternatives where P_beam(r) = false are *pruned* -- they are never emitted in
 the generated code. This is a compile-time decision; no runtime beam check
@@ -133,12 +133,12 @@ through four thread-local storage cells per category.
 For each category `Cat`, four `Cell`-based thread-local variables are emitted
 in the generated code:
 
-| Thread-Local                   | Type                             | Purpose                                             |
-|--------------------------------|----------------------------------|------------------------------------------------------|
-| `NFA_PREFIX_SPILL_CAT`         | `Cell<Vec<(Cat, usize, f64)>>`   | Spillover buffer for N-1 alternatives with weights   |
-| `NFA_FORCED_PREFIX_CAT`        | `Cell<Option<(Cat, usize, f64)>>`| Forced-prefix replay override                        |
-| `NFA_PRIMARY_WEIGHT_CAT`       | `Cell<f64>`                      | Weight of the primary (best) NFA result              |
-| `RUNNING_WEIGHT_CAT`           | `Cell<f64>`                      | Accumulated dispatch confidence weight (B2 adaptive) |
+| Thread-Local             | Type                              | Purpose                                              |
+|--------------------------|-----------------------------------|------------------------------------------------------|
+| `NFA_PREFIX_SPILL_CAT`   | `Cell<Vec<(Cat, usize, f64)>>`    | Spillover buffer for N-1 alternatives with weights   |
+| `NFA_FORCED_PREFIX_CAT`  | `Cell<Option<(Cat, usize, f64)>>` | Forced-prefix replay override                        |
+| `NFA_PRIMARY_WEIGHT_CAT` | `Cell<f64>`                       | Weight of the primary (best) NFA result              |
+| `RUNNING_WEIGHT_CAT`     | `Cell<f64>`                       | Accumulated dispatch confidence weight (B2 adaptive) |
 
 All four use `Cell` (not `RefCell`) because the trampoline's standalone parse
 functions may cause re-entrant calls. `Cell::take()` and `Cell::set()` are
@@ -174,58 +174,62 @@ thread_local! {
 ### 3.2 Compile-Time vs Runtime Boundary
 
 ```
-  ┌───────────────────────────────────────────────────────────────────────┐
-  │  COMPILE TIME (PraTTaIL pipeline)                                     │
-  │                                                                       │
-  │  ┌─────────────────────────────────────────────────────────────────┐  │
-  │  │  Detection                                                      │  │
-  │  │    categories_needing_nfa_spillover()                            │  │
-  │  │    group_rd_by_dispatch_token()                                  │  │
-  │  │    --> needs_nfa_spillover flag on TrampolineConfig               │  │
-  │  └─────────────────────────────────────────────────────────────────┘  │
-  │                               │                                       │
-  │  ┌─────────────────────────────▼───────────────────────────────────┐  │
-  │  │  Weight Ordering                                                │  │
-  │  │    nfa_alternative_order() --> sorted (index, TropicalWeight)    │  │
-  │  │    beam pruning: w(r) <= w* + beta                              │  │
-  │  └─────────────────────────────────────────────────────────────────┘  │
-  │                               │                                       │
-  │  ┌─────────────────────────────▼───────────────────────────────────┐  │
-  │  │  Code Generation                                                │  │
-  │  │    write_nfa_merged_prefix_arm() --> NFA try-all match arm      │  │
-  │  │    write_nfa_inline_constructor() --> Ok(Cat::Label(...))        │  │
-  │  │    Thread-local declarations (4 per category)                    │  │
-  │  │    Forced-prefix check at top of 'prefix block                  │  │
-  │  └─────────────────────────────────────────────────────────────────┘  │
-  │                                                                       │
-  └───────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│  COMPILE TIME (PraTTaIL pipeline)                                     │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  Detection                                                      │  │
+│  │    categories_needing_nfa_spillover()                           │  │
+│  │    group_rd_by_dispatch_token()                                 │  │
+│  │    --> needs_nfa_spillover flag on TrampolineConfig             │  │
+│  └─────────────────────────────┬───────────────────────────────────┘  │
+│                                │                                      │
+│                                ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  Weight Ordering                                                │  │
+│  │    nfa_alternative_order() --> sorted (index, TropicalWeight)   │  │
+│  │    beam pruning: w(r) <= w* + beta                              │  │
+│  └─────────────────────────────┬───────────────────────────────────┘  │
+│                                │                                      │
+│                                ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  Code Generation                                                │  │
+│  │    write_nfa_merged_prefix_arm() --> NFA try-all match arm      │  │
+│  │    write_nfa_inline_constructor() --> Ok(Cat::Label(...))       │  │
+│  │    Thread-local declarations (4 per category)                   │  │
+│  │    Forced-prefix check at top of 'prefix block                  │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+│                                                                       │
+└───────────────────────────────────────────────────────────────────────┘
 
-  ┌───────────────────────────────────────────────────────────────────────┐
-  │  RUNTIME (generated code)                                             │
-  │                                                                       │
-  │  ┌─────────────────────────────────────────────────────────────────┐  │
-  │  │  NFA Merged Arm                                                 │  │
-  │  │    Save pos --> try each alternative in weight order              │  │
-  │  │    Collect (result, position, weight) for each success           │  │
-  │  │    Return best (index 0) --> spill rest to NFA_PREFIX_SPILL      │  │
-  │  └─────────────────────────────────────────────────────────────────┘  │
-  │                               │                                       │
-  │  ┌─────────────────────────────▼───────────────────────────────────┐  │
-  │  │  parse_preserving_vars Drain Loop                               │  │
-  │  │    Primary parse --> record NFA_PRIMARY_WEIGHT                   │  │
-  │  │    Drain NFA_PREFIX_SPILL --> forced-prefix replay               │  │
-  │  │    Each replay: set NFA_FORCED_PREFIX --> Cat::parse(input)      │  │
-  │  │    Collect successes + weights                                   │  │
-  │  └─────────────────────────────────────────────────────────────────┘  │
-  │                               │                                       │
-  │  ┌─────────────────────────────▼───────────────────────────────────┐  │
-  │  │  Weight-Aware from_alternatives                                 │  │
-  │  │    AMBIGUOUS_WEIGHTS carries weights parallel to flat            │  │
-  │  │    Multiple accepting --> min-weight (tropical) wins             │  │
-  │  │    Length mismatch --> first accepting (declaration order)        │  │
-  │  └─────────────────────────────────────────────────────────────────┘  │
-  │                                                                       │
-  └───────────────────────────────────────────────────────────────────────┘
+┌───────────────────────────────────────────────────────────────────────┐
+│  RUNTIME (generated code)                                             │
+│                                                                       │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  NFA Merged Arm                                                 │  │
+│  │    Save pos --> try each alternative in weight order            │  │
+│  │    Collect (result, position, weight) for each success          │  │
+│  │    Return best (index 0) --> spill rest to NFA_PREFIX_SPILL     │  │
+│  └─────────────────────────────┬───────────────────────────────────┘  │
+│                                │                                      │
+│                                ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  parse_preserving_vars Drain Loop                               │  │
+│  │    Primary parse --> record NFA_PRIMARY_WEIGHT                  │  │
+│  │    Drain NFA_PREFIX_SPILL --> forced-prefix replay              │  │
+│  │    Each replay: set NFA_FORCED_PREFIX --> Cat::parse(input)     │  │
+│  │    Collect successes + weights                                  │  │
+│  └─────────────────────────────┬───────────────────────────────────┘  │
+│                                │                                      │
+│                                ▼                                      │
+│  ┌─────────────────────────────────────────────────────────────────┐  │
+│  │  Weight-Aware from_alternatives                                 │  │
+│  │    AMBIGUOUS_WEIGHTS carries weights parallel to flat           │  │
+│  │    Multiple accepting --> min-weight (tropical) wins            │  │
+│  │    Length mismatch --> first accepting (declaration order)      │  │
+│  └─────────────────────────────────────────────────────────────────┘  │
+│                                                                       │
+└───────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -436,11 +440,11 @@ priority).
 
 The weight determines three things:
 
-| Semantic Role             | Description                                             |
-|---------------------------|---------------------------------------------------------|
-| **Try order**             | Lowest-weight alternative is tried first                |
-| **Primary selection**     | Index 0 after weight-sort is returned as primary result |
-| **Tiebreaking**           | Weight carried through spillover for `from_alternatives`|
+| Semantic Role         | Description                                              |
+|-----------------------|----------------------------------------------------------|
+| **Try order**         | Lowest-weight alternative is tried first                 |
+| **Primary selection** | Index 0 after weight-sort is returned as primary result  |
+| **Tiebreaking**       | Weight carried through spillover for `from_alternatives` |
 
 ### 5.3 F2 Early Termination
 
@@ -486,11 +490,11 @@ weight was estimated but the runtime primary result has a different weight.
 
 Each spilled alternative is a 3-tuple `(Cat, usize, f64)`:
 
-| Field  | Type    | Semantics                                                    |
-|--------|---------|--------------------------------------------------------------|
-| `.0`   | `Cat`   | Parsed prefix value (e.g., `IntToFloat(IntVar("x"))`)       |
-| `.1`   | `usize` | Token position after parsing (end position of the prefix)   |
-| `.2`   | `f64`   | WFST tropical weight (lower = more likely)                  |
+| Field | Type    | Semantics                                                 |
+|-------|---------|-----------------------------------------------------------|
+| `.0`  | `Cat`   | Parsed prefix value (e.g., `IntToFloat(IntVar("x"))`)     |
+| `.1`  | `usize` | Token position after parsing (end position of the prefix) |
+| `.2`  | `f64`   | WFST tropical weight (lower = more likely)                |
 
 ### 6.2 Position Filter
 
@@ -588,10 +592,10 @@ When the forced-prefix check fires:
 A design that only collected prefix values (without running the infix loop)
 would lose operator context. Consider `float(x) + 1.0`:
 
-| Approach          | Result                                               | Correct? |
-|-------------------|------------------------------------------------------|----------|
-| Prefix-only       | `IntToFloat(IntVar("x"))`                           | No -- missing `+ 1.0` |
-| Full replay       | `FloatAdd(IntToFloat(IntVar("x")), FloatLit(1.0))`  | Yes      |
+| Approach    | Result                                             | Correct?              |
+|-------------|----------------------------------------------------|-----------------------|
+| Prefix-only | `IntToFloat(IntVar("x"))`                          | No -- missing `+ 1.0` |
+| Full replay | `FloatAdd(IntToFloat(IntVar("x")), FloatLit(1.0))` | Yes                   |
 
 The forced-prefix replay runs the *complete* parser (prefix + infix loop),
 so each alternative gets its full syntactic context.
@@ -616,13 +620,13 @@ spillover buffer.
 
 ### 8.1 Cost Analysis by Scenario
 
-| Scenario                  | Cost                                                      |
-|---------------------------|-----------------------------------------------------------|
-| Unambiguous dispatch      | `Cell::take()` on `None` / empty `Vec` (pointer swap)     |
-| All alternatives fail     | Single error return, no spillover written                  |
-| Single NFA success        | No spillover push (only `break 'prefix best`)             |
-| N NFA successes (N >= 2)  | NFA merged arm: N try-restore + spillover push            |
-| Spillover replay          | N-1 full re-parses via forced prefix                      |
+| Scenario                 | Cost                                                  |
+|--------------------------|-------------------------------------------------------|
+| Unambiguous dispatch     | `Cell::take()` on `None` / empty `Vec` (pointer swap) |
+| All alternatives fail    | Single error return, no spillover written             |
+| Single NFA success       | No spillover push (only `break 'prefix best`)         |
+| N NFA successes (N >= 2) | NFA merged arm: N try-restore + spillover push        |
+| Spillover replay         | N-1 full re-parses via forced prefix                  |
 
 ### 8.2 Why Unambiguous Is Free
 
@@ -631,12 +635,12 @@ NFA-ambiguous ones) so that `parse_preserving_vars` can unconditionally drain
 them without compile-time category branching. The cost when these cells are
 never populated:
 
-| Operation                            | Cost               |
-|--------------------------------------|--------------------|
-| `Cell::take()` on empty `Vec`        | Pointer swap (2 writes) |
-| `Cell::take()` on `None`             | Register-width copy     |
-| `Cell::get()` on default `f64`       | Register-width read     |
-| `Cell::set()` on `f64`              | Register-width write    |
+| Operation                      | Cost                    |
+|--------------------------------|-------------------------|
+| `Cell::take()` on empty `Vec`  | Pointer swap (2 writes) |
+| `Cell::take()` on `None`       | Register-width copy     |
+| `Cell::get()` on default `f64` | Register-width read     |
+| `Cell::set()` on `f64`         | Register-width write    |
 
 ### 8.3 No Thread-Local Access on Non-NFA Arms
 
@@ -894,44 +898,46 @@ STAGE F: substitute_env (x = Bool(true))
   ┌──────────────────────────────────────────────────────────────────┐
   │ NFA merged arm (KwFloat)                                         │
   │                                                                  │
-  │  FloatId ──┐                                                     │
+  │  FloatId ────┐                                                   │
   │  IntToFloat──┤  nfa_results = [R0, R1, R2, R3]                   │
-  │  BoolToFloat─┤  nfa_weights = [0.50, 1.00, 1.50, 2.00]          │
+  │  BoolToFloat─┤  nfa_weights = [0.50, 1.00, 1.50, 2.00]           │
   │  StrToFloat──┘                                                   │
   │                                                                  │
   │  best = R0 (FloatId)                                             │
-  │  spill = [(R1,4,1.0), (R2,4,1.5), (R3,4,2.0)]                  │
-  │          │                │                                      │
-  └──────────┼────────────────┼──────────────────────────────────────┘
+  │  spill = [(R1,4,1.0), (R2,4,1.5), (R3,4,2.0)]                    │
+  │          ╷                ╷                                      │
+  └──────────┊────────────────┊──────────────────────────────────────┘
              │                │
-             │  ┌─────────────▼──────────────────────────────┐
-             │  │ NFA_PREFIX_SPILL_FLOAT                      │
-             │  │   Cell<Vec<(Float, usize, f64)>>            │
+             │                ▼
+             │  ┌────────────────────────────────────────────┐
+             │  │ NFA_PREFIX_SPILL_FLOAT                     │
+             │  │   Cell<Vec<(Float, usize, f64)>>           │
              │  └─────────────┬──────────────────────────────┘
              │                │
-             │  ┌─────────────▼──────────────────────────────┐
-             │  │ NFA_PRIMARY_WEIGHT_FLOAT                    │
-             │  │   Cell<f64> = 0.50                          │
+             │                ▼
+             │  ┌────────────────────────────────────────────┐
+             │  │ NFA_PRIMARY_WEIGHT_FLOAT                   │
+             │  │   Cell<f64> = 0.50                         │
              │  └─────────────┬──────────────────────────────┘
              │                │
-  ┌──────────▼────────────────▼──────────────────────────────────────┐
-  │ parse_preserving_vars                                             │
-  │                                                                   │
-  │  primary: Ok(FloatId(FloatVar("x")))     weight: 0.50            │
-  │                                                                   │
-  │  drain spill:                                                     │
-  │    ┌────────────────────────────────────────────────────────────┐ │
-  │    │ NFA_FORCED_PREFIX_FLOAT.set(R1)  --> Float::parse(input)   │ │
-  │    │ NFA_FORCED_PREFIX_FLOAT.set(R2)  --> Float::parse(input)   │ │
-  │    │ NFA_FORCED_PREFIX_FLOAT.set(R3)  --> Float::parse(input)   │ │
-  │    └────────────────────────────────────────────────────────────┘ │
-  │                                                                   │
+             ▼                ▼
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ parse_preserving_vars                                               │
+  │                                                                     │
+  │  primary: Ok(FloatId(FloatVar("x")))     weight: 0.50               │
+  │                                                                     │
+  │  drain spill:                                                       │
+  │    ┌────────────────────────────────────────────────────────────┐   │
+  │    │ NFA_FORCED_PREFIX_FLOAT.set(R1)  --> Float::parse(input)   │   │
+  │    │ NFA_FORCED_PREFIX_FLOAT.set(R2)  --> Float::parse(input)   │   │
+  │    │ NFA_FORCED_PREFIX_FLOAT.set(R3)  --> Float::parse(input)   │   │
+  │    └────────────────────────────────────────────────────────────┘   │
+  │                                                                     │
   │  successes = [R0', R1', R2', R3']    weights = [0.5, 1.0, 1.5, 2.0] │
-  │                          │                          │              │
-  │                          ▼                          ▼              │
-  │                 AMBIGUOUS_WEIGHTS.set(weights)                     │
-  │                 from_alternatives(successes)                       │
-  └───────────────────────────────────────────────────────────────────┘
+  │                                                                     │
+  │  AMBIGUOUS_WEIGHTS.set(weights)                                     │
+  │  from_alternatives(successes)                                       │
+  └─────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -1008,75 +1014,75 @@ accepting alternative (declaration-order determinism).
 
 ### 11.1 Compile-Time Complexity
 
-| Operation                           | Complexity           | Notes                         |
-|-------------------------------------|----------------------|-------------------------------|
-| `group_rd_by_dispatch_token`        | O(|R|)               | Single scan of rules          |
-| `categories_needing_nfa_spillover`  | O(|C| x |R|)        | Per-category grouping         |
-| `nfa_alternative_order`             | O(k log k)           | Sort k alternatives per group |
-| Beam pruning                        | O(k)                 | Single filter pass            |
-| Code emission                       | O(sum k_i x s_i)     | k_i alts x s_i syntax items  |
+| Operation                          | Complexity         | Notes                             |
+|------------------------------------|--------------------|-----------------------------------|
+| `group_rd_by_dispatch_token`       | `O(\|R\|)`         | Single scan of rules              |
+| `categories_needing_nfa_spillover` | `O(\|C\| x \|R\|)` | Per-category grouping             |
+| `nfa_alternative_order`            | `O(k log k)`       | Sort k alternatives per group     |
+| Beam pruning                       | `O(k)`             | Single filter pass                |
+| Code emission                      | `O(sum k_i x s_i)` | `k_i` alts `x` `s_i` syntax items |
 
 Where |R| = total rules, |C| = total categories, k = group size, s = rule
 syntax length.
 
 ### 11.2 Runtime Complexity
 
-| Scenario                       | Time Complexity              | Space Complexity            |
-|--------------------------------|------------------------------|-----------------------------|
-| Unambiguous (|G(t)| = 1)      | O(1) extra (Cell::take only) | O(0) (no allocation)        |
-| NFA try-all (k alternatives)  | O(k x P(n))                  | O(k) for result vectors     |
-| Spillover replay               | O((k-1) x P(n))             | O(k-1) for spill buffer     |
-| from_alternatives              | O(k)                         | O(k) for flat vector        |
-| Total worst case               | O(k^2 x P(n))               | O(k)                        |
+| Scenario                       | Time Complexity                  | Space Complexity          |
+|--------------------------------|----------------------------------|---------------------------|
+| Unambiguous (`\|G(t)\| = 1`)   | `O(1)` extra (`Cell::take` only) | `O(0)` (no allocation)    |
+| NFA try-all (`k` alternatives) | `O(k x P(n))`                    | `O(k)` for result vectors |
+| Spillover replay               | `O((k-1) x P(n))`                | `O(k-1)` for spill buffer |
+| from_alternatives              | `O(k)`                           | `O(k)` for flat vector    |
+| Total worst case               | `O(k^2 x P(n))`                  | `O(k)`                    |
 
-Where P(n) = parse cost for input of length n. The O(k^2) factor arises when
-all k alternatives succeed: k tries in the NFA merged arm, then k-1 forced-prefix
-replays each running the full parser. In practice, k is small (typically 2-4 for
-cast rules sharing a keyword) and P(n) is dominated by the input length, so the
-quadratic factor in k is negligible.
+Where `P(n)` = parse cost for input of length `n`. The `O(k^2)` factor arises when
+all `k` alternatives succeed: `k` tries in the NFA merged arm, then `k-1` forced-prefix
+replays each running the full parser. In practice, `k` is small (typically 2-4 for
+cast rules sharing a keyword) and `P(n)` is dominated by the input length, so the
+quadratic factor in `k` is negligible.
 
 ### 11.3 Space Overhead
 
-| Component                                | Allocation          | Lifetime         |
-|------------------------------------------|---------------------|------------------|
-| Thread-locals (4 per category)           | Register-width each | Thread-static    |
-| `nfa_results`, `nfa_positions`, `nfa_weights` | O(k) per parse  | Stack (function) |
-| Spillover buffer                         | O(k-1) per parse    | Thread-local     |
-| `AMBIGUOUS_WEIGHTS`                      | O(N) per parse      | Thread-local     |
+| Component                                     | Allocation          | Lifetime         |
+|-----------------------------------------------|---------------------|------------------|
+| Thread-locals (4 per category)                | Register-width each | Thread-static    |
+| `nfa_results`, `nfa_positions`, `nfa_weights` | `O(k)` per parse    | Stack (function) |
+| Spillover buffer                              | `O(k-1)` per parse  | Thread-local     |
+| `AMBIGUOUS_WEIGHTS`                           | `O(N)` per parse    | Thread-local     |
 
-Where N = total successes across all categories (typically 1-4).
+Where `N` = total successes across all categories (typically 1-4).
 
 ---
 
 ## 12. Source References
 
-| Concept                                | File                                 | Location                                |
-|----------------------------------------|--------------------------------------|-----------------------------------------|
-| RD rule grouping by dispatch token     | `prattail/src/trampoline.rs`         | `group_rd_by_dispatch_token()` (77-116)  |
-| Public wrapper for pipeline access     | `prattail/src/trampoline.rs`         | `group_rd_by_dispatch_token_pub()` (120-125) |
+| Concept                                | File                                 | Location                                       |
+|----------------------------------------|--------------------------------------|------------------------------------------------|
+| RD rule grouping by dispatch token     | `prattail/src/trampoline.rs`         | `group_rd_by_dispatch_token()` (77-116)        |
+| Public wrapper for pipeline access     | `prattail/src/trampoline.rs`         | `group_rd_by_dispatch_token_pub()` (120-125)   |
 | NFA-ambiguous category detection       | `prattail/src/trampoline.rs`         | `categories_needing_nfa_spillover()` (136-151) |
-| NFA merged prefix arm codegen          | `prattail/src/trampoline.rs`         | `write_nfa_merged_prefix_arm()` (162-421) |
-| NFA inline constructor                 | `prattail/src/trampoline.rs`         | `write_nfa_inline_constructor()` (428-450+) |
-| `TrampolineConfig.needs_nfa_spillover` | `prattail/src/trampoline.rs`         | Lines 726-730                            |
-| Thread-local declarations (per-cat)    | `prattail/src/trampoline.rs`         | Lines 1160-1173                          |
-| `running_weight_<cat>()` accessor      | `prattail/src/trampoline.rs`         | Lines 1178-1184                          |
-| Forced-prefix check (trampoline)       | `prattail/src/trampoline.rs`         | Lines 1343-1358                          |
-| Prefix match arm dispatch (NFA merge)  | `prattail/src/trampoline.rs`         | `write_prefix_match_arms()` (1370-1488)  |
-| Forced-prefix check (lazy parser)      | `prattail/src/trampoline.rs`         | Lines 3149                               |
-| NFA spillover detection in pipeline    | `prattail/src/pipeline.rs`           | Lines 800-840                            |
-| `needs_nfa_spillover` configuration    | `prattail/src/pipeline.rs`           | Line 910                                 |
-| WFST alternative ordering              | `prattail/src/wfst.rs`              | `nfa_alternative_order()` (198-218)      |
-| Beam width query                       | `prattail/src/wfst.rs`              | `PredictionWfst::beam_width()` (226-228) |
-| Predict with confidence                | `prattail/src/wfst.rs`              | `predict_with_confidence()` (169-173)    |
-| Predict with beam pruning              | `prattail/src/wfst.rs`              | `predict_pruned()` (179-191)             |
-| `AMBIGUOUS_WEIGHTS` thread-local       | `macros/src/gen/runtime/language.rs` | Lines 1529-1535                          |
-| Drain loop in `parse_preserving_vars`  | `macros/src/gen/runtime/language.rs` | Lines 1116-1161                          |
-| Weight-aware `from_alternatives()`     | `macros/src/gen/runtime/language.rs` | Lines 284-326                            |
-| `is_accepting()` for ground terms      | `macros/src/gen/runtime/language.rs` | Lines 271-278                            |
-| `substitute_env()` for Ambiguous       | `macros/src/gen/runtime/language.rs` | Lines 328-387                            |
-| Tropical semiring definition           | `prattail/src/automata/semiring.rs`  | `Semiring` trait (36-51)                 |
-| `TropicalWeight` implementation        | `prattail/src/automata/semiring.rs`  | Lines 68-100                             |
-| `BeamWidthConfig` enum                 | `prattail/src/lib.rs`               | Lines 76-123                             |
+| NFA merged prefix arm codegen          | `prattail/src/trampoline.rs`         | `write_nfa_merged_prefix_arm()` (162-421)      |
+| NFA inline constructor                 | `prattail/src/trampoline.rs`         | `write_nfa_inline_constructor()` (428-450+)    |
+| `TrampolineConfig.needs_nfa_spillover` | `prattail/src/trampoline.rs`         | Lines 726-730                                  |
+| Thread-local declarations (per-cat)    | `prattail/src/trampoline.rs`         | Lines 1160-1173                                |
+| `running_weight_<cat>()` accessor      | `prattail/src/trampoline.rs`         | Lines 1178-1184                                |
+| Forced-prefix check (trampoline)       | `prattail/src/trampoline.rs`         | Lines 1343-1358                                |
+| Prefix match arm dispatch (NFA merge)  | `prattail/src/trampoline.rs`         | `write_prefix_match_arms()` (1370-1488)        |
+| Forced-prefix check (lazy parser)      | `prattail/src/trampoline.rs`         | Lines 3149                                     |
+| NFA spillover detection in pipeline    | `prattail/src/pipeline.rs`           | Lines 800-840                                  |
+| `needs_nfa_spillover` configuration    | `prattail/src/pipeline.rs`           | Line 910                                       |
+| WFST alternative ordering              | `prattail/src/wfst.rs`               | `nfa_alternative_order()` (198-218)            |
+| Beam width query                       | `prattail/src/wfst.rs`               | `PredictionWfst::beam_width()` (226-228)       |
+| Predict with confidence                | `prattail/src/wfst.rs`               | `predict_with_confidence()` (169-173)          |
+| Predict with beam pruning              | `prattail/src/wfst.rs`               | `predict_pruned()` (179-191)                   |
+| `AMBIGUOUS_WEIGHTS` thread-local       | `macros/src/gen/runtime/language.rs` | Lines 1529-1535                                |
+| Drain loop in `parse_preserving_vars`  | `macros/src/gen/runtime/language.rs` | Lines 1116-1161                                |
+| Weight-aware `from_alternatives()`     | `macros/src/gen/runtime/language.rs` | Lines 284-326                                  |
+| `is_accepting()` for ground terms      | `macros/src/gen/runtime/language.rs` | Lines 271-278                                  |
+| `substitute_env()` for Ambiguous       | `macros/src/gen/runtime/language.rs` | Lines 328-387                                  |
+| Tropical semiring definition           | `prattail/src/automata/semiring.rs`  | `Semiring` trait (36-51)                       |
+| `TropicalWeight` implementation        | `prattail/src/automata/semiring.rs`  | Lines 68-100                                   |
+| `BeamWidthConfig` enum                 | `prattail/src/lib.rs`                | Lines 76-123                                   |
 
 ### Cross-References
 

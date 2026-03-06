@@ -51,11 +51,11 @@ likely, and aggressive pruning would discard valid parses with probability 2/3.
 Shannon entropy `H = -sum(p_i * ln(p_i))` quantifies this distinction. It enables
 three pipeline capabilities that counting alone cannot:
 
-| Capability | Why Counting Is Insufficient | What Entropy Provides |
-|------------|------------------------------|----------------------|
-| **Adaptive beam width** | A count of 3 says nothing about whether pruning is safe | H < 0.5 bits: narrow beam; H > 1.5 bits: wide beam |
-| **Grammar design feedback** | "3-way ambiguity" is actionable but imprecise | "1.58 bits at Ident in Proc" pinpoints the hotspot and its severity |
-| **Training convergence** | No measure of how close the model is to a decisive distribution | When total H stabilizes across epochs, the model has converged |
+| Capability                  | Why Counting Is Insufficient                                    | What Entropy Provides                                               |
+|-----------------------------|-----------------------------------------------------------------|---------------------------------------------------------------------|
+| **Adaptive beam width**     | A count of 3 says nothing about whether pruning is safe         | H < 0.5 bits: narrow beam; H > 1.5 bits: wide beam                  |
+| **Grammar design feedback** | "3-way ambiguity" is actionable but imprecise                   | "1.58 bits at Ident in Proc" pinpoints the hotspot and its severity |
+| **Training convergence**    | No measure of how close the model is to a decisive distribution | When total H stabilizes across epochs, the model has converged      |
 
 The expectation semiring computes Shannon entropy as a byproduct of the
 forward-backward algorithm, requiring no separate pass over the WFST.
@@ -180,10 +180,10 @@ EntropyWeight implements the semiring `(R x R, plus, times, (inf, 0), (0, 0))`
 
 ### 5a. Identity Elements
 
-| Element | `weight` | `expectation` | Meaning |
-|---------|----------|---------------|---------|
-| **Zero** `0-bar` | `+inf` | `0.0` | No paths: zero probability, zero entropy |
-| **One** `1-bar` | `0.0` | `0.0` | Single path with probability 1, zero entropy |
+| Element          | `weight` | `expectation` | Meaning                                      |
+|------------------|----------|---------------|----------------------------------------------|
+| **Zero** `0-bar` | `+inf`   | `0.0`         | No paths: zero probability, zero entropy     |
+| **One** `1-bar`  | `0.0`    | `0.0`         | Single path with probability 1, zero entropy |
 
 Zero represents the absence of any derivation. One represents a certain,
 deterministic outcome (no uncertainty, hence zero entropy).
@@ -319,10 +319,10 @@ in BTreeMap keys and sorted output.
 
 Two display implementations (`semiring.rs:1301-1323`):
 
-| Trait | Zero Output | Normal Output | Example |
-|-------|-------------|---------------|---------|
-| `Debug` | `EntropyWeight(inf, 0)` | `EntropyWeight(w, e)` | `EntropyWeight(2.3000, 1.5000)` |
-| `Display` | `(inf, 0)` | `(w, e)` | `(2.3000, 1.5000)` |
+| Trait     | Zero Output             | Normal Output         | Example                         |
+|-----------|-------------------------|-----------------------|---------------------------------|
+| `Debug`   | `EntropyWeight(inf, 0)` | `EntropyWeight(w, e)` | `EntropyWeight(2.3000, 1.5000)` |
+| `Display` | `(inf, 0)`              | `(w, e)`              | `(2.3000, 1.5000)`              |
 
 Both use 4 decimal places for the non-zero case. The Display format is compact
 for embedding in diagnostic messages:
@@ -340,37 +340,37 @@ info: category Proc at Token::Ident: entropy = (0.6931, 0.6931) = 1.00 bits
 Entropy flows through the pipeline at three stages:
 
 ```
-┌──────────────────────┐
-│ WFST Construction    │
-│ (pipeline.rs)        │
-│                      │
-│ For each (cat, tok): │
-│   w_i = TropicalWeight│
-│   arc_i = from_arc_  │
-│          weight(w_i) │
-└──────────┬───────────┘
-           │
-           v
-┌──────────────────────┐
-│ Forward-Backward     │
-│ (forward_backward.rs)│
-│                      │
-│ alpha = forward_     │
-│         scores(edges)│
-│ H = alpha[final]     │
-│     .expectation     │
-└──────────┬───────────┘
-           │
-           v
-┌──────────────────────┐
-│ Diagnostic Output    │
-│ (lint.rs, pipeline)  │
-│                      │
-│ H_bits = H.entropy_  │
-│          bits()      │
-│ Adaptive beam width  │
-│ Grammar feedback     │
-└──────────────────────┘
+┌────────────────────────┐
+│ WFST Construction      │
+│ (pipeline.rs)          │
+│                        │
+│ For each (cat, tok):   │
+│   w_i = TropicalWeight │
+│   arc_i = from_arc_    │
+│          weight(w_i)   │
+└───────────┬────────────┘
+            │
+            ▼
+┌────────────────────────┐
+│ Forward-Backward       │
+│ (forward_backward.rs)  │
+│                        │
+│ alpha = forward_       │
+│         scores(edges)  │
+│ H = alpha[final]       │
+│     .expectation       │
+└───────────┬────────────┘
+            │
+            ▼
+┌────────────────────────┐
+│ Diagnostic Output      │
+│ (lint.rs, pipeline)    │
+│                        │
+│ H_bits = H.entropy_    │
+│          bits()        │
+│ Adaptive beam width    │
+│ Grammar feedback       │
+└────────────────────────┘
 ```
 
 **Stage 1: Arc initialization**. During WFST construction, each dispatch arc's
@@ -492,12 +492,12 @@ with the entropy measurement (used for adaptive beam and diagnostics).
 
 ### 11b. Operation Semantics
 
-| Operation | Left (Tropical) | Right (Entropy) | Combined Semantics |
-|-----------|-----------------|-----------------|-------------------|
-| `plus` | `min(w_a, w_b)` | `log-sum-exp + weighted mixture` | Best priority + entropy of merged alternatives |
-| `times` | `w_a + w_b` | `(w_a + w_b, e_a + e_b)` | Accumulated cost + accumulated expected value |
-| `zero` | `+inf` | `(+inf, 0.0)` | Unreachable, zero entropy |
-| `one` | `0.0` | `(0.0, 0.0)` | Zero cost, zero entropy |
+| Operation | Left (Tropical) | Right (Entropy)                  | Combined Semantics                             |
+|-----------|-----------------|----------------------------------|------------------------------------------------|
+| `plus`    | `min(w_a, w_b)` | `log-sum-exp + weighted mixture` | Best priority + entropy of merged alternatives |
+| `times`   | `w_a + w_b`     | `(w_a + w_b, e_a + e_b)`         | Accumulated cost + accumulated expected value  |
+| `zero`    | `+inf`          | `(+inf, 0.0)`                    | Unreachable, zero entropy                      |
+| `one`     | `0.0`           | `(0.0, 0.0)`                     | Zero cost, zero entropy                        |
 
 **Plus semantics**: When merging parallel dispatch alternatives, the tropical
 component selects the best priority while the entropy component computes the
@@ -619,8 +619,8 @@ H_bits = 0.8011 / ln(2) = 0.8011 / 0.6931 = 1.156 bits
 │ Maximum possible (uniform 3-way): 1.585 bits     │
 │ Normalized entropy: 1.156 / 1.585 = 72.9%        │
 │                                                  │
-│ Recommendation: moderate ambiguity; widen beam    │
-│   from default 1.0 to 1.0 * (1 + 0.5 * 1.156)   │
+│ Recommendation: moderate ambiguity; widen beam   │
+│   from default 1.0 to 1.0 * (1 + 0.5 * 1.156)    │
 │   = 1.578                                        │
 └──────────────────────────────────────────────────┘
 ```
@@ -637,20 +637,20 @@ keeping POutput in the beam while still pruning PNew (4.9%).
 
 Thirteen tests in `semiring.rs:2468-2637` cover EntropyWeight:
 
-| # | Test | Lines | What It Verifies |
-|---|------|-------|------------------|
-| 1 | `test_entropy_weight_semiring_laws` | 2472-2489 | Zero/one identity, zero annihilation |
-| 2 | `test_entropy_weight_times_is_addition` | 2492-2498 | Times adds both components: `(2+3, 1.5+2.0) = (5, 3.5)` |
-| 3 | `test_entropy_weight_plus_equal_weights` | 2501-2520 | Equal weights: `log_sum_exp(1,1) = 1 - ln(2)`, expectations average to `(2+4)/2 = 3.0` |
-| 4 | `test_entropy_weight_plus_unequal_weights` | 2523-2534 | Dominant path (w=0.1) overwhelms minor path (w=10.0); expectation stays near 5.0 |
-| 5 | `test_entropy_weight_plus_commutativity` | 2537-2543 | `a.plus(&b) approx_eq b.plus(&a)` -- plus is commutative |
-| 6 | `test_entropy_weight_from_arc_weight` | 2546-2550 | `from_arc_weight(2.5)` sets both components to 2.5 |
-| 7 | `test_entropy_weight_entropy_bits` | 2553-2561 | `expectation = ln(4)` nats converts to `2.0` bits |
-| 8 | `test_entropy_weight_plus_large_diff` | 2564-2575 | Weight difference > 20.0 triggers the numerical stability fast path |
-| 9 | `test_entropy_weight_distributivity_approx` | 2578-2593 | `a * (b + c) approx_eq (a * b) + (a * c)` -- distributivity holds |
-| 10 | `test_entropy_weight_ordering` | 2596-2602 | `(1.0, 0.5) < (5.0, 0.5) < zero` -- lower weight = better |
-| 11 | `test_entropy_weight_display` | 2605-2609 | Format: `"(1.5000, 2.3000)"` for normal, `"(inf, 0)"` for zero |
-| 12 | `test_entropy_weight_hash` | 2613-2619 | HashSet membership via `to_bits()` hashing |
+| #  | Test                                        | Lines     | What It Verifies                                                                                          |
+|----|---------------------------------------------|-----------|-----------------------------------------------------------------------------------------------------------|
+| 1  | `test_entropy_weight_semiring_laws`         | 2472-2489 | Zero/one identity, zero annihilation                                                                      |
+| 2  | `test_entropy_weight_times_is_addition`     | 2492-2498 | Times adds both components: `(2+3, 1.5+2.0) = (5, 3.5)`                                                   |
+| 3  | `test_entropy_weight_plus_equal_weights`    | 2501-2520 | Equal weights: `log_sum_exp(1,1) = 1 - ln(2)`, expectations average to `(2+4)/2 = 3.0`                    |
+| 4  | `test_entropy_weight_plus_unequal_weights`  | 2523-2534 | Dominant path (w=0.1) overwhelms minor path (w=10.0); expectation stays near 5.0                          |
+| 5  | `test_entropy_weight_plus_commutativity`    | 2537-2543 | `a.plus(&b) approx_eq b.plus(&a)` -- plus is commutative                                                  |
+| 6  | `test_entropy_weight_from_arc_weight`       | 2546-2550 | `from_arc_weight(2.5)` sets both components to 2.5                                                        |
+| 7  | `test_entropy_weight_entropy_bits`          | 2553-2561 | `expectation = ln(4)` nats converts to `2.0` bits                                                         |
+| 8  | `test_entropy_weight_plus_large_diff`       | 2564-2575 | Weight difference > 20.0 triggers the numerical stability fast path                                       |
+| 9  | `test_entropy_weight_distributivity_approx` | 2578-2593 | `a * (b + c) approx_eq (a * b) + (a * c)` -- distributivity holds                                         |
+| 10 | `test_entropy_weight_ordering`              | 2596-2602 | `(1.0, 0.5) < (5.0, 0.5) < zero` -- lower weight = better                                                 |
+| 11 | `test_entropy_weight_display`               | 2605-2609 | Format: `"(1.5000, 2.3000)"` for normal, `"(inf, 0)"` for zero                                            |
+| 12 | `test_entropy_weight_hash`                  | 2613-2619 | HashSet membership via `to_bits()` hashing                                                                |
 | 13 | `test_entropy_weight_product_with_tropical` | 2622-2637 | `ProductWeight<TropicalWeight, EntropyWeight>`: plus = `(min, entropy_plus)`, times = `(add, (add, add))` |
 
 **Coverage analysis**:
@@ -666,25 +666,25 @@ Thirteen tests in `semiring.rs:2468-2637` cover EntropyWeight:
 
 ## 14. Source References
 
-| Component | File | Lines |
-|-----------|------|-------|
-| Module header & doc comment | `semiring.rs` | 1085-1117 |
-| Struct definition | `semiring.rs` | 1118-1125 |
-| `new()`, `from_arc_weight()`, `weight()`, `expectation()` | `semiring.rs` | 1128-1158 |
-| `entropy_bits()` | `semiring.rs` | 1160-1164 |
-| `log_sum_exp()` | `semiring.rs` | 1166-1182 |
-| `Semiring` impl (zero, one, plus, times, is_zero, is_one, approx_eq) | `semiring.rs` | 1186-1298 |
-| `Debug` impl | `semiring.rs` | 1301-1313 |
-| `Display` impl | `semiring.rs` | 1316-1323 |
-| `PartialEq` / `Eq` impl | `semiring.rs` | 1327-1335 |
-| `PartialOrd` / `Ord` impl | `semiring.rs` | 1338-1352 |
-| `Hash` impl | `semiring.rs` | 1355-1360 |
-| `Default` impl | `semiring.rs` | 1363-1367 |
-| Tests (13 EntropyWeight) | `semiring.rs` | 2468-2637 |
-| Forward-backward algorithm | `forward_backward.rs` | 33-88 |
-| Training convergence (loss computation) | `training.rs` | 93-101 |
-| Adaptive beam width integration point | `wfst.rs` | 214-226 |
-| Ambiguity detection (CountingWeight analog) | `prediction.rs` | 1544-1577 |
+| Component                                                            | File                  | Lines     |
+|----------------------------------------------------------------------|-----------------------|-----------|
+| Module header & doc comment                                          | `semiring.rs`         | 1085-1117 |
+| Struct definition                                                    | `semiring.rs`         | 1118-1125 |
+| `new()`, `from_arc_weight()`, `weight()`, `expectation()`            | `semiring.rs`         | 1128-1158 |
+| `entropy_bits()`                                                     | `semiring.rs`         | 1160-1164 |
+| `log_sum_exp()`                                                      | `semiring.rs`         | 1166-1182 |
+| `Semiring` impl (zero, one, plus, times, is_zero, is_one, approx_eq) | `semiring.rs`         | 1186-1298 |
+| `Debug` impl                                                         | `semiring.rs`         | 1301-1313 |
+| `Display` impl                                                       | `semiring.rs`         | 1316-1323 |
+| `PartialEq` / `Eq` impl                                              | `semiring.rs`         | 1327-1335 |
+| `PartialOrd` / `Ord` impl                                            | `semiring.rs`         | 1338-1352 |
+| `Hash` impl                                                          | `semiring.rs`         | 1355-1360 |
+| `Default` impl                                                       | `semiring.rs`         | 1363-1367 |
+| Tests (13 EntropyWeight)                                             | `semiring.rs`         | 2468-2637 |
+| Forward-backward algorithm                                           | `forward_backward.rs` | 33-88     |
+| Training convergence (loss computation)                              | `training.rs`         | 93-101    |
+| Adaptive beam width integration point                                | `wfst.rs`             | 214-226   |
+| Ambiguity detection (CountingWeight analog)                          | `prediction.rs`       | 1544-1577 |
 
 ---
 

@@ -99,17 +99,15 @@ sites.
 
 **Naming convention** (`terminal_to_variant_name` in `automata/codegen.rs`):
 
-┌──────────┬───────────────┬────────────────────────────────────┐
-│ Terminal │ Variant       │ Rule                               │
-├──────────┼───────────────┼────────────────────────────────────┤
-│ `+`      │ `Plus`        │ Single-char operator lookup table  │
-│ `*`      │ `Star`        │ Single-char operator lookup table  │
-│ `==`     │ `EqEq`        │ Multi-char operator lookup table   │
-│ `not`    │ `KwNot`       │ Alphanumeric → `Kw` + capitalized  │
-│ `error`  │ `KwError`     │ Alphanumeric → `Kw` + capitalized  │
-│ `(`      │ `LParen`      │ Delimiter lookup table             │
-│ `{}`     │ `EmptyBraces` │ Special multi-char lookup table    │
-└──────────┴───────────────┴────────────────────────────────────┘
+| Terminal | Variant       | Rule                               |
+|──────────|───────────────|────────────────────────────────────|
+| `+`      | `Plus`        | Single-char operator lookup table  |
+| `*`      | `Star`        | Single-char operator lookup table  |
+| `==`     | `EqEq`        | Multi-char operator lookup table   |
+| `not`    | `KwNot`       | Alphanumeric → `Kw` + capitalized  |
+| `error`  | `KwError`     | Alphanumeric → `Kw` + capitalized  |
+| `(`      | `LParen`      | Delimiter lookup table             |
+| `{}`     | `EmptyBraces` | Special multi-char lookup table    |
 
 ---
 
@@ -780,38 +778,36 @@ impl Bool {
 
 ## Generated Code Size Estimate
 
-┌───────────────────────────────────────┬───────────────────┐
-│ Component                             │ Approximate Lines │
-├───────────────────────────────────────┼───────────────────┤
-│ Token<'a> enum                        │ ~25               │
-│ Span, Position, Range structs         │ ~15               │
-│ ParseError enum                       │ ~25               │
-│ CHAR_CLASS table                      │ ~20               │
-│ Whitespace helper                     │ ~3                │
-│ lex<'a>() function                    │ ~45               │
-│ dfa_next()                            │ ~40               │
-│ accept_token<'a>()                    │ ~15               │
-│ Parser helpers (expect, peek)         │ ~35               │
-│ Recovery helpers (sync, rec)          │ ~40               │
-│ infix_bp() (Int)                      │ ~8                │
-│ make_infix() (Int)                    │ ~8                │
-│ postfix_bp() (if present)             │ ~8                │
-│ make_postfix() (if present)           │ ~8                │
-│ mixfix_bp() (if present)              │ ~8                │
-│ handle_mixfix() (if present)          │ ~15               │
-│ parse_Int()                           │ ~30               │
-│ parse_Int_prefix()                    │ ~30               │
-│ parse_Int_recovering()                │ ~35               │
-│ is_sync_Int()                         │ ~8                │
-│ parse_Bool() with dispatch            │ ~35               │
-│ parse_Bool_own()                      │ ~10               │
-│ parse_Bool_prefix()                   │ ~30               │
-│ parse_Bool_recovering()               │ ~35               │
-│ is_sync_Bool()                        │ ~8                │
-│ parse_not()                           │ ~8                │
-│ Parse entry points (4 x 2 categories) │ ~80               │
-│ **Total (TypedCalc)**                 │ **~700**          │
-└───────────────────────────────────────┴───────────────────┘
+| Component                             | Approximate Lines |
+|---------------------------------------|-------------------|
+| `Token<'a>` enum                      | ~25               |
+| `Span`, `Position`, `Range` structs   | ~15               |
+| `ParseError` enum                     | ~25               |
+| `CHAR_CLASS` table                    | ~20               |
+| Whitespace helper                     | ~3                |
+| `lex<'a>()` function                  | ~45               |
+| `dfa_next()`                          | ~40               |
+| `accept_token<'a>()`                  | ~15               |
+| Parser helpers (`expect`, `peek`)     | ~35               |
+| Recovery helpers (`sync`, `rec`)      | ~40               |
+| `infix_bp()` (`Int`)                  | ~8                |
+| `make_infix()` (`Int`)                | ~8                |
+| `postfix_bp()` (if present)           | ~8                |
+| `make_postfix()` (if present)         | ~8                |
+| `mixfix_bp()` (if present)            | ~8                |
+| `handle_mixfix()` (if present)        | ~15               |
+| `parse_Int()`                         | ~30               |
+| `parse_Int_prefix()`                  | ~30               |
+| `parse_Int_recovering()`              | ~35               |
+| `is_sync_Int()`                       | ~8                |
+| `parse_Bool()` with dispatch          | ~35               |
+| `parse_Bool_own()`                    | ~10               |
+| `parse_Bool_prefix()`                 | ~30               |
+| `parse_Bool_recovering()`             | ~35               |
+| `is_sync_Bool()`                      | ~8                |
+| `parse_not()`                         | ~8                |
+| Parse entry points (4 x 2 categories) | ~80               |
+| **Total (`TypedCalc`)**               | **~700**          |
 
 The generated code is built entirely as a `String` buffer using `write!` formatting,
 then parsed once via `str::parse::<TokenStream>()`. This string-based codegen approach
@@ -981,13 +977,11 @@ fn parse_ppar<'a>(tokens: &[(Token<'a>, Span)], pos: &mut usize) -> Result<Proc,
 
 The collection init and insert method are selected by `CollectionKind`:
 
-┌───────────┬────────────────────────────────────┬─────────────────┐
-│ Kind      │ Init Expression                    │ Insert Method   │
-├───────────┼────────────────────────────────────┼─────────────────┤
-│ `HashBag` │ `mettail_runtime::HashBag::new()`  │ `.insert(elem)` │
-│ `HashSet` │ `std::collections::HashSet::new()` │ `.insert(elem)` │
-│ `Vec`     │ `Vec::new()`                       │ `.push(elem)`   │
-└───────────┴────────────────────────────────────┴─────────────────┘
+| Kind      | Init Expression                    | Insert Method   |
+|-----------|------------------------------------|-----------------|
+| `HashBag` | `mettail_runtime::HashBag::new()`  | `.insert(elem)` |
+| `HashSet` | `std::collections::HashSet::new()` | `.insert(elem)` |
+| `Vec`     | `Vec::new()`                       | `.push(elem)`   |
 
 The loop structure is identical for all collection kinds — only the
 initialization and insertion expressions change.
@@ -1195,14 +1189,12 @@ determined by `nfa_alternative_order()` at compile time.
 
 ### Code Size Addendum
 
-┌───────────────────────────────────────┬───────────────────┐
-│ Component                             │ Approximate Lines │
-├───────────────────────────────────────┼───────────────────┤
-│ NFA thread-locals (3 per category)    │ ~10               │
-│ Forced-prefix check (per category)    │ ~5                │
-│ NFA merged arm (per ambiguous token)  │ ~50-80            │
-│ **Per NFA-ambiguous category total**  │ **~65-95**        │
-└───────────────────────────────────────┴───────────────────┘
+| Component                            | Approximate Lines |
+|--------------------------------------|-------------------|
+| NFA thread-locals (3 per category)   | ~10               |
+| Forced-prefix check (per category)   | ~5                |
+| NFA merged arm (per ambiguous token) | ~50-80            |
+| **Per NFA-ambiguous category total** | **~65-95**        |
 
 > **Cross-reference:** See
 > [../design/disambiguation/08-nfa-wfst-disambiguation.md](../design/disambiguation/08-nfa-wfst-disambiguation.md)

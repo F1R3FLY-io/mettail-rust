@@ -29,11 +29,11 @@ that requires tropical resolution or NFA spillover.
 
 ContextWeight serves three codegen-time analysis functions:
 
-| Function                    | Integration Point                    | Description                                                                                                                |
-|-----------------------------|--------------------------------------|----------------------------------------------------------------------------------------------------------------------------|
-| **Ambiguity diagnosis**     | `compute_composed_dispatch()`        | Tokens where \|ContextWeight\| > 1 indicate multiple rules competing for the same dispatch token                           |
-| **Follow-set tightening**   | Recovery WFST construction           | Intersection of context weights narrows sync token candidates to only those tokens where rules actually overlap            |
-| **NFA spillover decisions** | `categories_needing_nfa_spillover()` | Categories where any dispatch token has \|ContextWeight\| > 1 need forced-prefix replay via thread-local spillover buffers |
+| Function                    | Integration Point                    | Description                                                                                                                  |
+|-----------------------------|--------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
+| **Ambiguity diagnosis**     | `compute_composed_dispatch()`        | Tokens where `\|ContextWeight\| > 1` indicate multiple rules competing for the same dispatch token                           |
+| **Follow-set tightening**   | Recovery WFST construction           | Intersection of context weights narrows sync token candidates to only those tokens where rules actually overlap              |
+| **NFA spillover decisions** | `categories_needing_nfa_spillover()` | Categories where any dispatch token has `\|ContextWeight\| > 1` need forced-prefix replay via thread-local spillover buffers |
 
 ContextWeight is a **type-level formalization** of "which rules reach this token."
 The information it carries is equivalent to the set-valued annotation that
@@ -149,11 +149,11 @@ for the two 64-bit halves).
 
 The `Display` implementation (`semiring.rs:741-751`) uses three formats:
 
-| Condition | Output | Meaning |
-|-----------|--------|---------|
-| `bits == 0` | `∅` | Empty set -- no rules reachable |
-| `bits == u128::MAX` | `U` | Universal set -- all rules reachable |
-| Otherwise | `{Nb\|bits}` | N set bits, raw bitset value |
+| Condition           | Output       | Meaning                              |
+|---------------------|--------------|--------------------------------------|
+| `bits == 0`         | `∅`          | Empty set -- no rules reachable      |
+| `bits == u128::MAX` | `U`          | Universal set -- all rules reachable |
+| Otherwise           | `{Nb\|bits}` | N set bits, raw bitset value         |
 
 Example outputs:
 
@@ -286,12 +286,12 @@ The primary composition pairs tropical priority with rule-set tracking:
 type ContextDispatch = ProductWeight<TropicalWeight, ContextWeight>;
 ```
 
-| Operation | Left (Tropical) | Right (Context) | Combined Semantics |
-|-----------|-----------------|-----------------|-------------------|
-| `plus` | `min(a, b)` | `union(A, B)` | Best weight + all contributing rules |
-| `times` | `a + b` | `intersection(A, B)` | Accumulated cost + shared rules |
-| `zero` | `+inf` | `∅` | Unreachable, no rules |
-| `one` | `0.0` | `U` | Zero cost, all rules eligible |
+| Operation | Left (Tropical) | Right (Context)      | Combined Semantics                   |
+|-----------|-----------------|----------------------|--------------------------------------|
+| `plus`    | `min(a, b)`     | `union(A, B)`        | Best weight + all contributing rules |
+| `times`   | `a + b`         | `intersection(A, B)` | Accumulated cost + shared rules      |
+| `zero`    | `+inf`          | `∅`                  | Unreachable, no rules                |
+| `one`     | `0.0`           | `U`                  | Zero cost, all rules eligible        |
 
 **Plus semantics** (`min`, `union`): When merging parallel paths, select the
 best tropical weight while collecting **all** rules that contributed to any
@@ -365,11 +365,13 @@ This is a fundamental property of set algebra and is verified by
 ### 8c. Position in Semiring Hierarchy
 
 ```
-Boolean  <--project--  Context  --embed-->  Counting
-  |                       |
-  |                       +-- "which rules contribute?"
-  |
-  +-- "is there any path?"
+           ┌─────────┐               ┌───────┐
+Boolean ◀──┤ project ├──  Context  ──┤ embed ├──▶  Counting
+   ▲       └─────────┘       ▲       └───────┘
+   │                         │
+   │                         └── "which rules contribute?"
+   │
+   └── "is there any path?"
 ```
 
 - **Boolean projection**: `ContextWeight -> BooleanWeight` via
@@ -386,20 +388,20 @@ Boolean  <--project--  Context  --embed-->  Counting
 
 Seven tests in `semiring.rs:1519-1735` cover ContextWeight:
 
-| Test | Lines | What It Verifies |
-|------|-------|------------------|
-| `test_context_weight_semiring_laws` | 1519-1543 | Zero/one identity, zero annihilation, commutativity of plus and times |
-| `test_context_weight_union_intersection` | 1545-1555 | Plus = union (`0b1010 \| 0b1100 = 0b1110`), times = intersection (`0b1010 & 0b1100 = 0b1000`) |
+| Test                                         | Lines     | What It Verifies                                                                                       |
+|----------------------------------------------|-----------|--------------------------------------------------------------------------------------------------------|
+| `test_context_weight_semiring_laws`          | 1519-1543 | Zero/one identity, zero annihilation, commutativity of plus and times                                  |
+| `test_context_weight_union_intersection`     | 1545-1555 | Plus = union (`0b1010 \| 0b1100 = 0b1110`), times = intersection (`0b1010 & 0b1100 = 0b1000`)          |
 | `test_context_weight_singleton_and_contains` | 1557-1569 | `singleton(5)` sets bit 5, `contains()` membership, `insert()` adds bit, `count()` reports cardinality |
-| `test_context_weight_idempotent_plus` | 1571-1576 | `a.plus(&a) == a` -- union idempotency |
-| `test_context_weight_distributivity` | 1578-1588 | `a.times(&b.plus(&c)) == a.times(&b).plus(&a.times(&c))` -- intersection distributes over union |
-| `test_context_weight_ordering` | 1590-1601 | `empty < singleton < two_bits < universal` -- cardinality-based ordering |
-| `test_context_weight_display` | 1603-1608 | Format strings: `"∅"` for zero, `"U"` for one, `"{2b\|10}"` for `0b1010` |
+| `test_context_weight_idempotent_plus`        | 1571-1576 | `a.plus(&a) == a` -- union idempotency                                                                 |
+| `test_context_weight_distributivity`         | 1578-1588 | `a.times(&b.plus(&c)) == a.times(&b).plus(&a.times(&c))` -- intersection distributes over union        |
+| `test_context_weight_ordering`               | 1590-1601 | `empty < singleton < two_bits < universal` -- cardinality-based ordering                               |
+| `test_context_weight_display`                | 1603-1608 | Format strings: `"∅"` for zero, `"U"` for one, `"{2b\|10}"` for `0b1010`                               |
 
 One additional test covers ProductWeight composition:
 
-| Test | Lines | What It Verifies |
-|------|-------|------------------|
+| Test                                        | Lines     | What It Verifies                                                                                    |
+|---------------------------------------------|-----------|-----------------------------------------------------------------------------------------------------|
 | `test_context_weight_product_with_tropical` | 1720-1735 | `ProductWeight<TropicalWeight, ContextWeight>` plus = `(min, union)`, times = `(add, intersection)` |
 
 ---

@@ -596,6 +596,104 @@ fn first_of_suffix(
     (result, nullable)
 }
 
+/// Compute the FIRST set for a suffix of `RDSyntaxItem` items.
+///
+/// Analogous to `first_of_suffix()` but operates on the recursive descent
+/// `RDSyntaxItem` representation used in trampoline codegen. Returns
+/// `(first_set, is_nullable)`.
+///
+/// Used by backtracking elimination (G1) phases:
+/// - Phase 2: NFA suffix disjointness analysis
+/// - Phase 3: LParen rule vs grouping LL(2)/LL(3)
+/// - Phase 4: Optional group LL(1) guard
+pub fn first_of_rd_suffix(
+    items: &[crate::recursive::RDSyntaxItem],
+    first_sets: &HashMap<String, FirstSet>,
+) -> (FirstSet, bool) {
+    use crate::recursive::RDSyntaxItem;
+
+    let mut result = FirstSet::new();
+    let mut nullable = true; // empty suffix is nullable
+
+    for item in items {
+        match item {
+            RDSyntaxItem::Terminal(t) => {
+                result.insert(&terminal_to_variant_name(t));
+                nullable = false;
+                break;
+            },
+            RDSyntaxItem::NonTerminal { category, .. } => {
+                if let Some(cat_first) = first_sets.get(category) {
+                    for token in &cat_first.tokens {
+                        result.insert(token);
+                    }
+                    if !cat_first.nullable {
+                        nullable = false;
+                        break;
+                    }
+                } else {
+                    nullable = false;
+                    break;
+                }
+            },
+            RDSyntaxItem::IdentCapture { .. } => {
+                result.insert("Ident");
+                nullable = false;
+                break;
+            },
+            RDSyntaxItem::Binder { .. } => {
+                result.insert("Ident");
+                nullable = false;
+                break;
+            },
+            RDSyntaxItem::BinderCollection { .. } => {
+                result.insert("Ident");
+                // Binder collections can be empty, nullable — continue
+            },
+            RDSyntaxItem::Collection { element_category, .. }
+            | RDSyntaxItem::SepList { element_category, .. } => {
+                if let Some(cat_first) = first_sets.get(element_category) {
+                    for token in &cat_first.tokens {
+                        result.insert(token);
+                    }
+                }
+                // Collections can be empty, nullable — continue
+            },
+            RDSyntaxItem::Sep { body, .. } => {
+                let (body_first, _) = first_of_rd_suffix(
+                    std::slice::from_ref(body.as_ref()),
+                    first_sets,
+                );
+                result.union(&body_first);
+                // Sep is nullable (0 iterations) — continue
+            },
+            RDSyntaxItem::Map { body_items } => {
+                let (map_first, map_nullable) = first_of_rd_suffix(body_items, first_sets);
+                result.union(&map_first);
+                if !map_nullable {
+                    nullable = false;
+                    break;
+                }
+            },
+            RDSyntaxItem::Zip { body, .. } => {
+                let (body_first, _) = first_of_rd_suffix(
+                    std::slice::from_ref(body.as_ref()),
+                    first_sets,
+                );
+                result.union(&body_first);
+                // Zip delegates to body; body itself may be nullable
+            },
+            RDSyntaxItem::Optional { inner } => {
+                let (inner_first, _) = first_of_rd_suffix(inner, first_sets);
+                result.union(&inner_first);
+                // Optional is nullable by definition — continue
+            },
+        }
+    }
+
+    (result, nullable)
+}
+
 /// Add all tokens from a FIRST set to a category's FOLLOW set.
 ///
 /// Returns `true` if any new token was inserted (for dirty-flag convergence).
@@ -1550,8 +1648,10 @@ pub fn compute_composed_dispatch(
     variant_map: &super::automata::codegen::TokenVariantMap,
     prediction_wfsts: Option<&HashMap<String, crate::wfst::PredictionWfst>>,
     rule_infos: &[RuleInfo],
-) -> HashMap<(String, u32), Vec<ComposedEntry>> {
+    grammar_name: &str,
+) -> (HashMap<(String, u32), Vec<ComposedEntry>>, Vec<crate::lint::LintDiagnostic>) {
     let mut table: HashMap<(String, u32), Vec<ComposedEntry>> = HashMap::new();
+    let mut w05_diagnostics: Vec<crate::lint::LintDiagnostic> = Vec::new();
 
     for &(state_id, ref alts) in ambiguous_states {
         for category in categories {
@@ -1648,16 +1748,23 @@ pub fn compute_composed_dispatch(
                             )
                         })
                         .collect();
-                    eprintln!(
-                        "warning: {}-way ambiguity at ({}, DFA state {}): {} derivations\n{}\n  \
-                         Resolved by tropical shortest path → {}",
-                        derivation_count.count(),
-                        category,
-                        state_id,
-                        derivation_count.count(),
-                        alts_desc.join("\n"),
-                        entries[0].rule_label,
-                    );
+                    w05_diagnostics.push(crate::lint::LintDiagnostic {
+                        id: "W05",
+                        name: "composed-dispatch-ambiguity",
+                        severity: crate::lint::LintSeverity::Warning,
+                        category: Some(category.clone()),
+                        rule: None,
+                        message: format!(
+                            "{}-way ambiguity at DFA state {}: {} derivations\n{}\n  Resolved by tropical shortest path → {}",
+                            derivation_count.count(), state_id, derivation_count.count(),
+                            alts_desc.join("\n"), entries[0].rule_label,
+                        ),
+                        hint: Some(
+                            "assign distinct WFST weights to disambiguate, or restructure rules to avoid shared prefixes".to_string(),
+                        ),
+                        grammar_name: Some(grammar_name.to_string()),
+                        source_location: None,
+                    });
                 }
 
                 table.insert((category.clone(), state_id), entries);
@@ -1665,7 +1772,7 @@ pub fn compute_composed_dispatch(
         }
     }
 
-    table
+    (table, w05_diagnostics)
 }
 
 /// Compute rule specificity weight.
@@ -1942,13 +2049,14 @@ mod composed_dispatch_tests {
             ),
         ];
 
-        let table = compute_composed_dispatch(
+        let (table, _w05) = compute_composed_dispatch(
             &ambiguous_states,
             &categories,
             &first_sets,
             &variant_map,
             None,
             &rule_infos,
+            "TestGrammar",
         );
 
         // Should have entries for (Proc, 7) and (Int, 7)
@@ -1990,13 +2098,14 @@ mod composed_dispatch_tests {
         let categories = vec!["Proc".to_string()];
 
         // No ambiguous states
-        let table = compute_composed_dispatch(
+        let (table, _w05) = compute_composed_dispatch(
             &[],
             &categories,
             &first_sets,
             &variant_map,
             None,
             &rule_infos,
+            "TestGrammar",
         );
         assert!(table.is_empty());
     }
@@ -2105,13 +2214,14 @@ mod composed_dispatch_tests {
             ],
         )];
 
-        let table = compute_composed_dispatch(
+        let (table, _w05) = compute_composed_dispatch(
             &ambiguous_states,
             &categories,
             &first_sets,
             &variant_map,
             None,
             &rule_infos,
+            "TestGrammar",
         );
 
         let proc_entries = &table[&("Proc".to_string(), 5)];
@@ -2202,13 +2312,14 @@ mod composed_dispatch_tests {
         )];
 
         // Call with Some(prediction_wfsts)
-        let table = compute_composed_dispatch(
+        let (table, _w05) = compute_composed_dispatch(
             &ambiguous_states,
             &categories,
             &first_sets,
             &variant_map,
             Some(&prediction_wfsts),
             &rule_infos,
+            "TestGrammar",
         );
 
         // (Proc, 7): should use WFST weights (0.0+0.5=0.5 for CompareProc via KwError,

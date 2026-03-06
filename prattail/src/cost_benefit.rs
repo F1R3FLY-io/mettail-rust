@@ -45,6 +45,8 @@ pub enum Optimization {
     EarlyTermination,
     /// F3: Lazy spillover (demand-driven replay)
     LazySpillover,
+    /// G1: Backtracking elimination via compile-time FIRST set analysis
+    BacktrackingElimination,
 }
 
 impl fmt::Display for Optimization {
@@ -60,6 +62,7 @@ impl fmt::Display for Optimization {
             Self::SpilloverPruning => write!(f, "F1:SpilloverPruning"),
             Self::EarlyTermination => write!(f, "F2:EarlyTermination"),
             Self::LazySpillover => write!(f, "F3:LazySpillover"),
+            Self::BacktrackingElimination => write!(f, "G1:BacktrackingElimination"),
         }
     }
 }
@@ -80,6 +83,7 @@ impl std::str::FromStr for Optimization {
             "F1" => Ok(Self::SpilloverPruning),
             "F2" => Ok(Self::EarlyTermination),
             "F3" => Ok(Self::LazySpillover),
+            "G1" => Ok(Self::BacktrackingElimination),
             // Full names (case-insensitive)
             s if s.eq_ignore_ascii_case("LeftFactoring") => Ok(Self::LeftFactoring),
             s if s.eq_ignore_ascii_case("HotColdSplitting") => Ok(Self::HotColdSplitting),
@@ -95,13 +99,14 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("SpilloverPruning") => Ok(Self::SpilloverPruning),
             s if s.eq_ignore_ascii_case("EarlyTermination") => Ok(Self::EarlyTermination),
             s if s.eq_ignore_ascii_case("LazySpillover") => Ok(Self::LazySpillover),
+            s if s.eq_ignore_ascii_case("BacktrackingElimination") => Ok(Self::BacktrackingElimination),
             // Display format: "A1:LeftFactoring"
             s if s.contains(':') => s
                 .split_once(':')
                 .map(|(code, _)| code)
                 .unwrap_or(s)
                 .parse(),
-            other => Err(format!("unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3", other)),
+            other => Err(format!("unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3, G1", other)),
         }
     }
 }
@@ -392,6 +397,15 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         ),
     ));
 
+    // G1: Backtracking elimination — always beneficial (removes redundant save/restore)
+    candidates.push(OptimizationCandidate::new(
+        Optimization::BacktrackingElimination,
+        0.2, // good speedup (eliminates speculative parses)
+        0.1, // low cost (compile-time FIRST set analysis)
+        true,
+        "always applicable (static FIRST set analysis)".to_string(),
+    ));
+
     // Sort by score (lexicographic: speedup first, then compile_cost)
     candidates.sort_by(|a, b| a.score.cmp(&b.score));
 
@@ -447,6 +461,10 @@ pub struct OptimizationGates {
     pub ambiguity_targeting: bool,
     /// B2: Adaptive recovery via runtime weight accumulation.
     pub adaptive_recovery: bool,
+    /// G1: Backtracking elimination via compile-time FIRST set analysis.
+    /// Controls Phases 1-4: deterministic cross-cat arm commit, NFA suffix
+    /// disjointness, LParen LL(2)/LL(3), optional LL(1) guard.
+    pub backtracking_elimination: bool,
 }
 
 impl OptimizationGates {
@@ -463,6 +481,7 @@ impl OptimizationGates {
             enhanced_dce: true,
             ambiguity_targeting: true,
             adaptive_recovery: true,
+            backtracking_elimination: true,
         }
     }
 
@@ -487,6 +506,7 @@ impl OptimizationGates {
             enhanced_dce: enabled.contains(&Optimization::EnhancedDeadCodeElimination),
             ambiguity_targeting: enabled.contains(&Optimization::AmbiguityTargeting),
             adaptive_recovery: enabled.contains(&Optimization::AdaptiveRecovery),
+            backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
         }
     }
 
@@ -503,6 +523,7 @@ impl OptimizationGates {
             enhanced_dce: false,
             ambiguity_targeting: false,
             adaptive_recovery: false,
+            backtracking_elimination: false,
         }
     }
 
@@ -557,6 +578,7 @@ impl OptimizationGates {
             enhanced_dce: enabled.contains(&Optimization::EnhancedDeadCodeElimination),
             ambiguity_targeting: enabled.contains(&Optimization::AmbiguityTargeting),
             adaptive_recovery: enabled.contains(&Optimization::AdaptiveRecovery),
+            backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
         }))
     }
 
@@ -566,19 +588,32 @@ impl OptimizationGates {
     pub fn from_env_or_recommendations(recommended: &[OptimizationCandidate]) -> Self {
         match Self::from_env() {
             Ok(Some(gates)) => {
-                eprintln!(
-                    "  \x1b[33mwarn\x1b[0m: PRATTAIL_AUTO_OPTIMIZE override active — \
-                     cost-benefit recommendations bypassed"
-                );
+                crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+                    id: "I08",
+                    name: "env-override-active",
+                    severity: crate::lint::LintSeverity::Warning,
+                    category: None,
+                    rule: None,
+                    message: "PRATTAIL_AUTO_OPTIMIZE override active — cost-benefit recommendations bypassed".to_string(),
+                    hint: Some("unset PRATTAIL_AUTO_OPTIMIZE to use automatic cost-benefit analysis".to_string()),
+                    grammar_name: None,
+                    source_location: None,
+                });
                 gates
             },
             Ok(None) => Self::from_recommendations(recommended),
             Err(e) => {
-                eprintln!(
-                    "  \x1b[31merror\x1b[0m: PRATTAIL_AUTO_OPTIMIZE parse error: {} — \
-                     falling back to cost-benefit analysis",
-                    e
-                );
+                crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+                    id: "I09",
+                    name: "env-override-parse-error",
+                    severity: crate::lint::LintSeverity::Error,
+                    category: None,
+                    rule: None,
+                    message: format!("PRATTAIL_AUTO_OPTIMIZE parse error: {} — falling back to cost-benefit analysis", e),
+                    hint: Some("valid values: `all`, `none`, or comma-separated optimization codes (e.g., `A1,B2,F3`)".to_string()),
+                    grammar_name: None,
+                    source_location: None,
+                });
                 Self::from_recommendations(recommended)
             },
         }
@@ -743,6 +778,7 @@ impl Optimization {
             | Self::WfstMinimization   // B3: cascade gating
             | Self::EnhancedDeadCodeElimination // A4: dead-rule codegen suppression
             | Self::AdaptiveRecovery   // B2: adaptive recovery weight expr
+            | Self::BacktrackingElimination // G1: FIRST-set backtracking elimination
             => OptimizationStatus::Auto,
 
             // Diagnostic: info messages only, no codegen effect
@@ -867,47 +903,55 @@ impl GrammarComplexityReport {
         }
     }
 
-    /// D2: Format as a human-readable table.
-    pub fn format_table(&self) -> String {
+    /// D2: Format as a compact single-line summary with optional per-category detail.
+    pub fn format_compact(&self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
 
-        writeln!(out, "╔══════════════════════════════════════════════════════════════╗").unwrap();
-        writeln!(out, "║  Grammar Complexity Report: {}",  self.grammar_name).unwrap();
-        writeln!(out, "╠══════════════════════════════════════════════════════════════╣").unwrap();
-        writeln!(out, "║  Categories: {}  Rules: {}  WFST States: {}  Transitions: {}",
-            self.profile.category_count, self.profile.rule_count,
-            self.total_wfst_states, self.total_wfst_transitions).unwrap();
-        writeln!(out, "║  Ambiguous fraction: {:.1}%  Cold fraction: {:.1}%",
+        // Line 1: key scalar metrics
+        write!(
+            out,
+            "{} cats, {} rules, {} WFST states, {} transitions, {:.1}% ambiguous, {:.1}% cold, {} NFA spill, {} dispatch entries ({} resolved)",
+            self.profile.category_count,
+            self.profile.rule_count,
+            self.total_wfst_states,
+            self.total_wfst_transitions,
             self.profile.ambiguous_fraction * 100.0,
-            self.profile.cold_fraction * 100.0).unwrap();
-        writeln!(out, "║  NFA spillover categories: {}",
-            self.profile.nfa_spillover_categories).unwrap();
-        if self.composed_dispatch_entries > 0 || self.resolved_ambiguities > 0 {
-            writeln!(out, "║  Composed Dispatch: {} entries, {} ambiguities resolved deterministically",
-                self.composed_dispatch_entries, self.resolved_ambiguities).unwrap();
+            self.profile.cold_fraction * 100.0,
+            self.profile.nfa_spillover_categories,
+            self.composed_dispatch_entries,
+            self.resolved_ambiguities,
+        ).unwrap();
+
+        // Line 2: per-category summary (only if ≤ 8 categories)
+        if !self.categories.is_empty() && self.categories.len() <= 8 {
+            let cat_parts: Vec<String> = self.categories.iter()
+                .map(|c| format!("{}({}t/{}a)", c.name, c.dispatch_token_count, c.wfst_action_count))
+                .collect();
+            write!(out, "\n  per-category: {}", cat_parts.join(" ")).unwrap();
         }
-        writeln!(out, "╠══════════════════════════════════════════════════════════════╣").unwrap();
-        writeln!(out, "║  Per-Category Metrics:").unwrap();
-        writeln!(out, "║  {:<12} {:>6} {:>6} {:>6} {:>6} {:>6}",
-            "Category", "Tokens", "Ambig", "MaxAm", "States", "Acts").unwrap();
-        writeln!(out, "║  {:<12} {:>6} {:>6} {:>6} {:>6} {:>6}",
-            "────────", "──────", "─────", "─────", "──────", "────").unwrap();
-        for cat in &self.categories {
-            writeln!(out, "║  {:<12} {:>6} {:>6} {:>6} {:>6} {:>6}",
-                cat.name, cat.dispatch_token_count, cat.ambiguous_token_count,
-                cat.max_ambiguity, cat.wfst_state_count, cat.wfst_action_count).unwrap();
-        }
-        if !self.recommended_optimizations.is_empty() {
-            writeln!(out, "╠══════════════════════════════════════════════════════════════╣").unwrap();
-            writeln!(out, "║  Recommended Optimizations:").unwrap();
-            for (name, speedup, cost, reason, status) in &self.recommended_optimizations {
-                writeln!(out, "║    [{status}] {name} (speedup={speedup:.2}, cost={cost:.2}): {reason}").unwrap();
-            }
-        }
-        writeln!(out, "╚══════════════════════════════════════════════════════════════╝").unwrap();
 
         out
+    }
+
+    /// D2: Convert to a lint diagnostic for consistent emission.
+    pub fn to_diagnostic(&self) -> crate::lint::LintDiagnostic {
+        crate::lint::LintDiagnostic {
+            id: "D02",
+            name: "grammar-profile",
+            severity: crate::lint::LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: self.format_compact(),
+            hint: None,
+            grammar_name: Some(self.grammar_name.clone()),
+            source_location: None,
+        }
+    }
+
+    /// D2: Format as a human-readable table (legacy, kept for backward compatibility).
+    pub fn format_table(&self) -> String {
+        self.format_compact()
     }
 }
 
@@ -1033,7 +1077,7 @@ mod tests {
     fn test_all_candidates_evaluated() {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
-        assert_eq!(all.len(), 10, "should evaluate all 10 optimization candidates");
+        assert_eq!(all.len(), 11, "should evaluate all 11 optimization candidates");
     }
 
     #[test]
@@ -1350,7 +1394,7 @@ mod tests {
     }
 
     #[test]
-    fn test_d2_format_table_contains_key_sections() {
+    fn test_d2_format_compact_contains_key_metrics() {
         let profile = GrammarProfile {
             ambiguous_fraction: 0.15,
             cold_fraction: 0.3,
@@ -1377,19 +1421,23 @@ mod tests {
             resolved_ambiguities: 2,
         };
 
-        let table = report.format_table();
-        assert!(table.contains("TestLang"), "table should contain grammar name");
-        assert!(table.contains("Expr"), "table should contain category name");
-        assert!(table.contains("15.0%"), "table should contain ambiguous fraction as percentage");
-        assert!(table.contains("AmbiguityTargeting"), "table should contain recommended optimizations");
-        assert!(table.contains("[diag]"), "table should show [diag] status for diagnostic optimization");
-        assert!(table.contains("Composed Dispatch: 7 entries, 2 ambiguities"), "table should show composed dispatch metrics");
-        assert!(table.contains("╔"), "table should use Unicode box-drawing characters");
-        assert!(table.contains("╚"), "table should have closing border");
+        let compact = report.format_compact();
+        assert!(compact.contains("4 cats"), "should contain category count");
+        assert!(compact.contains("20 rules"), "should contain rule count");
+        assert!(compact.contains("8 WFST states"), "should contain WFST state count");
+        assert!(compact.contains("12 transitions"), "should contain transition count");
+        assert!(compact.contains("15.0% ambiguous"), "should contain ambiguous fraction");
+        assert!(compact.contains("30.0% cold"), "should contain cold fraction");
+        assert!(compact.contains("1 NFA spill"), "should contain NFA spillover count");
+        assert!(compact.contains("7 dispatch entries"), "should contain dispatch entries");
+        assert!(compact.contains("2 resolved"), "should contain resolved count");
+        assert!(compact.contains("Expr(5t/10a)"), "should contain per-category summary");
+        // Recommendations are NOT in compact format (I05 lint handles them)
+        assert!(!compact.contains("AmbiguityTargeting"), "recommendations should not appear in compact format");
     }
 
     #[test]
-    fn test_d2_format_table_no_recommendations() {
+    fn test_d2_format_compact_empty_categories() {
         let profile = simple_profile();
         let report = GrammarComplexityReport {
             grammar_name: "Simple".to_string(),
@@ -1401,15 +1449,32 @@ mod tests {
             composed_dispatch_entries: 0,
             resolved_ambiguities: 0,
         };
-        let table = report.format_table();
-        // Should NOT contain the "Recommended Optimizations" section
-        assert!(!table.contains("Recommended Optimizations"), "empty recommendations should be omitted");
-        // Should NOT contain composed dispatch line when both are 0
-        assert!(!table.contains("Composed Dispatch"), "zero composed dispatch should be omitted");
-        // Should still have header and footer
-        assert!(table.contains("Simple"));
-        assert!(table.contains("╔"));
-        assert!(table.contains("╚"));
+        let compact = report.format_compact();
+        // Should NOT contain per-category line when no categories
+        assert!(!compact.contains("per-category"), "empty categories should not show per-category line");
+        // Should still contain scalar metrics
+        assert!(compact.contains("4 cats"), "should contain category count");
+        assert!(compact.contains("20 rules"), "should contain rule count");
+    }
+
+    #[test]
+    fn test_d2_to_diagnostic() {
+        let profile = simple_profile();
+        let report = GrammarComplexityReport {
+            grammar_name: "TestLang".to_string(),
+            profile,
+            categories: vec![],
+            recommended_optimizations: vec![],
+            total_wfst_states: 0,
+            total_wfst_transitions: 0,
+            composed_dispatch_entries: 0,
+            resolved_ambiguities: 0,
+        };
+        let diag = report.to_diagnostic();
+        assert_eq!(diag.id, "D02");
+        assert_eq!(diag.name, "grammar-profile");
+        assert_eq!(diag.grammar_name.as_deref(), Some("TestLang"));
+        assert!(matches!(diag.severity, crate::lint::LintSeverity::Note));
     }
 
     #[test]
@@ -1559,6 +1624,7 @@ mod tests {
         assert!(gates.enhanced_dce);
         assert!(gates.ambiguity_targeting);
         assert!(gates.adaptive_recovery);
+        assert!(gates.backtracking_elimination);
     }
 
     #[test]
@@ -1570,6 +1636,7 @@ mod tests {
         let gates = result.expect("parse").expect("should be Some");
         assert!(!gates.left_factoring);
         assert!(!gates.adaptive_recovery);
+        assert!(!gates.backtracking_elimination);
     }
 
     #[test]

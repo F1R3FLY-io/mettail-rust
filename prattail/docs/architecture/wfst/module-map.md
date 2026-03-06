@@ -282,7 +282,7 @@ always-available, `[log]` for `#[cfg(feature = "wfst-log")]`.
   │     │                          dispatch_weighted()
   │     │                                │
   │     │                                ▼
-  │     └────────────────────────────────┼──► wfst.rs [core] ──► token_id.rs [core]
+  │     └────────────────────────────────┊──► wfst.rs [core] ──► token_id.rs [core]
   │                                      │         │
   │                                      │         ▼
   │                                      │    PredictionWfst
@@ -301,8 +301,8 @@ always-available, `[log]` for `#[cfg(feature = "wfst-log")]`.
   │                                      │         │         │
   │                                      │         │         ▼
   │                                      │         │    semiring.rs [core/log]
-  │                                      │         │         ┊
-  │                                      │         │         ┊ #[cfg(wfst-log)]
+  │                                      │         │         │
+  │                                      │         │         │ #[cfg(wfst-log)]
   │                                      │         │         ▼
   │                                      │         │    LogWeight
   │                                      │         │

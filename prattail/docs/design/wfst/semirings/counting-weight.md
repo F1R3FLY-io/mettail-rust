@@ -11,10 +11,10 @@ must resolve.
 
 CountingWeight serves two codegen-time analysis functions:
 
-| Function | Location | Description |
-|----------|----------|-------------|
-| **Ambiguity warnings** | `prediction.rs:1545-1569` | `compute_composed_dispatch()` counts per-(category, token) derivations; count > 1 emits a diagnostic |
-| **Confidence annotations** | `wfst.rs:158-173` | `predict_with_confidence()` annotates each action with the total derivation count for downstream product-semiring composition |
+| Function                   | Location                  | Description                                                                                                                   |
+|----------------------------|---------------------------|-------------------------------------------------------------------------------------------------------------------------------|
+| **Ambiguity warnings**     | `prediction.rs:1545-1569` | `compute_composed_dispatch()` counts per-(category, token) derivations; count > 1 emits a diagnostic                          |
+| **Confidence annotations** | `wfst.rs:158-173`         | `predict_with_confidence()` annotates each action with the total derivation count for downstream product-semiring composition |
 
 CountingWeight is **not** used for Viterbi path extraction because its natural
 ordering is incompatible with shortest-path initialization (see section on
@@ -79,22 +79,16 @@ CountingWeight to detect and report ambiguity:
 
 ```
 compute_composed_dispatch()
-  |
-  for each (category, DFA_state):
-    |
-    collect entries from all matching rules
-    |
-    sort entries by TropicalWeight (lowest first)
-    |
-    let derivation_count = CountingWeight::new(entries.len())  // L1548
-    |
-    if derivation_count.count() > 1:
-      |
-      emit warning with:
-        - N-way ambiguity count
-        - category and DFA state
-        - per-alternative: token variant, rule label, weight
-        - resolution: tropical shortest-path winner
+└─ for each (category, DFA_state):
+   ├─ collect entries from all matching rules
+   ├─ sort entries by TropicalWeight (lowest first)
+   ├─ let derivation_count = CountingWeight::new(entries.len())  // L1548
+   └─ if derivation_count.count() > 1:
+      └─ emit warning with:
+         ├─ N-way ambiguity count
+         ├─ category and DFA state
+         ├─ per-alternative: token variant, rule label, weight
+         └─ resolution: tropical shortest-path winner
 ```
 
 Example warning output:

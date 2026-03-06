@@ -22,17 +22,17 @@ forward-backward, and beam-pruning algorithms work unchanged.
 
 ```
                      ┌─────────────────────────┐
-  "1 + 2 * 3"  ───> │   Lattice Construction   │
+  "1 + 2 * 3"  ────> │  Lattice Construction   │
                      └─────────┬───────────────┘
                                │ edges carry (TropicalWeight, CountingWeight)
                                v
                      ┌─────────────────────────┐
-                     │   Viterbi / Forward-     │
-                     │   Backward (generic)     │
+                     │   Viterbi / Forward-    │
+                     │   Backward (generic)    │
                      └─────────┬───────────────┘
                                │
                   ┌────────────┴────────────┐
-                  v                          v
+                  v                         v
           best path weight            derivation count
           (tropical: 2.5)              (counting: 3)
 ```
@@ -52,9 +52,9 @@ The product semiring **S1 x S2** = (K1 x K2, ⊕, ⊗, 0, 1) is defined by:
 ```
 Carrier set:     K  = K1 x K2  =  { (a, b) | a in K1, b in K2 }
 
-Addition:        (a1, a2) ⊕ (b1, b2)  =  (a1 ⊕1 b1,  a2 ⊕2 b2)
+Addition:        (a1, a2) ⊕  (b1, b2)  =  (a1 ⊕1 b1,  a2 ⊕2 b2)
 
-Multiplication:  (a1, a2) ⊗ (b1, b2)  =  (a1 ⊗1 b1,  a2 ⊗2 b2)
+Multiplication:  (a1, a2) ⊗  (b1, b2)  =  (a1 ⊗1 b1,  a2 ⊗2 b2)
 
 Additive identity:        0  =  (01, 02)
 
@@ -88,28 +88,28 @@ components and applying the corresponding axiom of S1 or S2.
 ### 3.1 (A1) Associativity of ⊕
 
 ```
-((a1,a2) ⊕ (b1,b2)) ⊕ (c1,c2)
-  = (a1 ⊕1 b1, a2 ⊕2 b2) ⊕ (c1, c2)
+((a1,a2) ⊕  (b1,b2)) ⊕  (c1,c2)
+  = (a1 ⊕1 b1, a2 ⊕2 b2) ⊕  (c1, c2)
   = ((a1 ⊕1 b1) ⊕1 c1, (a2 ⊕2 b2) ⊕2 c2)
   = (a1 ⊕1 (b1 ⊕1 c1), a2 ⊕2 (b2 ⊕2 c2))     [by (A1) in S1, S2]
-  = (a1, a2) ⊕ (b1 ⊕1 c1, b2 ⊕2 c2)
-  = (a1, a2) ⊕ ((b1,b2) ⊕ (c1,c2))              QED
+  = (a1, a2) ⊕  (b1 ⊕1 c1, b2 ⊕2 c2)
+  = (a1, a2) ⊕  ((b1,b2) ⊕  (c1,c2))              QED
 ```
 
 ### 3.2 (A2) Commutativity of ⊕
 
 ```
-(a1, a2) ⊕ (b1, b2)
+(a1, a2) ⊕  (b1, b2)
   = (a1 ⊕1 b1, a2 ⊕2 b2)
   = (b1 ⊕1 a1, b2 ⊕2 a2)     [by (A2) in S1, S2]
-  = (b1, b2) ⊕ (a1, a2)       QED
+  = (b1, b2) ⊕  (a1, a2)       QED
 ```
 
 ### 3.3 (A3) Additive Identity
 
 ```
-0 ⊕ (a1, a2)
-  = (01, 02) ⊕ (a1, a2)
+0 ⊕  (a1, a2)
+  = (01, 02) ⊕  (a1, a2)
   = (01 ⊕1 a1, 02 ⊕2 a2)
   = (a1, a2)                   [by (A3) in S1, S2]    QED
 ```
@@ -117,18 +117,18 @@ components and applying the corresponding axiom of S1 or S2.
 ### 3.4 (M1) Associativity of ⊗
 
 ```
-((a1,a2) ⊗ (b1,b2)) ⊗ (c1,c2)
-  = (a1 ⊗1 b1, a2 ⊗2 b2) ⊗ (c1, c2)
+((a1,a2) ⊗  (b1,b2)) ⊗  (c1,c2)
+  = (a1 ⊗1 b1, a2 ⊗2 b2) ⊗  (c1, c2)
   = ((a1 ⊗1 b1) ⊗1 c1, (a2 ⊗2 b2) ⊗2 c2)
   = (a1 ⊗1 (b1 ⊗1 c1), a2 ⊗2 (b2 ⊗2 c2))     [by (M1) in S1, S2]
-  = (a1, a2) ⊗ ((b1,b2) ⊗ (c1,c2))              QED
+  = (a1, a2) ⊗  ((b1,b2) ⊗  (c1,c2))              QED
 ```
 
 ### 3.5 (M2) Multiplicative Identity
 
 ```
-1 ⊗ (a1, a2)
-  = (11, 12) ⊗ (a1, a2)
+1 ⊗  (a1, a2)
+  = (11, 12) ⊗  (a1, a2)
   = (11 ⊗1 a1, 12 ⊗2 a2)
   = (a1, a2)                   [by (M2) in S1, S2]    QED
 ```
@@ -138,12 +138,12 @@ components and applying the corresponding axiom of S1 or S2.
 Left-distributivity (D1):
 
 ```
-(a1,a2) ⊗ ((b1,b2) ⊕ (c1,c2))
-  = (a1,a2) ⊗ (b1 ⊕1 c1, b2 ⊕2 c2)
+(a1,a2) ⊗  ((b1,b2) ⊕  (c1,c2))
+  = (a1,a2) ⊗  (b1 ⊕1 c1, b2 ⊕2 c2)
   = (a1 ⊗1 (b1 ⊕1 c1), a2 ⊗2 (b2 ⊕2 c2))
   = ((a1 ⊗1 b1) ⊕1 (a1 ⊗1 c1), (a2 ⊗2 b2) ⊕2 (a2 ⊗2 c2))    [by (D1) in S1, S2]
-  = (a1 ⊗1 b1, a2 ⊗2 b2) ⊕ (a1 ⊗1 c1, a2 ⊗2 c2)
-  = ((a1,a2) ⊗ (b1,b2)) ⊕ ((a1,a2) ⊗ (c1,c2))                  QED
+  = (a1 ⊗1 b1, a2 ⊗2 b2) ⊕  (a1 ⊗1 c1, a2 ⊗2 c2)
+  = ((a1,a2) ⊗  (b1,b2)) ⊕  ((a1,a2) ⊗  (c1,c2))                  QED
 ```
 
 Right-distributivity (D2) follows symmetrically.
@@ -151,14 +151,14 @@ Right-distributivity (D2) follows symmetrically.
 ### 3.7 (Z) Zero Annihilation
 
 ```
-0 ⊗ (a1, a2)
-  = (01, 02) ⊗ (a1, a2)
+0 ⊗  (a1, a2)
+  = (01, 02) ⊗  (a1, a2)
   = (01 ⊗1 a1, 02 ⊗2 a2)
   = (01, 02)                   [by (Z) in S1, S2]
   = 0                          QED
 ```
 
-The symmetric case (a1, a2) ⊗ 0 = 0 follows identically.
+The symmetric case (a1, a2) ⊗  0 = 0 follows identically.
 
 > For the parsing-specific interpretation of these axioms, see
 > [§4 Why Each Axiom Matters for Parsing](../semirings.md#4-why-each-axiom-matters-for-parsing).
@@ -172,8 +172,8 @@ The symmetric case (a1, a2) ⊗ 0 = 0 follows identically.
 The product semiring is **commutative** if and only if both S1 and S2 are
 commutative.
 
-**Proof.** (a1,a2) ⊗ (b1,b2) = (a1 ⊗1 b1, a2 ⊗2 b2). This equals
-(b1 ⊗1 a1, b2 ⊗2 a2) = (b1,b2) ⊗ (a1,a2) iff a1 ⊗1 b1 = b1 ⊗1 a1
+**Proof.** (a1,a2) ⊗  (b1,b2) = (a1 ⊗1 b1, a2 ⊗2 b2). This equals
+(b1 ⊗1 a1, b2 ⊗2 a2) = (b1,b2) ⊗  (a1,a2) iff a1 ⊗1 b1 = b1 ⊗1 a1
 and a2 ⊗2 b2 = b2 ⊗2 a2, which holds iff S1 and S2 are commutative. QED
 
 All PraTTaIL semirings (Tropical, Counting, Boolean, Edit) are commutative,
@@ -184,7 +184,7 @@ so all product combinations are commutative.
 The product semiring is **idempotent** if and only if both S1 and S2 are
 idempotent.
 
-**Proof.** (a1,a2) ⊕ (a1,a2) = (a1 ⊕1 a1, a2 ⊕2 a2). This equals (a1,a2)
+**Proof.** (a1,a2) ⊕  (a1,a2) = (a1 ⊕1 a1, a2 ⊕2 a2). This equals (a1,a2)
 iff a1 ⊕1 a1 = a1 and a2 ⊕2 a2 = a2, which holds iff S1 and S2 are
 idempotent. QED
 
@@ -206,8 +206,8 @@ This ordering determines which path Viterbi considers "better." With
 tropical weight (highest priority) first; among equally-prioritized parses,
 it prefers the fewest edits.
 
-**This is NOT the same as component-wise ⊕.** The semiring ⊕ (component-wise
-min/add) and the Ord (lexicographic) are distinct operations. The ⊕ is used
+**This is NOT the same as component-wise ⊕.** The semiring ⊕  (component-wise
+min/add) and the Ord (lexicographic) are distinct operations. The ⊕  is used
 for path combination in forward-backward; the Ord is used for Viterbi
 comparison. This distinction is critical (see Section 9).
 
@@ -219,33 +219,33 @@ comparison. This distinction is critical (see Section 9).
 
 Consider a grammar with three rules that all accept the token `Ident`:
 
-| Rule      | Tropical Weight | Description             |
-|-----------|-----------------|-------------------------|
-| Variable  | 2.0             | Variable reference      |
-| TypeName  | 3.0             | Type constructor        |
-| ModName   | 5.0             | Module qualifier        |
+| Rule     | Tropical Weight | Description        |
+|----------|-----------------|--------------------|
+| Variable | 2.0             | Variable reference |
+| TypeName | 3.0             | Type constructor   |
+| ModName  | 5.0             | Module qualifier   |
 
 Under TropicalWeight alone, the parser selects Variable (weight 2.0) without
 knowing whether the choice was unique. With
 `ProductWeight<TropicalWeight, CountingWeight>`, each rule contributes both
 a cost and a count of 1:
 
-| Rule     | Product Weight      |
-|----------|---------------------|
-| Variable | (2.0, 1)            |
-| TypeName | (3.0, 1)            |
-| ModName  | (5.0, 1)            |
+| Rule     | Product Weight |
+|----------|----------------|
+| Variable | (2.0, 1)       |
+| TypeName | (3.0, 1)       |
+| ModName  | (5.0, 1)       |
 
 ### 5.2 Worked Example
 
-The semiring ⊕ (component-wise) combines all three:
+The semiring ⊕  (component-wise) combines all three:
 
 ```
-Step 1:  (2.0, 1) ⊕ (3.0, 1)
+Step 1:  (2.0, 1) ⊕  (3.0, 1)
        = (min(2.0, 3.0), 1 + 1)
        = (2.0, 2)
 
-Step 2:  (2.0, 2) ⊕ (5.0, 1)
+Step 2:  (2.0, 2) ⊕  (5.0, 1)
        = (min(2.0, 5.0), 2 + 1)
        = (2.0, 3)
 ```
@@ -256,10 +256,10 @@ compile-time warning or runtime disambiguation strategy.
 
 ### 5.3 Path Sequencing (⊗)
 
-When combining weights along a path (e.g., tokenize then parse), ⊗ operates:
+When combining weights along a path (e.g., tokenize then parse), ⊗  operates:
 
 ```
-(2.0, 3) ⊗ (1.5, 2) = (2.0 + 1.5,  3 * 2) = (3.5, 6)
+(2.0, 3) ⊗  (1.5, 2) = (2.0 + 1.5,  3 * 2) = (3.5, 6)
 ```
 
 The tropical component accumulates cost; the counting component multiplies
@@ -307,18 +307,18 @@ lexicographic pair:
 
   ┌───┐  1.0   ┌───┐  1.0   ┌───┐
   │ 0 │───────>│ 1 │───────>│ 3 │   Path A: skip '*', (1.0, 1)
-  └───┘        └───┘        └─┬─┘
-    │                     1.0  │
-    │           ┌───┐ ────────>│   Path B: insert '0' before '*',
-    │    2.0    │ 2 │──────────┘     then parse '*' as Mul, (2.0, 2)
-    └──────────>└───┘
+  └───┘        └───┘        └───┘
+    │                         ▲
+    │    2.0    ┌───┐  1.0    │     Path B: insert '0' before '*',
+    ├──────────>│ 2 │─────────┘       then parse '*' as Mul, (2.0, 2)
+    │           └───┘
     │
     │    1.5    ┌───┐  1.0   ┌───┐
     └──────────>│ 2'│───────>│ 3 │   Path C: substitute '1' for '*', (1.5, 2)
                 └───┘        └───┘
 
-  Product ⊗ along each path:
-    A: (1.0, 1) ⊗ (0.0, 0) = (1.0, 1)
+  Product ⊗  along each path:
+    A: (1.0, 1) ⊗  (0.0, 0) = (1.0, 1)
     B: (2.0, 2)
     C: (1.5, 2)
 
@@ -344,7 +344,7 @@ dimension 2."
 Formally, the zero-annihilation axiom (Z) guarantees:
 
 ```
-(01, x) ⊗ (a, b) = (01 ⊗1 a, x ⊗2 b) = (01, x ⊗2 b)
+(01, x) ⊗  (a, b) = (01 ⊗1 a, x ⊗2 b) = (01, x ⊗2 b)
 ```
 
 Since 01 is zero in S1, the first component can never leave zero regardless
@@ -444,14 +444,14 @@ without disrupting the path-selection logic.
 
 ### 9.3 Summary Table
 
-| Semiring                                  | Viterbi Compatible | Reason              |
-|-------------------------------------------|--------------------|---------------------|
-| TropicalWeight                            | Yes                | zero = +inf (max)   |
-| EditWeight                                | Yes                | zero = MAX (max)    |
-| CountingWeight                            | **No**             | zero = 0 (min)      |
-| ProductWeight\<Tropical, Counting\>       | Yes                | Tropical drives Ord |
-| ProductWeight\<Tropical, Edit\>           | Yes                | Both max under Ord  |
-| ProductWeight\<Edit, Counting\>           | Yes                | Edit drives Ord     |
+| Semiring                            | Viterbi Compatible | Reason              |
+|-------------------------------------|--------------------|---------------------|
+| TropicalWeight                      | Yes                | zero = +inf (max)   |
+| EditWeight                          | Yes                | zero = MAX (max)    |
+| CountingWeight                      | **No**             | zero = 0 (min)      |
+| ProductWeight\<Tropical, Counting\> | Yes                | Tropical drives Ord |
+| ProductWeight\<Tropical, Edit\>     | Yes                | Both max under Ord  |
+| ProductWeight\<Edit, Counting\>     | Yes                | Edit drives Ord     |
 
 ---
 
@@ -474,7 +474,7 @@ FUNCTION viterbi_generic(lattice, final_node) -> Option<ViterbiPath>
   FOR node IN 0..n DO
     IF dist[node].is_zero() THEN CONTINUE    // Skip unreachable nodes
     FOR (edge_idx, edge) IN lattice.edges_from(node) DO
-      new_dist := dist[node] ⊗ edge.weight   // Extend path
+      new_dist := dist[node] ⊗  edge.weight   // Extend path
       IF new_dist < dist[edge.target] THEN    // Better path found (Ord comparison)
         dist[edge.target] := new_dist
         pred[edge.target] := Some((node, edge_idx))
@@ -492,25 +492,25 @@ The comparison `new_dist < dist[edge.target]` uses the `Ord` implementation
   all paths' contributions.
 - **Ord** (lexicographic) is used in Viterbi to select the single best path.
 
-For idempotent semirings (Tropical, Edit), ⊕ and min agree. For
+For idempotent semirings (Tropical, Edit), ⊕  and min agree. For
 non-idempotent components (Counting), only the Ord comparison is used in
-Viterbi; the ⊕ is used separately in forward-backward.
+Viterbi; the ⊕  is used separately in forward-backward.
 
 ---
 
 ## 11. Comparison Table
 
-| Property                  | Tropical | Counting | Edit     | Product\<S1,S2\>        |
-|---------------------------|----------|----------|----------|--------------------------|
-| Carrier set               | R+ u {+inf} | N    | N u {inf} | S1 x S2                |
-| ⊕ (plus)                  | min      | +        | min      | component-wise ⊕        |
-| ⊗ (times)                 | +        | x        | +        | component-wise ⊗        |
-| 0 (zero)                  | +inf     | 0        | u32::MAX | (01, 02)               |
-| 1 (one)                   | 0.0      | 1        | 0        | (11, 12)               |
-| Commutative               | Yes      | Yes      | Yes      | iff both components     |
-| Idempotent                | Yes      | No       | Yes      | iff both components     |
-| Viterbi compatible        | Yes      | No       | Yes      | iff left drives Ord     |
-| Forward-backward capable  | Limited  | No       | Limited  | depends on components   |
+| Property                 | Tropical    | Counting | Edit      | Product\<S1,S2\>      |
+|--------------------------|-------------|----------|-----------|-----------------------|
+| Carrier set              | R+ u {+inf} | N        | N u {inf} | S1 x S2               |
+| ⊕  (plus)                | min         | +        | min       | component-wise ⊕      |
+| ⊗  (times)               | +           | x        | +         | component-wise ⊗      |
+| 0 (zero)                 | +inf        | 0        | u32::MAX  | (01, 02)              |
+| 1 (one)                  | 0.0         | 1        | 0         | (11, 12)              |
+| Commutative              | Yes         | Yes      | Yes       | iff both components   |
+| Idempotent               | Yes         | No       | Yes       | iff both components   |
+| Viterbi compatible       | Yes         | No       | Yes       | iff left drives Ord   |
+| Forward-backward capable | Limited     | No       | Limited   | depends on components |
 
 ---
 
@@ -682,14 +682,14 @@ The following table lists all ProductWeight instantiations that have been
 realized in PraTTaIL's codebase or test suite, along with their use cases
 and pipeline stages:
 
-| Composition | Use Case | Pipeline Stage | Idempotent? |
-|:------------|:---------|:---------------|:-----------:|
-| `ProductWeight<TropicalWeight, CountingWeight>` | Best parse + uniqueness detection. The tropical component selects the winner; the counting component flags whether the choice was unique (`count > 1` → ambiguous). | Composed dispatch (stage 4), lint analysis (stage 7) | No (Counting) |
-| `ProductWeight<TropicalWeight, EditWeight>` | Best parse + minimum repair distance. Enables error-tolerant parsing where the parser simultaneously optimizes priority and edit cost. | Error recovery WFST (stage 9), Viterbi recovery | Yes |
-| `ProductWeight<TropicalWeight, TropicalWeight>` | Cost-benefit scoring. Left component = dispatch priority, right component = estimated recovery cost. Used in cost-benefit analysis (D1). | Cost-benefit analysis (stage 12) | Yes |
-| `ProductWeight<TropicalWeight, ComplexityWeight>` | Dispatch priority + lookahead budget. Among equal-priority paths, prefer the one requiring less lookahead. Used in B1 selection and composed dispatch. | Composed dispatch (stage 4), codegen ordering (stage 8) | Yes |
-| `ProductWeight<TropicalWeight, ContextWeight>` | Dispatch priority + rule-set tracking. Identifies which specific rules compete at each dispatch point while maintaining priority ordering. | Ambiguity diagnosis, NFA spillover decisions | Yes |
-| `ProductWeight<TropicalWeight, EntropyWeight>` | Dispatch priority + uncertainty measurement. Tested in the semiring test suite for multi-objective forward-backward analysis. | Forward-backward (stage 11, `wfst-log`) | No (Entropy) |
+| Composition                                       | Use Case                                                                                                                                                            | Pipeline Stage                                          |  Idempotent?  |
+|:--------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------|:-------------:|
+| `ProductWeight<TropicalWeight, CountingWeight>`   | Best parse + uniqueness detection. The tropical component selects the winner; the counting component flags whether the choice was unique (`count > 1` → ambiguous). | Composed dispatch (stage 4), lint analysis (stage 7)    | No (Counting) |
+| `ProductWeight<TropicalWeight, EditWeight>`       | Best parse + minimum repair distance. Enables error-tolerant parsing where the parser simultaneously optimizes priority and edit cost.                              | Error recovery WFST (stage 9), Viterbi recovery         |      Yes      |
+| `ProductWeight<TropicalWeight, TropicalWeight>`   | Cost-benefit scoring. Left component = dispatch priority, right component = estimated recovery cost. Used in cost-benefit analysis (D1).                            | Cost-benefit analysis (stage 12)                        |      Yes      |
+| `ProductWeight<TropicalWeight, ComplexityWeight>` | Dispatch priority + lookahead budget. Among equal-priority paths, prefer the one requiring less lookahead. Used in B1 selection and composed dispatch.              | Composed dispatch (stage 4), codegen ordering (stage 8) |      Yes      |
+| `ProductWeight<TropicalWeight, ContextWeight>`    | Dispatch priority + rule-set tracking. Identifies which specific rules compete at each dispatch point while maintaining priority ordering.                          | Ambiguity diagnosis, NFA spillover decisions            |      Yes      |
+| `ProductWeight<TropicalWeight, EntropyWeight>`    | Dispatch priority + uncertainty measurement. Tested in the semiring test suite for multi-objective forward-backward analysis.                                       | Forward-backward (stage 11, `wfst-log`)                 | No (Entropy)  |
 
 ### 14.1 Choosing the Left Component
 

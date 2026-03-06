@@ -299,12 +299,12 @@ let app = Int::parse("$int(^x.{x + 1}, 5)");
 
 ## Troubleshooting Quick Reference
 
-| Symptom | Likely Cause | Fix |
-|---|---|---|
-| `unexpected character` | Token not in grammar | Check terminal strings in rules |
-| `expected Int expression` | Missing prefix handler | Ensure rule starts with a terminal or is a literal/var |
-| `unexpected token after parsing` | Trailing unconsumed input | Check for missing operators or extra tokens |
-| Precedence seems wrong | Declaration order | Move higher-precedence operators later in the `terms` block |
-| Variables not recognized | Non-primary category | Use `type:varname` prefix for non-primary categories |
+| Symptom                          | Likely Cause              | Fix                                                         |
+|----------------------------------|---------------------------|-------------------------------------------------------------|
+| `unexpected character`           | Token not in grammar      | Check terminal strings in rules                             |
+| `expected Int expression`        | Missing prefix handler    | Ensure rule starts with a terminal or is a literal/var      |
+| `unexpected token after parsing` | Trailing unconsumed input | Check for missing operators or extra tokens                 |
+| Precedence seems wrong           | Declaration order         | Move higher-precedence operators later in the `terms` block |
+| Variables not recognized         | Non-primary category      | Use `type:varname` prefix for non-primary categories        |
 
 See `troubleshooting.md` for detailed diagnostics.

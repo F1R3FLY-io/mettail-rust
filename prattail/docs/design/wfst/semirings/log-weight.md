@@ -12,12 +12,12 @@ forward-backward scoring, N-best extraction, and weight training.
 
 LogWeight is used exclusively in the `wfst-log` feature-gated modules:
 
-| Module | File | Role |
-|--------|------|------|
-| **Forward-backward** | `forward_backward.rs` | Compute total path probabilities to/from each node |
-| **Log-pushing** | `log_push.rs` | Normalize outgoing edges to sum to probability 1 |
-| **Training** | `training.rs` | SGD weight learning from parse corpora |
-| **WFST override** | `wfst.rs:367-391` | `with_trained_weights()` converts trained LogWeights to TropicalWeights |
+| Module               | File                  | Role                                                                    |
+|----------------------|-----------------------|-------------------------------------------------------------------------|
+| **Forward-backward** | `forward_backward.rs` | Compute total path probabilities to/from each node                      |
+| **Log-pushing**      | `log_push.rs`         | Normalize outgoing edges to sum to probability 1                        |
+| **Training**         | `training.rs`         | SGD weight learning from parse corpora                                  |
+| **WFST override**    | `wfst.rs:367-391`     | `with_trained_weights()` converts trained LogWeights to TropicalWeights |
 
 The flow is: train with LogWeight -> export as `TrainedModel` -> load at
 compile time -> override PredictionWfst transitions with TropicalWeight values.
@@ -75,11 +75,11 @@ if diff > 20.0 {
 The identity `logsumexp(a, b) = min(a, b) - ln(1 + exp(-|a - b|))` has a
 correction term `ln(1 + exp(-diff))` that vanishes exponentially:
 
-| diff | exp(-diff) | correction | relative to min_val |
-|------|-----------|------------|---------------------|
-| 10 | 4.5e-5 | 4.5e-5 | negligible |
-| 15 | 3.1e-7 | 3.1e-7 | negligible |
-| 20 | 2.1e-9 | 2.1e-9 | below f64 precision for most weights |
+| diff | exp(-diff) | correction | relative to min_val                  |
+|------|------------|------------|--------------------------------------|
+| 10   | 4.5e-5     | 4.5e-5     | negligible                           |
+| 15   | 3.1e-7     | 3.1e-7     | negligible                           |
+| 20   | 2.1e-9     | 2.1e-9     | below f64 precision for most weights |
 
 At `diff > 20`, the correction contributes less than 2 x 10^-9 nats. Since
 weights in PraTTaIL typically range from 0.0 to ~10.0, the relative error is
@@ -184,11 +184,11 @@ static TRAINED_MODEL: LazyLock<TrainedModel> = LazyLock::new(|| {
 PraTTaIL uses a three-tier weight strategy, where later sources override earlier
 ones:
 
-| Tier | Source | Domain | Applied When |
-|------|--------|--------|-------------|
-| 1. Specificity | `compute_rule_specificity()` in `prediction.rs:1588-1599` | TropicalWeight | Always (default) |
-| 2. Token priority | `TropicalWeight::from_priority()` in `semiring.rs:101-103` | TropicalWeight | Tokens with explicit `priority` |
-| 3. Trained probabilities | `with_trained_weights()` in `wfst.rs:367-391` | LogWeight -> TropicalWeight | `wfst-log` feature + model loaded |
+| Tier                     | Source                                                     | Domain                      | Applied When                      |
+|--------------------------|------------------------------------------------------------|-----------------------------|-----------------------------------|
+| 1. Specificity           | `compute_rule_specificity()` in `prediction.rs:1588-1599`  | TropicalWeight              | Always (default)                  |
+| 2. Token priority        | `TropicalWeight::from_priority()` in `semiring.rs:101-103` | TropicalWeight              | Tokens with explicit `priority`   |
+| 3. Trained probabilities | `with_trained_weights()` in `wfst.rs:367-391`              | LogWeight -> TropicalWeight | `wfst-log` feature + model loaded |
 
 Tier 1 is the baseline: every rule gets a weight based on structural specificity
 (more terminals = lower weight = higher priority).

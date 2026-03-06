@@ -50,14 +50,14 @@ an operator (e.g., `Eq(Int, "==", Int) → Bool`):
 
 ```
   ┌────────────────────────────────────────────────────────┐
-  │                    All Tokens                          │
+  │                      All Tokens                        │
+  ├────────────────────────────────────────────────────────┤
   │                                                        │
   │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  │
-  │  │ Unique to A  │  │  Ambiguous   │  │ Unique to B  │  │
-  │  │              │  │ (A ∩ B)      │  │              │  │
-  │  │  Integer     │  │  Ident       │  │  Boolean     │  │
-  │  │  Minus       │  │              │  │  Bang        │  │
-  │  │              │  │              │  │              │  │
+  │  │ Unique to A  │  │ Ambiguous    │  │ Unique to B  │  │
+  │  ├──────────────┤  ├──────────────┤  ├──────────────┤  │
+  │  │ Integer      │  │ (A ∩ B)      │  │ Boolean      │  │
+  │  │ Minus        │  │ Ident        │  │ Bang         │  │
   │  └──────────────┘  └──────────────┘  └──────────────┘  │
   │                                                        │
   │  Deterministic     Save/Restore      Deterministic     │
@@ -130,10 +130,69 @@ No backtracking needed. O(1) dispatch decision.
 
 ---
 
+## 3.5 Save/Restore vs Backtracking
+
+The terms **save/restore** and **backtracking** appear throughout this document and
+the generated dispatch code. They are related but not synonymous:
+
+- **Backtracking** is the *algorithmic strategy*: when a parse attempt for one
+  interpretation fails, undo the consumed input and try an alternative
+  interpretation. It describes *what* the parser does and *when*.
+
+- **Save/restore** is the *implementation mechanism*: the parser saves the current
+  position (`let saved = *pos`), attempts a parse, and restores the position on
+  failure (`*pos = saved`). It describes *how* position rollback is realized in code.
+
+In PraTTaIL, save/restore is the sole mechanism that implements backtracking.
+Every backtracking point uses save/restore; but not every save/restore point is
+backtracking.
+
+### Three uses of save/restore in PraTTaIL
+
+Save/restore appears in three distinct roles in the generated parser:
+
+1. **Cross-category backtracking** (ambiguous dispatch arms). When a token appears
+   in FIRST sets of multiple categories, the parser genuinely does not know which
+   category owns it. It saves position, tries one category's parse + operator peek,
+   and on failure restores and tries the next — or falls through to own-category
+   parsing. This is backtracking in the algorithmic sense: multiple alternatives are
+   tried sequentially until one succeeds. See [§4](#4-backtracking-dispatch-for-ambiguous-tokens)
+   below for worked examples.
+
+2. **Cross-category defense-in-depth** (deterministic dispatch arms). When FIRST-set
+   analysis classifies a token as unique to one source category, the parser "knows"
+   which path to take — no alternatives need to be tried. Nevertheless, the generated
+   code still emits save/restore around the deterministic path (`dispatch.rs`, lines
+   137–142). If the source parse + operator peek succeeds (as expected), the saved
+   position is never used. If it unexpectedly fails (edge-case misclassification),
+   position restores and own-category parsing handles the token gracefully. This is
+   **not** backtracking — it is a safety net that should never trigger under correct
+   FIRST-set classification.
+
+3. **NFA try-all** (intra-category merged prefix arms). When multiple rules within
+   one category share the same dispatch token, the parser tries *all* candidate rules
+   in WFST weight order, restoring position between each attempt, and collects all
+   successful results for deferred resolution by Layer 6 (semantic disambiguation).
+   This is broader than backtracking — it is exhaustive enumeration rather than
+   fail-and-fallback. See [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)
+   for details.
+
+### Summary table
+
+| Term | Level | Scope | Example |
+|------|-------|-------|---------|
+| Backtracking | Algorithmic strategy | Try alternative on failure | Ambiguous `Ident` → try `Int`, fallback `Bool` |
+| Save/restore | Implementation mechanism | `let saved = *pos` / `*pos = saved` | All three roles above |
+| Defense-in-depth | Robustness pattern | Safety net for deterministic arms | `Integer` unique to `Int`, but save/restore emitted |
+| NFA try-all | Enumeration strategy | Try all candidates, collect results | `float(x)` → FloatId, IntToFloat, ... all tried |
+
+---
+
 ## 4. Backtracking Dispatch for Ambiguous Tokens
 
 When a token appears in both source and target FIRST sets, the parser must
-**save** its position, try one interpretation, and **restore** on failure.
+**backtrack**: save position, try one interpretation, and restore on failure
+(see [§3.5](#35-saverestore-vs-backtracking) for the terminology distinction).
 
 ### 4.1 The Save/Restore Pattern
 

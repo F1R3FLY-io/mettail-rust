@@ -101,15 +101,15 @@ complement A' = S \ A.  This is the structure underlying `ContextWeight`
 ## 3  Theorem: Idempotent Semiring Induces a Semilattice
 
 We now prove that every idempotent commutative semiring carries a
-natural partial order under which ⊕ acts as the join operation.
+natural partial order under which ⊕  acts as the join operation.
 
 **Theorem 3.1 (Idempotent Semiring Order).**
-Let (K, ⊕, ⊗, 0-bar, 1-bar) be a commutative semiring where ⊕ is
-idempotent, i.e., a ⊕ a = a for all a ∈ K.  Define the relation:
+Let (K, ⊕, ⊗, 0-bar, 1-bar) be a commutative semiring where ⊕  is
+idempotent, i.e., a ⊕  a = a for all a ∈ K.  Define the relation:
 
-    a ≤ b   ⟺   a ⊕ b = b
+    a ≤ b   ⟺   a ⊕  b = b
 
-Then (K, ≤) is a partially ordered set, and ⊕ is the join (least upper
+Then (K, ≤) is a partially ordered set, and ⊕  is the join (least upper
 bound) under ≤.  That is, (K, ≤, ⊕) is a join-semilattice.
 
 **Proof.**
@@ -118,59 +118,59 @@ bound) under ≤.  That is, (K, ≤, ⊕) is a join-semilattice.
 
 We verify the three axioms.
 
-**Step 1 (Reflexivity).**  Let a ∈ K.  By idempotency,  a ⊕ a = a.
+**Step 1 (Reflexivity).**  Let a ∈ K.  By idempotency,  a ⊕  a = a.
 Hence  a ≤ a  by the definition of ≤.  ✓
 
 **Step 2 (Antisymmetry).**  Suppose a ≤ b and b ≤ a.  Then:
 
-    a ⊕ b = b          (from a ≤ b)
-    b ⊕ a = a          (from b ≤ a)
+    a ⊕  b = b          (from a ≤ b)
+    b ⊕  a = a          (from b ≤ a)
 
-By commutativity of ⊕,  a ⊕ b = b ⊕ a.  Substituting the two equations:
+By commutativity of ⊕,  a ⊕  b = b ⊕  a.  Substituting the two equations:
 
-    b = a ⊕ b = b ⊕ a = a
+    b = a ⊕  b = b ⊕  a = a
 
 Therefore a = b.  ✓
 
 **Step 3 (Transitivity).**  Suppose a ≤ b and b ≤ c.  Then:
 
-    a ⊕ b = b          (from a ≤ b)      ... (i)
-    b ⊕ c = c          (from b ≤ c)      ... (ii)
+    a ⊕  b = b          (from a ≤ b)      ... (i)
+    b ⊕  c = c          (from b ≤ c)      ... (ii)
 
 We compute:
 
-    a ⊕ c = a ⊕ (b ⊕ c)       [by (ii), substituting c = b ⊕ c]
-           = (a ⊕ b) ⊕ c       [by associativity of ⊕]
-           = b ⊕ c             [by (i), substituting a ⊕ b = b]
+    a ⊕  c = a ⊕  (b ⊕  c)       [by (ii), substituting c = b ⊕  c]
+           = (a ⊕  b) ⊕  c       [by associativity of ⊕]
+           = b ⊕  c             [by (i), substituting a ⊕  b = b]
            = c                 [by (ii)]
 
-Hence a ⊕ c = c, so a ≤ c.  ✓
+Hence a ⊕  c = c, so a ≤ c.  ✓
 
-*Part 2.  ⊕ is the join under ≤.*
+*Part 2.  ⊕  is the join under ≤.*
 
-We must show that for any a, b ∈ K, the element j = a ⊕ b is the least
+We must show that for any a, b ∈ K, the element j = a ⊕  b is the least
 upper bound of {a, b} under ≤.
 
 **Claim 2a (j is an upper bound).**
 
-We show a ≤ j.  Compute  a ⊕ j = a ⊕ (a ⊕ b) = (a ⊕ a) ⊕ b = a ⊕ b = j,
+We show a ≤ j.  Compute  a ⊕  j = a ⊕  (a ⊕  b) = (a ⊕  a) ⊕  b = a ⊕  b = j,
 where the first rewrite is associativity and the second is idempotency.
-Hence a ⊕ j = j, so a ≤ j.
+Hence a ⊕  j = j, so a ≤ j.
 
-Symmetrically,  b ⊕ j = b ⊕ (a ⊕ b) = (b ⊕ a) ⊕ b = (a ⊕ b) ⊕ b
-= a ⊕ (b ⊕ b) = a ⊕ b = j.  (We used commutativity and idempotency.)
+Symmetrically,  b ⊕  j = b ⊕  (a ⊕  b) = (b ⊕  a) ⊕  b = (a ⊕  b) ⊕  b
+= a ⊕  (b ⊕  b) = a ⊕  b = j.  (We used commutativity and idempotency.)
 Hence b ≤ j.  ✓
 
 **Claim 2b (j is least).**
 
-Suppose u ∈ K with a ≤ u and b ≤ u.  Then a ⊕ u = u and b ⊕ u = u.
+Suppose u ∈ K with a ≤ u and b ≤ u.  Then a ⊕  u = u and b ⊕  u = u.
 Compute:
 
-    j ⊕ u = (a ⊕ b) ⊕ u = a ⊕ (b ⊕ u) = a ⊕ u = u
+    j ⊕  u = (a ⊕  b) ⊕  u = a ⊕  (b ⊕  u) = a ⊕  u = u
 
-Hence j ⊕ u = u, so j ≤ u.  ✓
+Hence j ⊕  u = u, so j ≤ u.  ✓
 
-Since j = a ⊕ b is an upper bound of {a, b} that is less than or equal
+Since j = a ⊕  b is an upper bound of {a, b} that is less than or equal
 to every other upper bound, it is the least upper bound.
 
 Therefore (K, ≤, ⊕) is a join-semilattice.  **QED**
@@ -181,55 +181,55 @@ We now verify idempotency (or its failure) for each semiring and state
 the resulting order.
 
 **TropicalWeight** (`semiring.rs:106`).
-a ⊕ b = min(a, b).  Idempotent: min(a, a) = a.  ✓
+a ⊕  b = min(a, b).  Idempotent: min(a, a) = a.  ✓
 Natural order: a ≤ b  ⟺  min(a, b) = b  ⟺  a ≥_R b (reversed
 standard order on R+ ∪ {∞}).  Equivalently, smaller tropical weights are
 *higher* in the semilattice.  The join selects the minimum.
 
 **BooleanWeight** (`semiring.rs:317`).
-a ⊕ b = a ∨ b (logical OR).  Idempotent: a ∨ a = a.  ✓
+a ⊕  b = a ∨ b (logical OR).  Idempotent: a ∨ a = a.  ✓
 Natural order: a ≤ b  ⟺  a ∨ b = b.  This gives false ≤ true,
 the standard Boolean order.
 
 **EditWeight** (`semiring.rs:428`).
-a ⊕ b = min(a, b) over N ∪ {∞}.  Idempotent: min(a, a) = a.  ✓
+a ⊕  b = min(a, b) over N ∪ {∞}.  Idempotent: min(a, a) = a.  ✓
 Natural order: identical structure to TropicalWeight restricted to
 integers.  Smaller edit distances are higher in the semilattice.
 
 **ComplexityWeight** (`semiring.rs:821`).
-a ⊕ b = min(a, b) over N ∪ {∞}.  Idempotent: min(a, a) = a.  ✓
+a ⊕  b = min(a, b) over N ∪ {∞}.  Idempotent: min(a, a) = a.  ✓
 Natural order: same structure as EditWeight.  See
 `../wfst/semirings/complexity-weight.md` for the full proof.
 
 **ContextWeight** (`semiring.rs:684`).
-a ⊕ b = a ∪ b (bitwise OR).  Idempotent: A ∪ A = A.  ✓
+a ⊕  b = a ∪ b (bitwise OR).  Idempotent: A ∪ A = A.  ✓
 Natural order: A ≤ B  ⟺  A ∪ B = B  ⟺  A ⊆ B (subset inclusion).
 
 **CountingWeight** (`semiring.rs:235`).
-a ⊕ b = a + b (integer addition).  NOT idempotent: 1 + 1 = 2 ≠ 1.
+a ⊕  b = a + b (integer addition).  NOT idempotent: 1 + 1 = 2 ≠ 1.
 There is no natural semilattice order.  CountingWeight tracks path
 *counts*, not path *preferences*, so an ordering on alternatives is not
 meaningful.
 
 **LogWeight** (`semiring.rs:982`, feature-gated: `wfst-log`).
-a ⊕ b = -ln(exp(-a) + exp(-b)) (log-sum-exp).  NOT idempotent:
-a ⊕ a = -ln(2 exp(-a)) = a - ln 2 ≠ a (for finite a).  There is no
+a ⊕  b = -ln(exp(-a) + exp(-b)) (log-sum-exp).  NOT idempotent:
+a ⊕  a = -ln(2 exp(-a)) = a - ln 2 ≠ a (for finite a).  There is no
 natural semilattice order.  LogWeight preserves full probability mass;
 it must sum, not select.
 
 **EntropyWeight** (`semiring.rs:1186`, feature-gated: `wfst-log`).
-a ⊕ b uses log-sum-exp on the weight component.  Inherits
+a ⊕  b uses log-sum-exp on the weight component.  Inherits
 non-idempotency from LogWeight.  No natural semilattice order.
 
 **NbestWeight<N>** (`semiring.rs:1569`).
-a ⊕ b merges two N-best lists.  NOT idempotent in general:
+a ⊕  b merges two N-best lists.  NOT idempotent in general:
 merging a single-entry list with itself may produce the same list
-(dedup), but the cross-product under ⊗ doubles entries before merge,
-so the semiring as a whole does not satisfy a ⊕ a = a universally for
+(dedup), but the cross-product under ⊗  doubles entries before merge,
+so the semiring as a whole does not satisfy a ⊕  a = a universally for
 composite weights.  No natural semilattice order.
 
 **ProductWeight<S1, S2>** (`semiring.rs:528`).
-Component-wise: (a1, a2) ⊕ (b1, b2) = (a1 ⊕ b1, a2 ⊕ b2).  Idempotent
+Component-wise: (a1, a2) ⊕  (b1, b2) = (a1 ⊕  b1, a2 ⊕  b2).  Idempotent
 if and only if both S1 and S2 are idempotent.  Inherits the product
 order: (a1, a2) ≤ (b1, b2)  ⟺  a1 ≤ b1  and  a2 ≤ b2.
 
@@ -262,8 +262,8 @@ Boolean algebra.
 **Proof.**
 
 *Carrier:*  B = {false, true}.
-*Meet:*  a ∧ b = logical AND = ⊗ (`semiring.rs:335`).
-*Join:*  a ∨ b = logical OR = ⊕ (`semiring.rs:330`).
+*Meet:*  a ∧ b = logical AND = ⊗  (`semiring.rs:335`).
+*Join:*  a ∨ b = logical OR = ⊕  (`semiring.rs:330`).
 *Bottom:*  ⊥ = false = 0-bar (`semiring.rs:320`).
 *Top:*  ⊤ = true = 1-bar (`semiring.rs:325`).
 
@@ -318,8 +318,8 @@ operation, it is a Boolean algebra.
 
 *Carrier:*  L = 2^S = P({0, ..., 127}), represented as `u128`
 (`semiring.rs:643`).
-*Meet:*  A ∧ B = A ∩ B = bitwise AND = ⊗ (`semiring.rs:706`).
-*Join:*  A ∨ B = A ∪ B = bitwise OR = ⊕ (`semiring.rs:700`).
+*Meet:*  A ∧ B = A ∩ B = bitwise AND = ⊗  (`semiring.rs:706`).
+*Join:*  A ∨ B = A ∪ B = bitwise OR = ⊕  (`semiring.rs:700`).
 *Bottom:*  ⊥ = ∅ = 0u128 = 0-bar (`semiring.rs:688`).
 *Top:*  ⊤ = S = u128::MAX = 1-bar (`semiring.rs:694`).
 
@@ -377,8 +377,8 @@ algebra.  **QED**
 
 **Concrete Grounding.**
 `ContextWeight` (`semiring.rs:643`) represents the set of grammar rules
-that can produce a given token.  Composition via ⊗ = ∩ restricts to
-rules valid in *both* sequential segments; combination via ⊕ = ∪ unions
+that can produce a given token.  Composition via ⊗  = ∩ restricts to
+rules valid in *both* sequential segments; combination via ⊕  = ∪ unions
 the rules from alternative paths.  The Boolean-algebra structure ensures
 complement operations are well-defined for follow-set tightening.
 

@@ -737,6 +737,32 @@ impl PipelineState {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Pipeline diagnostic helper
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Build and emit a structured pipeline diagnostic via the lint system.
+fn pipeline_diagnostic(
+    grammar_name: &str,
+    id: &'static str,
+    name: &'static str,
+    severity: crate::lint::LintSeverity,
+    message: String,
+    hint: Option<String>,
+) {
+    crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+        id,
+        name,
+        severity,
+        category: None,
+        rule: None,
+        message,
+        hint,
+        grammar_name: Some(grammar_name.to_string()),
+        source_location: None,
+    });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Entry point
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1246,12 +1272,17 @@ fn generate_parser_code(
             };
             let summary = cascade.run_all(&mut prediction_wfsts);
             if !summary.is_empty() {
-                eprintln!("  \x1b[36minfo\x1b[0m[{}]: E1 {}", bundle.grammar_name, summary);
+                pipeline_diagnostic(
+                    &bundle.grammar_name, "I01", "transducer-cascade",
+                    crate::lint::LintSeverity::Info, summary, None,
+                );
             }
         } else {
-            eprintln!(
-                "  \x1b[36minfo\x1b[0m[{}]: B3 skipping cascade ({} WFST states ≤ 4)",
-                bundle.grammar_name, total_wfst_states,
+            pipeline_diagnostic(
+                &bundle.grammar_name, "I02", "cascade-skipped",
+                crate::lint::LintSeverity::Info,
+                format!("skipping transducer cascade ({} WFST states ≤ 4)", total_wfst_states),
+                None,
             );
         }
 
@@ -1281,14 +1312,18 @@ fn generate_parser_code(
                         if let Some(beam_value) = beam_opt {
                             let beam = crate::automata::semiring::TropicalWeight::new(beam_value);
                             wfst.set_beam_width(Some(beam));
-                            eprintln!(
-                                "  \x1b[36minfo\x1b[0m[{}]: A7 {}: entropy={:.2} bits → beam={:.2}",
-                                bundle.grammar_name, cat_name, entropy_bits, beam_value,
+                            pipeline_diagnostic(
+                                &bundle.grammar_name, "I03", "adaptive-beam",
+                                crate::lint::LintSeverity::Info,
+                                format!("{}: entropy={:.2} bits → beam={:.2}", cat_name, entropy_bits, beam_value),
+                                None,
                             );
                         } else {
-                            eprintln!(
-                                "  \x1b[36minfo\x1b[0m[{}]: A7 {}: entropy={:.2} bits → no beam (deterministic)",
-                                bundle.grammar_name, cat_name, entropy_bits,
+                            pipeline_diagnostic(
+                                &bundle.grammar_name, "I03", "adaptive-beam",
+                                crate::lint::LintSeverity::Info,
+                                format!("{}: entropy={:.2} bits → no beam (deterministic)", cat_name, entropy_bits),
+                                None,
                             );
                         }
                     }
@@ -1296,9 +1331,11 @@ fn generate_parser_code(
                 // Without wfst-log, Auto falls back to Disabled (no beam).
                 #[cfg(not(feature = "wfst-log"))]
                 {
-                    eprintln!(
-                        "  \x1b[33mwarn\x1b[0m[{}]: beam_width: auto requires feature `wfst-log`; falling back to disabled",
-                        bundle.grammar_name,
+                    pipeline_diagnostic(
+                        &bundle.grammar_name, "I04", "beam-feature-required",
+                        crate::lint::LintSeverity::Warning,
+                        "beam_width: auto requires feature `wfst-log`; falling back to disabled".to_string(),
+                        Some("enable `wfst-log` feature or use explicit beam_width".to_string()),
                     );
                 }
             }
@@ -1469,15 +1506,16 @@ fn generate_parser_code(
         build_complete_weight_map, compute_composed_dispatch, resolve_dispatch_winners,
     };
 
-    let (composed_resolutions, complete_weight_map) =
+    let (composed_resolutions, complete_weight_map, w05_diagnostics) =
         if ambiguity_info.has_ambiguous {
-            let composed = compute_composed_dispatch(
+            let (composed, w05_diags) = compute_composed_dispatch(
                 &ambiguity_info.ambiguous_states,
                 &category_names,
                 &first_sets,
                 variant_map,
                 Some(&prediction_wfsts),
                 &bundle.rule_infos,
+                &bundle.grammar_name,
             );
 
             // Build complete weight map covering ALL (category, token) pairs.
@@ -1493,6 +1531,7 @@ fn generate_parser_code(
             (
                 Some(resolve_dispatch_winners(&composed)),
                 Some(weight_map),
+                w05_diags,
             )
         } else {
             // No ambiguous states — still build weight map for deterministic tokens
@@ -1502,7 +1541,7 @@ fn generate_parser_code(
                 &bundle.rule_infos,
                 &category_names,
             );
-            (None, Some(weight_map))
+            (None, Some(weight_map), Vec::new())
         };
 
     // Detect which categories have NFA-ambiguous prefix groups (multiple rules
@@ -1536,6 +1575,7 @@ fn generate_parser_code(
             all_syntax: &bundle.all_syntax,
             follow_inputs: &bundle.follow_inputs,
             semantic_dependency_groups: &bundle.semantic_dependency_groups,
+            pre_collected_diagnostics: &w05_diagnostics,
         };
 
         let diagnostics = crate::lint::run_lints(&lint_ctx);
@@ -1559,19 +1599,18 @@ fn generate_parser_code(
         let recommended = crate::cost_benefit::recommended_optimizations(&grammar_profile);
         let gates = crate::cost_benefit::OptimizationGates::from_env_or_recommendations(&recommended);
         if !recommended.is_empty() {
-            eprintln!(
-                "  \x1b[36minfo\x1b[0m[{}]: D1 cost-benefit analysis recommends {} optimization(s):",
-                bundle.grammar_name, recommended.len()
+            let detail_lines: Vec<String> = recommended.iter().map(|c| {
+                format!("  {} (speedup={:.2}, cost={:.2}): {}", c.optimization, c.speedup.value(), c.compile_cost.value(), c.reason)
+            }).collect();
+            pipeline_diagnostic(
+                &bundle.grammar_name, "I05", "cost-benefit-recommendations",
+                crate::lint::LintSeverity::Info,
+                format!(
+                    "cost-benefit analysis recommends {} optimization(s):\n{}",
+                    recommended.len(), detail_lines.join("\n"),
+                ),
+                None,
             );
-            for candidate in &recommended {
-                eprintln!(
-                    "         {} (speedup={:.2}, cost={:.2}): {}",
-                    candidate.optimization,
-                    candidate.speedup.value(),
-                    candidate.compile_cost.value(),
-                    candidate.reason
-                );
-            }
         }
         gates
     };
@@ -1591,15 +1630,16 @@ fn generate_parser_code(
     );
     let dead_rules: HashSet<String> = if optimization_gates.enhanced_dce {
         if !all_dead_rule_labels.is_empty() {
-            eprintln!(
-                "  \x1b[36minfo\x1b[0m[{}]: A4 enhanced DCE: suppressing codegen for {} dead rule(s): [{}]",
-                bundle.grammar_name,
-                all_dead_rule_labels.len(),
-                {
-                    let mut sorted: Vec<&str> = all_dead_rule_labels.iter().map(|s| s.as_str()).collect();
-                    sorted.sort_unstable();
-                    sorted.join(", ")
-                },
+            let mut sorted: Vec<&str> = all_dead_rule_labels.iter().map(|s| s.as_str()).collect();
+            sorted.sort_unstable();
+            pipeline_diagnostic(
+                &bundle.grammar_name, "I06", "enhanced-dce-active",
+                crate::lint::LintSeverity::Info,
+                format!(
+                    "enhanced DCE: suppressing codegen for {} dead rule(s): [{}]",
+                    all_dead_rule_labels.len(), sorted.join(", "),
+                ),
+                None,
             );
         }
         all_dead_rule_labels.clone()
@@ -1618,33 +1658,36 @@ fn generate_parser_code(
             1, // threshold: flag tokens with >1 alternative
         );
         if !ambiguity_result.ambiguous_tokens.is_empty() {
-            eprintln!(
-                "  \x1b[36minfo\x1b[0m[{}]: A5 ambiguity targeting: {} ambiguous token(s), {} unambiguous, max ambiguity={}",
-                bundle.grammar_name,
-                ambiguity_result.ambiguous_tokens.len(),
-                ambiguity_result.unambiguous_count,
-                ambiguity_result.max_ambiguity
-            );
-            for info in &ambiguity_result.ambiguous_tokens {
-                eprintln!(
-                    "         {}::{} — {} alternative(s): [{}]{}",
-                    info.category,
-                    info.token,
-                    info.alternative_count,
+            let mut detail_lines: Vec<String> = ambiguity_result.ambiguous_tokens.iter().map(|info| {
+                format!(
+                    "  {}::{} — {} alternative(s): [{}]{}",
+                    info.category, info.token, info.alternative_count,
                     info.rule_labels.join(", "),
-                    if info.lookahead_candidate { " ← B1 candidate" } else { "" }
-                );
-            }
+                    if info.lookahead_candidate { " ← B1 candidate" } else { "" },
+                )
+            }).collect();
             if !ambiguity_result.presized_categories.is_empty() {
-                eprintln!(
-                    "         NFA spillover pre-sizing: {}",
+                detail_lines.push(format!(
+                    "  NFA spillover pre-sizing: {}",
                     ambiguity_result.presized_categories
                         .iter()
                         .map(|(cat, sz)| format!("{}={}", cat, sz))
                         .collect::<Vec<_>>()
                         .join(", ")
-                );
+                ));
             }
+            pipeline_diagnostic(
+                &bundle.grammar_name, "I07", "ambiguity-targeting",
+                crate::lint::LintSeverity::Info,
+                format!(
+                    "ambiguity targeting: {} ambiguous token(s), {} unambiguous, max ambiguity={}\n{}",
+                    ambiguity_result.ambiguous_tokens.len(),
+                    ambiguity_result.unambiguous_count,
+                    ambiguity_result.max_ambiguity,
+                    detail_lines.join("\n"),
+                ),
+                None,
+            );
         }
     }
 
@@ -1663,7 +1706,7 @@ fn generate_parser_code(
             composed_entries,
             resolved,
         );
-        eprintln!("{}", report.format_table());
+        crate::lint::emit_diagnostic(&report.to_diagnostic());
     }
 
     // Write parser helpers
@@ -1793,7 +1836,7 @@ fn generate_parser_code(
             &mut buf,
             &cat.name,
             &cat_cross,
-            &[],
+            &bundle.cast_rules,
             &overlaps,
             &first_sets,
             wfst,
@@ -1801,6 +1844,7 @@ fn generate_parser_code(
             complete_weight_map.as_ref(),
             &optimization_gates,
             &dead_rules,
+            &bundle.rd_rules,
         );
     }
 

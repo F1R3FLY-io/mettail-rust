@@ -112,41 +112,41 @@ Finalize (concatenate + parse TokenStream)
 ## 4. Compile-Time vs Runtime Classification
 
 ```
-┌────────────────────────────────────────────────────────────┐
-│  COMPILE-TIME                                              │
-│                                                            │
-│  Pipeline Analysis       Codegen Transformation            │
-│  ┌─────────────────┐     ┌──────────────────────────────┐  │
-│  │ D1 CostBenefit  │     │ A2 Hot/Cold Splitting        │  │
-│  │ A4 Enhanced DCE │     │ A1 Left-Factoring            │  │
-│  │ A5 Ambiguity    │     │ F1 Spillover Pruning         │  │
-│  │    Targeting    │     │ F2 Early Termination         │  │
-│  │                 │     │ A3 Composed DFA+Min          │  │
-│  └─────────────────┘     └──────────────────────────────┘  │
-│                                                            │
-├────────────────────────────────────────────────────────────┤
-│  RUNTIME                                                   │
-│                                                            │
-│  Generated Code          Infrastructure                    │
-│  ┌─────────────────┐     ┌──────────────────────────────┐  │
-│  │ B2 Adaptive     │     │ F3 Lazy Spillover            │  │
-│  │    Recovery     │     │ B1 Multi-Token Lookahead     │  │
-│  │ B3 WFST         │     │ E1 Transducer Cascade        │  │
-│  │    Minimization │     │                              │  │
-│  └─────────────────┘     └──────────────────────────────┘  │
-│                                                            │
-├────────────────────────────────────────────────────────────┤
-│  SEMIRINGS                                                 │
-│                                                            │
-│  Existing                Planned                           │
-│  ┌─────────────────┐     ┌──────────────────────────────┐  │
-│  │ TropicalWeight  │     │ C1 ContextWeight (BitSet)    │  │
-│  │ BooleanWeight   │     │ C2 ComplexityWeight          │  │
-│  │ CountingWeight  │     │ C3 EntropyWeight (wfst-log)  │  │
-│  │ EditWeight      │     │ C4 Viterbi-N-Best            │  │
-│  │ ProductWeight   │     │                              │  │
-│  └─────────────────┘     └──────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────┐
+│  COMPILE-TIME                                                │
+│  ┌───────────────────┐     ┌──────────────────────────────┐  │
+│  │ Pipeline Analysis │     │ Codegen Transformation       │  │
+│  ├───────────────────┤     ├──────────────────────────────┤  │
+│  │ D1 CostBenefit    │     │ A2 Hot/Cold Splitting        │  │
+│  │ A4 Enhanced DCE   │     │ A1 Left-Factoring            │  │
+│  │ A5 Ambiguity      │     │ F1 Spillover Pruning         │  │
+│  │    Targeting      │     │ F2 Early Termination         │  │
+│  │                   │     │ A3 Composed DFA+Min          │  │
+│  └───────────────────┘     └──────────────────────────────┘  │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│  RUNTIME                                                     │
+│  ┌───────────────────┐     ┌──────────────────────────────┐  │
+│  │ Generated Code    │     │ Infrastructure               │  │
+│  ├───────────────────┤     ├──────────────────────────────┤  │
+│  │ B2 Adaptive       │     │ F3 Lazy Spillover            │  │
+│  │    Recovery       │     │ B1 Multi-Token Lookahead     │  │
+│  │ B3 WFST           │     │ E1 Transducer Cascade        │  │
+│  │    Minimization   │     │                              │  │
+│  └───────────────────┘     └──────────────────────────────┘  │
+│                                                              │
+├──────────────────────────────────────────────────────────────┤
+│  SEMIRINGS                                                   │
+│  ┌───────────────────┐     ┌──────────────────────────────┐  │
+│  │ Existing          │     │ Planned                      │  │
+│  ├───────────────────┤     ├──────────────────────────────┤  │
+│  │ TropicalWeight    │     │ C1 ContextWeight (BitSet)    │  │
+│  │ BooleanWeight     │     │ C2 ComplexityWeight          │  │
+│  │ CountingWeight    │     │ C3 EntropyWeight (wfst-log)  │  │
+│  │ EditWeight        │     │ C4 Viterbi-N-Best            │  │
+│  │ ProductWeight     │     │                              │  │
+│  └───────────────────┘     └──────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -198,7 +198,7 @@ Each optimization is powered by one or more semirings:
 │  │  │ States   │ │ Actions  │ │ beam_width    │ │       │
 │  │  │ (2-level)│ │ (weighted│ │ (TropicalWt)  │ │       │
 │  │  └────┬─────┘ └────┬─────┘ └───────┬───────┘ │       │
-│  └───────┼────────────┼───────────────┼─────────┘       │
+│  └───────┊────────────┊───────────────┊─────────┘       │
 │          │            │               │                 │
 │   ┌──────┴──────┬─────┴─────┬─────────┴──────┐          │
 │   ▼             ▼           ▼                ▼          │
@@ -244,11 +244,11 @@ F1 (Spillover)   F2 (Early)   F3 (Lazy Spillover)
        │                              │
        └──────────────┬───────────────┘
                       │
-D1 (CostBenefit) ─────┼──────────────────────────────────┐
-                      │                                   │
+D1 (CostBenefit) ─────┼─────────────────────────────────┐
+                      │                                 │
 breezy-orbiting   C1 (ContextWeight) ──→ A4 (DCE)       │
--aho (prereq)                                             ├──→ E1 (Cascade)
-                                                          │
+-aho (prereq)                                           ├──→ E1 (Cascade)
+                                                        │
 A5 (Ambiguity) ──→ C2 (Complexity) ──→ B1 (Lookahead) ──┘
 
 A2 (Hot/Cold) ───────────────────── (independent)

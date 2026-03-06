@@ -36,12 +36,12 @@ but it cannot find the best *sequence* of actions.
 Consider the token stream `[a, b, c, ;]` where `;` is a sync token and
 the error is at position 0. Single-step evaluation:
 
-| Strategy       | Action           | Cost |
-|----------------|------------------|------|
-| SkipToSync     | skip 3 to `;`    | 1.5  |
-| DeleteToken    | delete `a`       | 1.0  |
-| SubstituteToken| replace `a`      | 1.5  |
-| InsertToken    | insert `;`       | 2.0  |
+| Strategy        | Action        | Cost |
+|-----------------|---------------|------|
+| SkipToSync      | skip 3 to `;` | 1.5  |
+| DeleteToken     | delete `a`    | 1.0  |
+| SubstituteToken | replace `a`   | 1.5  |
+| InsertToken     | insert `;`    | 2.0  |
 
 Single-step winner: DeleteToken (cost 1.0). But deleting `a` leaves
 `[b, c, ;]` — the parser still faces `b` and `c` before the sync point.
@@ -144,16 +144,16 @@ Nodes: {0, 1, 2, ..., L−1, SINK}
 
 Each edge carries a tropical weight (lower is better).
 
-| Edge Kind     | Source → Target  | Weight            | Guard                                   |
-|---------------|------------------|-------------------|-----------------------------------------|
-| Skip          | *i* → *i*+1      | c_skip            | *i* + 1 < |nodes|                       |
-| Delete        | *i* → *i*+1      | c_delete          | *i* + 1 < |nodes|                       |
-| Substitute    | *i* → *i*+1      | c_substitute      | token[*i*] ∉ sync_tokens                |
-| Insert        | *i* → SINK       | c_insert          | ¬inserted[*i*] (max 1 per position)     |
-| Swap          | *i* → *i*+2      | c_swap            | *i* + 2 ≤ *L*                           |
-| Sync          | *i* → SINK       | 0                 | token[*i*] ∈ sync_tokens                |
+| Edge Kind  | Source → Target | Weight       | Guard                               |
+|------------|-----------------|--------------|-------------------------------------|
+| Skip       | *i* → *i*+1     | c_skip       | *i* + 1 < \|nodes\|                 |
+| Delete     | *i* → *i*+1     | c_delete     | *i* + 1 < \|nodes\|                 |
+| Substitute | *i* → *i*+1     | c_substitute | token[*i*] ∉ sync_tokens            |
+| Insert     | *i* → SINK      | c_insert     | ¬inserted[*i*] (max 1 per position) |
+| Swap       | *i* → *i*+2     | c_swap       | *i* + 2 ≤ *L*                       |
+| Sync       | *i* → SINK      | 0            | token[*i*] ∈ sync_tokens            |
 
-**Weight functions** (tropical semiring: ⊕ = min, ⊗ = +):
+**Weight functions** (tropical semiring: ⊕  = min, ⊗  = +):
 
 ```
 w(Skip, i)       = c_skip           (default: 0.5)
@@ -200,7 +200,7 @@ Tokens: `[a, ;]`, sync_tokens = {`;`}, error at position 0:
   │        │─────────────►│        │
   └────┬───┘              └────┬───┘
        │                       │
-       │  insert(2.0)         │  sync(0.0)
+       │  insert(2.0)          │  sync(0.0)
        │                       │
        └──────────► SINK ◄─────┘
 ```
@@ -223,26 +223,26 @@ Five-node example with all edge types. Tokens: `[a, b, c, d, ;]`,
 sync_tokens = {`;`}.
 
 ```
-                    c_skip=0.5    c_skip=0.5    c_skip=0.5    c_skip=0.5
-           ┌──────────────┬──────────────┬──────────────┬──────────────┐
-           │              │              │              │              │
-      ┌────▼───┐    ┌─────▼──┐    ┌─────▼──┐    ┌─────▼──┐    ┌─────▼──┐
-      │  [0]   │    │  [1]   │    │  [2]   │    │  [3]   │    │  [4]   │
-      │  "a"   │    │  "b"   │    │  "c"   │    │  "d"   │    │  ";"   │
-      └──┬─┬───┘    └──┬─┬───┘    └──┬─┬───┘    └──┬─┬───┘    └────┬───┘
-         │ │            │ │            │ │            │ │             │
-         │ │ c_del=1.0  │ │ c_del=1.0  │ │ c_del=1.0  │ │ c_del=1.0  │ Sync
-         │ └──────▶[1]  │ └──────▶[2]  │ └──────▶[3]  │ └──────▶[4]  │ (free)
-         │              │              │              │              │
-         │  c_swap=1.25 │  c_swap=1.25 │  c_swap=1.25 │              │
-         └────────▶[2]  └────────▶[3]  └────────▶[4]  │              │
-                                                       │              │
-         c_ins=2.0      c_ins=2.0      c_ins=2.0      c_ins=2.0     │
-         ─ ─ ─ ─ ▶ SINK ─ ─ ─ ─ ▶ SINK ─ ─ ─ ▶ SINK  ─ ─ ─ ▶ SINK │
-                                                                      │
-                                                               ┌──────▼──┐
-                                                               │  SINK   │
-                                                               └─────────┘
+             c_skip=0.5    c_skip=0.5    c_skip=0.5    c_skip=0.5
+          ┌─────────────┬─────────────┬─────────────┬─────────────┐
+          │             │             │             │             │
+     ┌────▼───┐    ┌────▼───┐    ┌────▼───┐    ┌────▼───┐    ┌────▼───┐
+     │  [0]   │    │  [1]   │    │  [2]   │    │  [3]   │    │  [4]   │
+     │  "a"   │    │  "b"   │    │  "c"   │    │  "d"   │    │  ";"   │
+     └──┬─┬───┘    └──┬─┬───┘    └──┬─┬───┘    └──┬─┬───┘    └────┬───┘
+        │ │           │ │           │ │           │ │             │
+        │ │ c_del=1.0 │ │ c_del=1.0 │ │ c_del=1.0 │ │ c_del=1.0   │ Sync
+        │ └──────▶[1] │ └──────▶[2] │ └──────▶[3] │ └──────▶[4]   │ (free)
+        │             │             │             │               │
+        │ c_swap=1.25 │ c_swap=1.25 │ c_swap=1.25 │ c_ins=2.0     │
+        └───────▶[2]  └───────▶[3]  └───────▶[4]  └─ ─ ─ ─ ▶SINK  │
+                                                                  │
+        c_ins=2.0     c_ins=2.0     c_ins=2.0                     │
+        ─ ─ ─ ─ ▶SINK ─ ─ ─ ─ ▶SINK ─ ─ ─ ─ ▶SINK                 │
+                                                                  │
+                                                             ┌────▼───┐
+                                                             │  SINK  │
+                                                             └────────┘
 ```
 
 Substitute edges (omitted for clarity) connect *i* → *i* + 1 when
@@ -273,11 +273,11 @@ of `ba` is a single finger-ordering error.
 In PraTTaIL's repair lattice, swap cost is 1.25 (default), between
 delete (1.0) and substitute (1.5):
 
-| Repair    | Cost | Rationale                                           |
-|-----------|------|-----------------------------------------------------|
-| Delete    | 1.0  | Removes one token — information loss                |
-| **Swap**  | 1.25 | Reorders two tokens — all information preserved     |
-| Substitute| 1.5  | Replaces one token — information rewritten          |
+| Repair     | Cost | Rationale                                       |
+|------------|------|-------------------------------------------------|
+| Delete     | 1.0  | Removes one token — information loss            |
+| **Swap**   | 1.25 | Reorders two tokens — all information preserved |
+| Substitute | 1.5  | Replaces one token — information rewritten      |
 
 Swap preserves both tokens (no information is created or destroyed),
 justifying a cost between deletion (loses information) and substitution
@@ -318,11 +318,11 @@ remaining = [b, +, ...]
 The swap edge is preferred when downstream simulation (Tier 3) confirms
 that the swapped order is valid. The cost comparison:
 
-| Strategy         | Cost | Information preserved? |
-|------------------|------|-----------------------|
-| Swap             | 1.25 | Yes (both tokens)     |
-| Skip to `+`      | 0.5  | No (`b` lost)         |
-| Delete `b`       | 1.0  | No (`b` lost)         |
+| Strategy    | Cost | Information preserved? |
+|-------------|------|------------------------|
+| Swap        | 1.25 | Yes (both tokens)      |
+| Skip to `+` | 0.5  | No (`b` lost)          |
+| Delete `b`  | 1.0  | No (`b` lost)          |
 
 Without Tier 3 simulation, skip (0.5) is cheaper than swap (1.25). With
 Tier 3 validation confirming the swap produces a valid parse continuation,
@@ -778,16 +778,16 @@ considers all paths rather than committing to the cheapest single action.
 
 ## 9. Source Reference
 
-| Symbol                 | Location                            |
-|------------------------|-------------------------------------|
-| `RepairEdgeKind`       | `prattail/src/recovery.rs:772–789`  |
-| `RepairSequence`       | `prattail/src/recovery.rs:797–806`  |
-| `viterbi_multi_step()` | `prattail/src/recovery.rs:840–1072` |
-| `viterbi_recovery()`   | `prattail/src/recovery.rs:643–649`  |
-| `viterbi_recovery_beam()` | `prattail/src/recovery.rs:656–764` |
-| `RecoveryConfig`       | `prattail/src/recovery.rs:109–166`  |
-| `RepairAction::SwapTokens` | `prattail/src/recovery.rs:266–271` |
-| `RepairAction::Composite`  | `prattail/src/recovery.rs:277–280` |
+| Symbol                     | Location                            |
+|----------------------------|-------------------------------------|
+| `RepairEdgeKind`           | `prattail/src/recovery.rs:772–789`  |
+| `RepairSequence`           | `prattail/src/recovery.rs:797–806`  |
+| `viterbi_multi_step()`     | `prattail/src/recovery.rs:840–1072` |
+| `viterbi_recovery()`       | `prattail/src/recovery.rs:643–649`  |
+| `viterbi_recovery_beam()`  | `prattail/src/recovery.rs:656–764`  |
+| `RecoveryConfig`           | `prattail/src/recovery.rs:109–166`  |
+| `RepairAction::SwapTokens` | `prattail/src/recovery.rs:266–271`  |
+| `RepairAction::Composite`  | `prattail/src/recovery.rs:277–280`  |
 
 ---
 
@@ -795,7 +795,7 @@ considers all paths rather than committing to the cheapest single action.
 
 - [Viterbi and Forward-Backward](viterbi-and-forward-backward.md) — Viterbi
   on the token lattice (different graph)
-- [Semirings Overview](semirings.md) — tropical ⊕/⊗ operations
+- [Semirings Overview](semirings.md) — tropical ⊕/⊗  operations
 - [Extended Recovery Strategies](../../design/wfst/extended-recovery-strategies.md) —
   design-level integration of multi-step Viterbi
 - [RecoveryConfig](../../design/wfst/recovery-config.md) — all cost parameters

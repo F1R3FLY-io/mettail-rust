@@ -6,9 +6,9 @@
 ## Abstract
 
 PraTTaIL (Pratt-based parser generator for MeTTaIL) is a compile-time parser
-generator that unifies Pratt parsing, recursive descent, and **Weighted
-Finite-State Transducer (WFST) theory** into a single framework for
-expression-heavy, multi-category languages. This document introduces every major
+generator that unifies Pratt parsing, recursive descent, and Weighted
+Finite-State Transducer (WFST) theory into a single framework for
+expression-heavy, multi-category languages. This document introduces the major
 design component, argues why each was chosen, and explains how they integrate —
 with particular emphasis on the non-traditional application of WFST theory to
 parser generation.
@@ -226,9 +226,9 @@ allocated on the heap, managed via thread-local pooling:
               │  ┌──────────────┐   │   │  ┌──────────────────┐  │
   depth=10000 │  │ parse frame  │   │   │  │ Vec<Frame_Cat>   │  │
               │  │ parse frame  │   │   │  │ ┌──────────────┐ │  │
-              │  │ parse frame  │   │   │  │ │ InfixRHS     │ │  │
+              │  │ parse frame  │   │ ╳ │  │ │ InfixRHS     │ │  │
               │  │     ⋮        │   │   │  │ │ GroupClose   │ │  │
-              │  │ parse frame  │ ← │ ╳ │  │ │ UnaryPrefix  │ │  │
+              │  │ parse frame  │ ← │   │  │ │ UnaryPrefix  │ │  │
               │  └──────────────┘   │   │  │ │     ⋮        │ │  │
               │  ⚠ STACK OVERFLOW   │   │  │ │ InfixRHS     │ │  │
               └─────────────────────┘   │  │ └──────────────┘ │  │
@@ -338,7 +338,7 @@ powerful strategies:
 ```
   ┌────────────────────────────────────────────────────────────────┐
   │ Layer 1: Two-Token Lookahead                                   │
-  │   peek(pos+1) resolves: Ident + LParen → PApply               │
+  │   peek(pos+1) resolves: Ident + LParen → PApply                │
   │                          Ident + Dot   → PLookup               │
   │                          Ident + Bang  → POutput               │
   ├────────────────────────────────────────────────────────────────┤
@@ -352,7 +352,7 @@ powerful strategies:
   │ Layer 4: WFST Weight Ordering                                  │
   │   try cheapest alternative first (tropical weight)             │
   │   demand-driven replay with weight-threshold pruning           │
-  │   REPLAY_WEIGHT_SLACK = 2.0 tropical units                    │
+  │   REPLAY_WEIGHT_SLACK = 2.0 tropical units                     │
   └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -416,11 +416,15 @@ carry weights from an algebraic structure called a *semiring*. Formally:
 
 The **weight of a path** π = (q₀, a₁, q₁, w₁) · … · (qₙ₋₁, aₙ, qₙ, wₙ) is:
 
-$$w(π) = λ(q₀) ⊗ w₁ ⊗ … ⊗ wₙ ⊗ ρ(qₙ)$$
+```
+w(π) = λ(q₀) ⊗  w₁ ⊗  … ⊗  wₙ ⊗  ρ(qₙ)
+```
 
 The **weight of a string** x is the ⊕-sum over all accepting paths:
 
-$$‖M‖(x) = \bigoplus_{π \text{ accepts } x} w(π)$$
+```
+‖M‖(x) = ⊕ _{π accepts x} w(π)
+```
 
 In the **tropical semiring** (ℝ⁺ ∪ {+∞}, min, +, +∞, 0), this reduces to
 finding the *minimum-cost path* — exactly the shortest-path problem.
@@ -453,14 +457,14 @@ Here is the central argument of this document:
 
 The mapping is direct:
 
-| WFST Component | Parser Interpretation                             |
-|----------------|---------------------------------------------------|
-| Σ (alphabet)   | Token variants (`Ident`, `LParen`, `Int`, …)     |
-| Q (states)     | Parse contexts (category × disambiguation stage) |
-| δ (transitions)| Dispatch decisions (which rule to invoke)          |
-| 𝕂 (weights)   | Priority/cost of each dispatch choice              |
-| ⊕ (plus)       | Combine alternative paths (`min` for tropical)    |
-| ⊗ (times)      | Sequence path segments (`+` for tropical)          |
+| WFST Component  | Parser Interpretation                            |
+|-----------------|--------------------------------------------------|
+| Σ (alphabet)    | Token variants (`Ident`, `LParen`, `Int`, …)     |
+| Q (states)      | Parse contexts (category × disambiguation stage) |
+| δ (transitions) | Dispatch decisions (which rule to invoke)        |
+| 𝕂 (weights)     | Priority/cost of each dispatch choice            |
+| ⊕  (plus)       | Combine alternative paths (`min` for tropical)   |
+| ⊗  (times)      | Sequence path segments (`+` for tropical)        |
 
 **Why this matters.** Traditional parser generators treat dispatch as a
 *table lookup* (LALR action table) or *ordered list* (PEG). Both are first-order:
@@ -558,8 +562,8 @@ WFSTs provide **algebraic guarantees** via the semiring axioms:
 |---------------------------|-------------------------------------------|
 | Commutativity of ⊕        | Dispatch is independent of rule ordering  |
 | Associativity of ⊗        | Multi-step paths evaluate in any grouping |
-| Distributivity (⊗ over ⊕) | Prefix factoring preserves optimal paths  |
-| Annihilation (0̄ ⊗ a = 0̄)  | Unreachable paths propagate correctly     |
+| Distributivity (⊗  over ⊕) | Prefix factoring preserves optimal paths  |
+| Annihilation (0̄ ⊗  a = 0̄)  | Unreachable paths propagate correctly     |
 
 **Commutativity of ⊕** is particularly important: it means that the optimal
 dispatch decision does not depend on the order in which rules are written in the
@@ -597,18 +601,18 @@ The application of WFSTs to parser generation is non-obvious because WFSTs
 originate in a different domain. But the **structural analogy** is exact:
 
 ```
-  Speech Recognition                Parser Generation
-  ─────────────────────             ──────────────────────
-  Acoustic signal                   Character stream
-       │                                 │
-       ▼                                 ▼
-  Phoneme lattice                   Token lattice
-       │                                 │
-       ▼                                 ▼
-  Word sequence                     Parse tree
-       │                                 │
-       ▼                                 ▼
-  Sentence meaning                  AST / semantic value
+  Speech Recognition       Parser Generation
+  ─────────────────────    ──────────────────────
+  Acoustic signal          Character stream
+       │                        │
+       ▼                        ▼
+  Phoneme lattice          Token lattice
+       │                        │
+       ▼                        ▼
+  Word sequence            Parse tree
+       │                        │
+       ▼                        ▼
+  Sentence meaning         AST / semantic value
 ```
 
 Both face the **same fundamental problem**: an ambiguous input signal must be
@@ -642,10 +646,10 @@ performance characteristics, and well-understood trade-offs.
 
 A semiring 𝕊 = (𝕂, ⊕, ⊗, 0̄, 1̄) is an algebraic structure with two operations:
 
-- **⊕ (plus):** combines parallel paths (commutative monoid with identity 0̄)
-- **⊗ (times):** sequences path segments (monoid with identity 1̄)
-- **Distributivity:** ⊗ distributes over ⊕
-- **Annihilation:** 0̄ ⊗ a = a ⊗ 0̄ = 0̄
+- **⊕  (plus):** combines parallel paths (commutative monoid with identity 0̄)
+- **⊗  (times):** sequences path segments (monoid with identity 1̄)
+- **Distributivity:** ⊗  distributes over ⊕
+- **Annihilation:** 0̄ ⊗  a = a ⊗  0̄ = 0̄
 
 In Rust:
 
@@ -829,16 +833,16 @@ WFST. The Viterbi algorithm then finds the **minimum-cost repair sequence**:
   Error site: expected Ident, got Plus
   ┌──────────────────────────────────────────────────────────────┐
   │                                                              │
-  │  ●──── Skip(+) ────▶ ●──── Skip(2) ────▶ ●  weight: 1.0    │
-  │  │     w=0.5          │     w=0.5                            │
-  │  │                    │                                      │
-  │  ●── Insert(Ident) ──▶ ●                     weight: 2.0    │
+  │  ●──── Skip(+) ──────▶ ●──── Skip(2) ────▶ ●  weight: 1.0    │
+  │  │     w=0.5           │     w=0.5                           │
+  │  │                     │                                     │
+  │  ●── Insert(Ident) ──▶ ●                     weight: 2.0     │
   │  │     w=2.0                                                 │
   │  │                                                           │
-  │  ●── Delete(+) ──▶ ●── Parse(2) ──▶ ●        weight: 1.0    │
+  │  ●── Delete(+) ──▶ ●── Parse(2) ──▶ ●        weight: 1.0     │
   │       w=1.0                                                  │
   │                                                              │
-  │  Viterbi selects: Skip(+), Skip(2) or Delete(+), Parse(2)   │
+  │  Viterbi selects: Skip(+), Skip(2) or Delete(+), Parse(2)    │
   │  Both weight 1.0 — tiebreak by fewer repair steps            │
   └──────────────────────────────────────────────────────────────┘
 ```
@@ -857,13 +861,13 @@ pub enum RepairAction {
 }
 ```
 
-| Action         | Base Cost | EditWeight         |
-|----------------|-----------|---------------------|
-| Skip           | 0.5/token | `EditWeight::new(n)` |
-| Delete         | 1.0       | `EditWeight::delete()` = 1 |
-| Swap           | 1.25      | `EditWeight::new(1)` |
-| Substitute     | 1.5       | `EditWeight::substitute()` = 2 |
-| Insert         | 2.0       | `EditWeight::insert()` = 2 |
+| Action     | Base Cost | EditWeight                     |
+|------------|-----------|--------------------------------|
+| Skip       | 0.5/token | `EditWeight::new(n)`           |
+| Delete     | 1.0       | `EditWeight::delete()` = 1     |
+| Swap       | 1.25      | `EditWeight::new(1)`           |
+| Substitute | 1.5       | `EditWeight::substitute()` = 2 |
+| Insert     | 2.0       | `EditWeight::insert()` = 2     |
 
 ### Three-Tier Context Model
 
@@ -923,20 +927,20 @@ pub trait OptimizationPass: Debug {
 ### The Four Passes
 
 ```
-  ┌───────────────────┐     ┌───────────────────┐
-  │ WeightNormalization│     │ DeadStateElimination│
-  │   priority: 5      │────▶│   priority: 10     │
-  │   normalize so     │     │   remove states    │
-  │   best action = 0  │     │   with no outgoing │
-  └───────────────────┘     └───────────────────┘
+  ┌─────────────────────┐     ┌──────────────────────┐
+  │ WeightNormalization │     │ DeadStateElimination │
+  │   priority: 5       ├────▶│   priority: 10       │
+  │   normalize so      │     │   remove states      │
+  │   best action = 0   │     │   with no outgoing   │
+  └────────┬────────────┘     └───────┬──────────────┘
            │                          │
            ▼                          ▼
-  ┌───────────────────┐     ┌───────────────────┐
-  │ StateMinimization  │     │ BeamPruning        │
-  │   priority: 20     │◀────│   (configurable)   │
-  │   Hopcroft-style   │     │   drop transitions │
-  │   signature merge  │     │   beyond beam      │
-  └───────────────────┘     └───────────────────┘
+  ┌───────────────────┐     ┌────────────────────┐
+  │ StateMinimization │     │ BeamPruning        │
+  │   priority: 20    │◀────┤   (configurable)   │
+  │   Hopcroft-style  │     │   drop transitions │
+  │   signature merge │     │   beyond beam      │
+  └────────┬──────────┘     └────────────────────┘
            │
            ▼
        Converged?
@@ -993,23 +997,23 @@ increases in sophistication:
 ```
   ┌─────────────────────────────────────────────────────────────────┐
   │ Tier 1: LiteralNoNativeType                                     │
-  │   Rule dispatches on a literal token (e.g., IntLit) but its    │
-  │   category has no native type for that literal.                │
+  │   Rule dispatches on a literal token (e.g., IntLit) but its     │
+  │   category has no native type for that literal.                 │
   ├─────────────────────────────────────────────────────────────────┤
   │ Tier 2: UnreachableCategory                                     │
-  │   The rule's category is not reachable via any FIRST set or    │
-  │   cross-category edge. Fixed-point over transitive closure.    │
+  │   The rule's category is not reachable via any FIRST set or     │
+  │   cross-category edge. Fixed-point over transitive closure.     │
   ├─────────────────────────────────────────────────────────────────┤
   │ Tier 3: WfstUnreachable                                         │
-  │   BooleanWeight analysis on the same WFST built for dispatch:  │
-  │   forward<BooleanWeight>(wfst) returns false for this rule.    │
-  │   This is the key reuse of the dispatch WFST (see §5.3).      │
+  │   BooleanWeight analysis on the same WFST built for dispatch:   │
+  │   forward<BooleanWeight>(wfst) returns false for this rule.     │
+  │   This is the key reuse of the dispatch WFST (see §5.3).        │
   ├─────────────────────────────────────────────────────────────────┤
   │ Tier 4: SemanticLiveness                                        │
   │   Transitive closure over semantic dependency groups            │
-  │   (equations, rewrites, logic blocks). A rule that is parsing- │
-  │   dead may be resurrected if it appears in a dependency group  │
-  │   with a live label.                                           │
+  │   (equations, rewrites, logic blocks). A rule that is parsing-  │
+  │   dead may be resurrected if it appears in a dependency group   │
+  │   with a live label.                                            │
   └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1022,14 +1026,14 @@ data structure is needed.
 PraTTaIL provides **28 lints** across 6 categories, with Rust-compiler-style
 output:
 
-| Category | Prefix | Focus                | Count |
-|----------|--------|----------------------|-------|
-| Grammar  | G      | Structure & syntax   | 11    |
-| WFST     | W      | Dispatch weights     | 5     |
-| Recovery | R      | Error repair config  | 5     |
-| Cross-cat| C      | Cast rules & overlap | 3     |
-| Perf     | P      | Performance warnings | 3     |
-| Compose  | X      | Multi-grammar union  | 5     |
+| Category  | Prefix | Focus                | Count |
+|-----------|--------|----------------------|-------|
+| Grammar   | G      | Structure & syntax   | 11    |
+| WFST      | W      | Dispatch weights     | 5     |
+| Recovery  | R      | Error repair config  | 5     |
+| Cross-cat | C      | Cast rules & overlap | 3     |
+| Perf      | P      | Performance warnings | 3     |
+| Compose   | X      | Multi-grammar union  | 5     |
 
 **Sample output:**
 
@@ -1058,78 +1062,78 @@ warning[W01]: rule `FloatToStr` in category `Str` is dead (Tier 3: WfstUnreachab
 PraTTaIL's compile-time pipeline has three phases:
 
 ```
-  ┌────────────┐     ┌────────────┐     ┌────────────┐
-  │   EXTRACT   │────▶│  GENERATE  │────▶│  FINALIZE   │
-  │             │     │            │     │             │
-  │ Parse macro │     │ Build WFSTs│     │ Emit Rust   │
-  │ Build specs │     │ Run cascade│     │ code as     │
-  │ Compute BP  │     │ Run lints  │     │ TokenStream │
-  │ FIRST/FOLLOW│     │ DCE        │     │             │
-  └────────────┘     └────────────┘     └────────────┘
+  ┌──────────────┐     ┌─────────────┐     ┌─────────────┐
+  │ EXTRACT      │     │ GENERATE    │     │ FINALIZE    │
+  ├──────────────┤     ├─────────────┤     ├─────────────┤
+  │ Parse macro  ├────▶│ Build WFSTs ├────▶│ Emit Rust   │
+  │ Build specs  │     │ Run cascade │     │ code as     │
+  │ Compute BP   │     │ Run lints   │     │ TokenStream │
+  │ FIRST/FOLLOW │     │ DCE         │     │             │
+  └──────────────┘     └─────────────┘     └─────────────┘
 ```
 
 ### Detailed Integration Diagram
 
 ```
-  LanguageSpec (from macro expansion)
-       │
-       ├──▶ LexerBundle ──▶ NFA → DFA → Minimized DFA
-       │         │              │
-       │         │              ├─ IS_ACCEPTING bitmap (u128 or bool[])
-       │         │              └─ Multi-accept states for token lattices
-       │         │
-       │         └──▶ write_lexer_code()
-       │                  │
-       │                  └──▶ lex_core() / lex_weighted_core()
-       │
-       ├──▶ ParserBundle
-       │         │
-       │         ├──▶ compute_first_sets()  ──────┐
-       │         │    compute_follow_sets()  ──────┤
-       │         │                                 │
-       │         ├──▶ compute_composed_dispatch()  │
-       │         │         │                       │
-       │         │         ├─ PredictionWfst per category
-       │         │         │     │
-       │         │         │     ├─ TransducerCascade.run()
-       │         │         │     │     ├─ WeightNormalization
-       │         │         │     │     ├─ DeadStateElimination
-       │         │         │     │     └─ StateMinimization
-       │         │         │     │
-       │         │         │     ├─ predict() → weight-ordered arms
-       │         │         │     ├─ BooleanWeight → dead rules
-       │         │         │     └─ CountingWeight → ambiguity warnings
-       │         │         │
-       │         │         ├─ RecoveryWfst per category
-       │         │         │     ├─ sync tokens from FOLLOW sets
-       │         │         │     └─ ContextWeight follow tightening
-       │         │         │
-       │         │         └─ DeadRuleWarnings
-       │         │
-       │         ├──▶ collect_dead_rule_labels()  ◀── Tier 1-4 analysis
-       │         │         │
-       │         │         └─ Dead code elimination: skip codegen
-       │         │
-       │         ├──▶ run_lints()  ──▶ 28 lints, compiler-style output
-       │         │
-       │         └──▶ Codegen
-       │               │
-       │               ├─ write_category_dispatch()
-       │               │     └─ match arms ordered by tropical weight
-       │               │
-       │               ├─ write_trampoline_parser()
-       │               │     ├─ Frame_Cat enum
-       │               │     ├─ Thread-local pools
-       │               │     └─ NFA spillover buffers
-       │               │
-       │               ├─ write_pratt_parser()
-       │               │     ├─ BP lookup tables
-       │               │     └─ make_infix / make_postfix
-       │               │
-       │               └─ emit_prediction_wfst_static()
-       │                     └─ CSR flat arrays (compile-time constant)
-       │
-       └──▶ TokenStream (generated Rust code)
+LanguageSpec (from macro expansion)
+     │
+     ├──▶ LexerBundle ──▶ NFA → DFA → Minimized DFA
+     │         │              │
+     │         │              ├─ IS_ACCEPTING bitmap (u128 or bool[])
+     │         │              └─ Multi-accept states for token lattices
+     │         │
+     │         └──▶ write_lexer_code()
+     │                  │
+     │                  └──▶ lex_core() / lex_weighted_core()
+     │
+     ├──▶ ParserBundle
+     │         │
+     │         ├──▶ compute_first_sets()  ──────┐
+     │         │    compute_follow_sets()  ──────┤
+     │         │                                 │
+     │         ├──▶ compute_composed_dispatch()  │
+     │         │         │                       │
+     │         │         ├─ PredictionWfst per category
+     │         │         │     │
+     │         │         │     ├─ TransducerCascade.run()
+     │         │         │     │     ├─ WeightNormalization
+     │         │         │     │     ├─ DeadStateElimination
+     │         │         │     │     └─ StateMinimization
+     │         │         │     │
+     │         │         │     ├─ predict() → weight-ordered arms
+     │         │         │     ├─ BooleanWeight → dead rules
+     │         │         │     └─ CountingWeight → ambiguity warnings
+     │         │         │
+     │         │         ├─ RecoveryWfst per category
+     │         │         │     ├─ sync tokens from FOLLOW sets
+     │         │         │     └─ ContextWeight follow tightening
+     │         │         │
+     │         │         └─ DeadRuleWarnings
+     │         │
+     │         ├──▶ collect_dead_rule_labels()  ◀── Tier 1-4 analysis
+     │         │         │
+     │         │         └─ Dead code elimination: skip codegen
+     │         │
+     │         ├──▶ run_lints()  ──▶ 28 lints, compiler-style output
+     │         │
+     │         └──▶ Codegen
+     │               │
+     │               ├─ write_category_dispatch()
+     │               │     └─ match arms ordered by tropical weight
+     │               │
+     │               ├─ write_trampoline_parser()
+     │               │     ├─ Frame_Cat enum
+     │               │     ├─ Thread-local pools
+     │               │     └─ NFA spillover buffers
+     │               │
+     │               ├─ write_pratt_parser()
+     │               │     ├─ BP lookup tables
+     │               │     └─ make_infix / make_postfix
+     │               │
+     │               └─ emit_prediction_wfst_static()
+     │                     └─ CSR flat arrays (compile-time constant)
+     │
+     └──▶ TokenStream (generated Rust code)
 ```
 
 ### Zero Runtime Overhead
@@ -1176,13 +1180,13 @@ category Int:
 The pipeline builds a `PredictionWfst` for the `Int` category:
 
 ```
-  Dispatch WFST for Int
-  ─────────────────────
-  Token     │ Action     │ Weight (tropical)
-  ──────────┼────────────┼──────────────────
-  IntLit    │ ParseInt   │ 0.0   (unique dispatch)
-  LParen    │ GroupExpr  │ 0.5   (grouping)
-  Minus     │ Negate     │ 1.0   (unary prefix)
+Dispatch WFST for Int
+──────────┬────────────┬────────────────────────
+Token     │ Action     │ Weight (tropical)
+──────────┼────────────┼────────────────────────
+IntLit    │ ParseInt   │ 0.0   (unique dispatch)
+LParen    │ GroupExpr  │ 0.5   (grouping)
+Minus     │ Negate     │ 1.0   (unary prefix)
 ```
 
 After `TransducerCascade` (WeightNorm → DeadStateElim → StateMin):

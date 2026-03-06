@@ -37,7 +37,7 @@ FIRST(Bool) = {KwTrue, KwFalse, Ident, LParen}
 
 For "Eq . a:Int, b:Int |- a '==' b : Bool":
   +---------------------------------------------+
-  |                FIRST(Bool)                   |
+  |                FIRST(Bool)                  |
   |  +---------+  +---------------+             |
   |  | unique  |  |  ambiguous    |  unique     |
   |  | to Int  |  |  (both sets)  |  to Bool    |
@@ -149,10 +149,10 @@ produces match arms that are emitted as part of the parser code string.
 
 ## Source Reference
 
-| Component | File |
-|-----------|------|
+| Component                           | File                         |
+|-------------------------------------|------------------------------|
 | `analyze_cross_category_overlaps()` | `prattail/src/prediction.rs` |
-| `write_category_dispatch()` | `prattail/src/dispatch.rs` |
-| `build_prediction_wfsts()` | `prattail/src/pipeline.rs` |
-| `compute_composed_dispatch()` | `prattail/src/pipeline.rs` |
-| `resolve_dispatch_winners()` | `prattail/src/pipeline.rs` |
+| `write_category_dispatch()`         | `prattail/src/dispatch.rs`   |
+| `build_prediction_wfsts()`          | `prattail/src/pipeline.rs`   |
+| `compute_composed_dispatch()`       | `prattail/src/pipeline.rs`   |
+| `resolve_dispatch_winners()`        | `prattail/src/pipeline.rs`   |

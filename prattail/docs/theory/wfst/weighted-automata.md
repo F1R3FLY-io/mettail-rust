@@ -47,7 +47,7 @@ A **path** π = (q₀, σ₁, w₁, q₁), (q₁, σ₂, w₂, q₂), ..., (qₙ
 from initial state q₀ ∈ I to final state qₙ ∈ F has path weight:
 
 ```
-w(π) = λ(q₀) ⊗ w₁ ⊗ w₂ ⊗ … ⊗ wₙ ⊗ ρ(qₙ)
+w(π) = λ(q₀) ⊗  w₁ ⊗  w₂ ⊗  … ⊗  wₙ ⊗  ρ(qₙ)
 ```
 
 The initial and final weights λ, ρ bracket the arc weights.
@@ -58,7 +58,7 @@ The **string weight** of an input string x is the ⊕-combination of the
 weights of all accepting paths labelled x:
 
 ```
-‖M‖(x) = ⊕ { w(π) : π is an accepting path labelled x }
+‖M‖(x) = ⊕  { w(π) : π is an accepting path labelled x }
 ```
 
 Under TropicalWeight, this selects the minimum-weight (best) accepting

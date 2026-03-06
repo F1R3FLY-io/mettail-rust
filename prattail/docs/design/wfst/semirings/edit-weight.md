@@ -58,12 +58,12 @@ fractional weighting is the domain of TropicalWeight.
 
 The four repair operations have asymmetric costs (`semiring.rs:403-425`):
 
-| Operation | Cost | Method | Rationale |
-|-----------|------|--------|-----------|
-| **Skip** | 1 per token | `EditWeight::skip()` | Advance past unexpected tokens -- minimally disruptive |
-| **Delete** | 1 | `EditWeight::delete()` | Remove one unexpected token -- equivalent to skip |
-| **Insert** | 2 | `EditWeight::insert()` | Fabricate a missing token -- requires guessing intent |
-| **Substitute** | 2 | `EditWeight::substitute()` | Replace wrong token with expected -- requires guessing |
+| Operation      | Cost        | Method                     | Rationale                                              |
+|----------------|-------------|----------------------------|--------------------------------------------------------|
+| **Skip**       | 1 per token | `EditWeight::skip()`       | Advance past unexpected tokens -- minimally disruptive |
+| **Delete**     | 1           | `EditWeight::delete()`     | Remove one unexpected token -- equivalent to skip      |
+| **Insert**     | 2           | `EditWeight::insert()`     | Fabricate a missing token -- requires guessing intent  |
+| **Substitute** | 2           | `EditWeight::substitute()` | Replace wrong token with expected -- requires guessing |
 
 **Design rationale**:
 
@@ -106,12 +106,12 @@ pub const INFINITY: EditWeight = EditWeight(u32::MAX);
 
 PraTTaIL maintains two parallel cost systems for error recovery:
 
-| Property | TropicalWeight | EditWeight |
-|----------|---------------|------------|
-| **Domain** | `f64` (continuous) | `u32` (discrete) |
-| **Semantics** | Arbitrary priority costs | Token-level edit operations |
-| **Used by** | Viterbi dispatch, beam pruning | Repair quality metric |
-| **Values** | Skip: 0.5, Delete: 1.0, Sub: 1.5, Insert: 2.0 | Skip: 1, Delete: 1, Sub: 2, Insert: 2 |
+| Property      | TropicalWeight                                | EditWeight                            |
+|---------------|-----------------------------------------------|---------------------------------------|
+| **Domain**    | `f64` (continuous)                            | `u32` (discrete)                      |
+| **Semantics** | Arbitrary priority costs                      | Token-level edit operations           |
+| **Used by**   | Viterbi dispatch, beam pruning                | Repair quality metric                 |
+| **Values**    | Skip: 0.5, Delete: 1.0, Sub: 1.5, Insert: 2.0 | Skip: 1, Delete: 1, Sub: 2, Insert: 2 |
 
 The TropicalWeight costs are tuned for Viterbi shortest-path in the recovery
 WFST (`recovery.rs` repair cost constants). They use fractional values (0.5 for

@@ -68,22 +68,22 @@ This document catalogs all optimization items from the WFST-Informed Ascent Opti
 
 ## Summary Statistics
 
-| Status | Count | Description |
-|--------|-------|-------------|
-| Implemented | 13 | Sprints 0-9, A, B, C |
-| Deferred | 3 | 6g/6h, 8c-8g, 9h/9i |
-| Rejected | 1 | R2 (lazy binder) |
-| **Total** | **17** | All cataloged items |
+| Status      | Count  | Description          |
+|-------------|--------|----------------------|
+| Implemented | 13     | Sprints 0-9, A, B, C |
+| Deferred    | 3      | 6g/6h, 8c-8g, 9h/9i  |
+| Rejected    | 1      | R2 (lazy binder)     |
+| **Total**   | **17** | All cataloged items  |
 
 ## Taxonomy Tiers
 
 The deferred items were classified into tiers during the deep-dive audit:
 
-| Tier | Description | Items |
-|------|-------------|-------|
-| A | High-value, low-risk, ready to implement | N10, R1, C1 (all implemented) |
-| B | Medium-value, moderate complexity | (none remaining) |
-| C | Lower-value or high-complexity | (none remaining) |
-| D | Infrastructure or scale-dependent | 6g/6h, 8c-8g, 9h/9i |
+| Tier | Description                              | Items                         |
+|------|------------------------------------------|-------------------------------|
+| A    | High-value, low-risk, ready to implement | N10, R1, C1 (all implemented) |
+| B    | Medium-value, moderate complexity        | (none remaining)              |
+| C    | Lower-value or high-complexity           | (none remaining)              |
+| D    | Infrastructure or scale-dependent        | 6g/6h, 8c-8g, 9h/9i           |
 
 All Tier A items have been implemented (Sprints A, B, C). The remaining Tier D items require either scale triggers (larger grammars) or infrastructure investment (CI) to justify implementation.

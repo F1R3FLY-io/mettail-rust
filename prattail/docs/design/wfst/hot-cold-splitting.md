@@ -46,13 +46,13 @@ sees mixed history, degrading prediction accuracy for the common case.
 Consider a category `Bool` with the following dispatch arms in the generated
 parser:
 
-| Arm | Token | Weight | Frequency |
-|-----|-------|--------|-----------|
-| 1 | `Integer` (deterministic cross-cat) | 0.0 | ~40% |
-| 2 | `KwTrue` / `KwFalse` (direct) | 0.0 | ~30% |
-| 3 | `Ident` (backtracking cross-cat) | 0.5 | ~15% |
-| 4 | `Ident` (lookahead) | 1.0 | ~5% |
-| 5 | `Ident` (variable) | 2.0 | ~10% |
+| Arm | Token                               | Weight | Frequency |
+|-----|-------------------------------------|--------|-----------|
+| 1   | `Integer` (deterministic cross-cat) | 0.0    | ~40%      |
+| 2   | `KwTrue` / `KwFalse` (direct)       | 0.0    | ~30%      |
+| 3   | `Ident` (backtracking cross-cat)    | 0.5    | ~15%      |
+| 4   | `Ident` (lookahead)                 | 1.0    | ~5%       |
+| 5   | `Ident` (variable)                  | 2.0    | ~10%      |
 
 Arms 1--3 account for ~85% of dispatches.  Arms 4--5 contribute ~200 bytes of
 machine code that pollute the i-cache on every invocation of `parse_Bool()`,
@@ -97,11 +97,11 @@ function emit_dispatch(category, sorted_arms):
 
 ### 2.2 Partitioning rules
 
-| Condition | Result |
-|-----------|--------|
-| All arms have weight < 1.0 | No split; single function with all arms |
-| All arms have weight >= 1.0 | No split; single function with all arms |
-| Some arms < 1.0, some >= 1.0 | Split at the boundary |
+| Condition                    | Result                                  |
+|------------------------------|-----------------------------------------|
+| All arms have weight < 1.0   | No split; single function with all arms |
+| All arms have weight >= 1.0  | No split; single function with all arms |
+| Some arms < 1.0, some >= 1.0 | Split at the boundary                   |
 
 The split is only applied when there are **both** hot and cold arms.  Splitting
 when all arms fall on one side of the threshold would add an unnecessary
@@ -132,15 +132,15 @@ The following table summarizes the weight assignment from
 `compute_action_weight()` in `wfst.rs`, annotated with hot/cold classification
 under `COLD_THRESHOLD = 1.0`:
 
-| Action Kind | Weight | Path | Rationale |
-|-------------|--------|------|-----------|
-| `Direct` | 0.0 | Hot | Unambiguous token-to-rule mapping |
-| `Grouping` | 0.0 | Hot | Structural delimiter, always valid |
-| `CrossCategory` (no backtrack) | 0.0 | Hot | Unique token in source category |
-| `CrossCategory` (needs backtrack) | 0.5 | Hot | Shared token, try source first |
-| `Cast` | 0.5 | Hot | Type coercion, slightly penalized |
-| `Lookahead` | 1.0 + order | Cold | Requires reading extra tokens |
-| `Variable` | 2.0 | Cold | Last-resort identifier fallback |
+| Action Kind                       | Weight      | Path | Rationale                          |
+|-----------------------------------|-------------|------|------------------------------------|
+| `Direct`                          | 0.0         | Hot  | Unambiguous token-to-rule mapping  |
+| `Grouping`                        | 0.0         | Hot  | Structural delimiter, always valid |
+| `CrossCategory` (no backtrack)    | 0.0         | Hot  | Unique token in source category    |
+| `CrossCategory` (needs backtrack) | 0.5         | Hot  | Shared token, try source first     |
+| `Cast`                            | 0.5         | Hot  | Type coercion, slightly penalized  |
+| `Lookahead`                       | 1.0 + order | Cold | Requires reading extra tokens      |
+| `Variable`                        | 2.0         | Cold | Last-resort identifier fallback    |
 
 The weight assignment function:
 
@@ -177,16 +177,18 @@ dispatch weight distribution for category `Bool` (which has cross-category
 comparison rules from `Int`):
 
 ```
-  Hot zone (weight < 1.0)
-  ├── Integer  → deterministic cross-cat (Eq, Lt, Gt, ...)   w = 0.0
-  ├── KwTrue   → direct (BoolLit)                            w = 0.0
-  ├── KwFalse  → direct (BoolLit)                            w = 0.0
-  ├── Float    → deterministic cross-cat                      w = 0.0
-  └── Ident    → backtracking cross-cat                       w = 0.5
-  ─────────────────── COLD_THRESHOLD = 1.0 ───────────────────
-  Cold zone (weight >= 1.0)
-  ├── Ident    → lookahead                                    w = 1.0
-  └── Ident    → variable fallback                            w = 2.0
+┌────────────────────────────────────────────────────────────────────┐
+│ Hot zone (weight < 1.0)                                            │
+│ ├── Integer  → deterministic cross-cat (Eq, Lt, Gt, ...)   w = 0.0 │
+│ ├── KwTrue   → direct (BoolLit)                            w = 0.0 │
+│ ├── KwFalse  → direct (BoolLit)                            w = 0.0 │
+│ ├── Float    → deterministic cross-cat                     w = 0.0 │
+│ └── Ident    → backtracking cross-cat                      w = 0.5 │
+├──────────────────── COLD_THRESHOLD = 1.0 ──────────────────────────┤
+│ Cold zone (weight >= 1.0)                                          │
+│ ├── Ident    → lookahead                                   w = 1.0 │
+│ └── Ident    → variable fallback                           w = 2.0 │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -335,14 +337,14 @@ fn parse_Bool<'a>(
 
 ### 4.3 Key differences
 
-| Aspect | Before (single function) | After (hot/cold split) |
-|--------|--------------------------|------------------------|
-| `parse_Bool()` size | All arms inline | Hot arms only |
-| Cold arm location | Same function body | Separate `parse_Bool_cold()` |
-| Wildcard fallback | `parse_Bool_own()` | `parse_Bool_cold()` |
-| Cold function wildcard | N/A | `parse_Bool_own()` |
-| `#[cold]` annotation | None | On cold helper |
-| `#[inline(never)]` | None | On cold helper |
+| Aspect                 | Before (single function) | After (hot/cold split)       |
+|------------------------|--------------------------|------------------------------|
+| `parse_Bool()` size    | All arms inline          | Hot arms only                |
+| Cold arm location      | Same function body       | Separate `parse_Bool_cold()` |
+| Wildcard fallback      | `parse_Bool_own()`       | `parse_Bool_cold()`          |
+| Cold function wildcard | N/A                      | `parse_Bool_own()`           |
+| `#[cold]` annotation   | None                     | On cold helper               |
+| `#[inline(never)]`     | None                     | On cold helper               |
 
 ---
 
@@ -354,21 +356,21 @@ On x86-64 (Intel/AMD), the L1 instruction cache is typically 32 KiB with
 64-byte cache lines (512 cache lines total).  A Rust `match` arm on a
 token enum compiles to approximately:
 
-| Arm type | Machine code size | Cache lines |
-|----------|-------------------|-------------|
-| Direct dispatch (simple) | 40--80 bytes | 1--2 |
-| Cross-category with save/restore | 100--160 bytes | 2--3 |
-| Lookahead disambiguation | 150--250 bytes | 3--4 |
-| Variable fallback | 60--100 bytes | 1--2 |
+| Arm type                         | Machine code size | Cache lines |
+|----------------------------------|-------------------|-------------|
+| Direct dispatch (simple)         | 40--80 bytes      | 1--2        |
+| Cross-category with save/restore | 100--160 bytes    | 2--3        |
+| Lookahead disambiguation         | 150--250 bytes    | 3--4        |
+| Variable fallback                | 60--100 bytes     | 1--2        |
 
 A category with 8 dispatch arms (4 hot, 2 lookahead, 2 variable) might
 produce:
 
-| Configuration | Estimated size | Cache lines |
-|---------------|----------------|-------------|
-| All inline | ~900 bytes | ~14 |
-| Hot function only | ~500 bytes | ~8 |
-| Cold helper | ~400 bytes | ~7 |
+| Configuration     | Estimated size | Cache lines |
+|-------------------|----------------|-------------|
+| All inline        | ~900 bytes     | ~14         |
+| Hot function only | ~500 bytes     | ~8          |
+| Cold helper       | ~400 bytes     | ~7          |
 
 The hot function shrinks by ~44%, fitting in fewer cache lines.  Since the
 hot function is called on every token dispatch and the cold helper is called
@@ -406,32 +408,32 @@ means:
 ### 5.4 Data flow diagram
 
 ```
-  ┌──────────────────────────────────────────────────┐
-  │              parse_Bool()                        │
-  │              (.text.hot section)                 │
-  │                                                  │
-  │  match &tokens[*pos].0 {                         │
-  │      Token::Integer(_) => { ... }  ──── w=0.0    │  ◄── 85% of dispatches
-  │      Token::KwTrue     => { ... }  ──── w=0.0    │      hit these arms
-  │      Token::KwFalse    => { ... }  ──── w=0.0    │
-  │      Token::Ident(_)   => { ... }  ──── w=0.5    │
-  │      _                 => ─────────────────────────┐
-  │  }                                               │ │
-  └──────────────────────────────────────────────────┘ │
-                                                       │ call (rarely taken)
-  ┌────────────────────────────────────────────────────┘
-  │
-  ▼
-  ┌──────────────────────────────────────────────────┐
-  │         parse_Bool_cold()                        │
-  │         (.text.unlikely section)                 │
-  │         #[cold] #[inline(never)]                 │
-  │                                                  │
-  │  match &tokens[*pos].0 {                         │
-  │      Token::LParen => { ... }  ──── w=1.0        │  ◄── 15% of dispatches
-  │      _             => parse_Bool_own(...)         │      (loaded on demand)
-  │  }                                               │
-  └──────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│              parse_Bool()                        │
+│              (.text.hot section)                 │
+│                                                  │
+│  match &tokens[*pos].0 {                         │
+│      Token::Integer(_) => { ... }  ──── w=0.0    │  ◄── 85% of dispatches
+│      Token::KwTrue     => { ... }  ──── w=0.0    │      hit these arms
+│      Token::KwFalse    => { ... }  ──── w=0.0    │
+│      Token::Ident(_)   => { ... }  ──── w=0.5    │
+│      _                 => ───────────────────────┈─┐
+│  }                                               │ │
+└──────────────────────────────────────────────────┘ │
+                                                     │ call (rarely taken)
+                          ┌──────────────────────────┘
+                          │
+                          ▼
+┌──────────────────────────────────────────────────┐
+│         parse_Bool_cold()                        │
+│         (.text.unlikely section)                 │
+│         #[cold] #[inline(never)]                 │
+│                                                  │
+│  match &tokens[*pos].0 {                         │
+│      Token::LParen => { ... }  ──── w=1.0        │  ◄── 15% of dispatches
+│      _             => parse_Bool_own(...)        │      (loaded on demand)
+│  }                                               │
+└──────────────────────────────────────────────────┘
 ```
 
 ---
@@ -570,28 +572,28 @@ levels of dispatch.
 
 ### Implementation
 
-| Symbol | File | Lines | Description |
-|--------|------|-------|-------------|
-| `write_category_dispatch()` | `dispatch.rs` | 63--414 | Dispatch codegen with hot/cold partition |
-| `COLD_THRESHOLD` | `dispatch.rs` | 320 | Partition threshold constant (1.0) |
-| `cold_start_idx` | `dispatch.rs` | 322--324 | Binary search for first cold arm |
-| `has_split` | `dispatch.rs` | 328--329 | Guard: split only when both hot and cold exist |
+| Symbol                      | File          | Lines    | Description                                         |
+|-----------------------------|---------------|----------|-----------------------------------------------------|
+| `write_category_dispatch()` | `dispatch.rs` | 63--414  | Dispatch codegen with hot/cold partition            |
+| `COLD_THRESHOLD`            | `dispatch.rs` | 320      | Partition threshold constant (1.0)                  |
+| `cold_start_idx`            | `dispatch.rs` | 322--324 | Binary search for first cold arm                    |
+| `has_split`                 | `dispatch.rs` | 328--329 | Guard: split only when both hot and cold exist      |
 | `parse_<Cat>_cold` emission | `dispatch.rs` | 339--354 | Cold helper codegen with `#[cold] #[inline(never)]` |
-| `parse_<Cat>` hot emission | `dispatch.rs` | 357--383 | Hot function codegen with wildcard -> cold |
+| `parse_<Cat>` hot emission  | `dispatch.rs` | 357--383 | Hot function codegen with wildcard -> cold          |
 
 ### Weight Assignment
 
-| Symbol | File | Lines | Description |
-|--------|------|-------|-------------|
-| `compute_action_weight()` | `wfst.rs` | 559--581 | Dispatch action -> tropical weight |
-| `PredictionWfst::predict()` | `wfst.rs` | 139--156 | Weight-sorted action query |
+| Symbol                                    | File      | Lines    | Description                            |
+|-------------------------------------------|-----------|----------|----------------------------------------|
+| `compute_action_weight()`                 | `wfst.rs` | 559--581 | Dispatch action -> tropical weight     |
+| `PredictionWfst::predict()`               | `wfst.rs` | 139--156 | Weight-sorted action query             |
 | `PredictionWfst::nfa_alternative_order()` | `wfst.rs` | 198--230 | NFA weight ordering (orthogonal to A2) |
 
 ### Related Subsystems
 
-| Symbol | File | Description |
-|--------|------|-------------|
-| `write_nfa_merged_prefix_arm()` | `trampoline.rs` | NFA merged arms (not affected by A2) |
-| `group_rd_by_dispatch_token()` | `trampoline.rs` | NFA grouping for prefix dispatch |
-| `categories_needing_dispatch()` | `dispatch.rs` | Which categories get dispatch wrappers |
-| `test_compute_action_weight()` | `wfst.rs` | Weight assignment unit tests |
+| Symbol                          | File            | Description                            |
+|---------------------------------|-----------------|----------------------------------------|
+| `write_nfa_merged_prefix_arm()` | `trampoline.rs` | NFA merged arms (not affected by A2)   |
+| `group_rd_by_dispatch_token()`  | `trampoline.rs` | NFA grouping for prefix dispatch       |
+| `categories_needing_dispatch()` | `dispatch.rs`   | Which categories get dispatch wrappers |
+| `test_compute_action_weight()`  | `wfst.rs`       | Weight assignment unit tests           |

@@ -213,17 +213,17 @@ provenance); only `expected_rule_labels` drives the weight update.
 
 ### 3.2 `RuleWeights`
 
-| Method                               | Description                                       |
-|--------------------------------------|---------------------------------------------------|
-| `uniform(labels: &[String]) -> Self` | Initialise all weights to `LogWeight::one()`      |
-| `set_learning_rate(lr: f64)`         | Override the default `0.1` learning rate          |
-| `learning_rate() -> f64`             | Query the current learning rate                   |
-| `get(label: &str) -> LogWeight`      | Look up the weight for a rule                     |
-| `set(label: &str, w: LogWeight)`     | Manually override a rule's weight                 |
-| `compute_loss(correct, total) -> f64`| Compute per-example loss in the log domain        |
-| `update(expected_correct, expected_all)` | One gradient step over pre-computed counts    |
-| `train(examples, epochs) -> TrainingStats` | Full epoch loop                             |
-| `to_trained_model(stats) -> TrainedModel` | Package weights for serialization           |
+| Method                                     | Description                                  |
+|--------------------------------------------|----------------------------------------------|
+| `uniform(labels: &[String]) -> Self`       | Initialise all weights to `LogWeight::one()` |
+| `set_learning_rate(lr: f64)`               | Override the default `0.1` learning rate     |
+| `learning_rate() -> f64`                   | Query the current learning rate              |
+| `get(label: &str) -> LogWeight`            | Look up the weight for a rule                |
+| `set(label: &str, w: LogWeight)`           | Manually override a rule's weight            |
+| `compute_loss(correct, total) -> f64`      | Compute per-example loss in the log domain   |
+| `update(expected_correct, expected_all)`   | One gradient step over pre-computed counts   |
+| `train(examples, epochs) -> TrainingStats` | Full epoch loop                              |
+| `to_trained_model(stats) -> TrainedModel`  | Package weights for serialization            |
 
 ### 3.3 `TrainingStats`
 
@@ -256,10 +256,10 @@ pub struct TrainedModelMetadata {
 }
 ```
 
-| Method                         | Description                                 |
-|--------------------------------|---------------------------------------------|
-| `save(path: &str) -> io::Result<()>`  | Serialize to pretty-printed JSON     |
-| `load(path: &str) -> io::Result<Self>`| Deserialize from JSON file           |
+| Method                                 | Description                      |
+|----------------------------------------|----------------------------------|
+| `save(path: &str) -> io::Result<()>`   | Serialize to pretty-printed JSON |
+| `load(path: &str) -> io::Result<Self>` | Deserialize from JSON file       |
 
 ---
 

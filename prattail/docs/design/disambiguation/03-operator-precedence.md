@@ -216,6 +216,7 @@ than its own `right_bp` (4).
 
 ```
   Left-Associative                  Right-Associative
+  ──────────────────────────────    ──────────────────────────────
 
   left_bp < right_bp                left_bp > right_bp
   (2, 3)                            (5, 4)
@@ -258,12 +259,12 @@ between prefix, infix, and postfix operators.
 
   BP Number Line:
   ────────────────────────────────────────────────────────► higher BP
-  0        2      ...      M      M+2         M+4   ...
-  ↑        ↑               ↑       ↑            ↑
-  entry    infix range     max   prefix BP    postfix range
-           (lowest prec    infix  (all unary   (start at M+4,
-            operators      BP     prefixes     one per postfix
-            first)                share M+2)   operator)
+  0        2      ...      M       M+2         M+4   ...
+  ↑        ↑               ↑       ↑           ↑
+  entry    infix range     max     prefix BP   postfix range
+           (lowest prec    infix   (all unary  (start at M+4,
+            operators      BP       prefixes    one per postfix
+            first)                  share M+2)  operator)
 ```
 
 **Infix operators:** BP range `[2, P-1]`, assigned from declaration order.

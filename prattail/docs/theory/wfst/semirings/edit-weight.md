@@ -32,18 +32,18 @@ The edit-distance semiring is the algebraic structure:
 
 where N = {0, 1, 2, 3, ...} denotes the natural numbers.  Concretely:
 
-| Component         | Symbol | Meaning                         |
-|-------------------|--------|---------------------------------|
-| Carrier set       | K      | N union {infinity}              |
-| Addition          | ⊕      | min (minimum)                   |
-| Multiplication    | ⊗      | + (saturating addition)         |
-| Additive identity | 0      | infinity (impossible repair)    |
-| Multiplicative id | 1      | 0 (no edits needed)             |
+| Component         | Symbol | Meaning                      |
+|-------------------|--------|------------------------------|
+| Carrier set       | K      | N union {infinity}           |
+| Addition          | ⊕      | min (minimum)                |
+| Multiplication    | ⊗      | + (saturating addition)      |
+| Additive identity | 0      | infinity (impossible repair) |
+| Multiplicative id | 1      | 0 (no edits needed)          |
 
 In WFST terms:
 
-- **⊕ = min** selects the repair strategy with the fewest total edits.
-- **⊗ = +** accumulates edit counts along a repair path (if segment A
+- **⊕  = min** selects the repair strategy with the fewest total edits.
+- **⊗  = +** accumulates edit counts along a repair path (if segment A
   requires 2 edits and segment B requires 3 edits, the path costs 5).
 - **0 = infinity** represents an impossible repair -- the additive identity
   (min(infinity, x) = x for all x).
@@ -57,13 +57,13 @@ share the same algebraic skeleton: (K, min, +, infinity, 0).  They are
 structurally isomorphic as semirings -- the operations have the same names and
 satisfy the same laws.  The distinction is **semantic**, not algebraic:
 
-| Aspect          | TropicalWeight         | EditWeight                |
-|-----------------|------------------------|---------------------------|
-| Carrier         | R+ (continuous)        | N (discrete)              |
-| Values mean     | Priority / cost        | Edit operation counts     |
-| Precision       | f64 (64-bit float)     | u32 (32-bit unsigned int) |
-| Overflow        | IEEE 754 infinity      | Saturating at u32::MAX    |
-| Interpretation  | "lower is better"      | "fewer edits is better"   |
+| Aspect         | TropicalWeight     | EditWeight                |
+|----------------|--------------------|---------------------------|
+| Carrier        | R+ (continuous)    | N (discrete)              |
+| Values mean    | Priority / cost    | Edit operation counts     |
+| Precision      | f64 (64-bit float) | u32 (32-bit unsigned int) |
+| Overflow       | IEEE 754 infinity  | Saturating at u32::MAX    |
+| Interpretation | "lower is better"  | "fewer edits is better"   |
 
 This isomorphism is exploited in PraTTaIL: since both semirings use min/+,
 the same Viterbi shortest-path algorithm works for both dispatch (Tropical)
@@ -114,7 +114,7 @@ to u32::MAX regardless of grouping.
 
 ### 3.3 Distributivity
 
-**Left**: a ⊗ (b ⊕ c) = (a ⊗ b) ⊕ (a ⊗ c), i.e., a + min(b, c) = min(a + b, a + c)
+**Left**: a ⊗  (b ⊕  c) = (a ⊗  b) ⊕  (a ⊗  c), i.e., a + min(b, c) = min(a + b, a + c)
 
     Example: 2 + min(3, 5) = 2 + 3 = 5
              min(2 + 3, 2 + 5) = min(5, 7) = 5    Check.
@@ -125,7 +125,7 @@ min(a + b, a + c) = a + b = RHS.
 
 **Right**: follows by commutativity of addition.
 
-### 3.4 Zero annihilation: 0 ⊗ a = a ⊗ 0 = 0
+### 3.4 Zero annihilation: 0 ⊗  a = a ⊗  0 = 0
 
     infinity + a = infinity   (saturating: u32::MAX + anything = u32::MAX)
     a + infinity = infinity   (likewise)
@@ -153,7 +153,7 @@ preserves this property.  Therefore EditWeight is a **commutative semiring**.
 
 ### 4.2 Idempotency of ⊕
 
-Addition ⊕ = min is idempotent:
+Addition ⊕  = min is idempotent:
 
     min(a, a) = a    for all a in N union {infinity}
 
@@ -184,12 +184,12 @@ This has practical consequences:
 
 PraTTaIL defines four token-level repair actions with asymmetric costs:
 
-| Operation      | Method                | Cost | Rationale                          |
-|----------------|-----------------------|------|------------------------------------|
-| **Skip**       | `EditWeight::skip()`  | 1    | Skip past unexpected token         |
-| **Delete**     | `EditWeight::delete()` | 1   | Remove unexpected token            |
-| **Insert**     | `EditWeight::insert()` | 2   | Fabricate a missing token          |
-| **Substitute** | `EditWeight::substitute()` | 2 | Replace wrong token with correct one |
+| Operation      | Method                     | Cost | Rationale                            |
+|----------------|----------------------------|------|--------------------------------------|
+| **Skip**       | `EditWeight::skip()`       | 1    | Skip past unexpected token           |
+| **Delete**     | `EditWeight::delete()`     | 1    | Remove unexpected token              |
+| **Insert**     | `EditWeight::insert()`     | 2    | Fabricate a missing token            |
+| **Substitute** | `EditWeight::substitute()` | 2    | Replace wrong token with correct one |
 
 ### 5.1 Cost asymmetry rationale
 
@@ -227,15 +227,22 @@ The edit-distance computation can be modeled as a single-state WFST (a
 **transducer**) with four self-loop arcs -- one per edit operation:
 
 ```
-                  ┌─────────────────────────────────────┐
-                  │                                     │
-        ε:t / 2  │    a:ε / 1     a:a / 0    a:b / 2  │
-     ┌───────────>│<──────────┐ ┌──────────┐ ┌─────────┘
-     │            │           │ │          │ │
-     │          ┌─┴─┐        │ │          │ │
-     └──────────│ q │────────┘ └──────────┘ └──────────>
-                └───┘
-                 (F)
+    ┌────── a:a / 0 ──────┐
+    │                     │
+    │  ┌── a:ε / 1 ──┐    │
+    │  │             │    │
+    ▼  ▼             │    │
+   ┌┴──┴────────┐    │    │
+   │            │────┘    │
+   │   q  (F)   │─────────┘
+   │            │─────────┐
+   │            │────┐    │
+   └┬──┬────────┘    │    │
+    ▲  ▲             │    │
+    │  │             │    │
+    │  └── ε:t / 2 ──┘    │
+    │                     │
+    └────── a:b / 2 ──────┘
 
     Legend:
       a:a / 0  = match (input a, output a, cost 0)
@@ -310,7 +317,7 @@ Diagram of the repair lattice:
     │                               │  INT:INT/0    │               │
     │                               ├──────────────>│               │
     │                                                               │
-    └── Viterbi best path: 0 + 1 + 0 + 0 = 1 edit ────────────────┘
+    └── Viterbi best path: 0 + 1 + 0 + 0 = 1 edit ──────────────────┘
 ```
 
 The Viterbi algorithm selects the path through state 1 that deletes the extra
@@ -366,7 +373,7 @@ Character-level Levenshtein automaton (liblevenshtein)
     │  returns: [(candidate, char_distance), ...]
     │
     ▼
-Refined cost = EditWeight(2) ⊗ EditWeight(char_distance)
+Refined cost = EditWeight(2) ⊗  EditWeight(char_distance)
              = EditWeight(2 + char_distance)
 ```
 
@@ -408,12 +415,12 @@ token-level disruptions.
 
 ### 9.2 Cost mapping summary
 
-| RepairAction        | Tropical cost        | Edit cost              |
-|---------------------|----------------------|------------------------|
-| SkipToSync(n)       | n * 0.5              | EditWeight(n)          |
-| DeleteToken         | 1.0                  | EditWeight(1)          |
-| InsertToken         | 2.0                  | EditWeight(2)          |
-| SubstituteToken     | 1.5                  | EditWeight(2)          |
+| RepairAction    | Tropical cost | Edit cost     |
+|-----------------|---------------|---------------|
+| SkipToSync(n)   | n * 0.5       | EditWeight(n) |
+| DeleteToken     | 1.0           | EditWeight(1) |
+| InsertToken     | 2.0           | EditWeight(2) |
+| SubstituteToken | 1.5           | EditWeight(2) |
 
 Note the divergence for SubstituteToken: the tropical cost (1.5) is lower than
 insert (2.0) to prefer substitution over insertion when the parser has a
@@ -438,20 +445,20 @@ tiebreaker.
 
 ## 10. Comparison Table
 
-| Property                  | EditWeight              | TropicalWeight         | BooleanWeight        |
-|---------------------------|-------------------------|------------------------|----------------------|
-| **Carrier**               | N union {infinity}      | R+ union {+infinity}   | {false, true}        |
-| **⊕ (plus)**              | min                     | min                    | ∨ (OR)               |
-| **⊗ (times)**             | + (saturating)          | + (IEEE 754)           | ∧ (AND)              |
-| **0 (zero)**              | infinity (u32::MAX)     | +infinity (f64)        | false                |
-| **1 (one)**               | 0                       | 0.0                    | true                 |
-| **Commutative**           | Yes                     | Yes                    | Yes                  |
-| **Idempotent (⊕)**        | Yes (min(a,a) = a)     | Yes (min(a,a) = a)    | Yes (a ∨ a = a)     |
-| **Precision**             | Exact (u32)             | Approximate (f64)      | Exact (bool)         |
-| **Semantics**             | Edit operation count    | Priority / cost        | Reachability         |
-| **PraTTaIL use**          | Recovery cost metric    | Dispatch + Viterbi     | Dead-rule detection  |
-| **Rust Display**          | integer / infinity          | float / inf            | ⊤ / ⊥                |
-| **Isomorphic to Tropical**| Yes (over N)            | --                     | No                   |
+| Property                   | EditWeight           | TropicalWeight       | BooleanWeight       |
+|----------------------------|----------------------|----------------------|---------------------|
+| **Carrier**                | N union {infinity}   | R+ union {+infinity} | {false, true}       |
+| **⊕  (plus)**              | min                  | min                  | ∨ (OR)              |
+| **⊗  (times)**             | + (saturating)       | + (IEEE 754)         | ∧ (AND)             |
+| **0 (zero)**               | infinity (u32::MAX)  | +infinity (f64)      | false               |
+| **1 (one)**                | 0                    | 0.0                  | true                |
+| **Commutative**            | Yes                  | Yes                  | Yes                 |
+| **Idempotent (⊕)**         | Yes (min(a,a) = a)   | Yes (min(a,a) = a)   | Yes (a ∨ a = a)     |
+| **Precision**              | Exact (u32)          | Approximate (f64)    | Exact (bool)        |
+| **Semantics**              | Edit operation count | Priority / cost      | Reachability        |
+| **PraTTaIL use**           | Recovery cost metric | Dispatch + Viterbi   | Dead-rule detection |
+| **Rust Display**           | integer / infinity   | float / inf          | ⊤ / ⊥               |
+| **Isomorphic to Tropical** | Yes (over N)         | --                   | No                  |
 
 ---
 
@@ -630,9 +637,9 @@ Parse error at position P
 RecoveryWfst::find_best_recovery(tokens, pos)
         │
         ├─ Evaluate SkipToSync:  tropical = n * 0.5,  edit = n
-        ├─ Evaluate DeleteToken: tropical = 1.0,       edit = 1
-        ├─ Evaluate InsertToken: tropical = 2.0,       edit = 2
-        ├─ Evaluate Substitute:  tropical = 1.5,       edit = 2
+        ├─ Evaluate DeleteToken: tropical = 1.0,      edit = 1
+        ├─ Evaluate InsertToken: tropical = 2.0,      edit = 2
+        ├─ Evaluate Substitute:  tropical = 1.5,      edit = 2
         │
         ├─ Select minimum tropical cost
         │
@@ -737,9 +744,9 @@ The semiring machinery is already in place; only the plumbing needs updating.
 
 **Tests**: `prattail/src/automata/semiring.rs`, lines 1067--1142
   - `test_edit_semiring_laws` -- zero/one identity, zero annihilation, commutativity
-  - `test_edit_plus_is_min` -- ⊕ = min verification
-  - `test_edit_times_is_add` -- ⊗ = + verification
-  - `test_edit_idempotent` -- ⊕ idempotency
+  - `test_edit_plus_is_min` -- ⊕  = min verification
+  - `test_edit_times_is_add` -- ⊗  = + verification
+  - `test_edit_idempotent` -- ⊕  idempotency
   - `test_edit_operation_costs` -- skip/delete/insert/substitute cost values
   - `test_edit_infinity` -- INFINITY constant = zero element
   - `test_edit_saturating` -- overflow protection via saturating_add

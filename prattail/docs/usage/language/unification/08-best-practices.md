@@ -9,15 +9,15 @@ migration path from monolithic grammars to composed fragments.
 The following table maps concrete scenarios to their recommended composition
 mechanism with rationale:
 
-| Scenario | Mechanism | Rationale |
-|----------|-----------|-----------|
-| Building a language family (core + extensions) | `extends:` | Full semantic inheritance ensures consistency |
-| Sharing syntax across languages with different semantics | `includes:` | Import grammar shape, provide own equations/rewrites |
+| Scenario                                                  | Mechanism                        | Rationale                                             |
+|-----------------------------------------------------------|----------------------------------|-------------------------------------------------------|
+| Building a language family (core + extensions)            | `extends:`                       | Full semantic inheritance ensures consistency         |
+| Sharing syntax across languages with different semantics  | `includes:`                      | Import grammar shape, provide own equations/rewrites  |
 | Reusable operator libraries (arithmetic, boolean, string) | `language_fragment!` + `mixins:` | Fragments are lightweight, composable building blocks |
-| Combining independently developed languages | `compose_languages!` | No recompilation, independent evolution |
-| Programmatic grammar construction in tests/tools | `compose_languages()` API | Runtime flexibility, incremental FIRST/FOLLOW |
-| Adding comparison operators across categories | Cross-category rules | Automatic dispatch via FIRST set analysis |
-| Allowing one type where another is expected | Cast rules | Implicit type coercion via category embedding |
+| Combining independently developed languages               | `compose_languages!`             | No recompilation, independent evolution               |
+| Programmatic grammar construction in tests/tools          | `compose_languages()` API        | Runtime flexibility, incremental FIRST/FOLLOW         |
+| Adding comparison operators across categories             | Cross-category rules             | Automatic dispatch via FIRST set analysis             |
+| Allowing one type where another is expected               | Cast rules                       | Implicit type coercion via category embedding         |
 
 ## Decision Flowchart
 
@@ -115,11 +115,11 @@ parser with proper dispatch.
 
 ## Performance Considerations
 
-| Approach | Parser Count | Compilation Cost | Runtime Cost | Dispatch |
-|----------|-------------|-----------------|-------------|----------|
-| `extends:`/`includes:`/`mixins:` | 1 (merged) | Higher (larger grammar) | Optimal (single parse) | WFST-weighted |
-| `compose_languages!` | N (per-sub-lang) | Lower (independent) | Higher (sequential try) | Declaration order |
-| `compose_languages()` API | 1 (merged) | At API call time | Optimal (single parse) | WFST-weighted |
+| Approach                         | Parser Count     | Compilation Cost        | Runtime Cost            | Dispatch          |
+|----------------------------------|------------------|-------------------------|-------------------------|-------------------|
+| `extends:`/`includes:`/`mixins:` | 1 (merged)       | Higher (larger grammar) | Optimal (single parse)  | WFST-weighted     |
+| `compose_languages!`             | N (per-sub-lang) | Lower (independent)     | Higher (sequential try) | Declaration order |
+| `compose_languages()` API        | 1 (merged)       | At API call time        | Optimal (single parse)  | WFST-weighted     |
 
 **Merge composition** produces a single parser with WFST-weighted dispatch --
 optimal runtime performance but higher compilation cost for large grammars.

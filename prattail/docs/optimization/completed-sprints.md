@@ -11,59 +11,59 @@ Sprint 0 and is consumed by the macros crate during `generate_ascent_source()`.
   LanguageSpec
        │
        ▼
-  ┌────────────────────────────────────────────────────────────┐
-  │ PraTTaIL Pipeline  (prattail/src/pipeline.rs)             │
-  │                                                           │
-  │  NFA ──► DFA ──► WFST construction ──► PredictionWfst     │
-  │                        │                     │            │
-  │                  dead-rule detection    canonical_structure│
-  │                  (4-tier analysis)      (De Bruijn canon.) │
-  │                        │                     │            │
-  │                        ▼                     ▼            │
-  │              ┌──────────────────────────────────┐         │
-  │              │   PipelineAnalysis               │         │
-  │              │   ├─ dead_rule_labels             │         │
-  │              │   ├─ unreachable_categories       │         │
-  │              │   ├─ constructor_weights           │         │
-  │              │   ├─ category_weights              │         │
-  │              │   ├─ isomorphic_groups             │         │
-  │              │   └─ isomorphic_action_maps        │         │
-  │              └──────────────────────────────────┘         │
-  └────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────┐
+  │ PraTTaIL Pipeline  (prattail/src/pipeline.rs)               │
+  │                                                             │
+  │  NFA ──► DFA ──► WFST construction ──► PredictionWfst       │
+  │                        │                     │              │
+  │                  dead-rule detection    canonical_structure │
+  │                  (4-tier analysis)      (De Bruijn canon.)  │
+  │                        │                     │              │
+  │                        ▼                     ▼              │
+  │              ┌──────────────────────────────────┐           │
+  │              │   PipelineAnalysis               │           │
+  │              │   ├─ dead_rule_labels            │           │
+  │              │   ├─ unreachable_categories      │           │
+  │              │   ├─ constructor_weights         │           │
+  │              │   ├─ category_weights            │           │
+  │              │   ├─ isomorphic_groups           │           │
+  │              │   └─ isomorphic_action_maps      │           │
+  │              └──────────────────────────────────┘           │
+  └─────────────────────────────────────────────────────────────┘
        │ (TokenStream, PipelineAnalysis)
        ▼
-  ┌────────────────────────────────────────────────────────────┐
-  │ Macros Crate  (macros/src/logic/, macros/src/gen/)        │
-  │                                                           │
-  │  Sprint 1: Dead-rule DCE ─────────────────────────────┐   │
-  │  Sprint 2: Premise cost ordering ─────────────────────┤   │
-  │  Sprint 3: Rule ordering (cache locality) ────────────┤   │
-  │  Sprint 4: Body clause ordering (fail-fast) ──────────┤   │
-  │  Sprint 5: Ground rewrite pre-stratum ────────────────┤   │
-  │  Sprint 6: De Bruijn pattern trie ────────────────────┤   │
-  │  Sprint 7: Variable binding selectivity ──────────────┤   │
-  │  Sprint A: Subsumption exploitation ──────────────────┘   │
-  │                         │                                 │
-  │                         ▼                                 │
-  │                  Generated Ascent Code                    │
-  └────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Macros Crate  (macros/src/logic/, macros/src/gen/)          │
+  │                                                             │
+  │  Sprint 1: Dead-rule DCE ─────────────────────────────┐     │
+  │  Sprint 2: Premise cost ordering ─────────────────────┤     │
+  │  Sprint 3: Rule ordering (cache locality) ────────────┤     │
+  │  Sprint 4: Body clause ordering (fail-fast) ──────────┤     │
+  │  Sprint 5: Ground rewrite pre-stratum ────────────────┤     │
+  │  Sprint 6: De Bruijn pattern trie ────────────────────┤     │
+  │  Sprint 7: Variable binding selectivity ──────────────┤     │
+  │  Sprint A: Subsumption exploitation ──────────────────┘     │
+  │                         │                                   │
+  │                         ▼                                   │
+  │                  Generated Ascent Code                      │
+  └─────────────────────────────────────────────────────────────┘
        │
        ▼
-  ┌────────────────────────────────────────────────────────────┐
-  │ Runtime  (runtime/src/)                                   │
-  │                                                           │
-  │  Sprint B: Term equality cache ───────── binding.rs       │
-  │  Sprint 5: Two-phase run_ascent_typed ── language.rs      │
-  └────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Runtime  (runtime/src/)                                     │
+  │                                                             │
+  │  Sprint B: Term equality cache ───────── binding.rs         │
+  │  Sprint 5: Two-phase run_ascent_typed ── language.rs        │
+  └─────────────────────────────────────────────────────────────┘
        │
        ▼
-  ┌────────────────────────────────────────────────────────────┐
-  │ Pipeline Analysis (compile-time only)                     │
-  │                                                           │
-  │  Sprint 8: Isomorphic WFST detection ── pipeline.rs       │
-  │  Sprint 9: Integration tests ─────────── integration.rs   │
-  │  Sprint C: alpha-equivalence lint ────── lint.rs           │
-  └────────────────────────────────────────────────────────────┘
+  ┌─────────────────────────────────────────────────────────────┐
+  │ Pipeline Analysis (compile-time only)                       │
+  │                                                             │
+  │  Sprint 8: Isomorphic WFST detection ── pipeline.rs         │
+  │  Sprint 9: Integration tests ─────────── integration.rs     │
+  │  Sprint C: alpha-equivalence lint ────── lint.rs            │
+  └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -83,14 +83,14 @@ Introduces `PipelineAnalysis` in `prattail/src/lib.rs`.  After constructing
 `PredictionWfst` instances and running the 4-tier dead-rule analysis, the
 pipeline populates:
 
-| Field                     | Type                                  | Source                           |
-|---------------------------|---------------------------------------|----------------------------------|
-| `dead_rule_labels`        | `HashSet<String>`                     | 4-tier WFST dead-rule detection  |
-| `unreachable_categories`  | `HashSet<String>`                     | All rules dead in category       |
-| `constructor_weights`     | `HashMap<String, f64>`                | `PredictionWfst` action weights  |
-| `category_weights`        | `HashMap<String, f64>`                | Per-category mean tropical weight|
-| `isomorphic_groups`       | `Vec<Vec<String>>`                    | De Bruijn WFST grouping (Sp. 8)  |
-| `isomorphic_action_maps`  | `Vec<HashMap<u32, Vec<(String, String)>>>` | Per-group action map (Sp. 8)|
+| Field                    | Type                                       | Source                            |
+|--------------------------|--------------------------------------------|-----------------------------------|
+| `dead_rule_labels`       | `HashSet<String>`                          | 4-tier WFST dead-rule detection   |
+| `unreachable_categories` | `HashSet<String>`                          | All rules dead in category        |
+| `constructor_weights`    | `HashMap<String, f64>`                     | `PredictionWfst` action weights   |
+| `category_weights`       | `HashMap<String, f64>`                     | Per-category mean tropical weight |
+| `isomorphic_groups`      | `Vec<Vec<String>>`                         | De Bruijn WFST grouping (Sp. 8)   |
+| `isomorphic_action_maps` | `Vec<HashMap<u32, Vec<(String, String)>>>` | Per-group action map (Sp. 8)      |
 
 A new entry point, `generate_parser_with_analysis()`, returns
 `(TokenStream, PipelineAnalysis)`.  The macros crate's bridge function calls
@@ -167,12 +167,12 @@ case.  DCE prunes rules that provably never fire, shrinking the working set.
 
 The 4-tier analysis identifies dead rules conservatively:
 
-| Tier | Name                    | Description                                                |
-|------|-------------------------|------------------------------------------------------------|
-| 1    | LiteralNoNativeType     | Literal constructor whose category has no native type      |
-| 2    | UnreachableCategory     | Category unreachable from any FIRST set                    |
-| 3    | WfstUnreachable         | No dispatch transition leads to the constructor            |
-| 4    | SemanticLiveness        | Transitive dependency analysis via equation/rewrite groups |
+| Tier | Name                | Description                                                |
+|------|---------------------|------------------------------------------------------------|
+| 1    | LiteralNoNativeType | Literal constructor whose category has no native type      |
+| 2    | UnreachableCategory | Category unreachable from any FIRST set                    |
+| 3    | WfstUnreachable     | No dispatch transition leads to the constructor            |
+| 4    | SemanticLiveness    | Transitive dependency analysis via equation/rewrite groups |
 
 Only Tiers 1 and 2 are used for codegen DCE to avoid false-positive risk.
 
@@ -216,11 +216,11 @@ checks come first.
 Introduces `condition_cost()` in `macros/src/logic/rules.rs` that assigns a
 scalar cost to each condition variant:
 
-| Condition   | Cost              | Rationale                                           |
-|-------------|-------------------|-----------------------------------------------------|
-| `Freshness` | 1                 | O(1) -- single `free_vars().contains()` check       |
-| `EnvQuery`  | 10                | O(\|relation\|) -- scans relation for matching rows |
-| `ForAll`    | 100 + body\_cost  | O(\|collection\| x body\_cost) -- iterates + checks |
+| Condition   | Cost             | Rationale                                           |
+|-------------|------------------|-----------------------------------------------------|
+| `Freshness` | 1                | O(1) -- single `free_vars().contains()` check       |
+| `EnvQuery`  | 10               | O(\|relation\|) -- scans relation for matching rows |
+| `ForAll`    | 100 + body\_cost | O(\|collection\| x body\_cost) -- iterates + checks |
 
 Condition clauses are topologically sorted respecting data dependencies (a
 clause that binds variable `x` must precede any clause that reads `x`), then
@@ -953,18 +953,18 @@ redundant parser/Ascent code.
 
 ## Summary Table
 
-| Sprint | Name                          | Type        | Consumes from PipelineAnalysis      | Key Effect                           |
-|--------|-------------------------------|-------------|-------------------------------------|--------------------------------------|
-| 0      | Pipeline Analysis Export      | Infra       | --                                  | Data channel for all downstream opts |
-| 1      | Dead-Rule DCE                 | Codegen     | `dead_rule_labels`, `unreachable_categories` | Prunes dead Ascent rules    |
-| 2      | Premise Cost Ordering         | Codegen     | (structural)                        | Fail-fast condition evaluation       |
-| 3      | Rule Ordering                 | Codegen     | `constructor_weights`               | Cache locality, branch prediction    |
-| 4      | Body Clause Ordering          | Codegen     | `category_weights`                  | Fail-fast equality checks            |
-| 5      | Ground Rewrite Pre-Stratum    | Codegen+RT  | (indirect)                          | Two-phase evaluation, O(depth) pre   |
-| 6      | De Bruijn Pattern Trie        | Analysis    | (structural)                        | Dependency groups, subsumption       |
-| 7      | Variable Binding Selectivity  | Codegen     | (structural)                        | Inline eq checks at earliest point   |
-| 8      | Isomorphic WFST Detection     | Analysis    | `PredictionWfst`                    | Template instantiation infrastructure|
-| 9      | Integration Testing           | Testing     | all fields                          | Cross-cutting validation             |
-| A      | Subsumption Exploitation      | Codegen     | Sprint 6 subsumption pairs          | Eliminates redundant equations       |
-| B      | Term Equality Cache           | Runtime     | --                                  | Memoizes deep comparisons            |
-| C      | Alpha-Equivalence Lint        | Lint        | (structural)                        | Detects alpha-equivalent grammar rules|
+| Sprint | Name                         | Type       | Consumes from PipelineAnalysis               | Key Effect                             |
+|--------|------------------------------|------------|----------------------------------------------|----------------------------------------|
+| 0      | Pipeline Analysis Export     | Infra      | --                                           | Data channel for all downstream opts   |
+| 1      | Dead-Rule DCE                | Codegen    | `dead_rule_labels`, `unreachable_categories` | Prunes dead Ascent rules               |
+| 2      | Premise Cost Ordering        | Codegen    | (structural)                                 | Fail-fast condition evaluation         |
+| 3      | Rule Ordering                | Codegen    | `constructor_weights`                        | Cache locality, branch prediction      |
+| 4      | Body Clause Ordering         | Codegen    | `category_weights`                           | Fail-fast equality checks              |
+| 5      | Ground Rewrite Pre-Stratum   | Codegen+RT | (indirect)                                   | Two-phase evaluation, O(depth) pre     |
+| 6      | De Bruijn Pattern Trie       | Analysis   | (structural)                                 | Dependency groups, subsumption         |
+| 7      | Variable Binding Selectivity | Codegen    | (structural)                                 | Inline eq checks at earliest point     |
+| 8      | Isomorphic WFST Detection    | Analysis   | `PredictionWfst`                             | Template instantiation infrastructure  |
+| 9      | Integration Testing          | Testing    | all fields                                   | Cross-cutting validation               |
+| A      | Subsumption Exploitation     | Codegen    | Sprint 6 subsumption pairs                   | Eliminates redundant equations         |
+| B      | Term Equality Cache          | Runtime    | --                                           | Memoizes deep comparisons              |
+| C      | Alpha-Equivalence Lint       | Lint       | (structural)                                 | Detects alpha-equivalent grammar rules |

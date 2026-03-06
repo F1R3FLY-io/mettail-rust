@@ -20,87 +20,101 @@ alternatives to the next layer.
 ## The Six-Layer Stack
 
 ```
-                    ┌─────────────────────────────────────────┐
-                    │  Characters (source text)               │
-                    └────────────────┬────────────────────────┘
-                                     │
-               ┌─────────────────────▼──────────────────────────┐
+                   ┌─────────────────────────────────────────┐
+                   │  Characters (source text)               │
+                   └───────────────────┬─────────────────────┘
+                                       │
+                                       ▼
+               ┌────────────────────────────────────────────────┐
   Layer 1      │  LEXICAL DISAMBIGUATION                        │
                │  DFA + maximal munch + token priority          │
                │  Resolves: shared prefixes, keyword/ident      │
                │            overlap, token boundaries           │
-               └─────────────────────┬──────────────────────────┘
-                                     │
-                    ┌────────────────▼────────────────────────┐
-                    │  Token stream                           │
-                    └────────────────┬────────────────────────┘
-                                     │
-               ┌─────────────────────▼──────────────────────────┐
+               └───────────────────────┬────────────────────────┘
+                                       │
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │  Token stream                           │
+                  └────────────────────┬────────────────────┘
+                                       │
+                                       ▼
+               ┌────────────────────────────────────────────────┐
   Layer 2      │  PARSE PREDICTION                              │
                │  FIRST sets + dispatch tables + lookahead      │
                │  Resolves: which rule to try for a given       │
                │            category, given the next token      │
-               └─────────────────────┬──────────────────────────┘
-                                     │
-                    ┌────────────────▼────────────────────────┐
-                    │  Rule selected (or NFA-ambiguous group) │
-                    └────────────────┬────────────────────────┘
-                                     │
-               ┌─────────────────────▼──────────────────────────┐
+               └───────────────────────┬────────────────────────┘
+                                       │
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │  Rule selected (or NFA-ambiguous group) │
+                  └────────────────────┬────────────────────┘
+                                       │
+                                       ▼
+               ┌────────────────────────────────────────────────┐
   Layer 2.5    │  NFA INTRA-CATEGORY DISAMBIGUATION             │
                │  NFA try-all + forced-prefix replay + WFST     │
                │  Resolves: multiple rules in same category     │
                │            share the same dispatch token       │
-               └─────────────────────┬──────────────────────────┘
-                                     │
-                    ┌────────────────▼────────────────────────┐
-                    │  Rule selected (prefix handler chosen)  │
-                    └────────────────┬────────────────────────┘
-                                     │
-               ┌─────────────────────▼──────────────────────────┐
+               └───────────────────────┬────────────────────────┘
+                                       │
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │  Rule selected (prefix handler chosen)  │
+                  └────────────────────┬────────────────────┘
+                                       │
+                                       ▼
+               ┌────────────────────────────────────────────────┐
   Layer 3      │  OPERATOR PRECEDENCE                           │
                │  Binding power pairs + Pratt loop              │
                │  Resolves: competing infix/prefix/postfix      │
                │            operators, associativity            │
-               └─────────────────────┬──────────────────────────┘
-                                     │
-                    ┌────────────────▼────────────────────────┐
-                    │  Expression tree (single category)      │
-                    └────────────────┬────────────────────────┘
-                                     │
-               ┌─────────────────────▼──────────────────────────┐
+               └───────────────────────┬────────────────────────┘
+                                       │
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │  Expression tree (single category)      │
+                  └────────────────────┬────────────────────┘
+                                       │
+                                       ▼
+               ┌────────────────────────────────────────────────┐
   Layer 4      │  CROSS-CATEGORY RESOLUTION                     │
                │  FIRST set partition + backtracking dispatch   │
                │  Resolves: token could begin expression in     │
                │            multiple type categories            │
-               └─────────────────────┬──────────────────────────┘
-                                     │
-                    ┌────────────────▼────────────────────────┐
-                    │  Typed AST node                         │
-                    └────────────────┬────────────────────────┘
-                                     │
-               ┌─────────────────────▼──────────────────────────┐
+               └───────────────────────┬────────────────────────┘
+                                       │
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │  Typed AST node                         │
+                  └────────────────────┬────────────────────┘
+                                       │
+                                       ▼
+               ┌────────────────────────────────────────────────┐
   Layer 5      │  ERROR RECOVERY                                │
                │  FOLLOW sets + structural delimiters           │
                │  Resolves: where to resume after a syntax      │
                │            error (prevents error cascades)     │
-               └─────────────────────┬──────────────────────────┘
-                                     │
-                    ┌────────────────▼────────────────────────┐
-                    │  AST (possibly with error nodes)        │
-                    └────────────────┬────────────────────────┘
-                                     │
-               ┌─────────────────────▼──────────────────────────┐
+               └───────────────────────┬────────────────────────┘
+                                       │
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │  AST (possibly with error nodes)        │
+                  └────────────────────┬────────────────────┘
+                                       │
+                                       ▼
+               ┌────────────────────────────────────────────────┐
   Layer 6      │  SEMANTIC DISAMBIGUATION                       │
                │  lexer probe + is_ground() + Ambiguous         │
                │  Resolves: multi-category parse ambiguity      │
                │            via groundness and substitution     │
-               └─────────────────────┬──────────────────────────┘
-                                     │
-                    ┌────────────────▼────────────────────────┐
-                    │  Disambiguated AST (single category     │
-                    │  per node, or merged Ascent results)    │
-                    └─────────────────────────────────────────┘
+               └───────────────────────┬────────────────────────┘
+                                       │
+                                       ▼
+                  ┌─────────────────────────────────────────┐
+                  │  Disambiguated AST (single category     │
+                  │  per node, or merged Ascent results)    │
+                  └─────────────────────────────────────────┘
 ```
 
 ## Layer Summary
@@ -169,7 +183,7 @@ show all six layers acting on real input.
 | [05-error-recovery.md](05-error-recovery.md)                       | 5     | ~300  | FOLLOW sets, structural delimiters, panic-mode recovery         |
 | [06-layer-interactions.md](06-layer-interactions.md)               | All   | ~700  | End-to-end traces, layer ordering, master flowchart             |
 | [07-semantic-disambiguation.md](07-semantic-disambiguation.md)     | 6     | ~450  | NFA-style parse, Ambiguous, is_ground(), three-stage resolution |
-| [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)   | 2.5   | ~600  | NFA try-all, forced-prefix replay, beam pruning, weight-aware   |
+| [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)     | 2.5   | ~600  | NFA try-all, forced-prefix replay, beam pruning, weight-aware   |
 
 ### File Numbering
 
@@ -199,22 +213,22 @@ themselves.
 | 3. Precedence     | [theory/pratt-parsing.md](../../../docs/theory/pratt-parsing.md) §2-5                       | [design/pratt-generator.md](../pratt-generator.md)                      |
 | 4. Cross-Category | [theory/prediction-and-lookahead.md](../../../docs/theory/prediction-and-lookahead.md) §5   | [design/cross-category-dispatch.md](../cross-category-dispatch.md) §1-7 |
 | 5. Recovery       | [theory/prediction-and-lookahead.md](../../../docs/theory/prediction-and-lookahead.md) §3   | [design/prediction-engine.md](../prediction-engine.md) §8               |
-| 2.5 NFA Intra-Cat | --                                                                                          | [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)         |
+| 2.5 NFA Intra-Cat | --                                                                                          | [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)          |
 | 6. Semantic       | --                                                                                          | [07-semantic-disambiguation.md](07-semantic-disambiguation.md)          |
 
 ## Key Source Files
 
-| File                                 | Layers  | Purpose                                                     |
-|--------------------------------------|---------|-------------------------------------------------------------|
-| `prattail/src/automata/mod.rs`       | 1       | Token priority system                                       |
-| `prattail/src/automata/nfa.rs`       | 1       | DAFSA construction, keyword trie                            |
-| `prattail/src/automata/codegen.rs`   | 1       | Maximal munch loop, DFA compression                         |
-| `prattail/src/automata/partition.rs` | 1       | Alphabet equivalence classes                                |
-| `prattail/src/prediction.rs`         | 2, 4, 5 | FIRST/FOLLOW sets, dispatch, sync predicates                |
-| `prattail/src/binding_power.rs`      | 3       | BP assignment, associativity                                |
-| `prattail/src/pratt.rs`              | 3       | Pratt loop, led chain, prefix handlers                      |
-| `prattail/src/dispatch.rs`           | 4       | Cross-category dispatch generation                          |
-| `prattail/src/trampoline.rs`         | 2.5,3,4 | NFA merged arms, stack-safe trampolined parsers             |
-| `prattail/src/wfst.rs`              | 2.5     | `nfa_alternative_order()`, WFST weight ordering             |
-| `macros/src/gen/term_ops/ground.rs`  | 6       | `is_ground()` deep recursive groundness check               |
-| `macros/src/gen/runtime/language.rs` | 2.5, 6  | `Ambiguous`, `from_alternatives()`, NFA drain, weights      |
+| File                                 | Layers  | Purpose                                                |
+|--------------------------------------|---------|--------------------------------------------------------|
+| `prattail/src/automata/mod.rs`       | 1       | Token priority system                                  |
+| `prattail/src/automata/nfa.rs`       | 1       | DAFSA construction, keyword trie                       |
+| `prattail/src/automata/codegen.rs`   | 1       | Maximal munch loop, DFA compression                    |
+| `prattail/src/automata/partition.rs` | 1       | Alphabet equivalence classes                           |
+| `prattail/src/prediction.rs`         | 2, 4, 5 | FIRST/FOLLOW sets, dispatch, sync predicates           |
+| `prattail/src/binding_power.rs`      | 3       | BP assignment, associativity                           |
+| `prattail/src/pratt.rs`              | 3       | Pratt loop, led chain, prefix handlers                 |
+| `prattail/src/dispatch.rs`           | 4       | Cross-category dispatch generation                     |
+| `prattail/src/trampoline.rs`         | 2.5,3,4 | NFA merged arms, stack-safe trampolined parsers        |
+| `prattail/src/wfst.rs`               | 2.5     | `nfa_alternative_order()`, WFST weight ordering        |
+| `macros/src/gen/term_ops/ground.rs`  | 6       | `is_ground()` deep recursive groundness check          |
+| `macros/src/gen/runtime/language.rs` | 2.5, 6  | `Ambiguous`, `from_alternatives()`, NFA drain, weights |

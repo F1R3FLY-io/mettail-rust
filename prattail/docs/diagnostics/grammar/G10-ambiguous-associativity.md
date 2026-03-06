@@ -9,10 +9,10 @@ Detects operators at the same precedence level (same `left_bp` value in the bind
 power table) that have different associativity. In a Pratt parser, associativity is
 encoded in the relationship between `left_bp` and `right_bp`:
 
-| Associativity | Encoding |
-|---------------|----------|
-| Left | `right_bp = left_bp + 1` |
-| Right | `right_bp = left_bp` |
+| Associativity | Encoding                 |
+|---------------|--------------------------|
+| Left          | `right_bp = left_bp + 1` |
+| Right         | `right_bp = left_bp`     |
 
 When two operators share the same `left_bp` but one is left-associative and the
 other is right-associative, the parser's behavior becomes ambiguous for expressions
