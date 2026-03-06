@@ -191,6 +191,15 @@ language! {
         LenMap . a:Map |- "maplength" "(" a ")" : Int ![
             a.len() as i32
         ] fold;
+        GetMap . m:Map, k:Proc |- "get" "(" m "," k ")" : Proc ![
+            m.get(&k).cloned().expect("get: key not found")
+        ] fold;
+        PutMap . m:Map, k:Proc, v:Proc |- "put" "(" m "," k "," v ")" : Map ![
+            { let mut m = m.clone(); m.insert(k, v); m }
+        ] fold;
+        DeleteMap . m:Map, k:Proc |- "delete" "(" m "," k ")" : Map ![
+            { let mut m = m.clone(); m.remove(&k); m }
+        ] fold;
     },
     equations {
     },
@@ -302,6 +311,13 @@ language! {
         ProcMapCong . | S ~> T |- (ProcMap S) ~> (ProcMap T);
         // Map operations
         LenMapCong . | S ~> T |- (LenMap S) ~> (LenMap T);
+        GetMapCongL . | S ~> T |- (GetMap S R) ~> (GetMap T R);
+        GetMapCongR . | S ~> T |- (GetMap L S) ~> (GetMap L T);
+        PutMapCongL . | S ~> T |- (PutMap S K V) ~> (PutMap T K V);
+        PutMapCongKey . | S ~> T |- (PutMap M S V) ~> (PutMap M T V);
+        PutMapCongVal . | S ~> T |- (PutMap M K S) ~> (PutMap M K T);
+        DeleteMapCongL . | S ~> T |- (DeleteMap S R) ~> (DeleteMap T R);
+        DeleteMapCongR . | S ~> T |- (DeleteMap L S) ~> (DeleteMap L T);
         // Custom operation
         CustomOpCongL . | S ~> T |- (CustomOp S R) ~> (CustomOp T R);
         CustomOpCongR . | S ~> T |- (CustomOp L S) ~> (CustomOp L T);

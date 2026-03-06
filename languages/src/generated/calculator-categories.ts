@@ -86,6 +86,13 @@ export const categoryInfo = {
 		],
 		colour: "c1e051",
 	},
+	Map: {
+		constructors: [
+			"PutMap",
+			"DeleteMap"
+		],
+		colour: "51e0b7",
+	},
 	Proc: {
 		constructors: [
 			"ProcInt",
@@ -95,7 +102,8 @@ export const categoryInfo = {
 			"ProcList",
 			"ProcBag",
 			"ProcMap",
-			"ElemList"
+			"ElemList",
+			"GetMap"
 		],
 		colour: "208bfe",
 	},

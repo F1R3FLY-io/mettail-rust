@@ -98,6 +98,9 @@ proc(sub.clone()) <--
         Proc::ProcMap(f0) => {
             buf.push(Proc::ProcMap(Box::new(f0.as_ref().clone())));
         },
+        Proc::GetMap(_, f1) => {
+            buf.push(f1.as_ref().clone());
+        },
         Proc::ApplyProc(lam, arg) => {
             buf.push(lam.as_ref().clone());
             buf.push(arg.as_ref().clone());
@@ -308,6 +311,9 @@ map(sub.clone()) <--
     proc(t),
     for sub in { std::thread_local! { static POOL_PROC_MAP : std::cell::Cell < Vec < Map >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_MAP.with(| p | p.take()); buf.clear(); match t {
         Proc::ProcMap(f0) => {
+            buf.push(f0.as_ref().clone());
+        },
+        Proc::GetMap(f0, _) => {
             buf.push(f0.as_ref().clone());
         },
         Proc::ApplyMap(_, arg) => {
@@ -1410,6 +1416,37 @@ bag(sub.clone()) <--
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_BAG_BAG.with(| p | p.set(buf)); iter_buf }.into_iter();
+
+proc(sub.clone()) <--
+    map(t),
+    for sub in { std::thread_local! { static POOL_MAP_PROC : std::cell::Cell < Vec < Proc >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_MAP_PROC.with(| p | p.take()); buf.clear(); match t {
+        Map::PutMap(_, f1, f2) => {
+            buf.push(f1.as_ref().clone());
+            buf.push(f2.as_ref().clone());
+        },
+        Map::DeleteMap(_, f1) => {
+            buf.push(f1.as_ref().clone());
+        },
+        Map::MapLit(ref map) => {
+            for (k, v) in map.iter() { buf.push(k.clone()); buf.push(v.clone()); }
+        },
+        _ => {
+            buf.push(Proc::ProcMap(Box::new(t.clone())));
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_MAP_PROC.with(| p | p.set(buf)); iter_buf }.into_iter();
+
+map(sub.clone()) <--
+    map(t),
+    for sub in { std::thread_local! { static POOL_MAP_MAP : std::cell::Cell < Vec < Map >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_MAP_MAP.with(| p | p.take()); buf.clear(); match t {
+        Map::PutMap(f0, _, _) => {
+            buf.push(f0.as_ref().clone());
+        },
+        Map::DeleteMap(f0, _) => {
+            buf.push(f0.as_ref().clone());
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_MAP_MAP.with(| p | p.set(buf)); iter_buf }.into_iter();
 
 proc(c1.clone()) <--
     proc(c0),
@@ -2712,110 +2749,147 @@ eq_list(s.clone(), t.clone()) <--
     eq_list(s_f0, t_f0),
     eq_list(s_f1, t_f1);
 
+eq_map(s.clone(), t.clone()) <--
+    map(s),
+    map(t),
+    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_MAP_EQ_CONG_21 : std::cell::Cell < Vec < (Map, Proc, Map, Proc) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_MAP_EQ_CONG_21.with(| p | p.take()); buf.clear(); match (s, t) {
+        (Map::DeleteMap(sf0, sf1), Map::DeleteMap(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_MAP_EQ_CONG_21.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    eq_map(s_f0, t_f0),
+    eq_proc(s_f1, t_f1);
+
+eq_map(s.clone(), t.clone()) <--
+    map(s),
+    map(t),
+    for (s_f0, s_f1, s_f2, t_f0, t_f1, t_f2) in { std::thread_local! { static POOL_MAP_EQ_CONG_22 : std::cell::Cell < Vec < (Map, Proc, Proc, Map, Proc, Proc) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_MAP_EQ_CONG_22.with(| p | p.take()); buf.clear(); match (s, t) {
+        (Map::PutMap(sf0, sf1, sf2), Map::PutMap(tf0, tf1, tf2)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), sf2.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone(), tf2.as_ref().clone()));
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_MAP_EQ_CONG_22.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    eq_map(s_f0, t_f0),
+    eq_proc(s_f1, t_f1),
+    eq_proc(s_f2, t_f2);
+
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_21 : std::cell::Cell < Vec < (Bag, Bag) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_21.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_23 : std::cell::Cell < Vec < (Bag, Bag) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_23.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::ProcBag(sf0), Proc::ProcBag(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_21.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_23.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_bag(s_f0, t_f0);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_22 : std::cell::Cell < Vec < (Bool, Bool) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_22.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_24 : std::cell::Cell < Vec < (Bool, Bool) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_24.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::ProcBool(sf0), Proc::ProcBool(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_22.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_24.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_bool(s_f0, t_f0);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_23 : std::cell::Cell < Vec < (Float, Float) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_23.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_25 : std::cell::Cell < Vec < (Float, Float) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_25.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::ProcFloat(sf0), Proc::ProcFloat(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_23.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_25.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_float(s_f0, t_f0);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_24 : std::cell::Cell < Vec < (Int, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_24.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_26 : std::cell::Cell < Vec < (Int, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_26.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::ProcInt(sf0), Proc::ProcInt(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_24.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_26.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_int(s_f0, t_f0);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_25 : std::cell::Cell < Vec < (List, List) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_25.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_27 : std::cell::Cell < Vec < (List, List) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_27.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::ProcList(sf0), Proc::ProcList(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_25.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_27.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_list(s_f0, t_f0);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
-    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_PROC_EQ_CONG_26 : std::cell::Cell < Vec < (List, Int, List, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_26.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_PROC_EQ_CONG_28 : std::cell::Cell < Vec < (List, Int, List, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_28.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::ElemList(sf0, sf1), Proc::ElemList(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_26.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_28.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_list(s_f0, t_f0),
     eq_int(s_f1, t_f1);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_27 : std::cell::Cell < Vec < (Map, Map) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_27.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_29 : std::cell::Cell < Vec < (Map, Map) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_29.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::ProcMap(sf0), Proc::ProcMap(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_27.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_29.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_map(s_f0, t_f0);
 
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_28 : std::cell::Cell < Vec < (Str, Str) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_28.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_PROC_EQ_CONG_30 : std::cell::Cell < Vec < (Map, Proc, Map, Proc) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_30.with(| p | p.take()); buf.clear(); match (s, t) {
+        (Proc::GetMap(sf0, sf1), Proc::GetMap(tf0, tf1)) => {
+            buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_30.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    eq_map(s_f0, t_f0),
+    eq_proc(s_f1, t_f1);
+
+eq_proc(s.clone(), t.clone()) <--
+    proc(s),
+    proc(t),
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_PROC_EQ_CONG_31 : std::cell::Cell < Vec < (Str, Str) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_31.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::ProcStr(sf0), Proc::ProcStr(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_28.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_EQ_CONG_31.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_str(s_f0, t_f0);
 
 eq_str(s.clone(), t.clone()) <--
     str(s),
     str(t),
-    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_29 : std::cell::Cell < Vec < (Proc, Proc) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_29.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, t_f0) in { std::thread_local! { static POOL_STR_EQ_CONG_32 : std::cell::Cell < Vec < (Proc, Proc) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_32.with(| p | p.take()); buf.clear(); match (s, t) {
         (Str::ProcToStr(sf0), Str::ProcToStr(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_29.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_32.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_proc(s_f0, t_f0);
 
 eq_str(s.clone(), t.clone()) <--
     str(s),
     str(t),
-    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_STR_EQ_CONG_30 : std::cell::Cell < Vec < (Str, Str, Str, Str) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_30.with(| p | p.take()); buf.clear(); match (s, t) {
+    for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_STR_EQ_CONG_33 : std::cell::Cell < Vec < (Str, Str, Str, Str) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_STR_EQ_CONG_33.with(| p | p.take()); buf.clear(); match (s, t) {
         (Str::Concat(sf0, sf1), Str::Concat(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
@@ -2823,7 +2897,7 @@ eq_str(s.clone(), t.clone()) <--
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
         },
         _ => {},
-    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_30.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    } let iter_buf = std::mem::take(& mut buf); POOL_STR_EQ_CONG_33.with(| p | p.set(buf)); iter_buf }.into_iter(),
     eq_str(s_f0, t_f0),
     eq_str(s_f1, t_f1);
 
@@ -3193,9 +3267,18 @@ fold_proc(s.clone(), res) <--
         _ => panic!("ElemList: expected Int literal")
     }; a.get(idx).cloned().expect("ElemList: index out of bounds") });
 
+fold_proc(s.clone(), res) <--
+    proc(s),
+    if let Proc::GetMap(left, right) = s,
+    fold_map(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let m = lv,
+    let k = rv,
+    let res = (m.get(& k).cloned().expect("get: key not found"));
+
 rw_proc(s.clone(), t.clone()) <--
     proc(s),
-    if (match s { Proc::ElemList(_, _) => true, _ => false, }),
+    if (match s { Proc::ElemList(_, _) => true, Proc::GetMap(_, _) => true, _ => false, }),
     fold_proc(s, t);
 
 fold_int(t.clone(), t.clone()) <--
@@ -3769,6 +3852,20 @@ fold_map(t.clone(), payload.clone()) <--
     map(t),
     if let Map::MapLit(ref payload) = t;
 
+rw_map(s.clone(), Map::MapLit(t.clone())) <--
+    map(s),
+    if (match s { Map::PutMap(_, _, _) => true, Map::DeleteMap(_, _) => true, _ => false, }),
+    fold_map(s, t);
+
+fold_map(s.clone(), res) <--
+    map(s),
+    if let Map::DeleteMap(left, right) = s,
+    fold_map(left.as_ref().clone(), lv),
+    fold_proc(right.as_ref().clone(), rv),
+    let m = lv,
+    let k = rv,
+    let res = ({ let mut m = m.clone(); m.remove(& k); m });
+
 rw_bool(lhs.clone(), match (lhs, vi) {
     (Bool::EqBool(_, x1), 0usize) => Bool::EqBool(Box::new(t.clone()), x1.clone()),
     (Bool::EqBool(x0, _), 1usize) => Bool::EqBool(x0.clone(), Box::new(t.clone())),
@@ -4156,6 +4253,42 @@ rw_int(lhs.clone(), match (lhs, vi) {
     } let iter_buf = std::mem::take(& mut buf); POOL_INT_SCONG_STR.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_str(field_val, t);
 
+rw_map(lhs.clone(), match (lhs, vi) {
+    (Map::PutMap(_, x1, x2), 0usize) => Map::PutMap(Box::new(t.clone()), x1.clone(), x2.clone()),
+    (Map::DeleteMap(_, x1), 1usize) => Map::DeleteMap(Box::new(t.clone()), x1.clone()),
+    _ => unreachable!(),
+}) <--
+    map(lhs),
+    for (field_val, vi) in { std::thread_local! { static POOL_MAP_SCONG_MAP : std::cell::Cell < Vec < (Map, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_MAP_SCONG_MAP.with(| p | p.take()); buf.clear(); match lhs {
+        Map::DeleteMap(x0, _) => {
+            buf.push(((** x0).clone(), 1usize));
+        },
+        Map::PutMap(x0, _, _) => {
+            buf.push(((** x0).clone(), 0usize));
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_MAP_SCONG_MAP.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    rw_map(field_val, t);
+
+rw_map(lhs.clone(), match (lhs, vi) {
+    (Map::PutMap(x0, _, x2), 0usize) => Map::PutMap(x0.clone(), Box::new(t.clone()), x2.clone()),
+    (Map::PutMap(x0, x1, _), 1usize) => Map::PutMap(x0.clone(), x1.clone(), Box::new(t.clone())),
+    (Map::DeleteMap(x0, _), 2usize) => Map::DeleteMap(x0.clone(), Box::new(t.clone())),
+    _ => unreachable!(),
+}) <--
+    map(lhs),
+    for (field_val, vi) in { std::thread_local! { static POOL_MAP_SCONG_PROC : std::cell::Cell < Vec < (Proc, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_MAP_SCONG_PROC.with(| p | p.take()); buf.clear(); match lhs {
+        Map::DeleteMap(_, x1) => {
+            buf.push(((** x1).clone(), 2usize));
+        },
+        Map::PutMap(_, x1, x2) => {
+            buf.push(((** x1).clone(), 0usize));
+            buf.push(((** x2).clone(), 1usize));
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_MAP_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    rw_proc(field_val, t);
+
 rw_proc(lhs.clone(), match (lhs, vi) {
     (Proc::ProcBag(_), 0usize) => Proc::ProcBag(Box::new(t.clone())),
     _ => unreachable!(),
@@ -4223,16 +4356,33 @@ rw_proc(lhs.clone(), match (lhs, vi) {
 
 rw_proc(lhs.clone(), match (lhs, vi) {
     (Proc::ProcMap(_), 0usize) => Proc::ProcMap(Box::new(t.clone())),
+    (Proc::GetMap(_, x1), 1usize) => Proc::GetMap(Box::new(t.clone()), x1.clone()),
     _ => unreachable!(),
 }) <--
     proc(lhs),
     for (field_val, vi) in { std::thread_local! { static POOL_PROC_SCONG_MAP : std::cell::Cell < Vec < (Map, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_SCONG_MAP.with(| p | p.take()); buf.clear(); match lhs {
+        Proc::GetMap(x0, _) => {
+            buf.push(((** x0).clone(), 1usize));
+        },
         Proc::ProcMap(x0) => {
             buf.push(((** x0).clone(), 0usize));
         },
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_MAP.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_map(field_val, t);
+
+rw_proc(lhs.clone(), match (lhs, vi) {
+    (Proc::GetMap(x0, _), 0usize) => Proc::GetMap(x0.clone(), Box::new(t.clone())),
+    _ => unreachable!(),
+}) <--
+    proc(lhs),
+    for (field_val, vi) in { std::thread_local! { static POOL_PROC_SCONG_PROC : std::cell::Cell < Vec < (Proc, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_SCONG_PROC.with(| p | p.take()); buf.clear(); match lhs {
+        Proc::GetMap(_, x1) => {
+            buf.push(((** x1).clone(), 0usize));
+        },
+        _ => {},
+    } let iter_buf = std::mem::take(& mut buf); POOL_PROC_SCONG_PROC.with(| p | p.set(buf)); iter_buf }.into_iter(),
+    rw_proc(field_val, t);
 
 rw_proc(lhs.clone(), match (lhs, vi) {
     (Proc::ProcStr(_), 0usize) => Proc::ProcStr(Box::new(t.clone())),

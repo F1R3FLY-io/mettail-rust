@@ -762,6 +762,26 @@ fn test_map_length_two() {
     calc_normal_form("maplength(map(1:2, 3:4))", "2");
 }
 
+// Map get/put/delete
+#[test]
+fn test_map_get() {
+    calc_normal_form("get(map(1:10, 2:20), 1)", "10");
+    calc_normal_form("get(map(1:10, 2:20), 2)", "20");
+}
+
+#[test]
+fn test_map_put() {
+    calc_normal_form("get(put(map(), 1, 10), 1)", "10");
+    calc_normal_form("get(put(put(map(), 1, 10), 2, 20), 2)", "20");
+    calc_normal_form("get(put(put(map(1:10), 1, 99), 2, 20), 1)", "99");
+}
+
+#[test]
+fn test_map_delete() {
+    calc_normal_form("maplength(delete(map(1:10, 2:20), 1))", "1");
+    calc_normal_form("get(delete(map(1:10, 2:20), 1), 2)", "20");
+}
+
 // ── Regression: existing casts still work ──
 
 #[test]
