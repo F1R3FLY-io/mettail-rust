@@ -924,12 +924,50 @@ impl Repl {
         let language = self.registry.get(language_name)?;
 
         println!();
-        print!("Parsing... ");
-
-        let term = language
-            .parse_term_for_env(term_str)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-        println!("{}", "✓".green());
+        let trimmed = term_str.trim();
+        // If input is a single identifier and it's bound in the env, use the stored term.
+        // This avoids parsing "z" as e.g. IVar(z) when z is bound as a Proc, which would leave
+        // the variable unsubstituted and panic on eval.
+        let (term, from_env) = if !trimmed.is_empty()
+            && trimmed
+                .chars()
+                .all(|c| c.is_alphabetic() || c == '_' || c.is_ascii_digit())
+            && trimmed
+                .chars()
+                .next()
+                .map(|c| c.is_alphabetic() || c == '_')
+                .unwrap_or(false)
+        {
+            if let Some(env) = self.state.environment() {
+                if let Some(env_term) = language.get_env_term(env, trimmed) {
+                    (env_term, true)
+                } else {
+                    print!("Parsing... ");
+                    let t = language
+                        .parse_term_for_env(term_str)
+                        .map_err(|e| anyhow::anyhow!("{}", e))?;
+                    println!("{}", "✓".green());
+                    (t, false)
+                }
+            } else {
+                print!("Parsing... ");
+                let t = language
+                    .parse_term_for_env(term_str)
+                    .map_err(|e| anyhow::anyhow!("{}", e))?;
+                println!("{}", "✓".green());
+                (t, false)
+            }
+        } else {
+            print!("Parsing... ");
+            let t = language
+                .parse_term_for_env(term_str)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            println!("{}", "✓".green());
+            (t, false)
+        };
+        if from_env {
+            println!("{}", "✓ Resolved from environment".green());
+        }
 
         let term = if let Some(env) = self.state.environment() {
             if !language.is_env_empty(env) {

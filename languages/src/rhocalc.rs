@@ -16,6 +16,8 @@ language! {
         ![f64] as Float
         ![bool] as Bool
         ![str] as Str
+        ![Vec<Proc>] as List
+        ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
     },
 
     terms {
@@ -47,12 +49,18 @@ language! {
         CastFloat . k:Float |- k : Proc;
         CastBool . k:Bool |- k : Proc;
         CastStr . s:Str |- s : Proc;
+        ProcList . l:List |- l : Proc;
+        ProcBag . b:Bag |- b : Proc;
 
         // and invoke any methods on them
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
             { match (&a, &b) {
                 (Proc::CastInt(a), Proc::CastInt(b)) => Proc::CastInt(Box::new(*a.clone() + *b.clone())),
                 (Proc::CastFloat(a), Proc::CastFloat(b)) => Proc::CastFloat(Box::new(*a.clone() + *b.clone())),
+                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
+                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))),
+                    _ => Proc::Err,
+                },
                 _ => Proc::Err,
             }}
         ] fold;
@@ -165,6 +173,63 @@ language! {
             }}
         ] fold;
 
+        // List operations: take Proc, match ProcList/ListLit in semantic (like arithmetic)
+        ConcatList . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::ProcList(la), Proc::ProcList(lb)) => match (la.as_ref(), lb.as_ref()) {
+                    (List::ListLit(va), List::ListLit(vb)) => { let mut o = va.clone(); o.extend(vb.iter().cloned()); Proc::ProcList(Box::new(List::ListLit(o))) },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ElemList . a:Proc, i:Proc |- "at" "(" a "," i ")" : Proc ![
+            { match (&a, &i) {
+                (Proc::ProcList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) { (List::ListLit(v), Int::NumLit(n)) => v.get(*n as usize).cloned().expect("at: index out of bounds"), _ => Proc::Err },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        DeleteList . a:Proc, i:Proc |- "delete" "(" a "," i ")" : Proc ![
+            { match (&a, &i) {
+                (Proc::ProcList(l), Proc::CastInt(ii)) => match (l.as_ref(), &**ii) {
+                    (List::ListLit(v), Int::NumLit(n)) => { let idx = *n as usize; let mut vec = v.clone(); if idx >= vec.len() { panic!("delete: index out of bounds"); } vec.remove(idx); Proc::ProcList(Box::new(List::ListLit(vec))) },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
+        // Bag operations: take Proc, match ProcBag/BagLit in semantic (like arithmetic)
+        UnionBag . a:Proc, b:Proc |- "union" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::ProcBag(ba), Proc::ProcBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
+                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::ProcBag(Box::new(Bag::BagLit(ha.union(hb)))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        RemoveBag . a:Proc, e:Proc |- "remove" "(" a "," e ")" : Proc ![
+            { match &a {
+                Proc::ProcBag(b) => match b.as_ref() { Bag::BagLit(h) => Proc::ProcBag(Box::new(Bag::BagLit(h.remove_one(&e)))), _ => Proc::Err },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        DiffBag . a:Proc, b:Proc |- "diff" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::ProcBag(ba), Proc::ProcBag(bb)) => match (ba.as_ref(), bb.as_ref()) {
+                    (Bag::BagLit(ha), Bag::BagLit(hb)) => Proc::ProcBag(Box::new(Bag::BagLit(ha.diff(hb)))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        CountBag . b:Proc, e:Proc |- "count" "(" b "," e ")" : Int ![
+            { match &b {
+                Proc::ProcBag(bag) => match bag.as_ref() { Bag::BagLit(h) => mettail_runtime::HashBag::count(h, &e) as i64, _ => panic!("count: expected bag literal") }, _ => panic!("count: expected ProcBag")
+            }}
+        ] fold;
+
         Not . a:Proc |- "not" a : Proc ![
             { match &a {
                 Proc::CastBool(b) => match &**b {
@@ -195,20 +260,14 @@ language! {
             }}
         ] fold;
 
-        ConcatStr . a:Proc, b:Proc |- "concat" "(" a "," b ")" : Proc ![
-            { match (&a, &b) {
-                (Proc::CastStr(a), Proc::CastStr(b)) => match (&**a, &**b) {
-                    (Str::StringLit(x), Str::StringLit(y)) => Proc::CastStr(Box::new(Str::StringLit(format!("{}{}", x, y)))),
-                    _ => Proc::Err,
-                },
-                _ => Proc::Err,
-            }}
-        ] fold;
-
         Len . p:Proc |- "len" "(" p ")" : Proc ![
             { match &p {
                 Proc::CastStr(inner) => match &**inner {
                     Str::StringLit(x) => Proc::CastInt(Box::new(Int::NumLit(x.len() as i64))),
+                    _ => Proc::Err,
+                },
+                Proc::ProcList(l) => match l.as_ref() {
+                    List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -350,10 +409,24 @@ language! {
         OrCongL . | S ~> T |- (Or S X) ~> (Or T X);
         OrCongR . | S ~> T |- (Or X S) ~> (Or X T);
 
-        ConcatStrCongL . | S ~> T |- (ConcatStr S X) ~> (ConcatStr T X);
-        ConcatStrCongR . | S ~> T |- (ConcatStr X S) ~> (ConcatStr X T);
         LenCong . | S ~> T |- (Len S) ~> (Len T);
 
+        ConcatListCongL . | S ~> T |- (ConcatList S X) ~> (ConcatList T X);
+        ConcatListCongR . | S ~> T |- (ConcatList X S) ~> (ConcatList X T);
+        ElemListCongL . | S ~> T |- (ElemList S X) ~> (ElemList T X);
+        ElemListCongR . | S ~> T |- (ElemList X S) ~> (ElemList X T);
+        DeleteListCongL . | S ~> T |- (DeleteList S X) ~> (DeleteList T X);
+        DeleteListCongR . | S ~> T |- (DeleteList X S) ~> (DeleteList X T);
+        UnionBagCongL . | S ~> T |- (UnionBag S X) ~> (UnionBag T X);
+        UnionBagCongR . | S ~> T |- (UnionBag X S) ~> (UnionBag X T);
+        RemoveBagCongL . | S ~> T |- (RemoveBag S X) ~> (RemoveBag T X);
+        RemoveBagCongR . | S ~> T |- (RemoveBag X S) ~> (RemoveBag X T);
+        DiffBagCongL . | S ~> T |- (DiffBag S X) ~> (DiffBag T X);
+        DiffBagCongR . | S ~> T |- (DiffBag X S) ~> (DiffBag X T);
+        CountBagCongL . | S ~> T |- (CountBag S X) ~> (CountBag T X);
+        CountBagCongR . | S ~> T |- (CountBag X S) ~> (CountBag X T);
+
+        CastIntCong . | S ~> T |- (CastInt S) ~> (CastInt T);
         ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
         ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
         ToBoolCong . | S ~> T |- (ToBool S) ~> (ToBool T);
@@ -361,6 +434,13 @@ language! {
     },
 
     logic {
+        // fold *(@(P)) to P so that remove(*(@(bag)), *(@(elem))) can reduce (Exec semantics in fold)
+        fold_proc(s.clone(), res) <--
+            proc(s),
+            if let Proc::PDrop(ref n) = s,
+            if let Name::NQuote(ref p) = n.as_ref(),
+            let res = p.as_ref().clone();
+
         // many-step to a result
         relation path(Proc, Proc);
         path(p0, p1) <-- rw_proc(p0, p1);

@@ -5,6 +5,114 @@
 import * as Blockly from "blockly/core";
 
 const definitions = [
+	// Proc Int: ...
+	{
+		type: "proc_proc_int",
+		tooltip: "Proc Int: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Float: ...
+	{
+		type: "proc_proc_float",
+		tooltip: "Proc Float: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Float",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Bool: ...
+	{
+		type: "proc_proc_bool",
+		tooltip: "Proc Bool: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bool",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Str: ...
+	{
+		type: "proc_proc_str",
+		tooltip: "Proc Str: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Str",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc List: ...
+	{
+		type: "proc_proc_list",
+		tooltip: "Proc List: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Proc Bag: ...
+	{
+		type: "proc_proc_bag",
+		tooltip: "Proc Bag: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",
@@ -1048,67 +1156,16 @@ const definitions = [
 		colour: "e05196",
 	},
 
-	// Int To Float: ...
+	// Proc To Int: ...
 	{
-		type: "float_int_to_float",
-		tooltip: "Int To Float: ...",
+		type: "int_proc_to_int",
+		tooltip: "Proc To Int: ...",
 		message0: "%1",
 		args0: [
 			{
 				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Float",
-		colour: "e05196",
-	},
-
-	// Bool To Float: ...
-	{
-		type: "float_bool_to_float",
-		tooltip: "Bool To Float: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Float",
-		colour: "e05196",
-	},
-
-	// Str To Float: ...
-	{
-		type: "float_str_to_float",
-		tooltip: "Str To Float: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
-			},
-		],
-		inputsInline: true,
-		output: "Float",
-		colour: "e05196",
-	},
-
-	// Float To Int: ...
-	{
-		type: "int_float_to_int",
-		tooltip: "Float To Int: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
+				name: "BODY",
+				check: "Proc",
 			},
 		],
 		inputsInline: true,
@@ -1116,169 +1173,16 @@ const definitions = [
 		colour: "51b0e0",
 	},
 
-	// Bool To Int: ...
+	// Proc To Float: ...
 	{
-		type: "int_bool_to_int",
-		tooltip: "Bool To Int: ...",
+		type: "float_proc_to_float",
+		tooltip: "Proc To Float: ...",
 		message0: "%1",
 		args0: [
 			{
 				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Str To Int: ...
-	{
-		type: "int_str_to_int",
-		tooltip: "Str To Int: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Bool To Str: ...
-	{
-		type: "str_bool_to_str",
-		tooltip: "Bool To Str: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
-			},
-		],
-		inputsInline: true,
-		output: "Str",
-		colour: "51e05f",
-	},
-
-	// Int To Str: ...
-	{
-		type: "str_int_to_str",
-		tooltip: "Int To Str: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Str",
-		colour: "51e05f",
-	},
-
-	// Float To Str: ...
-	{
-		type: "str_float_to_str",
-		tooltip: "Float To Str: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
-			},
-		],
-		inputsInline: true,
-		output: "Str",
-		colour: "51e05f",
-	},
-
-	// Int To Bool: ...
-	{
-		type: "bool_int_to_bool",
-		tooltip: "Int To Bool: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
-	// Float To Bool: ...
-	{
-		type: "bool_float_to_bool",
-		tooltip: "Float To Bool: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
-	// Str To Bool: ...
-	{
-		type: "bool_str_to_bool",
-		tooltip: "Str To Bool: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Str",
-			},
-		],
-		inputsInline: true,
-		output: "Bool",
-		colour: "7a51e0",
-	},
-
-	// Int Id: ...
-	{
-		type: "int_int_id",
-		tooltip: "Int Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Int",
-			},
-		],
-		inputsInline: true,
-		output: "Int",
-		colour: "51b0e0",
-	},
-
-	// Float Id: ...
-	{
-		type: "float_float_id",
-		tooltip: "Float Id: ...",
-		message0: "%1",
-		args0: [
-			{
-				type: "input_value",
-				name: "ARG1",
-				check: "Float",
+				name: "BODY",
+				check: "Proc",
 			},
 		],
 		inputsInline: true,
@@ -1286,16 +1190,16 @@ const definitions = [
 		colour: "e05196",
 	},
 
-	// Bool Id: ...
+	// Proc To Bool: ...
 	{
-		type: "bool_bool_id",
-		tooltip: "Bool Id: ...",
+		type: "bool_proc_to_bool",
+		tooltip: "Proc To Bool: ...",
 		message0: "%1",
 		args0: [
 			{
 				type: "input_value",
-				name: "ARG1",
-				check: "Bool",
+				name: "BODY",
+				check: "Proc",
 			},
 		],
 		inputsInline: true,
@@ -1303,16 +1207,16 @@ const definitions = [
 		colour: "7a51e0",
 	},
 
-	// Str Id: ...
+	// Proc To Str: ...
 	{
-		type: "str_str_id",
-		tooltip: "Str Id: ...",
+		type: "str_proc_to_str",
+		tooltip: "Proc To Str: ...",
 		message0: "%1",
 		args0: [
 			{
 				type: "input_value",
-				name: "ARG1",
-				check: "Str",
+				name: "BODY",
+				check: "Proc",
 			},
 		],
 		inputsInline: true,
@@ -1335,6 +1239,178 @@ const definitions = [
 				type: "input_value",
 				name: "ARG2",
 				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Concat List: ... ...
+	{
+		type: "list_concat_list",
+		tooltip: "Concat List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
+	},
+
+	// Len List: ...
+	{
+		type: "int_len_list",
+		tooltip: "Len List: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Elem List: ... ...
+	{
+		type: "proc_elem_list",
+		tooltip: "Elem List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Delete List: ... ...
+	{
+		type: "list_delete_list",
+		tooltip: "Delete List: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "List",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Int",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
+	},
+
+	// Union Bag: ... ...
+	{
+		type: "bag_union_bag",
+		tooltip: "Union Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bag",
+			},
+		],
+		inputsInline: true,
+		output: "Bag",
+		colour: "e0d451",
+	},
+
+	// Remove Bag: ... ...
+	{
+		type: "bag_remove_bag",
+		tooltip: "Remove Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Bag",
+		colour: "e0d451",
+	},
+
+	// Diff Bag: ... ...
+	{
+		type: "bag_diff_bag",
+		tooltip: "Diff Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Bag",
+			},
+		],
+		inputsInline: true,
+		output: "Bag",
+		colour: "e0d451",
+	},
+
+	// Count Bag: ... ...
+	{
+		type: "int_count_bag",
+		tooltip: "Count Bag: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Bag",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
 			},
 		],
 		inputsInline: true,

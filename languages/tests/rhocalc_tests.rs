@@ -127,6 +127,12 @@ fn multiset_eq(a: &str, b: &str) -> bool {
 mod comm {
     use super::*;
 
+    /// Reproduces REPL load_env parse error: PPar with a!(n) must not reduce "a" to variable.
+    #[test]
+    fn par_with_output_literal() {
+        let _ = parse("{ a!(2) | b!(3) }");
+    }
+
     #[test]
     fn single_channel() {
         assert_reduces_to("{(c?x).{*(x)} | c!(p)}", "p");
@@ -433,6 +439,25 @@ mod native_ops {
         #[test]
         fn len() {
             assert_reduces_to(r#"{len("hello")}"#, "5");
+        }
+    }
+
+    mod bag {
+        use super::*;
+
+        /// remove(*(bag), *(elem)) after comm: removes one occurrence of elem from bag
+        #[test]
+        fn remove_comm() {
+            assert_reduces_to(
+                "{a!(#{1|2|2}#) | c!(2) | (a?b, c?e).{remove(*(b), *(e))}}",
+                "#{1|2}#",
+            );
+        }
+
+        /// count(*(bag), *(elem)) after comm: counts occurrences of elem in bag
+        #[test]
+        fn count_comm() {
+            assert_reduces_to("{a!(#{1|2|2}#) | c!(2) | (a?b, c?e).{count(*(b), *(e))}}", "2");
         }
     }
 

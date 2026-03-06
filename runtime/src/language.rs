@@ -183,6 +183,14 @@ pub trait Language: Send + Sync {
     /// Check if the environment is empty
     fn is_env_empty(&self, env: &dyn Any) -> bool;
 
+    /// Get a term by name from the environment (any category).
+    /// Used so that `exec z` uses the stored term for "z" instead of parsing "z" as a variable,
+    /// which can leave e.g. IVar(z) unsubstituted when "z" is bound in another category (e.g. Proc).
+    fn get_env_term(&self, env: &dyn Any, name: &str) -> Option<Box<dyn Term>> {
+        let _ = (env, name);
+        None
+    }
+
     // === Type Inference Support ===
 
     /// Infer the type of a term

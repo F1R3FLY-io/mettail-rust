@@ -1131,6 +1131,7 @@ mod tests {
                 name: "Int".to_string(),
                 native_type: Some("i32".to_string()),
                 is_primary: true,
+                has_var: true,
             }],
             rules: vec![
                 // NumLit
@@ -1329,6 +1330,7 @@ mod tests {
                 name: t.name.clone(),
                 native_type: t.native_type.clone(),
                 is_primary: i == 0,
+                has_var: t.has_var,
             })
             .collect();
 
@@ -1667,6 +1669,7 @@ mod tests {
                 name: "Term".to_string(),
                 native_type: None,
                 is_primary: true,
+                has_var: true,
             }],
             rules: vec![
                 {
@@ -1725,11 +1728,13 @@ mod tests {
                     name: "Proc".to_string(),
                     native_type: None,
                     is_primary: true,
+                    has_var: true,
                 },
                 CategorySpec {
                     name: "Name".to_string(),
                     native_type: None,
                     is_primary: false,
+                    has_var: true,
                 },
             ],
             rules: vec![
@@ -1800,6 +1805,7 @@ mod tests {
                 name: "Int".to_string(),
                 native_type: Some("i32".to_string()),
                 is_primary: true,
+                has_var: true,
             }],
             rules: vec![
                 {

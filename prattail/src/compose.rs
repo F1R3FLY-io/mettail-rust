@@ -241,6 +241,7 @@ fn merge_categories(
             name: cat.name.clone(),
             native_type: cat.native_type.clone(),
             is_primary,
+            has_var: cat.has_var,
         });
     }
 
@@ -266,6 +267,7 @@ fn merge_categories(
                 name: cat.name.clone(),
                 native_type: cat.native_type.clone(),
                 is_primary,
+                has_var: cat.has_var,
             });
             by_name.insert(cat.name.clone(), cat);
         }
@@ -762,6 +764,7 @@ mod tests {
                 name: name.to_string(),
                 native_type: native.map(|s| s.to_string()),
                 is_primary: *primary,
+                has_var: true,
             })
             .collect();
 
@@ -884,6 +887,7 @@ mod tests {
             name: "Stmt".to_string(),
             native_type: None,
             is_primary: false,
+            has_var: true,
         }];
         let cat_names_b: Vec<String> = vec!["Stmt".to_string(), "Int".to_string()];
         let rules_b = vec![RuleSpec::classified(
@@ -1128,6 +1132,7 @@ mod tests {
                 name: "Expr".to_string(),
                 native_type: None,
                 is_primary: false,
+                has_var: true,
             }],
             rules: vec![RuleSpec::classified(
                 "List",
@@ -1206,6 +1211,7 @@ mod tests {
                 name: "Int".to_string(),
                 native_type: Some("i32".to_string()),
                 is_primary: true,
+                has_var: true,
             }];
             let cat_names = vec!["Int".to_string()];
             let rules = vec![RuleSpec::classified(
@@ -1240,6 +1246,7 @@ mod tests {
                 name: "Int".to_string(),
                 native_type: Some("i32".to_string()),
                 is_primary: false,
+                has_var: true,
             }];
             let cat_names = vec!["Int".to_string()];
             let rules = vec![RuleSpec::classified(
@@ -1287,6 +1294,7 @@ mod tests {
                 name: "Int".to_string(),
                 native_type: Some("i32".to_string()),
                 is_primary: true,
+                has_var: true,
             }];
             let cat_names = vec!["Int".to_string()];
             let rules = vec![RuleSpec::classified(
@@ -1319,6 +1327,7 @@ mod tests {
                 name: "Int".to_string(),
                 native_type: Some("i32".to_string()),
                 is_primary: false,
+                has_var: true,
             }];
             let cat_names = vec!["Int".to_string()];
             let rules = vec![RuleSpec::classified(

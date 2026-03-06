@@ -11,7 +11,7 @@
 
 use crate::ast::{
     grammar::{GrammarItem, GrammarRule, PatternOp, SyntaxExpr, TermParam},
-    language::{AttributeValue, LanguageDef},
+    language::{AttributeValue, CollectionCategory, LanguageDef},
     types::{CollectionType, TypeExpr},
 };
 use crate::gen::native::native_type_to_string;
@@ -25,6 +25,8 @@ use mettail_prattail::{
 /// Performs structural mapping of syntax items, then delegates all
 /// flag classification to `LanguageSpec::new()`.
 pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
+    // has_var: true for scalar types (IVar, FVar, ...) and for List/Bag (LVar, BVar) so that
+    // length(x), at(x, 0), concat(x, y), etc. accept identifier expressions.
     let categories: Vec<CategorySpec> = language
         .types
         .iter()
@@ -33,16 +35,106 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
             name: t.name.to_string(),
             native_type: t.native_type.as_ref().map(native_type_to_string),
             is_primary: idx == 0,
+            has_var: true,
         })
         .collect();
 
     let cat_names: Vec<String> = categories.iter().map(|c| c.name.clone()).collect();
 
-    let inputs: Vec<RuleSpecInput> = language
+    let mut inputs: Vec<RuleSpecInput> = language
         .terms
         .iter()
         .map(|rule| convert_rule(rule, &cat_names))
         .collect();
+
+    // Add synthetic variable rules for categories with has_var (no collection_kind) so that
+    // identifiers parse as variables and infix expressions like "a + b" work.
+    // Use the same label convention as AST (generate_var_label: first letter + "Var", e.g. IVar, PVar).
+    for lang_type in &language.types {
+        if lang_type.collection_kind.is_none() {
+            let category = lang_type.name.to_string();
+            let label = crate::gen::generate_var_label(&lang_type.name).to_string();
+            inputs.push(RuleSpecInput {
+                label,
+                category: category.clone(),
+                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
+                associativity: mettail_prattail::binding_power::Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+            });
+        }
+    }
+
+    // Add synthetic variable rules for List/Bag so that identifiers (e.g. x in at(x, 0))
+    // parse as list/bag variables when the name is bound in the environment.
+    for lang_type in &language.types {
+        if lang_type.collection_kind.is_some() {
+            let category = lang_type.name.to_string();
+            let label = crate::gen::generate_var_label(&lang_type.name).to_string();
+            inputs.push(RuleSpecInput {
+                label,
+                category: category.clone(),
+                syntax: vec![SyntaxItemSpec::IdentCapture { param_name: "v".to_string() }],
+                associativity: mettail_prattail::binding_power::Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+            });
+        }
+    }
+
+    // Add synthetic literal rules for List/Bag categories (parameterised by delimiters)
+    let elem_cat = language
+        .types
+        .iter()
+        .find(|t| t.name.to_string() == "Proc")
+        .map(|t| t.name.to_string())
+        .or_else(|| language.types.first().map(|t| t.name.to_string()));
+    if let Some(ref elem_cat) = elem_cat {
+        for lang_type in &language.types {
+            if let Some(ref coll) = lang_type.collection_kind {
+                let (label, open, close, sep, kind) = match coll {
+                    CollectionCategory::List(d) => (
+                        "ListLit".to_string(),
+                        d.open.clone(),
+                        d.close.clone(),
+                        d.sep.clone(),
+                        CollectionKind::Vec,
+                    ),
+                    CollectionCategory::Bag(d) => (
+                        "BagLit".to_string(),
+                        d.open.clone(),
+                        d.close.clone(),
+                        d.sep.clone(),
+                        CollectionKind::HashBag,
+                    ),
+                };
+                let category = lang_type.name.to_string();
+                inputs.push(RuleSpecInput {
+                    label: label.clone(),
+                    category: category.clone(),
+                    syntax: vec![
+                        SyntaxItemSpec::Terminal(open),
+                        SyntaxItemSpec::Collection {
+                            param_name: "elems".to_string(),
+                            element_category: elem_cat.clone(),
+                            separator: sep,
+                            kind,
+                        },
+                        SyntaxItemSpec::Terminal(close),
+                    ],
+                    associativity: mettail_prattail::binding_power::Associativity::Left,
+                    prefix_precedence: None,
+                    has_rust_code: false,
+                    rust_code: None,
+                    eval_mode: None,
+                });
+            }
+        }
+    }
 
     // Extract beam_width from options (defaults to Disabled if not specified)
     let beam_width = match language.options.get("beam_width") {

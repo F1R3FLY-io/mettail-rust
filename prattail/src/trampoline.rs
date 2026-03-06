@@ -260,6 +260,8 @@ pub struct TrampolineConfig {
     pub category: String,
     /// Whether this is the primary category.
     pub is_primary: bool,
+    /// Whether this category has a variable variant (e.g. IVar). False for List/Bag.
+    pub has_var: bool,
     /// Whether this category has infix operators.
     pub has_infix: bool,
     /// Whether this category has postfix operators.
@@ -457,6 +459,15 @@ pub fn write_frame_enum(
                 },
             ],
         });
+
+        // ElemParse frame: when element_category != cat, we parse elements via a separate
+        // parse_* call. Pushed after CollectionElem so it's popped first; sets pending_elem.
+        if element_category != *cat {
+            variants.push(FrameVariant {
+                name: format!("ElemParse_{}_{}", rd_rule.label, element_category),
+                fields: vec![],
+            });
+        }
     }
 
     // ── Per-mixfix operand step variants ──
@@ -700,8 +711,89 @@ fn write_trampoline_body(
     // ═══ Main trampoline loop ═══
     buf.push_str("'drive: loop {");
 
+    // pending_elem: set by ElemParse when collection element_category != cat (e.g. List/Bag with Proc elements)
+    let needs_pending_elem = rd_rules.iter().any(|r| {
+        r.category == *config.category
+            && is_simple_collection(r)
+            && r.items.iter().find_map(|i| match i {
+                RDSyntaxItem::Collection { element_category, .. } => {
+                    Some(element_category.as_str())
+                },
+                _ => None,
+            }) != Some(config.category.as_str())
+    });
+    // lhs: when needs_pending_elem we may set it in ElemParse arm and skip prefix; else prefix always sets it
+    if needs_pending_elem {
+        let dummy = rd_rules
+            .iter()
+            .find(|r| r.category == *config.category && is_simple_collection(r))
+            .map(|r| match r.collection_type.unwrap_or(CollectionKind::HashBag) {
+                CollectionKind::Vec => format!("{}::{}(vec![])", config.category, r.label),
+                CollectionKind::HashBag => {
+                    format!("{}::{}(mettail_runtime::HashBag::new())", config.category, r.label)
+                },
+                CollectionKind::HashSet => {
+                    format!("{}::{}(std::collections::HashSet::new())", config.category, r.label)
+                },
+            })
+            .unwrap_or_else(|| "unsafe { std::mem::zeroed() }".to_string());
+        write!(buf, "let mut lhs: {} = {};", config.category, dummy).unwrap();
+    } else {
+        write!(buf, "let mut lhs: {};", config.category).unwrap();
+    }
+    if needs_pending_elem {
+        buf.push_str("let mut pending_elem: Option<Proc> = None;");
+        // When ElemParse is on top (after [ or ,), pop it, parse element, set lhs dummy and skip prefix
+        buf.push_str("let mut skip_prefix = false;");
+        write!(buf, "if let Some(frame) = stack.pop() {{ match frame {{").unwrap();
+        for rd_rule in rd_rules {
+            if rd_rule.category != *config.category || !is_simple_collection(rd_rule) {
+                continue;
+            }
+            let element_category = rd_rule.items.iter().find_map(|item| match item {
+                RDSyntaxItem::Collection { element_category, .. } => Some(element_category.clone()),
+                _ => None,
+            });
+            let elem_cat = element_category.as_deref().unwrap_or("Proc");
+            if elem_cat == config.category.as_str() {
+                continue;
+            }
+            let empty_init = match rd_rule.collection_type.unwrap_or(CollectionKind::HashBag) {
+                CollectionKind::Vec => format!("{}::{}(vec![])", config.category, rd_rule.label),
+                CollectionKind::HashBag => {
+                    format!(
+                        "{}::{}(mettail_runtime::HashBag::new())",
+                        config.category, rd_rule.label
+                    )
+                },
+                CollectionKind::HashSet => {
+                    format!(
+                        "{}::{}(std::collections::HashSet::new())",
+                        config.category, rd_rule.label
+                    )
+                },
+            };
+            write!(
+                buf,
+                "{}::ElemParse_{}_{} {{}} => {{ pending_elem = parse_{}(tokens, pos, 0).ok(); lhs = {}; skip_prefix = true; }}",
+                frame_info.enum_name,
+                rd_rule.label,
+                elem_cat,
+                elem_cat,
+                empty_init,
+            )
+            .unwrap();
+        }
+        write!(buf, "other => {{ stack.push(other); }} }} }}").unwrap();
+        write!(buf, "if !skip_prefix {{").unwrap();
+    }
+
     // ═══ Phase A: Prefix dispatch ═══
     write_prefix_phase(buf, config, prefix_handlers, rd_rules, frame_info, &expected_escaped);
+
+    if needs_pending_elem {
+        buf.push('}'); // close if !skip_prefix
+    }
 
     // ═══ Phase B: Infix loop + continuation unwinding ═══
     buf.push_str("'unwind: loop {");
@@ -730,12 +822,8 @@ fn write_prefix_phase(
     frame_info: &FrameInfo,
     expected_escaped: &str,
 ) {
-    let cat = &config.category;
-
     // The prefix match block: produces `lhs` or pushes frame + continues
-    buf.push_str("let mut lhs: ");
-    buf.push_str(cat);
-    buf.push_str(" = 'prefix: {");
+    buf.push_str("lhs = 'prefix: {");
 
     // EOF check (inside 'prefix block so we can use break 'prefix for collection catch)
     write!(
@@ -924,6 +1012,61 @@ fn write_prefix_match_arms(
         }
     }
 
+    // ── Empty collection close (] or }) — when we see ]/} immediately after [/{ ──
+    for rd_rule in rd_rules {
+        if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
+            continue;
+        }
+        let closing_terminal = rd_rule.items.iter().rev().find_map(|item| {
+            if let RDSyntaxItem::Terminal(t) = item {
+                Some(t.clone())
+            } else {
+                None
+            }
+        });
+        let element_category = rd_rule.items.iter().find_map(|item| match item {
+            RDSyntaxItem::Collection { element_category, .. } => Some(element_category.clone()),
+            _ => None,
+        });
+        let needs_elem_parse = element_category.as_deref().unwrap_or("Proc") != cat.as_str();
+        if let Some(ref closing) = closing_terminal {
+            let close_variant = terminal_to_variant_name(closing);
+            let elem_cat = element_category.as_deref().unwrap_or("Proc");
+            write!(buf, "Token::{} => {{", close_variant).unwrap();
+            if needs_elem_parse {
+                write!(
+                    buf,
+                    "if matches!(stack.last(), Some(&{}::ElemParse_{}_{} {{}})) {{ \
+                        stack.pop(); \
+                        pending_elem = None; \
+                    }} ",
+                    frame_info.enum_name, rd_rule.label, elem_cat,
+                )
+                .unwrap();
+            }
+            write!(
+                buf,
+                "if let Some({}::CollectionElem_{} {{ elements, saved_pos, saved_bp }}) = stack.pop() {{ \
+                    *pos = saved_pos; \
+                    expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?; \
+                    cur_bp = saved_bp; \
+                    break 'prefix {}::{}(elements); \
+                }} else {{ \
+                    return Err(ParseError::UnexpectedToken {{ expected: \"{}\", found: format!(\"{{:?}}\", tokens[*pos].0), range: tokens[*pos].1 }}); \
+                }}",
+                frame_info.enum_name,
+                rd_rule.label,
+                close_variant,
+                closing,
+                cat,
+                rd_rule.label,
+                expected_escaped,
+            )
+            .unwrap();
+            buf.push_str("},");
+        }
+    }
+
     // ── Collection rules ──
     for rd_rule in rd_rules {
         if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
@@ -945,7 +1088,7 @@ fn write_prefix_match_arms(
             _ => None,
         });
 
-        if let (Some(terminal), Some((_elem_cat, _sep, kind))) = (opening_terminal, collection_info)
+        if let (Some(terminal), Some((elem_cat, _sep, kind))) = (opening_terminal, collection_info)
         {
             let variant = terminal_to_variant_name(&terminal);
             let init_str = match kind {
@@ -953,6 +1096,7 @@ fn write_prefix_match_arms(
                 CollectionKind::HashSet => "std::collections::HashSet::new()",
                 CollectionKind::Vec => "Vec::new()",
             };
+            let needs_elem_parse = elem_cat != *cat;
 
             write!(
                 buf,
@@ -963,10 +1107,22 @@ fn write_prefix_match_arms(
                         saved_pos: *pos, \
                         saved_bp: cur_bp, \
                     }}); \
+                    {} \
                     cur_bp = 0; \
                     continue 'drive; \
                 }},",
-                variant, frame_info.enum_name, rd_rule.label, init_str,
+                variant,
+                frame_info.enum_name,
+                rd_rule.label,
+                init_str,
+                if needs_elem_parse {
+                    format!(
+                        "stack.push({}::ElemParse_{}_{} {{}}); ",
+                        frame_info.enum_name, rd_rule.label, elem_cat
+                    )
+                } else {
+                    String::new()
+                },
             )
             .unwrap();
         }
@@ -1012,11 +1168,143 @@ fn write_prefix_match_arms(
         .unwrap();
     }
 
+    // ── Variable fallback (with optional lookahead) — BEFORE cast arms so Ident is tried first.
+    // Otherwise Token::Ident from cast (e.g. Int variable) would match and consume "a" in "a!(2)".
+    if config.has_var {
+        let var_label = format!(
+            "{}Var",
+            cat.chars()
+                .next()
+                .unwrap_or('V')
+                .to_uppercase()
+                .collect::<String>()
+        );
+
+        // When WFST is enabled, reorder lookahead handlers by weight (lowest first = most likely).
+        // This ensures the most probable ident-dispatch path is tried first, reducing backtracking.
+        #[cfg(feature = "wfst")]
+        let lookahead_handlers = {
+            let mut sorted = lookahead_handlers;
+            if let Some(ref wfst) = config.prediction_wfst {
+                sorted.sort_by(|a, b| {
+                    let weight_a = a
+                        .ident_lookahead
+                        .as_ref()
+                        .and_then(|tok| {
+                            let variant = terminal_to_variant_name(tok);
+                            wfst.predict(&variant).first().map(|wa| wa.weight)
+                        })
+                        .unwrap_or(crate::automata::semiring::TropicalWeight::new(f64::INFINITY));
+                    let weight_b = b
+                        .ident_lookahead
+                        .as_ref()
+                        .and_then(|tok| {
+                            let variant = terminal_to_variant_name(tok);
+                            wfst.predict(&variant).first().map(|wa| wa.weight)
+                        })
+                        .unwrap_or(crate::automata::semiring::TropicalWeight::new(f64::INFINITY));
+                    weight_a.cmp(&weight_b)
+                });
+            }
+            sorted
+        };
+
+        // Use prefix_handlers with ident_lookahead, and merge rd_rules fallback so we never miss
+        // ident-start rules (e.g. POutput n "!" "(" q ")" so "{ a!(0) | ... }" parses correctly).
+        let mut ident_lookahead_cases: Vec<(String, String)> = lookahead_handlers
+            .iter()
+            .map(|h| {
+                (
+                    h.ident_lookahead.as_ref().expect("checked above").clone(),
+                    h.parse_fn_name.clone(),
+                )
+            })
+            .collect();
+
+        let rd_fallback: Vec<(String, String)> = rd_rules
+            .iter()
+            .filter(|r| r.category == *cat)
+            .filter(|r| !is_simple_collection(r) && r.prefix_bp.is_none())
+            .filter_map(|r| {
+                let first_nt = matches!(
+                    r.items.first(),
+                    Some(RDSyntaxItem::NonTerminal { .. })
+                        | Some(RDSyntaxItem::IdentCapture { .. })
+                );
+                if !first_nt {
+                    return None;
+                }
+                let first_term = r.items.iter().find_map(|i| {
+                    if let RDSyntaxItem::Terminal(t) = i {
+                        Some(t.clone())
+                    } else {
+                        None
+                    }
+                })?;
+                Some((first_term, format!("parse_{}", r.label.to_lowercase())))
+            })
+            .collect();
+
+        let mut seen: std::collections::HashSet<String> = ident_lookahead_cases
+            .iter()
+            .map(|(t, _)| t.clone())
+            .collect();
+        for (term, fn_name) in rd_fallback {
+            if seen.insert(term.clone()) {
+                ident_lookahead_cases.push((term, fn_name));
+            }
+        }
+
+        if !ident_lookahead_cases.is_empty() {
+            let mut arm =
+                String::from("Token::Ident(name) => { match peek_ahead(tokens, *pos, 1) {");
+            for (terminal, parse_fn_name) in &ident_lookahead_cases {
+                let variant = terminal_to_variant_name(terminal);
+                write!(arm, "Some(Token::{}) => {{ match {}(tokens, pos) {{ Ok(v) => break 'prefix v, Err(e) => {{ match stack.pop() {{ None => return Err(e),",
+                    variant, parse_fn_name).unwrap();
+                // Collection catch on error
+                write_collection_error_catch_inline(&mut arm, config, rd_rules, frame_info);
+                arm.push_str("Some(_) => return Err(e), } } } },");
+            }
+            // Default: variable fallback
+            write!(
+                arm,
+                "_ => {{ \
+                    let var_name = (*name).to_string(); \
+                    *pos += 1; \
+                    break 'prefix {cat}::{var_label}(\
+                        mettail_runtime::OrdVar(mettail_runtime::Var::Free(\
+                            mettail_runtime::get_or_create_var(var_name)\
+                        ))\
+                    ); \
+                }}",
+            )
+            .unwrap();
+            arm.push_str("} },");
+            buf.push_str(&arm);
+        } else {
+            write!(
+                buf,
+                "Token::Ident(name) => {{ \
+                    let var_name = (*name).to_string(); \
+                    *pos += 1; \
+                    break 'prefix {cat}::{var_label}(\
+                        mettail_runtime::OrdVar(mettail_runtime::Var::Free(\
+                            mettail_runtime::get_or_create_var(var_name)\
+                        ))\
+                    ); \
+                }},",
+            )
+            .unwrap();
+        }
+    }
+
     // ── Cast rule prefix arms ──
+    // Use source_first (not unique_to_source): target's own_first includes these tokens
+    // precisely because of the cast rule, so difference would be empty and we'd miss the arm.
     for cast_rule in &config.cast_rules {
         if let Some(source_first) = config.all_first_sets.get(&cast_rule.source_category) {
-            let unique_tokens = source_first.difference(&config.own_first_set);
-            for token in &unique_tokens.tokens {
+            for token in &source_first.tokens {
                 let mut arm = String::new();
                 crate::pratt::write_token_pattern_pub(&mut arm, token);
                 write!(
@@ -1037,91 +1325,6 @@ fn write_prefix_match_arms(
     if config.has_binders && config.is_primary {
         write_lambda_prefix_arm(buf, config, frame_info);
         write_dollar_prefix_arms(buf, config, frame_info);
-    }
-
-    // ── Variable fallback (with optional lookahead) ──
-    let var_label = format!(
-        "{}Var",
-        cat.chars()
-            .next()
-            .unwrap_or('V')
-            .to_uppercase()
-            .collect::<String>()
-    );
-
-    // When WFST is enabled, reorder lookahead handlers by weight (lowest first = most likely).
-    // This ensures the most probable ident-dispatch path is tried first, reducing backtracking.
-    #[cfg(feature = "wfst")]
-    let lookahead_handlers = {
-        let mut sorted = lookahead_handlers;
-        if let Some(ref wfst) = config.prediction_wfst {
-            sorted.sort_by(|a, b| {
-                let weight_a = a
-                    .ident_lookahead
-                    .as_ref()
-                    .and_then(|tok| {
-                        let variant = terminal_to_variant_name(tok);
-                        wfst.predict(&variant).first().map(|wa| wa.weight)
-                    })
-                    .unwrap_or(crate::automata::semiring::TropicalWeight::new(f64::INFINITY));
-                let weight_b = b
-                    .ident_lookahead
-                    .as_ref()
-                    .and_then(|tok| {
-                        let variant = terminal_to_variant_name(tok);
-                        wfst.predict(&variant).first().map(|wa| wa.weight)
-                    })
-                    .unwrap_or(crate::automata::semiring::TropicalWeight::new(f64::INFINITY));
-                weight_a.cmp(&weight_b)
-            });
-        }
-        sorted
-    };
-
-    if !lookahead_handlers.is_empty() {
-        let mut arm = String::from("Token::Ident(name) => { match peek_ahead(tokens, *pos, 1) {");
-        for handler in &lookahead_handlers {
-            let terminal = handler.ident_lookahead.as_ref().expect("checked above");
-            let variant = terminal_to_variant_name(terminal);
-            // For ident-dispatched RD handlers, we still call the standalone function
-            // (these have bounded depth — the nonterminal-first rule dispatch doesn't
-            // deeply nest the same category)
-            write!(arm, "Some(Token::{}) => {{ match {}(tokens, pos) {{ Ok(v) => break 'prefix v, Err(e) => {{ match stack.pop() {{ None => return Err(e),",
-                variant, handler.parse_fn_name).unwrap();
-            // Collection catch on error
-            write_collection_error_catch_inline(&mut arm, config, rd_rules, frame_info);
-            arm.push_str("Some(_) => return Err(e), } } } },");
-        }
-        // Default: variable fallback
-        write!(
-            arm,
-            "_ => {{ \
-                let var_name = (*name).to_string(); \
-                *pos += 1; \
-                break 'prefix {cat}::{var_label}(\
-                    mettail_runtime::OrdVar(mettail_runtime::Var::Free(\
-                        mettail_runtime::get_or_create_var(var_name)\
-                    ))\
-                ); \
-            }}",
-        )
-        .unwrap();
-        arm.push_str("} },");
-        buf.push_str(&arm);
-    } else {
-        write!(
-            buf,
-            "Token::Ident(name) => {{ \
-                let var_name = (*name).to_string(); \
-                *pos += 1; \
-                break 'prefix {cat}::{var_label}(\
-                    mettail_runtime::OrdVar(mettail_runtime::Var::Free(\
-                        mettail_runtime::get_or_create_var(var_name)\
-                    ))\
-                ); \
-            }},",
-        )
-        .unwrap();
     }
 
     // ── Error fallback ──
@@ -2010,6 +2213,31 @@ fn write_unwind_handlers(
         }
     }
 
+    // ── ElemParse variants (parse element when element_category != cat) ──
+    for rd_rule in rd_rules {
+        if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
+            continue;
+        }
+        let element_category = rd_rule.items.iter().find_map(|item| match item {
+            RDSyntaxItem::Collection { element_category, .. } => Some(element_category.clone()),
+            _ => None,
+        });
+        let elem_cat = element_category.as_deref().unwrap_or("Proc");
+        if elem_cat == cat.as_str() {
+            continue;
+        }
+        write!(
+            buf,
+            "Some({enum_name}::ElemParse_{label}_{elem_cat} {{}}) => {{ \
+                pending_elem = parse_{elem_cat}(tokens, pos, 0).ok(); \
+            }},",
+            enum_name = frame_info.enum_name,
+            label = rd_rule.label,
+            elem_cat = elem_cat,
+        )
+        .unwrap();
+    }
+
     // ── CollectionElem variants ──
     for rd_rule in rd_rules {
         if rd_rule.category != *cat || !is_simple_collection(rd_rule) {
@@ -2035,6 +2263,14 @@ fn write_unwind_handlers(
             }
         });
 
+        // Element category: when != cat, we use pending_elem (from ElemParse); else use lhs.
+        let element_category = rd_rule.items.iter().find_map(|item| match item {
+            RDSyntaxItem::Collection { element_category, .. } => Some(element_category.clone()),
+            _ => None,
+        });
+        let elem_cat = element_category.as_deref().unwrap_or("Proc");
+        let use_pending_elem = elem_cat != cat.as_str();
+
         write!(
             buf,
             "Some({enum_name}::CollectionElem_{label} {{ mut elements, saved_pos, saved_bp }}) => {{",
@@ -2042,10 +2278,32 @@ fn write_unwind_handlers(
             label = rd_rule.label,
         ).unwrap();
 
-        write!(buf, "elements.{}(lhs);", insert_method).unwrap();
+        if use_pending_elem {
+            write!(
+                buf,
+                "if let Some(elem) = pending_elem.take() {{ elements.{}(elem); }}",
+                insert_method
+            )
+            .unwrap();
+        } else {
+            // Same category: lhs may be List/Bag — wrap as ProcList/ProcBag when in Proc collection
+            let wrap_for_proc = elem_cat == "Proc" && (cat == "List" || cat == "Bag");
+            if wrap_for_proc {
+                let wrap_expr = if collection_type == CollectionKind::Vec {
+                    format!("{}::ProcList(Box::new(lhs))", elem_cat)
+                } else {
+                    format!("{}::ProcBag(Box::new(lhs))", elem_cat)
+                };
+                write!(buf, "elements.{}({});", insert_method, wrap_expr).unwrap();
+            } else {
+                write!(buf, "elements.{}(lhs);", insert_method).unwrap();
+            }
+        }
 
         if let Some(ref sep) = sep_info {
             let sep_variant = terminal_to_variant_name(sep);
+            let elem_cat = element_category.as_deref().unwrap_or("Proc");
+            let needs_elem_parse = elem_cat != cat.as_str();
             write!(
                 buf,
                 "if peek_token(tokens, *pos).map_or(false, |t| matches!(t, Token::{})) {{ \
@@ -2053,12 +2311,21 @@ fn write_unwind_handlers(
                     stack.push({enum_name}::CollectionElem_{label} {{ \
                         elements, saved_pos: *pos, saved_bp, \
                     }}); \
+                    {elem_parse_push} \
                     cur_bp = 0; \
                     continue 'drive; \
                 }}",
                 sep_variant,
                 enum_name = frame_info.enum_name,
                 label = rd_rule.label,
+                elem_parse_push = if needs_elem_parse {
+                    format!(
+                        "stack.push({}::ElemParse_{}_{} {{}}); ",
+                        frame_info.enum_name, rd_rule.label, elem_cat
+                    )
+                } else {
+                    String::new()
+                },
             )
             .unwrap();
         }
@@ -2074,6 +2341,7 @@ fn write_unwind_handlers(
             .unwrap();
         }
 
+        // List = Vec, Bag = HashBag in the enum; pass elements directly (no wrapper)
         write!(buf, "lhs = {}::{}(elements);", cat, rd_rule.label).unwrap();
         buf.push_str("cur_bp = saved_bp;");
         buf.push_str("},");
@@ -2340,7 +2608,7 @@ fn write_collection_eof_catch(
         }
 
         // Use break 'prefix to exit the prefix block with the finalized collection.
-        // The unwind phase will then process any remaining frames from the stack.
+        // List = Vec, Bag = HashBag; pass elements directly
         write!(
             buf,
             "cur_bp = saved_bp; \
@@ -2396,7 +2664,6 @@ fn write_collection_error_catch_inline(
         }
 
         // Use break 'prefix to exit the prefix block with the finalized collection.
-        // (Same approach as write_collection_eof_catch — we're inside the 'prefix block.)
         write!(
             buf,
             "cur_bp = saved_bp; \
@@ -2552,6 +2819,7 @@ fn write_rd_constructor_from_segments(
 }
 
 /// Write a segment capture as a constructor argument.
+/// For List/Bag categories, collection captures use Vec/HashBag directly.
 fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture) {
     match capture {
         SegmentCapture::NonTerminal { name, .. } => {
@@ -2572,6 +2840,7 @@ fn write_segment_capture_as_arg(buf: &mut String, capture: &SegmentCapture) {
             buf.push_str(name);
         },
         SegmentCapture::Collection { name, .. } => {
+            // List = Vec, Bag = HashBag; pass collection as-is
             buf.push_str(name);
         },
     }

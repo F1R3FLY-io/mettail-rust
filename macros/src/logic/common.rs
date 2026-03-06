@@ -41,11 +41,19 @@ pub fn relation_names(category: &Ident) -> RelationNames {
     }
 }
 
-/// Find the literal label for a category (e.g., `NumLit` for `Int`, `BoolLit` for `Bool`).
+/// Find the literal label for a category (e.g., `NumLit` for `Int`, `ListLit` for `List`).
 ///
 /// Returns `None` if the category has no native type or no literal rule.
+/// For collection categories (List/Bag), returns ListLit/BagLit to match the enum variant.
 pub fn literal_label_for(language: &LanguageDef, category: &Ident) -> Option<Ident> {
     let lang_type = language.types.iter().find(|t| t.name == *category)?;
+    if let Some(ref ck) = lang_type.collection_kind {
+        let label = match ck {
+            crate::ast::language::CollectionCategory::List(_) => quote::format_ident!("ListLit"),
+            crate::ast::language::CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
+        };
+        return Some(label);
+    }
     let native_type = lang_type.native_type.as_ref()?;
     let label = language
         .terms
@@ -121,6 +129,16 @@ pub fn native_type_for<'a>(language: &'a LanguageDef, category: &Ident) -> Optio
         .iter()
         .find(|t| t.name == *category)
         .and_then(|t| t.native_type.as_ref())
+}
+
+/// True if the category is a collection (List or Bag). Step/fold rust_code receives the enum, not the payload.
+pub fn is_collection_category(language: &LanguageDef, category: &Ident) -> bool {
+    language
+        .types
+        .iter()
+        .find(|t| t.name == *category)
+        .and_then(|t| t.collection_kind.as_ref())
+        .is_some()
 }
 
 /// Collect non-terminal fields from a grammar rule's items.

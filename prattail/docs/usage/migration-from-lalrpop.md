@@ -161,6 +161,7 @@ fn convert_to_language_spec(lang: &LanguageDef) -> LanguageSpec {
             name: t.name.to_string(),
             native_type: t.native_type_name(),
             is_primary: i == 0,
+            has_var: true,
         }).collect(),
         rules: /* ... map grammar rules to RuleSpec ... */,
     }
