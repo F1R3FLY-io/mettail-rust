@@ -1188,9 +1188,6 @@ fn nested_seed_pushes_for_inner_category(
         let param_cat_lower = format_ident!("{}", param_cat.to_string().to_lowercase());
         pushes.push(quote! {
             if let #inner_cat::#rule_label(sub) = inner.as_ref() {
-                if std::env::var("METTAIL_DEBUG").is_ok() {
-                    eprintln!("[mettail] nested seed (injection): {} -> {}", stringify!(#inner_cat), stringify!(#param_cat));
-                }
                 prog.#param_cat_lower.push((sub.as_ref().clone(),));
             }
         });
@@ -1229,9 +1226,6 @@ fn nested_seed_pushes_for_category_value(
         let param_cat_lower = format_ident!("{}", param_cat.to_string().to_lowercase());
         pushes.push(quote! {
             if let #cat::#rule_label(sub) = &initial {
-                if std::env::var("METTAIL_DEBUG").is_ok() {
-                    eprintln!("[mettail] nested seed: {} -> {}", stringify!(#cat), stringify!(#param_cat));
-                }
                 prog.#param_cat_lower.push((sub.as_ref().clone(),));
             }
         });
@@ -1339,12 +1333,8 @@ fn generate_language_struct_multi(
             };
             // When seeding e.g. Int(LenMap(m)), also seed map(m) so fold_map can run (same as core arms).
             let nest_pushes = nested_seed_pushes_for_category_value(language, cat);
-            let cat_lit = LitStr::new(&cat.to_string(), Span::call_site());
             quote! {
                 #inner_enum_name::#variant(inner) => {
-                    if std::env::var("METTAIL_DEBUG").is_ok() {
-                        eprintln!("[mettail] seed arm (full): {}", #cat_lit);
-                    }
                     let initial = inner.clone();
                     prog.#cat_lower.push((initial.clone(),));
                     #seed_step_term
@@ -1551,12 +1541,8 @@ fn generate_language_struct_multi(
                     })
                     .unwrap_or_default();
                 let nest_pushes = nested_seed_pushes_for_category_value(language, cat);
-                let cat_lit = LitStr::new(&cat.to_string(), Span::call_site());
                 quote! {
                     #inner_enum_name::#variant(inner) => {
-                        if std::env::var("METTAIL_DEBUG").is_ok() {
-                            eprintln!("[mettail] seed arm (core): {}", #cat_lit);
-                        }
                         let initial = inner.clone();
                         prog.#cat_lower.push((initial.clone(),));
                         #seed_step_term

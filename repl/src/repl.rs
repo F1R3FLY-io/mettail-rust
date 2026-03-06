@@ -1009,13 +1009,6 @@ impl Repl {
             }
         }
 
-        if std::env::var("METTAIL_DEBUG").is_ok() {
-            eprintln!(
-                "[mettail] exec term: type={:?} display={}",
-                language.infer_term_type(term.as_ref()),
-                term
-            );
-        }
         print!("Running Ascent... ");
         let start_time = Instant::now();
         let results = language
@@ -1030,14 +1023,6 @@ impl Repl {
         println!("  - {} terms", results.all_terms.len());
         println!("  - {} rewrites", results.rewrites.len());
         println!("  - {} normal forms", results.normal_forms().len());
-        if std::env::var("METTAIL_DEBUG").is_ok() {
-            for (i, t) in results.all_terms.iter().enumerate() {
-                eprintln!("[mettail]   term[{}] id={} nf={} display={}", i, t.term_id, t.is_normal_form, t.display);
-            }
-            for (i, r) in results.rewrites.iter().enumerate() {
-                eprintln!("[mettail]   rewrite[{}] {} -> {}", i, r.from_id, r.to_id);
-            }
-        }
         println!();
 
         let initial_id = term.term_id();
@@ -1060,14 +1045,8 @@ impl Repl {
                 println!("  No rewrites from this term (already a normal form).");
             }
         } else {
-            // Exec: show a normal form reachable from the initial term.
-            // Prefer initial_id; if not in graph (e.g. HashMap hash differs), try display match.
-            let nf = results.normal_form_reachable_from(initial_id).or_else(|| {
-                results
-                    .term_id_for_display(&format!("{}", term))
-                    .and_then(|id| results.normal_form_reachable_from(id))
-            });
-            if let Some(nf) = nf {
+            // Exec: show a normal form reachable from the initial term
+            if let Some(nf) = results.normal_form_reachable_from(initial_id) {
                 let result_term = language
                     .parse_term(&nf.display)
                     .map_err(|e| anyhow::anyhow!("{}", e))?;

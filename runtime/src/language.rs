@@ -296,15 +296,6 @@ impl AscentResults {
             .collect()
     }
 
-    /// Return a term id whose display string equals `display`, if any.
-    /// Used as a fallback when the initial term's hash (e.g. from HashMap) does not match any node.
-    pub fn term_id_for_display(&self, display: &str) -> Option<u64> {
-        self.all_terms
-            .iter()
-            .find(|t| t.display == display)
-            .map(|t| t.term_id)
-    }
-
     /// Find a normal form reachable from the given term by following rewrites.
     /// Returns the first normal form reached (BFS). If the start term is already
     /// a normal form, returns it. Returns `None` if the term is not in the graph.
