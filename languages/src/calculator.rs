@@ -16,7 +16,7 @@ language! {
         ![str] as Str
         ![Vec<Proc>] as List
         ![mettail_runtime::HashBag<Proc>] as Bag
-        ![mettail_runtime::HashMapLit<Proc, Proc>] as Map
+        ![HashMap<Proc, Proc>] as Map
     },
     terms {
         // Injection into Proc (unified variant) so List/Bag elements are Proc

@@ -485,22 +485,19 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
             let name = content.parse::<Ident>()?;
             let name_str = name.to_string();
 
-            // Special-case implicit Map declaration: `![HashMap] as Map`.
-            //
-            // A bare `HashMap` type does not compile in Rust (missing generics), so we
-            // expand it to the runtime wrapper with implicit parameters.
+            // Special-case Map: `![HashMap] as Map` or `![HashMap<Proc, Proc>] as Map`.
+            // Both expand to the runtime wrapper (HashMapLit) so the engine's deterministic Hash/Ord apply.
             let native_type = if name_str == "Map" {
-                let is_bare_hashmap = match &native_type_raw {
-                    Type::Path(tp) => tp
-                        .path
-                        .segments
-                        .last()
-                        .is_some_and(|seg| seg.ident == "HashMap" && matches!(seg.arguments, syn::PathArguments::None)),
+                let is_hashmap = match &native_type_raw {
+                    Type::Path(tp) => tp.path.segments.last().is_some_and(|seg| {
+                        seg.ident == "HashMap"
+                            && matches!(seg.arguments, syn::PathArguments::None | syn::PathArguments::AngleBracketed(_))
+                    }),
                     _ => false,
                 };
-                if is_bare_hashmap {
+                if is_hashmap {
                     syn::parse_str::<Type>("mettail_runtime::HashMapLit<Proc, Proc>")
-                        .expect("parse implicit Map native type")
+                        .expect("parse Map native type")
                 } else {
                     native_type_raw
                 }
