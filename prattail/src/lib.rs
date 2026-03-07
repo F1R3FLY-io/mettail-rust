@@ -53,12 +53,14 @@ pub mod compose;
 pub mod composition_optimize;
 pub mod composition_verify;
 pub mod cost_benefit;
+pub mod decision_tree;
 pub mod lattice;
 pub mod lint;
 pub mod prefix_trie;
 pub mod recovery;
 pub mod runtime_types;
 pub mod transducer;
+pub mod wpds;
 
 // ── Forward-backward analysis (always-on — generic over any semiring) ──────
 // The core algorithm is semiring-generic and used by A4 (BooleanWeight).
@@ -554,6 +556,12 @@ pub struct PipelineAnalysis {
     /// to the concrete `(category_name, constructor_label)` pairs across group members.
     /// Used by Sprint 8 for `macro_rules!` template parameter generation.
     pub isomorphic_action_maps: Vec<HashMap<u32, Vec<(String, String)>>>,
+
+    /// Per-category decision trees built during parser code generation.
+    ///
+    /// Available for downstream composition analysis (X06/X07), incremental
+    /// codegen (Layer 10 `.prattail-cache`), and diagnostic tools.
+    pub decision_trees: HashMap<String, decision_tree::CategoryDecisionTree>,
 }
 
 /// Generate a complete parser for a language specification.

@@ -114,7 +114,7 @@ int(sub.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_INT_INT.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-bool(c1.clone()) <--
+bool(c1.clone().normalize()) <--
     bool(c0),
     rw_bool(c0, c1);
 
@@ -148,7 +148,7 @@ rw_bool(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_BOOL_CONG_ARG_BOOL.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_bool(arg, new_arg);
 
-int(c1.clone()) <--
+int(c1.clone().normalize()) <--
     int(c0),
     rw_int(c0, c1);
 

@@ -138,6 +138,7 @@ does not make semantic sense but a two-step conversion does.
 
 ## Related Lints
 
+- [W01 / A4](../wfst/W01-dead-rule.md) -- A4 (`InterCategoryDeadPath`) also detects categories isolated from the root, but uses a richer **undirected** graph that includes syntax-level NonTerminal, Binder, and Collection references in addition to cast/cross-cat edges. G08 uses a **directed** cast-only graph. G08 can fire on categories that A4 does NOT flag (when the category is syntax-connected but not cast-connected), and vice versa. The two analyses are **complementary, not redundant**.
 - [G02](./G02-unused-category.md) -- detects categories that are declared but never referenced by any rule; G08 is more specific, detecting categories that are referenced by their own rules but lack a path to primary
 - [G05](./G05-empty-category.md) -- detects categories with zero rules, which trivially have no cast path (but G05 fires first)
 - [C01](../cross-category/C01-cast-cycle.md) -- detects cycles in the cast graph; a cycle means infinite cast chains, while G08 detects disconnected subgraphs

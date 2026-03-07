@@ -50,7 +50,7 @@ num(sub.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_NUM_NUM.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-num(c1.clone()) <--
+num(c1.clone().normalize()) <--
     num(c0),
     rw_num(c0, c1);
 

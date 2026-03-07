@@ -353,7 +353,7 @@ fn test_warning_display_format() {
 // ══════════════════════════════════════════════════════════════════════════════
 
 mod dead_rule_tests {
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     use crate::automata::semiring::TropicalWeight;
     use crate::pipeline::{CategoryInfo, DeadRuleWarning, detect_dead_rules};
@@ -431,7 +431,8 @@ mod dead_rule_tests {
         let first_sets = HashMap::new();
         let wfsts = HashMap::new();
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         assert_eq!(warnings.len(), 1);
         assert!(matches!(
@@ -457,7 +458,8 @@ mod dead_rule_tests {
         let first_sets = HashMap::new();
         let wfsts = HashMap::new();
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         assert!(
             warnings.is_empty(),
@@ -485,7 +487,8 @@ mod dead_rule_tests {
         let first_sets: HashMap<String, FirstSet> = HashMap::new();
         let wfsts = HashMap::new();
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         assert_eq!(warnings.len(), 1);
         assert!(matches!(
@@ -511,7 +514,8 @@ mod dead_rule_tests {
         let first_sets: HashMap<String, FirstSet> = HashMap::new();
         let wfsts = HashMap::new();
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         assert_eq!(warnings.len(), 1);
         assert!(matches!(
@@ -552,7 +556,8 @@ mod dead_rule_tests {
         first_sets.insert("Int".to_string(), first_set_with(&["Integer", "Plus"]));
         let wfsts = HashMap::new();
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         // NumLit is literal with native_type → not dead
         // Add is infix in reachable category → not dead
@@ -595,7 +600,8 @@ mod dead_rule_tests {
         let mut wfsts = HashMap::new();
         wfsts.insert("Int".to_string(), wfst);
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         assert!(
             warnings.is_empty(),
@@ -604,13 +610,13 @@ mod dead_rule_tests {
         );
     }
 
-    // ── Tier 2 edge case: cross-category infix is NOT skipped as same-cat infix ──
+    // ── Tier 2 edge case: cross-category infix checks SOURCE category ──
 
     #[test]
-    fn test_cross_category_infix_goes_through_wfst_check() {
-        // Cross-category rules have is_infix=true AND is_cross_category=true.
-        // They should NOT be handled by Tier 2 (same-cat infix), but by Tier 3
-        // (WFST check). If the WFST doesn't route to them, they're dead.
+    fn test_cross_category_infix_unreachable_source() {
+        // Cross-category infix rules go through Tier 2 with source-category
+        // reachability check. When the source category (Int) is unreachable,
+        // the rule is flagged as UnreachableCategory.
         let rule_infos = vec![RuleInfo {
             label: "Eq".to_string(),
             category: "Bool".to_string(),
@@ -624,23 +630,26 @@ mod dead_rule_tests {
         let categories = vec![cat_info("Bool", Some("bool"))];
         let mut first_sets = HashMap::new();
         first_sets.insert("Bool".to_string(), first_set_with(&["Integer"]));
-        // Empty WFST — no actions for Bool → Eq is dead
+        // Int not in categories/first_sets → unreachable source
         let wfst = build_wfst("Bool", &[]);
         let mut wfsts = HashMap::new();
         wfsts.insert("Bool".to_string(), wfst);
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         assert_eq!(warnings.len(), 1);
         assert!(matches!(
             &warnings[0],
-            DeadRuleWarning::WfstUnreachable { rule_label, category }
+            DeadRuleWarning::UnreachableCategory { rule_label, category }
             if rule_label == "Eq" && category == "Bool"
         ));
     }
 
     #[test]
     fn test_reachable_cross_category_not_flagged() {
+        // Cross-category infix with reachable source category → not flagged.
+        // Tier 2 checks source (Int) reachability, not WFST dispatch.
         let rule_infos = vec![RuleInfo {
             label: "Eq".to_string(),
             category: "Bool".to_string(),
@@ -651,28 +660,59 @@ mod dead_rule_tests {
             is_cross_category: true,
             is_cast: false,
         }];
-        let categories = vec![cat_info("Bool", Some("bool"))];
+        let categories = vec![
+            cat_info("Bool", Some("bool")),
+            cat_info("Int", Some("i32")),
+        ];
         let mut first_sets = HashMap::new();
         first_sets.insert("Bool".to_string(), first_set_with(&["Integer"]));
-        // WFST routes Integer → Eq
-        let wfst = build_wfst_with_cast("Bool", &[(
-            "Integer",
-            DispatchAction::CrossCategory {
-                source_category: "Int".to_string(),
-                operator_token: "EqEq".to_string(),
-                rule_label: "Eq".to_string(),
-                needs_backtrack: false,
-            },
-            0.5,
-        )]);
+        first_sets.insert("Int".to_string(), first_set_with(&["Integer"]));
+        // WFST irrelevant for cross-cat infix — Tier 2 handles it
+        let wfst = build_wfst("Bool", &[]);
         let mut wfsts = HashMap::new();
         wfsts.insert("Bool".to_string(), wfst);
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         assert!(
             warnings.is_empty(),
-            "reachable cross-category rule should not be flagged: {:?}",
+            "cross-cat infix with reachable source should not be flagged: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn test_cross_category_infix_reachable_source_not_flagged() {
+        // Explicit test: cross-cat infix where source category is reachable
+        // but the WFST has no entry — should still NOT be flagged (Tier 2
+        // handles it before Tier 3).
+        let rule_infos = vec![RuleInfo {
+            label: "EqInt".to_string(),
+            category: "Bool".to_string(),
+            first_items: vec![FirstItem::NonTerminal("Int".to_string())],
+            is_infix: true,
+            is_var: false,
+            is_literal: false,
+            is_cross_category: true,
+            is_cast: false,
+        }];
+        let categories = vec![
+            cat_info("Bool", Some("bool")),
+            cat_info("Int", Some("i32")),
+        ];
+        let mut first_sets = HashMap::new();
+        first_sets.insert("Int".to_string(), first_set_with(&["Integer"]));
+        first_sets.insert("Bool".to_string(), first_set_with(&["Integer"]));
+        let wfst = build_wfst("Bool", &[]);
+        let mut wfsts = HashMap::new();
+        wfsts.insert("Bool".to_string(), wfst);
+
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
+        assert!(
+            warnings.is_empty(),
+            "cross-cat infix with reachable source should not be flagged: {:?}",
             warnings
         );
     }
@@ -699,7 +739,8 @@ mod dead_rule_tests {
         let mut wfsts = HashMap::new();
         wfsts.insert("Float".to_string(), wfst);
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         assert_eq!(warnings.len(), 1);
         assert!(matches!(
@@ -736,7 +777,8 @@ mod dead_rule_tests {
         let mut wfsts = HashMap::new();
         wfsts.insert("Float".to_string(), wfst);
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         assert!(
             warnings.is_empty(),
@@ -791,7 +833,8 @@ mod dead_rule_tests {
         let mut wfsts = HashMap::new();
         wfsts.insert("Float".to_string(), wfst);
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         // Float is reachable via Int → IntToFloat cast, so FAdd should NOT be dead
         assert!(
@@ -894,7 +937,8 @@ mod dead_rule_tests {
         let mut wfsts = HashMap::new();
         wfsts.insert("Int".to_string(), wfst);
 
-        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                          &HashSet::new(), &[]);
 
         // Neg: reachable prefix in Int → not dead
         // GhostLit: literal without native_type → dead (Tier 1)
@@ -1031,7 +1075,8 @@ mod dead_rule_tests {
         };
 
         // Without semantic groups: PIn is flagged as WfstUnreachable.
-        let warnings_no_sem = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[]);
+        let warnings_no_sem = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &[],
+                                                 &HashSet::new(), &[]);
         assert_eq!(warnings_no_sem.len(), 1, "PIn should be flagged without semantic groups");
         assert!(matches!(
             &warnings_no_sem[0],
@@ -1042,11 +1087,223 @@ mod dead_rule_tests {
         let groups = vec![
             ["PIn", "PNew"].iter().map(|s| s.to_string()).collect::<HashSet<_>>(),
         ];
-        let warnings_with_sem = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &groups);
+        let warnings_with_sem = detect_dead_rules(&rule_infos, &categories, &first_sets, &wfsts, &groups,
+                                                   &HashSet::new(), &[]);
         assert!(
             warnings_with_sem.is_empty(),
             "PIn should be resurrected by semantic group: {:?}",
             warnings_with_sem,
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // NFA spillover: sibling rules in the same dispatch group
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_nfa_spillover_siblings_not_flagged() {
+        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+
+        // Two RD rules in Float that share dispatch token "float":
+        //   BoolToFloat: "float" "(" Bool ")"
+        //   IntToFloat:  "float" "(" Int ")"
+        // The WFST only dispatches to IntToFloat (best weight), but the
+        // NFA try-all tries both. Neither should be flagged.
+        let rd_rules = vec![
+            RDRuleInfo {
+                label: "IntToFloat".to_string(),
+                category: "Float".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Int".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
+            },
+            RDRuleInfo {
+                label: "BoolToFloat".to_string(),
+                category: "Float".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "Bool".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
+            },
+        ];
+
+        // RuleInfo entries for detect_dead_rules
+        let rule_infos = vec![
+            RuleInfo {
+                label: "IntToFloat".to_string(),
+                category: "Float".to_string(),
+                first_items: vec![FirstItem::Terminal("float".to_string())],
+                is_infix: false,
+                is_var: false,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: true,
+            },
+            RuleInfo {
+                label: "BoolToFloat".to_string(),
+                category: "Float".to_string(),
+                first_items: vec![FirstItem::Terminal("float".to_string())],
+                is_infix: false,
+                is_var: false,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: true,
+            },
+        ];
+
+        let categories = vec![cat_info("Float", Some("f64"))];
+        let mut first_sets = HashMap::new();
+        first_sets.insert("Float".to_string(), first_set_with(&["float"]));
+
+        // WFST only dispatches IntToFloat (best weight)
+        let wfst = build_wfst("Float", &[("float", "IntToFloat", 0.0)]);
+        let mut wfsts = HashMap::new();
+        wfsts.insert("Float".to_string(), wfst);
+
+        let nfa_cats: HashSet<String> = ["Float"].iter().map(|s| s.to_string()).collect();
+
+        let warnings = detect_dead_rules(
+            &rule_infos,
+            &categories,
+            &first_sets,
+            &wfsts,
+            &[],
+            &nfa_cats,
+            &rd_rules,
+        );
+
+        assert!(
+            warnings.is_empty(),
+            "NFA spillover rules should not be flagged as dead: {:?}",
+            warnings
+        );
+    }
+
+    #[test]
+    fn test_nfa_spillover_all_dead_still_flagged() {
+        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+
+        // Two RD rules sharing dispatch token "convert", but NEITHER is
+        // WFST-reachable → both should still be flagged.
+        let rd_rules = vec![
+            RDRuleInfo {
+                label: "ConvA".to_string(),
+                category: "Out".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("convert".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "InA".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
+            },
+            RDRuleInfo {
+                label: "ConvB".to_string(),
+                category: "Out".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("convert".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                    RDSyntaxItem::NonTerminal {
+                        category: "InB".to_string(),
+                        param_name: "a".to_string(),
+                    },
+                    RDSyntaxItem::Terminal(")".to_string()),
+                ],
+                has_binder: false,
+                has_multi_binder: false,
+                is_collection: false,
+                collection_type: None,
+                separator: None,
+                prefix_bp: None,
+                eval_mode: None,
+            },
+        ];
+
+        let rule_infos = vec![
+            RuleInfo {
+                label: "ConvA".to_string(),
+                category: "Out".to_string(),
+                first_items: vec![FirstItem::Terminal("convert".to_string())],
+                is_infix: false,
+                is_var: false,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: true,
+            },
+            RuleInfo {
+                label: "ConvB".to_string(),
+                category: "Out".to_string(),
+                first_items: vec![FirstItem::Terminal("convert".to_string())],
+                is_infix: false,
+                is_var: false,
+                is_literal: false,
+                is_cross_category: false,
+                is_cast: true,
+            },
+        ];
+
+        let categories = vec![cat_info("Out", Some("out_t"))];
+        let mut first_sets = HashMap::new();
+        first_sets.insert("Out".to_string(), first_set_with(&["convert"]));
+
+        // WFST dispatches to "Other" — neither ConvA nor ConvB
+        let wfst = build_wfst("Out", &[("convert", "Other", 0.0)]);
+        let mut wfsts = HashMap::new();
+        wfsts.insert("Out".to_string(), wfst);
+
+        let nfa_cats: HashSet<String> = ["Out"].iter().map(|s| s.to_string()).collect();
+
+        let warnings = detect_dead_rules(
+            &rule_infos,
+            &categories,
+            &first_sets,
+            &wfsts,
+            &[],
+            &nfa_cats,
+            &rd_rules,
+        );
+
+        // Both should be flagged as WfstUnreachable since no sibling is reachable
+        assert_eq!(
+            warnings.len(),
+            2,
+            "all-dead NFA group should still be flagged: {:?}",
+            warnings
+        );
+        assert!(warnings.iter().all(|w| matches!(w, DeadRuleWarning::WfstUnreachable { .. })));
     }
 }

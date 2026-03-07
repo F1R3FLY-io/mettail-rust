@@ -650,6 +650,12 @@ pub struct WfstCompositionResult {
     pub terminals: HashSet<String>,
     /// Enriched composition summary with WFST statistics.
     pub summary: WfstCompositionSummary,
+    /// Decision trees for source grammar A (built via lightweight analysis pipeline).
+    pub source_a_trees: Option<HashMap<String, crate::decision_tree::CategoryDecisionTree>>,
+    /// Decision trees for source grammar B.
+    pub source_b_trees: Option<HashMap<String, crate::decision_tree::CategoryDecisionTree>>,
+    /// Decision trees for the merged grammar.
+    pub merged_trees: Option<HashMap<String, crate::decision_tree::CategoryDecisionTree>>,
 }
 
 /// Enriched composition summary including WFST statistics.
@@ -780,6 +786,58 @@ pub fn compose_with_wfst(
         cvt_report
     );
 
+    // Step 3.6: Decision tree composition analysis (X06/X07) — automatic
+    // Build decision trees for both source specs and the merged spec to detect:
+    // - Common sublanguage (shared dispatch paths)
+    // - New ambiguities introduced by composition
+    let trees_a = crate::decision_tree::build_decision_trees_from_spec(spec_a);
+    let trees_b = crate::decision_tree::build_decision_trees_from_spec(spec_b);
+    let trees_merged = crate::decision_tree::build_decision_trees_from_spec(&merged_spec);
+
+    if let (Some(ref ta), Some(ref tb), Some(ref _tm)) = (&trees_a, &trees_b, &trees_merged) {
+        let cats_a: std::collections::HashSet<&str> = ta.keys().map(|s| s.as_str()).collect();
+        let cats_b: std::collections::HashSet<&str> = tb.keys().map(|s| s.as_str()).collect();
+        let shared_cats: Vec<&str> = cats_a.intersection(&cats_b).copied().collect();
+
+        for cat in &shared_cats {
+            if let (Some(tree_a), Some(tree_b)) = (ta.get(*cat), tb.get(*cat)) {
+                let report = crate::decision_tree::composition_trie_analysis(tree_a, tree_b);
+                if report.common_rules > 0 {
+                    crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+                        id: "X06",
+                        name: "common-sublanguage",
+                        severity: crate::lint::LintSeverity::Note,
+                        category: Some(cat.to_string()),
+                        rule: None,
+                        message: format!(
+                            "composition: {} common dispatch paths, {} unique to A, {} unique to B",
+                            report.common_rules, report.unique_a, report.unique_b,
+                        ),
+                        hint: None,
+                        grammar_name: None,
+                        source_location: None,
+                    });
+                }
+                if report.new_ambiguities > 0 {
+                    crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+                        id: "X07",
+                        name: "composition-introduced-ambiguity",
+                        severity: crate::lint::LintSeverity::Warning,
+                        category: Some(cat.to_string()),
+                        rule: None,
+                        message: format!(
+                            "composition introduces {} new ambiguous dispatch point(s) not present in either source",
+                            report.new_ambiguities,
+                        ),
+                        hint: Some("review merged grammar for overlapping rules from different sources".to_string()),
+                        grammar_name: None,
+                        source_location: None,
+                    });
+                }
+            }
+        }
+    }
+
     // Step 4: Compute statistics
     let total_actions: usize = prediction_wfsts.values().map(|w| w.num_actions()).sum();
     let total_states: usize = prediction_wfsts.values().map(|w| w.num_states()).sum();
@@ -797,6 +855,9 @@ pub fn compose_with_wfst(
         prediction_wfsts,
         terminals,
         summary,
+        source_a_trees: trees_a,
+        source_b_trees: trees_b,
+        merged_trees: trees_merged,
     })
 }
 

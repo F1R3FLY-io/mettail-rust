@@ -40,14 +40,15 @@ context-sensitive recovery.
 | 15 | Recovery state TLS      | `language.rs` / codegen | `BRACKET_STATE_Cat`, `LAST_ERROR_POS_Cat`, `RUNNING_WEIGHT_Cat`              |
 | 16 | Prediction statics      | `pipeline.rs` (codegen) | `WFST_TRANSITIONS_Cat`, `WFST_STATE_OFFSETS_Cat`, `PREDICTION_Cat: LazyLock` |
 | 17 | Recovery statics        | `pipeline.rs` (codegen) | `RECOVERY_SYNC_TOKENS_Cat`, `RECOVERY_SYNC_SOURCES_Cat`                      |
+| 18 | Decision tree           | `decision_tree.rs`      | `PathMap`, `DecisionTreeBuilder`, D01-D09 analysis layers                    |
 
 ### `wfst-log`-Gated (Tier 1)
 
 | #  | Module                | Source File           | Purpose                                                   |
 |----|-----------------------|-----------------------|-----------------------------------------------------------|
-| 18 | Baum-Welch posteriors | `forward_backward.rs` | `forward_scores()`, `backward_scores()`, `total_weight()` |
-| 19 | Mohri weight pushing  | `log_push.rs`         | `log_push_weights()`, `check_normalization()`             |
-| 20 | Weight training       | `training.rs`         | `TrainedModel`, `RuleWeights::train()`, SGD               |
+| 19 | Baum-Welch posteriors | `forward_backward.rs` | `forward_scores()`, `backward_scores()`, `total_weight()` |
+| 20 | Mohri weight pushing  | `log_push.rs`         | `log_push_weights()`, `check_normalization()`             |
+| 21 | Weight training       | `training.rs`         | `TrainedModel`, `RuleWeights::train()`, SGD               |
 
 ---
 
@@ -111,15 +112,16 @@ Steps inside `generate_parser_code()`:
 
 ## 6  Lint Categories
 
-| Prefix | Category          | Count | Key Source Data                                   |
-|--------|-------------------|------:|---------------------------------------------------|
-| **G**  | Grammar structure |    10 | Rule specs, FIRST/FOLLOW, operator tables         |
-| **W**  | WFST-specific     |     5 | Prediction WFSTs, dispatch weights                |
-| **R**  | Recovery          |     5 | Sync sets, repair costs, bracket patterns         |
-| **C**  | Cross-category    |     3 | Cast graphs, FIRST-set overlaps                   |
-| **P**  | Performance       |     3 | Spillover counts, cast depth, alternative fan-out |
+| Prefix | Category          | Count | Key Source Data                                    |
+|--------|-------------------|------:|----------------------------------------------------|
+| **G**  | Grammar structure |    10 | Rule specs, FIRST/FOLLOW, operator tables          |
+| **W**  | WFST-specific     |     5 | Prediction WFSTs, dispatch weights                 |
+| **R**  | Recovery          |     5 | Sync sets, repair costs, bracket patterns          |
+| **C**  | Cross-category    |     3 | Cast graphs, FIRST-set overlaps                    |
+| **D**  | Decision tree     |     9 | PathMap trie structure, ambiguity, lookahead depth |
+| **P**  | Performance       |     3 | Spillover counts, cast depth, alternative fan-out  |
 
-23 total lints emitted by `run_lints()` in `lint.rs` — see [lint-layer.md](../design/lint-layer.md) for the full catalog.
+32 total lints emitted by `run_lints()` in `lint.rs` — see [lint-layer.md](../design/lint-layer.md) for the full catalog (includes 9 D-category decision tree lints).
 
 ---
 
@@ -185,8 +187,8 @@ Reading the graph: a module on the left of `──►` imports from the module o
 
 | Gate               | Modules Enabled | Semirings Added                    | Use Case                                                 |
 |--------------------|-----------------|------------------------------------|----------------------------------------------------------|
-| *(none — default)* | Layers 1–17     | 8 (Tropical through ProductWeight) | All compile-time analysis and runtime parsing            |
-| `wfst-log`         | + Layers 18–20  | + LogWeight, EntropyWeight         | Probabilistic training, weight pushing, entropy analysis |
+| *(none — default)* | Layers 1–18     | 8 (Tropical through ProductWeight) | All compile-time analysis and runtime parsing            |
+| `wfst-log`         | + Layers 19–21  | + LogWeight, EntropyWeight         | Probabilistic training, weight pushing, entropy analysis |
 
 All dispatch, prediction, recovery, dead-rule detection, and lint analysis run **unconditionally**.  The `wfst-log` gate adds only statistical training and log-domain operations.
 
@@ -196,16 +198,18 @@ All dispatch, prediction, recovery, dead-rule detection, and lint analysis run *
 
 ### Architecture
 
-| Topic                               | Document                                                                 |
-|-------------------------------------|--------------------------------------------------------------------------|
-| Module inventory + dependency graph | [wfst/module-map.md](wfst/module-map.md)                                 |
-| Pipeline execution + data flow      | [wfst/pipeline-integration.md](wfst/pipeline-integration.md)             |
-| Optimization pass inventory         | [wfst/optimization-pipeline.md](wfst/optimization-pipeline.md)           |
-| NFA spillover thread-locals         | [wfst/nfa-spillover-architecture.md](wfst/nfa-spillover-architecture.md) |
-| Recovery state propagation          | [wfst/recovery-state-propagation.md](wfst/recovery-state-propagation.md) |
-| Token lattice integration           | [wfst/token-lattices.md](wfst/token-lattices.md)                         |
-| Crate module graph                  | [crate-structure.md](crate-structure.md)                                 |
-| Full data-flow trace                | [data-flow.md](data-flow.md)                                             |
+| Topic                               | Document                                                                                          |
+|-------------------------------------|---------------------------------------------------------------------------------------------------|
+| Decision tree module map            | [decision-tree/module-map.md](../../architecture/decision-tree/module-map.md)                     |
+| Decision tree pipeline integration  | [decision-tree/pipeline-integration.md](../../architecture/decision-tree/pipeline-integration.md) |
+| Module inventory + dependency graph | [wfst/module-map.md](wfst/module-map.md)                                                          |
+| Pipeline execution + data flow      | [wfst/pipeline-integration.md](wfst/pipeline-integration.md)                                      |
+| Optimization pass inventory         | [wfst/optimization-pipeline.md](wfst/optimization-pipeline.md)                                    |
+| NFA spillover thread-locals         | [wfst/nfa-spillover-architecture.md](wfst/nfa-spillover-architecture.md)                          |
+| Recovery state propagation          | [wfst/recovery-state-propagation.md](wfst/recovery-state-propagation.md)                          |
+| Token lattice integration           | [wfst/token-lattices.md](wfst/token-lattices.md)                                                  |
+| Crate module graph                  | [crate-structure.md](crate-structure.md)                                                          |
+| Full data-flow trace                | [data-flow.md](data-flow.md)                                                                      |
 
 ### Design
 

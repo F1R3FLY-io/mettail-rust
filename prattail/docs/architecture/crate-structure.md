@@ -101,9 +101,14 @@ lib.rs
           │       │                  pratt.rs (PrefixHandler)
           │       (produces PrefixHandler values consumed by pratt.rs)
           │
-          └──→ dispatch.rs ──────→ automata/codegen.rs (terminal_to_variant_name)
-                  │                  prediction.rs (CrossCategoryOverlap, FirstSet)
-                  (uses FIRST set overlap analysis for backtracking decisions)
+          ├──→ dispatch.rs ──────→ automata/codegen.rs (terminal_to_variant_name)
+          │       │                  prediction.rs (CrossCategoryOverlap, FirstSet)
+          │       (uses FIRST set overlap analysis for backtracking decisions)
+          │
+          └──→ decision_tree.rs ──→ prediction.rs (FirstSet, dispatch tables)
+                  │                    wfst.rs (PredictionWfst)
+                  │                    token_id.rs (TokenIdMap)
+                  (PathMap trie construction, D01-D09 analysis, DisjointSuffix)
 ```
 
 > **Terminology note:** "dispatch table" refers to the `DispatchTable` data
@@ -328,6 +333,25 @@ compiled (no feature gate); only the log semiring modules require `wfst-log`.
 
 > **Cross-reference:** See [architecture/wfst/module-map.md](wfst/module-map.md)
 > for detailed WFST module architecture and data flow.
+
+### `decision_tree.rs` -- PathMap Decision Tree
+
+- **`DecisionTreeBuilder`** -- builds per-category PathMap tries from RD, cross-category,
+  and cast rules using byte-encoded token prefixes
+- **`CategoryDecisionTree`** -- per-category trie with `TreeStats` (states, depth,
+  deterministic/ambiguous ratio, savings estimate)
+- **Analysis layers**: `precision_ambiguity_reports()` (D01),
+  `unresolvable_ambiguity_detection()` (D02), `unreachable_rule_detection()` (D03),
+  `min_lookahead_report()` (D04), `complexity_metrics()` (D05),
+  `wfst_consistency_check()` (D06), `path_coverage_report()` (D07),
+  `optimization_suggestions()` (D08), `conflict_resolution_guidance()` (D09)
+- **Composition**: `composition_trie_analysis()` for PathMap join/meet/subtract
+  operations (X06, X07)
+- **DisjointSuffix** analysis replaces the A1 + G1 optimization gates
+
+> **Cross-reference:** See [decision-tree/module-map.md](../../architecture/decision-tree/module-map.md)
+> and [decision-tree/pipeline-integration.md](../../architecture/decision-tree/pipeline-integration.md)
+> for detailed decision tree architecture and pipeline data flow.
 
 ---
 

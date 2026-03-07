@@ -9,6 +9,8 @@ description = "PraTTaIL: Pratt + Recursive Descent parser generator with automat
 [features]
 ## Log semiring (LogWeight), forward-backward, N-best, log-pushing, training.
 wfst-log = ["dep:serde", "dep:postcard"]
+## Complex-amplitude semiring for quantum CTMC simulation (MeTTaIL-Gillespie).
+quantum = ["dep:num-complex"]
 ## Grammar-aware expression generator (proptest-based) for benchmarks and tests.
 grammar-gen = ["dep:proptest"]
 
@@ -19,9 +21,12 @@ syn = { workspace = true }
 serde = { version = "1", features = ["derive"], optional = true }
 postcard = { version = "1", features = ["alloc"], optional = true }
 proptest = { version = "1", optional = true }
+num-complex = { version = "0.4", optional = true }
+pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
 
 [dev-dependencies]
 criterion = { version = "0.5", features = ["html_reports"] }
+proptest = "1"
 
 [[bench]]
 name = "bench_end_to_end"

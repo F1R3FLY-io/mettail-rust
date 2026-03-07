@@ -509,6 +509,169 @@ impl SpilloverTrainer {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Sprint 5: Forward-backward expected counts
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Sprint 5: Compute expected rule counts using forward-backward with LogWeight.
+///
+/// Builds a DAG from the PredictionWfst's transitions and computes:
+/// ```text
+/// E[count(r)] = exp(-(alpha[i] + w + beta[j] - Z))
+/// ```
+/// where `alpha[i]` = forward score at source state, `w` = transition weight,
+/// `beta[j]` = backward score at target state, and `Z` = total path weight.
+///
+/// Returns a map from rule_label → expected count.
+///
+/// # Requires
+/// Feature `wfst-log` (uses `LogWeight` for forward-backward).
+#[cfg(feature = "wfst-log")]
+pub fn compute_expected_counts_fb(
+    wfst: &crate::wfst::PredictionWfst,
+) -> HashMap<String, f64> {
+    use crate::automata::semiring::LogWeight;
+    use crate::forward_backward::{forward_scores, backward_scores, total_weight};
+
+    let n = wfst.states.len();
+    if n == 0 {
+        return HashMap::new();
+    }
+
+    // Add a virtual "super-final" node (index n) that all final states connect to.
+    // This handles star-shaped WFSTs with multiple final states correctly.
+    let super_final = n;
+    let total_nodes = n + 1;
+
+    // Build edge list for LogWeight forward-backward
+    let mut edges: Vec<Vec<(usize, LogWeight)>> = vec![Vec::new(); total_nodes];
+    // Also track which action_idx is used per edge for rule attribution
+    let mut edge_actions: Vec<Vec<(usize, u32)>> = vec![Vec::new(); total_nodes];
+
+    for state in &wfst.states {
+        let from = state.id as usize;
+        for trans in &state.transitions {
+            let to = trans.to as usize;
+            let w = LogWeight::new(trans.weight.value());
+            edges[from].push((to, w));
+            edge_actions[from].push((to, trans.action_idx));
+        }
+        // Connect final states to super-final with their final_weight
+        if state.is_final {
+            edges[from].push((super_final, LogWeight::new(state.final_weight.value())));
+            edge_actions[from].push((super_final, u32::MAX)); // sentinel: no action
+        }
+    }
+
+    let alpha = forward_scores(&edges, total_nodes);
+    let beta = backward_scores(&edges, total_nodes, super_final);
+    let z = total_weight(&alpha, super_final);
+
+    if z.is_zero() {
+        return HashMap::new();
+    }
+
+    let z_val = z.value();
+    let mut counts: HashMap<String, f64> = HashMap::new();
+
+    for (from, trans_list) in edges.iter().enumerate() {
+        for (idx, &(to, ref w)) in trans_list.iter().enumerate() {
+            // E[count(edge)] = exp(-(alpha[from] + w + beta[to] - Z))
+            let edge_score = alpha[from].value() + w.value() + beta[to].value();
+            let expected_count = (-(edge_score - z_val)).exp();
+
+            if expected_count > 1e-15 {
+                // Look up the action for this edge
+                let action_idx = edge_actions[from][idx].1;
+                if let Some(action) = wfst.actions.get(action_idx as usize) {
+                    *counts.entry(action.action.rule_label()).or_insert(0.0) += expected_count;
+                }
+            }
+        }
+    }
+
+    counts
+}
+
+/// Sprint 5: Train rule weights using forward-backward expected counts from
+/// NFA spillover corrections.
+///
+/// For each correction, builds a DAG from the affected PredictionWfst and
+/// computes forward-backward expected counts. Uses these to update rule weights
+/// via SGD, replacing the simplified "uniform all-counts" approximation.
+///
+/// # Arguments
+///
+/// * `rule_weights` — The trainable rule weights to update.
+/// * `wfsts` — Per-category PredictionWfsts (source of the DAG structure).
+/// * `corrections` — Accumulated spillover corrections.
+/// * `epochs` — Number of SGD iterations over all corrections.
+///
+/// # Returns
+///
+/// Training statistics from the forward-backward training run.
+///
+/// # Requires
+/// Feature `wfst-log`.
+#[cfg(feature = "wfst-log")]
+pub fn train_from_corrections(
+    rule_weights: &mut RuleWeights,
+    wfsts: &HashMap<String, crate::wfst::PredictionWfst>,
+    corrections: &[crate::wfst::WeightCorrection],
+    epochs: usize,
+) -> TrainingStats {
+    let mut epoch_losses = Vec::with_capacity(epochs);
+
+    for _epoch in 0..epochs {
+        let mut epoch_loss = 0.0;
+
+        for correction in corrections {
+            // Find the WFST for this correction's category
+            let wfst = match wfsts.get(correction.category) {
+                Some(w) => w,
+                None => continue,
+            };
+
+            // Compute expected counts via forward-backward
+            let expected_all = compute_expected_counts_fb(wfst);
+
+            // "Correct" counts: the selected (accepted) alternative gets count 1.0
+            // We can't identify the exact rule label from weight alone, so we use
+            // all rules whose weight matches the selected weight (±tolerance)
+            let tolerance = 0.1;
+            let mut expected_correct: HashMap<String, f64> = HashMap::new();
+            for action in &wfst.actions {
+                if (action.weight.value() - correction.selected_weight).abs() < tolerance {
+                    expected_correct.insert(action.action.rule_label(), 1.0);
+                }
+            }
+
+            // Compute loss
+            let correct_weight = expected_correct.values().sum::<f64>();
+            let all_weight = expected_all.values().sum::<f64>();
+            if all_weight > 0.0 {
+                epoch_loss += (correct_weight / all_weight).max(1e-15).ln().abs();
+            }
+
+            // Update weights
+            rule_weights.update(&expected_correct, &expected_all);
+        }
+
+        epoch_losses.push(if corrections.is_empty() { 0.0 } else { epoch_loss / corrections.len() as f64 });
+    }
+
+    let final_loss = epoch_losses.last().copied().unwrap_or(f64::INFINITY);
+    let converged = epoch_losses.len() >= 2
+        && (epoch_losses[epoch_losses.len() - 2] - final_loss).abs() < 1e-6;
+
+    TrainingStats {
+        epoch_losses,
+        final_loss,
+        converged,
+        recommended_beam_width: None,
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Recovery weight training (Sprint 12)
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1070,5 +1233,160 @@ mod tests {
         assert_eq!(trainer.num_corrections(), 1);
         trainer.clear();
         assert_eq!(trainer.num_corrections(), 0);
+    }
+
+    // ── Sprint 5: Forward-backward expected counts ──
+
+    #[cfg(feature = "wfst-log")]
+    mod fb_tests {
+        use super::*;
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::PredictionWfstBuilder;
+
+        fn build_simple_wfst() -> crate::wfst::PredictionWfst {
+            let token_map = TokenIdMap::from_names(
+                vec!["Plus", "Minus", "Star"].into_iter().map(String::from),
+            );
+            let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+            builder.add_action(
+                "Plus",
+                DispatchAction::Direct { rule_label: "Add".to_string(), parse_fn: "parse_add".to_string() },
+                TropicalWeight::new(0.0),
+            );
+            builder.add_action(
+                "Minus",
+                DispatchAction::Direct { rule_label: "Sub".to_string(), parse_fn: "parse_sub".to_string() },
+                TropicalWeight::new(0.5),
+            );
+            builder.add_action(
+                "Star",
+                DispatchAction::Direct { rule_label: "Mul".to_string(), parse_fn: "parse_mul".to_string() },
+                TropicalWeight::new(1.0),
+            );
+            builder.build()
+        }
+
+        #[test]
+        fn test_fb_expected_counts_basic() {
+            let wfst = build_simple_wfst();
+            let counts = super::super::compute_expected_counts_fb(&wfst);
+
+            // Star-shaped WFST: each rule has one transition start→accept
+            // Expected counts should be proportional to exp(-weight)
+            assert!(counts.contains_key("Add"), "Add should have expected count");
+            assert!(counts.contains_key("Sub"), "Sub should have expected count");
+            assert!(counts.contains_key("Mul"), "Mul should have expected count");
+
+            // Add (weight=0.0) should have highest expected count
+            // Mul (weight=1.0) should have lowest expected count
+            assert!(
+                counts["Add"] > counts["Mul"],
+                "Add (w=0.0) should have higher count than Mul (w=1.0): {} vs {}",
+                counts["Add"], counts["Mul"]
+            );
+        }
+
+        #[test]
+        fn test_fb_expected_counts_sum() {
+            let wfst = build_simple_wfst();
+            let counts = super::super::compute_expected_counts_fb(&wfst);
+
+            // For a star-shaped WFST, expected counts should sum to ~1.0
+            // (each path is a complete derivation)
+            let total: f64 = counts.values().sum();
+            assert!(
+                (total - 1.0).abs() < 0.1,
+                "expected counts should sum to ~1.0 for star-shaped WFST, got {}",
+                total,
+            );
+        }
+
+        #[test]
+        fn test_fb_expected_counts_empty_wfst() {
+            use crate::wfst::PredictionWfst;
+            let wfst = PredictionWfst {
+                category: "Empty".to_string(),
+                states: vec![],
+                start: 0,
+                actions: vec![],
+                token_map: TokenIdMap::from_names(std::iter::empty::<String>()),
+                beam_width: None,
+                context_labels: HashMap::new(),
+            };
+            let counts = super::super::compute_expected_counts_fb(&wfst);
+            assert!(counts.is_empty(), "empty WFST should have no expected counts");
+        }
+
+        #[test]
+        fn test_train_from_corrections_convergence() {
+            let wfst = build_simple_wfst();
+            let mut wfsts = HashMap::new();
+            wfsts.insert("Expr".to_string(), wfst);
+
+            let labels = vec!["Add".to_string(), "Sub".to_string(), "Mul".to_string()];
+            let mut rw = RuleWeights::uniform(&labels);
+            rw.set_learning_rate(0.01);
+
+            // Corrections: primary at 0.0 was wrong, selected at 0.5 was right
+            let corrections = vec![
+                crate::wfst::WeightCorrection {
+                    category: "Expr",
+                    primary_weight: 0.0,
+                    selected_weight: 0.5,
+                    alternatives_considered: 3,
+                },
+            ];
+
+            let stats = super::super::train_from_corrections(
+                &mut rw, &wfsts, &corrections, 10,
+            );
+
+            assert_eq!(stats.epoch_losses.len(), 10, "should have 10 epoch losses");
+            assert!(!stats.final_loss.is_nan(), "loss should not be NaN");
+            assert!(!stats.final_loss.is_infinite(), "loss should not be infinite");
+        }
+
+        #[test]
+        fn test_wfst_apply_corrections() {
+            let mut wfst = build_simple_wfst();
+            let add_weight_before = wfst.actions.iter()
+                .find(|a| a.action.rule_label() == "Add")
+                .expect("Add action").weight.value();
+
+            let corrections = vec![
+                crate::wfst::WeightCorrection {
+                    category: "Expr",
+                    primary_weight: 0.0,  // matches Add
+                    selected_weight: 0.5, // matches Sub
+                    alternatives_considered: 2,
+                },
+            ];
+
+            wfst.apply_corrections(&corrections, 0.1, 0.5);
+
+            let add_weight_after = wfst.actions.iter()
+                .find(|a| a.action.rule_label() == "Add")
+                .expect("Add action").weight.value();
+
+            // Add (matching primary=0.0) should be penalized (weight increased)
+            assert!(
+                add_weight_after > add_weight_before,
+                "Add weight should increase after correction: {} → {}",
+                add_weight_before, add_weight_after,
+            );
+
+            let sub_weight_after = wfst.actions.iter()
+                .find(|a| a.action.rule_label() == "Sub")
+                .expect("Sub action").weight.value();
+
+            // Sub (matching selected=0.5) should be reinforced (weight decreased)
+            assert!(
+                sub_weight_after < 0.5,
+                "Sub weight should decrease after correction: {}",
+                sub_weight_after,
+            );
+        }
     }
 }

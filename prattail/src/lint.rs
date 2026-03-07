@@ -62,11 +62,13 @@ use std::fmt;
 
 use crate::SourceLocation;
 use crate::binding_power::BindingPowerTable;
+use crate::decision_tree::CategoryDecisionTree;
 use crate::dispatch::{CastRule, CrossCategoryRule};
 use crate::pipeline::CategoryInfo;
 use crate::prediction::{FirstSet, FollowSetInput, RuleInfo};
 use crate::recovery::{RecoveryConfig, RecoveryWfst};
 use crate::recursive::RDRuleInfo;
+use crate::token_id::TokenIdMap;
 use crate::wfst::PredictionWfst;
 use crate::SyntaxItemSpec;
 
@@ -186,6 +188,19 @@ pub struct LintContext<'a> {
     /// Pre-collected diagnostics from pipeline phases that emit before lint context
     /// is constructed (e.g., W05 from composed dispatch resolution).
     pub pre_collected_diagnostics: &'a [LintDiagnostic],
+    /// Decision trees per category (from PathMap trie construction).
+    pub decision_trees: &'a HashMap<String, CategoryDecisionTree>,
+    /// Token ID mapping for dispatch_strategy() queries.
+    pub token_id_map: &'a TokenIdMap,
+    /// Pre-computed dead-rule warnings from the pipeline's 2nd
+    /// `collect_dead_rule_labels` pass (after decision tree construction).
+    /// `lint_w01_dead_rule` reads these instead of re-invoking `detect_dead_rules`.
+    pub dead_rule_warnings: &'a [crate::pipeline::DeadRuleWarning],
+    /// Grammar profile for severity modulation.
+    pub grammar_profile: Option<&'a crate::cost_benefit::GrammarProfile>,
+    /// WPDS analysis results (stack-aware reachability).
+    /// `None` if WPDS analysis was not run (G25 gate disabled or < 2 categories).
+    pub wpds_analysis: Option<&'a crate::wpds::WpdsAnalysis>,
 }
 
 /// Run all lints and return structured diagnostics.
@@ -220,6 +235,10 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     // W05: Insert pre-collected composed-dispatch-ambiguity diagnostics
     diagnostics.extend(ctx.pre_collected_diagnostics.iter().cloned());
     lint_w06_weight_inversion(ctx, &mut diagnostics);
+    lint_w10_spillover_eliminable_by_lookahead(ctx, &mut diagnostics);
+    lint_w11_context_narrowing_deterministic(ctx, &mut diagnostics);
+    #[cfg(feature = "wfst-log")]
+    lint_w12_training_would_improve(ctx, &mut diagnostics);
 
     // ── Recovery lints ──
     lint_r01_empty_sync_set(ctx, &mut diagnostics);
@@ -237,6 +256,15 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_p02_high_nfa_spillover(ctx, &mut diagnostics);
     lint_p03_deep_cast_nesting(ctx, &mut diagnostics);
     lint_p04_many_alternatives(ctx, &mut diagnostics);
+
+    // ── WPDS-derived lints ──
+    lint_w13_wpds_unreachable(ctx, &mut diagnostics);
+
+    // ── PathMap-derived lints ──
+    lint_w03_cross_category_hotspot(ctx, &mut diagnostics);
+    lint_g32_prefix_isomorphism(ctx, &mut diagnostics);
+    lint_d10_lookahead_waste(ctx, &mut diagnostics);
+    lint_d13_ascent_trie_correlation(ctx, &mut diagnostics);
 
     diagnostics
 }
@@ -420,7 +448,10 @@ pub fn has_errors(diagnostics: &[LintDiagnostic]) -> bool {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Known lint IDs eligible for grouping.
-const GROUPABLE_IDS: &[&str] = &["W01", "W02", "W03", "W05", "W07", "G03", "G08", "G27"];
+const GROUPABLE_IDS: &[&str] = &[
+    "W01", "W02", "W03", "W05", "W07", "G03", "G08", "G27",
+    "D01", "D02", "D03", "D08", "D09",
+];
 
 /// Group repeated lint diagnostics into compact summaries.
 ///
@@ -466,6 +497,11 @@ pub fn group_diagnostics(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic
                 "G03" => group_g03(items),
                 "G08" => group_g08(items),
                 "G27" => group_g27(items),
+                "D01" => group_ambiguity_by_category("D01", "precision-ambiguity", "precision ambiguity", items),
+                "D02" => group_ambiguity_by_category("D02", "unresolvable-ambiguity", "unresolvable ambiguity", items),
+                "D03" => group_ambiguity_by_category("D03", "trie-unreachable-rule", "unreachable trie rule(s)", items),
+                "D08" => group_ambiguity_by_category("D08", "optimization-suggestion", "optimization suggestion(s)", items),
+                "D09" => group_ambiguity_by_category("D09", "conflict-resolution-guide", "conflict resolution guidance", items),
                 _ => items, // unreachable due to GROUPABLE_IDS check
             };
             indexed.push((idx, grouped));
@@ -1004,19 +1040,29 @@ fn lint_g03_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
 
         for (token, rule_labels) in &terminal_to_rules {
             if rule_labels.len() > 1 {
+                // Classify root cause via decision tree if available
+                let root_cause = classify_ambiguity_root_cause(ctx, cat, token);
+
+                let message = if let Some(cause) = &root_cause {
+                    format!(
+                        "ambiguous prefix on `{}` in category `{}`: rules [{}] — {}",
+                        token, cat, rule_labels.join(", "), cause,
+                    )
+                } else {
+                    format!(
+                        "ambiguous prefix dispatch for token `{}` in category `{}`: \
+                         rules [{}] all match",
+                        token, cat, rule_labels.join(", "),
+                    )
+                };
+
                 diagnostics.push(LintDiagnostic {
                     id: "G03",
                     name: "ambiguous-prefix",
                     severity: LintSeverity::Warning,
                     category: Some(cat.clone()),
                     rule: None,
-                    message: format!(
-                        "ambiguous prefix dispatch for token `{}` in category `{}`: \
-                         rules [{}] all match",
-                        token,
-                        cat,
-                        rule_labels.join(", "),
-                    ),
+                    message,
                     hint: Some(
                         "add unique dispatch tokens or use WFST weights to disambiguate"
                             .to_string(),
@@ -1026,6 +1072,79 @@ fn lint_g03_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
                 });
             }
         }
+    }
+}
+
+/// Classify the root cause of a G03 ambiguity using the decision tree.
+///
+/// Returns a human-readable classification:
+/// - FIRST token clash (branch at byte 0)
+/// - Shared terminal prefix diverging at suffix (branch at byte N>0)
+/// - Nonterminal boundary
+/// - Cross-category overlap (cast collision)
+fn classify_ambiguity_root_cause(
+    ctx: &LintContext,
+    category: &str,
+    token: &str,
+) -> Option<String> {
+    let tree = ctx.decision_trees.get(category)?;
+    let strategy = tree.dispatch_strategy(token, ctx.token_id_map);
+
+    match strategy {
+        crate::decision_tree::DispatchStrategy::NfaTryAll {
+            rule_labels,
+            shared_prefix_len,
+            shared_terminals,
+            ..
+        } => {
+            if shared_prefix_len == 0 && shared_terminals.is_empty() {
+                // Branch at byte 0 — FIRST token clash
+                Some(format!(
+                    "FIRST token clash: {} rules share dispatch token with no distinguishing prefix",
+                    rule_labels.len()
+                ))
+            } else {
+                // Check if any shared byte is an NT boundary marker
+                let has_nt_boundary = shared_terminals.iter().any(|&b| b >= 0x82 && b < 0xC0);
+                let has_optional = shared_terminals.iter().any(|&b| b == 0xC0 || b == 0xC1);
+
+                if has_nt_boundary {
+                    Some(format!(
+                        "nonterminal boundary divergence after {}-token shared prefix",
+                        shared_prefix_len
+                    ))
+                } else if has_optional {
+                    Some(format!(
+                        "optional group nesting divergence after {}-token shared prefix",
+                        shared_prefix_len
+                    ))
+                } else {
+                    // Shared terminal prefix diverging at suffix
+                    let shared_names: Vec<String> = shared_terminals.iter()
+                        .filter_map(|&b| {
+                            ctx.token_id_map.name(b as u16).map(|n| format!("`{}`", n))
+                        })
+                        .collect();
+                    if shared_names.is_empty() {
+                        Some(format!(
+                            "shared {}-token prefix diverges at suffix",
+                            shared_prefix_len
+                        ))
+                    } else {
+                        Some(format!(
+                            "shared prefix [{}] ({} tokens) diverges at suffix",
+                            shared_names.join(" "),
+                            shared_prefix_len
+                        ))
+                    }
+                }
+            }
+        }
+        crate::decision_tree::DispatchStrategy::DisjointSuffix { .. } => {
+            // Disjoint suffix = resolved, not actually ambiguous at runtime
+            Some("resolved by disjoint suffix dispatch (no runtime ambiguity)".to_string())
+        }
+        _ => None,
     }
 }
 
@@ -1064,23 +1183,26 @@ fn lint_g04_duplicate_rule_label(ctx: &LintContext, diagnostics: &mut Vec<LintDi
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn lint_g05_empty_category(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
-    let category_names: Vec<&str> = ctx.categories.iter().map(|c| c.name.as_str()).collect();
-
-    for cat_name in &category_names {
+    for cat in ctx.categories.iter() {
+        // Native-type categories (e.g., ![i64] as Int) are parsed via auto-generated
+        // Pratt prefix match arms — they don't need explicit grammar rules.
+        if cat.native_type.is_some() {
+            continue;
+        }
         let has_rules = ctx
             .all_syntax
             .iter()
-            .any(|(_, category, _)| category.as_str() == *cat_name);
+            .any(|(_, category, _)| category.as_str() == cat.name);
         if !has_rules {
             diagnostics.push(LintDiagnostic {
                 id: "G05",
                 name: "empty-category",
                 severity: LintSeverity::Warning,
-                category: Some(cat_name.to_string()),
+                category: Some(cat.name.clone()),
                 rule: None,
                 message: format!(
                     "category `{}` has zero rules — cannot be parsed",
-                    cat_name,
+                    cat.name,
                 ),
                 hint: Some("add at least one rule or remove the category declaration".to_string()),
                 grammar_name: Some(ctx.grammar_name.to_string()),
@@ -1495,6 +1617,15 @@ fn lint_g24_alpha_equivalent_rules(ctx: &LintContext, diagnostics: &mut Vec<Lint
 // G08: Missing Cast to Root
 // ══════════════════════════════════════════════════════════════════════════════
 
+/// G08: Checks **directed** cast/cross-cat graph reachability only (source→target
+/// edges). A category that has no directed cast path *from itself to the primary*
+/// is flagged. This is a grammar-structure lint focused on cast connectivity.
+///
+/// **Relationship with A4 (W01 InterCategoryDeadPath)**: A4 uses a richer
+/// **undirected** graph that also includes syntax-level NonTerminal, Binder, and
+/// Collection references. G08 can fire on categories that A4 does NOT flag (when
+/// the category is syntax-connected but not cast-connected) and vice versa.
+/// The two analyses are complementary, not redundant.
 fn lint_g08_missing_cast_to_root(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
     // Find primary (root) category
     let primary = match ctx.categories.iter().find(|c| c.is_primary) {
@@ -1657,6 +1788,24 @@ fn collect_terminals_flat(items: &[SyntaxItemSpec]) -> Vec<String> {
     terminals
 }
 
+/// Get rule labels dispatched by a token in a category using the decision tree.
+fn tree_rules_for_token(ctx: &LintContext, category: &str, token: &str) -> Vec<String> {
+    let tree = match ctx.decision_trees.get(category) {
+        Some(t) => t,
+        None => return Vec::new(),
+    };
+    let variant = crate::automata::codegen::terminal_to_variant_name(token);
+    let strategy = tree.dispatch_strategy(&variant, ctx.token_id_map);
+    match strategy {
+        crate::decision_tree::DispatchStrategy::Singleton { rule_label } => vec![rule_label],
+        crate::decision_tree::DispatchStrategy::NfaTryAll { rule_labels, .. } => rule_labels,
+        crate::decision_tree::DispatchStrategy::DisjointSuffix { suffix_map, .. } => {
+            suffix_map.values().cloned().collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // G10: Ambiguous Associativity
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1713,19 +1862,26 @@ fn lint_g10_ambiguous_associativity(ctx: &LintContext, diagnostics: &mut Vec<Lin
 // ══════════════════════════════════════════════════════════════════════════════
 
 fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
-    let mut warnings = crate::pipeline::detect_dead_rules(
-        ctx.rules,
-        ctx.categories,
-        ctx.first_sets,
-        ctx.prediction_wfsts,
-        ctx.semantic_dependency_groups,
-    );
+    // Use pre-computed dead-rule warnings from the pipeline (cached in LintContext).
+    // This avoids re-invoking detect_dead_rules() which was previously called 3x
+    // with identical inputs.
+    //
+    // A4 (inter-category dead-path) and A8 (nearly-dead path) are still computed
+    // here because they are lint-only analyses not needed by the pipeline codegen.
+    let mut warnings: Vec<crate::pipeline::DeadRuleWarning> =
+        ctx.dead_rule_warnings.to_vec();
 
     // A4: Inter-category dead-path detection via forward-backward analysis
+    // on an undirected inter-category graph including all syntax references
+    // (NonTerminal, Binder, Collection). See also G08 which checks directed
+    // cast-graph reachability specifically. G08 fires on categories without
+    // a directed cast path to the primary; A4 fires on categories structurally
+    // isolated via the richer undirected graph. The two are complementary.
     let inter_cat_warnings = crate::pipeline::detect_inter_category_dead_paths(
         ctx.rules,
         ctx.categories,
         ctx.first_sets,
+        ctx.all_syntax,
     );
     // Only add inter-category warnings for rules not already flagged by Tier 1-3
     let existing_rules: std::collections::HashSet<String> = warnings
@@ -1758,6 +1914,7 @@ fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) 
         ctx.rules,
         ctx.categories,
         ctx.first_sets,
+        ctx.all_syntax,
     );
     // Collect all already-flagged rules to avoid duplicate diagnostics
     let all_flagged: std::collections::HashSet<String> = warnings
@@ -1780,7 +1937,7 @@ fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) 
         }
     }
 
-    for w in warnings {
+    for w in &warnings {
         let (rule_label, category, hint_msg) = match &w {
             crate::pipeline::DeadRuleWarning::LiteralNoNativeType {
                 rule_label,
@@ -1847,6 +2004,53 @@ fn lint_w01_dead_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) 
             source_location: ctx.rule_locations.get(&(rule_label.clone(), category.clone())).copied(),
         });
     }
+
+    // Dead prefix detection: use the shared detect_dead_prefixes() function
+    // (also used by the pipeline to increase recovery WFST weights).
+    let dead_prefixes = crate::pipeline::detect_dead_prefixes(
+        &warnings, ctx.decision_trees, ctx.token_id_map,
+    );
+    for (cat_name, prefix_tokens) in &dead_prefixes {
+        for token_variant in prefix_tokens {
+            // Look up which rules this prefix reaches, for the diagnostic message
+            if let Some(tree) = ctx.decision_trees.get(cat_name) {
+                let strategy = tree.dispatch_strategy(token_variant, ctx.token_id_map);
+                let rule_labels = match &strategy {
+                    crate::decision_tree::DispatchStrategy::Singleton { rule_label } => {
+                        vec![rule_label.clone()]
+                    }
+                    crate::decision_tree::DispatchStrategy::NfaTryAll { rule_labels, .. } => {
+                        rule_labels.clone()
+                    }
+                    crate::decision_tree::DispatchStrategy::DisjointSuffix { suffix_map, .. } => {
+                        suffix_map.values().cloned().collect()
+                    }
+                    crate::decision_tree::DispatchStrategy::NotPresent => Vec::new(),
+                };
+                diagnostics.push(LintDiagnostic {
+                    id: "W01",
+                    name: "dead-prefix",
+                    severity: LintSeverity::Note,
+                    category: Some(cat_name.clone()),
+                    rule: None,
+                    message: format!(
+                        "prefix `{}` in category `{}` leads only to dead rules [{}]; \
+                         entire prefix subtrie is unreachable",
+                        token_variant,
+                        cat_name,
+                        rule_labels.join(", "),
+                    ),
+                    hint: Some(
+                        "all rules reachable from this prefix are dead — \
+                         the dispatch arm is unreachable"
+                            .to_string(),
+                    ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
+                });
+            }
+        }
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1867,6 +2071,11 @@ fn lint_w02_nfa_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                 let all_equal =
                     weights.windows(2).all(|w| (w[0] - w[1]).abs() < 1e-12);
 
+                // Sprint 4: Compute ContextWeight narrowing for this dispatch token.
+                // If the WFST has context labels, report the narrowed count.
+                let (_ctx_narrowed, narrowed_count) = wfst.context_narrowing(&[token]);
+                let original_count = rules.len();
+
                 let mut message = format!(
                     "ambiguous prefix dispatch for token `{}` in category `{}`: \
                      rules [{}] all match",
@@ -1875,19 +2084,33 @@ fn lint_w02_nfa_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                     labels.join(", "),
                 );
 
+                if narrowed_count > 0 && (narrowed_count as usize) < original_count {
+                    message.push_str(&format!(
+                        " (ContextWeight narrows to {}/{} candidates)",
+                        narrowed_count, original_count,
+                    ));
+                }
+
                 if all_equal {
                     message.push_str(&format!(
                         " — all {} alternatives have equal weight ({:.1}); \
                          resolution deferred to semantic disambiguation",
-                        rules.len(),
+                        original_count,
                         weights.first().copied().unwrap_or(0.5),
                     ));
                 }
 
+                // When ContextWeight narrows to singleton, downgrade to Note
+                let severity = if narrowed_count == 1 {
+                    LintSeverity::Note
+                } else {
+                    LintSeverity::Warning
+                };
+
                 diagnostics.push(LintDiagnostic {
                     id: "W02",
                     name: "nfa-ambiguous-prefix",
-                    severity: LintSeverity::Warning,
+                    severity,
                     category: Some(cat_name.clone()),
                     rule: None,
                     message,
@@ -2067,24 +2290,171 @@ fn lint_w06_weight_inversion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// R01: Empty Sync Set
+// W10: Spillover Eliminable by Lookahead (Sprint 6)
 // ══════════════════════════════════════════════════════════════════════════════
 
-fn lint_r01_empty_sync_set(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
-    for rwfst in ctx.recovery_wfsts {
-        if rwfst.sync_tokens().is_empty() {
+/// W10: For each NFA-spillover category, compute minimum k such that k-token
+/// lookahead eliminates try-all. Emits Note with required depth when all
+/// branches narrow to singletons at depth ≤ 4.
+fn lint_w10_spillover_eliminable_by_lookahead(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for cat_name in ctx.nfa_spillover_categories {
+        if let Some(wfst) = ctx.prediction_wfsts.get(cat_name.as_str()) {
+            if wfst.context_labels.is_empty() {
+                continue;
+            }
+
+            let rd_by_token = crate::trampoline::group_rd_by_dispatch_token_pub(
+                ctx.rd_rules, cat_name,
+            );
+
+            for (token, rules) in &rd_by_token {
+                if rules.len() <= 1 {
+                    continue;
+                }
+
+                // Check if two-token lookahead resolves this group
+                if let Some(label) = wfst.is_deterministic_context(&[token]) {
+                    diagnostics.push(LintDiagnostic {
+                        id: "W10",
+                        name: "spillover-eliminable-by-lookahead",
+                        severity: LintSeverity::Note,
+                        category: Some(cat_name.clone()),
+                        rule: None,
+                        message: format!(
+                            "NFA spillover for token `{}` in `{}` could be eliminated \
+                             with 1-token lookahead (resolves to `{}`)",
+                            token, cat_name, label,
+                        ),
+                        hint: Some(
+                            "two-token WFST disambiguation resolves this group \
+                             deterministically"
+                                .to_string(),
+                        ),
+                        grammar_name: Some(ctx.grammar_name.to_string()),
+                        source_location: None,
+                    });
+                } else {
+                    // Check two-token narrowing
+                    let (_, count) = wfst.context_narrowing(&[token]);
+                    if count > 0 && (count as usize) < rules.len() {
+                        diagnostics.push(LintDiagnostic {
+                            id: "W10",
+                            name: "spillover-eliminable-by-lookahead",
+                            severity: LintSeverity::Note,
+                            category: Some(cat_name.clone()),
+                            rule: None,
+                            message: format!(
+                                "NFA spillover for token `{}` in `{}` narrows from {} to {} \
+                                 candidates with ContextWeight analysis",
+                                token, cat_name, rules.len(), count,
+                            ),
+                            hint: Some(
+                                "consider extending lookahead depth to further reduce \
+                                 ambiguity"
+                                    .to_string(),
+                            ),
+                            grammar_name: Some(ctx.grammar_name.to_string()),
+                            source_location: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// W11: Context Narrowing Deterministic (Sprint 6)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// W11: When ContextWeight narrows to singleton, suggest replacing NfaTryAll
+/// with Commit dispatch.
+fn lint_w11_context_narrowing_deterministic(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for (cat_name, tree) in ctx.decision_trees {
+        if let Some(wfst) = ctx.prediction_wfsts.get(cat_name.as_str()) {
+            if wfst.context_labels.is_empty() {
+                continue;
+            }
+
+            // Get all dispatch tokens for this category
+            let first_set = match ctx.first_sets.get(cat_name) {
+                Some(fs) => fs,
+                None => continue,
+            };
+
+            for token in first_set.sorted_tokens() {
+                let variant = crate::automata::codegen::terminal_to_variant_name(&token);
+                let strategy = tree.dispatch_strategy(&variant, ctx.token_id_map);
+
+                if let crate::decision_tree::DispatchStrategy::NfaTryAll {
+                    rule_labels, ..
+                } = &strategy
+                {
+                    if let Some(label) = wfst.is_deterministic_context(&[&token]) {
+                        diagnostics.push(LintDiagnostic {
+                            id: "W11",
+                            name: "context-narrowing-deterministic",
+                            severity: LintSeverity::Note,
+                            category: Some(cat_name.clone()),
+                            rule: None,
+                            message: format!(
+                                "NfaTryAll for token `{}` in `{}` ({} candidates) is \
+                                 deterministic via ContextWeight — resolves to `{}`",
+                                token, cat_name, rule_labels.len(), label,
+                            ),
+                            hint: Some(
+                                "the NFA try-all could be replaced with direct Commit \
+                                 dispatch for this token"
+                                    .to_string(),
+                            ),
+                            grammar_name: Some(ctx.grammar_name.to_string()),
+                            source_location: None,
+                        });
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// W12: Training Would Improve (Sprint 6, wfst-log gated)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// W12: Compute Shannon entropy at each dispatch point. High entropy suggests
+/// training would improve weight assignment.
+#[cfg(feature = "wfst-log")]
+fn lint_w12_training_would_improve(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for (cat_name, wfst) in ctx.prediction_wfsts {
+        let (entropy_nats, entropy_bits) = wfst.compute_entropy();
+
+        // High entropy threshold: > 2.0 bits (near-uniform distribution)
+        if entropy_bits > 2.0 {
+            let num_actions = wfst.num_actions();
             diagnostics.push(LintDiagnostic {
-                id: "R01",
-                name: "empty-sync-set",
-                severity: LintSeverity::Warning,
-                category: Some(rwfst.category().to_string()),
+                id: "W12",
+                name: "training-would-improve",
+                severity: LintSeverity::Note,
+                category: Some(cat_name.clone()),
                 rule: None,
                 message: format!(
-                    "category `{}` has no sync tokens — recovery always skips to EOF",
-                    rwfst.category(),
+                    "category `{}` has high dispatch entropy ({:.2} bits, {:.2} nats) \
+                     across {} actions — WFST weight training would likely improve \
+                     disambiguation quality",
+                    cat_name, entropy_bits, entropy_nats, num_actions,
                 ),
                 hint: Some(
-                    "add structural delimiters or ensure the category has FOLLOW set tokens"
+                    "use `SpilloverTrainer` or `train_from_corrections()` to \
+                     learn better weights from parse examples"
                         .to_string(),
                 ),
                 grammar_name: Some(ctx.grammar_name.to_string()),
@@ -2095,6 +2465,121 @@ fn lint_r01_empty_sync_set(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnost
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// W13: WPDS-Unreachable Rule (stack-aware dead-rule verification)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// W13: WPDS stack-aware dead-rule detection.
+///
+/// Uses poststar saturation results to identify rules that are unreachable
+/// when stack context (call/return matching) is considered. This is strictly
+/// more precise than the finite-state W01 tier: a rule may be reachable in
+/// the WFST projection but unreachable in the WPDS because no valid calling
+/// context exists.
+fn lint_w13_wpds_unreachable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.wpds_analysis {
+        Some(a) => a,
+        None => return,
+    };
+
+    for unreachable in &analysis.unreachable_rules {
+        let missing_ctx = if unreachable.missing_contexts.is_empty() {
+            String::new()
+        } else {
+            format!(
+                " (missing callers: {})",
+                unreachable.missing_contexts.join(", ")
+            )
+        };
+
+        let source_location = ctx
+            .rule_locations
+            .get(&(unreachable.rule_label.clone(), unreachable.category.clone()))
+            .copied();
+
+        diagnostics.push(LintDiagnostic {
+            id: "W13",
+            name: "wpds-unreachable",
+            severity: LintSeverity::Warning,
+            category: Some(unreachable.category.clone()),
+            rule: Some(unreachable.rule_label.clone()),
+            message: format!(
+                "rule `{}` in category `{}` is unreachable via WPDS stack-aware analysis{}",
+                unreachable.rule_label, unreachable.category, missing_ctx,
+            ),
+            hint: Some(
+                "this rule's category is not reachable from the root via any \
+                 valid call/return path; consider adding a cross-category \
+                 reference or removing the rule"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location,
+        });
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// R01: Empty Sync Set
+// ══════════════════════════════════════════════════════════════════════════════
+
+fn lint_r01_empty_sync_set(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    for rwfst in ctx.recovery_wfsts {
+        if rwfst.sync_tokens().is_empty() {
+            // Suggest good sync token candidates from the decision tree
+            let suggestion = suggest_sync_tokens_from_trie(ctx, rwfst.category());
+            let hint = if suggestion.is_empty() {
+                "add structural delimiters or ensure the category has FOLLOW set tokens"
+                    .to_string()
+            } else {
+                format!(
+                    "add structural delimiters or FOLLOW set tokens. \
+                     Decision tree suggests shallow tokens: [{}]",
+                    suggestion,
+                )
+            };
+
+            diagnostics.push(LintDiagnostic {
+                id: "R01",
+                name: "empty-sync-set",
+                severity: LintSeverity::Warning,
+                category: Some(rwfst.category().to_string()),
+                rule: None,
+                message: format!(
+                    "category `{}` has no sync tokens — recovery always skips to EOF",
+                    rwfst.category(),
+                ),
+                hint: Some(hint),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+/// Suggest sync token candidates based on trie depth (shallower = better recovery target).
+fn suggest_sync_tokens_from_trie(ctx: &LintContext, category: &str) -> String {
+    let tree = match ctx.decision_trees.get(category) {
+        Some(t) => t,
+        None => return String::new(),
+    };
+    let dispatch_tokens = tree.dispatch_tokens(ctx.token_id_map);
+    // Tokens at depth 0 (direct root children) are excellent sync targets
+    let mut shallow_tokens: Vec<String> = Vec::new();
+    for token_variant in &dispatch_tokens {
+        let strategy = tree.dispatch_strategy(token_variant, ctx.token_id_map);
+        match strategy {
+            crate::decision_tree::DispatchStrategy::Singleton { .. } => {
+                shallow_tokens.push(token_variant.clone());
+            }
+            _ => {}
+        }
+    }
+    shallow_tokens.sort();
+    shallow_tokens.truncate(5);
+    shallow_tokens.join(", ")
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // R02: Sparse Recovery
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -2102,6 +2587,19 @@ fn lint_r02_sparse_recovery(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
     for rwfst in ctx.recovery_wfsts {
         let count = rwfst.sync_tokens().len();
         if count > 0 && count < 2 {
+            // Assess sync token quality via decision tree depth
+            let quality_notes = assess_sync_quality(ctx, rwfst);
+
+            let hint = if quality_notes.is_empty() {
+                "add more structural delimiters to improve error recovery quality"
+                    .to_string()
+            } else {
+                format!(
+                    "add more structural delimiters to improve error recovery quality. {}",
+                    quality_notes,
+                )
+            };
+
             diagnostics.push(LintDiagnostic {
                 id: "R02",
                 name: "sparse-recovery",
@@ -2113,14 +2611,47 @@ fn lint_r02_sparse_recovery(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnos
                     rwfst.category(),
                     count,
                 ),
-                hint: Some(
-                    "add more structural delimiters to improve error recovery quality"
-                        .to_string(),
-                ),
+                hint: Some(hint),
                 grammar_name: Some(ctx.grammar_name.to_string()),
                 source_location: None,
             });
         }
+    }
+}
+
+/// Assess sync token quality via decision tree depth.
+fn assess_sync_quality(
+    ctx: &LintContext,
+    rwfst: &crate::recovery::RecoveryWfst,
+) -> String {
+    let tree = match ctx.decision_trees.get(rwfst.category()) {
+        Some(t) => t,
+        None => return String::new(),
+    };
+
+    let mut quality_parts = Vec::new();
+    for &token_id in rwfst.sync_tokens() {
+        let token_name = match rwfst.token_name(token_id) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        let strategy = tree.dispatch_strategy(&token_name, ctx.token_id_map);
+        let quality = match &strategy {
+            crate::decision_tree::DispatchStrategy::Singleton { .. } => "excellent (depth 0)",
+            crate::decision_tree::DispatchStrategy::DisjointSuffix { shared_prefix_len, .. } => {
+                if *shared_prefix_len <= 1 { "good (shallow)" } else { "fair (deep prefix)" }
+            }
+            crate::decision_tree::DispatchStrategy::NfaTryAll { shared_prefix_len, .. } => {
+                if *shared_prefix_len == 0 { "fair (ambiguous at root)" } else { "poor (deep + ambiguous)" }
+            }
+            crate::decision_tree::DispatchStrategy::NotPresent => "N/A (not in trie)",
+        };
+        quality_parts.push(format!("`{}`: {}", token_name, quality));
+    }
+    if quality_parts.is_empty() {
+        String::new()
+    } else {
+        format!("Sync token quality: {}", quality_parts.join(", "))
     }
 }
 
@@ -2555,21 +3086,44 @@ fn lint_c04_wide_cross_overlap(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
             let ratio = overlap_count as f64 / min_size as f64;
 
             if ratio >= 0.8 && overlap_count >= 2 {
+                // Build token-level breakdown using decision trees
+                let mut token_breakdown: Vec<String> = Vec::new();
+                for token in overlap.sorted_tokens() {
+                    let rules_a = tree_rules_for_token(ctx, cat_a, &token);
+                    let rules_b = tree_rules_for_token(ctx, cat_b, &token);
+                    if !rules_a.is_empty() || !rules_b.is_empty() {
+                        token_breakdown.push(format!(
+                            "`{}` ({}:{} vs {}:{})",
+                            token,
+                            cat_a,
+                            if rules_a.is_empty() { "cast".to_string() } else { rules_a.join("/") },
+                            cat_b,
+                            if rules_b.is_empty() { "cast".to_string() } else { rules_b.join("/") },
+                        ));
+                    }
+                }
+
+                let message = if token_breakdown.is_empty() {
+                    format!(
+                        "cross-category overlap between `{}` and `{}`: {}/{} tokens ({:.0}%) \
+                         — mostly save/restore dispatch",
+                        cat_a, cat_b, overlap_count, min_size, ratio * 100.0,
+                    )
+                } else {
+                    format!(
+                        "cross-category overlap between `{}` and `{}`: {}/{} tokens ({:.0}%): [{}]",
+                        cat_a, cat_b, overlap_count, min_size, ratio * 100.0,
+                        token_breakdown.join(", "),
+                    )
+                };
+
                 diagnostics.push(LintDiagnostic {
                     id: "C04",
                     name: "wide-cross-overlap",
                     severity: LintSeverity::Note,
                     category: None,
                     rule: None,
-                    message: format!(
-                        "cross-category overlap between `{}` and `{}`: {}/{} tokens ({:.0}%) \
-                         — mostly save/restore dispatch",
-                        cat_a,
-                        cat_b,
-                        overlap_count,
-                        min_size,
-                        ratio * 100.0,
-                    ),
+                    message,
                     hint: Some(
                         "high FIRST-set overlap means many tokens need save/restore \
                          backtracking in cross-category dispatch"
@@ -2592,10 +3146,17 @@ fn lint_p02_high_nfa_spillover(ctx: &LintContext, diagnostics: &mut Vec<LintDiag
         let mut sorted_cats: Vec<&String> = ctx.nfa_spillover_categories.iter().collect();
         sorted_cats.sort();
         let cats_str: Vec<&str> = sorted_cats.iter().map(|s| s.as_str()).collect();
+        // Modulate severity: tiny grammars (<10 categories) → Note, larger → Warning
+        let severity = if ctx.grammar_profile
+            .map_or(false, |p| p.category_count >= 10) {
+            LintSeverity::Warning
+        } else {
+            LintSeverity::Note
+        };
         diagnostics.push(LintDiagnostic {
             id: "P02",
             name: "high-nfa-spillover",
-            severity: LintSeverity::Note,
+            severity,
             category: None,
             rule: None,
             message: format!(
@@ -2675,10 +3236,17 @@ fn lint_p03_deep_cast_nesting(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
             .map(|(&name, _)| name)
             .collect::<Vec<_>>();
 
+        // Modulate severity: tiny grammars (<10 categories) → Note, larger → Warning
+        let severity = if ctx.grammar_profile
+            .map_or(false, |p| p.category_count >= 10) {
+            LintSeverity::Warning
+        } else {
+            LintSeverity::Note
+        };
         diagnostics.push(LintDiagnostic {
             id: "P03",
             name: "deep-cast-nesting",
-            severity: LintSeverity::Note,
+            severity,
             category: None,
             rule: None,
             message: format!(
@@ -2710,10 +3278,17 @@ fn lint_p04_many_alternatives(ctx: &LintContext, diagnostics: &mut Vec<LintDiagn
                 for token in first_set.sorted_tokens() {
                     let actions = wfst.predict(&token);
                     if actions.len() > 4 {
+                        // Modulate severity: tiny grammars (<10 categories) → Note, larger → Warning
+                        let severity = if ctx.grammar_profile
+                            .map_or(false, |p| p.category_count >= 10) {
+                            LintSeverity::Warning
+                        } else {
+                            LintSeverity::Note
+                        };
                         diagnostics.push(LintDiagnostic {
                             id: "P04",
                             name: "many-alternatives",
-                            severity: LintSeverity::Note,
+                            severity,
                             category: Some(cat.clone()),
                             rule: None,
                             message: format!(
@@ -3272,6 +3847,279 @@ fn lint_x05_composition_terminal_collision(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// W03+: Cross-Category Ambiguity Hotspot Ranking
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// After per-category W03 emissions, aggregate ambiguity counts across ALL
+/// categories per token. Rank tokens by total ambiguity impact.
+fn lint_w03_cross_category_hotspot(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    if ctx.decision_trees.is_empty() {
+        return;
+    }
+
+    // Accumulate per-token ambiguity counts across categories
+    let mut token_ambiguity: HashMap<String, Vec<(String, usize)>> = HashMap::new();
+
+    for (cat_name, tree) in ctx.decision_trees {
+        let dispatch_tokens = tree.dispatch_tokens(ctx.token_id_map);
+        for token_variant in &dispatch_tokens {
+            let strategy = tree.dispatch_strategy(token_variant, ctx.token_id_map);
+            let count = match &strategy {
+                crate::decision_tree::DispatchStrategy::NfaTryAll { rule_labels, .. } => {
+                    rule_labels.len()
+                }
+                _ => 0,
+            };
+            if count >= 2 {
+                token_ambiguity
+                    .entry(token_variant.clone())
+                    .or_default()
+                    .push((cat_name.clone(), count));
+            }
+        }
+    }
+
+    // Only report tokens ambiguous in 2+ categories
+    let mut hotspots: Vec<(String, usize, Vec<(String, usize)>)> = token_ambiguity
+        .into_iter()
+        .filter(|(_, cats)| cats.len() >= 2)
+        .map(|(token, cats)| {
+            let total: usize = cats.iter().map(|(_, c)| *c).sum();
+            (token, total, cats)
+        })
+        .collect();
+    hotspots.sort_by(|a, b| b.1.cmp(&a.1));
+
+    for (rank, (token, total, cats)) in hotspots.iter().enumerate() {
+        let breakdown: Vec<String> = cats
+            .iter()
+            .map(|(cat, count)| format!("{}: {}", cat, count))
+            .collect();
+        diagnostics.push(LintDiagnostic {
+            id: "W03",
+            name: "cross-category-hotspot",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "token `{}` is #{} ambiguity hotspot: {} ambiguities across {} categories ({})",
+                token,
+                rank + 1,
+                total,
+                cats.len(),
+                breakdown.join(", "),
+            ),
+            hint: Some(
+                "consider left-factoring rules starting with this token to reduce cross-category ambiguity"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G32: Prefix Structural Isomorphism
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Detect categories with structurally identical dispatch tries.
+/// Uses content hashing of the trie structure for comparison.
+fn lint_g32_prefix_isomorphism(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    if ctx.decision_trees.len() < 2 {
+        return;
+    }
+
+    // Hash each category's trie structure by serializing stats + dispatch tokens + strategies
+    let mut hash_to_cats: HashMap<u64, Vec<String>> = HashMap::new();
+
+    for (cat_name, tree) in ctx.decision_trees {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        let mut hasher = DefaultHasher::new();
+
+        // Hash the trie structure via all (path, action) pairs
+        let mut entries: Vec<(Vec<u8>, String)> = tree.segments.iter()
+            .flat_map(|seg| seg.iter())
+            .map(|(path, action)| {
+                let action_str = match action {
+                    crate::decision_tree::DecisionAction::Commit { rule_label, .. } => {
+                        format!("C:{}", rule_label)
+                    }
+                    crate::decision_tree::DecisionAction::Ambiguous { candidates } => {
+                        let mut labels: Vec<&str> = candidates.iter()
+                            .map(|c| c.rule_label.as_str())
+                            .collect();
+                        labels.sort();
+                        format!("A:{}", labels.join(","))
+                    }
+                    crate::decision_tree::DecisionAction::NonterminalBoundary { options } => {
+                        format!("NT:{}", options.len())
+                    }
+                };
+                (path, action_str)
+            })
+            .collect();
+        entries.sort();
+
+        // Hash the sorted entries (structure, not content) — compare shapes, not labels
+        entries.len().hash(&mut hasher);
+        for (path, _) in &entries {
+            path.hash(&mut hasher);
+        }
+        tree.stats.total_states.hash(&mut hasher);
+        tree.stats.ambiguous_nodes.hash(&mut hasher);
+        tree.stats.max_depth.hash(&mut hasher);
+
+        let hash = hasher.finish();
+        hash_to_cats.entry(hash).or_default().push(cat_name.clone());
+    }
+
+    for cats in hash_to_cats.values() {
+        if cats.len() >= 2 {
+            let mut sorted = cats.clone();
+            sorted.sort();
+            diagnostics.push(LintDiagnostic {
+                id: "G32",
+                name: "prefix-isomorphism",
+                severity: LintSeverity::Note,
+                category: None,
+                rule: None,
+                message: format!(
+                    "categories [{}] have structurally identical dispatch tries; \
+                     they could share parser code via parameterization",
+                    sorted.join(", "),
+                ),
+                hint: Some(
+                    "consider using a generic parser parameterized over the category type"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// D10: Lookahead Waste
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Detect when generated lookahead is deeper than necessary.
+/// Compares TreeStats.max_depth vs per-token resolution depth.
+fn lint_d10_lookahead_waste(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    for (cat_name, tree) in ctx.decision_trees {
+        if tree.stats.total_states == 0 || tree.stats.max_depth <= 1 {
+            continue;
+        }
+
+        let dispatch_tokens = tree.dispatch_tokens(ctx.token_id_map);
+        let mut depth1_count = 0usize;
+        let mut total_tokens = 0usize;
+
+        for token_variant in &dispatch_tokens {
+            total_tokens += 1;
+            let strategy = tree.dispatch_strategy(token_variant, ctx.token_id_map);
+            match &strategy {
+                crate::decision_tree::DispatchStrategy::Singleton { .. } => {
+                    depth1_count += 1;
+                }
+                crate::decision_tree::DispatchStrategy::DisjointSuffix { shared_prefix_len, .. } => {
+                    if *shared_prefix_len == 0 {
+                        depth1_count += 1;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        if total_tokens > 0 && tree.stats.max_depth > 2 {
+            let depth1_pct = depth1_count as f64 / total_tokens as f64 * 100.0;
+            if depth1_pct >= 80.0 {
+                diagnostics.push(LintDiagnostic {
+                    id: "D10",
+                    name: "lookahead-waste",
+                    severity: LintSeverity::Note,
+                    category: Some(cat_name.clone()),
+                    rule: None,
+                    message: format!(
+                        "category `{}`: {}-token max lookahead generated but 1-token suffices \
+                         for {:.0}% ({}/{}) of dispatch points",
+                        cat_name,
+                        tree.stats.max_depth,
+                        depth1_pct,
+                        depth1_count,
+                        total_tokens,
+                    ),
+                    hint: Some(
+                        "the few deep-lookahead tokens may be candidates for left-factoring"
+                            .to_string(),
+                    ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
+                });
+            }
+        }
+    }
+}
+
+/// 2e: Ascent equation x dispatch trie correlation.
+///
+/// Detects parsed-but-never-rewritten constructors: rules reachable in the
+/// trie (they can be parsed) but never consumed by any Ascent equation
+/// (semantic dependency groups). Such rules produce parse nodes that are
+/// never processed by the semantic layer.
+///
+/// Severity: Note (informational — the rule may still be needed for pattern matching).
+fn lint_d13_ascent_trie_correlation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    if ctx.semantic_dependency_groups.is_empty() || ctx.decision_trees.is_empty() {
+        return;
+    }
+
+    // Collect all rule labels referenced by any semantic dependency group
+    let semantically_consumed: HashSet<&str> = ctx.semantic_dependency_groups
+        .iter()
+        .flat_map(|group| group.iter().map(|s| s.as_str()))
+        .collect();
+
+    if semantically_consumed.is_empty() {
+        return;
+    }
+
+    // For each category, find trie-reachable rules not in any semantic group
+    for (cat_name, tree) in ctx.decision_trees {
+        let reachable = tree.reachable_rules();
+        let mut orphans: Vec<&str> = reachable
+            .iter()
+            .filter(|label| !semantically_consumed.contains(label.as_str()))
+            .map(|s| s.as_str())
+            .collect();
+        orphans.sort_unstable();
+
+        for orphan in &orphans {
+            diagnostics.push(LintDiagnostic {
+                id: "D13",
+                name: "parsed-but-unrewritten",
+                severity: LintSeverity::Note,
+                category: Some(cat_name.clone()),
+                rule: Some(orphan.to_string()),
+                message: format!(
+                    "rule `{}` is reachable in trie dispatch but appears in zero Ascent equations",
+                    orphan,
+                ),
+                hint: Some(
+                    "this constructor is parsed but never semantically consumed; \
+                     verify it's needed or add an Ascent equation referencing it"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -3333,6 +4181,9 @@ mod tests {
         follow_inputs: Vec<FollowSetInput>,
         semantic_dependency_groups: Vec<HashSet<String>>,
         pre_collected_diagnostics: Vec<LintDiagnostic>,
+        decision_trees: HashMap<String, CategoryDecisionTree>,
+        token_id_map: TokenIdMap,
+        dead_rule_warnings: Vec<crate::pipeline::DeadRuleWarning>,
     }
 
     impl CtxBuilder {
@@ -3356,6 +4207,9 @@ mod tests {
                 follow_inputs: Vec::new(),
                 semantic_dependency_groups: Vec::new(),
                 pre_collected_diagnostics: Vec::new(),
+                decision_trees: HashMap::new(),
+                token_id_map: TokenIdMap::new(),
+                dead_rule_warnings: Vec::new(),
             }
         }
 
@@ -3379,6 +4233,11 @@ mod tests {
                 follow_inputs: &self.follow_inputs,
                 semantic_dependency_groups: &self.semantic_dependency_groups,
                 pre_collected_diagnostics: &self.pre_collected_diagnostics,
+                decision_trees: &self.decision_trees,
+                token_id_map: &self.token_id_map,
+                dead_rule_warnings: &self.dead_rule_warnings,
+                grammar_profile: None,
+                wpds_analysis: None,
             }
         }
     }
@@ -3579,6 +4438,17 @@ mod tests {
         let mut diags = Vec::new();
         lint_g05_empty_category(&b.ctx(), &mut diags);
         assert!(diags.is_empty());
+    }
+
+    #[test]
+    fn g05_does_not_fire_for_native_type_category() {
+        let mut b = CtxBuilder::new();
+        // Category with native_type but zero explicit rules — should NOT trigger G05.
+        b.categories.push(cat_info("Int", Some("i64"), true));
+
+        let mut diags = Vec::new();
+        lint_g05_empty_category(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "G05 should not fire for native-type categories");
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -4360,6 +5230,7 @@ mod tests {
             actions,
             token_map,
             beam_width: None,
+            context_labels: HashMap::new(),
         }
     }
 

@@ -308,8 +308,8 @@ Two terms are **α-equivalent** (written t₁ ≡α t₂) if they differ only in
 ### Tropical Semiring Weights
 
 Constructor weights use the **tropical semiring** ⟨ℝ ∪ {∞}, min, +, ∞, 0⟩ where:
-- ⊕ = min (best path wins)
-- ⊗ = + (costs accumulate along paths)
+- ⊕  = min (best path wins)
+- ⊗  = + (costs accumulate along paths)
 - 0̄ = ∞ (identity for min)
 - 1̄ = 0 (identity for +)
 
@@ -332,6 +332,23 @@ Ascent uses **semi-naive evaluation**: each iteration only considers tuples deri
 - Main fixpoint: O(N × K) where N = term count, K = max rewrite chain length
 - Term equality cache: amortized O(1) per comparison after first iteration
 
+## Decision Tree Subsumption
+
+The PathMap Decision Tree (see [`prattail/docs/design/decision-tree/`](../design/decision-tree/README.md))
+introduces `DisjointSuffix` analysis which **subsumes** the following optimization gates
+from `cost_benefit.rs`:
+
+- **A1** (`AmbiguityTargeting`) -- Now handled by D01/D02 precision-ambiguity analysis
+  in the PathMap trie, which provides finer-grained per-path ambiguity detection.
+- **G1** (`BacktrackingElimination`) -- Now handled by DisjointSuffix analysis which
+  determines backtracking necessity directly from the trie structure rather than from
+  FIRST set intersection heuristics.
+
+The Sprint 6 De Bruijn Pattern Trie (`detect_subsumption()`) and Sprint A Subsumption
+Exploitation continue to operate on the Ascent equation trie (separate from the PathMap
+parse dispatch trie). The two trie systems are complementary: PathMap handles parse
+dispatch, while the De Bruijn trie handles equational reasoning.
+
 ## Cross-References
 
 - [Sprint A: N10 Subsumption Exploitation](n10-subsumption.md)
@@ -339,3 +356,5 @@ Ascent uses **semi-naive evaluation**: each iteration only considers tuples deri
 - [Sprint C: C1 α-Equivalence Lint](c1-alpha-equiv-lint.md)
 - [Completed Sprints (0-9, A-C)](completed-sprints.md)
 - [Deferred and Rejected Items](deferred-and-rejected.md)
+- [PathMap Decision Tree Design](../design/decision-tree/README.md)
+- [Decision Tree Diagnostics (D01-D09)](../diagnostics/decision-tree/README.md)

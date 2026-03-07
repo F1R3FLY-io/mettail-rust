@@ -25,7 +25,9 @@ use crate::wfst::PredictionWfst;
 /// An optimization that the framework can recommend.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Optimization {
-    /// A1: Grammar left-factoring via prefix sharing
+    /// A1: Grammar left-factoring via prefix sharing.
+    /// Subsumed by the decision tree for the DisjointSuffix path, but this
+    /// gate still controls the recovery parser's legacy fallback.
     LeftFactoring,
     /// A2: Hot/cold dispatch path splitting
     HotColdSplitting,
@@ -33,7 +35,8 @@ pub enum Optimization {
     EnhancedDeadCodeElimination,
     /// A5: CountingWeight-guided ambiguity targeting
     AmbiguityTargeting,
-    /// B1: Multi-token lookahead via extended PredictionWfst
+    /// B1: Multi-token lookahead via extended PredictionWfst.
+    /// Used by both DT-driven NfaTryAll path and legacy fallback path.
     MultiTokenLookahead,
     /// B2: Adaptive recovery via runtime weight accumulation
     AdaptiveRecovery,
@@ -45,8 +48,17 @@ pub enum Optimization {
     EarlyTermination,
     /// F3: Lazy spillover (demand-driven replay)
     LazySpillover,
-    /// G1: Backtracking elimination via compile-time FIRST set analysis
+    /// G1: Backtracking elimination via compile-time FIRST set analysis.
+    /// Used by both DT-driven NfaTryAll path (suffix_disjointness_check)
+    /// and legacy fallback path.
     BacktrackingElimination,
+    /// H1: ContextWeight-based disambiguation (Sprint 6).
+    /// Uses powerset WFST to narrow NFA try-all candidate sets at compile time.
+    ContextDisambiguation,
+    /// G25: WPDS stack-aware reachability check.
+    /// Uses poststar saturation to confirm/refute WFST-based dead-rule detection
+    /// with full pushdown precision.
+    WpdsReachabilityCheck,
 }
 
 impl fmt::Display for Optimization {
@@ -63,6 +75,8 @@ impl fmt::Display for Optimization {
             Self::EarlyTermination => write!(f, "F2:EarlyTermination"),
             Self::LazySpillover => write!(f, "F3:LazySpillover"),
             Self::BacktrackingElimination => write!(f, "G1:BacktrackingElimination"),
+            Self::ContextDisambiguation => write!(f, "H1:ContextDisambiguation"),
+            Self::WpdsReachabilityCheck => write!(f, "G25:WpdsReachabilityCheck"),
         }
     }
 }
@@ -84,6 +98,8 @@ impl std::str::FromStr for Optimization {
             "F2" => Ok(Self::EarlyTermination),
             "F3" => Ok(Self::LazySpillover),
             "G1" => Ok(Self::BacktrackingElimination),
+            "H1" => Ok(Self::ContextDisambiguation),
+            "G25" => Ok(Self::WpdsReachabilityCheck),
             // Full names (case-insensitive)
             s if s.eq_ignore_ascii_case("LeftFactoring") => Ok(Self::LeftFactoring),
             s if s.eq_ignore_ascii_case("HotColdSplitting") => Ok(Self::HotColdSplitting),
@@ -100,13 +116,15 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("EarlyTermination") => Ok(Self::EarlyTermination),
             s if s.eq_ignore_ascii_case("LazySpillover") => Ok(Self::LazySpillover),
             s if s.eq_ignore_ascii_case("BacktrackingElimination") => Ok(Self::BacktrackingElimination),
+            s if s.eq_ignore_ascii_case("ContextDisambiguation") => Ok(Self::ContextDisambiguation),
+            s if s.eq_ignore_ascii_case("WpdsReachabilityCheck") => Ok(Self::WpdsReachabilityCheck),
             // Display format: "A1:LeftFactoring"
             s if s.contains(':') => s
                 .split_once(':')
                 .map(|(code, _)| code)
                 .unwrap_or(s)
                 .parse(),
-            other => Err(format!("unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3, G1", other)),
+            other => Err(format!("unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3, G1, H1, G25", other)),
         }
     }
 }
@@ -150,7 +168,7 @@ impl OptimizationCandidate {
     }
 }
 
-/// Grammar profile extracted from WFST analysis.
+/// Grammar profile extracted from WFST analysis and PathMap decision trees.
 ///
 /// Computed once during pipeline execution and passed to `evaluate_optimizations()`.
 #[derive(Debug, Clone)]
@@ -173,18 +191,27 @@ pub struct GrammarProfile {
     pub has_beam_width: bool,
     /// Number of PredictionWfst states (sum across all categories).
     pub total_wfst_states: usize,
+
+    // ── PathMap decision tree metrics ─────────────────────────────────────
+    /// Mean max_depth across all category decision trees.
+    pub avg_trie_depth: f64,
+    /// Fraction of ambiguous nodes across all decision trees (ambiguous / total_states).
+    pub ambiguity_score: f64,
+    /// Fraction of rules that have fully deterministic dispatch (no ambiguity at prefix).
+    pub deterministic_ratio: f64,
 }
 
-/// Build a `GrammarProfile` from pipeline data.
+/// Build a `GrammarProfile` from pipeline data and decision tree metrics.
 ///
 /// This is the main analysis entry point, called from the pipeline after
-/// WFST construction.
+/// WFST and decision tree construction.
 pub fn build_grammar_profile(
     prediction_wfsts: &HashMap<String, PredictionWfst>,
     first_sets: &HashMap<String, FirstSet>,
     nfa_spillover_cats: &std::collections::HashSet<String>,
     rule_count: usize,
     has_beam_width: bool,
+    decision_trees: &HashMap<String, crate::decision_tree::CategoryDecisionTree>,
 ) -> GrammarProfile {
     let category_count = prediction_wfsts.len();
 
@@ -239,6 +266,30 @@ pub fn build_grammar_profile(
     // Total WFST states
     let total_wfst_states: usize = prediction_wfsts.values().map(|w| w.states.len()).sum();
 
+    // PathMap decision tree metrics
+    let (avg_trie_depth, ambiguity_score, deterministic_ratio) = if decision_trees.is_empty() {
+        (0.0, 0.0, 1.0)
+    } else {
+        let mut total_depth = 0usize;
+        let mut total_ambiguous = 0usize;
+        let mut total_states = 0usize;
+        let mut total_det_rules = 0usize;
+        let mut total_rules = 0usize;
+        for tree in decision_trees.values() {
+            total_depth += tree.stats.max_depth;
+            total_ambiguous += tree.stats.ambiguous_nodes;
+            total_states += tree.stats.total_states;
+            total_det_rules += tree.stats.deterministic_rules;
+            total_rules += tree.stats.total_rules;
+        }
+        let n = decision_trees.len() as f64;
+        (
+            total_depth as f64 / n,
+            if total_states > 0 { total_ambiguous as f64 / total_states as f64 } else { 0.0 },
+            if total_rules > 0 { total_det_rules as f64 / total_rules as f64 } else { 1.0 },
+        )
+    };
+
     GrammarProfile {
         shared_prefix_ratio,
         cold_fraction,
@@ -249,6 +300,9 @@ pub fn build_grammar_profile(
         nfa_spillover_categories: nfa_spillover_cats.len(),
         has_beam_width,
         total_wfst_states,
+        avg_trie_depth,
+        ambiguity_score,
+        deterministic_ratio,
     }
 }
 
@@ -406,6 +460,34 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         "always applicable (static FIRST set analysis)".to_string(),
     ));
 
+    // H1: ContextWeight-based disambiguation
+    candidates.push(OptimizationCandidate::new(
+        Optimization::ContextDisambiguation,
+        if profile.ambiguous_fraction > 0.0 {
+            -profile.ambiguous_fraction.ln() * 0.8
+        } else {
+            f64::INFINITY
+        },
+        0.2,
+        profile.nfa_spillover_categories > 0 && profile.ambiguous_fraction > 0.05,
+        format!(
+            "nfa_spillover_categories={}, ambiguous_fraction={:.2}",
+            profile.nfa_spillover_categories, profile.ambiguous_fraction
+        ),
+    ));
+
+    // G25: WPDS stack-aware reachability — beneficial for multi-category grammars
+    candidates.push(OptimizationCandidate::new(
+        Optimization::WpdsReachabilityCheck,
+        0.4, // moderate benefit (refines dead-rule detection)
+        0.3, // medium cost (WPDS construction + poststar saturation)
+        profile.category_count >= 2,
+        format!(
+            "category_count={} (threshold: >=2)",
+            profile.category_count
+        ),
+    ));
+
     // Sort by score (lexicographic: speedup first, then compile_cost)
     candidates.sort_by(|a, b| a.score.cmp(&b.score));
 
@@ -465,6 +547,12 @@ pub struct OptimizationGates {
     /// Controls Phases 1-4: deterministic cross-cat arm commit, NFA suffix
     /// disjointness, LParen LL(2)/LL(3), optional LL(1) guard.
     pub backtracking_elimination: bool,
+    /// H1: ContextWeight-based disambiguation (Sprint 6).
+    /// When true, NFA try-all codegen narrows candidates via ContextWeight.
+    pub context_disambiguation: bool,
+    /// G25: WPDS stack-aware reachability check.
+    /// When true, poststar analysis refines dead-rule detection.
+    pub wpds_reachability: bool,
 }
 
 impl OptimizationGates {
@@ -482,6 +570,8 @@ impl OptimizationGates {
             ambiguity_targeting: true,
             adaptive_recovery: true,
             backtracking_elimination: true,
+            context_disambiguation: true,
+            wpds_reachability: true,
         }
     }
 
@@ -507,6 +597,8 @@ impl OptimizationGates {
             ambiguity_targeting: enabled.contains(&Optimization::AmbiguityTargeting),
             adaptive_recovery: enabled.contains(&Optimization::AdaptiveRecovery),
             backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
+            context_disambiguation: enabled.contains(&Optimization::ContextDisambiguation),
+            wpds_reachability: enabled.contains(&Optimization::WpdsReachabilityCheck),
         }
     }
 
@@ -524,6 +616,8 @@ impl OptimizationGates {
             ambiguity_targeting: false,
             adaptive_recovery: false,
             backtracking_elimination: false,
+            context_disambiguation: false,
+            wpds_reachability: false,
         }
     }
 
@@ -579,6 +673,8 @@ impl OptimizationGates {
             ambiguity_targeting: enabled.contains(&Optimization::AmbiguityTargeting),
             adaptive_recovery: enabled.contains(&Optimization::AdaptiveRecovery),
             backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
+            context_disambiguation: enabled.contains(&Optimization::ContextDisambiguation),
+            wpds_reachability: enabled.contains(&Optimization::WpdsReachabilityCheck),
         }))
     }
 
@@ -781,8 +877,13 @@ impl Optimization {
             | Self::BacktrackingElimination // G1: FIRST-set backtracking elimination
             => OptimizationStatus::Auto,
 
+            // Auto-applied (Sprint 6): ContextWeight narrowing in NFA try-all
+            | Self::ContextDisambiguation // H1: powerset WFST candidate narrowing
+            => OptimizationStatus::Auto,
+
             // Diagnostic: info messages only, no codegen effect
             Self::AmbiguityTargeting   // A5: per-token ambiguity report
+            | Self::WpdsReachabilityCheck // G25: WPDS stack-aware dead-rule verification
             => OptimizationStatus::Diagnostic,
         }
     }
@@ -974,6 +1075,9 @@ mod tests {
             nfa_spillover_categories: 0,
             has_beam_width: false,
             total_wfst_states: 10,
+            avg_trie_depth: 0.0,
+            ambiguity_score: 0.0,
+            deterministic_ratio: 1.0,
         }
     }
 
@@ -1077,7 +1181,7 @@ mod tests {
     fn test_all_candidates_evaluated() {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
-        assert_eq!(all.len(), 11, "should evaluate all 11 optimization candidates");
+        assert_eq!(all.len(), 13, "should evaluate all 13 optimization candidates");
     }
 
     #[test]

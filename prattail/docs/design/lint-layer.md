@@ -16,6 +16,7 @@ generate_parser_code()
   3. Build prediction WFSTs + beam width
   4. Build recovery WFSTs
   ─── 5. lint::run_lints(&ctx) → Vec<LintDiagnostic> ───
+  5b. Decision tree analysis (D01–D09)
   6. WFST static embedding
   7. RD handlers + trampoline + dispatch codegen
   8. Error recovery codegen
@@ -101,38 +102,38 @@ Ordering: `Info < Note < Warning < Error`
 
 ### Grammar Structure (G01–G10, G24–G31)
 
-| ID  | Name                      | Severity | Description                               |
-|-----|---------------------------|----------|-------------------------------------------|
-| G01 | `left-recursion`          | Warning  | Rule starts with same-category NT         |
-| G02 | `unused-category`         | Warning  | Declared but never referenced             |
-| G03 | `ambiguous-prefix`        | Warning  | Multiple rules share dispatch token       |
-| G04 | `duplicate-rule-label`    | Error    | Two rules share constructor label         |
-| G05 | `empty-category`          | Warning  | Category has zero rules                   |
-| G06 | `shadowed-operator`       | Note     | Same terminal as both infix and prefix    |
-| G07 | `identical-rules`         | Warning  | Two rules with identical syntax sequences |
-| G08 | `missing-cast-to-root`    | Warning  | No cast path to primary category          |
-| G09 | `unbalanced-delimiters`   | Warning  | Opening delimiter without matching close  |
-| G10 | `ambiguous-associativity` | Warning  | Same-precedence ops with different assoc  |
-| G24 | `alpha-equivalent-rules`  | Note     | Rules with identical De Bruijn structure   |
-| G25 | `cancellation-pair-detected` | Note  | Equation `Outer(Inner(X)) = X` suppressed |
-| G26 | `equation-subsumed`       | Note     | Equation eliminated by subsumption        |
-| G27 | `rule-subsumption-candidate` | Warning | Rule may be subsumed by more general rule |
-| G28 | `alpha-equivalent-groups` | Note     | Alpha-equivalent LHS pattern groups       |
-| G29 | `dependency-groups`       | Note     | Fine-grained dependency groups            |
-| G30 | `isomorphic-wfst-groups`  | Note     | Isomorphic WFST dispatch topology         |
-| G31 | `subsumed-equations-eliminated` | Note | N equations eliminated from codegen     |
+| ID  | Name                            | Severity | Description                               |
+|-----|---------------------------------|----------|-------------------------------------------|
+| G01 | `left-recursion`                | Warning  | Rule starts with same-category NT         |
+| G02 | `unused-category`               | Warning  | Declared but never referenced             |
+| G03 | `ambiguous-prefix`              | Warning  | Multiple rules share dispatch token       |
+| G04 | `duplicate-rule-label`          | Error    | Two rules share constructor label         |
+| G05 | `empty-category`                | Warning  | Category has zero rules                   |
+| G06 | `shadowed-operator`             | Note     | Same terminal as both infix and prefix    |
+| G07 | `identical-rules`               | Warning  | Two rules with identical syntax sequences |
+| G08 | `missing-cast-to-root`          | Warning  | No cast path to primary category          |
+| G09 | `unbalanced-delimiters`         | Warning  | Opening delimiter without matching close  |
+| G10 | `ambiguous-associativity`       | Warning  | Same-precedence ops with different assoc  |
+| G24 | `alpha-equivalent-rules`        | Note     | Rules with identical De Bruijn structure  |
+| G25 | `cancellation-pair-detected`    | Note     | Equation `Outer(Inner(X)) = X` suppressed |
+| G26 | `equation-subsumed`             | Note     | Equation eliminated by subsumption        |
+| G27 | `rule-subsumption-candidate`    | Warning  | Rule may be subsumed by more general rule |
+| G28 | `alpha-equivalent-groups`       | Note     | Alpha-equivalent LHS pattern groups       |
+| G29 | `dependency-groups`             | Note     | Fine-grained dependency groups            |
+| G30 | `isomorphic-wfst-groups`        | Note     | Isomorphic WFST dispatch topology         |
+| G31 | `subsumed-equations-eliminated` | Note     | N equations eliminated from codegen       |
 
 ### WFST-Specific (W01–W09)
 
-| ID  | Name                   | Severity | Description                                           |
-|-----|------------------------|----------|-------------------------------------------------------|
-| W01 | `dead-rule`            | Warning  | No FIRST-set token dispatches to rule                 |
-| W02 | `nfa-ambiguous-prefix` | Warning  | Multiple rules share dispatch token with equal weight |
-| W03 | `high-ambiguity-token` | Warning  | Token dispatches to 3+ rules                          |
-| W04 | `weight-gap-anomaly`   | Note     | Gap > 5.0 between best and second-best                |
-| W05 | `composed-dispatch-ambiguity` | Warning | N-way ambiguity in composed dispatch table       |
-| W06 | `weight-inversion`     | Note     | Less-specific rule has lower weight                   |
-| W09 | `cancellation-pair-missing-rewrite` | Warning | Suppressed equation has no corresponding rewrite |
+| ID  | Name                                | Severity | Description                                           |
+|-----|-------------------------------------|----------|-------------------------------------------------------|
+| W01 | `dead-rule`                         | Warning  | No FIRST-set token dispatches to rule                 |
+| W02 | `nfa-ambiguous-prefix`              | Warning  | Multiple rules share dispatch token with equal weight |
+| W03 | `high-ambiguity-token`              | Warning  | Token dispatches to 3+ rules                          |
+| W04 | `weight-gap-anomaly`                | Note     | Gap > 5.0 between best and second-best                |
+| W05 | `composed-dispatch-ambiguity`       | Warning  | N-way ambiguity in composed dispatch table            |
+| W06 | `weight-inversion`                  | Note     | Less-specific rule has lower weight                   |
+| W09 | `cancellation-pair-missing-rewrite` | Warning  | Suppressed equation has no corresponding rewrite      |
 
 ### Recovery (R01–R07)
 
@@ -157,6 +158,20 @@ Ordering: `Info < Note < Warning < Error`
 | ID  | Name                              | Severity | Description                          |
 |-----|-----------------------------------|----------|--------------------------------------|
 | X06 | `composition-verification-violation` | Warning | CVT property violation              |
+
+### Decision Tree (D01–D09)
+
+| ID  | Name                        | Severity | Description                                               |
+|-----|-----------------------------|----------|-----------------------------------------------------------|
+| D01 | `precision-ambiguity`       | Note     | Token path with conflicting rules and overlap tokens      |
+| D02 | `unresolvable-ambiguity`    | Warning  | No finite lookahead resolves -- inherent grammar conflict |
+| D03 | `trie-unreachable-rule`     | Warning  | Rule shadowed by higher-priority path in PathMap trie     |
+| D04 | `min-lookahead-depth`       | Note     | Per-category minimum lookahead tokens                     |
+| D05 | `decision-tree-summary`     | Note     | States, deterministic/ambiguous ratio, depth, savings     |
+| D06 | `wfst-trie-inconsistency`   | Warning  | WFST prediction vs trie reachability mismatch             |
+| D07 | `path-coverage-report`      | Note     | Untested trie paths (opt-in `PRATTAIL_COVERAGE=1`)        |
+| D08 | `optimization-suggestion`   | Note     | Grammar modifications to resolve PathMap ambiguity        |
+| D09 | `conflict-resolution-guide` | Note     | Strategies for genuine conflicts in PathMap trie          |
 
 ### Performance (P02–P04)
 
@@ -194,16 +209,16 @@ Ordering: `Info < Note < Warning < Error`
 
 ## Files
 
-| File                        | Role                                                            |
-|-----------------------------|----------------------------------------------------------------|
-| `prattail/src/lint.rs`      | Core lint types, `run_lints()`, `emit_diagnostic()`, `format_diagnostic_colored()` |
-| `prattail/src/lib.rs`       | `pub mod lint;` + re-exports                                   |
-| `prattail/src/pipeline.rs`  | `LintContext` construction + `run_lints()` + I01–I07 emissions |
-| `prattail/src/prediction.rs`| W05 composed dispatch ambiguity warning                        |
-| `prattail/src/cost_benefit.rs` | I08, I09 env override diagnostics                           |
-| `prattail/src/compose.rs`   | X06 composition verification violations                        |
-| `prattail/src/ebnf.rs`      | I11, I12 EBNF dump diagnostics                                |
-| `macros/src/logic/mod.rs`   | G25–G31, W09, I10 macro-phase diagnostics                     |
+| File                           | Role                                                                               |
+|--------------------------------|------------------------------------------------------------------------------------|
+| `prattail/src/lint.rs`         | Core lint types, `run_lints()`, `emit_diagnostic()`, `format_diagnostic_colored()` |
+| `prattail/src/lib.rs`          | `pub mod lint;` + re-exports                                                       |
+| `prattail/src/pipeline.rs`     | `LintContext` construction + `run_lints()` + I01–I07 emissions                     |
+| `prattail/src/prediction.rs`   | W05 composed dispatch ambiguity warning                                            |
+| `prattail/src/cost_benefit.rs` | I08, I09 env override diagnostics                                                  |
+| `prattail/src/compose.rs`      | X06 composition verification violations                                            |
+| `prattail/src/ebnf.rs`         | I11, I12 EBNF dump diagnostics                                                     |
+| `macros/src/logic/mod.rs`      | G25–G31, W09, I10 macro-phase diagnostics                                          |
 
 ## Migration from Ad-Hoc Warnings
 
@@ -223,16 +238,16 @@ Larger grammars can produce many diagnostics with the same lint ID — for examp
 
 ### Grouped IDs
 
-| ID  | Group Key | Sub-Group | Grouped Output |
-|-----|-----------|-----------|----------------|
-| W01 | hint text (= dead-rule tier) | category | `"N rules are unreachable...\n  Cat1: R1, R2\n  Cat2: R3"` |
-| W02 | (single group) | category | `"N ambiguous NFA prefix dispatch in M categories\n  Cat: msg"` |
-| W03 | (single group) | category | `"N high-ambiguity tokens in M categories\n  Cat: msg"` |
-| W05 | (single group) | category | `"N ambiguities resolved by tropical shortest path\n  Cat: details"` |
-| W07 | (single group) | category | `"N rules on nearly-dead paths\n  Cat: R1, R2"` |
-| G03 | (single group) | category | `"N ambiguous prefix dispatch in M categories\n  Cat: msg"` |
-| G08 | (single group) | — | `"N categories have no cast path to primary\n  isolated: Cat1, Cat2"` |
-| G27 | general rule name | — | `"N rules may be subsumed by general rule \`Gen\`\n  candidates: R1, R2"` |
+| ID  | Group Key                    | Sub-Group | Grouped Output                                                            |
+|-----|------------------------------|-----------|---------------------------------------------------------------------------|
+| W01 | hint text (= dead-rule tier) | category  | `"N rules are unreachable...\n  Cat1: R1, R2\n  Cat2: R3"`                |
+| W02 | (single group)               | category  | `"N ambiguous NFA prefix dispatch in M categories\n  Cat: msg"`           |
+| W03 | (single group)               | category  | `"N high-ambiguity tokens in M categories\n  Cat: msg"`                   |
+| W05 | (single group)               | category  | `"N ambiguities resolved by tropical shortest path\n  Cat: details"`      |
+| W07 | (single group)               | category  | `"N rules on nearly-dead paths\n  Cat: R1, R2"`                           |
+| G03 | (single group)               | category  | `"N ambiguous prefix dispatch in M categories\n  Cat: msg"`               |
+| G08 | (single group)               | —         | `"N categories have no cast path to primary\n  isolated: Cat1, Cat2"`     |
+| G27 | general rule name            | —         | `"N rules may be subsumed by general rule \`Gen\`\n  candidates: R1, R2"` |
 
 All other lint IDs pass through unchanged. Single-item groups always pass through unchanged.
 

@@ -45,6 +45,172 @@ use crate::wfst::PredictionWfst;
 use crate::{LanguageSpec, LiteralPatterns, SyntaxItemSpec};
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Inter-category graph (shared by A4 and A8)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Shared inter-category graph used by both A4 (dead-path detection) and
+/// A8 (nearly-dead path detection). Nodes are categories; edges represent
+/// inter-category connections via cast/cross-category rules and syntax-level
+/// NonTerminal/Binder/Collection references.
+pub(crate) struct InterCategoryGraph {
+    pub cat_to_idx: HashMap<String, usize>,
+    pub num_nodes: usize,
+    pub root_idx: usize,
+    /// Undirected adjacency (HashSet for dedup).
+    pub adj: Vec<HashSet<usize>>,
+}
+
+impl InterCategoryGraph {
+    /// BFS from `start`, returning all reachable node indices.
+    pub fn bfs_reachable(&self, start: usize) -> HashSet<usize> {
+        let mut visited = HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        visited.insert(start);
+        queue.push_back(start);
+        while let Some(node) = queue.pop_front() {
+            for &target in &self.adj[node] {
+                if visited.insert(target) {
+                    queue.push_back(target);
+                }
+            }
+        }
+        visited
+    }
+
+}
+
+/// Recursively collect cross-category edge pairs from a `SyntaxItemSpec`.
+///
+/// Unified helper used by both A4 and A8: any NonTerminal, Binder, or
+/// Collection referencing a different category produces an edge pair
+/// `(referenced_category_idx, rule_category_idx)`.
+fn collect_syntax_refs(
+    item: &crate::SyntaxItemSpec,
+    rule_cat: &str,
+    cat_to_idx: &HashMap<String, usize>,
+    target_idx: usize,
+    pairs: &mut Vec<(usize, usize)>,
+) {
+    match item {
+        crate::SyntaxItemSpec::NonTerminal { category: ref nt_cat, .. } => {
+            if nt_cat != rule_cat {
+                if let Some(&src_idx) = cat_to_idx.get(nt_cat) {
+                    pairs.push((src_idx, target_idx));
+                }
+            }
+        }
+        crate::SyntaxItemSpec::Binder { category: ref b_cat, .. } => {
+            if b_cat != rule_cat {
+                if let Some(&src_idx) = cat_to_idx.get(b_cat) {
+                    pairs.push((src_idx, target_idx));
+                }
+            }
+        }
+        crate::SyntaxItemSpec::Collection { element_category: ref e_cat, .. } => {
+            if e_cat != rule_cat {
+                if let Some(&src_idx) = cat_to_idx.get(e_cat) {
+                    pairs.push((src_idx, target_idx));
+                }
+            }
+        }
+        crate::SyntaxItemSpec::Sep { body, .. } => {
+            collect_syntax_refs(body, rule_cat, cat_to_idx, target_idx, pairs);
+        }
+        crate::SyntaxItemSpec::Map { body_items } => {
+            for sub in body_items {
+                collect_syntax_refs(sub, rule_cat, cat_to_idx, target_idx, pairs);
+            }
+        }
+        crate::SyntaxItemSpec::Zip { left_category, right_category, body, .. } => {
+            for ref_cat in [left_category.as_str(), right_category.as_str()] {
+                if ref_cat != rule_cat {
+                    if let Some(&src_idx) = cat_to_idx.get(ref_cat) {
+                        pairs.push((src_idx, target_idx));
+                    }
+                }
+            }
+            collect_syntax_refs(body, rule_cat, cat_to_idx, target_idx, pairs);
+        }
+        crate::SyntaxItemSpec::Optional { inner } => {
+            for sub in inner {
+                collect_syntax_refs(sub, rule_cat, cat_to_idx, target_idx, pairs);
+            }
+        }
+        // Terminal, IdentCapture, BinderCollection — no cross-category refs
+        _ => {}
+    }
+}
+
+/// Build the shared inter-category graph from rule infos, categories, and syntax.
+///
+/// Nodes are categories; edges come from:
+/// 1. Cast/cross-category rules (source↔target via first_items NonTerminal)
+/// 2. Full syntax traversal (any cross-category NonTerminal/Binder/Collection)
+///
+/// Returns `None` if fewer than 2 categories (no inter-category analysis possible).
+pub(crate) fn build_inter_category_graph(
+    rule_infos: &[RuleInfo],
+    categories: &[CategoryInfo],
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+) -> Option<InterCategoryGraph> {
+    if categories.len() < 2 {
+        return None;
+    }
+
+    let cat_to_idx: HashMap<String, usize> = categories
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.name.clone(), i))
+        .collect();
+    let num_nodes = categories.len();
+
+    let root_idx = categories
+        .iter()
+        .position(|c| c.is_primary)
+        .unwrap_or(0);
+
+    let mut adj: Vec<HashSet<usize>> = vec![HashSet::new(); num_nodes];
+
+    // From cast/cross-category rules: source category ↔ target category
+    for rule in rule_infos {
+        if rule.is_cast || rule.is_cross_category {
+            let target_idx = match cat_to_idx.get(&rule.category) {
+                Some(&idx) => idx,
+                None => continue,
+            };
+            for fi in &rule.first_items {
+                if let FirstItem::NonTerminal(src_cat) = fi {
+                    if let Some(&src_idx) = cat_to_idx.get(src_cat) {
+                        adj[src_idx].insert(target_idx);
+                        adj[target_idx].insert(src_idx);
+                    }
+                }
+            }
+        }
+    }
+
+    // From full syntax: any cross-category NonTerminal/Binder/Collection reference
+    {
+        let mut pairs = Vec::new();
+        for (_, rule_cat, items) in all_syntax {
+            let target_idx = match cat_to_idx.get(rule_cat) {
+                Some(&idx) => idx,
+                None => continue,
+            };
+            for item in items {
+                collect_syntax_refs(item, rule_cat, &cat_to_idx, target_idx, &mut pairs);
+            }
+        }
+        for (a, b) in pairs {
+            adj[a].insert(b);
+            adj[b].insert(a);
+        }
+    }
+
+    Some(InterCategoryGraph { cat_to_idx, num_nodes, root_idx, adj })
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Dead-rule detection
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -144,6 +310,8 @@ pub(crate) fn detect_dead_rules(
     first_sets: &HashMap<String, FirstSet>,
     prediction_wfsts: &HashMap<String, PredictionWfst>,
     semantic_dependency_groups: &[HashSet<String>],
+    nfa_spillover_categories: &HashSet<String>,
+    rd_rules: &[crate::recursive::RDRuleInfo],
 ) -> Vec<DeadRuleWarning> {
     let mut warnings = Vec::new();
 
@@ -185,6 +353,44 @@ pub(crate) fn detect_dead_rules(
         reachable
     };
 
+    // Pre-compute rule labels reachable via NFA spillover try-all dispatch.
+    // In NFA-spillover categories, multiple RD rules share a dispatch token.
+    // The trampoline tries all rules in each group — if ANY rule in the group
+    // is WFST-reachable, all siblings are also reachable at runtime.
+    let nfa_covered: HashSet<String> = {
+        let mut covered = HashSet::new();
+        for cat in nfa_spillover_categories {
+            let groups = crate::trampoline::group_rd_by_dispatch_token_pub(rd_rules, cat);
+            for (_token, rules) in &groups {
+                if rules.len() < 2 {
+                    continue;
+                }
+                // If any rule in the group is WFST-reachable, all are covered.
+                let any_reachable =
+                    prediction_wfsts
+                        .get(cat.as_str())
+                        .map_or(false, |wfst| {
+                            first_sets.get(cat.as_str()).map_or(false, |fs| {
+                                fs.tokens.iter().any(|tok| {
+                                    let preds = wfst.predict(tok);
+                                    rules.iter().any(|r| {
+                                        preds
+                                            .iter()
+                                            .any(|a| a.action.rule_label() == r.label)
+                                    })
+                                })
+                            })
+                        });
+                if any_reachable {
+                    for r in rules {
+                        covered.insert(r.label.clone());
+                    }
+                }
+            }
+        }
+        covered
+    };
+
     for rule_info in rule_infos {
         // Tier 1: literal rules — dead if category has no native_type.
         if rule_info.is_literal {
@@ -200,11 +406,28 @@ pub(crate) fn detect_dead_rules(
             continue;
         }
 
-        // Tier 2: same-category infix/postfix/mixfix and var rules — dead
-        // if their entire category is unreachable (no prefix rule can start
-        // a parse in that category).
-        if (rule_info.is_infix && !rule_info.is_cross_category) || rule_info.is_var {
-            if !reachable_categories.contains(&rule_info.category) {
+        // Tier 2: infix/postfix/mixfix and var rules — dead if their
+        // dispatch category is unreachable. Cross-category infix rules are
+        // dispatched from the SOURCE category's infix loop, so we check
+        // source-category reachability; same-category infix/var rules check
+        // their own category.
+        if rule_info.is_infix || rule_info.is_var {
+            let check_cat = if rule_info.is_cross_category {
+                rule_info
+                    .first_items
+                    .iter()
+                    .find_map(|fi| {
+                        if let FirstItem::NonTerminal(cat) = fi {
+                            Some(cat.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(rule_info.category.as_str())
+            } else {
+                rule_info.category.as_str()
+            };
+            if !reachable_categories.contains(check_cat) {
                 warnings.push(DeadRuleWarning::UnreachableCategory {
                     rule_label: rule_info.label.clone(),
                     category: rule_info.category.clone(),
@@ -231,7 +454,7 @@ pub(crate) fn detect_dead_rules(
                 })
             });
 
-        if !reachable {
+        if !reachable && !nfa_covered.contains(&rule_info.label) {
             warnings.push(DeadRuleWarning::WfstUnreachable {
                 rule_label: rule_info.label.clone(),
                 category: rule_info.category.clone(),
@@ -329,86 +552,55 @@ pub(crate) fn compute_semantic_live_labels(
 pub(crate) fn detect_inter_category_dead_paths(
     rule_infos: &[RuleInfo],
     categories: &[CategoryInfo],
-    first_sets: &HashMap<String, FirstSet>,
+    _first_sets: &HashMap<String, FirstSet>,
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
 ) -> Vec<DeadRuleWarning> {
-    use crate::automata::semiring::{BooleanWeight, Semiring};
-    use crate::forward_backward::{forward_scores, backward_scores};
+    let graph = match build_inter_category_graph(rule_infos, categories, all_syntax) {
+        Some(g) => g,
+        None => return Vec::new(),
+    };
 
-    // Need at least 2 categories for inter-category analysis
-    if categories.len() < 2 {
-        return Vec::new();
-    }
+    // Forward BFS from root: which categories are reachable
+    let fwd_reachable = graph.bfs_reachable(graph.root_idx);
 
-    // Build node index: category name → node ID
-    let cat_to_idx: HashMap<String, usize> = categories
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.name.clone(), i))
-        .collect();
-    let num_nodes = categories.len();
-
-    // Find root category (primary = first-declared)
-    let root_idx = categories
-        .iter()
-        .position(|c| c.is_primary)
-        .unwrap_or(0);
-
-    // Build edge list: inter-category connections with BooleanWeight
-    let mut edges: Vec<Vec<(usize, BooleanWeight)>> = vec![Vec::new(); num_nodes];
-
-    for rule in rule_infos {
-        if rule.is_cast || rule.is_cross_category {
-            // Cast/cross-cat: source category → target category
-            let target_idx = match cat_to_idx.get(&rule.category) {
-                Some(&idx) => idx,
-                None => continue,
-            };
-
-            // Find source category from first items
-            for fi in &rule.first_items {
-                if let FirstItem::NonTerminal(src_cat) = fi {
-                    if let Some(&src_idx) = cat_to_idx.get(src_cat) {
-                        // Edge from source to target (forward direction: source can produce target)
-                        edges[src_idx].push((target_idx, BooleanWeight::one()));
-                        // Reverse edge for backward reachability
-                        edges[target_idx].push((src_idx, BooleanWeight::one()));
-                    }
+    // Backward BFS: build reverse edges, then BFS from root.
+    // Since edges are bidirectional (adj is symmetric), backward = forward.
+    // But for correctness with asymmetric future changes, use reverse graph.
+    let bwd_reachable: HashSet<usize> = {
+        let mut rev_adj: Vec<Vec<usize>> = vec![Vec::new(); graph.num_nodes];
+        for (src, targets) in graph.adj.iter().enumerate() {
+            for &tgt in targets {
+                rev_adj[tgt].push(src);
+            }
+        }
+        let mut visited = HashSet::new();
+        let mut queue = std::collections::VecDeque::new();
+        visited.insert(graph.root_idx);
+        queue.push_back(graph.root_idx);
+        while let Some(node) = queue.pop_front() {
+            for &source in &rev_adj[node] {
+                if visited.insert(source) {
+                    queue.push_back(source);
                 }
             }
         }
-    }
+        visited
+    };
 
-    // Also add edges for categories that have non-empty FIRST sets
-    // (they are self-reachable — can produce terms from their own tokens)
-    for (cat, fs) in first_sets {
-        if !fs.tokens.is_empty() {
-            if let Some(&idx) = cat_to_idx.get(cat) {
-                // Self-edge: category can start a parse
-                edges[idx].push((idx, BooleanWeight::one()));
-            }
-        }
-    }
-
-    // Forward from root: which categories are reachable from root
-    let forward = forward_scores::<BooleanWeight>(&edges, num_nodes);
-
-    // Backward to root: which categories can reach root
-    let backward = backward_scores::<BooleanWeight>(&edges, num_nodes, root_idx);
-
-    // Collect warnings for rules in categories where forward ∧ backward == false
+    // Collect warnings for rules in categories not reachable in both directions
     let mut warnings = Vec::new();
 
     for rule in rule_infos {
-        let cat_idx = match cat_to_idx.get(&rule.category) {
+        let cat_idx = match graph.cat_to_idx.get(&rule.category) {
             Some(&idx) => idx,
             None => continue,
         };
 
-        let fwd_reachable = !forward[cat_idx].is_zero();
-        let bwd_reachable = !backward[cat_idx].is_zero();
+        let fwd = fwd_reachable.contains(&cat_idx);
+        let bwd = bwd_reachable.contains(&cat_idx);
 
-        if !fwd_reachable || !bwd_reachable {
-            let direction = match (fwd_reachable, bwd_reachable) {
+        if !fwd || !bwd {
+            let direction = match (fwd, bwd) {
                 (false, false) => "forward+backward",
                 (false, true) => "forward",
                 (true, false) => "backward",
@@ -451,84 +643,45 @@ pub(crate) fn detect_nearly_dead_paths(
     rule_infos: &[RuleInfo],
     categories: &[CategoryInfo],
     first_sets: &HashMap<String, FirstSet>,
+    all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
 ) -> Vec<DeadRuleWarning> {
     use crate::automata::semiring::{BooleanWeight, CountingWeight, ProductWeight, Semiring};
     use crate::forward_backward::{forward_scores, backward_scores};
 
     type BoolCount = ProductWeight<BooleanWeight, CountingWeight>;
 
-    // Need at least 2 categories for inter-category analysis
-    if categories.len() < 2 {
-        return Vec::new();
-    }
+    let graph = match build_inter_category_graph(rule_infos, categories, all_syntax) {
+        Some(g) => g,
+        None => return Vec::new(),
+    };
 
-    // Build node index: category name → node ID
-    let cat_to_idx: HashMap<String, usize> = categories
-        .iter()
-        .enumerate()
-        .map(|(i, c)| (c.name.clone(), i))
-        .collect();
-    let num_nodes = categories.len();
-
-    // Find root category (primary = first-declared)
-    let root_idx = categories
-        .iter()
-        .position(|c| c.is_primary)
-        .unwrap_or(0);
-
-    // Build edge list with ProductWeight<BooleanWeight, CountingWeight>
-    let mut edges: Vec<Vec<(usize, BoolCount)>> = vec![Vec::new(); num_nodes];
-
-    for rule in rule_infos {
-        if rule.is_cast || rule.is_cross_category {
-            let target_idx = match cat_to_idx.get(&rule.category) {
-                Some(&idx) => idx,
-                None => continue,
-            };
-
-            for fi in &rule.first_items {
-                if let FirstItem::NonTerminal(src_cat) = fi {
-                    if let Some(&src_idx) = cat_to_idx.get(src_cat) {
-                        let w = BoolCount::new(BooleanWeight::one(), CountingWeight::one());
-                        edges[src_idx].push((target_idx, w));
-                        edges[target_idx].push((src_idx, w));
-                    }
-                }
-            }
+    // Build weighted edge list from shared graph adjacency
+    let mut edges: Vec<Vec<(usize, BoolCount)>> = vec![Vec::new(); graph.num_nodes];
+    let w_one = BoolCount::new(BooleanWeight::one(), CountingWeight::one());
+    for (src, targets) in graph.adj.iter().enumerate() {
+        for &dst in targets {
+            edges[src].push((dst, w_one));
         }
     }
 
     // Self-edges for categories with non-empty FIRST sets
     for (cat, fs) in first_sets {
         if !fs.tokens.is_empty() {
-            if let Some(&idx) = cat_to_idx.get(cat) {
-                let w = BoolCount::new(BooleanWeight::one(), CountingWeight::one());
-                edges[idx].push((idx, w));
+            if let Some(&idx) = graph.cat_to_idx.get(cat) {
+                edges[idx].push((idx, w_one));
             }
         }
     }
 
     // Forward from root
-    let forward = forward_scores::<BoolCount>(&edges, num_nodes);
+    let forward = forward_scores::<BoolCount>(&edges, graph.num_nodes);
 
     // Backward to root
-    let backward = backward_scores::<BoolCount>(&edges, num_nodes, root_idx);
+    let backward = backward_scores::<BoolCount>(&edges, graph.num_nodes, graph.root_idx);
 
-    // Root's total derivation count (forward to root = one(), so use backward[root])
-    // For a well-formed graph: forward[root].right should be CountingWeight::one() (1 starting path)
-    // The total is backward[root].right = sum of all paths from root to root.
-    // For our purposes: total = max(forward[root_idx].right.count(), 1)
-    // But actually the meaningful total is the path weight from root back to root:
-    // backward[root_idx] = total weight of all paths from root to root = one() (self-loop)
-    //
-    // Better metric: use forward scores at each node × backward scores as the
-    // "through" weight. For each non-root node i:
-    //   through[i] = forward[i].right.count() (paths from root → i)
-    //   total = forward score accumulated at any category that has self-loops.
-    //
-    // Simpler approach: compare each category's forward count to the root's forward count.
-    // A category with very few forward paths relative to the maximum is nearly dead.
-    // Find the max forward count across all reachable categories
+    // Compare each category's forward count to the maximum across all reachable
+    // categories. A category with very few forward paths relative to the maximum
+    // is nearly dead.
     let max_count = forward.iter()
         .filter(|w| w.left.is_reachable())
         .map(|w| w.right.count())
@@ -539,7 +692,7 @@ pub(crate) fn detect_nearly_dead_paths(
     let mut warnings = Vec::new();
 
     for rule in rule_infos {
-        let cat_idx = match cat_to_idx.get(&rule.category) {
+        let cat_idx = match graph.cat_to_idx.get(&rule.category) {
             Some(&idx) => idx,
             None => continue,
         };
@@ -553,7 +706,7 @@ pub(crate) fn detect_nearly_dead_paths(
         }
 
         // Skip the root category itself (always has count >= 1)
-        if cat_idx == root_idx {
+        if cat_idx == graph.root_idx {
             continue;
         }
 
@@ -571,6 +724,66 @@ pub(crate) fn detect_nearly_dead_paths(
     }
 
     warnings
+}
+
+/// Detect dead prefixes: dispatch tokens whose entire trie subtree leads only
+/// to dead rules. Returns `category → [dead_prefix_token_variant, ...]`.
+///
+/// Used by Sprint 4 to increase recovery WFST weights for dead-prefix tokens
+/// (demoting them as recovery targets) and by `lint_w01_dead_rule` to emit
+/// W01 dead-prefix sub-notes.
+pub(crate) fn detect_dead_prefixes(
+    dead_rule_warnings: &[DeadRuleWarning],
+    decision_trees: &HashMap<String, crate::decision_tree::CategoryDecisionTree>,
+    token_id_map: &crate::token_id::TokenIdMap,
+) -> HashMap<String, Vec<String>> {
+    if decision_trees.is_empty() {
+        return HashMap::new();
+    }
+
+    let dead_labels: HashSet<String> = dead_rule_warnings
+        .iter()
+        .map(|w| match w {
+            DeadRuleWarning::LiteralNoNativeType { rule_label, .. }
+            | DeadRuleWarning::UnreachableCategory { rule_label, .. }
+            | DeadRuleWarning::WfstUnreachable { rule_label, .. }
+            | DeadRuleWarning::InterCategoryDeadPath { rule_label, .. }
+            | DeadRuleWarning::NearlyDeadPath { rule_label, .. } => rule_label.clone(),
+        })
+        .collect();
+
+    if dead_labels.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut result: HashMap<String, Vec<String>> = HashMap::new();
+
+    for (cat_name, tree) in decision_trees {
+        let dispatch_tokens = tree.dispatch_tokens(token_id_map);
+        for token_variant in &dispatch_tokens {
+            let strategy = tree.dispatch_strategy(token_variant, token_id_map);
+            let rule_labels = match &strategy {
+                crate::decision_tree::DispatchStrategy::Singleton { rule_label } => {
+                    vec![rule_label.clone()]
+                }
+                crate::decision_tree::DispatchStrategy::NfaTryAll { rule_labels, .. } => {
+                    rule_labels.clone()
+                }
+                crate::decision_tree::DispatchStrategy::DisjointSuffix { suffix_map, .. } => {
+                    suffix_map.values().cloned().collect()
+                }
+                crate::decision_tree::DispatchStrategy::NotPresent => Vec::new(),
+            };
+            if !rule_labels.is_empty() && rule_labels.iter().all(|l| dead_labels.contains(l)) {
+                result
+                    .entry(cat_name.clone())
+                    .or_default()
+                    .push(token_variant.clone());
+            }
+        }
+    }
+
+    result
 }
 
 /// A4: Collect dead rule labels safe for codegen suppression.
@@ -604,6 +817,7 @@ pub(crate) fn collect_dead_rule_labels(
     first_sets: &HashMap<String, FirstSet>,
     prediction_wfsts: &HashMap<String, PredictionWfst>,
     semantic_dependency_groups: &[HashSet<String>],
+    decision_trees: &HashMap<String, crate::decision_tree::CategoryDecisionTree>,
 ) -> HashSet<String> {
     let mut dead_labels = HashSet::new();
 
@@ -611,14 +825,32 @@ pub(crate) fn collect_dead_rule_labels(
     // These are provably unreachable: the category can never produce a native value.
     // Tier 2: UnreachableCategory — rules in categories with no reachable prefix rules.
     // These are provably unreachable: no parse can ever start in the category.
-    for w in detect_dead_rules(rule_infos, categories, first_sets, prediction_wfsts, semantic_dependency_groups) {
+    // Tier 3 (confirmed): WfstUnreachable AND trie-unreachable — dead in both WFST
+    // and decision tree dispatch, so no alternative dispatch path exists.
+    let trie_reachable: HashMap<String, HashSet<String>> = decision_trees
+        .iter()
+        .map(|(cat, tree)| (cat.clone(), tree.reachable_rules()))
+        .collect();
+
+    for w in detect_dead_rules(rule_infos, categories, first_sets, prediction_wfsts,
+                               semantic_dependency_groups, &HashSet::new(), &[]) {
         match &w {
             DeadRuleWarning::LiteralNoNativeType { rule_label, .. }
             | DeadRuleWarning::UnreachableCategory { rule_label, .. } => {
                 dead_labels.insert(rule_label.clone());
             }
-            // WfstUnreachable excluded: cross-cat/cast/NFA rules are reachable
-            // through non-WFST dispatch paths.
+            // 1.2b: WfstUnreachable is now promoted to confirmed-dead if the rule
+            // is also unreachable in the decision tree trie. This eliminates the
+            // false-positive risk from cross-cat/cast/NFA dispatch paths: if the
+            // trie also can't reach the rule, no dispatch path exists.
+            DeadRuleWarning::WfstUnreachable { rule_label, category, .. } => {
+                let trie_also_unreachable = trie_reachable
+                    .get(category)
+                    .map_or(false, |reachable| !reachable.contains(rule_label));
+                if trie_also_unreachable {
+                    dead_labels.insert(rule_label.clone());
+                }
+            }
             _ => {}
         }
     }
@@ -1142,6 +1374,20 @@ fn generate_parser_code(
     let category_names: Vec<String> = bundle.categories.iter().map(|c| c.name.clone()).collect();
     let primary_category = category_names.first().map(|s| s.as_str()).unwrap_or("");
 
+    // D07: Check if runtime coverage instrumentation is requested
+    let emit_coverage = std::env::var("PRATTAIL_COVERAGE").is_ok();
+
+    // Layer 10: Load incremental codegen cache (.prattail-cache)
+    let cache_path = std::env::var("PRATTAIL_CACHE_DIR")
+        .map(|d| std::path::PathBuf::from(d).join(".prattail-cache"))
+        .ok();
+    let prev_cache = cache_path.as_ref()
+        .and_then(|p| crate::decision_tree::IncrementalState::load(p));
+    let mut new_cache = crate::decision_tree::IncrementalState {
+        version: crate::decision_tree::CACHE_VERSION,
+        ..Default::default()
+    };
+
     // Compute FIRST sets
     let mut first_sets = compute_first_sets(&bundle.rule_infos, &category_names);
 
@@ -1223,7 +1469,7 @@ fn generate_parser_code(
     // ── WFST construction ─────────────────────────────────────────────────
     // Build prediction WFSTs and recovery WFSTs from FIRST/FOLLOW/overlap data.
     // These are consulted by weighted dispatch and recovery codegen below.
-    let (prediction_wfsts, recovery_wfsts, token_id_map) = {
+    let (mut prediction_wfsts, mut recovery_wfsts, token_id_map) = {
         use crate::prediction::build_dispatch_action_tables;
         use crate::recovery::build_recovery_wfsts;
         use crate::token_id::TokenIdMap;
@@ -1250,6 +1496,56 @@ fn generate_parser_code(
         // Build prediction WFSTs (per-category, weight-ordered dispatch)
         let mut prediction_wfsts =
             build_prediction_wfsts(&category_names, &first_sets, &overlaps, &dispatch_actions);
+
+        // Enrich WFSTs with two-token disambiguation paths.
+        // For NFA-ambiguous groups where the second position (terminal or FIRST-expanded
+        // nonterminal) uniquely identifies the rule, adds start → intermediate → accept
+        // paths so predict_two_token() can resolve them.
+        let two_token_paths_added = crate::wfst::enrich_with_two_token_paths(
+            &mut prediction_wfsts,
+            &bundle.rd_rules,
+            &category_names,
+            &first_sets,
+        );
+        if two_token_paths_added > 0 {
+            pipeline_diagnostic(
+                &bundle.grammar_name, "I02", "two-token-enrichment",
+                crate::lint::LintSeverity::Info,
+                format!("{} two-token disambiguation path(s) added to prediction WFSTs", two_token_paths_added),
+                None,
+            );
+        }
+
+        // Sprint 3: Assign ContextWeight bit positions to rules in each WFST.
+        // For each category's PredictionWfst, find dispatch tokens that have
+        // multiple competing rules (ambiguous groups). Assign sequential bit IDs
+        // (0..N-1) to the rule labels so that `live_rules_context_after()` can
+        // track which rules survive after consuming tokens.
+        {
+            let mut total_context_labels = 0usize;
+            for wfst in prediction_wfsts.values_mut() {
+                // Collect unique rule labels from all actions
+                let mut rule_labels: Vec<String> = wfst.actions
+                    .iter()
+                    .map(|a| a.action.rule_label())
+                    .collect();
+                rule_labels.sort();
+                rule_labels.dedup();
+                if rule_labels.len() > 1 {
+                    let label_refs: Vec<&str> = rule_labels.iter().map(|s| s.as_str()).collect();
+                    wfst.assign_context_labels(&label_refs);
+                    total_context_labels += rule_labels.len();
+                }
+            }
+            if total_context_labels > 0 {
+                pipeline_diagnostic(
+                    &bundle.grammar_name, "I03", "context-weight-labels",
+                    crate::lint::LintSeverity::Info,
+                    format!("{} ContextWeight bit labels assigned across prediction WFSTs", total_context_labels),
+                    None,
+                );
+            }
+        }
 
         // B3: WFST minimization gate — skip cascade for trivial grammars.
         // The threshold is 4 WFST states: grammars below this (e.g., Lambda with
@@ -1547,40 +1843,10 @@ fn generate_parser_code(
     // Detect which categories have NFA-ambiguous prefix groups (multiple rules
     // sharing the same dispatch token). These categories need thread-local spillover
     // buffers and forced-prefix replay for intra-category disambiguation.
-    let nfa_spillover_categories = crate::trampoline::categories_needing_nfa_spillover(
+    let mut nfa_spillover_categories = crate::trampoline::categories_needing_nfa_spillover(
         &bundle.rd_rules,
         &category_names,
     );
-
-    // ── Unified lint layer ─────────────────────────────────────────────────
-    // Construct LintContext with all pipeline data and run all 23 lints.
-    // Replaces the previous ad-hoc eprintln! blocks for dead rules (W01),
-    // NFA ambiguity (W02), and grammar warnings (G01-G03).
-    {
-        let lint_ctx = crate::lint::LintContext {
-            grammar_name: &bundle.grammar_name,
-            rule_locations: &bundle.rule_locations,
-            categories: &bundle.categories,
-            rules: &bundle.rule_infos,
-            rd_rules: &bundle.rd_rules,
-            first_sets: &first_sets,
-            follow_sets: &follow_sets,
-            bp_table: &bundle.bp_table,
-            prediction_wfsts: &prediction_wfsts,
-            recovery_wfsts: &recovery_wfsts,
-            cast_rules: &bundle.cast_rules,
-            cross_rules: &bundle.cross_rules,
-            nfa_spillover_categories: &nfa_spillover_categories,
-            recovery_config: &bundle.recovery_config,
-            all_syntax: &bundle.all_syntax,
-            follow_inputs: &bundle.follow_inputs,
-            semantic_dependency_groups: &bundle.semantic_dependency_groups,
-            pre_collected_diagnostics: &w05_diagnostics,
-        };
-
-        let diagnostics = crate::lint::run_lints(&lint_ctx);
-        crate::lint::emit_diagnostics_for_grammar(&bundle.grammar_name, &diagnostics);
-    }
 
     // ── D1 + A3: Cost-benefit optimization analysis → optimization gating ──
     // Profile the grammar and evaluate which optimizations are beneficial.
@@ -1588,12 +1854,14 @@ fn generate_parser_code(
     // compile-time optimization passes are emitted in codegen. This makes
     // the pipeline self-tuning per grammar.
     // The grammar_profile is computed once and reused for the D2 complexity report.
-    let grammar_profile = crate::cost_benefit::build_grammar_profile(
+    let empty_dt: HashMap<String, crate::decision_tree::CategoryDecisionTree> = HashMap::new();
+    let mut grammar_profile = crate::cost_benefit::build_grammar_profile(
         &prediction_wfsts,
         &first_sets,
         &nfa_spillover_categories,
         bundle.rule_infos.len(),
         bundle.beam_width.is_enabled(),
+        &empty_dt,
     );
     let optimization_gates = {
         let recommended = crate::cost_benefit::recommended_optimizations(&grammar_profile);
@@ -1621,12 +1889,13 @@ fn generate_parser_code(
     // these labels are additionally threaded into dispatch and trampoline
     // configs to suppress parser codegen for unreachable rules.
     // The lint layer still emits W01 warnings independently.
-    let all_dead_rule_labels = collect_dead_rule_labels(
+    let mut all_dead_rule_labels = collect_dead_rule_labels(
         &bundle.rule_infos,
         &bundle.categories,
         &first_sets,
         &prediction_wfsts,
         &bundle.semantic_dependency_groups,
+        &HashMap::new(), // DTs not yet built; trie confirmation in 2nd pass below
     );
     let dead_rules: HashSet<String> = if optimization_gates.enhanced_dce {
         if !all_dead_rule_labels.is_empty() {
@@ -1646,6 +1915,437 @@ fn generate_parser_code(
     } else {
         HashSet::new()
     };
+
+    // ── Decision tree construction ─────────────────────────────────────────
+    // Build PathMap decision trees for all categories. The tree subsumes the
+    // ad-hoc dispatch analyses (group_rd_by_dispatch_token, shared prefix,
+    // second-token lookahead, suffix disjointness, etc.) into a single
+    // unified trie-based mechanism. Built after FIRST sets and dead rules
+    // are available; threaded into TrampolineConfig for codegen queries.
+    let decision_trees = {
+        use crate::decision_tree::DecisionTreeBuilder;
+        let mut dt_builder = DecisionTreeBuilder::new(
+            token_id_map.clone(),
+            first_sets.clone(),
+            category_names.clone(),
+            dead_rules.clone(),
+        );
+        dt_builder.build_all(
+            &bundle.rd_rules,
+            &bundle.cross_rules,
+            &bundle.cast_rules,
+        );
+
+        // ── Decision-tree diagnostics (D01–D09) ─────────────────────────────
+        // Collect all DT diagnostics into a single Vec, then emit via the
+        // standard lint framework for batching, grouping, and PRATTAIL_LINT_VERBOSE.
+        let mut dt_diagnostics: Vec<crate::lint::LintDiagnostic> = Vec::new();
+
+        for cat_name in &category_names {
+            if let Some(tree) = dt_builder.get_tree(cat_name) {
+                // D05: complexity metrics
+                if tree.stats.total_states > 0 {
+                    dt_diagnostics.push(
+                        crate::decision_tree::complexity_metrics(tree, &bundle.grammar_name)
+                    );
+                }
+
+                // D01: precision ambiguity
+                dt_diagnostics.extend(
+                    crate::decision_tree::precision_ambiguity_reports(tree, &token_id_map, &bundle.grammar_name)
+                );
+
+                // D02: unresolvable ambiguity
+                dt_diagnostics.extend(
+                    crate::decision_tree::unresolvable_ambiguity_reports(tree, &token_id_map, &bundle.grammar_name)
+                );
+
+                // D03: unreachable rules
+                let all_labels: std::collections::HashSet<String> = bundle.rd_rules
+                    .iter()
+                    .filter(|r| r.category == *cat_name && !r.is_collection && r.prefix_bp.is_none())
+                    .filter(|r| !matches!(
+                        r.items.first(),
+                        Some(crate::recursive::RDSyntaxItem::NonTerminal { .. }) |
+                        Some(crate::recursive::RDSyntaxItem::IdentCapture { .. })
+                    ))
+                    .map(|r| r.label.clone())
+                    .collect();
+                dt_diagnostics.extend(
+                    crate::decision_tree::unreachable_rule_detection(tree, &all_labels, &bundle.grammar_name)
+                );
+
+                // D04: min lookahead
+                if tree.stats.total_states > 0 {
+                    dt_diagnostics.push(
+                        crate::decision_tree::min_lookahead_report(tree, &bundle.grammar_name)
+                    );
+                }
+            }
+
+            // D06: WFST consistency (needs both tree and wfst)
+            if let (Some(tree), Some(wfst)) = (dt_builder.get_tree(cat_name), prediction_wfsts.get(cat_name)) {
+                dt_diagnostics.extend(
+                    crate::decision_tree::wfst_consistency_check(tree, wfst, &token_id_map, &bundle.grammar_name)
+                );
+            }
+
+            if let Some(tree) = dt_builder.get_tree(cat_name) {
+                // D08: optimization suggestions
+                dt_diagnostics.extend(
+                    crate::decision_tree::optimization_suggestions(tree, &bundle.grammar_name)
+                );
+
+                // D09: conflict resolution guidance
+                dt_diagnostics.extend(
+                    crate::decision_tree::conflict_resolution_guidance(tree, &bundle.grammar_name)
+                );
+            }
+        }
+
+        crate::lint::emit_diagnostics_for_grammar(&bundle.grammar_name, &dt_diagnostics);
+
+        dt_builder
+    };
+
+    // ── Update grammar_profile with PathMap decision tree metrics ──────────
+    {
+        let dt_trees = decision_trees.trees();
+        if !dt_trees.is_empty() {
+            let mut total_depth = 0usize;
+            let mut total_ambiguous = 0usize;
+            let mut total_states = 0usize;
+            let mut total_det_rules = 0usize;
+            let mut total_rules = 0usize;
+            for tree in dt_trees.values() {
+                total_depth += tree.stats.max_depth;
+                total_ambiguous += tree.stats.ambiguous_nodes;
+                total_states += tree.stats.total_states;
+                total_det_rules += tree.stats.deterministic_rules;
+                total_rules += tree.stats.total_rules;
+            }
+            let n = dt_trees.len() as f64;
+            grammar_profile.avg_trie_depth = total_depth as f64 / n;
+            grammar_profile.ambiguity_score = if total_states > 0 {
+                total_ambiguous as f64 / total_states as f64
+            } else {
+                0.0
+            };
+            grammar_profile.deterministic_ratio = if total_rules > 0 {
+                total_det_rules as f64 / total_rules as f64
+            } else {
+                1.0
+            };
+        }
+    }
+
+    // ── 2a: Dispatch entropy analysis (optional) ───────────────────────────
+    // Gated by PRATTAIL_ENTROPY=1 env var. Reports per-category dispatch
+    // entropy to identify "decision bottlenecks" — tokens where grammar
+    // restructuring would have maximum disambiguation impact.
+    if std::env::var("PRATTAIL_ENTROPY").is_ok() {
+        let dt_trees = decision_trees.trees();
+        for (cat_name, tree) in dt_trees {
+            let profile = tree.entropy_profile();
+            if !profile.is_empty() {
+                let lines: Vec<String> = profile.iter()
+                    .take(5) // top 5 bottlenecks
+                    .filter_map(|(byte, entropy, count)| {
+                        token_id_map.name(*byte as u16).map(|name|
+                            format!("{}: H={:.3}, {} rule(s)", name, entropy, count)
+                        )
+                    })
+                    .collect();
+                if !lines.is_empty() {
+                    pipeline_diagnostic(
+                        &bundle.grammar_name, "D11", "dispatch-entropy",
+                        crate::lint::LintSeverity::Note,
+                        format!(
+                            "category {}: dispatch entropy (top bottlenecks): {}",
+                            cat_name, lines.join("; "),
+                        ),
+                        None,
+                    );
+                }
+            }
+        }
+    }
+
+    // ── 2b: BP/dispatch correlation analysis (optional) ────────────────────
+    // Gated by PRATTAIL_ENTROPY=1 env var (shared with entropy analysis).
+    // Reports per-category BP stratification: how many rules are reachable
+    // at each binding power level, enabling early-commit optimizations.
+    if std::env::var("PRATTAIL_ENTROPY").is_ok() {
+        let dt_trees = decision_trees.trees();
+        for (cat_name, tree) in dt_trees {
+            // Build a rule→BP map from the bp_table for this category
+            let bp_map: HashMap<String, u8> = bundle.bp_table
+                .operators_for_category(cat_name)
+                .iter()
+                .map(|op| (op.label.clone(), op.left_bp))
+                .collect();
+            let strata = tree.bp_stratification(&bp_map);
+            if strata.len() > 1 {
+                let lines: Vec<String> = strata.iter()
+                    .map(|(bp, reachable, total)| {
+                        format!("BP≤{}: {}/{} rules ({:.0}%)", bp, reachable, total,
+                            *reachable as f64 / *total as f64 * 100.0)
+                    })
+                    .collect();
+                pipeline_diagnostic(
+                    &bundle.grammar_name, "D12", "bp-stratification",
+                    crate::lint::LintSeverity::Note,
+                    format!(
+                        "category {}: BP stratification: {}",
+                        cat_name, lines.join(", "),
+                    ),
+                    None,
+                );
+            }
+        }
+    }
+
+    // ── 1.2a: Trie-informed WFST weight scaling ─────────────────────────────
+    // Compute trie-informed weight adjustments from decision tree depth/ambiguity
+    // and apply them to prediction WFST transition weights. Deeper unique prefixes
+    // get lower weight (higher confidence), short shared prefixes get higher weight.
+    {
+        let dt_trees = decision_trees.trees();
+        let trie_weight_adjustments =
+            crate::decision_tree::compute_weight_adjustments(dt_trees, &token_id_map);
+        for ((cat, token_variant), adjustment) in &trie_weight_adjustments {
+            if let Some(wfst) = prediction_wfsts.get_mut(cat.as_str()) {
+                wfst.adjust_weight(token_variant, *adjustment);
+            }
+        }
+    }
+
+    // ── 1.2b: Trie+WFST dead-rule confirmation (2nd pass) ──────────────────
+    // Now that decision trees are built, re-run dead-rule collection with trie
+    // reachability to confirm WfstUnreachable rules. Rules dead in BOTH the
+    // WFST and the trie are added to the dead set.
+    {
+        let dt_trees = decision_trees.trees();
+        let confirmed = collect_dead_rule_labels(
+            &bundle.rule_infos,
+            &bundle.categories,
+            &first_sets,
+            &prediction_wfsts,
+            &bundle.semantic_dependency_groups,
+            dt_trees,
+        );
+        let new_dead: Vec<String> = confirmed
+            .difference(&all_dead_rule_labels)
+            .cloned()
+            .collect();
+        if !new_dead.is_empty() {
+            let mut sorted: Vec<&str> = new_dead.iter().map(|s| s.as_str()).collect();
+            sorted.sort_unstable();
+            pipeline_diagnostic(
+                &bundle.grammar_name, "I07", "trie-confirmed-dead",
+                crate::lint::LintSeverity::Info,
+                format!(
+                    "trie-confirmed dead: {} additional rule(s) confirmed dead via trie+WFST cross-validation: [{}]",
+                    new_dead.len(), sorted.join(", "),
+                ),
+                None,
+            );
+            all_dead_rule_labels.extend(new_dead);
+        }
+    }
+
+    // ── 1.3a: Trie-depth sync token ranking ─────────────────────────────────
+    // Adjust recovery sync token discounts based on trie depth. Sync tokens at
+    // trie root (depth 0) are preferred for error recovery; deep tokens are demoted.
+    {
+        let dt_trees = decision_trees.trees();
+        let depth_discounts = crate::decision_tree::compute_sync_depth_discounts(
+            dt_trees, &token_id_map,
+        );
+        if !depth_discounts.is_empty() {
+            for rwfst in &mut recovery_wfsts {
+                let cat_name = rwfst.category().to_string();
+                let mut cat_discounts: std::collections::HashMap<u16, f64> =
+                    std::collections::HashMap::new();
+                for (&(ref cat, token_id), &discount) in &depth_discounts {
+                    if cat == &cat_name {
+                        // Merge with existing prediction discounts (multiply)
+                        let existing = rwfst.prediction_discount(token_id);
+                        cat_discounts.insert(token_id, existing * discount);
+                    }
+                }
+                if !cat_discounts.is_empty() {
+                    rwfst.set_prediction_discounts(cat_discounts);
+                }
+            }
+        }
+    }
+
+    // ── 1.7a: Trie-pruned NFA spillover refinement ──────────────────────────
+    // Refine NFA spillover set using decision tree dispatch strategy.
+    // A category marked for NFA spillover by the ad-hoc grouping may actually
+    // have disjoint suffixes (resolvable without backtracking) for all its
+    // ambiguous tokens. Remove such categories from the spillover set.
+    {
+        let dt_trees = decision_trees.trees();
+        let mut to_remove = Vec::new();
+        for cat in &nfa_spillover_categories {
+            if let Some(tree) = dt_trees.get(cat) {
+                let dispatch_tokens = tree.dispatch_tokens(&token_id_map);
+                let all_resolved = dispatch_tokens.iter().all(|token_variant| {
+                    match tree.dispatch_strategy(token_variant, &token_id_map) {
+                        crate::decision_tree::DispatchStrategy::NotPresent
+                        | crate::decision_tree::DispatchStrategy::Singleton { .. }
+                        | crate::decision_tree::DispatchStrategy::DisjointSuffix { .. } => true,
+                        crate::decision_tree::DispatchStrategy::NfaTryAll { .. } => false,
+                    }
+                });
+                if all_resolved {
+                    to_remove.push(cat.clone());
+                }
+            }
+        }
+        if !to_remove.is_empty() {
+            to_remove.sort();
+            pipeline_diagnostic(
+                &bundle.grammar_name, "I08", "trie-pruned-nfa-spillover",
+                crate::lint::LintSeverity::Info,
+                format!(
+                    "trie-pruned NFA spillover: removed {} category(ies) with fully disjoint dispatch: [{}]",
+                    to_remove.len(),
+                    to_remove.join(", "),
+                ),
+                None,
+            );
+            for cat in &to_remove {
+                nfa_spillover_categories.remove(cat);
+            }
+        }
+    }
+
+    // ── Sprint 4: Dead-prefix recovery weight penalty ──────────────────────
+    // After trie+WFST dead-rule confirmation, detect "dead prefixes" — dispatch
+    // tokens whose entire trie subtree leads only to dead rules. Increase their
+    // recovery WFST weights (demoting them as recovery targets).
+    // Data flow: WFST → Decision Tree → Dead Prefix → Recovery WFST
+    {
+        let dt_trees = decision_trees.trees();
+        let dead_warnings = detect_dead_rules(
+            &bundle.rule_infos,
+            &bundle.categories,
+            &first_sets,
+            &prediction_wfsts,
+            &bundle.semantic_dependency_groups,
+            &nfa_spillover_categories,
+            &bundle.rd_rules,
+        );
+        let dead_prefixes = detect_dead_prefixes(&dead_warnings, dt_trees, &token_id_map);
+        if !dead_prefixes.is_empty() {
+            const DEAD_PREFIX_WEIGHT_PENALTY: f64 = 2.0;
+            let mut total_adjusted = 0usize;
+            for rwfst in &mut recovery_wfsts {
+                let cat_name = rwfst.category().to_string();
+                if let Some(prefix_tokens) = dead_prefixes.get(&cat_name) {
+                    let mut discounts: std::collections::HashMap<crate::token_id::TokenId, f64> =
+                        std::collections::HashMap::new();
+                    for token_variant in prefix_tokens {
+                        if let Some(token_id) = token_id_map.get(token_variant) {
+                            let existing = rwfst.prediction_discount(token_id);
+                            // Increase weight = reduce discount (multiply by penalty)
+                            discounts.insert(token_id, existing * DEAD_PREFIX_WEIGHT_PENALTY);
+                            total_adjusted += 1;
+                        }
+                    }
+                    if !discounts.is_empty() {
+                        rwfst.set_prediction_discounts(discounts);
+                    }
+                }
+            }
+            if total_adjusted > 0 {
+                pipeline_diagnostic(
+                    &bundle.grammar_name, "I09", "dead-prefix-weight-penalty",
+                    crate::lint::LintSeverity::Info,
+                    format!(
+                        "applied dead-prefix weight penalty (×{:.1}) to {} sync token(s) across {} category(ies)",
+                        DEAD_PREFIX_WEIGHT_PENALTY, total_adjusted, dead_prefixes.len(),
+                    ),
+                    None,
+                );
+            }
+        }
+    }
+
+    // ── G25: WPDS stack-aware reachability analysis ─────────────────────
+    // Build WPDS and run poststar if the gate is enabled and grammar has ≥2 categories.
+    let wpds_analysis = if optimization_gates.wpds_reachability
+        && bundle.categories.len() >= 2
+    {
+        let wpds_cats: Vec<crate::wpds::WpdsCategoryInfo> = bundle
+            .categories
+            .iter()
+            .map(|c| crate::wpds::WpdsCategoryInfo {
+                name: c.name.clone(),
+                is_primary: c.is_primary,
+            })
+            .collect();
+        Some(crate::wpds::analyze_wpds_from_bundle(
+            &bundle.grammar_name,
+            &wpds_cats,
+            &bundle.all_syntax,
+            &prediction_wfsts,
+        ))
+    } else {
+        None
+    };
+
+    // ── Unified lint layer ─────────────────────────────────────────────────
+    // Construct LintContext with all pipeline data and run all lints.
+    // Moved after decision tree construction so PathMap-derived lints
+    // (G32, D10, W03 cross-category hotspot, etc.) can access decision_trees.
+    {
+        let dt_trees = decision_trees.trees();
+        // Compute dead-rule warnings once for lint caching.
+        // This replaces the duplicate detect_dead_rules() call that lint_w01
+        // previously performed independently.
+        let cached_dead_rule_warnings = crate::pipeline::detect_dead_rules(
+            &bundle.rule_infos,
+            &bundle.categories,
+            &first_sets,
+            &prediction_wfsts,
+            &bundle.semantic_dependency_groups,
+            &nfa_spillover_categories,
+            &bundle.rd_rules,
+        );
+
+        let lint_ctx = crate::lint::LintContext {
+            grammar_name: &bundle.grammar_name,
+            rule_locations: &bundle.rule_locations,
+            categories: &bundle.categories,
+            rules: &bundle.rule_infos,
+            rd_rules: &bundle.rd_rules,
+            first_sets: &first_sets,
+            follow_sets: &follow_sets,
+            bp_table: &bundle.bp_table,
+            prediction_wfsts: &prediction_wfsts,
+            recovery_wfsts: &recovery_wfsts,
+            cast_rules: &bundle.cast_rules,
+            cross_rules: &bundle.cross_rules,
+            nfa_spillover_categories: &nfa_spillover_categories,
+            recovery_config: &bundle.recovery_config,
+            all_syntax: &bundle.all_syntax,
+            follow_inputs: &bundle.follow_inputs,
+            semantic_dependency_groups: &bundle.semantic_dependency_groups,
+            pre_collected_diagnostics: &w05_diagnostics,
+            decision_trees: dt_trees,
+            token_id_map: &token_id_map,
+            dead_rule_warnings: &cached_dead_rule_warnings,
+            grammar_profile: Some(&grammar_profile),
+            wpds_analysis: wpds_analysis.as_ref(),
+        };
+
+        let diagnostics = crate::lint::run_lints(&lint_ctx);
+        crate::lint::emit_diagnostics_for_grammar(&bundle.grammar_name, &diagnostics);
+    }
 
     // ── A5: Ambiguity targeting analysis ──────────────────────────────────
     // Identify per-token ambiguity for downstream optimizations (B1, buffer
@@ -1712,6 +2412,50 @@ fn generate_parser_code(
     // Write parser helpers
     write_parser_helpers(&mut buf);
 
+    // D07: Emit runtime coverage tracking module (gated by parser-coverage feature)
+    if emit_coverage {
+        buf.push_str(
+            "#[cfg(feature = \"parser-coverage\")] \
+             mod __coverage { \
+                 use std::sync::Mutex; \
+                 use std::collections::HashSet; \
+                 static COVERED: Mutex<HashSet<(&'static str, u32)>> = Mutex::new(HashSet::new()); \
+                 pub fn record(cat: &'static str, path_id: u32) { \
+                     if let Ok(mut set) = COVERED.lock() { set.insert((cat, path_id)); } \
+                 } \
+                 pub fn dump() -> HashSet<(String, u32)> { \
+                     COVERED.lock().map(|set| \
+                         set.iter().map(|(c, id)| (c.to_string(), *id)).collect() \
+                     ).unwrap_or_default() \
+                 } \
+                 pub fn reset() { \
+                     if let Ok(mut set) = COVERED.lock() { set.clear(); } \
+                 } \
+             } ",
+        );
+
+        // D07 diagnostic: report number of instrumented categories
+        let instrumented_cats: Vec<&str> = category_names.iter()
+            .filter_map(|cat_name| {
+                decision_trees.get_tree(cat_name)
+                    .filter(|tree| tree.stats.total_states > 0)
+                    .map(|_| cat_name.as_str())
+            })
+            .collect();
+        if !instrumented_cats.is_empty() {
+            pipeline_diagnostic(
+                &bundle.grammar_name, "D07", "path-coverage-report",
+                crate::lint::LintSeverity::Note,
+                format!(
+                    "{} categories instrumented for coverage tracking: [{}]",
+                    instrumented_cats.len(),
+                    instrumented_cats.join(", "),
+                ),
+                Some("run tests with `parser-coverage` feature enabled, then call __coverage::dump()".to_string()),
+            );
+        }
+    }
+
     // Write trampolined parsers per category (stack-safe via explicit continuation stack)
     for cat in &bundle.categories {
         let has_infix = !bundle.bp_table.operators_for_category(&cat.name).is_empty();
@@ -1776,6 +2520,21 @@ fn generate_parser_code(
             &projection_rules,
         );
 
+        // 1.3b: Compute expected tokens string from decision tree dispatch tokens
+        let expected_tokens_str = decision_trees.get_tree(&cat.name)
+            .map(|tree| {
+                let tokens = tree.dispatch_tokens(&token_id_map);
+                if tokens.is_empty() {
+                    format!("{} expression", cat.name)
+                } else if tokens.len() <= 10 {
+                    format!("one of: {}", tokens.join(", "))
+                } else {
+                    // Truncate very long token lists
+                    let shown: Vec<&str> = tokens.iter().take(10).map(|s| s.as_str()).collect();
+                    format!("one of: {}, ... ({} more)", shown.join(", "), tokens.len() - 10)
+                }
+            });
+
         let tramp_config = TrampolineConfig {
             category: cat.name.clone(),
             is_primary: cat.is_primary,
@@ -1797,6 +2556,9 @@ fn generate_parser_code(
             dead_rules: dead_rules.clone(),
             complete_weight_map: complete_weight_map.clone(),
             led_delegation,
+            decision_tree: decision_trees.get_tree(&cat.name).cloned(),
+            emit_coverage,
+            expected_tokens_str,
         };
 
         let cat_handlers: Vec<PrefixHandler> = all_prefix_handlers
@@ -1805,13 +2567,39 @@ fn generate_parser_code(
             .cloned()
             .collect();
 
-        write_trampolined_parser(
-            &mut buf,
-            &tramp_config,
-            &bundle.bp_table,
-            &cat_handlers,
-            &bundle.rd_rules,
-        );
+        // Layer 10: Incremental codegen — check if this category's code can be reused
+        let current_hash = tramp_config.decision_tree.as_ref()
+            .map(crate::decision_tree::category_content_hash);
+        let cache_hit = current_hash.and_then(|h| {
+            if let Some(ref prev) = prev_cache {
+                if prev.is_valid() && prev.is_unchanged(&cat.name, h) {
+                    return prev.category_code.get(&cat.name).cloned();
+                }
+            }
+            None
+        });
+
+        if let Some(cached_code) = cache_hit {
+            buf.push_str(&cached_code);
+            if let Some(h) = current_hash {
+                new_cache.record(&cat.name, h);
+                new_cache.category_code.insert(cat.name.clone(), cached_code);
+            }
+        } else {
+            let cat_start = buf.len();
+            write_trampolined_parser(
+                &mut buf,
+                &tramp_config,
+                &bundle.bp_table,
+                &cat_handlers,
+                &bundle.rd_rules,
+            );
+            let cat_code = buf[cat_start..].to_string();
+            if let Some(h) = current_hash {
+                new_cache.record(&cat.name, h);
+                new_cache.category_code.insert(cat.name.clone(), cat_code);
+            }
+        }
 
     }
 
@@ -1921,6 +2709,9 @@ fn generate_parser_code(
             optimization_gates: optimization_gates.clone(),
             dead_rules: dead_rules.clone(),
             complete_weight_map: None, // Recovery path doesn't need composed weights
+            decision_tree: None, // Recovery path doesn't use decision tree dispatch
+            emit_coverage: false, // Recovery path doesn't need coverage tracking
+            expected_tokens_str: None, // Recovery path uses its own error messages
             led_delegation: {
                 let rec_cast_rules: Vec<CastRule> = bundle.cast_rules.iter()
                     .filter(|r| r.target_category == cat.name)
@@ -2046,7 +2837,13 @@ fn generate_parser_code(
         &prediction_wfsts,
         &bundle.categories,
         &bundle.rule_infos,
+        decision_trees.trees().clone(),
     );
+
+    // Layer 10: Save updated incremental state to .prattail-cache
+    if let Some(ref path) = cache_path {
+        let _ = new_cache.save(path); // Best-effort; don't fail on cache write error
+    }
 
     (buf, analysis)
 }
@@ -2061,6 +2858,7 @@ fn build_pipeline_analysis(
     prediction_wfsts: &HashMap<String, PredictionWfst>,
     categories: &[CategoryInfo],
     rule_infos: &[RuleInfo],
+    decision_trees: HashMap<String, crate::decision_tree::CategoryDecisionTree>,
 ) -> crate::PipelineAnalysis {
     let mut constructor_weights = HashMap::new();
     let mut category_weights = HashMap::new();
@@ -2120,6 +2918,7 @@ fn build_pipeline_analysis(
         category_weights,
         isomorphic_groups,
         isomorphic_action_maps,
+        decision_trees,
     }
 }
 
@@ -2490,7 +3289,7 @@ fn extract_mixfix_parts(syntax: &[SyntaxItemSpec]) -> (bool, Vec<MixfixPart>) {
 /// Convert a `SyntaxItemSpec` to an `RDSyntaxItem`.
 ///
 /// Used for converting syntax items when building `RDRuleInfo` from `RuleSpec`.
-fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
+pub(crate) fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
     match item {
         SyntaxItemSpec::Terminal(t) => RDSyntaxItem::Terminal(t.clone()),
         SyntaxItemSpec::NonTerminal { category, param_name } => RDSyntaxItem::NonTerminal {
@@ -3330,7 +4129,7 @@ mod tests {
         let cats = vec![category("Expr", true)];
         let rules = vec![rule("Add", "Expr")];
         let first_sets: HashMap<String, FirstSet> = [("Expr".to_string(), first_set(&["Plus"]))].into();
-        let warnings = detect_nearly_dead_paths(&rules, &cats, &first_sets);
+        let warnings = detect_nearly_dead_paths(&rules, &cats, &first_sets, &[]);
         assert!(warnings.is_empty(), "single category should produce no warnings");
     }
 
@@ -3352,7 +4151,7 @@ mod tests {
             ("Int".to_string(), first_set(&["Plus"])),
         ].into();
 
-        let warnings = detect_nearly_dead_paths(&rules, &cats, &first_sets);
+        let warnings = detect_nearly_dead_paths(&rules, &cats, &first_sets, &[]);
         assert!(warnings.is_empty(), "well-connected categories should not be nearly-dead: {:?}", warnings);
     }
 
@@ -3377,7 +4176,7 @@ mod tests {
             ("Orphan".to_string(), first_set(&["Bang"])),
         ].into();
 
-        let warnings = detect_nearly_dead_paths(&rules, &cats, &first_sets);
+        let warnings = detect_nearly_dead_paths(&rules, &cats, &first_sets, &[]);
         // Orphan is completely unreachable (forward = zero), so it should NOT appear
         // in nearly-dead warnings (that's A4's job).
         let orphan_warnings: Vec<_> = warnings.iter().filter(|w| {
@@ -3475,5 +4274,223 @@ mod tests {
         assert!(msg.contains("1/500"), "should mention 1/500: {}", msg);
         assert!(msg.contains("ObscureCast"), "should mention rule label: {}", msg);
         assert!(msg.contains("Rare"), "should mention category: {}", msg);
+    }
+
+    // ── A4: Inter-category dead-path detection ──
+
+    #[test]
+    fn test_a4_cyclic_graph_backward_reachable() {
+        // Calculator pattern: Int(root), Float, Bool, Str.
+        // Cross-cat edges: Int↔Bool, Float↔Bool, Str↔Bool (via comparison ops).
+        // Str→Bool→Int is a valid path, so Str must NOT be flagged.
+        let cats = vec![
+            category("Int", true),
+            category("Float", false),
+            category("Bool", false),
+            category("Str", false),
+        ];
+        // Cross-category infix rules creating bidirectional connections
+        let mut eq_int = rule("EqInt", "Bool");
+        eq_int.is_cross_category = true;
+        eq_int.is_infix = true;
+        eq_int.first_items = vec![FirstItem::NonTerminal("Int".to_string())];
+
+        let mut eq_float = rule("EqFloat", "Bool");
+        eq_float.is_cross_category = true;
+        eq_float.is_infix = true;
+        eq_float.first_items = vec![FirstItem::NonTerminal("Float".to_string())];
+
+        let mut eq_str = rule("EqStr", "Bool");
+        eq_str.is_cross_category = true;
+        eq_str.is_infix = true;
+        eq_str.first_items = vec![FirstItem::NonTerminal("Str".to_string())];
+
+        let rules = vec![
+            rule("NumLit", "Int"),
+            rule("FltLit", "Float"),
+            rule("True", "Bool"),
+            rule("Concat", "Str"),
+            eq_int,
+            eq_float,
+            eq_str,
+        ];
+        let first_sets: HashMap<String, FirstSet> = [
+            ("Int".to_string(), first_set(&["Integer"])),
+            ("Float".to_string(), first_set(&["Float"])),
+            ("Bool".to_string(), first_set(&["true", "false"])),
+            ("Str".to_string(), first_set(&["String"])),
+        ].into();
+
+        let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &[]);
+        let str_warnings: Vec<_> = warnings.iter().filter(|w| {
+            matches!(w, DeadRuleWarning::InterCategoryDeadPath { category, .. } if category == "Str")
+        }).collect();
+        assert!(str_warnings.is_empty(),
+            "Str should not be flagged as dead (Str→Bool→Int is valid): {:?}", str_warnings);
+
+        // No categories should be flagged since all are connected through Bool
+        assert!(warnings.is_empty(),
+            "no categories should be flagged in well-connected cyclic graph: {:?}", warnings);
+    }
+
+    #[test]
+    fn test_a4_prefix_rule_with_cross_category_nonterminal() {
+        // NQuote pattern: Name has rule `"@" "(" Proc ")"` — a regular prefix rule
+        // that references Proc as a NonTerminal in its syntax (not as first item).
+        // Also: Proc has `"*" Name` (PDrop). So Name↔Proc are connected.
+        let cats = vec![
+            category("Proc", true),
+            category("Name", false),
+        ];
+        let rules = vec![
+            rule("PPar", "Proc"),
+            rule("PDrop", "Proc"),
+            rule("NQuote", "Name"),
+        ];
+        let first_sets: HashMap<String, FirstSet> = [
+            ("Proc".to_string(), first_set(&["|", "*"])),
+            ("Name".to_string(), first_set(&["@"])),
+        ].into();
+
+        // NQuote syntax: "@" "(" Proc ")" — references Proc as NonTerminal
+        // PDrop syntax: "*" Name — references Name as NonTerminal
+        let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = vec![
+            ("NQuote".to_string(), "Name".to_string(), vec![
+                SyntaxItemSpec::Terminal("@".to_string()),
+                SyntaxItemSpec::Terminal("(".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Proc".to_string(), param_name: "p".to_string() },
+                SyntaxItemSpec::Terminal(")".to_string()),
+            ]),
+            ("PDrop".to_string(), "Proc".to_string(), vec![
+                SyntaxItemSpec::Terminal("*".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Name".to_string(), param_name: "n".to_string() },
+            ]),
+        ];
+
+        let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &all_syntax);
+        let name_warnings: Vec<_> = warnings.iter().filter(|w| {
+            matches!(w, DeadRuleWarning::InterCategoryDeadPath { category, .. } if category == "Name")
+        }).collect();
+        assert!(name_warnings.is_empty(),
+            "Name should not be flagged as dead (connected to Proc via syntax): {:?}", name_warnings);
+        assert!(warnings.is_empty(),
+            "no categories should be flagged: {:?}", warnings);
+    }
+
+    #[test]
+    fn test_a4_truly_isolated_category_flagged() {
+        // Orphan category with no cross-category references at all.
+        let cats = vec![
+            category("Proc", true),
+            category("Int", false),
+            category("Orphan", false),
+        ];
+        let mut cast = rule("IntToProc", "Proc");
+        cast.is_cast = true;
+        cast.first_items = vec![FirstItem::NonTerminal("Int".to_string())];
+        let rules = vec![
+            rule("PPar", "Proc"),
+            rule("Add", "Int"),
+            cast,
+            rule("OrphanRule", "Orphan"),
+        ];
+        let first_sets: HashMap<String, FirstSet> = [
+            ("Proc".to_string(), first_set(&["|"])),
+            ("Int".to_string(), first_set(&["Integer"])),
+            ("Orphan".to_string(), first_set(&["!"])),
+        ].into();
+
+        let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &[]);
+        let orphan_warnings: Vec<_> = warnings.iter().filter(|w| {
+            matches!(w, DeadRuleWarning::InterCategoryDeadPath { category, .. } if category == "Orphan")
+        }).collect();
+        assert!(!orphan_warnings.is_empty(),
+            "Orphan should be flagged as dead (no connections to root)");
+        // Non-orphan categories should NOT be flagged
+        let non_orphan: Vec<_> = warnings.iter().filter(|w| {
+            matches!(w, DeadRuleWarning::InterCategoryDeadPath { category, .. } if category != "Orphan")
+        }).collect();
+        assert!(non_orphan.is_empty(),
+            "only Orphan should be flagged: {:?}", non_orphan);
+    }
+
+    #[test]
+    fn test_a4_single_category_no_warnings() {
+        // With only one category, no inter-category analysis possible.
+        let cats = vec![category("Expr", true)];
+        let rules = vec![rule("Add", "Expr")];
+        let first_sets: HashMap<String, FirstSet> = [("Expr".to_string(), first_set(&["Plus"]))].into();
+        let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &[]);
+        assert!(warnings.is_empty(), "single category should produce no warnings");
+    }
+
+    #[test]
+    fn test_a4_syntax_binder_creates_edge() {
+        // A Binder referencing a different category creates an inter-category edge.
+        let cats = vec![
+            category("Proc", true),
+            category("Name", false),
+        ];
+        let rules = vec![
+            rule("PPar", "Proc"),
+            rule("NVar", "Name"),
+        ];
+        let first_sets: HashMap<String, FirstSet> = [
+            ("Proc".to_string(), first_set(&["|"])),
+            ("Name".to_string(), first_set(&["Ident"])),
+        ].into();
+
+        // Proc rule with a Binder from Name category
+        let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = vec![
+            ("PNew".to_string(), "Proc".to_string(), vec![
+                SyntaxItemSpec::Terminal("new".to_string()),
+                SyntaxItemSpec::Binder {
+                    param_name: "n".to_string(),
+                    category: "Name".to_string(),
+                    is_multi: false,
+                },
+                SyntaxItemSpec::Terminal("in".to_string()),
+                SyntaxItemSpec::NonTerminal { category: "Proc".to_string(), param_name: "p".to_string() },
+            ]),
+        ];
+
+        let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &all_syntax);
+        assert!(warnings.is_empty(),
+            "Name should be reachable via Binder from Proc: {:?}", warnings);
+    }
+
+    #[test]
+    fn test_a4_syntax_collection_creates_edge() {
+        // A Collection referencing a different category creates an inter-category edge.
+        let cats = vec![
+            category("Proc", true),
+            category("Arg", false),
+        ];
+        let rules = vec![
+            rule("PPar", "Proc"),
+            rule("ArgLit", "Arg"),
+        ];
+        let first_sets: HashMap<String, FirstSet> = [
+            ("Proc".to_string(), first_set(&["|"])),
+            ("Arg".to_string(), first_set(&["Integer"])),
+        ].into();
+
+        let all_syntax: Vec<(String, String, Vec<SyntaxItemSpec>)> = vec![
+            ("PCall".to_string(), "Proc".to_string(), vec![
+                SyntaxItemSpec::Terminal("call".to_string()),
+                SyntaxItemSpec::Terminal("(".to_string()),
+                SyntaxItemSpec::Collection {
+                    param_name: "args".to_string(),
+                    element_category: "Arg".to_string(),
+                    separator: ",".to_string(),
+                    kind: crate::recursive::CollectionKind::Vec,
+                },
+                SyntaxItemSpec::Terminal(")".to_string()),
+            ]),
+        ];
+
+        let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &all_syntax);
+        assert!(warnings.is_empty(),
+            "Arg should be reachable via Collection from Proc: {:?}", warnings);
     }
 }

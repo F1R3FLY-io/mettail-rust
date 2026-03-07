@@ -13,6 +13,10 @@ wfst-log = ["mettail-macros/wfst-log", "mettail-prattail/wfst-log"]
 ## Test-only languages: composition (BaseMath, ExtMath, MixedMath, ImportedMath,
 ## CalcLambda) and LedTest. Not for application use.
 test-languages = []
+## Enable runtime parser coverage tracking (D07). When enabled, generated parsers
+## record which dispatch paths are exercised. Call `__coverage::dump()` to retrieve
+## the coverage map. Activated by setting `PRATTAIL_COVERAGE=1` during code generation.
+parser-coverage = []
 
 [dependencies]
 mettail-macros = { path = "../macros" }

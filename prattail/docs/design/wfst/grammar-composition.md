@@ -553,3 +553,61 @@ examples, diagrams, and decision flowcharts, see:
 - [Cross-category dispatch](../../usage/language/unification/06-cross-category.md)
 - [Cast rules](../../usage/language/unification/07-cast-rules.md)
 - [Best practices](../../usage/language/unification/08-best-practices.md)
+
+---
+
+## Decision Tree Composition Analysis
+
+Grammar composition includes automatic decision tree comparison to detect
+structural overlap and composition-introduced ambiguity. This analysis is
+lightweight, self-contained, and runs automatically inside `compose_with_wfst()`.
+
+### `build_decision_trees_from_spec()`
+
+`build_decision_trees_from_spec(spec: &LanguageSpec) -> BTreeMap<String, DecisionTree>`
+
+A lightweight pipeline that extracts `RuleInfo` from a `LanguageSpec`, computes
+FIRST sets, builds a `TokenIdMap`, and constructs per-category decision trees.
+It does **not** run full codegen, FOLLOW set computation, or WFST construction,
+making it efficient for comparison purposes.
+
+Available in `prattail/src/decision_tree.rs`.
+
+Used by `compose_with_wfst()` for automatic pre/post-composition tree
+comparison: decision trees are built for both source grammars and for the
+merged grammar, then compared via `composition_trie_analysis()`.
+
+### X06: Common Sublanguage
+
+Reports rules and dispatch paths shared by both source grammars. Quantifies
+overlap with three counts:
+
+- `common_rules` -- rules/dispatch paths present in both source trees.
+- `unique_a` -- rules/dispatch paths present only in grammar A's tree.
+- `unique_b` -- rules/dispatch paths present only in grammar B's tree.
+
+Uses `composition_trie_analysis(tree_a, tree_b)` from `decision_tree.rs` to
+walk both tries and identify shared structure.
+
+Emitted as a `LintSeverity::Note` diagnostic, informing the grammar author
+of the degree of overlap without requiring action.
+
+### X07: Composition-Introduced Ambiguity
+
+Detects when merging two individually-unambiguous grammars creates **new**
+ambiguities that did not exist in either source grammar alone. This is a
+critical safety check: two clean grammars can still conflict when their
+FIRST sets overlap in the merged token namespace.
+
+Emitted as a `LintSeverity::Warning` diagnostic with a hint to review the
+merged grammar and disambiguate conflicting rules.
+
+### Integration
+
+- Automatically runs inside `compose_with_wfst()` after CVT verification.
+- Decision trees are stored in `WfstCompositionResult`:
+  - `.source_a_trees` -- decision trees for grammar A.
+  - `.source_b_trees` -- decision trees for grammar B.
+  - `.merged_trees` -- decision trees for the composed grammar.
+- Also available in `PipelineAnalysis.decision_trees` for downstream tools
+  that need to inspect parse dispatch structure independently of composition.

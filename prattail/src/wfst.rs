@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use crate::automata::semiring::{Semiring, TropicalWeight};
+use crate::automata::semiring::{ContextWeight, Semiring, TropicalWeight};
 use crate::prediction::{CrossCategoryOverlap, DispatchAction, FirstSet};
 use crate::token_id::{TokenId, TokenIdMap};
 
@@ -229,9 +229,11 @@ pub struct CanonicalWfstStructure {
 /// exist from the start state, weighted by declaration order and FIRST-set
 /// uniqueness.
 ///
-/// This is a simple one-level WFST (start → accept) since prefix dispatch
-/// is a single-token decision. Lookahead (2+ tokens) could extend this to
-/// multi-level paths in the future.
+/// The base topology is a simple one-level WFST (start → accept) for
+/// single-token dispatch. Two-token disambiguation extends this with
+/// intermediate states: `start --(token1)--> intermediate --(token2)--> accept`,
+/// enabling compile-time resolution of NFA-ambiguous groups where each rule
+/// has a distinct second terminal.
 #[derive(Debug, Clone)]
 pub struct PredictionWfst {
     /// Category this predictor serves.
@@ -247,6 +249,11 @@ pub struct PredictionWfst {
     /// Optional beam width for pruning low-probability actions.
     /// When `Some(w)`, actions with weight > best + w are pruned.
     pub beam_width: Option<TropicalWeight>,
+    /// ContextWeight label assignments: maps rule_label → bit position (0..127).
+    /// Used by the powerset WFST to track which rules are alive after consuming tokens.
+    /// Built per-group: within each ambiguous dispatch token group, rules get
+    /// sequential bit IDs. Empty when no ContextWeight analysis has been performed.
+    pub context_labels: HashMap<String, u8>,
 }
 
 impl PredictionWfst {
@@ -340,6 +347,11 @@ impl PredictionWfst {
             .transitions
             .iter()
             .filter(|t| t.input == token_id)
+            // Only follow transitions to final states (skip intermediate states
+            // used by two-token paths — those are non-final with outgoing transitions)
+            .filter(|t| {
+                self.states.get(t.to as usize).map_or(false, |s| s.is_final)
+            })
             .filter_map(|t| self.actions.get(t.action_idx as usize))
             .collect();
 
@@ -427,6 +439,194 @@ impl PredictionWfst {
         }
     }
 
+    // ══════════════════════════════════════════════════════════════════════════
+    // Two-token prediction queries
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Query the prediction WFST with a two-token lookahead sequence.
+    ///
+    /// Traverses two levels: `start --(token1)--> intermediate --(token2)--> accept`.
+    /// Returns weighted actions reachable through the two-token path, sorted by
+    /// weight (lowest first). Falls back to single-token `predict()` when no
+    /// intermediate states exist for `token1`.
+    ///
+    /// Two-token paths are added via `PredictionWfstBuilder::add_two_token_action()`.
+    pub fn predict_two_token(&self, token1: &str, token2: &str) -> Vec<&WeightedAction> {
+        let token1_id = match self.token_map.get(token1) {
+            Some(id) => id,
+            None => return Vec::new(),
+        };
+        let token2_id = match self.token_map.get(token2) {
+            Some(id) => id,
+            None => return Vec::new(),
+        };
+
+        let start_state = &self.states[self.start as usize];
+
+        // Find intermediate states reachable from start via token1 that are NOT final
+        // (final states are single-token accept states; non-final intermediates are
+        // two-token path intermediates)
+        let intermediates: Vec<(WfstStateId, TropicalWeight)> = start_state
+            .transitions
+            .iter()
+            .filter(|t| t.input == token1_id)
+            .filter_map(|t| {
+                let target = self.states.get(t.to as usize)?;
+                if !target.is_final && !target.transitions.is_empty() {
+                    Some((t.to, t.weight))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if intermediates.is_empty() {
+            // No two-token paths for this token1 — fall back to single-token
+            return self.predict(token1);
+        }
+
+        // Traverse from intermediate states via token2
+        let mut results: Vec<(&WeightedAction, TropicalWeight)> = Vec::new();
+        for (mid_id, weight1) in &intermediates {
+            if let Some(mid_state) = self.states.get(*mid_id as usize) {
+                for t in &mid_state.transitions {
+                    if t.input == token2_id {
+                        if let Some(action) = self.actions.get(t.action_idx as usize) {
+                            // Accumulated weight = weight of first hop + weight of second hop
+                            let total_weight = TropicalWeight::new(weight1.value() + t.weight.value());
+                            results.push((action, total_weight));
+                        }
+                    }
+                }
+            }
+        }
+
+        if results.is_empty() {
+            // token2 not found via any intermediate — fall back to single-token
+            return self.predict(token1);
+        }
+
+        // Sort by accumulated weight (lowest first)
+        results.sort_by(|(_, wa), (_, wb)| wa.cmp(wb));
+        results.into_iter().map(|(action, _)| action).collect()
+    }
+
+    /// Check whether a two-token sequence deterministically identifies a single rule.
+    ///
+    /// Returns `Some(rule_label)` when `predict_two_token(token1, token2)` yields
+    /// exactly one action, indicating the parser can commit without NFA try-all.
+    /// Returns `None` when the sequence is still ambiguous or unrecognized.
+    pub fn is_deterministic_after(&self, tokens: &[&str]) -> Option<String> {
+        match tokens.len() {
+            0 => None,
+            1 => {
+                let actions = self.predict(tokens[0]);
+                if actions.len() == 1 {
+                    Some(actions[0].action.rule_label())
+                } else {
+                    None
+                }
+            }
+            _ => {
+                let actions = self.predict_two_token(tokens[0], tokens[1]);
+                if actions.len() == 1 {
+                    Some(actions[0].action.rule_label())
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Return the set of actions reachable after consuming the given token sequence.
+    ///
+    /// For a single token, returns all actions at that dispatch point.
+    /// For two tokens, returns the narrowed set via two-token paths.
+    /// Used by ContextWeight tracking to compute live rule sets.
+    pub fn live_actions_after(&self, tokens: &[&str]) -> Vec<&WeightedAction> {
+        match tokens.len() {
+            0 => Vec::new(),
+            1 => self.predict(tokens[0]),
+            _ => self.predict_two_token(tokens[0], tokens[1]),
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // ContextWeight powerset queries (Sprint 3)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Assign ContextWeight bit positions to rules in an ambiguous group.
+    ///
+    /// Each rule in `rule_labels` gets a sequential bit ID (0..N-1). These
+    /// bit positions are stored in `context_labels` and used by
+    /// `live_rules_context_after()` to track which rules survive token consumption.
+    ///
+    /// Typically called per ambiguous dispatch token group during pipeline
+    /// enrichment. The 128-bit capacity (u128) supports up to 128 rules per
+    /// group — far beyond the 2–10 rules seen in practice.
+    pub fn assign_context_labels(&mut self, rule_labels: &[&str]) {
+        for (i, label) in rule_labels.iter().enumerate() {
+            if i < 128 {
+                self.context_labels.insert(label.to_string(), i as u8);
+            }
+        }
+    }
+
+    /// Return a ContextWeight bitset indicating which rules from the ambiguous
+    /// group survive after consuming the given token sequence.
+    ///
+    /// Uses `live_actions_after()` to find reachable actions, then maps each
+    /// action's `rule_label()` to its assigned bit position via `context_labels`.
+    /// Actions without assigned bit positions are ignored (they belong to a
+    /// different ambiguous group or were not enriched).
+    ///
+    /// Returns `ContextWeight::zero()` (empty set) when no context labels have
+    /// been assigned or when no actions survive.
+    pub fn live_rules_context_after(&self, tokens: &[&str]) -> ContextWeight {
+        if self.context_labels.is_empty() {
+            return ContextWeight::zero();
+        }
+
+        let actions = self.live_actions_after(tokens);
+        let mut ctx = ContextWeight::zero();
+        for action in &actions {
+            if let Some(&bit) = self.context_labels.get(&action.action.rule_label()) {
+                ctx = ctx.plus(&ContextWeight::singleton(bit));
+            }
+        }
+        ctx
+    }
+
+    /// Check whether the ContextWeight narrows to a singleton after consuming
+    /// the given token sequence, meaning the parser can deterministically commit.
+    ///
+    /// Returns `Some(rule_label)` when exactly one rule survives, `None` otherwise.
+    /// This is the ContextWeight analog of `is_deterministic_after()`, but uses
+    /// the powerset bitset rather than action count.
+    pub fn is_deterministic_context(&self, tokens: &[&str]) -> Option<String> {
+        let ctx = self.live_rules_context_after(tokens);
+        if ctx.count() == 1 {
+            // Find the single surviving rule label
+            let bit = ctx.bits().trailing_zeros() as u8;
+            self.context_labels
+                .iter()
+                .find(|(_, &b)| b == bit)
+                .map(|(label, _)| label.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Return the ContextWeight bitset for a specific ambiguous group at a
+    /// dispatch token, along with the count of surviving rules.
+    ///
+    /// This combines `live_rules_context_after()` with the count for use in
+    /// diagnostics and decision tree annotations.
+    pub fn context_narrowing(&self, tokens: &[&str]) -> (ContextWeight, u32) {
+        let ctx = self.live_rules_context_after(tokens);
+        (ctx, ctx.count())
+    }
+
     /// Set the beam width for pruning.
     pub fn set_beam_width(&mut self, beam: Option<TropicalWeight>) {
         self.beam_width = beam;
@@ -435,6 +635,28 @@ impl PredictionWfst {
     /// Get the current beam width.
     pub fn beam_width(&self) -> Option<TropicalWeight> {
         self.beam_width
+    }
+
+    /// Adjust weights for all transitions matching `token_variant` by `adjustment`.
+    ///
+    /// Positive adjustment = higher weight (less likely); negative = lower weight
+    /// (more likely). Clamps to 0.0 minimum. Only adjusts transition weights,
+    /// NOT action weights (actions may be shared across multiple transitions).
+    pub fn adjust_weight(&mut self, token_variant: &str, adjustment: f64) {
+        let token_id = match self.token_map.get(token_variant) {
+            Some(id) => id,
+            None => return,
+        };
+        let start = self.start as usize;
+        if start >= self.states.len() {
+            return;
+        }
+        for trans in &mut self.states[start].transitions {
+            if trans.input == token_id {
+                let new_val = (trans.weight.value() + adjustment).max(0.0);
+                trans.weight = TropicalWeight::new(new_val);
+            }
+        }
     }
 
     /// Number of registered actions.
@@ -595,6 +817,7 @@ impl PredictionWfst {
             actions,
             token_map,
             beam_width: beam.map(TropicalWeight::new),
+            context_labels: HashMap::new(),
         }
     }
 
@@ -923,6 +1146,57 @@ impl PredictionWfst {
         }
     }
 
+    /// Sprint 5: Apply weight corrections from NFA spillover training signals.
+    ///
+    /// For each correction, adjusts the weights of actions whose `rule_label()`
+    /// matches rules associated with the primary weight (penalize) or selected
+    /// weight (reinforce). The adjustment magnitude is `learning_rate × weight_delta`,
+    /// clamped to `[-max_adjustment, +max_adjustment]`.
+    ///
+    /// This provides the WFST-level interface for the `SpilloverTrainer`.
+    #[cfg(feature = "wfst-log")]
+    pub fn apply_corrections(
+        &mut self,
+        corrections: &[WeightCorrection],
+        learning_rate: f64,
+        max_adjustment: f64,
+    ) {
+        let tolerance = 0.1;
+        for correction in corrections {
+            let adj = correction.primary_adjustment(learning_rate, max_adjustment);
+            if adj < 1e-10 {
+                continue;
+            }
+
+            let start = self.start as usize;
+            if start >= self.states.len() {
+                continue;
+            }
+
+            // Adjust transition weights in the start state
+            for trans in &mut self.states[start].transitions {
+                let tw = trans.weight.value();
+                if (tw - correction.primary_weight).abs() < tolerance {
+                    // Penalize primary: increase weight (less likely)
+                    trans.weight = TropicalWeight::new((tw + adj).max(0.0));
+                } else if (tw - correction.selected_weight).abs() < tolerance {
+                    // Reinforce selected: decrease weight (more likely)
+                    trans.weight = TropicalWeight::new((tw - adj).max(0.0));
+                }
+            }
+
+            // Adjust action weights correspondingly
+            for action in &mut self.actions {
+                let aw = action.weight.value();
+                if (aw - correction.primary_weight).abs() < tolerance {
+                    action.weight = TropicalWeight::new((aw + adj).max(0.0));
+                } else if (aw - correction.selected_weight).abs() < tolerance {
+                    action.weight = TropicalWeight::new((aw - adj).max(0.0));
+                }
+            }
+        }
+    }
+
     /// A7: Compute Shannon entropy of the prediction distribution at this category.
     ///
     /// Uses the expectation semiring (`EntropyWeight`) with forward-backward to compute
@@ -1133,6 +1407,8 @@ pub struct PredictionWfstBuilder {
     token_map: TokenIdMap,
     actions: Vec<WeightedAction>,
     transitions: Vec<(TokenId, u32, TropicalWeight)>, // (input, action_idx, weight)
+    /// Two-token transitions: (token1_id, token2_id, action_idx, weight)
+    two_token_transitions: Vec<(TokenId, TokenId, u32, TropicalWeight)>,
     beam_width: Option<TropicalWeight>,
 }
 
@@ -1144,6 +1420,7 @@ impl PredictionWfstBuilder {
             token_map,
             actions: Vec::new(),
             transitions: Vec::new(),
+            two_token_transitions: Vec::new(),
             beam_width: None,
         }
     }
@@ -1162,18 +1439,43 @@ impl PredictionWfstBuilder {
         self.transitions.push((token_id, action_idx, weight));
     }
 
+    /// Add a two-token dispatch action: `token1 → intermediate → token2 → accept`.
+    ///
+    /// Creates a 3-state path: `start --(token1)--> intermediate --(token2)--> accept`.
+    /// Used when the first token is ambiguous but the second token disambiguates.
+    ///
+    /// The weight is split: first hop carries `weight`, second hop carries 0.0
+    /// (all disambiguation cost is attributed to the dispatch decision).
+    pub fn add_two_token_action(
+        &mut self,
+        token1: &str,
+        token2: &str,
+        action: DispatchAction,
+        weight: TropicalWeight,
+    ) {
+        let token1_id = self.token_map.get_or_insert(token1);
+        let token2_id = self.token_map.get_or_insert(token2);
+        let action_idx = self.actions.len() as u32;
+        self.actions.push(WeightedAction { action, weight });
+        self.two_token_transitions.push((token1_id, token2_id, action_idx, weight));
+    }
+
     /// Build the prediction WFST.
     ///
-    /// Creates a simple two-level WFST: start state → final state per action.
-    /// Transitions from start carry the token label and weight.
+    /// Creates a multi-level WFST:
+    /// - Single-token paths: `start → final` (one final state per action)
+    /// - Two-token paths: `start → intermediate → final` (intermediate per unique
+    ///   (token1, intermediate_group), final per action)
     pub fn build(self) -> PredictionWfst {
         // State 0: start state
         let mut start_state = WfstState::new(0);
 
-        // Create one final state per action + transitions from start
-        let mut states = Vec::with_capacity(1 + self.transitions.len());
+        // Estimate capacity: single-token finals + two-token intermediates + finals
+        let estimated_states = 1 + self.transitions.len() + self.two_token_transitions.len() * 2;
+        let mut states = Vec::with_capacity(estimated_states);
         states.push(WfstState::new(0)); // placeholder for start
 
+        // Single-token paths: start → final
         for (token_id, action_idx, weight) in &self.transitions {
             let final_id = states.len() as WfstStateId;
             states.push(WfstState::final_state(final_id, TropicalWeight::one()));
@@ -1187,6 +1489,42 @@ impl PredictionWfstBuilder {
             });
         }
 
+        // Two-token paths: start → intermediate → final
+        // Group by token1 to share intermediate states
+        if !self.two_token_transitions.is_empty() {
+            let mut intermediate_map: HashMap<TokenId, WfstStateId> = HashMap::new();
+
+            for (token1_id, token2_id, action_idx, weight) in &self.two_token_transitions {
+                // Get or create intermediate state for this token1
+                let mid_id = *intermediate_map.entry(*token1_id).or_insert_with(|| {
+                    let mid = states.len() as WfstStateId;
+                    states.push(WfstState::new(mid)); // non-final intermediate
+                    // Add transition from start to intermediate (weight on first hop)
+                    start_state.transitions.push(WeightedTransition {
+                        from: 0,
+                        input: *token1_id,
+                        action_idx: 0, // placeholder — intermediate, not an action
+                        to: mid,
+                        weight: TropicalWeight::new(0.0), // weight deferred to second hop
+                    });
+                    mid
+                });
+
+                // Create final state for this action
+                let final_id = states.len() as WfstStateId;
+                states.push(WfstState::final_state(final_id, TropicalWeight::one()));
+
+                // Add transition from intermediate to final (carries the action weight)
+                states[mid_id as usize].transitions.push(WeightedTransition {
+                    from: mid_id,
+                    input: *token2_id,
+                    action_idx: *action_idx,
+                    to: final_id,
+                    weight: *weight,
+                });
+            }
+        }
+
         states[0] = start_state;
 
         PredictionWfst {
@@ -1196,6 +1534,7 @@ impl PredictionWfstBuilder {
             actions: self.actions,
             token_map: self.token_map,
             beam_width: self.beam_width,
+            context_labels: HashMap::new(),
         }
     }
 }
@@ -1249,6 +1588,171 @@ pub fn build_prediction_wfsts(
     }
 
     result
+}
+
+/// Enrich prediction WFSTs with two-token paths for NFA-ambiguous groups.
+///
+/// For each category, identifies dispatch tokens where multiple RD rules
+/// share the same first token. When the second syntax item uniquely identifies
+/// the rule within the group — either directly (terminal) or via FIRST set
+/// expansion (nonterminal) — adds two-token paths to the WFST:
+/// `start --(token1)--> intermediate --(token2)--> accept`.
+///
+/// This migrates the `second_token_lookahead()` and `suffix_disjointness_check()`
+/// analyses from trampoline.rs into the WFST itself, making them queryable by
+/// all consumers (lint, decision tree, cost-benefit, error recovery).
+///
+/// ## FIRST-Set Expansion (Sprint 2)
+///
+/// When `items[1]` is `NonTerminal { category }`, the second-level transitions
+/// are expanded using `FIRST(category)`. Each token in the FIRST set becomes a
+/// second-level transition. This resolves cases like:
+/// - `float ( Expr )` vs `float ( Ident )` — if FIRST(Expr) and FIRST(Ident)
+///   are disjoint, the second token disambiguates.
+///
+/// Returns the number of two-token paths added across all categories.
+pub fn enrich_with_two_token_paths(
+    wfsts: &mut HashMap<String, PredictionWfst>,
+    rd_rules: &[crate::recursive::RDRuleInfo],
+    category_names: &[String],
+    first_sets: &HashMap<String, crate::prediction::FirstSet>,
+) -> usize {
+    use crate::recursive::RDSyntaxItem;
+
+    let mut total_added = 0;
+
+    for cat in category_names {
+        let wfst = match wfsts.get_mut(cat) {
+            Some(w) => w,
+            None => continue,
+        };
+
+        // Group RD rules by their dispatch token (first terminal)
+        let mut groups: HashMap<String, Vec<&crate::recursive::RDRuleInfo>> = HashMap::new();
+        for rule in rd_rules {
+            if rule.category != *cat {
+                continue;
+            }
+            if rule.is_collection || rule.prefix_bp.is_some() {
+                continue;
+            }
+            if let Some(RDSyntaxItem::Terminal(t)) = rule.items.first() {
+                groups.entry(t.clone()).or_default().push(rule);
+            }
+        }
+
+        // For ambiguous groups (>1 rule), check if second-position analysis resolves them
+        for (dispatch_token, rules) in &groups {
+            if rules.len() < 2 {
+                continue;
+            }
+
+            // Build per-rule FIRST sets for items[1..] (suffix after dispatch token).
+            // Terminal items[1] contribute their variant name directly.
+            // NonTerminal items[1] contribute FIRST(category) tokens.
+            // IdentCapture/Binder contribute "Ident".
+            let mut per_rule_second_tokens: Vec<(&str, Vec<String>)> = Vec::with_capacity(rules.len());
+            let mut all_valid = true;
+
+            for rule in rules {
+                if rule.items.len() < 2 {
+                    all_valid = false;
+                    break;
+                }
+                let suffix = &rule.items[1..];
+                let (first, _nullable) = crate::prediction::first_of_rd_suffix(suffix, first_sets);
+                if first.tokens.is_empty() {
+                    all_valid = false;
+                    break;
+                }
+                per_rule_second_tokens.push((&rule.label, first.tokens.into_iter().collect()));
+            }
+
+            if !all_valid {
+                continue;
+            }
+
+            // Check pairwise disjointness: each second-position token must map to
+            // exactly one rule. This is the WFST analog of suffix_disjointness_check().
+            let mut token_to_rule: HashMap<String, Vec<&str>> = HashMap::new();
+            for (rule_label, tokens) in &per_rule_second_tokens {
+                for token in tokens {
+                    token_to_rule.entry(token.clone()).or_default().push(rule_label);
+                }
+            }
+
+            if token_to_rule.values().any(|rules| rules.len() > 1) {
+                continue; // Overlapping FIRST sets — can't disambiguate
+            }
+
+            // Disjoint! Add two-token paths for each (token2 → rule) mapping.
+            let dispatch_token_variant = crate::automata::codegen::terminal_to_variant_name(dispatch_token);
+            let token1_id = match wfst.token_map.get(&dispatch_token_variant) {
+                Some(id) => id,
+                None => wfst.token_map.get_or_insert(&dispatch_token_variant),
+            };
+
+            // Create a shared intermediate state for this dispatch token group
+            let mid_id = wfst.states.len() as WfstStateId;
+            wfst.states.push(WfstState::new(mid_id));
+
+            // Add start → intermediate transition
+            if let Some(start) = wfst.states.get_mut(wfst.start as usize) {
+                start.transitions.push(WeightedTransition {
+                    from: wfst.start,
+                    input: token1_id,
+                    action_idx: 0, // placeholder for intermediate
+                    to: mid_id,
+                    weight: TropicalWeight::new(0.0),
+                });
+            }
+
+            for (second_token, rule_labels) in &token_to_rule {
+                let rule_label = rule_labels[0];
+
+                // Find the existing action for this rule to clone it
+                let action = wfst.actions.iter().find(|a| a.action.rule_label() == rule_label);
+                let (dispatch_action, weight) = if let Some(wa) = action {
+                    (wa.action.clone(), wa.weight)
+                } else {
+                    (
+                        DispatchAction::Direct {
+                            rule_label: rule_label.to_string(),
+                            parse_fn: format!("parse_{}", rule_label.to_lowercase()),
+                        },
+                        TropicalWeight::new(0.0),
+                    )
+                };
+
+                // Register second token in token map
+                let token2_id = wfst.token_map.get_or_insert(second_token);
+
+                // Create final state
+                let final_id = wfst.states.len() as WfstStateId;
+                wfst.states.push(WfstState::final_state(final_id, TropicalWeight::one()));
+
+                // Register the action
+                let action_idx = wfst.actions.len() as u32;
+                wfst.actions.push(WeightedAction {
+                    action: dispatch_action,
+                    weight,
+                });
+
+                // Add intermediate → final transition
+                wfst.states[mid_id as usize].transitions.push(WeightedTransition {
+                    from: mid_id,
+                    input: token2_id,
+                    action_idx,
+                    to: final_id,
+                    weight,
+                });
+
+                total_added += 1;
+            }
+        }
+    }
+
+    total_added
 }
 
 /// Compute the tropical weight for a dispatch action.
@@ -3047,5 +3551,882 @@ mod tests {
         let h1 = wfst.canonical_hash();
         let h2 = wfst.canonical_hash();
         assert_eq!(h1, h2, "Canonical hash should be deterministic");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Two-token WFST tests (Sprint 1)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_two_token_builder_creates_intermediate_states() {
+        // Two-token paths should create intermediate (non-final) states
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Integer", "Boolean"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+
+        // Single-token action
+        builder.add_action(
+            "Integer",
+            DispatchAction::Direct { rule_label: "IntLit".to_string(), parse_fn: "parse_intlit".to_string() },
+            TropicalWeight::new(0.0),
+        );
+
+        // Two-token actions: Float → ( → FloatId, Float → Boolean → BoolToFloat
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_two_token_action(
+            "Float", "Boolean",
+            DispatchAction::Direct { rule_label: "BoolToFloat".to_string(), parse_fn: "parse_booltofloat".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let wfst = builder.build();
+
+        // Should have: start(0) + 1 single-token final + 1 intermediate(Float) + 2 two-token finals
+        assert_eq!(wfst.num_states(), 5, "expected 5 states: start + 1 single final + 1 intermediate + 2 two-token finals");
+
+        // The intermediate state should NOT be final
+        let intermediate = wfst.states.iter().find(|s| !s.is_final && s.id != 0);
+        assert!(intermediate.is_some(), "should have a non-final intermediate state");
+
+        // The intermediate should have 2 outgoing transitions (LParen, Boolean)
+        let mid = intermediate.expect("intermediate exists");
+        assert_eq!(mid.transitions.len(), 2, "intermediate should have 2 transitions");
+    }
+
+    #[test]
+    fn test_predict_two_token_resolves_ambiguity() {
+        // predict_two_token should return narrowed results via intermediate states
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+
+        // Two ambiguous rules sharing dispatch token "Float"
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_two_token_action(
+            "Float", "Integer",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "parse_inttofloat".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let wfst = builder.build();
+
+        // Two-token query: Float + LParen → FloatId only
+        let results = wfst.predict_two_token("Float", "LParen");
+        assert_eq!(results.len(), 1, "two-token query should resolve to single action");
+        assert_eq!(results[0].action.rule_label(), "FloatId");
+
+        // Two-token query: Float + Integer → IntToFloat only
+        let results = wfst.predict_two_token("Float", "Integer");
+        assert_eq!(results.len(), 1, "two-token query should resolve to single action");
+        assert_eq!(results[0].action.rule_label(), "IntToFloat");
+    }
+
+    #[test]
+    fn test_predict_two_token_fallback_to_single() {
+        // When no intermediate states exist for token1, fall back to single-token predict
+        let token_map = TokenIdMap::from_names(
+            vec!["Plus", "Minus"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_action(
+            "Plus",
+            DispatchAction::Direct { rule_label: "Add".to_string(), parse_fn: "parse_add".to_string() },
+            TropicalWeight::new(0.0),
+        );
+
+        let wfst = builder.build();
+
+        // No two-token paths for Plus — should fall back to single-token
+        let results = wfst.predict_two_token("Plus", "Minus");
+        assert_eq!(results.len(), 1, "should fall back to single-token predict");
+        assert_eq!(results[0].action.rule_label(), "Add");
+    }
+
+    #[test]
+    fn test_predict_two_token_unknown_token2_fallback() {
+        // When token2 is not found in intermediate transitions, fall back to single-token
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Unknown"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            TropicalWeight::new(0.0),
+        );
+
+        let wfst = builder.build();
+
+        // Float + Unknown → no match via intermediate, should fall back to single-token
+        // But there's no single-token "Float" action either, so predict("Float") would
+        // find the intermediate transition (non-final), skip it, and return empty.
+        // Actually, predict() returns actions from final states, and intermediates are not final.
+        // So it returns empty. predict_two_token should also handle this gracefully.
+        let results = wfst.predict_two_token("Float", "Unknown");
+        // Falls back to predict("Float"), which finds no actions via final states
+        assert!(results.is_empty(), "unknown token2 should result in empty or single-token fallback");
+    }
+
+    #[test]
+    fn test_is_deterministic_after_two_tokens() {
+        // is_deterministic_after should return Some when two-token path yields singleton
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_two_token_action(
+            "Float", "Integer",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "parse_inttofloat".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let wfst = builder.build();
+
+        // Two-token: Float + LParen → FloatId (deterministic)
+        assert_eq!(
+            wfst.is_deterministic_after(&["Float", "LParen"]),
+            Some("FloatId".to_string()),
+        );
+        // Two-token: Float + Integer → IntToFloat (deterministic)
+        assert_eq!(
+            wfst.is_deterministic_after(&["Float", "Integer"]),
+            Some("IntToFloat".to_string()),
+        );
+        // Single-token: Integer → no action (empty)
+        assert_eq!(wfst.is_deterministic_after(&["Integer"]), None);
+        // Empty sequence
+        assert_eq!(wfst.is_deterministic_after(&[]), None);
+    }
+
+    #[test]
+    fn test_live_actions_after_returns_narrowed_set() {
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_two_token_action(
+            "Float", "Integer",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "parse_inttofloat".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let wfst = builder.build();
+
+        // Two tokens: narrowed to 1
+        let actions = wfst.live_actions_after(&["Float", "LParen"]);
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].action.rule_label(), "FloatId");
+
+        // Single token with no single-token actions: empty
+        let actions = wfst.live_actions_after(&["Float"]);
+        assert!(actions.is_empty(), "no single-token Float action");
+
+        // Empty sequence
+        let actions = wfst.live_actions_after(&[]);
+        assert!(actions.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // FIRST-set expansion tests (Sprint 2)
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_enrich_terminal_second_items() {
+        // enrich_with_two_token_paths should add paths when 2nd items are disjoint terminals
+        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+        use crate::prediction::FirstSet;
+
+        let rd_rules = vec![
+            RDRuleInfo {
+                label: "IfThen".to_string(),
+                category: "Stmt".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                ],
+                has_binder: false, has_multi_binder: false, is_collection: false,
+                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+            },
+            RDRuleInfo {
+                label: "IfNot".to_string(),
+                category: "Stmt".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("if".to_string()),
+                    RDSyntaxItem::Terminal("!".to_string()),
+                ],
+                has_binder: false, has_multi_binder: false, is_collection: false,
+                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+            },
+        ];
+
+        let token_map = TokenIdMap::from_names(
+            vec!["KwIf", "LParen", "Bang"].into_iter().map(String::from),
+        );
+        let mut builder = PredictionWfstBuilder::new("Stmt", token_map);
+        builder.add_action(
+            "KwIf",
+            DispatchAction::Direct { rule_label: "IfThen".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_action(
+            "KwIf",
+            DispatchAction::Direct { rule_label: "IfNot".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+        let mut wfsts = HashMap::new();
+        wfsts.insert("Stmt".to_string(), builder.build());
+
+        let first_sets = HashMap::new(); // Not needed for terminal second items
+
+        let added = enrich_with_two_token_paths(
+            &mut wfsts, &rd_rules, &["Stmt".to_string()], &first_sets,
+        );
+
+        assert!(added >= 2, "should add at least 2 two-token paths, got {}", added);
+
+        let wfst = wfsts.get("Stmt").expect("Stmt WFST exists");
+        // Should be able to resolve via two-token query
+        let results = wfst.predict_two_token("KwIf", "LParen");
+        assert_eq!(results.len(), 1, "KwIf + LParen should resolve to IfThen");
+        assert_eq!(results[0].action.rule_label(), "IfThen");
+
+        let results = wfst.predict_two_token("KwIf", "Bang");
+        assert_eq!(results.len(), 1, "KwIf + Bang should resolve to IfNot");
+        assert_eq!(results[0].action.rule_label(), "IfNot");
+    }
+
+    #[test]
+    fn test_enrich_nonterminal_first_set_expansion() {
+        // Sprint 2: enrich should expand NonTerminal second items via FIRST sets
+        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+        use crate::prediction::FirstSet;
+
+        // Rule A: float ( Expr ) — FIRST(Expr) = {Integer, Ident}
+        // Rule B: float [ List ] — FIRST(List) = {LBracket, Ident} — overlaps with Expr on Ident
+        // Since Ident appears in both, this group should NOT be enriched (overlap)
+        let rd_rules_overlapping = vec![
+            RDRuleInfo {
+                label: "FloatExpr".to_string(),
+                category: "Val".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::NonTerminal { category: "Expr".to_string(), param_name: "e".to_string() },
+                ],
+                has_binder: false, has_multi_binder: false, is_collection: false,
+                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+            },
+            RDRuleInfo {
+                label: "FloatList".to_string(),
+                category: "Val".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::NonTerminal { category: "List".to_string(), param_name: "l".to_string() },
+                ],
+                has_binder: false, has_multi_binder: false, is_collection: false,
+                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+            },
+        ];
+
+        let mut first_sets_overlapping = HashMap::new();
+        let mut expr_first = FirstSet::new();
+        expr_first.insert("Integer");
+        expr_first.insert("Ident");
+        first_sets_overlapping.insert("Expr".to_string(), expr_first);
+        let mut list_first = FirstSet::new();
+        list_first.insert("LBracket");
+        list_first.insert("Ident"); // overlaps with Expr
+        first_sets_overlapping.insert("List".to_string(), list_first);
+
+        let token_map = TokenIdMap::from_names(
+            vec!["KwFloat"].into_iter().map(String::from),
+        );
+        let mut builder = PredictionWfstBuilder::new("Val", token_map);
+        builder.add_action(
+            "KwFloat",
+            DispatchAction::Direct { rule_label: "FloatExpr".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_action(
+            "KwFloat",
+            DispatchAction::Direct { rule_label: "FloatList".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+        let mut wfsts_overlap = HashMap::new();
+        wfsts_overlap.insert("Val".to_string(), builder.build());
+
+        let added = enrich_with_two_token_paths(
+            &mut wfsts_overlap, &rd_rules_overlapping, &["Val".to_string()], &first_sets_overlapping,
+        );
+        assert_eq!(added, 0, "overlapping FIRST sets should NOT be enriched");
+
+        // Now test disjoint case:
+        // Rule A: float ( Expr ) — FIRST(Expr) = {Integer, LParen}
+        // Rule B: float [ List ] — FIRST(List) = {LBracket, Ident}
+        // Disjoint: no overlap → should add paths
+        let rd_rules_disjoint = vec![
+            RDRuleInfo {
+                label: "FloatExpr".to_string(),
+                category: "Val".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::NonTerminal { category: "Expr".to_string(), param_name: "e".to_string() },
+                ],
+                has_binder: false, has_multi_binder: false, is_collection: false,
+                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+            },
+            RDRuleInfo {
+                label: "FloatList".to_string(),
+                category: "Val".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("float".to_string()),
+                    RDSyntaxItem::NonTerminal { category: "List".to_string(), param_name: "l".to_string() },
+                ],
+                has_binder: false, has_multi_binder: false, is_collection: false,
+                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+            },
+        ];
+
+        let mut first_sets_disjoint = HashMap::new();
+        let mut expr_first2 = FirstSet::new();
+        expr_first2.insert("Integer");
+        expr_first2.insert("LParen");
+        first_sets_disjoint.insert("Expr".to_string(), expr_first2);
+        let mut list_first2 = FirstSet::new();
+        list_first2.insert("LBracket");
+        list_first2.insert("Ident");
+        first_sets_disjoint.insert("List".to_string(), list_first2);
+
+        let token_map2 = TokenIdMap::from_names(
+            vec!["KwFloat"].into_iter().map(String::from),
+        );
+        let mut builder2 = PredictionWfstBuilder::new("Val", token_map2);
+        builder2.add_action(
+            "KwFloat",
+            DispatchAction::Direct { rule_label: "FloatExpr".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder2.add_action(
+            "KwFloat",
+            DispatchAction::Direct { rule_label: "FloatList".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+        let mut wfsts_disjoint = HashMap::new();
+        wfsts_disjoint.insert("Val".to_string(), builder2.build());
+
+        let added = enrich_with_two_token_paths(
+            &mut wfsts_disjoint, &rd_rules_disjoint, &["Val".to_string()], &first_sets_disjoint,
+        );
+        assert_eq!(added, 4, "disjoint FIRST sets should add 4 two-token paths (2+2)");
+
+        // Verify: Integer → FloatExpr, LParen → FloatExpr, LBracket → FloatList, Ident → FloatList
+        let wfst = wfsts_disjoint.get("Val").expect("Val WFST exists");
+        let r = wfst.predict_two_token("KwFloat", "Integer");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].action.rule_label(), "FloatExpr");
+
+        let r = wfst.predict_two_token("KwFloat", "LBracket");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].action.rule_label(), "FloatList");
+    }
+
+    #[test]
+    fn test_enrich_mixed_terminal_nonterminal() {
+        // Mix of terminal and nonterminal second items
+        // terminal_to_variant_name("cmd") = "KwCmd"
+        use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+        use crate::prediction::FirstSet;
+
+        // Rule A: cmd ( — terminal second item "("
+        // Rule B: cmd Expr — nonterminal second item, FIRST(Expr) = {Integer}
+        // Disjoint: "LParen" ≠ "Integer"
+        let rd_rules = vec![
+            RDRuleInfo {
+                label: "CmdParen".to_string(),
+                category: "Cmd".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("cmd".to_string()),
+                    RDSyntaxItem::Terminal("(".to_string()),
+                ],
+                has_binder: false, has_multi_binder: false, is_collection: false,
+                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+            },
+            RDRuleInfo {
+                label: "CmdExpr".to_string(),
+                category: "Cmd".to_string(),
+                items: vec![
+                    RDSyntaxItem::Terminal("cmd".to_string()),
+                    RDSyntaxItem::NonTerminal { category: "Expr".to_string(), param_name: "e".to_string() },
+                ],
+                has_binder: false, has_multi_binder: false, is_collection: false,
+                collection_type: None, separator: None, prefix_bp: None, eval_mode: None,
+            },
+        ];
+
+        let mut first_sets = HashMap::new();
+        let mut expr_first = FirstSet::new();
+        expr_first.insert("Integer");
+        first_sets.insert("Expr".to_string(), expr_first);
+
+        // terminal_to_variant_name("cmd") = "KwCmd"
+        let token_map = TokenIdMap::from_names(
+            vec!["KwCmd"].into_iter().map(String::from),
+        );
+        let mut builder = PredictionWfstBuilder::new("Cmd", token_map);
+        builder.add_action(
+            "KwCmd",
+            DispatchAction::Direct { rule_label: "CmdParen".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_action(
+            "KwCmd",
+            DispatchAction::Direct { rule_label: "CmdExpr".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+        let mut wfsts = HashMap::new();
+        wfsts.insert("Cmd".to_string(), builder.build());
+
+        let added = enrich_with_two_token_paths(
+            &mut wfsts, &rd_rules, &["Cmd".to_string()], &first_sets,
+        );
+        assert_eq!(added, 2, "mixed terminal+nonterminal should add 2 paths");
+
+        let wfst = wfsts.get("Cmd").expect("Cmd WFST exists");
+        let r = wfst.predict_two_token("KwCmd", "LParen");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].action.rule_label(), "CmdParen");
+
+        let r = wfst.predict_two_token("KwCmd", "Integer");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].action.rule_label(), "CmdExpr");
+    }
+
+    #[test]
+    fn test_two_token_mixed_single_and_two_token_paths() {
+        // WFST with both single-token and two-token paths for the same first token
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+
+        // Single-token path: Float → Direct action (cast rule)
+        builder.add_action(
+            "Float",
+            DispatchAction::Cast {
+                source_category: "Float".to_string(),
+                wrapper_label: "CastFloat".to_string(),
+            },
+            TropicalWeight::new(0.5),
+        );
+
+        // Two-token path: Float + LParen → FloatId
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "parse_floatid".to_string() },
+            TropicalWeight::new(0.0),
+        );
+
+        let wfst = builder.build();
+
+        // Single-token query: Float → CastFloat (from single-token path)
+        let results = wfst.predict("Float");
+        assert_eq!(results.len(), 1, "single-token predict should find CastFloat");
+        assert_eq!(results[0].action.rule_label(), "CastFloat");
+
+        // Two-token query: Float + LParen → FloatId (from two-token path)
+        let results = wfst.predict_two_token("Float", "LParen");
+        assert_eq!(results.len(), 1, "two-token predict should find FloatId via intermediate");
+        assert_eq!(results[0].action.rule_label(), "FloatId");
+
+        // Two-token query with unmatched token2: Float + Integer → fallback to single-token
+        let results = wfst.predict_two_token("Float", "Integer");
+        assert_eq!(results.len(), 1, "unmatched token2 should fall back to single-token CastFloat");
+        assert_eq!(results[0].action.rule_label(), "CastFloat");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sprint 3: ContextWeight powerset query tests
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_context_labels_assignment() {
+        // Assign context labels and verify bit positions
+        let token_map = TokenIdMap::from_names(
+            vec!["Float"].into_iter().map(String::from),
+        );
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_action(
+            "Float",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_action(
+            "Float",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+        builder.add_action(
+            "Float",
+            DispatchAction::Direct { rule_label: "BoolToFloat".to_string(), parse_fn: "p3".to_string() },
+            TropicalWeight::new(1.0),
+        );
+
+        let mut wfst = builder.build();
+        wfst.assign_context_labels(&["FloatId", "IntToFloat", "BoolToFloat"]);
+
+        assert_eq!(wfst.context_labels.len(), 3);
+        assert_eq!(wfst.context_labels["FloatId"], 0);
+        assert_eq!(wfst.context_labels["IntToFloat"], 1);
+        assert_eq!(wfst.context_labels["BoolToFloat"], 2);
+    }
+
+    #[test]
+    fn test_live_rules_context_all_alive() {
+        // All rules alive when querying the shared dispatch token
+        let token_map = TokenIdMap::from_names(
+            vec!["Float"].into_iter().map(String::from),
+        );
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_action(
+            "Float",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_action(
+            "Float",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let mut wfst = builder.build();
+        wfst.assign_context_labels(&["FloatId", "IntToFloat"]);
+
+        let ctx = wfst.live_rules_context_after(&["Float"]);
+        assert_eq!(ctx.count(), 2, "both rules should be alive after dispatch token");
+        assert!(ctx.contains(0), "FloatId (bit 0) should be alive");
+        assert!(ctx.contains(1), "IntToFloat (bit 1) should be alive");
+    }
+
+    #[test]
+    fn test_live_rules_context_narrowed_by_two_token() {
+        // Two-token paths narrow the live set to a singleton
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        // Two rules share dispatch token "Float"
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_two_token_action(
+            "Float", "Integer",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let mut wfst = builder.build();
+        wfst.assign_context_labels(&["FloatId", "IntToFloat"]);
+
+        // Two-token query narrows to singleton
+        let ctx = wfst.live_rules_context_after(&["Float", "LParen"]);
+        assert_eq!(ctx.count(), 1, "should narrow to FloatId");
+        assert!(ctx.contains(0), "FloatId (bit 0) should survive");
+        assert!(!ctx.contains(1), "IntToFloat (bit 1) should be eliminated");
+
+        let ctx = wfst.live_rules_context_after(&["Float", "Integer"]);
+        assert_eq!(ctx.count(), 1, "should narrow to IntToFloat");
+        assert!(!ctx.contains(0), "FloatId should be eliminated");
+        assert!(ctx.contains(1), "IntToFloat should survive");
+    }
+
+    #[test]
+    fn test_is_deterministic_context_singleton() {
+        // is_deterministic_context returns Some when ContextWeight is singleton
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_two_token_action(
+            "Float", "Integer",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let mut wfst = builder.build();
+        wfst.assign_context_labels(&["FloatId", "IntToFloat"]);
+
+        assert_eq!(
+            wfst.is_deterministic_context(&["Float", "LParen"]),
+            Some("FloatId".to_string()),
+        );
+        assert_eq!(
+            wfst.is_deterministic_context(&["Float", "Integer"]),
+            Some("IntToFloat".to_string()),
+        );
+    }
+
+    #[test]
+    fn test_is_deterministic_context_ambiguous() {
+        // is_deterministic_context returns None when multiple rules survive
+        let token_map = TokenIdMap::from_names(
+            vec!["Float"].into_iter().map(String::from),
+        );
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_action(
+            "Float",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_action(
+            "Float",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let mut wfst = builder.build();
+        wfst.assign_context_labels(&["FloatId", "IntToFloat"]);
+
+        // Single-token query: both rules alive → None
+        assert_eq!(wfst.is_deterministic_context(&["Float"]), None);
+    }
+
+    #[test]
+    fn test_context_narrowing_reports_count() {
+        // context_narrowing returns the correct count
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_two_token_action(
+            "Float", "Integer",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let mut wfst = builder.build();
+        wfst.assign_context_labels(&["FloatId", "IntToFloat"]);
+
+        let (ctx, count) = wfst.context_narrowing(&["Float", "LParen"]);
+        assert_eq!(count, 1);
+        assert!(ctx.contains(0));
+
+        let (ctx, count) = wfst.context_narrowing(&["Float", "Integer"]);
+        assert_eq!(count, 1);
+        assert!(ctx.contains(1));
+    }
+
+    #[test]
+    fn test_context_labels_empty_no_crash() {
+        // When no context labels are assigned, queries return zero ContextWeight
+        let token_map = TokenIdMap::from_names(
+            vec!["Float"].into_iter().map(String::from),
+        );
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_action(
+            "Float",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+
+        let wfst = builder.build();
+
+        // No context labels assigned — should return zero
+        let ctx = wfst.live_rules_context_after(&["Float"]);
+        assert_eq!(ctx.count(), 0, "no context labels → zero ContextWeight");
+        assert_eq!(wfst.is_deterministic_context(&["Float"]), None);
+    }
+
+    #[test]
+    fn test_context_labels_unknown_token() {
+        // Query with unknown token returns zero ContextWeight
+        let token_map = TokenIdMap::from_names(
+            vec!["Float"].into_iter().map(String::from),
+        );
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        builder.add_action(
+            "Float",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        let mut wfst = builder.build();
+        wfst.assign_context_labels(&["FloatId"]);
+
+        let ctx = wfst.live_rules_context_after(&["Unknown"]);
+        assert_eq!(ctx.count(), 0, "unknown token → empty live set");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sprint 4: Narrowed NFA candidate filtering tests
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_nfa_order_with_context_narrowing() {
+        // Verify that nfa_alternative_order works correctly on a narrowed
+        // candidate set (simulates what the trampoline does in Sprint 4).
+        let token_map = TokenIdMap::from_names(
+            vec!["Float", "LParen", "Integer"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Expr", token_map);
+        // Three rules share "Float", but two-token paths narrow to singletons
+        builder.add_two_token_action(
+            "Float", "LParen",
+            DispatchAction::Direct { rule_label: "FloatId".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_two_token_action(
+            "Float", "Integer",
+            DispatchAction::Direct { rule_label: "IntToFloat".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+
+        let mut wfst = builder.build();
+        wfst.assign_context_labels(&["FloatId", "IntToFloat"]);
+
+        // Without narrowing: both rules alive at single-token level
+        let all_labels = vec!["FloatId", "IntToFloat"];
+        let order = wfst.nfa_alternative_order("Float", &all_labels);
+        // Both rules should be orderable — the fallback to single-token returns both
+        assert!(order.len() >= 1, "should return at least 1 alternative");
+
+        // With narrowing (simulating trampoline Sprint 4 logic):
+        // When only two-token actions exist (no single-token), predict("Float")
+        // returns empty (no final states reachable in one hop), so
+        // live_rules_context_after(&["Float"]) returns zero. The trampoline
+        // code falls through to try-all in this case (ctx.count() == 0 → keep all).
+        let ctx = wfst.live_rules_context_after(&["Float"]);
+        assert_eq!(ctx.count(), 0, "no single-token paths → empty context");
+
+        // At two-token level, narrowing gives singletons
+        let ctx2 = wfst.live_rules_context_after(&["Float", "LParen"]);
+        let narrowed2: Vec<&str> = all_labels.iter().copied().filter(|label| {
+            wfst.context_labels.get(*label)
+                .map_or(true, |&bit| ctx2.contains(bit))
+        }).collect();
+        assert_eq!(narrowed2.len(), 1, "two-token narrows to FloatId");
+        assert_eq!(narrowed2[0], "FloatId");
+    }
+
+    #[test]
+    fn test_narrowed_candidate_excludes_dead_rules() {
+        // Verify that ContextWeight filtering correctly excludes rules
+        // not in the live set.
+        let token_map = TokenIdMap::from_names(
+            vec!["KwFn"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Stmt", token_map);
+        builder.add_action(
+            "KwFn",
+            DispatchAction::Direct { rule_label: "FnDecl".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_action(
+            "KwFn",
+            DispatchAction::Direct { rule_label: "FnExpr".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.5),
+        );
+        builder.add_action(
+            "KwFn",
+            DispatchAction::Direct { rule_label: "FnType".to_string(), parse_fn: "p3".to_string() },
+            TropicalWeight::new(1.0),
+        );
+
+        let mut wfst = builder.build();
+        // Only assign labels to 2 of 3 rules (simulating a partial group)
+        wfst.assign_context_labels(&["FnDecl", "FnExpr", "FnType"]);
+
+        let ctx = wfst.live_rules_context_after(&["KwFn"]);
+        assert_eq!(ctx.count(), 3, "all three rules alive at dispatch token");
+
+        // Simulate removing FnType from the live set (as if two-token narrowed it)
+        // by manually constructing a narrowed context
+        use crate::automata::semiring::ContextWeight;
+        let narrowed_ctx = ContextWeight::singleton(0).plus(&ContextWeight::singleton(1));
+        assert_eq!(narrowed_ctx.count(), 2);
+
+        let all_labels = vec!["FnDecl", "FnExpr", "FnType"];
+        let narrowed: Vec<&str> = all_labels.iter().copied().filter(|label| {
+            wfst.context_labels.get(*label)
+                .map_or(true, |&bit| narrowed_ctx.contains(bit))
+        }).collect();
+        assert_eq!(narrowed.len(), 2);
+        assert!(narrowed.contains(&"FnDecl"));
+        assert!(narrowed.contains(&"FnExpr"));
+        assert!(!narrowed.contains(&"FnType"));
+    }
+
+    #[test]
+    fn test_narrowed_preserves_order() {
+        // After narrowing, nfa_alternative_order on the narrowed set preserves
+        // WFST weight ordering.
+        let token_map = TokenIdMap::from_names(
+            vec!["KwLet"].into_iter().map(String::from),
+        );
+
+        let mut builder = PredictionWfstBuilder::new("Stmt", token_map);
+        builder.add_action(
+            "KwLet",
+            DispatchAction::Direct { rule_label: "LetMut".to_string(), parse_fn: "p1".to_string() },
+            TropicalWeight::new(0.0),
+        );
+        builder.add_action(
+            "KwLet",
+            DispatchAction::Direct { rule_label: "LetConst".to_string(), parse_fn: "p2".to_string() },
+            TropicalWeight::new(0.3),
+        );
+
+        let mut wfst = builder.build();
+        wfst.assign_context_labels(&["LetMut", "LetConst"]);
+
+        let narrowed = vec!["LetMut", "LetConst"];
+        let ordered = wfst.nfa_alternative_order("KwLet", &narrowed);
+
+        // Should be ordered by weight: LetMut (0.0) before LetConst (0.3)
+        assert_eq!(ordered.len(), 2);
+        assert_eq!(ordered[0].0, 0, "LetMut at index 0 (lowest weight)");
+        assert_eq!(ordered[1].0, 1, "LetConst at index 1 (higher weight)");
+        assert!(ordered[0].1.value() < ordered[1].1.value(), "weights should be ordered");
     }
 }

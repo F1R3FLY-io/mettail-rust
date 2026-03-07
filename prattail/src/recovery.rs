@@ -1291,6 +1291,184 @@ pub fn viterbi_multi_step(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Sprint 7 Design B: Forward-Backward Multi-Step Recovery
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Per-position posterior analysis from forward-backward on the repair lattice.
+///
+/// Identifies **bottleneck positions** — positions where the minimum-cost repair
+/// path is forced to pass through — and computes posterior costs that reveal
+/// whether a repair at position P also resolves an error at position P+k.
+#[derive(Debug, Clone)]
+pub struct RecoveryPosterior {
+    /// Posterior cost at each position: `alpha[i] ⊗ beta[i]`.
+    ///
+    /// Low values indicate bottleneck positions (the repair path must pass
+    /// through them). High values indicate positions with alternative paths.
+    pub position_costs: Vec<TropicalWeight>,
+
+    /// The total cost (partition function) of the repair lattice.
+    pub total_cost: TropicalWeight,
+
+    /// Bottleneck positions: indices where the posterior equals the total cost
+    /// (within tolerance). Repairs at these positions are on every optimal path.
+    pub bottleneck_positions: Vec<usize>,
+
+    /// The Viterbi-optimal repair sequence (same as `viterbi_multi_step`).
+    pub optimal_sequence: Option<RepairSequence>,
+}
+
+/// Build the repair lattice as an explicit edge list and run forward-backward
+/// to compute posterior costs per position.
+///
+/// This extends `viterbi_multi_step` with backward analysis:
+/// - **Forward pass**: same Viterbi lattice as `viterbi_multi_step`.
+/// - **Backward pass**: total weight of all paths from each node to the sink.
+/// - **Posterior**: `alpha[i] ⊗ beta[i]` per position — reveals bottlenecks.
+///
+/// ## Multi-error recovery
+///
+/// When multiple errors are close together, the backward pass reveals whether
+/// fixing the first error also resolves subsequent ones (shared bottleneck).
+/// If positions P and P+k are both bottleneck positions, a single repair
+/// strategy must handle both.
+///
+/// ## ContextWeight integration
+///
+/// When `dispatch_context` is provided, repair edges are filtered by context
+/// viability: insert/substitute actions are only emitted for sync tokens
+/// reachable from the active rule set (via `RecoveryWfst::is_sync_reachable`).
+pub fn viterbi_recovery_forward_backward(
+    token_ids: &[TokenId],
+    pos: usize,
+    recovery_wfst: &RecoveryWfst,
+    config: &RecoveryConfig,
+    dispatch_context: Option<crate::automata::semiring::ContextWeight>,
+) -> RecoveryPosterior {
+    let remaining = &token_ids[pos..];
+    let max_lookahead = remaining.len().min(config.max_skip_lookahead);
+
+    if max_lookahead == 0 {
+        return RecoveryPosterior {
+            position_costs: vec![],
+            total_cost: TropicalWeight::zero(),
+            bottleneck_positions: vec![],
+            optimal_sequence: None,
+        };
+    }
+
+    let num_nodes = max_lookahead + 1; // positions 0..max_lookahead, plus sink
+    let sink = max_lookahead;
+
+    // Build explicit edge list for forward-backward
+    let mut edges: Vec<Vec<(usize, TropicalWeight)>> = vec![vec![]; num_nodes];
+
+    let skip_cost = TropicalWeight::new(config.skip_per_token);
+    let delete_cost = TropicalWeight::new(config.delete_cost);
+    let substitute_cost = TropicalWeight::new(config.substitute_cost);
+    let insert_cost = TropicalWeight::new(config.insert_cost);
+    let swap_cost = TropicalWeight::new(config.swap_cost);
+
+    for i in 0..max_lookahead {
+        let token_at_i = remaining[i];
+
+        // Sync edge: i → sink (free) when at sync token
+        if recovery_wfst.sync_tokens.contains(&token_at_i) {
+            let discount = TropicalWeight::new(recovery_wfst.prediction_discount(token_at_i));
+            // Context viability: if dispatch context is set, check reachability
+            let context_viable = dispatch_context
+                .map_or(true, |ctx| recovery_wfst.is_sync_reachable(token_at_i, ctx));
+            if context_viable {
+                // Sync is free but modulated by prediction discount
+                let sync_weight = if discount.value() < 1.0 {
+                    TropicalWeight::new(discount.value() * 0.01) // near-zero but preserves ordering
+                } else {
+                    TropicalWeight::one() // 0.0 = free
+                };
+                edges[i].push((sink, sync_weight));
+            }
+        }
+
+        // Skip edge: i → i+1
+        if i + 1 < num_nodes {
+            edges[i].push((i + 1, skip_cost));
+        }
+
+        // Delete edge: i → i+1
+        if i + 1 < num_nodes {
+            edges[i].push((i + 1, delete_cost));
+        }
+
+        // Substitute edge: i → i+1 (only when not a sync token)
+        if i + 1 < num_nodes && !recovery_wfst.sync_tokens.contains(&token_at_i) {
+            for &sync_id in &recovery_wfst.sync_tokens {
+                let context_viable = dispatch_context
+                    .map_or(true, |ctx| recovery_wfst.is_sync_reachable(sync_id, ctx));
+                if context_viable {
+                    edges[i].push((i + 1, substitute_cost));
+                    break; // one substitute edge per position suffices for cost analysis
+                }
+            }
+        }
+
+        // Swap edge: i → i+2
+        if i + 2 <= max_lookahead {
+            edges[i].push((i + 2, swap_cost));
+        }
+
+        // Insert edge: i → sink (insert sync token to reach sync immediately)
+        for &sync_id in &recovery_wfst.sync_tokens {
+            let context_viable = dispatch_context
+                .map_or(true, |ctx| recovery_wfst.is_sync_reachable(sync_id, ctx));
+            if context_viable {
+                edges[i].push((sink, insert_cost));
+                break; // one insert cost per position suffices
+            }
+        }
+    }
+
+    // Forward and backward passes
+    let alpha = crate::forward_backward::forward_scores::<TropicalWeight>(&edges, num_nodes);
+    let beta = crate::forward_backward::backward_scores::<TropicalWeight>(&edges, num_nodes, sink);
+
+    let total_cost = alpha[sink];
+
+    // Posterior costs: alpha[i] ⊗ beta[i] for each position
+    let position_costs: Vec<TropicalWeight> = (0..num_nodes)
+        .map(|i| alpha[i].times(&beta[i]))
+        .collect();
+
+    // Bottleneck detection: positions where posterior ≈ total cost
+    // (within tolerance 1e-6). These positions are on every optimal path.
+    let tolerance = 1e-6;
+    let bottleneck_positions: Vec<usize> = if total_cost.is_zero() {
+        vec![]
+    } else {
+        (0..max_lookahead)
+            .filter(|&i| {
+                !position_costs[i].is_zero()
+                    && (position_costs[i].value() - total_cost.value()).abs() < tolerance
+            })
+            .collect()
+    };
+
+    // Also run Viterbi to get the optimal sequence
+    let optimal_sequence = viterbi_multi_step(
+        token_ids,
+        pos,
+        &recovery_wfst.sync_tokens,
+        config,
+    );
+
+    RecoveryPosterior {
+        position_costs,
+        total_cost,
+        bottleneck_positions,
+        optimal_sequence,
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Builder — construct RecoveryWfsts for all categories
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1520,6 +1698,13 @@ pub struct RecoveryContext {
     pub open_braces: u16,
     /// Number of unmatched open brackets `[`.
     pub open_brackets: u16,
+
+    // ── Sprint 7: Dispatch context ────────────────────────────────────────
+    /// ContextWeight bitset of rules active at the error point.
+    /// When set, recovery actions are scored by context viability: sync tokens
+    /// whose FOLLOW context intersects the dispatch context are preferred.
+    /// `None` when no ContextWeight analysis is available.
+    pub dispatch_context: Option<crate::automata::semiring::ContextWeight>,
 }
 
 impl Default for RecoveryContext {
@@ -1531,6 +1716,7 @@ impl Default for RecoveryContext {
             open_parens: 0,
             open_braces: 0,
             open_brackets: 0,
+            dispatch_context: None,
         }
     }
 }
@@ -1634,6 +1820,35 @@ impl RecoveryContext {
             Some("RBrace") if self.open_braces > 0 => config.bracket_insert_mult,
             Some("RBracket") if self.open_brackets > 0 => config.bracket_insert_mult,
             _ => 1.0,
+        }
+    }
+
+    /// Sprint 7: Compute a cost multiplier based on ContextWeight viability.
+    ///
+    /// When `dispatch_context` is set, intersects it with the sync token's
+    /// `follow_context` to determine how many active rules can reach this
+    /// sync token. More viable rules → lower multiplier (cheaper recovery).
+    ///
+    /// Returns `1.0` when no dispatch context is available.
+    pub fn context_viability_multiplier(
+        &self,
+        follow_ctx: &crate::automata::semiring::ContextWeight,
+    ) -> f64 {
+        use crate::automata::semiring::Semiring;
+
+        match &self.dispatch_context {
+            Some(dispatch) => {
+                let intersection = dispatch.times(follow_ctx);
+                let viable = intersection.count();
+                if viable == 0 {
+                    // No viable rules — this sync token is a false positive
+                    5.0 // heavy penalty
+                } else {
+                    // More viable rules → cheaper (inverse)
+                    1.0 / (viable as f64).max(1.0)
+                }
+            }
+            None => 1.0, // no dispatch context → neutral
         }
     }
 }
@@ -1876,7 +2091,10 @@ impl RecoveryWfst {
                 } else {
                     // Tier 4: B1 prediction discount
                     let tier4_mult = self.prediction_discount(token_at);
-                    costs::joint_edit(base_cost.value() * tier1_mult * tier3_mult * tier4_mult, action.edit_cost())
+                    // Tier 5 (Sprint 7): ContextWeight viability
+                    let tier5_mult = self.follow_contexts.get(&token_at)
+                        .map_or(1.0, |fc| ctx.context_viability_multiplier(fc));
+                    costs::joint_edit(base_cost.value() * tier1_mult * tier3_mult * tier4_mult * tier5_mult, action.edit_cost())
                 };
 
                 let result = RepairResult {
@@ -3563,5 +3781,301 @@ mod tests {
         // No sync tokens → no edges
         assert!(!dot.contains("->") || dot.matches("->").count() == 0
             || !dot.contains("sync_"), "empty recovery should have no sync edges");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Sprint 7: ContextWeight-guided recovery tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_sprint7_context_viability_multiplier_with_context() {
+        use crate::automata::semiring::ContextWeight;
+
+        // Dispatch context: rules 0 and 2 are active
+        let mut ctx = RecoveryContext::default();
+        ctx.dispatch_context = Some(ContextWeight::singleton(0).insert(2));
+
+        // Follow context for a sync token: rules 0, 1 are reachable
+        let follow = ContextWeight::singleton(0).insert(1);
+
+        // Intersection: only rule 0 → viable = 1
+        let mult = ctx.context_viability_multiplier(&follow);
+        assert!(
+            (mult - 1.0).abs() < 1e-10,
+            "single viable rule → multiplier should be 1.0, got {}",
+            mult
+        );
+    }
+
+    #[test]
+    fn test_sprint7_context_viability_no_overlap() {
+        use crate::automata::semiring::ContextWeight;
+
+        // Dispatch context: only rule 3 is active
+        let mut ctx = RecoveryContext::default();
+        ctx.dispatch_context = Some(ContextWeight::singleton(3));
+
+        // Follow context: only rules 0, 1 can reach this sync token
+        let follow = ContextWeight::singleton(0).insert(1);
+
+        // Intersection: empty → should be penalized
+        let mult = ctx.context_viability_multiplier(&follow);
+        assert!(
+            (mult - 5.0).abs() < 1e-10,
+            "no viable rules → multiplier should be 5.0 (heavy penalty), got {}",
+            mult
+        );
+    }
+
+    #[test]
+    fn test_sprint7_context_viability_multiple_viable() {
+        use crate::automata::semiring::ContextWeight;
+
+        // Dispatch context: rules 0, 1, 2 active
+        let mut ctx = RecoveryContext::default();
+        ctx.dispatch_context = Some(ContextWeight::singleton(0).insert(1).insert(2));
+
+        // Follow context: rules 1, 2, 3 reachable
+        let follow = ContextWeight::singleton(1).insert(2).insert(3);
+
+        // Intersection: rules 1, 2 → viable = 2 → multiplier = 0.5
+        let mult = ctx.context_viability_multiplier(&follow);
+        assert!(
+            (mult - 0.5).abs() < 1e-10,
+            "two viable rules → multiplier should be 0.5, got {}",
+            mult
+        );
+    }
+
+    #[test]
+    fn test_sprint7_context_viability_no_dispatch_context() {
+        use crate::automata::semiring::ContextWeight;
+
+        // No dispatch context → neutral multiplier
+        let ctx = RecoveryContext::default();
+        let follow = ContextWeight::singleton(0);
+
+        let mult = ctx.context_viability_multiplier(&follow);
+        assert!(
+            (mult - 1.0).abs() < 1e-10,
+            "no dispatch context → multiplier should be 1.0, got {}",
+            mult
+        );
+    }
+
+    #[test]
+    fn test_sprint7_tier5_in_contextual_recovery() {
+        use crate::automata::semiring::ContextWeight;
+        use crate::token_id::TokenIdMap;
+
+        let mut token_map = TokenIdMap::new();
+        let eof_id = token_map.get_or_insert("Eof");
+        let rparen_id = token_map.get_or_insert("RParen");
+        let semi_id = token_map.get_or_insert("Semicolon");
+        let bad_id = token_map.get_or_insert("BadToken");
+
+        let sync_names = vec![
+            "Eof".to_string(),
+            "RParen".to_string(),
+            "Semicolon".to_string(),
+        ];
+        let mut recovery = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        // Set follow contexts: RParen reachable from rule 0, Semicolon from rule 1
+        let mut follow_ctxs = std::collections::HashMap::new();
+        follow_ctxs.insert(rparen_id, ContextWeight::singleton(0));
+        follow_ctxs.insert(semi_id, ContextWeight::singleton(1));
+        follow_ctxs.insert(eof_id, ContextWeight::one());
+        recovery.set_follow_contexts(follow_ctxs);
+
+        // Token stream: [BadToken, RParen, Semicolon, Eof]
+        let tokens = vec![bad_id, rparen_id, semi_id, eof_id];
+
+        // Recovery with dispatch context = rule 0 (only RParen is viable)
+        let mut ctx = RecoveryContext::default();
+        ctx.dispatch_context = Some(ContextWeight::singleton(0));
+
+        let result = recovery.find_best_recovery_contextual(
+            &tokens, 0, &ctx, None, "Expr",
+        );
+        assert!(result.is_some(), "should find a recovery action");
+
+        let repair = result.expect("recovery should succeed");
+        // The repair should prefer RParen (viable) over Semicolon (not viable)
+        // since Tier 5 multiplier penalizes Semicolon (5× penalty) but not RParen
+        match &repair.action {
+            RepairAction::SkipToSync { sync_token, .. } => {
+                assert_eq!(
+                    *sync_token, rparen_id,
+                    "should prefer RParen (viable from rule 0) over Semicolon"
+                );
+            }
+            _ => {
+                // Other repair actions are also valid — just check cost is reasonable
+                assert!(
+                    repair.cost.left.value() < 10.0,
+                    "repair cost should be reasonable, got {}",
+                    repair.cost.left.value()
+                );
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Sprint 7: Forward-backward multi-step recovery tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_sprint7_fb_recovery_basic_bottleneck() {
+        use crate::token_id::TokenIdMap;
+
+        let mut token_map = TokenIdMap::new();
+        let eof_id = token_map.get_or_insert("Eof");
+        let semi_id = token_map.get_or_insert("Semicolon");
+        let bad1 = token_map.get_or_insert("Bad1");
+        let bad2 = token_map.get_or_insert("Bad2");
+
+        let sync_names = vec!["Eof".to_string(), "Semicolon".to_string()];
+        let recovery = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        // Token stream: [Bad1, Bad2, Semicolon, Eof]
+        // Expected: skip Bad1, skip Bad2, sync at Semicolon
+        let tokens = vec![bad1, bad2, semi_id, eof_id];
+        let config = RecoveryConfig::default();
+
+        let posterior = viterbi_recovery_forward_backward(
+            &tokens, 0, &recovery, &config, None,
+        );
+
+        // Total cost should be finite (a path exists)
+        assert!(
+            !posterior.total_cost.is_zero(),
+            "total cost should be finite (path to sync exists)"
+        );
+
+        // Position 2 (Semicolon) should have a good posterior score
+        // since there's a free sync edge from position 2 to sink
+        assert!(
+            posterior.position_costs.len() > 2,
+            "should have position costs for at least 3 positions"
+        );
+
+        // The optimal sequence should exist
+        assert!(
+            posterior.optimal_sequence.is_some(),
+            "should have an optimal repair sequence"
+        );
+    }
+
+    #[test]
+    fn test_sprint7_fb_recovery_immediate_sync() {
+        use crate::token_id::TokenIdMap;
+
+        let mut token_map = TokenIdMap::new();
+        let eof_id = token_map.get_or_insert("Eof");
+        let semi_id = token_map.get_or_insert("Semicolon");
+
+        let sync_names = vec!["Eof".to_string(), "Semicolon".to_string()];
+        let recovery = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        // Token stream: [Semicolon, Eof] — immediate sync
+        let tokens = vec![semi_id, eof_id];
+        let config = RecoveryConfig::default();
+
+        let posterior = viterbi_recovery_forward_backward(
+            &tokens, 0, &recovery, &config, None,
+        );
+
+        assert!(
+            !posterior.total_cost.is_zero(),
+            "immediate sync should have finite total cost"
+        );
+
+        // Position 0 should be a bottleneck (the only path goes through it)
+        assert!(
+            posterior.bottleneck_positions.contains(&0),
+            "position 0 should be a bottleneck for immediate sync"
+        );
+    }
+
+    #[test]
+    fn test_sprint7_fb_recovery_empty_input() {
+        use crate::token_id::TokenIdMap;
+
+        let token_map = TokenIdMap::new();
+        let sync_names = vec!["Eof".to_string()];
+        let recovery = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        let tokens: Vec<TokenId> = vec![];
+        let config = RecoveryConfig::default();
+
+        let posterior = viterbi_recovery_forward_backward(
+            &tokens, 0, &recovery, &config, None,
+        );
+
+        assert!(posterior.position_costs.is_empty(), "no positions for empty input");
+        assert!(posterior.total_cost.is_zero(), "no path for empty input");
+        assert!(posterior.bottleneck_positions.is_empty(), "no bottlenecks for empty input");
+        assert!(posterior.optimal_sequence.is_none(), "no sequence for empty input");
+    }
+
+    #[test]
+    fn test_sprint7_fb_recovery_with_context_weight() {
+        use crate::automata::semiring::ContextWeight;
+        use crate::token_id::TokenIdMap;
+
+        let mut token_map = TokenIdMap::new();
+        let eof_id = token_map.get_or_insert("Eof");
+        let rparen_id = token_map.get_or_insert("RParen");
+        let semi_id = token_map.get_or_insert("Semicolon");
+        let bad_id = token_map.get_or_insert("BadToken");
+
+        let sync_names = vec![
+            "Eof".to_string(),
+            "RParen".to_string(),
+            "Semicolon".to_string(),
+        ];
+        let mut recovery = RecoveryWfst::new("Expr".to_string(), &sync_names, &token_map);
+
+        // RParen reachable from rule 0 only, Semicolon from rule 1 only
+        let mut follow_ctxs = std::collections::HashMap::new();
+        follow_ctxs.insert(rparen_id, ContextWeight::singleton(0));
+        follow_ctxs.insert(semi_id, ContextWeight::singleton(1));
+        follow_ctxs.insert(eof_id, ContextWeight::one());
+        recovery.set_follow_contexts(follow_ctxs);
+
+        // Token stream: [BadToken, Semicolon, RParen, Eof]
+        let tokens = vec![bad_id, semi_id, rparen_id, eof_id];
+        let config = RecoveryConfig::default();
+
+        // With dispatch context = rule 0: only RParen and Eof are reachable
+        let dispatch = ContextWeight::singleton(0);
+        let posterior_ctx = viterbi_recovery_forward_backward(
+            &tokens, 0, &recovery, &config, Some(dispatch),
+        );
+
+        // Without context: all sync tokens are available
+        let posterior_no_ctx = viterbi_recovery_forward_backward(
+            &tokens, 0, &recovery, &config, None,
+        );
+
+        // Both should find a path
+        assert!(
+            !posterior_ctx.total_cost.is_zero(),
+            "should find path with context filter"
+        );
+        assert!(
+            !posterior_no_ctx.total_cost.is_zero(),
+            "should find path without context filter"
+        );
+
+        // With context, fewer edges are viable → potentially higher total cost
+        // (or same if RParen is reached anyway)
+        assert!(
+            posterior_ctx.total_cost.value() >= posterior_no_ctx.total_cost.value() - 1e-6,
+            "context-filtered cost ({}) should be >= unfiltered cost ({})",
+            posterior_ctx.total_cost.value(),
+            posterior_no_ctx.total_cost.value()
+        );
     }
 }

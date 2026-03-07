@@ -87,6 +87,12 @@ fn should_use_standalone_fn(rule: &RDRuleInfo) -> bool {
 /// - Start with a terminal (not a nonterminal/ident capture)
 ///
 /// Uses `BTreeMap` for deterministic arm ordering.
+///
+/// Used by:
+/// - Main codegen loop in `write_rd_handlers_trampoline` (both DT and legacy paths)
+/// - `categories_needing_nfa_spillover()` for NFA detection
+/// - W02 lint for ambiguous prefix diagnostics
+/// - Equivalence tests in `decision_tree.rs`
 fn group_rd_by_dispatch_token<'a>(
     rd_rules: &'a [RDRuleInfo],
     cat: &str,
@@ -128,19 +134,14 @@ fn group_rd_by_dispatch_token<'a>(
     groups
 }
 
-/// A2: Compute the disambiguation complexity of an NFA-ambiguous rule group.
+/// Legacy A2: Compute the disambiguation complexity of an NFA-ambiguous rule group.
 ///
 /// Uses `ComplexityWeight` (bottleneck semiring: ⊕ = min, ⊗ = max) to represent
 /// the worst-case backtrack depth × alternative count for the group. The result
-/// indicates how much work the NFA try-all must do to resolve this ambiguity:
+/// indicates how much work the NFA try-all must do to resolve this ambiguity.
 ///
-/// - `ComplexityWeight::deterministic()` (0) — no ambiguity (single rule)
-/// - `ComplexityWeight::single_lookahead()` (1) — trivial: 2 alternatives, 1 item each
-/// - Higher values — more complex disambiguation requiring deeper backtracks
-///
-/// The cost-benefit framework uses this to selectively enable B1 (multi-token
-/// lookahead) only for groups whose complexity exceeds a threshold, avoiding
-/// unnecessary lookahead codegen overhead for simple groups.
+/// Used by the B1 (multi-token lookahead) gate in both the DT-driven NfaTryAll
+/// path and the legacy fallback path. Retained because it gates B1 emission.
 fn compute_group_complexity(rules: &[&RDRuleInfo]) -> ComplexityWeight {
     if rules.len() < 2 {
         return ComplexityWeight::deterministic();
@@ -185,23 +186,22 @@ const COMPLEXITY_THRESHOLD: u32 = 2;
 /// - Weight ≥ 1.0: cold path (Lookahead=1.0+, Variable=2.0) — in `#[cold]` helper
 const NFA_COLD_THRESHOLD: f64 = 1.0;
 
-/// B1: Analyze whether an NFA-merged rule group can be disambiguated by
+/// Legacy B1: Analyze whether an NFA-merged rule group can be disambiguated by
 /// peeking at the second token instead of trying all alternatives.
 ///
-/// Returns `Some(map)` where map is `second_token_variant → &RDRuleInfo` when
-/// every rule in the group has a distinct second terminal. Returns `None` when:
-/// - Fewer than 2 rules (no ambiguity to resolve)
-/// - Any rule lacks a second terminal (e.g., single-token rule, or second item
-///   is a NonTerminal/IdentCapture)
-/// - Two rules share the same second terminal (ambiguity persists at depth 2)
+/// Used by both the DT-driven NfaTryAll path (shared_prefix_len == 0) and the
+/// legacy fallback path. Retained because the decision tree's trie structure
+/// cannot detect second-token disjointness at nonterminal boundaries — this
+/// function handles the `NonTerminal` case via FIRST set expansion.
+///
 /// B1 result: maps second-token variant → rule index within the group.
 /// Only produced when every rule has a distinct second item that is a terminal.
-struct TwoTokenLookahead {
+pub(crate) struct TwoTokenLookahead {
     /// second_variant → index into the original inlineable slice
-    groups: std::collections::BTreeMap<String, usize>,
+    pub(crate) groups: std::collections::BTreeMap<String, usize>,
 }
 
-fn second_token_lookahead(
+pub(crate) fn second_token_lookahead(
     rules: &[&RDRuleInfo],
 ) -> Option<TwoTokenLookahead> {
     if rules.len() < 2 {
@@ -246,18 +246,13 @@ fn second_token_lookahead(
     }
 }
 
-/// A1: Compute the longest shared terminal prefix among rules (starting from
-/// items[1], since items[0] is the shared dispatch token).
+/// Legacy A1: Compute the longest shared terminal prefix among rules (starting
+/// from items[1], since items[0] is the shared dispatch token).
 ///
-/// Returns the shared terminal strings. For example, if all rules start with
-/// `"float" "(" ...`, items[0]="float" is the dispatch token, items[1]="(" is
-/// the shared prefix. The returned vec would be `["("]`.
-///
-/// Returns empty vec when:
-/// - Fewer than 2 rules
-/// - Any rule's items[1..] starts with a non-terminal
-/// - The items[1..] diverge immediately (no shared prefix)
-fn compute_shared_terminal_prefix(rules: &[&RDRuleInfo]) -> Vec<String> {
+/// Subsumed by the decision tree's `dispatch_strategy()` for the DisjointSuffix
+/// path, but retained for the legacy fallback path (recovery parsers where
+/// `decision_tree: None`) and as validation in tests.
+pub(crate) fn compute_shared_terminal_prefix(rules: &[&RDRuleInfo]) -> Vec<String> {
     if rules.len() < 2 {
         return Vec::new();
     }
@@ -300,17 +295,14 @@ fn compute_shared_terminal_prefix(rules: &[&RDRuleInfo]) -> Vec<String> {
     shared
 }
 
-/// G1 Phase 2: Check whether the suffixes of NFA-merged rules (starting at
-/// position `skip`) have pairwise disjoint FIRST sets.
+/// Legacy G1 Phase 2: Check whether the suffixes of NFA-merged rules
+/// (starting at position `skip`) have pairwise disjoint FIRST sets.
 ///
-/// Returns `Some(map)` where map is `token_variant → rule_index` when every
-/// rule's suffix starts with a distinct terminal or nonterminal FIRST token.
-/// Returns `None` when suffixes overlap (at least two rules share a token).
-///
-/// This generalizes B1 (second_token_lookahead): B1 requires items[1] to be
-/// a Terminal for ALL rules, while this function handles NonTerminals by
-/// using the category's FIRST set.
-fn suffix_disjointness_check(
+/// Used by both the DT-driven NfaTryAll path and the legacy fallback path.
+/// Retained because the decision tree's trie structure operates on terminal
+/// bytes only — this function uses FIRST set expansion at nonterminal
+/// boundaries, which may resolve overlaps the trie cannot prove disjoint.
+pub(crate) fn suffix_disjointness_check(
     rules: &[&RDRuleInfo],
     skip: usize,
     first_sets: &std::collections::HashMap<String, FirstSet>,
@@ -505,6 +497,7 @@ fn write_nfa_merged_prefix_arm(
     cat: &str,
     config: &TrampolineConfig,
     frame_info: &FrameInfo,
+    coverage_path_counter: &mut u32,
 ) {
     // If only frame-pushing rules remain and none are inlineable, emit them separately.
     // This is a diagnostic edge case — in practice, duplicate-token rules are either
@@ -542,22 +535,656 @@ fn write_nfa_merged_prefix_arm(
         return;
     }
 
-    // ── A1: Left-factoring via shared prefix ────────────────────────────
-    // Before trying NFA try-all, check if rules share a common prefix of
-    // terminals (beyond the dispatch token). Walk shared terminals once without
-    // save/restore, then NFA try-all only over the remaining (divergent) items.
-    // This reduces code size and avoids redundant token matching.
-    // A3: Gated by `optimization_gates.left_factoring`.
+    // ── Decision-tree-first dispatch (replaces A1+G1 ad-hoc analysis) ──
+    // When the category has a decision tree, query dispatch_strategy() to
+    // determine whether the suffixes are disjoint (deterministic dispatch)
+    // or overlapping (NFA try-all). The decision tree subsumes:
+    // - A1: compute_shared_terminal_prefix() → shared trie chains
+    // - B1: second_token_lookahead() → depth-2 disjoint children
+    // - G1 Phase 2: suffix_disjointness_check() → disjoint children after prefix
+    //
+    // Equivalence proven by test_equivalence_* tests in decision_tree.rs.
+    if frame_pushing.is_empty() && inlineable.len() >= 2 {
+        if let Some(ref dt) = config.decision_tree {
+            use crate::decision_tree::DispatchStrategy;
+            use crate::token_id::TokenIdMap;
+
+            /* Build a minimal TokenIdMap for lookup. We reuse the one threaded
+             * through the pipeline (stored alongside the decision tree in the
+             * config). Since TrampolineConfig doesn't carry a separate
+             * token_id_map, reconstruct from the first_sets tokens + structural
+             * delimiters — same as the pipeline does. */
+            let token_id_map = {
+                let mut all_tokens: Vec<String> = Vec::new();
+                for fs in config.all_first_sets.values() {
+                    all_tokens.extend(fs.tokens.iter().cloned());
+                }
+                for v in &["Eof", "RParen", "RBrace", "RBracket", "Semi", "Comma",
+                           "LParen", "LBrace", "LBracket"] {
+                    all_tokens.push(v.to_string());
+                }
+                TokenIdMap::from_names(all_tokens)
+            };
+
+            match dt.dispatch_strategy(variant, &token_id_map) {
+                DispatchStrategy::DisjointSuffix {
+                    shared_prefix_len,
+                    suffix_map,
+                    ..
+                } if !config.needs_nfa_spillover => {
+                    /* Deterministic dispatch: emit shared prefix + match on suffix token.
+                     * Build rule lookup from suffix_map (variant → label) → inlineable. */
+                    let rule_by_label: std::collections::HashMap<&str, &RDRuleInfo> =
+                        inlineable.iter().map(|r| (r.label.as_str(), *r)).collect();
+
+                    let path_id = *coverage_path_counter;
+                    *coverage_path_counter += 1;
+                    write!(buf, "Token::{} => {{", variant).unwrap();
+                    if config.emit_coverage {
+                        write!(
+                            buf,
+                            "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                        ).unwrap();
+                    }
+                    buf.push_str("*pos += 1;");
+
+                    /* Emit shared terminal prefix from items[1..1+shared_prefix_len] */
+                    if shared_prefix_len > 0 {
+                        /* Use items from the first rule (they're shared across all rules) */
+                        for offset in 0..shared_prefix_len {
+                            let item_idx = 1 + offset; // items[0] is dispatch token
+                            if let Some(RDSyntaxItem::Terminal(t)) = inlineable[0].items.get(item_idx) {
+                                let shared_variant = terminal_to_variant_name(t);
+                                write!(
+                                    buf,
+                                    "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
+                                    shared_variant, t,
+                                ).unwrap();
+                            }
+                        }
+                    }
+
+                    let skip_count = 1 + shared_prefix_len;
+
+                    buf.push_str("if *pos < tokens.len() { match &tokens[*pos].0 {");
+
+                    for (suffix_token, rule_label) in &suffix_map {
+                        let rd_rule = match rule_by_label.get(rule_label.as_str()) {
+                            Some(r) => *r,
+                            None => continue,
+                        };
+                        let segments = split_rd_handler(rd_rule);
+                        if segments.is_empty() {
+                            continue;
+                        }
+
+                        write!(buf, "Token::{} => {{", suffix_token).unwrap();
+
+                        let consumes_token = matches!(
+                            rd_rule.items.get(skip_count),
+                            Some(RDSyntaxItem::Terminal(_))
+                        );
+                        if consumes_token {
+                            buf.push_str("*pos += 1;");
+                        }
+
+                        let inner_skip = if consumes_token { skip_count + 1 } else { skip_count };
+                        let remaining_items: Vec<_> = segments[0]
+                            .inline_items
+                            .iter()
+                            .skip(inner_skip)
+                            .cloned()
+                            .collect();
+                        if !remaining_items.is_empty() {
+                            write_inline_items(buf, &remaining_items, false);
+                        }
+
+                        write_nfa_inline_constructor(buf, rd_rule, &segments);
+                        buf.push_str("},");
+                    }
+
+                    write!(
+                        buf,
+                        "_ => {{ return Err(ParseError::UnexpectedToken {{ \
+                            expected: Cow::Borrowed(\"{cat} expression\"), \
+                            found: format_token_friendly(&tokens[*pos].0), \
+                            range: tokens[*pos].1, \
+                            hint: None, \
+                        }}); }},",
+                    ).unwrap();
+
+                    buf.push_str("} } else {");
+                    write!(
+                        buf,
+                        "return Err(ParseError::UnexpectedEof {{ \
+                            expected: Cow::Borrowed(\"{cat} expression\"), \
+                            range: tokens[tokens.len() - 1].1, \
+                            hint: None, \
+                        }});",
+                    ).unwrap();
+                    buf.push_str("}");
+
+                    buf.push_str("},");
+                    return; // Decision tree DisjointSuffix handled this arm
+                }
+                DispatchStrategy::NfaTryAll {
+                    shared_prefix_len,
+                    ..
+                } => {
+                    // ── DT-driven NfaTryAll ─────────────────────────────────
+                    // The decision tree tells us these rules overlap (NFA).
+                    // When shared_prefix_len > 0, use the pre-computed length
+                    // instead of calling compute_shared_terminal_prefix().
+                    let skip_count: usize = 1 + shared_prefix_len;
+
+                    // Try G1 suffix disjointness (FIRST set analysis may
+                    // resolve the overlap the trie couldn't prove disjoint)
+                    if config.optimization_gates.backtracking_elimination
+                        && !config.needs_nfa_spillover
+                    {
+                        if let Some(suffix_map) = suffix_disjointness_check(inlineable, skip_count, &config.all_first_sets) {
+                            let path_id = *coverage_path_counter;
+                            *coverage_path_counter += 1;
+                            write!(buf, "Token::{} => {{", variant).unwrap();
+                            if config.emit_coverage {
+                                write!(
+                                    buf,
+                                    "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                                ).unwrap();
+                            }
+                            buf.push_str("*pos += 1;");
+
+                            // Emit shared terminal prefix from items[1..1+shared_prefix_len]
+                            for offset in 0..shared_prefix_len {
+                                let item_idx = 1 + offset;
+                                if let Some(RDSyntaxItem::Terminal(t)) = inlineable[0].items.get(item_idx) {
+                                    let shared_variant = terminal_to_variant_name(t);
+                                    write!(
+                                        buf,
+                                        "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
+                                        shared_variant, t,
+                                    ).unwrap();
+                                }
+                            }
+
+                            buf.push_str("if *pos < tokens.len() { match &tokens[*pos].0 {");
+
+                            for (suffix_token, rule_indices) in &suffix_map {
+                                let rule_idx = rule_indices[0];
+                                let rd_rule = inlineable[rule_idx];
+                                let segments = split_rd_handler(rd_rule);
+                                if segments.is_empty() {
+                                    continue;
+                                }
+
+                                write!(buf, "Token::{} => {{", suffix_token).unwrap();
+
+                                let consumes_token = matches!(
+                                    rd_rule.items.get(skip_count),
+                                    Some(RDSyntaxItem::Terminal(_))
+                                );
+                                if consumes_token {
+                                    buf.push_str("*pos += 1;");
+                                }
+
+                                let inner_skip = if consumes_token { skip_count + 1 } else { skip_count };
+                                let remaining_items: Vec<_> = segments[0]
+                                    .inline_items
+                                    .iter()
+                                    .skip(inner_skip)
+                                    .cloned()
+                                    .collect();
+                                if !remaining_items.is_empty() {
+                                    write_inline_items(buf, &remaining_items, false);
+                                }
+
+                                write_nfa_inline_constructor(buf, rd_rule, &segments);
+                                buf.push_str("},");
+                            }
+
+                            write!(
+                                buf,
+                                "_ => {{ return Err(ParseError::UnexpectedToken {{ \
+                                    expected: Cow::Borrowed(\"{cat} expression\"), \
+                                    found: format_token_friendly(&tokens[*pos].0), \
+                                    range: tokens[*pos].1, \
+                                    hint: None, \
+                                }}); }},",
+                            ).unwrap();
+
+                            buf.push_str("} } else {");
+                            write!(
+                                buf,
+                                "return Err(ParseError::UnexpectedEof {{ \
+                                    expected: Cow::Borrowed(\"{cat} expression\"), \
+                                    range: tokens[tokens.len() - 1].1, \
+                                    hint: None, \
+                                }});",
+                            ).unwrap();
+                            buf.push_str("}");
+
+                            buf.push_str("},");
+                            return; // DT NfaTryAll + G1 suffix resolved this arm
+                        }
+                    }
+
+                    // B1: Two-token lookahead (only for shared_prefix_len == 0)
+                    if shared_prefix_len == 0 {
+                        let group_complexity = compute_group_complexity(inlineable);
+                        if config.optimization_gates.multi_token_lookahead
+                            && group_complexity.value() > COMPLEXITY_THRESHOLD
+                            && !config.needs_nfa_spillover
+                        {
+                            if let Some(lookahead) = second_token_lookahead(inlineable) {
+                                let path_id = *coverage_path_counter;
+                                *coverage_path_counter += 1;
+                                write!(buf, "Token::{} => {{", variant).unwrap();
+                                if config.emit_coverage {
+                                    write!(
+                                        buf,
+                                        "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                                    ).unwrap();
+                                }
+                                buf.push_str("*pos += 1;");
+                                buf.push_str("if *pos < tokens.len() { match &tokens[*pos].0 {");
+
+                                for (second_variant, rule_idx) in &lookahead.groups {
+                                    let rd_rule = inlineable[*rule_idx];
+                                    let segments = split_rd_handler(rd_rule);
+                                    if segments.is_empty() {
+                                        continue;
+                                    }
+
+                                    write!(buf, "Token::{} => {{", second_variant).unwrap();
+                                    buf.push_str("*pos += 1;");
+
+                                    let remaining_items: Vec<_> = segments[0]
+                                        .inline_items
+                                        .iter()
+                                        .skip(2)
+                                        .cloned()
+                                        .collect();
+                                    if !remaining_items.is_empty() {
+                                        write_inline_items(buf, &remaining_items, false);
+                                    }
+
+                                    if let Some(ref nt) = segments[0].nonterminal {
+                                        write!(
+                                            buf,
+                                            "stack.push({}::{} {{",
+                                            frame_info.enum_name, segments[0].frame_variant
+                                        ).unwrap();
+                                        write!(buf, "saved_bp: cur_bp,").unwrap();
+                                        for capture in &segments[0].accumulated_captures {
+                                            match capture {
+                                                SegmentCapture::Ident { name }
+                                                | SegmentCapture::Binder { name }
+                                                | SegmentCapture::NonTerminal { name, .. } => {
+                                                    write!(buf, "{},", name).unwrap();
+                                                },
+                                                _ => {},
+                                            }
+                                        }
+                                        buf.push_str("});");
+                                        write!(buf, "cur_bp = {};", nt.bp).unwrap();
+                                        buf.push_str("continue 'drive;");
+                                    } else {
+                                        write_nfa_inline_constructor(buf, rd_rule, &segments);
+                                    }
+                                    buf.push_str("},");
+                                }
+
+                                write!(
+                                    buf,
+                                    "_ => {{ *pos -= 1; return Err(ParseError::UnexpectedToken {{ \
+                                        expected: Cow::Borrowed(\"{cat} expression after {variant}\"), \
+                                        found: format_token_friendly(&tokens[*pos].0), \
+                                        range: tokens[*pos].1, \
+                                        hint: None, \
+                                    }}); }},",
+                                ).unwrap();
+
+                                buf.push_str("} } else {");
+                                write!(
+                                    buf,
+                                    "*pos -= 1; return Err(ParseError::UnexpectedEof {{ \
+                                        expected: Cow::Borrowed(\"{cat} expression\"), \
+                                        range: tokens[tokens.len() - 1].1, \
+                                        hint: None, \
+                                    }});",
+                                ).unwrap();
+                                buf.push_str("}");
+                                buf.push_str("},");
+                                return; // DT NfaTryAll + B1 handled this arm
+                            }
+                        }
+                    }
+
+                    // WFST two-token disambiguation: check if predict_two_token()
+                    // yields a singleton for each second-token variant in this group.
+                    // If so, emit deterministic Commit dispatch instead of NFA try-all.
+                    if shared_prefix_len == 0
+                        && !config.needs_nfa_spillover
+                    {
+                        if let Some(ref wfst) = config.prediction_wfst {
+                            // Collect second tokens from inlineable rules
+                            let mut second_tokens_resolved = true;
+                            let mut two_token_resolutions: Vec<(&str, String)> = Vec::new();
+                            for rule in inlineable.iter() {
+                                if rule.items.len() >= 2 {
+                                    if let RDSyntaxItem::Terminal(t2) = &rule.items[1] {
+                                        let t2_variant = terminal_to_variant_name(t2);
+                                        if let Some(label) = wfst.is_deterministic_after(&[variant, &t2_variant]) {
+                                            two_token_resolutions.push((rule.label.as_str(), label));
+                                        } else {
+                                            second_tokens_resolved = false;
+                                            break;
+                                        }
+                                    } else {
+                                        second_tokens_resolved = false;
+                                        break;
+                                    }
+                                } else {
+                                    second_tokens_resolved = false;
+                                    break;
+                                }
+                            }
+                            // If all rules resolved to singletons via two-token lookahead,
+                            // we can use deterministic B1-style dispatch
+                            if second_tokens_resolved && !two_token_resolutions.is_empty() {
+                                // Deduplicate: only proceed if each rule resolved uniquely
+                                let mut seen = std::collections::HashSet::new();
+                                let all_unique = two_token_resolutions.iter().all(|(label, _)| seen.insert(*label));
+                                if all_unique {
+                                    if let Some(lookahead) = second_token_lookahead(inlineable) {
+                                        let path_id = *coverage_path_counter;
+                                        *coverage_path_counter += 1;
+                                        write!(buf, "Token::{} => {{", variant).unwrap();
+                                        if config.emit_coverage {
+                                            write!(
+                                                buf,
+                                                "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                                            ).unwrap();
+                                        }
+                                        buf.push_str("*pos += 1;");
+                                        buf.push_str("if *pos < tokens.len() { match &tokens[*pos].0 {");
+
+                                        for (second_variant, rule_idx) in &lookahead.groups {
+                                            let rd_rule = inlineable[*rule_idx];
+                                            let segments = split_rd_handler(rd_rule);
+                                            if segments.is_empty() {
+                                                continue;
+                                            }
+                                            write!(buf, "Token::{} => {{", second_variant).unwrap();
+                                            buf.push_str("*pos += 1;");
+                                            let remaining_items: Vec<_> = segments[0]
+                                                .inline_items.iter().skip(2).cloned().collect();
+                                            if !remaining_items.is_empty() {
+                                                write_inline_items(buf, &remaining_items, false);
+                                            }
+                                            if let Some(ref nt) = segments[0].nonterminal {
+                                                write!(buf, "stack.push({}::{} {{",
+                                                    frame_info.enum_name, segments[0].frame_variant
+                                                ).unwrap();
+                                                write!(buf, "saved_bp: cur_bp,").unwrap();
+                                                for capture in &segments[0].accumulated_captures {
+                                                    match capture {
+                                                        SegmentCapture::Ident { name }
+                                                        | SegmentCapture::Binder { name }
+                                                        | SegmentCapture::NonTerminal { name, .. } => {
+                                                            write!(buf, "{},", name).unwrap();
+                                                        },
+                                                        _ => {},
+                                                    }
+                                                }
+                                                buf.push_str("});");
+                                                write!(buf, "cur_bp = {};", nt.bp).unwrap();
+                                                buf.push_str("continue 'drive;");
+                                            } else {
+                                                write_nfa_inline_constructor(buf, rd_rule, &segments);
+                                            }
+                                            buf.push_str("},");
+                                        }
+
+                                        write!(buf,
+                                            "_ => {{ *pos -= 1; return Err(ParseError::UnexpectedToken {{ \
+                                                expected: Cow::Borrowed(\"{cat} expression after {variant}\"), \
+                                                found: format_token_friendly(&tokens[*pos].0), \
+                                                range: tokens[*pos].1, \
+                                                hint: None, \
+                                            }}); }},",
+                                        ).unwrap();
+
+                                        buf.push_str("} } else {");
+                                        write!(buf,
+                                            "*pos -= 1; return Err(ParseError::UnexpectedEof {{ \
+                                                expected: Cow::Borrowed(\"{cat} expression\"), \
+                                                range: tokens[tokens.len() - 1].1, \
+                                                hint: None, \
+                                            }});",
+                                        ).unwrap();
+                                        buf.push_str("}");
+                                        buf.push_str("},");
+                                        return; // WFST two-token resolved this arm
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // G1/B1/WFST couldn't resolve — emit NFA try-all with DT skip_count
+                    let path_id = *coverage_path_counter;
+                    *coverage_path_counter += 1;
+                    write!(buf, "Token::{} => {{", variant).unwrap();
+                    if config.emit_coverage {
+                        write!(
+                            buf,
+                            "#[cfg(feature = \"parser-coverage\")] __coverage::record(\"{cat}\", {path_id});",
+                        ).unwrap();
+                    }
+                    buf.push_str("*pos += 1;");
+
+                    // Emit shared terminal prefix
+                    for offset in 0..shared_prefix_len {
+                        let item_idx = 1 + offset;
+                        if let Some(RDSyntaxItem::Terminal(t)) = inlineable[0].items.get(item_idx) {
+                            let shared_variant = terminal_to_variant_name(t);
+                            write!(
+                                buf,
+                                "expect_token(tokens, pos, |t| matches!(t, Token::{}), \"{}\")?;",
+                                shared_variant, t,
+                            ).unwrap();
+                        }
+                    }
+
+                    buf.push_str("let nfa_saved = *pos;");
+                    write!(buf, "let mut nfa_results: Vec<{}> = Vec::new();", cat).unwrap();
+                    buf.push_str("let mut nfa_positions: Vec<usize> = Vec::new();");
+                    buf.push_str("let mut nfa_weights: Vec<f64> = Vec::new();");
+                    buf.push_str("let mut nfa_first_err: Option<ParseError> = None;");
+
+                    // Sprint 4: Narrow inlineable candidates using ContextWeight.
+                    // If the WFST has context labels, filter out rules whose bit is
+                    // not set in the live ContextWeight for this dispatch token.
+                    let narrowed_inlineable: Vec<&RDRuleInfo> =
+                        if let Some(ref wfst) = config.prediction_wfst {
+                            let ctx = wfst.live_rules_context_after(&[variant]);
+                            if ctx.count() > 0 {
+                                // Filter to only rules that survive ContextWeight narrowing
+                                inlineable.iter().copied().filter(|r| {
+                                    wfst.context_labels.get(&r.label)
+                                        .map_or(true, |&bit| ctx.contains(bit))
+                                }).collect()
+                            } else {
+                                // No context labels or no surviving rules — keep all
+                                inlineable.to_vec()
+                            }
+                        } else {
+                            inlineable.to_vec()
+                        };
+                    let effective_inlineable = &narrowed_inlineable;
+
+                    let a1_ordered: Vec<(&RDRuleInfo, f64)> =
+                        if let Some(ref wfst) = config.prediction_wfst {
+                            let labels: Vec<&str> =
+                                effective_inlineable.iter().map(|r| r.label.as_str()).collect();
+                            let ordered = wfst.nfa_alternative_order(variant, &labels);
+                            ordered
+                                .iter()
+                                .map(|(i, w)| (effective_inlineable[*i], w.0))
+                                .collect()
+                        } else {
+                            effective_inlineable.iter().map(|r| (*r, 0.5_f64)).collect()
+                        };
+
+                    // A4: Hot/cold splitting
+                    let a1_cold_idx = if config.optimization_gates.hot_cold_splitting {
+                        a1_ordered.iter().position(|(_, w)| *w >= NFA_COLD_THRESHOLD)
+                    } else {
+                        None
+                    };
+                    let has_a1_cold = a1_cold_idx
+                        .map_or(false, |idx| idx > 0 && idx < a1_ordered.len());
+
+                    let (a1_hot, a1_cold): (&[(&RDRuleInfo, f64)], &[(&RDRuleInfo, f64)]) = if has_a1_cold {
+                        let idx = a1_cold_idx.expect("has_a1_cold checked");
+                        (&a1_ordered[..idx], &a1_ordered[idx..])
+                    } else {
+                        (&a1_ordered[..], &[][..])
+                    };
+
+                    let a1_cold_fn_name = if has_a1_cold {
+                        let fn_name = format!(
+                            "nfa_try_cold_a1_{}_{}",
+                            cat.to_lowercase(),
+                            variant.to_lowercase()
+                        );
+                        write!(
+                            cold_fns,
+                            "#[cold] #[inline(never)] \
+                            fn {fn_name}<'a>(\
+                                tokens: &[(Token<'a>, Range)], \
+                                pos: &mut usize, \
+                                nfa_saved: usize, \
+                                nfa_results: &mut Vec<{cat}>, \
+                                nfa_positions: &mut Vec<usize>, \
+                                nfa_weights: &mut Vec<f64>, \
+                                nfa_first_err: &mut Option<ParseError>, \
+                            ) {{",
+                        ).unwrap();
+
+                        for (rd_rule, weight) in a1_cold {
+                            cold_fns.push_str("*pos = nfa_saved;");
+                            let segments = split_rd_handler(rd_rule);
+                            if segments.is_empty() {
+                                continue;
+                            }
+                            let remaining_items: Vec<_> = segments[0]
+                                .inline_items
+                                .iter()
+                                .skip(skip_count)
+                                .cloned()
+                                .collect();
+                            write!(cold_fns, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
+                            if !remaining_items.is_empty() {
+                                write_inline_items(cold_fns, &remaining_items, false);
+                            }
+                            write_nfa_inline_constructor(cold_fns, rd_rule, &segments);
+                            cold_fns.push_str("})() {");
+                            write!(cold_fns, "Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); nfa_weights.push({weight:?}); }},").unwrap();
+                            cold_fns.push_str("Err(e) => { if nfa_first_err.is_none() { *nfa_first_err = Some(e); } },");
+                            cold_fns.push('}');
+                        }
+                        cold_fns.push('}');
+                        Some(fn_name)
+                    } else {
+                        None
+                    };
+
+                    for (rd_rule, weight) in a1_hot {
+                        buf.push_str("*pos = nfa_saved;");
+                        let segments = split_rd_handler(rd_rule);
+                        if segments.is_empty() {
+                            continue;
+                        }
+                        let remaining_items: Vec<_> = segments[0]
+                            .inline_items
+                            .iter()
+                            .skip(skip_count)
+                            .cloned()
+                            .collect();
+
+                        write!(buf, "match (|| -> Result<{}, ParseError> {{", cat).unwrap();
+                        if !remaining_items.is_empty() {
+                            write_inline_items(buf, &remaining_items, false);
+                        }
+                        write_nfa_inline_constructor(buf, rd_rule, &segments);
+                        buf.push_str("})() {");
+                        write!(buf, "Ok(v) => {{ nfa_results.push(v); nfa_positions.push(*pos); nfa_weights.push({weight:?}); }},").unwrap();
+                        buf.push_str("Err(e) => { if nfa_first_err.is_none() { nfa_first_err = Some(e); } },");
+                        buf.push('}');
+                    }
+
+                    if let Some(ref fn_name) = a1_cold_fn_name {
+                        write!(
+                            buf,
+                            "if nfa_results.is_empty() {{ \
+                                {fn_name}(tokens, pos, nfa_saved, &mut nfa_results, \
+                                 &mut nfa_positions, &mut nfa_weights, &mut nfa_first_err); \
+                            }}",
+                        ).unwrap();
+                    }
+
+                    buf.push_str("match nfa_results.len() {");
+                    write!(
+                        buf,
+                        "0 => {{ return Err(nfa_first_err.unwrap_or_else(|| \
+                            ParseError::UnexpectedToken {{ \
+                                expected: Cow::Borrowed(\"{cat} expression\"), \
+                                found: format_token_friendly(&tokens[nfa_saved].0), \
+                                range: tokens[nfa_saved].1, \
+                                hint: None, \
+                            }} \
+                        )); }},",
+                    ).unwrap();
+                    let cat_upper = cat.to_uppercase();
+                    buf.push_str(&format_nfa_result_selection_arm(&cat_upper, config));
+                    buf.push('}');
+
+                    buf.push_str("},");
+                    return; // DT NfaTryAll handled this arm
+                }
+
+                DispatchStrategy::Singleton { .. } | DispatchStrategy::NotPresent => {
+                    // Singleton: handled by single-rule arm elsewhere.
+                    // NotPresent: no trie data for this token — skip.
+                    // Both fall through to the NFA try-all below (which also
+                    // handles these cases via the legacy path when DT is None).
+                }
+
+                // DisjointSuffix that needs_nfa_spillover — fall through to
+                // NFA try-all since spillover requires all alternatives.
+                DispatchStrategy::DisjointSuffix { .. } => {}
+            }
+        }
+    }
+
+    // ── Legacy A1+G1+B1 Fallback Path ──────────────────────────────────
+    // Retained for recovery parsers (decision_tree: None) and for NfaTryAll
+    // cases where FIRST set analysis may further disambiguate beyond what
+    // the trie proves. Functions used:
+    //   - compute_shared_terminal_prefix(): A1 shared prefix detection
+    //   - second_token_lookahead(): B1 two-token disambiguation
+    //   - suffix_disjointness_check(): G1 Phase 2 suffix FIRST set analysis
+    //   - compute_group_complexity(): A2 NFA group complexity measurement
+    // These are subsumed by the decision tree for the DisjointSuffix path
+    // but remain necessary for recovery codegen and NfaTryAll refinement.
     if config.optimization_gates.left_factoring && frame_pushing.is_empty() && inlineable.len() >= 2 {
         let shared_terminal_prefix = compute_shared_terminal_prefix(inlineable);
-        // shared_terminal_prefix starts from items[1] (items[0] is dispatch token).
-        // If ≥ 1 shared terminal beyond the dispatch token, left-factor.
         if !shared_terminal_prefix.is_empty() {
             write!(buf, "Token::{} => {{", variant).unwrap();
-            // Consume the dispatch token
             buf.push_str("*pos += 1;");
 
-            // Walk the shared terminal prefix
             for terminal in &shared_terminal_prefix {
                 let shared_variant = terminal_to_variant_name(terminal);
                 write!(
@@ -568,13 +1195,8 @@ fn write_nfa_merged_prefix_arm(
                 .unwrap();
             }
 
-            // Now do NFA try-all over the divergent suffixes
-            // The number of items to skip = 1 (dispatch token) + shared_prefix_len
             let skip_count = 1 + shared_terminal_prefix.len();
 
-            // G1 Phase 2: After left-factoring, check if remaining suffixes
-            // have disjoint FIRST sets. If so, emit deterministic dispatch
-            // instead of NFA try-all.
             if config.optimization_gates.backtracking_elimination
                 && !config.needs_nfa_spillover
             {
@@ -1694,6 +2316,25 @@ pub struct TrampolineConfig {
     /// When non-empty, the LED chain falls back to delegating to constituent categories'
     /// operators when the sum type's own BP tables don't match the current token.
     pub led_delegation: Vec<crate::pratt::LedDelegationSource>,
+    /// Decision tree for this category (unified dispatch analysis).
+    ///
+    /// When present, the trie-based dispatch analysis subsumes ad-hoc analyses
+    /// (group_rd_by_dispatch_token, shared prefix, second-token lookahead, etc.)
+    /// and provides precision ambiguity reports, WFST consistency checks, and
+    /// incremental codegen support.
+    pub decision_tree: Option<crate::decision_tree::CategoryDecisionTree>,
+    /// D07: Emit runtime coverage instrumentation at dispatch points.
+    ///
+    /// When true, each dispatch resolution emits
+    /// `#[cfg(feature = "parser-coverage")] __coverage::record("Cat", path_id);`
+    /// so test suites can report which dispatch paths are exercised.
+    /// Activated by `PRATTAIL_COVERAGE=1` env var during code generation.
+    pub emit_coverage: bool,
+    /// 1.3b: Prefix-guided expected token description for error messages.
+    ///
+    /// Derived from decision tree dispatch tokens (e.g., `"one of: Plus, Minus, LParen"`).
+    /// When `None`, falls back to generic `"Cat expression"`.
+    pub expected_tokens_str: Option<String>,
 }
 
 /// Write the Frame enum declaration for a category.
@@ -2446,6 +3087,9 @@ fn write_prefix_match_arms(
     // suppress the later grouping handler and avoid duplicate match arms.
     let mut lparen_handled = false;
 
+    // D07: Coverage path counter — each dispatch arm gets a unique path_id
+    let mut coverage_path_counter: u32 = 0;
+
     for (variant, rules) in &rd_by_token {
         if rules.len() == 1 {
             // Singleton: emit the original single-rule arm
@@ -2717,6 +3361,7 @@ fn write_prefix_match_arms(
                 cat,
                 config,
                 frame_info,
+                &mut coverage_path_counter,
             );
         }
     }

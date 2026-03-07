@@ -147,4 +147,5 @@ The four hint messages correspond to the four tiers:
 
 - [G02](../grammar/G02-unused-category.md) -- Detects categories that are declared but never referenced in any rule; a structural precursor to W01 Tier 2
 - [G05](../grammar/G05-empty-category.md) -- Detects categories with zero rules; a degenerate case where W01 would flag every (nonexistent) rule
-- [G08](../grammar/G08-missing-cast-to-root.md) -- Detects categories with no cast path to the primary category; overlaps with W01 Tier 4 but uses structural analysis rather than BooleanWeight forward-backward
+- [G08](../grammar/G08-missing-cast-to-root.md) -- Detects categories with no **directed** cast/cross-cat path to the primary. G08 and A4 (W01 Tier 4) are **complementary**: G08 uses a directed cast-only graph, A4 uses a richer undirected graph including syntax-level references. G08 can fire on categories that A4 does NOT flag (syntax-connected but not cast-connected) and vice versa.
+- [D03](../decision-tree/D03-trie-unreachable-rule.md) -- Complementary to Tier 3: Tier 3 + D03 trie confirmation = confirmed dead rule. Already properly composed in `collect_dead_rule_labels()`.

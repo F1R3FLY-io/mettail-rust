@@ -271,7 +271,7 @@ expr(sub.clone()) <--
         _ => {},
     } let iter_buf = std::mem::take(& mut buf); POOL_EXPR_EXPR.with(| p | p.set(buf)); iter_buf }.into_iter();
 
-num(c1.clone()) <--
+num(c1.clone().normalize()) <--
     num(c0),
     rw_num(c0, c1);
 
@@ -347,7 +347,7 @@ rw_num(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_NUM_CONG_ARG_EXPR.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_expr(arg, new_arg);
 
-pred(c1.clone()) <--
+pred(c1.clone().normalize()) <--
     pred(c0),
     rw_pred(c0, c1);
 
@@ -423,7 +423,7 @@ rw_pred(t.clone(), match t {
     } let iter_buf = std::mem::take(& mut buf); POOL_PRED_CONG_ARG_EXPR.with(| p | p.set(buf)); iter_buf }.into_iter(),
     rw_expr(arg, new_arg);
 
-expr(c1.clone()) <--
+expr(c1.clone().normalize()) <--
     expr(c0),
     rw_expr(c0, c1);
 
@@ -613,6 +613,15 @@ eq_pred(s.clone(), t.clone()) <--
 
 
     // Rewrite rules
+rw_pred(s.clone(), t) <--
+    pred(s),
+    if let Pred::EqNum(left, right) = s,
+    if let Num::NumLit(a_ref) = left.as_ref(),
+    if let Num::NumLit(b_ref) = right.as_ref(),
+    let a = a_ref.clone(),
+    let b = b_ref.clone(),
+    let t = Pred::BoolLit((a == b));
+
 rw_num(s.clone(), t) <--
     num(s),
     if let Num::AddNum(left, right) = s,
@@ -630,15 +639,6 @@ rw_num(s.clone(), t) <--
     let a = a_ref.clone(),
     let b = b_ref.clone(),
     let t = Num::NumLit((a * b));
-
-rw_pred(s.clone(), t) <--
-    pred(s),
-    if let Pred::EqNum(left, right) = s,
-    if let Num::NumLit(a_ref) = left.as_ref(),
-    if let Num::NumLit(b_ref) = right.as_ref(),
-    let a = a_ref.clone(),
-    let b = b_ref.clone(),
-    let t = Pred::BoolLit((a == b));
 
 rw_pred(s.clone(), t) <--
     pred(s),

@@ -18,26 +18,26 @@ Ordering: `Info < Note < Warning < Error`
 
 ### Grammar Structure (G01–G10, G24–G31)
 
-| ID                                            | Name                    | Severity | Description                                             |
-|-----------------------------------------------|-------------------------|----------|---------------------------------------------------------|
-| [G01](grammar/G01-left-recursion.md)          | left-recursion          | Warning  | Left-recursive rule (same-category leading NonTerminal) |
-| [G02](grammar/G02-unused-category.md)         | unused-category         | Warning  | Category declared but never referenced                  |
-| [G03](grammar/G03-ambiguous-prefix.md)        | ambiguous-prefix        | Warning  | Multiple prefix rules share the same first terminal     |
-| [G04](grammar/G04-duplicate-rule-label.md)    | duplicate-rule-label    | Error    | Duplicate rule label within a category                  |
-| [G05](grammar/G05-empty-category.md)          | empty-category          | Warning  | Category with zero rules                                |
-| [G06](grammar/G06-shadowed-operator.md)       | shadowed-operator       | Note     | Operator used as both infix and prefix                  |
-| [G07](grammar/G07-identical-rules.md)         | identical-rules         | Warning  | Structurally identical rules in same category           |
-| [G08](grammar/G08-missing-cast-to-root.md)    | missing-cast-to-root    | Warning  | No cast path from category to primary                   |
-| [G09](grammar/G09-unbalanced-delimiters.md)   | unbalanced-delimiters   | Warning  | Mismatched open/close brackets in rule syntax           |
-| [G10](grammar/G10-ambiguous-associativity.md) | ambiguous-associativity | Warning  | Same-precedence operators with mixed associativity      |
-| G24 | alpha-equivalent-rules | Note | Rules with identical De Bruijn structure |
-| G25 | cancellation-pair-detected | Note | Equation `Outer(Inner(X)) = X` suppressed from eqrel |
-| G26 | equation-subsumed | Note | Equation eliminated by subsumption |
-| G27 | rule-subsumption-candidate | Warning | Rule may be subsumed by more general rule |
-| G28 | alpha-equivalent-groups | Note | Alpha-equivalent LHS pattern groups |
-| G29 | dependency-groups | Note | Fine-grained dependency groups |
-| G30 | isomorphic-wfst-groups | Note | Isomorphic WFST dispatch topology |
-| G31 | subsumed-equations-eliminated | Note | N equations eliminated from codegen |
+| ID                                            | Name                          | Severity | Description                                             |
+|-----------------------------------------------|-------------------------------|----------|---------------------------------------------------------|
+| [G01](grammar/G01-left-recursion.md)          | left-recursion                | Warning  | Left-recursive rule (same-category leading NonTerminal) |
+| [G02](grammar/G02-unused-category.md)         | unused-category               | Warning  | Category declared but never referenced                  |
+| [G03](grammar/G03-ambiguous-prefix.md)        | ambiguous-prefix              | Warning  | Multiple prefix rules share the same first terminal     |
+| [G04](grammar/G04-duplicate-rule-label.md)    | duplicate-rule-label          | Error    | Duplicate rule label within a category                  |
+| [G05](grammar/G05-empty-category.md)          | empty-category                | Warning  | Category with zero rules                                |
+| [G06](grammar/G06-shadowed-operator.md)       | shadowed-operator             | Note     | Operator used as both infix and prefix                  |
+| [G07](grammar/G07-identical-rules.md)         | identical-rules               | Warning  | Structurally identical rules in same category           |
+| [G08](grammar/G08-missing-cast-to-root.md)    | missing-cast-to-root          | Warning  | No cast path from category to primary                   |
+| [G09](grammar/G09-unbalanced-delimiters.md)   | unbalanced-delimiters         | Warning  | Mismatched open/close brackets in rule syntax           |
+| [G10](grammar/G10-ambiguous-associativity.md) | ambiguous-associativity       | Warning  | Same-precedence operators with mixed associativity      |
+| G24                                           | alpha-equivalent-rules        | Note     | Rules with identical De Bruijn structure                |
+| G25                                           | cancellation-pair-detected    | Note     | Equation `Outer(Inner(X)) = X` suppressed from eqrel    |
+| G26                                           | equation-subsumed             | Note     | Equation eliminated by subsumption                      |
+| G27                                           | rule-subsumption-candidate    | Warning  | Rule may be subsumed by more general rule               |
+| G28                                           | alpha-equivalent-groups       | Note     | Alpha-equivalent LHS pattern groups                     |
+| G29                                           | dependency-groups             | Note     | Fine-grained dependency groups                          |
+| G30                                           | isomorphic-wfst-groups        | Note     | Isomorphic WFST dispatch topology                       |
+| G31                                           | subsumed-equations-eliminated | Note     | N equations eliminated from codegen                     |
 
 ### WFST-Specific (W01–W09)
 
@@ -75,6 +75,20 @@ Ordering: `Info < Note < Warning < Error`
 |-----|------|----------|-------------|
 | X06 | composition-verification-violation | Warning | CVT property violation in composed grammar |
 
+### Decision Tree (D01–D09)
+
+| ID                                                                              | Name                      | Severity | Description                                               |
+|---------------------------------------------------------------------------------|---------------------------|----------|-----------------------------------------------------------|
+| [D01](decision-tree/D01-precision-ambiguity.md)       | precision-ambiguity       | Note     | Token path with conflicting rules and overlap tokens      |
+| [D02](decision-tree/D02-unresolvable-ambiguity.md)    | unresolvable-ambiguity    | Warning  | No finite lookahead resolves -- inherent grammar conflict |
+| [D03](decision-tree/D03-trie-unreachable-rule.md)     | trie-unreachable-rule     | Warning  | Rule shadowed by higher-priority path in PathMap trie     |
+| [D04](decision-tree/D04-min-lookahead-depth.md)       | min-lookahead-depth       | Note     | Per-category minimum lookahead tokens                     |
+| [D05](decision-tree/D05-decision-tree-summary.md)     | decision-tree-summary     | Note     | States, deterministic/ambiguous ratio, depth, savings     |
+| [D06](decision-tree/D06-wfst-trie-inconsistency.md)   | wfst-trie-inconsistency   | Warning  | WFST prediction vs trie reachability mismatch             |
+| [D07](decision-tree/D07-path-coverage-report.md)      | path-coverage-report      | Note     | Untested trie paths (opt-in `PRATTAIL_COVERAGE=1`)        |
+| [D08](decision-tree/D08-optimization-suggestion.md)   | optimization-suggestion   | Note     | Grammar modifications to resolve PathMap ambiguity        |
+| [D09](decision-tree/D09-conflict-resolution-guide.md) | conflict-resolution-guide | Note     | Strategies for genuine conflicts in PathMap trie          |
+
 ### Performance (P02–P04)
 
 | ID                                           | Name               | Severity | Description                                   |
@@ -85,20 +99,20 @@ Ordering: `Info < Note < Warning < Error`
 
 ### Infrastructure (I01–I12)
 
-| ID  | Name | Severity | Description |
-|-----|------|----------|-------------|
-| I01 | transducer-cascade | Info | E1 transducer cascade summary |
-| I02 | cascade-skipped | Info | B3 trivial grammar skips cascade |
-| I03 | adaptive-beam | Info | A7 entropy-based beam width |
-| I04 | beam-feature-required | Warning | Auto beam needs `wfst-log` |
-| I05 | cost-benefit-recommendations | Info | D1 optimization recommendations |
-| I06 | enhanced-dce-active | Info | A4 dead rule suppression |
-| I07 | ambiguity-targeting | Info | A5 ambiguity analysis |
-| I08 | env-override-active | Warning | PRATTAIL_AUTO_OPTIMIZE active |
-| I09 | env-override-parse-error | Error | PRATTAIL_AUTO_OPTIMIZE parse fail |
-| I10 | ascent-file-write-failed | Warning | Ascent Datalog file I/O error |
-| I11 | ebnf-dump-failed | Warning | EBNF dump I/O failure |
-| I12 | ebnf-dump-success | Info | EBNF dump written |
+| ID  | Name                         | Severity | Description                       |
+|-----|------------------------------|----------|-----------------------------------|
+| I01 | transducer-cascade           | Info     | E1 transducer cascade summary     |
+| I02 | cascade-skipped              | Info     | B3 trivial grammar skips cascade  |
+| I03 | adaptive-beam                | Info     | A7 entropy-based beam width       |
+| I04 | beam-feature-required        | Warning  | Auto beam needs `wfst-log`        |
+| I05 | cost-benefit-recommendations | Info     | D1 optimization recommendations   |
+| I06 | enhanced-dce-active          | Info     | A4 dead rule suppression          |
+| I07 | ambiguity-targeting          | Info     | A5 ambiguity analysis             |
+| I08 | env-override-active          | Warning  | PRATTAIL_AUTO_OPTIMIZE active     |
+| I09 | env-override-parse-error     | Error    | PRATTAIL_AUTO_OPTIMIZE parse fail |
+| I10 | ascent-file-write-failed     | Warning  | Ascent Datalog file I/O error     |
+| I11 | ebnf-dump-failed             | Warning  | EBNF dump I/O failure             |
+| I12 | ebnf-dump-success            | Info     | EBNF dump written                 |
 
 ### Runtime Errors
 
@@ -129,7 +143,7 @@ warning[W01]: rule `FloatToStr` in category `Str` is unreachable (dead code)
 |-----------------------------|-------------|
 | `error[ID]`                 | Bold red    |
 | `warning[ID]`               | Bold yellow |
-| `note[ID]` / `info[ID]`    | Bold cyan   |
+| `note[ID]` / `info[ID]`     | Bold cyan   |
 | `(GrammarName)`             | Dim         |
 | `-->` location              | Bold blue   |
 | `= in category/rule`        | Dim         |

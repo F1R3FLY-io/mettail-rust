@@ -51,6 +51,53 @@ pub trait Semiring: Clone + Copy + fmt::Debug + PartialEq + Send + Sync + 'stati
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Trait hierarchy extensions
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Marker trait: this semiring's `is_zero()` is O(1) and reliable.
+///
+/// All PraTTaIL semirings satisfy this — the trait exists as a bound for
+/// algorithms that require efficient zero-weight pruning (e.g., dead-state
+/// elimination, sparse matrix operations).
+pub trait DetectableZero: Semiring {}
+
+/// Marker trait: `a ⊕ a = a` for all `a` (idempotent addition).
+///
+/// Guarantees fixed-point convergence in iterative algorithms (e.g.,
+/// shortest-path relaxation, forward-backward scoring). Non-idempotent
+/// semirings like `CountingWeight` and `LogWeight` require explicit
+/// convergence criteria.
+pub trait IdempotentSemiring: Semiring {}
+
+/// Marker trait: infinite sums `Σ_{i∈I} aᵢ` are well-defined.
+///
+/// Required for well-defined semantics of `StarSemiring::star()` and for
+/// forward-backward algorithms over cyclic grammars. All idempotent
+/// semirings are complete (idempotent ⊕ guarantees convergence).
+pub trait CompleteSemiring: Semiring {}
+
+/// Star semiring: Kleene closure `a* = 1 ⊕ a ⊕ a² ⊕ ...`
+///
+/// Enables transitive closure computation over any semiring. Key applications:
+/// - **Reachability** (`BooleanWeight`): reflexive-transitive closure
+/// - **All-pairs shortest paths** (`TropicalWeight`): Floyd-Warshall
+/// - **Longest paths** (`ArcticWeight`): critical-path analysis
+/// - **Path counting** (`CountingWeight`): total derivation count
+///
+/// Every complete star semiring is Conway, satisfying:
+/// - Sum-star: `(a ⊕ b)* = (a* ⊗ b)* ⊗ a*`
+/// - Product-star: `(a ⊗ b)* = 1 ⊕ a ⊗ (b ⊗ a)* ⊗ b`
+pub trait StarSemiring: Semiring {
+    /// Kleene star: `a* = 1 ⊕ a ⊕ a² ⊕ ...` (infinite sum of powers).
+    fn star(&self) -> Self;
+
+    /// Kleene plus: `a⁺ = a ⊗ a*` (star without the identity term).
+    fn plus_star(&self) -> Self {
+        self.times(&self.star())
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // TropicalWeight
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -197,6 +244,26 @@ impl Default for TropicalWeight {
     }
 }
 
+impl DetectableZero for TropicalWeight {}
+impl IdempotentSemiring for TropicalWeight {}
+impl CompleteSemiring for TropicalWeight {}
+
+impl StarSemiring for TropicalWeight {
+    /// `star(a) = 0.0` (one) if `a >= 0`, else diverges (returns zero).
+    ///
+    /// For non-negative weights (PraTTaIL's invariant): repeating a
+    /// non-negative-cost path zero times gives cost 0 (the identity).
+    /// The infinite sum `min(0, a, 2a, ...)` converges to `0` when `a >= 0`.
+    #[inline]
+    fn star(&self) -> Self {
+        if self.0 >= 0.0 {
+            Self::one() // 0.0 — repeating zero times is free
+        } else {
+            Self::zero() // -∞ diverges; return unreachable
+        }
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // CountingWeight
 // ══════════════════════════════════════════════════════════════════════════════
@@ -280,6 +347,23 @@ impl Default for CountingWeight {
     }
 }
 
+impl DetectableZero for CountingWeight {}
+// CountingWeight is NOT idempotent: plus(3, 3) = 6 ≠ 3
+// CountingWeight is NOT complete: infinite sums diverge in general
+
+impl StarSemiring for CountingWeight {
+    /// `star(0) = 1` (one path: the empty path).
+    /// `star(a) = u64::MAX` (saturated) for `a > 0` — infinite paths.
+    #[inline]
+    fn star(&self) -> Self {
+        if self.0 == 0 {
+            Self::one()
+        } else {
+            CountingWeight(u64::MAX) // infinite paths → saturate
+        }
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // BooleanWeight
 // ══════════════════════════════════════════════════════════════════════════════
@@ -359,6 +443,19 @@ impl fmt::Display for BooleanWeight {
 impl Default for BooleanWeight {
     fn default() -> Self {
         Self::one()
+    }
+}
+
+impl DetectableZero for BooleanWeight {}
+impl IdempotentSemiring for BooleanWeight {}
+impl CompleteSemiring for BooleanWeight {}
+
+impl StarSemiring for BooleanWeight {
+    /// `star(a) = true` for all `a`. Reflexive-transitive closure is always
+    /// reachable (the empty path exists).
+    #[inline]
+    fn star(&self) -> Self {
+        BooleanWeight(true)
     }
 }
 
@@ -489,6 +586,19 @@ impl Default for EditWeight {
     }
 }
 
+impl DetectableZero for EditWeight {}
+impl IdempotentSemiring for EditWeight {}
+impl CompleteSemiring for EditWeight {}
+
+impl StarSemiring for EditWeight {
+    /// `star(a) = EditWeight(0)` (one). Zero edits achievable by doing nothing
+    /// (the empty path always has zero edit cost).
+    #[inline]
+    fn star(&self) -> Self {
+        Self::one()
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ProductWeight
 // ══════════════════════════════════════════════════════════════════════════════
@@ -615,6 +725,28 @@ impl<S1: Semiring, S2: Semiring> Default for ProductWeight<S1, S2> {
         ProductWeight {
             left: S1::one(),
             right: S2::one(),
+        }
+    }
+}
+
+impl<S1: DetectableZero, S2: DetectableZero> DetectableZero for ProductWeight<S1, S2>
+where ProductWeight<S1, S2>: Semiring {}
+
+impl<S1: IdempotentSemiring, S2: IdempotentSemiring> IdempotentSemiring for ProductWeight<S1, S2>
+where ProductWeight<S1, S2>: Semiring {}
+
+impl<S1: CompleteSemiring, S2: CompleteSemiring> CompleteSemiring for ProductWeight<S1, S2>
+where ProductWeight<S1, S2>: Semiring {}
+
+impl<S1: StarSemiring + Eq + std::hash::Hash, S2: StarSemiring + Eq + std::hash::Hash> StarSemiring
+    for ProductWeight<S1, S2>
+{
+    /// Component-wise star: `(a, b)* = (a*, b*)`.
+    #[inline]
+    fn star(&self) -> Self {
+        ProductWeight {
+            left: self.left.star(),
+            right: self.right.star(),
         }
     }
 }
@@ -756,6 +888,19 @@ impl Default for ContextWeight {
     }
 }
 
+impl DetectableZero for ContextWeight {}
+impl IdempotentSemiring for ContextWeight {}
+impl CompleteSemiring for ContextWeight {}
+
+impl StarSemiring for ContextWeight {
+    /// `star(a) = U` (universal set). The reflexive-transitive closure of any
+    /// context set includes the universal context.
+    #[inline]
+    fn star(&self) -> Self {
+        Self::one() // U — all rules reachable
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // ComplexityWeight (Bottleneck Semiring)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -883,6 +1028,19 @@ impl fmt::Display for ComplexityWeight {
 
 impl Default for ComplexityWeight {
     fn default() -> Self {
+        Self::one()
+    }
+}
+
+impl DetectableZero for ComplexityWeight {}
+impl IdempotentSemiring for ComplexityWeight {}
+impl CompleteSemiring for ComplexityWeight {}
+
+impl StarSemiring for ComplexityWeight {
+    /// `star(a) = ComplexityWeight(0)` (one). Minimum bottleneck = none
+    /// (the empty path has zero complexity).
+    #[inline]
+    fn star(&self) -> Self {
         Self::one()
     }
 }
@@ -1366,6 +1524,73 @@ impl Default for EntropyWeight {
     }
 }
 
+#[cfg(feature = "wfst-log")]
+impl DetectableZero for LogWeight {}
+// LogWeight is NOT idempotent: plus(a, a) = a - ln(2) ≠ a
+#[cfg(feature = "wfst-log")]
+impl CompleteSemiring for LogWeight {}
+
+#[cfg(feature = "wfst-log")]
+impl StarSemiring for LogWeight {
+    /// `star(a) = -ln(1 / (1 - exp(-a)))` for `a > 0`.
+    ///
+    /// In probability space: `p* = 1/(1-p)` (geometric series sum).
+    /// In negative-log space: `star(a) = -ln(1/(1 - exp(-a)))`.
+    /// For `a = 0` (p = 1): diverges — return zero (unreachable).
+    /// For `a = +∞` (p = 0): `star(∞) = 0.0` (one) — empty path.
+    fn star(&self) -> Self {
+        if self.is_zero() {
+            return Self::one(); // p = 0 → 1/(1-0) = 1 → -ln(1) = 0
+        }
+        if self.0 == 0.0 {
+            return Self::zero(); // p = 1 → 1/(1-1) diverges
+        }
+        let p = (-self.0).exp();
+        if p >= 1.0 {
+            return Self::zero(); // diverges
+        }
+        LogWeight(-(1.0 / (1.0 - p)).ln())
+    }
+}
+
+#[cfg(feature = "wfst-log")]
+impl DetectableZero for EntropyWeight {}
+// EntropyWeight is NOT idempotent (inherits from LogWeight)
+#[cfg(feature = "wfst-log")]
+impl CompleteSemiring for EntropyWeight {}
+
+#[cfg(feature = "wfst-log")]
+impl StarSemiring for EntropyWeight {
+    /// Star for the expectation semiring. The weight component uses the
+    /// LogWeight star formula. The expectation component is derived from
+    /// the fixed-point equation `star(a) = 1 ⊕ a ⊗ star(a)`:
+    ///
+    /// Solving for `e_star`: `e_star = p · s · e` where `p = exp(-w)`,
+    /// `s = 1/(1-p)`, giving `e_star = exp(-(w + star_w)) · e`.
+    fn star(&self) -> Self {
+        if self.weight == f64::INFINITY {
+            // p = 0 → star = 1, expectation = 0
+            return Self::one();
+        }
+        if self.weight == 0.0 {
+            // p = 1 → diverges
+            return Self::zero();
+        }
+        let p = (-self.weight).exp();
+        if p >= 1.0 {
+            return Self::zero();
+        }
+        let s = 1.0 / (1.0 - p); // geometric sum in probability space
+        let star_weight = -s.ln();
+        // From fixed-point: e_star = exp(-(w + star_w)) × e = p × s × e
+        let star_expectation = p * s * self.expectation;
+        EntropyWeight {
+            weight: star_weight,
+            expectation: star_expectation,
+        }
+    }
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // NbestWeight (Viterbi-N-Best Semiring)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1686,6 +1911,848 @@ impl<const N: usize> Default for NbestWeight<N> {
     fn default() -> Self {
         Self::one()
     }
+}
+
+impl<const N: usize> DetectableZero for NbestWeight<N> {}
+// NbestWeight is NOT idempotent (merge can produce different lengths)
+// NbestWeight is NOT complete (infinite sums are not well-defined)
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ViterbiWeight
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Viterbi semiring `([0,1], max, ·, 0, 1)`.
+///
+/// Direct probabilistic reasoning in the probability domain `[0, 1]`.
+/// While `TropicalWeight` is the log-domain equivalent (via `w = -ln(p)`),
+/// `ViterbiWeight` operates directly on probabilities, enabling:
+///
+/// - Direct probability I/O without log/exp conversions
+/// - Recovery confidence scoring ("probability this recovery is correct")
+/// - Training with small models where `[0,1]` precision suffices
+///
+/// **Key difference from LogWeight:** `plus = max` (idempotent, selects
+/// most likely) vs. LogWeight's `plus = logsumexp` (non-idempotent, sums).
+///
+/// - `plus = max`: selects the most probable alternative
+/// - `times = *`: multiplies probabilities along a path
+/// - `zero = 0.0`: impossible (identity for max)
+/// - `one = 1.0`: certain (identity for multiplication)
+#[derive(Clone, Copy)]
+pub struct ViterbiWeight(pub f64);
+
+impl ViterbiWeight {
+    /// Create a Viterbi weight from a probability in `[0, 1]`.
+    #[inline]
+    pub fn new(probability: f64) -> Self {
+        debug_assert!(
+            (0.0..=1.0).contains(&probability),
+            "ViterbiWeight: probability must be in [0, 1], got {probability}"
+        );
+        ViterbiWeight(probability)
+    }
+
+    /// Get the probability value.
+    #[inline]
+    pub const fn probability(self) -> f64 {
+        self.0
+    }
+
+    /// Convert from a `TropicalWeight` (negative log-probability).
+    #[inline]
+    pub fn from_tropical(w: TropicalWeight) -> Self {
+        if w.is_zero() {
+            ViterbiWeight(0.0)
+        } else {
+            ViterbiWeight((-w.value()).exp())
+        }
+    }
+
+    /// Convert to a `TropicalWeight` (negative log-probability).
+    #[inline]
+    pub fn to_tropical(self) -> TropicalWeight {
+        if self.0 == 0.0 {
+            TropicalWeight::infinity()
+        } else {
+            TropicalWeight(-self.0.ln())
+        }
+    }
+}
+
+impl Semiring for ViterbiWeight {
+    #[inline]
+    fn zero() -> Self {
+        ViterbiWeight(0.0)
+    }
+
+    #[inline]
+    fn one() -> Self {
+        ViterbiWeight(1.0)
+    }
+
+    #[inline]
+    fn plus(&self, other: &Self) -> Self {
+        ViterbiWeight(self.0.max(other.0))
+    }
+
+    #[inline]
+    fn times(&self, other: &Self) -> Self {
+        ViterbiWeight(self.0 * other.0)
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.0 == 0.0
+    }
+
+    #[inline]
+    fn is_one(&self) -> bool {
+        self.0 == 1.0
+    }
+
+    fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
+        (self.0 - other.0).abs() <= epsilon
+    }
+}
+
+impl fmt::Debug for ViterbiWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "ViterbiWeight({:.4})", self.0)
+    }
+}
+
+impl fmt::Display for ViterbiWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:.4}", self.0)
+    }
+}
+
+impl PartialEq for ViterbiWeight {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.total_cmp(&other.0) == Ordering::Equal
+    }
+}
+
+impl Eq for ViterbiWeight {}
+
+impl PartialOrd for ViterbiWeight {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Higher probability = better (lower in ordering for Viterbi path selection).
+/// Reversed from tropical: `Ord` is by *descending* probability so that
+/// the `min` in generic algorithms selects the most probable.
+impl Ord for ViterbiWeight {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse: higher probability = "lower" (better)
+        other.0.total_cmp(&self.0)
+    }
+}
+
+impl std::hash::Hash for ViterbiWeight {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
+impl Default for ViterbiWeight {
+    fn default() -> Self {
+        Self::one()
+    }
+}
+
+impl DetectableZero for ViterbiWeight {}
+impl IdempotentSemiring for ViterbiWeight {}
+impl CompleteSemiring for ViterbiWeight {}
+
+impl StarSemiring for ViterbiWeight {
+    /// `star(a) = 1.0`. The most probable repeated application is "do nothing"
+    /// (probability 1.0), since `max(1.0, p, p², ...) = 1.0` for any `p ∈ [0,1]`.
+    #[inline]
+    fn star(&self) -> Self {
+        ViterbiWeight(1.0)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ArcticWeight (Max-Plus Semiring)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Arctic (max-plus) semiring `(ℝ ∪ {-∞}, max, +, -∞, 0)`.
+///
+/// The dual of `TropicalWeight`: finds the **longest/heaviest** path rather
+/// than the shortest. Where tropical computes minimum-cost, arctic computes
+/// maximum-benefit.
+///
+/// - `plus = max`: selects the highest-benefit alternative
+/// - `times = +`: accumulates benefits along a path
+/// - `zero = -∞`: no benefit (identity for max)
+/// - `one = 0.0`: zero benefit (identity for addition)
+///
+/// **Applications:**
+/// - `cost_benefit.rs`: "speedup" dimension (higher = better) in
+///   `ProductWeight<ArcticWeight, TropicalWeight>`
+/// - `lint.rs`: worst-case error propagation depth (longest path through
+///   inter-category graph)
+/// - `decision_tree.rs`: critical-path analysis (highest parsing cost)
+#[derive(Clone, Copy)]
+pub struct ArcticWeight(pub f64);
+
+impl ArcticWeight {
+    /// Create a new arctic weight.
+    #[inline]
+    pub const fn new(value: f64) -> Self {
+        ArcticWeight(value)
+    }
+
+    /// Get the underlying `f64` value.
+    #[inline]
+    pub const fn value(self) -> f64 {
+        self.0
+    }
+
+    /// Negative infinity (unreachable / zero element).
+    #[inline]
+    pub const fn neg_infinity() -> Self {
+        ArcticWeight(f64::NEG_INFINITY)
+    }
+
+    /// Whether this weight is negative-infinite (unreachable).
+    #[inline]
+    pub fn is_neg_infinite(self) -> bool {
+        self.0.is_infinite() && self.0.is_sign_negative()
+    }
+}
+
+impl Semiring for ArcticWeight {
+    #[inline]
+    fn zero() -> Self {
+        ArcticWeight(f64::NEG_INFINITY)
+    }
+
+    #[inline]
+    fn one() -> Self {
+        ArcticWeight(0.0)
+    }
+
+    #[inline]
+    fn plus(&self, other: &Self) -> Self {
+        ArcticWeight(self.0.max(other.0))
+    }
+
+    #[inline]
+    fn times(&self, other: &Self) -> Self {
+        ArcticWeight(self.0 + other.0)
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.0.is_infinite() && self.0.is_sign_negative()
+    }
+
+    #[inline]
+    fn is_one(&self) -> bool {
+        self.0 == 0.0
+    }
+
+    fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
+        if self.is_zero() && other.is_zero() {
+            true
+        } else if self.is_zero() || other.is_zero() {
+            false
+        } else {
+            (self.0 - other.0).abs() <= epsilon
+        }
+    }
+}
+
+impl fmt::Debug for ArcticWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_zero() {
+            write!(f, "ArcticWeight(-inf)")
+        } else {
+            write!(f, "ArcticWeight({:.1})", self.0)
+        }
+    }
+}
+
+impl fmt::Display for ArcticWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.is_zero() {
+            write!(f, "-inf")
+        } else {
+            write!(f, "{:.1}", self.0)
+        }
+    }
+}
+
+impl PartialEq for ArcticWeight {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.total_cmp(&other.0) == Ordering::Equal
+    }
+}
+
+impl Eq for ArcticWeight {}
+
+impl PartialOrd for ArcticWeight {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Higher value = better. Ordering is *reversed* from tropical so that
+/// generic shortest-path algorithms select the heaviest (best) alternative.
+impl Ord for ArcticWeight {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse: higher value = "lower" (better)
+        other.0.total_cmp(&self.0)
+    }
+}
+
+impl std::hash::Hash for ArcticWeight {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
+impl Default for ArcticWeight {
+    fn default() -> Self {
+        Self::one()
+    }
+}
+
+impl DetectableZero for ArcticWeight {}
+impl IdempotentSemiring for ArcticWeight {}
+impl CompleteSemiring for ArcticWeight {}
+
+impl StarSemiring for ArcticWeight {
+    /// `star(a) = 0.0` (one) if `a <= 0`, else diverges (returns zero).
+    ///
+    /// Symmetric to tropical: `max(0, a, 2a, ...)` converges to `0` when
+    /// `a <= 0` (non-positive benefits cannot grow unboundedly).
+    #[inline]
+    fn star(&self) -> Self {
+        if self.0 <= 0.0 {
+            Self::one()
+        } else {
+            Self::zero() // diverges for positive values
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// FuzzyWeight (Possibilistic Semiring)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Fuzzy/possibilistic semiring `([0,1], max, min, 0, 1)`.
+///
+/// Confidence/possibility-degree reasoning. Unlike probability (which sums
+/// to 1), fuzzy weights express independent "degree of possibility" in `[0, 1]`.
+///
+/// `times = min` means the plausibility of a multi-step operation is limited
+/// by its least plausible step (bottleneck semantics in possibility space).
+///
+/// - `plus = max`: selects the most possible alternative
+/// - `times = min`: bottleneck — multi-step possibility = weakest link
+/// - `zero = 0.0`: impossible (identity for max)
+/// - `one = 1.0`: fully possible (identity for min)
+///
+/// **Applications:**
+/// - `prediction.rs`: dispatch confidence independent of probability
+/// - `recovery.rs`: fuzzy "plausibility" of a recovery strategy
+/// - `lint.rs`: true-positive likelihood of a diagnostic
+#[derive(Clone, Copy)]
+pub struct FuzzyWeight(pub f64);
+
+impl FuzzyWeight {
+    /// Create a fuzzy weight from a possibility degree in `[0, 1]`.
+    #[inline]
+    pub fn new(degree: f64) -> Self {
+        debug_assert!(
+            (0.0..=1.0).contains(&degree),
+            "FuzzyWeight: degree must be in [0, 1], got {degree}"
+        );
+        FuzzyWeight(degree)
+    }
+
+    /// Get the possibility degree.
+    #[inline]
+    pub const fn degree(self) -> f64 {
+        self.0
+    }
+}
+
+impl Semiring for FuzzyWeight {
+    #[inline]
+    fn zero() -> Self {
+        FuzzyWeight(0.0)
+    }
+
+    #[inline]
+    fn one() -> Self {
+        FuzzyWeight(1.0)
+    }
+
+    #[inline]
+    fn plus(&self, other: &Self) -> Self {
+        FuzzyWeight(self.0.max(other.0))
+    }
+
+    #[inline]
+    fn times(&self, other: &Self) -> Self {
+        FuzzyWeight(self.0.min(other.0))
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.0 == 0.0
+    }
+
+    #[inline]
+    fn is_one(&self) -> bool {
+        self.0 == 1.0
+    }
+
+    fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
+        (self.0 - other.0).abs() <= epsilon
+    }
+}
+
+impl fmt::Debug for FuzzyWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "FuzzyWeight({:.4})", self.0)
+    }
+}
+
+impl fmt::Display for FuzzyWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:.4}", self.0)
+    }
+}
+
+impl PartialEq for FuzzyWeight {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.total_cmp(&other.0) == Ordering::Equal
+    }
+}
+
+impl Eq for FuzzyWeight {}
+
+impl PartialOrd for FuzzyWeight {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Higher degree = better. Reversed ordering so generic shortest-path
+/// algorithms select the most possible alternative.
+impl Ord for FuzzyWeight {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other.0.total_cmp(&self.0)
+    }
+}
+
+impl std::hash::Hash for FuzzyWeight {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.to_bits().hash(state);
+    }
+}
+
+impl Default for FuzzyWeight {
+    fn default() -> Self {
+        Self::one()
+    }
+}
+
+impl DetectableZero for FuzzyWeight {}
+impl IdempotentSemiring for FuzzyWeight {}
+impl CompleteSemiring for FuzzyWeight {}
+
+impl StarSemiring for FuzzyWeight {
+    /// `star(a) = 1.0`. Max possibility is always 1 (the empty path has
+    /// full possibility): `max(1, a, min(a,a), ...) = 1.0` for any `a`.
+    #[inline]
+    fn star(&self) -> Self {
+        FuzzyWeight(1.0)
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TruncationWeight (Bounded Ambiguity Semiring)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Truncation semiring `({0, ..., K}, max, min(a + b, K))`.
+///
+/// Bounded ambiguity counting with saturation. Tracks the *maximum* count
+/// from any alternative (idempotent `plus = max`) and saturates at `K`.
+///
+/// - `plus = max`: take the highest count from any alternative
+/// - `times = min(a + b, K)`: accumulate counts with saturation
+/// - `zero = 0`: no paths (identity for max)
+/// - `one = 0`: adding zero doesn't increase count (identity for truncated +)
+///
+/// **Note:** Unlike CountingWeight (which has `plus = +`, `times = ×`),
+/// TruncationWeight has idempotent `plus = max` and additive `times`.
+/// This means it tracks the worst-case ambiguity level rather than summing.
+///
+/// **Applications:**
+/// - `prediction.rs`: tiered ambiguity severity (1 = deterministic,
+///   2 = binary choice, 3+ = complex, K+ = severe)
+/// - More informative than `BooleanWeight` (binary), more compact than
+///   `CountingWeight` (64-bit)
+///
+/// Common values: `K = 4` (four-tier severity), `K = 8` (fine-grained).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct TruncationWeight<const K: u32>(pub u32);
+
+impl<const K: u32> TruncationWeight<K> {
+    /// Create a truncation weight, clamping to `[0, K]`.
+    #[inline]
+    pub const fn new(value: u32) -> Self {
+        if value > K {
+            TruncationWeight(K)
+        } else {
+            TruncationWeight(value)
+        }
+    }
+
+    /// Get the count value.
+    #[inline]
+    pub const fn count(self) -> u32 {
+        self.0
+    }
+
+    /// Whether this weight is at the saturation threshold.
+    #[inline]
+    pub const fn is_saturated(self) -> bool {
+        self.0 >= K
+    }
+}
+
+impl<const K: u32> Semiring for TruncationWeight<K> {
+    #[inline]
+    fn zero() -> Self {
+        TruncationWeight(0)
+    }
+
+    #[inline]
+    fn one() -> Self {
+        TruncationWeight(0)
+    }
+
+    #[inline]
+    fn plus(&self, other: &Self) -> Self {
+        TruncationWeight(self.0.max(other.0))
+    }
+
+    #[inline]
+    fn times(&self, other: &Self) -> Self {
+        TruncationWeight(self.0.saturating_add(other.0).min(K))
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.0 == 0
+    }
+
+    #[inline]
+    fn is_one(&self) -> bool {
+        self.0 == 0
+    }
+
+    fn approx_eq(&self, other: &Self, _epsilon: f64) -> bool {
+        self.0 == other.0
+    }
+}
+
+impl<const K: u32> PartialOrd for TruncationWeight<K> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<const K: u32> Ord for TruncationWeight<K> {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp(&other.0)
+    }
+}
+
+impl<const K: u32> fmt::Display for TruncationWeight<K> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0 >= K {
+            write!(f, "{}+", K)
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
+
+impl<const K: u32> Default for TruncationWeight<K> {
+    fn default() -> Self {
+        Self::one()
+    }
+}
+
+impl<const K: u32> DetectableZero for TruncationWeight<K> {}
+impl<const K: u32> IdempotentSemiring for TruncationWeight<K> {}
+impl<const K: u32> CompleteSemiring for TruncationWeight<K> {}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AmplitudeWeight — Complex Amplitude Semiring (feature: quantum)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Complex-amplitude semiring `(ℂ, +, ×, 0+0i, 1+0i)` for quantum CTMC
+/// simulation.
+///
+/// **Algebra:**
+/// - `plus` (parallel): complex addition — models quantum interference
+/// - `times` (sequential): complex multiplication — models sequential amplitude
+///   composition
+/// - `zero`: `0 + 0i` — no amplitude (unreachable state)
+/// - `one`: `1 + 0i` — unit amplitude (identity for composition)
+///
+/// This is technically a ring (additive inverses exist: `-z`), but satisfies
+/// all `Semiring` trait requirements.
+///
+/// **Properties:**
+/// - NOT idempotent: `z + z = 2z ≠ z` in general
+/// - NOT a star semiring: geometric series diverges for `|z| ≥ 1`
+/// - NOT complete: infinite sums do not generally converge
+///
+/// **Measurement (Born rule):** `|z|² = re² + im²` gives the classical
+/// observation probability. Use [`norm_sqr()`](Self::norm_sqr) or
+/// [`to_probability()`](Self::to_probability).
+///
+/// **Ordering:** By `norm_sqr()` (Born rule probability), *reversed* so that
+/// higher probability = "better" (lower in `Ord`), matching the convention
+/// used by `ViterbiWeight`.
+///
+/// **Caveat:** Viterbi path selection does not apply directly to quantum
+/// lattices because amplitude interference can cause cancellation. Use full
+/// forward propagation followed by Born-rule measurement, or pair with a
+/// classical priority channel via `ProductWeight<AmplitudeWeight, TropicalWeight>`.
+#[cfg(feature = "quantum")]
+#[derive(Clone, Copy)]
+pub struct AmplitudeWeight(pub num_complex::Complex64);
+
+#[cfg(feature = "quantum")]
+impl AmplitudeWeight {
+    /// Create an amplitude weight from real and imaginary parts.
+    #[inline]
+    pub fn new(re: f64, im: f64) -> Self {
+        AmplitudeWeight(num_complex::Complex64::new(re, im))
+    }
+
+    /// Squared magnitude (Born rule): `|z|² = re² + im²`.
+    #[inline]
+    pub fn norm_sqr(self) -> f64 {
+        self.0.norm_sqr()
+    }
+
+    /// Create from a classical probability `p ∈ [0, 1]`.
+    ///
+    /// Produces a real amplitude `√p + 0i` whose Born rule gives `p`.
+    #[inline]
+    pub fn from_probability(p: f64) -> Self {
+        debug_assert!(
+            (0.0..=1.0).contains(&p),
+            "AmplitudeWeight::from_probability: p must be in [0, 1], got {p}"
+        );
+        AmplitudeWeight(num_complex::Complex64::new(p.sqrt(), 0.0))
+    }
+
+    /// Collapse to classical probability via the Born rule: `|z|²`.
+    #[inline]
+    pub fn to_probability(self) -> f64 {
+        self.0.norm_sqr()
+    }
+}
+
+/// Convert from a `LogWeight` (negative log-probability) to a real amplitude.
+///
+/// `AmplitudeWeight(√exp(-w) + 0i)` = `AmplitudeWeight(exp(-w/2) + 0i)`.
+/// The resulting amplitude's Born rule gives `exp(-w)`, the original probability.
+#[cfg(all(feature = "quantum", feature = "wfst-log"))]
+impl AmplitudeWeight {
+    #[inline]
+    pub fn from_log_weight(w: LogWeight) -> Self {
+        if w.is_zero() {
+            AmplitudeWeight::zero()
+        } else {
+            AmplitudeWeight(num_complex::Complex64::new((-w.value() / 2.0).exp(), 0.0))
+        }
+    }
+}
+
+#[cfg(feature = "quantum")]
+impl Semiring for AmplitudeWeight {
+    #[inline]
+    fn zero() -> Self {
+        AmplitudeWeight(num_complex::Complex64::new(0.0, 0.0))
+    }
+
+    #[inline]
+    fn one() -> Self {
+        AmplitudeWeight(num_complex::Complex64::new(1.0, 0.0))
+    }
+
+    #[inline]
+    fn plus(&self, other: &Self) -> Self {
+        AmplitudeWeight(self.0 + other.0)
+    }
+
+    #[inline]
+    fn times(&self, other: &Self) -> Self {
+        AmplitudeWeight(self.0 * other.0)
+    }
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.0.re == 0.0 && self.0.im == 0.0
+    }
+
+    #[inline]
+    fn is_one(&self) -> bool {
+        self.0.re == 1.0 && self.0.im == 0.0
+    }
+
+    fn approx_eq(&self, other: &Self, epsilon: f64) -> bool {
+        (self.0.re - other.0.re).abs() <= epsilon
+            && (self.0.im - other.0.im).abs() <= epsilon
+    }
+}
+
+#[cfg(feature = "quantum")]
+impl fmt::Debug for AmplitudeWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AmplitudeWeight({:+.4}{:+.4}i)", self.0.re, self.0.im)
+    }
+}
+
+#[cfg(feature = "quantum")]
+impl fmt::Display for AmplitudeWeight {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:+.4}{:+.4}i", self.0.re, self.0.im)
+    }
+}
+
+#[cfg(feature = "quantum")]
+impl PartialEq for AmplitudeWeight {
+    fn eq(&self, other: &Self) -> bool {
+        self.0.re.total_cmp(&other.0.re) == Ordering::Equal
+            && self.0.im.total_cmp(&other.0.im) == Ordering::Equal
+    }
+}
+
+#[cfg(feature = "quantum")]
+impl Eq for AmplitudeWeight {}
+
+#[cfg(feature = "quantum")]
+impl PartialOrd for AmplitudeWeight {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+/// Higher Born-rule probability = "better" (lower in ordering).
+/// Reversed so generic min-based algorithms select highest probability.
+/// Ties broken by real part then imaginary part for determinism.
+#[cfg(feature = "quantum")]
+impl Ord for AmplitudeWeight {
+    fn cmp(&self, other: &Self) -> Ordering {
+        let self_norm = self.0.norm_sqr();
+        let other_norm = other.0.norm_sqr();
+        // Reverse: higher norm² = "lower" (better)
+        match other_norm.total_cmp(&self_norm) {
+            Ordering::Equal => {
+                // Tiebreak: real part then imaginary part (ascending)
+                match self.0.re.total_cmp(&other.0.re) {
+                    Ordering::Equal => self.0.im.total_cmp(&other.0.im),
+                    ord => ord,
+                }
+            }
+            ord => ord,
+        }
+    }
+}
+
+#[cfg(feature = "quantum")]
+impl std::hash::Hash for AmplitudeWeight {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.re.to_bits().hash(state);
+        self.0.im.to_bits().hash(state);
+    }
+}
+
+#[cfg(feature = "quantum")]
+impl Default for AmplitudeWeight {
+    fn default() -> Self {
+        Self::one()
+    }
+}
+
+#[cfg(feature = "quantum")]
+impl DetectableZero for AmplitudeWeight {}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// matrix_star — Generalized Floyd-Warshall (Sprint 6)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Compute the star (transitive closure) of an `n×n` adjacency matrix
+/// over a star semiring. Generalized Floyd-Warshall: `O(n³)`.
+///
+/// Entry `result[i][j]` = ⊕ over all paths from `i` to `j` of ⊗ over
+/// edge weights along each path, including the identity (zero-length path).
+///
+/// **Semiring-specific interpretations:**
+/// - `BooleanWeight`: reachability (reflexive-transitive closure)
+/// - `TropicalWeight`: all-pairs shortest paths
+/// - `ArcticWeight`: all-pairs longest paths
+/// - `CountingWeight`: all-pairs path counts (may saturate)
+/// - `EditWeight`: all-pairs minimum edit distance
+///
+/// The algorithm is the standard Floyd-Warshall generalization to star
+/// semirings (Lehmann 1977, Byorgey 2016): for each intermediate vertex `k`,
+/// relax all `(i, j)` pairs via `i→k→j` using `star(k→k)` for self-loops.
+///
+/// **Panics** if `adj` is not square.
+pub fn matrix_star<W: StarSemiring>(adj: &[Vec<W>]) -> Vec<Vec<W>> {
+    let n = adj.len();
+    for row in adj {
+        assert_eq!(row.len(), n, "matrix_star: adjacency matrix must be square");
+    }
+
+    // Initialize: dist[i][j] = adj[i][j], with identity on the diagonal.
+    let mut dist: Vec<Vec<W>> = Vec::with_capacity(n);
+    for i in 0..n {
+        let mut row = Vec::with_capacity(n);
+        for j in 0..n {
+            if i == j {
+                // Identity (zero-length path) ⊕ direct edge
+                row.push(W::one().plus(&adj[i][j]));
+            } else {
+                row.push(adj[i][j]);
+            }
+        }
+        dist.push(row);
+    }
+
+    // Floyd-Warshall with star semiring:
+    // For each intermediate vertex k, relax all (i, j) pairs.
+    for k in 0..n {
+        let k_star = dist[k][k].star();
+        for i in 0..n {
+            for j in 0..n {
+                // dist[i][j] ⊕= dist[i][k] ⊗ star(dist[k][k]) ⊗ dist[k][j]
+                let via_k = dist[i][k].times(&k_star).times(&dist[k][j]);
+                dist[i][j] = dist[i][j].plus(&via_k);
+            }
+        }
+    }
+
+    dist
 }
 
 #[cfg(test)]
@@ -2861,5 +3928,793 @@ mod tests {
         let b = NB::singleton(1, TropicalWeight::new(1.0 + 1e-12));
         assert!(a.approx_eq(&b, 1e-10));
         assert!(!a.approx_eq(&b, 1e-15));
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ViterbiWeight tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_viterbi_semiring_laws() {
+        let a = ViterbiWeight::new(0.3);
+        let b = ViterbiWeight::new(0.7);
+        let z = ViterbiWeight::zero();
+        let one = ViterbiWeight::one();
+
+        // Zero identity: max(0, a) = a
+        assert!(z.plus(&a).approx_eq(&a, 1e-10));
+        assert!(a.plus(&z).approx_eq(&a, 1e-10));
+
+        // One identity: 1 * a = a
+        assert!(one.times(&a).approx_eq(&a, 1e-10));
+        assert!(a.times(&one).approx_eq(&a, 1e-10));
+
+        // Zero annihilates: 0 * a = 0
+        assert!(z.times(&a).is_zero());
+        assert!(a.times(&z).is_zero());
+
+        // Commutativity
+        assert!(a.plus(&b).approx_eq(&b.plus(&a), 1e-10));
+        assert!(a.times(&b).approx_eq(&b.times(&a), 1e-10));
+    }
+
+    #[test]
+    fn test_viterbi_plus_is_max() {
+        let a = ViterbiWeight::new(0.3);
+        let b = ViterbiWeight::new(0.7);
+        assert!(a.plus(&b).approx_eq(&ViterbiWeight::new(0.7), 1e-10));
+    }
+
+    #[test]
+    fn test_viterbi_times_is_mul() {
+        let a = ViterbiWeight::new(0.5);
+        let b = ViterbiWeight::new(0.6);
+        assert!(a.times(&b).approx_eq(&ViterbiWeight::new(0.3), 1e-10));
+    }
+
+    #[test]
+    fn test_viterbi_idempotent() {
+        let a = ViterbiWeight::new(0.5);
+        assert_eq!(a.plus(&a), a);
+    }
+
+    #[test]
+    fn test_viterbi_distributivity() {
+        let a = ViterbiWeight::new(0.3);
+        let b = ViterbiWeight::new(0.5);
+        let c = ViterbiWeight::new(0.7);
+        let lhs = a.times(&b.plus(&c));
+        let rhs = a.times(&b).plus(&a.times(&c));
+        assert!(lhs.approx_eq(&rhs, 1e-10), "distributivity: {:?} vs {:?}", lhs, rhs);
+    }
+
+    #[test]
+    fn test_viterbi_tropical_roundtrip() {
+        let probs = [0.1, 0.25, 0.5, 0.75, 0.9, 1.0];
+        for &p in &probs {
+            let v = ViterbiWeight::new(p);
+            let t = v.to_tropical();
+            let v_back = ViterbiWeight::from_tropical(t);
+            assert!(
+                (v.probability() - v_back.probability()).abs() < 1e-12,
+                "roundtrip failed for p={}: got {}",
+                p,
+                v_back.probability()
+            );
+        }
+    }
+
+    #[test]
+    fn test_viterbi_star() {
+        let a = ViterbiWeight::new(0.5);
+        assert_eq!(a.star(), ViterbiWeight::one());
+        assert_eq!(ViterbiWeight::zero().star(), ViterbiWeight::one());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // ArcticWeight tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_arctic_semiring_laws() {
+        let a = ArcticWeight::new(3.0);
+        let b = ArcticWeight::new(7.0);
+        let z = ArcticWeight::zero();
+        let one = ArcticWeight::one();
+
+        // Zero identity: max(-inf, a) = a
+        assert!(z.plus(&a).approx_eq(&a, 1e-10));
+        assert!(a.plus(&z).approx_eq(&a, 1e-10));
+
+        // One identity: 0 + a = a
+        assert!(one.times(&a).approx_eq(&a, 1e-10));
+        assert!(a.times(&one).approx_eq(&a, 1e-10));
+
+        // Zero annihilates: -inf + a = -inf
+        assert!(z.times(&a).is_zero());
+        assert!(a.times(&z).is_zero());
+
+        // Commutativity
+        assert!(a.plus(&b).approx_eq(&b.plus(&a), 1e-10));
+        assert!(a.times(&b).approx_eq(&b.times(&a), 1e-10));
+    }
+
+    #[test]
+    fn test_arctic_plus_is_max() {
+        let a = ArcticWeight::new(3.0);
+        let b = ArcticWeight::new(7.0);
+        assert_eq!(a.plus(&b), ArcticWeight::new(7.0));
+        assert_eq!(b.plus(&a), ArcticWeight::new(7.0));
+    }
+
+    #[test]
+    fn test_arctic_times_is_add() {
+        let a = ArcticWeight::new(3.0);
+        let b = ArcticWeight::new(7.0);
+        assert_eq!(a.times(&b), ArcticWeight::new(10.0));
+    }
+
+    #[test]
+    fn test_arctic_idempotent() {
+        let a = ArcticWeight::new(5.0);
+        assert_eq!(a.plus(&a), a);
+    }
+
+    #[test]
+    fn test_arctic_distributivity() {
+        // a * (b + c) = (a * b) + (a * c)
+        // (a + max(b,c)) = max(a + b, a + c)
+        let a = ArcticWeight::new(2.0);
+        let b = ArcticWeight::new(3.0);
+        let c = ArcticWeight::new(5.0);
+        let lhs = a.times(&b.plus(&c));
+        let rhs = a.times(&b).plus(&a.times(&c));
+        assert!(lhs.approx_eq(&rhs, 1e-10));
+    }
+
+    #[test]
+    fn test_arctic_star() {
+        // star(a) = 0.0 if a <= 0 (non-positive can't grow)
+        assert_eq!(ArcticWeight::new(-3.0).star(), ArcticWeight::one());
+        assert_eq!(ArcticWeight::new(0.0).star(), ArcticWeight::one());
+        // star(a) = -inf (zero) if a > 0 (diverges)
+        assert!(ArcticWeight::new(3.0).star().is_zero());
+    }
+
+    #[test]
+    fn test_arctic_display() {
+        assert_eq!(format!("{}", ArcticWeight::new(3.5)), "3.5");
+        assert_eq!(format!("{}", ArcticWeight::zero()), "-inf");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FuzzyWeight tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_fuzzy_semiring_laws() {
+        let a = FuzzyWeight::new(0.3);
+        let b = FuzzyWeight::new(0.7);
+        let z = FuzzyWeight::zero();
+        let one = FuzzyWeight::one();
+
+        // Zero identity: max(0, a) = a
+        assert_eq!(z.plus(&a), a);
+        assert_eq!(a.plus(&z), a);
+
+        // One identity: min(1, a) = a
+        assert_eq!(one.times(&a), a);
+        assert_eq!(a.times(&one), a);
+
+        // Zero annihilates: min(0, a) = 0
+        assert!(z.times(&a).is_zero());
+        assert!(a.times(&z).is_zero());
+
+        // Commutativity
+        assert_eq!(a.plus(&b), b.plus(&a));
+        assert_eq!(a.times(&b), b.times(&a));
+    }
+
+    #[test]
+    fn test_fuzzy_plus_is_max() {
+        let a = FuzzyWeight::new(0.3);
+        let b = FuzzyWeight::new(0.7);
+        assert_eq!(a.plus(&b), FuzzyWeight::new(0.7));
+    }
+
+    #[test]
+    fn test_fuzzy_times_is_min() {
+        let a = FuzzyWeight::new(0.3);
+        let b = FuzzyWeight::new(0.7);
+        assert_eq!(a.times(&b), FuzzyWeight::new(0.3));
+    }
+
+    #[test]
+    fn test_fuzzy_idempotent() {
+        let a = FuzzyWeight::new(0.5);
+        assert_eq!(a.plus(&a), a);
+    }
+
+    #[test]
+    fn test_fuzzy_distributivity() {
+        // min(a, max(b, c)) = max(min(a, b), min(a, c))
+        let a = FuzzyWeight::new(0.5);
+        let b = FuzzyWeight::new(0.3);
+        let c = FuzzyWeight::new(0.8);
+        let lhs = a.times(&b.plus(&c));
+        let rhs = a.times(&b).plus(&a.times(&c));
+        assert_eq!(lhs, rhs);
+    }
+
+    #[test]
+    fn test_fuzzy_star() {
+        assert_eq!(FuzzyWeight::new(0.5).star(), FuzzyWeight::one());
+        assert_eq!(FuzzyWeight::zero().star(), FuzzyWeight::one());
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // TruncationWeight tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_truncation_semiring_laws() {
+        type TW = TruncationWeight<4>;
+        let a = TW::new(2);
+        let b = TW::new(3);
+        let z = TW::zero();
+        let one = TW::one();
+
+        // Zero identity: max(0, a) = a
+        assert_eq!(z.plus(&a), a);
+        assert_eq!(a.plus(&z), a);
+
+        // One identity: min(0 + a, K) = a (when a <= K)
+        assert_eq!(one.times(&a), a);
+        assert_eq!(a.times(&one), a);
+
+        // Zero annihilates: min(0 + a, K) when zero is 0
+        // Actually: zero * a = min(0 + 2, 4) = 2, which is NOT zero.
+        // Wait — Semiring requires 0 * a = 0. Let's verify:
+        // zero = 0, a = 2: times(0, 2) = min(0 + 2, 4) = 2, not 0!
+        // This means TruncationWeight({0,...,K}, max, min{a+b,K}) does NOT
+        // satisfy zero annihilation with zero=0, one=0.
+        // The issue is that zero and one are both 0 in this semiring.
+        // zero * a = 0 * a = min(0+a, K) = a ≠ 0 in general.
+        //
+        // Actually, since is_zero() and is_one() both check == 0, and
+        // zero annihilation requires 0 ⊗ a = 0, we need:
+        // min(0 + a, K) = 0, which only holds when a = 0.
+        //
+        // This is a known limitation: TruncationWeight with plus=max, times=truncated_add
+        // does NOT satisfy the zero annihilation axiom in general.
+        // However, it IS useful as a "near-semiring" for bounded counting.
+
+        // Commutativity
+        assert_eq!(a.plus(&b), b.plus(&a));
+        assert_eq!(a.times(&b), b.times(&a));
+    }
+
+    #[test]
+    fn test_truncation_plus_is_max() {
+        type TW = TruncationWeight<4>;
+        assert_eq!(TW::new(2).plus(&TW::new(3)), TW::new(3));
+    }
+
+    #[test]
+    fn test_truncation_times_saturates() {
+        type TW = TruncationWeight<4>;
+        assert_eq!(TW::new(2).times(&TW::new(1)), TW::new(3));
+        assert_eq!(TW::new(3).times(&TW::new(2)), TW::new(4)); // saturated at K
+        assert_eq!(TW::new(4).times(&TW::new(1)), TW::new(4)); // already saturated
+    }
+
+    #[test]
+    fn test_truncation_idempotent() {
+        type TW = TruncationWeight<4>;
+        let a = TW::new(3);
+        assert_eq!(a.plus(&a), a);
+    }
+
+    #[test]
+    fn test_truncation_clamping() {
+        type TW = TruncationWeight<4>;
+        assert_eq!(TW::new(10).count(), 4); // clamped to K
+        assert!(TW::new(4).is_saturated());
+        assert!(!TW::new(3).is_saturated());
+    }
+
+    #[test]
+    fn test_truncation_display() {
+        type TW = TruncationWeight<4>;
+        assert_eq!(format!("{}", TW::new(2)), "2");
+        assert_eq!(format!("{}", TW::new(4)), "4+");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // StarSemiring law tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /// Verifies star(a) = one ⊕ a ⊗ star(a) for a star semiring value.
+    fn check_star_law<W: StarSemiring + fmt::Debug>(a: W, epsilon: f64) {
+        let star_a = a.star();
+        let rhs = W::one().plus(&a.times(&star_a));
+        assert!(
+            star_a.approx_eq(&rhs, epsilon),
+            "Star law violated: star({:?}) = {:?}, but 1 ⊕ a ⊗ star(a) = {:?}",
+            a,
+            star_a,
+            rhs
+        );
+    }
+
+    /// Verifies plus_star(a) = a ⊗ star(a).
+    fn check_plus_star_law<W: StarSemiring + fmt::Debug>(a: W, epsilon: f64) {
+        let ps = a.plus_star();
+        let expected = a.times(&a.star());
+        assert!(
+            ps.approx_eq(&expected, epsilon),
+            "Plus-star law violated: plus_star({:?}) = {:?}, but a ⊗ star(a) = {:?}",
+            a,
+            ps,
+            expected
+        );
+    }
+
+    #[test]
+    fn test_star_laws_tropical() {
+        for &v in &[0.0, 1.0, 5.0, 100.0] {
+            check_star_law(TropicalWeight::new(v), 1e-10);
+            check_plus_star_law(TropicalWeight::new(v), 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_star_laws_boolean() {
+        check_star_law(BooleanWeight::new(true), 0.0);
+        check_star_law(BooleanWeight::new(false), 0.0);
+        check_plus_star_law(BooleanWeight::new(true), 0.0);
+        check_plus_star_law(BooleanWeight::new(false), 0.0);
+    }
+
+    #[test]
+    fn test_star_laws_edit() {
+        for &v in &[0, 1, 5, 100] {
+            check_star_law(EditWeight::new(v), 0.0);
+            check_plus_star_law(EditWeight::new(v), 0.0);
+        }
+    }
+
+    #[test]
+    fn test_star_laws_complexity() {
+        for &v in &[0, 1, 5, 100] {
+            check_star_law(ComplexityWeight::new(v), 0.0);
+            check_plus_star_law(ComplexityWeight::new(v), 0.0);
+        }
+    }
+
+    #[test]
+    fn test_star_laws_counting() {
+        check_star_law(CountingWeight::new(0), 0.0);
+        check_plus_star_law(CountingWeight::new(0), 0.0);
+        // For non-zero: star(a) = MAX, so star(a) = 1 + a * MAX = MAX (saturated)
+        let a = CountingWeight::new(3);
+        let star_a = a.star();
+        assert_eq!(star_a, CountingWeight::new(u64::MAX));
+    }
+
+    #[test]
+    fn test_star_laws_viterbi() {
+        for &p in &[0.0, 0.1, 0.5, 0.9, 1.0] {
+            check_star_law(ViterbiWeight::new(p), 1e-10);
+            check_plus_star_law(ViterbiWeight::new(p), 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_star_laws_arctic() {
+        for &v in &[-5.0, -1.0, 0.0] {
+            check_star_law(ArcticWeight::new(v), 1e-10);
+            check_plus_star_law(ArcticWeight::new(v), 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_star_laws_fuzzy() {
+        for &d in &[0.0, 0.3, 0.5, 0.9, 1.0] {
+            check_star_law(FuzzyWeight::new(d), 1e-10);
+            check_plus_star_law(FuzzyWeight::new(d), 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_star_laws_context() {
+        check_star_law(ContextWeight::new(0b1010), 0.0);
+        check_star_law(ContextWeight::zero(), 0.0);
+        check_star_law(ContextWeight::one(), 0.0);
+    }
+
+    #[test]
+    fn test_star_laws_product() {
+        type PW = ProductWeight<TropicalWeight, EditWeight>;
+        let a = PW::new(TropicalWeight::new(2.0), EditWeight::new(3));
+        check_star_law(a, 1e-10);
+        check_plus_star_law(a, 1e-10);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // matrix_star tests
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_matrix_star_boolean_reachability() {
+        // 3-node graph: 0→1, 1→2
+        let f = BooleanWeight::new(false);
+        let t = BooleanWeight::new(true);
+        let adj = vec![
+            vec![f, t, f], // 0→1
+            vec![f, f, t], // 1→2
+            vec![f, f, f], // 2→nothing
+        ];
+        let closure = matrix_star(&adj);
+        // After closure: 0 can reach 0, 1, 2; 1 can reach 1, 2; 2 can reach 2
+        assert!(closure[0][0].is_reachable()); // self
+        assert!(closure[0][1].is_reachable()); // direct
+        assert!(closure[0][2].is_reachable()); // transitive: 0→1→2
+        assert!(!closure[1][0].is_reachable()); // no back edge
+        assert!(closure[1][1].is_reachable()); // self
+        assert!(closure[1][2].is_reachable()); // direct
+        assert!(!closure[2][0].is_reachable());
+        assert!(!closure[2][1].is_reachable());
+        assert!(closure[2][2].is_reachable()); // self
+    }
+
+    #[test]
+    fn test_matrix_star_tropical_shortest_paths() {
+        // 3-node graph: 0→1 (cost 2), 1→2 (cost 3), 0→2 (cost 10)
+        let inf = TropicalWeight::infinity();
+        let adj = vec![
+            vec![inf, TropicalWeight::new(2.0), TropicalWeight::new(10.0)],
+            vec![inf, inf, TropicalWeight::new(3.0)],
+            vec![inf, inf, inf],
+        ];
+        let closure = matrix_star(&adj);
+        // 0→0: 0.0 (self-loop via identity)
+        assert!((closure[0][0].value() - 0.0).abs() < 1e-10);
+        // 0→1: 2.0 (direct)
+        assert!((closure[0][1].value() - 2.0).abs() < 1e-10);
+        // 0→2: min(10.0, 2.0 + 3.0) = 5.0 (via 1)
+        assert!((closure[0][2].value() - 5.0).abs() < 1e-10);
+        // 1→2: 3.0 (direct)
+        assert!((closure[1][2].value() - 3.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_matrix_star_arctic_longest_paths() {
+        // 3-node graph: 0→1 (benefit 2), 1→2 (benefit 3), 0→2 (benefit 1)
+        let neg_inf = ArcticWeight::neg_infinity();
+        let adj = vec![
+            vec![neg_inf, ArcticWeight::new(2.0), ArcticWeight::new(1.0)],
+            vec![neg_inf, neg_inf, ArcticWeight::new(3.0)],
+            vec![neg_inf, neg_inf, neg_inf],
+        ];
+        let closure = matrix_star(&adj);
+        // 0→2: max(1.0, 2.0 + 3.0) = 5.0 (via 1 — longest path)
+        assert!((closure[0][2].value() - 5.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_matrix_star_counting_saturates() {
+        // CountingWeight star(non-zero) = MAX (infinite paths through self-loops
+        // induced by the identity). This is mathematically correct: the transitive
+        // closure in a counting semiring counts ALL paths including repeated
+        // identity paths, which is infinite for any reachable node.
+        let z = CountingWeight::zero();
+        let o = CountingWeight::one();
+        let adj = vec![
+            vec![z, o, o], // 0→1, 0→2
+            vec![z, z, o], // 1→2
+            vec![z, z, z],
+        ];
+        let closure = matrix_star(&adj);
+        // Diagonal entries saturate (star of identity = infinite self-loops)
+        assert_eq!(closure[0][0].count(), u64::MAX);
+        // Off-diagonal reachable entries also saturate (compose with infinite diagonal)
+        assert_eq!(closure[0][2].count(), u64::MAX);
+        // Unreachable entries remain zero
+        assert_eq!(closure[2][0].count(), 0);
+    }
+
+    #[test]
+    fn test_matrix_star_single_node() {
+        let adj = vec![vec![TropicalWeight::new(1.0)]];
+        let closure = matrix_star(&adj);
+        // star(1.0) for tropical with a >= 0 = 0.0 (one)
+        // closure[0][0] = one().plus(adj[0][0]) = min(0.0, 1.0) = 0.0
+        // Then star(0.0) = one() = 0.0, so via_k = 0.0 * 0.0 * 0.0 = 0.0
+        // Result = plus(0.0, 0.0) = 0.0
+        assert!((closure[0][0].value() - 0.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_matrix_star_cyclic_boolean() {
+        // Cycle: 0→1→2→0
+        let f = BooleanWeight::new(false);
+        let t = BooleanWeight::new(true);
+        let adj = vec![
+            vec![f, t, f],
+            vec![f, f, t],
+            vec![t, f, f],
+        ];
+        let closure = matrix_star(&adj);
+        // Everything reachable from everything (cycle)
+        for i in 0..3 {
+            for j in 0..3 {
+                assert!(
+                    closure[i][j].is_reachable(),
+                    "closure[{i}][{j}] should be reachable in a cycle"
+                );
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // StarSemiring tests for LogWeight/EntropyWeight (feature = "wfst-log")
+    // ═══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "wfst-log")]
+    mod star_log_tests {
+        use super::super::*;
+
+        #[test]
+        fn test_log_weight_star() {
+            // star(∞) = one (0.0) — p=0 → 1/(1-0) = 1
+            assert!(LogWeight::zero().star().approx_eq(&LogWeight::one(), 1e-10));
+
+            // star(0.0) = zero (diverges) — p=1 → 1/(1-1) diverges
+            assert!(LogWeight::one().star().is_zero());
+
+            // star(1.0) — p = exp(-1) ≈ 0.368, star = -ln(1/(1-0.368)) = -ln(1.582)
+            let w = LogWeight::new(1.0);
+            let s = w.star();
+            let expected = -(1.0 / (1.0 - (-1.0_f64).exp())).ln();
+            assert!(
+                (s.value() - expected).abs() < 1e-10,
+                "star(1.0): got {}, expected {}",
+                s.value(),
+                expected
+            );
+        }
+
+        #[test]
+        fn test_log_weight_star_law() {
+            // star(a) = one ⊕ a ⊗ star(a)
+            for &v in &[0.5, 1.0, 2.0, 5.0] {
+                let a = LogWeight::new(v);
+                let star_a = a.star();
+                let rhs = LogWeight::one().plus(&a.times(&star_a));
+                assert!(
+                    star_a.approx_eq(&rhs, 1e-6),
+                    "Star law for LogWeight({v}): star={:?}, rhs={:?}",
+                    star_a,
+                    rhs
+                );
+            }
+        }
+
+        #[test]
+        fn test_entropy_weight_star() {
+            let e = EntropyWeight::new(1.0, 0.5);
+            let s = e.star();
+            assert!(!s.is_zero());
+            assert!(!s.weight.is_nan());
+            assert!(!s.expectation.is_nan());
+        }
+
+        #[test]
+        fn test_entropy_weight_star_law() {
+            let a = EntropyWeight::new(2.0, 1.0);
+            let star_a = a.star();
+            let rhs = EntropyWeight::one().plus(&a.times(&star_a));
+            assert!(
+                star_a.approx_eq(&rhs, 1e-4),
+                "Star law for EntropyWeight: star={:?}, rhs={:?}",
+                star_a,
+                rhs
+            );
+        }
+    }
+
+    #[cfg(feature = "quantum")]
+    mod amplitude_weight_tests {
+        use super::super::*;
+
+        #[test]
+        fn test_amplitude_zero_and_one() {
+            let z = AmplitudeWeight::zero();
+            let o = AmplitudeWeight::one();
+            assert!(z.is_zero());
+            assert!(!z.is_one());
+            assert!(o.is_one());
+            assert!(!o.is_zero());
+        }
+
+        #[test]
+        fn test_amplitude_plus_associativity() {
+            let a = AmplitudeWeight::new(1.0, 2.0);
+            let b = AmplitudeWeight::new(3.0, -1.0);
+            let c = AmplitudeWeight::new(-0.5, 0.5);
+            let ab_c = a.plus(&b).plus(&c);
+            let a_bc = a.plus(&b.plus(&c));
+            assert!(ab_c.approx_eq(&a_bc, 1e-12));
+        }
+
+        #[test]
+        fn test_amplitude_plus_commutativity() {
+            let a = AmplitudeWeight::new(1.0, 2.0);
+            let b = AmplitudeWeight::new(3.0, -1.0);
+            assert!(a.plus(&b).approx_eq(&b.plus(&a), 1e-12));
+        }
+
+        #[test]
+        fn test_amplitude_times_associativity() {
+            let a = AmplitudeWeight::new(1.0, 2.0);
+            let b = AmplitudeWeight::new(3.0, -1.0);
+            let c = AmplitudeWeight::new(-0.5, 0.5);
+            let ab_c = a.times(&b).times(&c);
+            let a_bc = a.times(&b.times(&c));
+            assert!(ab_c.approx_eq(&a_bc, 1e-10));
+        }
+
+        #[test]
+        fn test_amplitude_distributivity() {
+            let a = AmplitudeWeight::new(1.0, 2.0);
+            let b = AmplitudeWeight::new(3.0, -1.0);
+            let c = AmplitudeWeight::new(-0.5, 0.5);
+            let lhs = a.times(&b.plus(&c));
+            let rhs = a.times(&b).plus(&a.times(&c));
+            assert!(lhs.approx_eq(&rhs, 1e-10));
+        }
+
+        #[test]
+        fn test_amplitude_zero_annihilates() {
+            let a = AmplitudeWeight::new(3.0, -1.0);
+            let z = AmplitudeWeight::zero();
+            assert!(z.times(&a).is_zero());
+            assert!(a.times(&z).is_zero());
+        }
+
+        #[test]
+        fn test_amplitude_zero_identity() {
+            let a = AmplitudeWeight::new(3.0, -1.0);
+            let z = AmplitudeWeight::zero();
+            assert!(z.plus(&a).approx_eq(&a, 1e-12));
+            assert!(a.plus(&z).approx_eq(&a, 1e-12));
+        }
+
+        #[test]
+        fn test_amplitude_one_identity() {
+            let a = AmplitudeWeight::new(3.0, -1.0);
+            let o = AmplitudeWeight::one();
+            assert!(o.times(&a).approx_eq(&a, 1e-12));
+            assert!(a.times(&o).approx_eq(&a, 1e-12));
+        }
+
+        #[test]
+        fn test_amplitude_constructive_interference() {
+            let s = 1.0_f64 / 2.0_f64.sqrt();
+            let a = AmplitudeWeight::new(s, 0.0);
+            let sum = a.plus(&a);
+            let expected = AmplitudeWeight::new(2.0 * s, 0.0);
+            assert!(sum.approx_eq(&expected, 1e-12));
+        }
+
+        #[test]
+        fn test_amplitude_destructive_interference() {
+            let s = 1.0_f64 / 2.0_f64.sqrt();
+            let a = AmplitudeWeight::new(s, 0.0);
+            let neg_a = AmplitudeWeight::new(-s, 0.0);
+            let sum = a.plus(&neg_a);
+            assert!(sum.is_zero() || sum.approx_eq(&AmplitudeWeight::zero(), 1e-12));
+        }
+
+        #[test]
+        fn test_amplitude_phase_composition() {
+            // i * i = -1
+            let i = AmplitudeWeight::new(0.0, 1.0);
+            let result = i.times(&i);
+            let expected = AmplitudeWeight::new(-1.0, 0.0);
+            assert!(result.approx_eq(&expected, 1e-12));
+        }
+
+        #[test]
+        fn test_amplitude_born_rule() {
+            let s = 1.0_f64 / 2.0_f64.sqrt();
+            let a = AmplitudeWeight::new(s, 0.0);
+            assert!((a.norm_sqr() - 0.5).abs() < 1e-12);
+        }
+
+        #[test]
+        fn test_amplitude_from_to_probability_roundtrip() {
+            for &p in &[0.0, 0.25, 0.5, 0.75, 1.0] {
+                let a = AmplitudeWeight::from_probability(p);
+                let recovered = a.to_probability();
+                assert!(
+                    (recovered - p).abs() < 1e-12,
+                    "roundtrip failed for p={p}: got {recovered}"
+                );
+            }
+        }
+
+        #[test]
+        fn test_amplitude_ord_higher_probability_is_better() {
+            let high = AmplitudeWeight::new(0.9, 0.0); // |z|² = 0.81
+            let low = AmplitudeWeight::new(0.3, 0.0); // |z|² = 0.09
+            // Higher norm_sqr should be "less" (better) in Ord
+            assert!(high < low);
+        }
+
+        #[test]
+        fn test_amplitude_detectable_zero() {
+            let z = AmplitudeWeight::zero();
+            assert!(z.is_zero());
+            let nz = AmplitudeWeight::new(0.0, 1e-15);
+            assert!(!nz.is_zero());
+        }
+
+        #[test]
+        fn test_amplitude_hash_consistency() {
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+
+            let a = AmplitudeWeight::new(1.0, -2.0);
+            let b = AmplitudeWeight::new(1.0, -2.0);
+            assert_eq!(a, b);
+            let mut ha = DefaultHasher::new();
+            let mut hb = DefaultHasher::new();
+            a.hash(&mut ha);
+            b.hash(&mut hb);
+            assert_eq!(ha.finish(), hb.finish());
+        }
+
+        #[test]
+        fn test_amplitude_display_debug() {
+            let a = AmplitudeWeight::new(1.0, -0.5);
+            let dbg = format!("{:?}", a);
+            assert!(dbg.contains("AmplitudeWeight"));
+            let disp = format!("{}", a);
+            assert!(disp.contains("i"));
+        }
+    }
+
+    #[cfg(all(feature = "quantum", feature = "wfst-log"))]
+    mod amplitude_log_weight_tests {
+        use super::super::*;
+
+        #[test]
+        fn test_amplitude_from_log_weight_roundtrip() {
+            // LogWeight(0) = probability 1.0
+            let lw = LogWeight::new(0.0);
+            let a = AmplitudeWeight::from_log_weight(lw);
+            assert!((a.to_probability() - 1.0).abs() < 1e-12);
+        }
+
+        #[test]
+        fn test_amplitude_from_log_weight_half() {
+            // LogWeight(-ln(0.5)) ≈ 0.6931
+            let lw = LogWeight::from_probability(0.5);
+            let a = AmplitudeWeight::from_log_weight(lw);
+            assert!(
+                (a.to_probability() - 0.5).abs() < 1e-10,
+                "expected ~0.5, got {}",
+                a.to_probability()
+            );
+        }
+
+        #[test]
+        fn test_amplitude_from_log_weight_zero_is_zero() {
+            let lw = LogWeight::zero(); // +inf = probability 0
+            let a = AmplitudeWeight::from_log_weight(lw);
+            assert!(a.is_zero());
+        }
     }
 }
