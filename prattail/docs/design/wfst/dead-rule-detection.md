@@ -1,10 +1,11 @@
-# Four-Tier Dead-Rule Detection
+# Five-Tier Dead-Rule Detection
 
 **Date:** 2026-03-02 (Tier 4 added; originally 2026-03-01)
+**Tier 5 added:** 2026-03-07
 
 Dead-rule detection identifies grammar rules that can never fire during
 parsing and reports them as compile-time warnings.  This document describes
-PraTTaIL's four-tier detection architecture, its integration with the
+PraTTaIL's five-tier detection architecture, its integration with the
 unified lint layer, correctness properties, and practical results.
 
 ---
@@ -12,7 +13,7 @@ unified lint layer, correctness properties, and practical results.
 ## Table of Contents
 
 1. [Introduction & Motivation](#1-introduction--motivation)
-2. [Four-Tier Architecture](#2-four-tier-architecture)
+2. [Five-Tier Architecture](#2-five-tier-architecture)
 3. [Integration with Unified Lint Layer](#3-integration-with-unified-lint-layer)
 4. [Correctness Properties](#4-correctness-properties)
 5. [Dead Rules Detected in Practice](#5-dead-rules-detected-in-practice)
@@ -49,7 +50,7 @@ PraTTaIL's detection is **conservative**: it may miss some dead rules
 (false negatives), but it will never flag a live rule as dead (no false
 positives).  This design choice mirrors Rust's `#[warn(dead_code)]` lint,
 where the compiler accepts silent dead code over noisy false alarms.  The
-four-tier structure progressively widens coverage while maintaining this
+five-tier structure progressively widens coverage while maintaining this
 conservatism.
 
 ### Relation to compiler warnings
@@ -64,7 +65,7 @@ The dead-rule warning is analogous to Rust's `#[warn(dead_code)]`:
 
 ---
 
-## 2. Four-Tier Architecture
+## 2. Five-Tier Architecture
 
 ### Decision flow
 
@@ -72,7 +73,8 @@ Every rule in the grammar enters the detection pipeline and is classified
 by exactly one tier.  Tiers 1–3 execute in order; once a rule is handled by
 a tier, it does not proceed to subsequent tiers.  Tier 4 (semantic liveness)
 runs after Tiers 1–3 and can **resurrect** rules that those tiers flagged
-as dead.
+as dead.  Tier 5 (WPDS stack-aware) runs after Tier 4 and can flag additional
+rules whose categories are unreachable under full pushdown analysis.
 
 ```
                 ┌──────┐
@@ -105,8 +107,21 @@ as dead.
                     ▼           │yes            │no
                ┌─────────┐      ▼               ▼
                │no →DEAD │   ┌──────┐        ┌──────┐
-               │yes→LIVE │   │ LIVE │        │ DEAD │
-               └─────────┘   └──────┘        └──────┘
+               │yes→LIVE │   │      │        │ DEAD │
+               └─────────┘   └──┬───┘        └──────┘
+                                │
+                                ▼
+              ┌─────────────────────────────────────┐
+              │ Tier 5: WPDS stack-aware reachable? │
+              │ (poststar saturation from root)     │
+              └──────────────┬──────────────────────┘
+                             │
+                    ┌────────┴────────┐
+                    │yes              │no
+                     ▼                 ▼
+                  ┌──────┐          ┌──────┐
+                  │ LIVE │          │ DEAD │
+                  └──────┘          └──────┘
 ```
 
 ### Tier 1 — Literal rules (structural check)
@@ -307,6 +322,76 @@ finite set of all rule labels.  The fixed-point loop terminates in at most
 **Complexity**: O(G × L × I) where G = groups, L = labels per group,
 I = iterations.  In practice G ≈ 10–50, L ≈ 2–4, I ≈ 2–3 — negligible.
 
+### Tier 5 — WPDS stack-aware unreachability (pushdown analysis)
+
+**Condition**: all rules surviving Tiers 1–4, in grammars with ≥2 categories
+
+Rules that survive Tiers 1–4 may still be unreachable when the full
+pushdown call/return structure is considered.  The WPDS layer builds a
+Weighted Pushdown System from the grammar's inter-category call structure
+and runs poststar saturation with `BooleanWeight` to determine which
+categories are reachable from the root via valid call/return sequences.
+
+**Algorithm** (from `wpds.rs`):
+
+```
+1. build_wpds() — encode grammar as PDS with Push/Replace/Pop rules
+2. poststar(BooleanWeight) — saturate P-automaton from root category
+3. For each category C:
+     if StackSymbol::category_entry(C) is NOT reachable in A_post*:
+       flag all rules in C as WPDS-unreachable (W13)
+4. For each unreachable rule:
+     compute D15 witness trace via BFS on G33 call graph
+```
+
+**Example** — orphan grammar:
+
+```
+language! {
+    name: OrphanGrammar;
+    primary: Expr;
+
+    category Expr { Num = INTEGER; }
+    category Orphan { OrphanRule = "orphan"; }
+}
+```
+
+Output:
+
+```
+warning[W13]: rule `OrphanRule` in category `Orphan` is unreachable via
+              WPDS stack-aware analysis
+  = hint: this rule's category is not reachable from the root via any
+          valid call/return path
+  witness trace:
+    Orphan has no path from any reachable category
+```
+
+**Pseudocode for Tier 5 check:**
+
+```
+// In analyze_wpds():
+for rule in spec.rules:
+    rule_entry := StackSymbol::rule_position(rule.category, rule.label, 0)
+    if post.symbol_weight(rule_entry).is_zero()
+       && !reachable_categories.contains(rule.category):
+        missing := find_missing_callers(spec, rule.category, reachable)
+        witness := shortest_path_witness(call_graph, reachable, rule.category)
+        unreachable_rules.push(WpdsUnreachableRule {
+            rule_label, category, missing_contexts, witness_trace
+        })
+```
+
+**Key difference from Tiers 1–3:** Tiers 1–3 use finite-state analysis
+(FIRST sets, WFST reachability).  Tier 5 uses pushdown analysis — it models
+the full call stack to distinguish categories that are referenced in the
+grammar but unreachable under any valid sequence of push/pop operations from
+the root.  Tier 4 can still resurrect rules flagged by Tier 5 if semantic
+dependency groups connect them to live labels.
+
+**Lint ID:** W13 (severity: Warning).  Sub-diagnostic D15 appends witness
+traces explaining the shortest hypothetical Push chain.
+
 ---
 
 ## 3. Integration with Unified Lint Layer
@@ -332,6 +417,7 @@ Dead-rule detection was migrated from inline `eprintln!` calls in
   │ ├─ G01..G10  (grammar structure)             │
   │ ├─ W01       (dead-rule) ◄── this lint       │
   │ ├─ W02..W06  (WFST-specific)                 │
+  │ ├─ W13       (wpds-unreachable) ◄── Tier 5   │
   │ ├─ R01..R07  (recovery)                      │
   │ ├─ C01..C04  (cross-category)                │
   │ └─ P02..P04  (performance)                   │
@@ -462,10 +548,10 @@ property independent of other rules.
 
 ### By language
 
-| Language   | Dead Rules | Tier 1 | Tier 2 | Tier 3 |
-|------------|------------|--------|--------|--------|
-| Calculator | 8          | 0      | 0      | 8      |
-| RhoCalc    | 36         | 0      | 0      | 36     |
+| Language   | Dead Rules | Tier 1 | Tier 2 | Tier 3 | Tier 5 |
+|------------|------------|--------|--------|--------|--------|
+| Calculator | 8          | 0      | 0      | 8      | 0      |
+| RhoCalc    | 36         | 0      | 0      | 36     | 0      |
 
 ### Calculator dead rules (8)
 
@@ -523,6 +609,7 @@ shadow the cross-category path.
 | 2 (rule check)    | `O(\|rules\|)`                                          | Set membership test per rule                         |
 | 3                 | `O(\|rules\| × \|FIRST\| × \|WFST_actions\|)`           | Bounded by grammar size                              |
 | 4                 | `O(\|groups\| × \|labels_per_group\| × \|iterations\|)` | Typically `O(50 × 4 × 3)` — negligible               |
+| 5                 | `O(\|Δ\| + \|Γ\|² × H)`                                | WPDS construction + poststar saturation              |
 
 The total cost is dominated by Tier 3, which is O(|rules| × |FIRST| ×
 |WFST_actions|).  In practice this is negligible compared to WFST
@@ -604,4 +691,9 @@ properties.
 | `collect_semantic_dependency_groups()`       | `prattail_bridge.rs`     | 596–649  |
 | `collect_constructor_labels()` (Pattern)     | `pattern.rs`             | 225–243  |
 | `collect_constructor_labels()` (PatternTerm) | `pattern.rs`             | 163–186  |
+| `analyze_wpds()`                            | `wpds.rs`                | 1991–2106 |
+| `lint_w13_wpds_unreachable()`               | `lint.rs`                | 2485–2536 |
+| `lint_d14_wpds_complexity_report()`         | `lint.rs`                | 2544–2616 |
+| `lint_p05_wpds_pipeline_cost()`             | `lint.rs`                | 2623–2651 |
+| WPDS pipeline block                         | `pipeline.rs`            | 2278–2371 |
 | Unit tests (Tiers 1–4)                       | `tests/warning_tests.rs` | 355–1045 |

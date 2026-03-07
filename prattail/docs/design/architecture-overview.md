@@ -169,10 +169,10 @@ Sub-steps:
 2. FOLLOW set computation
 3. Binding power table analysis (infix, prefix, postfix, mixfix)
 4. Prediction WFST construction per category (tropical shortest-path)
-5. Dead-rule detection (4-tier: LiteralNoNativeType, UnreachableCategory, WfstUnreachable, SemanticLiveness)
+5. Dead-rule detection (5-tier: LiteralNoNativeType, UnreachableCategory, WfstUnreachable, SemanticLiveness, WpdsStackAware)
 6. Inter-category dead-path detection (BooleanWeight forward-backward)
 7. Nearly-dead path detection (ProductWeight<BooleanWeight, CountingWeight>)
-8. Lint layer execution (23 lints in 5 categories: G, W, R, C, P)
+8. Lint layer execution (diagnostics across 7 categories: G, W, R, C, D, P, COMP)
 9. Recursive descent handler generation
 10. Trampolined parser generation (Frame_Cat enums, explicit continuation stack)
 11. Cross-category dispatch generation (WFST-weight-ordered match arms)
@@ -290,10 +290,10 @@ prattail/src/
   |                          CastRule, CrossCategoryRule
   |
   |-- lint.rs                Unified compile-time lint layer:
-  |                          23 lints in 5 categories (G01-G10, W01-W06,
-  |                          R01-R07, C01-C04, P02-P04),
-  |                          LintContext, run_lints(), LintDiagnostic,
-  |                          LintSeverity, Rust-compiler-style output
+  |                          diagnostics across 7 categories (G, W, R, C,
+  |                          D, P, COMP), LintContext, run_lints(),
+  |                          LintDiagnostic, LintSeverity,
+  |                          Rust-compiler-style output
   |
   |-- runtime_types.rs       Shared runtime types (imported by generated code
   |                          via `use mettail_prattail::runtime_types::*`):
@@ -566,16 +566,17 @@ dispatch match arms by WFST prediction weights. CountingWeight
 detects ambiguity; BooleanWeight detects dead rules. All WFST
 computation happens at codegen time with zero runtime overhead.
 
-**Generate Phase -- Dead-Rule Detection.** Four-tier analysis:
+**Generate Phase -- Dead-Rule Detection.** Five-tier analysis:
 1. **Tier 1** (LiteralNoNativeType): literal rules in categories without `native_type`
 2. **Tier 2** (UnreachableCategory): infix/var rules in unreachable categories
 3. **Tier 3** (WfstUnreachable): prefix rules with no WFST dispatch path
 4. **Tier 4** (SemanticLiveness): transitive closure over dependency groups
+5. **Tier 5** (WpdsStackAware): WPDS poststar(BooleanWeight) stack-aware unreachability (W13)
 
-**Generate Phase -- Lint Layer.** 23 lints in 5 categories run against the
-grammar: grammar structure (G01-G10), WFST-specific (W01-W06), recovery
-(R01-R07), cross-category (C01-C04), performance (P02-P04). Output follows
-Rust compiler diagnostic style to stderr.
+**Generate Phase -- Lint Layer.** Lint diagnostics across 7 categories run against
+the grammar: grammar structure (G), WFST-specific (W), recovery (R), cross-category
+(C), decision tree/WPDS (D/COMP), performance (P). Output follows Rust compiler
+diagnostic style to stderr.
 
 **Generate Phase -- Trampolined Parsers.**
 - `parse_Int`: Explicit continuation stack with `Frame_Int` variants.
@@ -695,9 +696,10 @@ the first success.
 > - [design/composed-dispatch.md](composed-dispatch.md) -- WFST-composed dispatch table computation
 > - [design/multi-accept-dfa.md](multi-accept-dfa.md) -- Multi-accept DFA analysis
 > - [design/lazy-trampoline-parser.md](lazy-trampoline-parser.md) -- Trampoline parser architecture
-> - [design/lint-layer.md](lint-layer.md) -- 23-lint diagnostic layer design
+> - [design/lint-layer.md](lint-layer.md) -- Lint diagnostic layer design
 > - [design/prediction-engine.md](prediction-engine.md) -- FIRST/FOLLOW sets and dispatch tables
-> - [design/wfst/dead-rule-detection.md](wfst/dead-rule-detection.md) -- Four-tier dead-rule detection
+> - [design/wfst/dead-rule-detection.md](wfst/dead-rule-detection.md) -- Five-tier dead-rule detection
+> - [design/wfst/wpds-analysis.md](wfst/wpds-analysis.md) -- WPDS analysis layer
 > - [design/wfst/grammar-composition.md](wfst/grammar-composition.md) -- WFST grammar composition
 > - [theory/wfst/semirings.md](../theory/wfst/semirings.md) -- Semiring theory
 > - [design/wfst/error-recovery.md](wfst/error-recovery.md) -- WFST-weighted error recovery

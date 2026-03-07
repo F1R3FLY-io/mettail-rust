@@ -989,9 +989,9 @@ In practice, convergence occurs in 2–3 iterations.
 
 ## §10 Dead-Rule Detection and Linting
 
-### Four-Tier Dead-Rule Detection
+### Five-Tier Dead-Rule Detection
 
-PraTTaIL identifies rules that can never fire through a four-tier analysis that
+PraTTaIL identifies rules that can never fire through a five-tier analysis that
 increases in sophistication:
 
 ```
@@ -1014,6 +1014,12 @@ increases in sophistication:
   │   (equations, rewrites, logic blocks). A rule that is parsing-  │
   │   dead may be resurrected if it appears in a dependency group   │
   │   with a live label.                                            │
+  ├─────────────────────────────────────────────────────────────────┤
+  │ Tier 5: WpdsStackAware (W13)                                    │
+  │   WPDS poststar(BooleanWeight) analysis: rules surviving        │
+  │   Tiers 1–4 are checked for stack-aware reachability via        │
+  │   weighted pushdown system saturation. D15 witness traces       │
+  │   provide shortest-path evidence for unreachability.            │
   └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1023,17 +1029,18 @@ data structure is needed.
 
 ### The Lint Layer
 
-PraTTaIL provides **28 lints** across 6 categories, with Rust-compiler-style
+PraTTaIL provides lint diagnostics across 7 categories, with Rust-compiler-style
 output:
 
-| Category  | Prefix | Focus                | Count |
-|-----------|--------|----------------------|-------|
-| Grammar   | G      | Structure & syntax   | 11    |
-| WFST      | W      | Dispatch weights     | 5     |
-| Recovery  | R      | Error repair config  | 5     |
-| Cross-cat | C      | Cast rules & overlap | 3     |
-| Perf      | P      | Performance warnings | 3     |
-| Compose   | X      | Multi-grammar union  | 5     |
+| Category  | Prefix | Focus                      | Count |
+|-----------|--------|----------------------------|-------|
+| Grammar   | G      | Structure & syntax         | 11    |
+| WFST      | W      | Dispatch weights           | 12    |
+| Recovery  | R      | Error repair config        | 5     |
+| Cross-cat | C      | Cast rules & overlap       | 3     |
+| WPDS      | D/COMP | WPDS analysis diagnostics  | 3     |
+| Perf      | P      | Performance warnings       | 4     |
+| Compose   | X      | Multi-grammar union        | 5     |
 
 **Sample output:**
 
@@ -1114,7 +1121,14 @@ LanguageSpec (from macro expansion)
      │         │         │
      │         │         └─ Dead code elimination: skip codegen
      │         │
-     │         ├──▶ run_lints()  ──▶ 28 lints, compiler-style output
+     │         ├──▶ analyze_wpds()  ──▶ WpdsAnalysis (call graph, depth, cycles)
+     │         │         │
+     │         │         ├─ INT-01: wpds_refine_prediction_weights()
+     │         │         ├─ COMP-07: wpds_confirm_trie_dead_rules()
+     │         │         ├─ INT-02: Record WPDS dead-rule labels
+     │         │         └─ INT-03: NFA spillover reduction
+     │         │
+     │         ├──▶ run_lints()  ──▶ lint diagnostics, compiler-style output
      │         │
      │         └──▶ Codegen
      │               │
@@ -1336,6 +1350,8 @@ composition lint suite (X01–X05) catches interaction bugs at compile time.
 - [Prediction](wfst/prediction.md)
 - [Grammar Composition](wfst/grammar-composition.md)
 - [NFA Disambiguation](wfst/nfa-disambiguation.md)
+- [WPDS Analysis](wfst/wpds-analysis.md)
+- [WPDS Layer Expansion](wfst/wpds-expansion/README.md)
 
 **Design — Semirings:**
 - [Boolean](wfst/semirings/boolean-weight.md) ·
@@ -1358,6 +1374,14 @@ composition lint suite (X01–X05) catches interaction bugs at compile time.
 - [Layer Interactions](disambiguation/06-layer-interactions.md)
 - [Semantic Disambiguation](disambiguation/07-semantic-disambiguation.md)
 - [NFA-WFST Disambiguation](disambiguation/08-nfa-wfst-disambiguation.md)
+
+**Design — WPDS:**
+- [WPDS Analysis](wfst/wpds-analysis.md) — Core WPDS algorithms: poststar, prestar, stringsum
+- [WPDS Layer Expansion](wfst/wpds-expansion/README.md) — 8-sprint expansion hub: G33–G36, CS-01/04/05
+- [Call Graph Analysis](wfst/wpds-expansion/call-graph-analysis.md) — G33, Tarjan SCC, witness traces
+- [Depth Bounds and Cycles](wfst/wpds-expansion/depth-bounds-and-cycles.md) — G34/G35, recursion classification
+- [Context-Sensitive Tables](wfst/wpds-expansion/context-sensitive-tables.md) — G36, CS-01/04/05
+- [Pipeline Integrations](wfst/wpds-expansion/pipeline-integrations.md) — INT-01/02/03, COMP-07, RT-01
 
 **Theory:**
 - [Pratt Parsing](../theory/pratt-parsing.md)

@@ -305,7 +305,7 @@ Boolean algebra.  **QED**
 `BooleanWeight` is used for dead-rule detection (`pipeline.rs`): a
 grammar rule's reachability is projected onto the Boolean semiring, and
 rules with weight `BooleanWeight(false)` for all tokens are flagged as
-dead (Tier 3 of the four-tier analysis).
+dead (Tier 3 of the five-tier analysis).
 
 ### 4.3  ContextWeight Is a Boolean Algebra
 

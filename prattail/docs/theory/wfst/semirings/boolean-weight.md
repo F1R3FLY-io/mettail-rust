@@ -264,11 +264,11 @@ yields `false` -- they are dead.
 
 PraTTaIL uses BooleanWeight semantics (though not the BooleanWeight struct
 directly) in `pipeline.rs` to detect dead grammar rules at compile time.
-Detection uses a four-tier architecture implemented in `detect_dead_rules()`
+Detection uses a five-tier architecture implemented in `detect_dead_rules()`
 (`pipeline.rs:106–207`), surfaced through the unified lint layer as lint
 W01 (`lint.rs:786–832`).
 
-### 6.1 Four-Tier Algorithm
+### 6.1 Five-Tier Algorithm
 
 The algorithm classifies each rule into exactly one tier:
 
@@ -329,7 +329,7 @@ Instead, `detect_dead_rules()` returns `Vec<DeadRuleWarning>` (three
 variants: `LiteralNoNativeType`, `UnreachableCategory`, `WfstUnreachable`),
 which `lint_w01_dead_rule()` wraps into `LintDiagnostic` entries with
 variant-specific hints.  The unified `run_lints()` entry point in
-`lint.rs:136–176` invokes all 23 lints including W01.
+`lint.rs` invokes all lint diagnostics including W01.
 
 See [../../../design/wfst/dead-rule-detection.md](../../../design/wfst/dead-rule-detection.md)
 for the full design document.

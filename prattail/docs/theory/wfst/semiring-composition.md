@@ -336,7 +336,7 @@ external parameters.  Therefore, the target semiring's algebraic properties
 | [`semirings/boolean-weight.md`](semirings/boolean-weight.md)                     | BooleanWeight reachability analysis                                                |
 | [`semirings/context-weight.md`](semirings/context-weight.md)                     | ContextWeight set-semiring details                                                 |
 | [`semirings/complexity-weight.md`](semirings/complexity-weight.md)               | ComplexityWeight bottleneck analysis                                               |
-| [`dead-rule-detection.md`](../../design/wfst/dead-rule-detection.md)             | Four-tier dead-rule analysis (Modes 1 + 4)                                         |
+| [`dead-rule-detection.md`](../../design/wfst/dead-rule-detection.md)             | Five-tier dead-rule analysis (Modes 1 + 4)                                         |
 | [`pipeline-integration.md`](../../architecture/wfst/pipeline-integration.md)     | Pipeline step-by-step data flow                                                    |
 | [`composed-dispatch.md`](../../design/composed-dispatch.md)                      | Composed dispatch table construction                                               |
 | [`stream-to-lattice.md`](stream-to-lattice.md)                                   | Stream-to-Lattice Conversion — the lattice structures that Mode 1/2/3 operate over |

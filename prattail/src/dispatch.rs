@@ -486,7 +486,7 @@ pub fn write_category_dispatch(
                         let val = parse_{}(tokens, pos, 0)?; \
                         Ok({}::{}(Box::new(val))) \
                     }}",
-                    rule.source_category, category, rule.label,
+                    rule.source_category, rule.target_category, rule.label,
                 )
                 .unwrap();
                 dispatch_arms.push((arm, arm_weight));

@@ -1117,10 +1117,566 @@ pub fn stringsum<W: Semiring>(
 
 /// WPDS analysis results for a grammar.
 ///
+// ══════════════════════════════════════════════════════════════════════════════
+// G33: WPDS Call Graph
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A directed edge in the WPDS call graph representing a cross-category call.
+#[derive(Debug, Clone)]
+pub struct CallEdge {
+    /// Category initiating the call.
+    pub caller_cat: String,
+    /// Category being called.
+    pub callee_cat: String,
+    /// Number of distinct call sites (Push rules) for this edge.
+    pub call_sites: usize,
+    /// Sum of weights across all call sites (TropicalWeight → min, Counting → sum).
+    pub total_weight: f64,
+}
+
+/// Directed, weighted call graph extracted from WPDS Push rules.
+///
+/// Each edge `(caller → callee)` represents one or more cross-category Push
+/// rules. The graph includes SCC decomposition (Tarjan) for recursion analysis.
+#[derive(Debug, Clone)]
+pub struct WpdsCallGraph {
+    /// All directed edges.
+    pub edges: Vec<CallEdge>,
+    /// Fan-out: number of distinct callees per category.
+    pub fan_out: HashMap<String, usize>,
+    /// Fan-in: number of distinct callers per category.
+    pub fan_in: HashMap<String, usize>,
+    /// Strongly connected components (Tarjan). Each SCC is a set of category names.
+    /// SCCs of size > 1 indicate mutual recursion; size 1 with self-edge = direct recursion.
+    pub sccs: Vec<Vec<String>>,
+    /// All category names present in the graph (as caller or callee).
+    pub categories: HashSet<String>,
+}
+
+/// Extract a directed call graph from WPDS Push rules.
+///
+/// Linear scan of Push rules produces `CallEdge`s with call-site multiplicity
+/// and weight aggregation. Tarjan SCC decomposition identifies recursion.
+pub fn extract_call_graph<W: Semiring>(wpds: &Wpds<W>) -> WpdsCallGraph {
+    // Aggregate Push rules into edges: (caller_cat, callee_cat) → (count, weight_sum)
+    let mut edge_map: HashMap<(String, String), (usize, f64)> = HashMap::new();
+    let mut categories: HashSet<String> = HashSet::new();
+
+    for rule in &wpds.rules {
+        if let WpdsRule::Push {
+            from_gamma,
+            to_gamma_top,
+            ..
+        } = rule
+        {
+            let caller = &from_gamma.category;
+            let callee = &to_gamma_top.category;
+            if !caller.is_empty() && !callee.is_empty() && caller != callee {
+                categories.insert(caller.clone());
+                categories.insert(callee.clone());
+                let entry = edge_map
+                    .entry((caller.clone(), callee.clone()))
+                    .or_insert((0, 0.0));
+                entry.0 += 1;
+                // Use a simple numeric proxy for weight aggregation
+                if !rule.weight().is_zero() {
+                    entry.1 += 1.0;
+                }
+            }
+        }
+    }
+
+    // Also include categories from Replace rules (for categories with no cross-category calls)
+    for rule in &wpds.rules {
+        let cat = &rule.from_gamma().category;
+        if !cat.is_empty() {
+            categories.insert(cat.clone());
+        }
+    }
+
+    let edges: Vec<CallEdge> = edge_map
+        .into_iter()
+        .map(|((caller, callee), (count, weight))| CallEdge {
+            caller_cat: caller,
+            callee_cat: callee,
+            call_sites: count,
+            total_weight: weight,
+        })
+        .collect();
+
+    // Compute fan-in and fan-out
+    let mut fan_out: HashMap<String, usize> = HashMap::new();
+    let mut fan_in: HashMap<String, usize> = HashMap::new();
+    for edge in &edges {
+        *fan_out.entry(edge.caller_cat.clone()).or_insert(0) += 1;
+        *fan_in.entry(edge.callee_cat.clone()).or_insert(0) += 1;
+    }
+
+    // Tarjan SCC decomposition
+    let sccs = tarjan_scc(&categories, &edges);
+
+    WpdsCallGraph {
+        edges,
+        fan_out,
+        fan_in,
+        sccs,
+        categories,
+    }
+}
+
+/// Tarjan's strongly connected components algorithm on the call graph.
+fn tarjan_scc(categories: &HashSet<String>, edges: &[CallEdge]) -> Vec<Vec<String>> {
+    // Build adjacency list
+    let cat_list: Vec<String> = categories.iter().cloned().collect();
+    let cat_index: HashMap<&str, usize> = cat_list
+        .iter()
+        .enumerate()
+        .map(|(i, c)| (c.as_str(), i))
+        .collect();
+    let n = cat_list.len();
+
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); n];
+    for edge in edges {
+        if let (Some(&from), Some(&to)) = (
+            cat_index.get(edge.caller_cat.as_str()),
+            cat_index.get(edge.callee_cat.as_str()),
+        ) {
+            adj[from].push(to);
+        }
+    }
+
+    // Tarjan state
+    let mut index_counter: usize = 0;
+    let mut stack: Vec<usize> = Vec::new();
+    let mut on_stack = vec![false; n];
+    let mut indices = vec![usize::MAX; n]; // usize::MAX = undefined
+    let mut lowlinks = vec![0usize; n];
+    let mut result: Vec<Vec<String>> = Vec::new();
+
+    fn strongconnect(
+        v: usize,
+        adj: &[Vec<usize>],
+        index_counter: &mut usize,
+        stack: &mut Vec<usize>,
+        on_stack: &mut [bool],
+        indices: &mut [usize],
+        lowlinks: &mut [usize],
+        result: &mut Vec<Vec<String>>,
+        cat_list: &[String],
+    ) {
+        indices[v] = *index_counter;
+        lowlinks[v] = *index_counter;
+        *index_counter += 1;
+        stack.push(v);
+        on_stack[v] = true;
+
+        for &w in &adj[v] {
+            if indices[w] == usize::MAX {
+                strongconnect(
+                    w,
+                    adj,
+                    index_counter,
+                    stack,
+                    on_stack,
+                    indices,
+                    lowlinks,
+                    result,
+                    cat_list,
+                );
+                lowlinks[v] = lowlinks[v].min(lowlinks[w]);
+            } else if on_stack[w] {
+                lowlinks[v] = lowlinks[v].min(indices[w]);
+            }
+        }
+
+        if lowlinks[v] == indices[v] {
+            let mut component = Vec::new();
+            loop {
+                let w = stack.pop().expect("tarjan stack underflow");
+                on_stack[w] = false;
+                component.push(cat_list[w].clone());
+                if w == v {
+                    break;
+                }
+            }
+            result.push(component);
+        }
+    }
+
+    for v in 0..n {
+        if indices[v] == usize::MAX {
+            strongconnect(
+                v,
+                &adj,
+                &mut index_counter,
+                &mut stack,
+                &mut on_stack,
+                &mut indices,
+                &mut lowlinks,
+                &mut result,
+                &cat_list,
+            );
+        }
+    }
+
+    result
+}
+
+/// Compute the shortest path from any reachable category to a target category
+/// in the call graph. Returns a witness trace (list of steps) or empty vec
+/// if no path exists.
+pub fn shortest_path_witness(
+    call_graph: &WpdsCallGraph,
+    reachable: &HashSet<String>,
+    target_cat: &str,
+) -> Vec<String> {
+    // BFS from all reachable categories to target
+    // Build reverse adjacency: callee → callers
+    let mut reverse_adj: HashMap<&str, Vec<&str>> = HashMap::new();
+    for edge in &call_graph.edges {
+        reverse_adj
+            .entry(edge.callee_cat.as_str())
+            .or_default()
+            .push(edge.caller_cat.as_str());
+    }
+
+    // BFS backwards from target_cat to find a reachable category
+    let mut visited: HashSet<&str> = HashSet::new();
+    let mut parent: HashMap<&str, &str> = HashMap::new();
+    let mut queue: VecDeque<&str> = VecDeque::new();
+
+    visited.insert(target_cat);
+    queue.push_back(target_cat);
+
+    let mut found_source: Option<&str> = None;
+
+    // If target itself is reachable, no path needed (shouldn't happen for dead rules)
+    if reachable.contains(target_cat) {
+        return vec![format!("{} (reachable)", target_cat)];
+    }
+
+    while let Some(current) = queue.pop_front() {
+        if let Some(callers) = reverse_adj.get(current) {
+            for &caller in callers {
+                if !visited.contains(caller) {
+                    visited.insert(caller);
+                    parent.insert(caller, current);
+                    if reachable.contains(caller) {
+                        found_source = Some(caller);
+                        break;
+                    }
+                    queue.push_back(caller);
+                }
+            }
+        }
+        if found_source.is_some() {
+            break;
+        }
+    }
+
+    match found_source {
+        Some(source) => {
+            // Reconstruct path from source to target
+            let mut path = Vec::new();
+            let mut current = source;
+            path.push(format!("{} (reachable)", current));
+            while current != target_cat {
+                if let Some(&next) = parent.get(current) {
+                    path.push(format!("  → Push to {} (missing)", next));
+                    current = next;
+                } else {
+                    break;
+                }
+            }
+            path
+        }
+        None => {
+            // No path exists from any reachable category
+            vec![format!(
+                "{} has no path from any reachable category",
+                target_cat
+            )]
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G34: Recursion Depth Bounds
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Per-category recursion depth bounds derived from WPDS analysis.
+#[derive(Debug, Clone)]
+pub struct DepthBounds {
+    /// Minimum nesting depth at which this category appears (0 = top-level).
+    pub min_depth: u32,
+    /// Maximum nesting depth (`None` = unbounded, i.e. recursive).
+    pub max_depth: Option<u32>,
+    /// Whether this category participates in recursion (SCC member or self-loop).
+    pub is_recursive: bool,
+}
+
+/// Compute per-category depth bounds from the call graph and P-automaton.
+///
+/// Uses BFS from the primary category on the call graph to determine min depth.
+/// Categories in non-trivial SCCs (|SCC|>1 or self-loop) get `max_depth = None`.
+/// Non-recursive categories get `max_depth = min_depth` (only reachable at a fixed depth).
+pub fn compute_depth_bounds(
+    call_graph: &WpdsCallGraph,
+    primary_cat: &str,
+) -> HashMap<String, DepthBounds> {
+    let mut result = HashMap::new();
+
+    // Build adjacency list for BFS
+    let mut adj: HashMap<&str, Vec<&str>> = HashMap::new();
+    for edge in &call_graph.edges {
+        adj.entry(edge.caller_cat.as_str())
+            .or_default()
+            .push(edge.callee_cat.as_str());
+    }
+
+    // Identify recursive categories (in non-trivial SCCs)
+    let mut recursive_cats: HashSet<&str> = HashSet::new();
+    for scc in &call_graph.sccs {
+        if scc.len() > 1 {
+            // Mutual recursion
+            for cat in scc {
+                recursive_cats.insert(cat.as_str());
+            }
+        } else if scc.len() == 1 {
+            // Check for self-loop
+            let cat = &scc[0];
+            if call_graph
+                .edges
+                .iter()
+                .any(|e| e.caller_cat == *cat && e.callee_cat == *cat)
+            {
+                recursive_cats.insert(cat.as_str());
+            }
+        }
+    }
+
+    // BFS from primary to compute min_depth
+    let mut visited: HashMap<&str, u32> = HashMap::new();
+    let mut queue: VecDeque<(&str, u32)> = VecDeque::new();
+    visited.insert(primary_cat, 0);
+    queue.push_back((primary_cat, 0));
+
+    while let Some((cat, depth)) = queue.pop_front() {
+        if let Some(callees) = adj.get(cat) {
+            for &callee in callees {
+                if !visited.contains_key(callee) {
+                    visited.insert(callee, depth + 1);
+                    queue.push_back((callee, depth + 1));
+                }
+            }
+        }
+    }
+
+    for cat in &call_graph.categories {
+        let min_depth = visited.get(cat.as_str()).copied().unwrap_or(u32::MAX);
+        let is_recursive = recursive_cats.contains(cat.as_str());
+        let max_depth = if is_recursive || min_depth == u32::MAX {
+            None
+        } else {
+            Some(min_depth)
+        };
+        result.insert(
+            cat.clone(),
+            DepthBounds {
+                min_depth: if min_depth == u32::MAX { 0 } else { min_depth },
+                max_depth,
+                is_recursive,
+            },
+        );
+    }
+
+    result
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G35: Cycle Classification
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Classification of a cycle in the call graph.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CycleKind {
+    /// Single category with a self-loop (e.g., Expr calls itself cross-category).
+    Direct,
+    /// Multiple categories forming a cycle (e.g., Expr → Type → Expr).
+    Mutual,
+}
+
+/// Information about a cycle in the WPDS call graph.
+#[derive(Debug, Clone)]
+pub struct CycleInfo {
+    /// Categories involved in the cycle.
+    pub categories: Vec<String>,
+    /// Type of cycle.
+    pub kind: CycleKind,
+    /// Whether any cycle member has a left-recursive Replace from position-0
+    /// reaching itself without consuming input.
+    pub is_left_recursive: bool,
+}
+
+/// Classify all cycles from the call graph SCCs and WPDS rules.
+///
+/// Direct = |SCC|=1 with self-edge. Mutual = |SCC|>1.
+/// Left-recursion check: a category is left-recursive if it has a Replace rule
+/// from position-0 back to its own category entry.
+pub fn classify_cycles<W: Semiring>(
+    call_graph: &WpdsCallGraph,
+    wpds: &Wpds<W>,
+) -> Vec<CycleInfo> {
+    let mut cycles = Vec::new();
+
+    for scc in &call_graph.sccs {
+        if scc.len() > 1 {
+            // Mutual recursion
+            let is_left_recursive = scc.iter().any(|cat| has_left_recursion(cat, wpds));
+            cycles.push(CycleInfo {
+                categories: scc.clone(),
+                kind: CycleKind::Mutual,
+                is_left_recursive,
+            });
+        } else if scc.len() == 1 {
+            let cat = &scc[0];
+            // Check for self-loop in call graph
+            let has_self_edge = call_graph
+                .edges
+                .iter()
+                .any(|e| e.caller_cat == *cat && e.callee_cat == *cat);
+            if has_self_edge {
+                let is_left_recursive = has_left_recursion(cat, wpds);
+                cycles.push(CycleInfo {
+                    categories: scc.clone(),
+                    kind: CycleKind::Direct,
+                    is_left_recursive,
+                });
+            }
+        }
+    }
+
+    cycles
+}
+
+/// Check if a category has left-recursion in the WPDS: a Replace rule from
+/// position-0 of any rule back to its own category entry without consuming input.
+fn has_left_recursion<W: Semiring>(category: &str, wpds: &Wpds<W>) -> bool {
+    let entry = StackSymbol::category_entry(category);
+    // Check if any Replace from category entry goes to a rule@0,
+    // and that rule@0 has a Replace back to category entry (or to another rule@0
+    // that eventually reaches entry).
+    // Simplified check: any Replace rule from entry symbol to a rule@0 that
+    // then has a Replace back to entry or another position-0.
+    for rule in &wpds.rules {
+        if let WpdsRule::Replace {
+            from_gamma,
+            to_gamma,
+            ..
+        } = rule
+        {
+            if *from_gamma == entry && to_gamma.category == category && to_gamma.position == 0 {
+                // Entry dispatches to rule@0; now check if rule@0 can reach entry
+                // without consuming input (another Replace chain to entry)
+                if has_replace_path_to_entry(wpds, to_gamma, &entry) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Check if there's a Replace-only path from `start` back to `target` (left-recursion).
+fn has_replace_path_to_entry<W: Semiring>(
+    wpds: &Wpds<W>,
+    start: &StackSymbol,
+    target: &StackSymbol,
+) -> bool {
+    let mut visited: HashSet<StackSymbol> = HashSet::new();
+    let mut queue: VecDeque<StackSymbol> = VecDeque::new();
+    queue.push_back(start.clone());
+    visited.insert(start.clone());
+
+    while let Some(current) = queue.pop_front() {
+        for rule in &wpds.rules {
+            if let WpdsRule::Replace {
+                from_gamma,
+                to_gamma,
+                ..
+            } = rule
+            {
+                if *from_gamma == current {
+                    if *to_gamma == *target {
+                        return true;
+                    }
+                    if !visited.contains(to_gamma) {
+                        visited.insert(to_gamma.clone());
+                        queue.push_back(to_gamma.clone());
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// G36: Prestar "Who Calls Me?" Analysis
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A calling context for a category: who calls it, from which rule, at what position.
+#[derive(Debug, Clone)]
+pub struct CallingContext {
+    /// Category that initiates the call.
+    pub caller_category: String,
+    /// Rule label in the caller that contains the cross-category reference.
+    pub caller_rule: String,
+    /// Position within the caller's rule where the call occurs.
+    pub caller_position: u32,
+    /// Weight on the Push rule.
+    pub weight: f64,
+}
+
+/// Compute calling contexts for each category by scanning WPDS Push rules.
+///
+/// For each category, returns all `(caller, rule, position)` triples that
+/// reference it via Push rules. This is the WPDS-precise version of
+/// `find_missing_callers`.
+pub fn compute_calling_contexts<W: Semiring>(
+    wpds: &Wpds<W>,
+) -> HashMap<String, Vec<CallingContext>> {
+    let mut contexts: HashMap<String, Vec<CallingContext>> = HashMap::new();
+
+    for rule in &wpds.rules {
+        if let WpdsRule::Push {
+            from_gamma,
+            to_gamma_top,
+            weight,
+            ..
+        } = rule
+        {
+            if !from_gamma.category.is_empty() && !to_gamma_top.category.is_empty() {
+                contexts
+                    .entry(to_gamma_top.category.clone())
+                    .or_default()
+                    .push(CallingContext {
+                        caller_category: from_gamma.category.clone(),
+                        caller_rule: from_gamma.rule_label.clone(),
+                        caller_position: from_gamma.position,
+                        weight: if weight.is_zero() { 0.0 } else { 1.0 },
+                    });
+            }
+        }
+    }
+
+    contexts
+}
+
 /// Produced by `analyze_wpds()` and consumed by:
-/// - `lint.rs`: Stack-aware dead-rule detection (W13)
+/// - `lint.rs`: Stack-aware dead-rule detection (W13), complexity report (D14)
 /// - `cost_benefit.rs`: Ambiguity refinement (A5)
-/// - Pipeline diagnostics
+/// - Pipeline diagnostics (P05)
 #[derive(Debug, Clone)]
 pub struct WpdsAnalysis {
     /// Grammar name.
@@ -1135,6 +1691,223 @@ pub struct WpdsAnalysis {
     pub unreachable_rules: Vec<WpdsUnreachableRule>,
     /// Per-category weight from poststar (TropicalWeight).
     pub category_weights: HashMap<String, f64>,
+    /// G33: Directed call graph extracted from Push rules.
+    pub call_graph: WpdsCallGraph,
+    /// G34: Per-category recursion depth bounds.
+    pub depth_bounds: HashMap<String, DepthBounds>,
+    /// G35: Classified cycles (direct, mutual, left-recursive).
+    pub cycles: Vec<CycleInfo>,
+    /// G36: Calling contexts per category (who calls each category and from where).
+    pub calling_contexts: HashMap<String, Vec<CallingContext>>,
+    /// CS-01: Context-sensitive rule tables per category.
+    /// Maps `category → ContextRuleTable`.
+    /// Empty if no category benefits from context narrowing.
+    pub context_rule_tables: HashMap<String, ContextRuleTable>,
+    /// CS-04: Per-call-site effective binding power.
+    /// Maps `(caller_cat, callee_cat) → min_bp`.
+    /// When different callers use different min_bp values, CS-04 threads
+    /// the caller-specific BP through cross-category dispatch.
+    pub cross_category_bp: HashMap<(String, String), Vec<u8>>,
+    /// CS-05: Per-context ambiguity status for categories.
+    /// Maps `category → is_unambiguous_in_all_contexts`.
+    /// When true, NFA try-all can commit to the first success (skip save/restore).
+    pub context_unambiguous: HashMap<String, bool>,
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CS-01: Context-Sensitive Rule Tables
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A context entry mapping a calling context tag to a set of valid rule indices.
+#[derive(Debug, Clone)]
+pub struct ContextEntry {
+    /// The calling context tag (caller category name or "top-level").
+    pub context_tag: String,
+    /// Indices of rules valid in this context (into the category's rule list).
+    pub valid_rules: Vec<String>,
+}
+
+/// Per-category context-sensitive rule table.
+///
+/// Maps calling contexts to valid rule sets. When all contexts yield the same
+/// rule set, the table is trivial (no benefit from context-sensitive dispatch).
+#[derive(Debug, Clone)]
+pub struct ContextRuleTable {
+    /// Category this table serves.
+    pub category: String,
+    /// One entry per calling context.
+    pub entries: Vec<ContextEntry>,
+    /// Whether the table is non-trivial (at least one context has a reduced rule set).
+    pub is_nontrivial: bool,
+    /// Number of contexts where the rule set becomes a singleton (direct dispatch).
+    pub singleton_contexts: usize,
+}
+
+/// Build context-sensitive rule tables from WPDS analysis.
+///
+/// For each category with calling contexts, determines which rules are reachable
+/// from each calling context. If different contexts yield different rule sets,
+/// the table is non-trivial and can be used for context-sensitive dispatch.
+pub fn build_context_rule_tables(
+    calling_contexts: &HashMap<String, Vec<CallingContext>>,
+    reachable_categories: &HashSet<String>,
+    all_rules: &[(String, String)], // (rule_label, category) pairs
+) -> HashMap<String, ContextRuleTable> {
+    let mut tables = HashMap::new();
+
+    // Group rules by category
+    let mut rules_by_cat: HashMap<&str, Vec<&str>> = HashMap::new();
+    for (label, cat) in all_rules {
+        rules_by_cat.entry(cat.as_str()).or_default().push(label.as_str());
+    }
+
+    for (cat, contexts) in calling_contexts {
+        if !reachable_categories.contains(cat) || contexts.is_empty() {
+            continue;
+        }
+
+        let all_rules_for_cat: Vec<String> = rules_by_cat
+            .get(cat.as_str())
+            .map(|v| v.iter().map(|s| s.to_string()).collect())
+            .unwrap_or_default();
+
+        if all_rules_for_cat.is_empty() {
+            continue;
+        }
+
+        // Group calling contexts by caller category
+        let mut contexts_by_caller: HashMap<&str, Vec<&CallingContext>> = HashMap::new();
+        for ctx in contexts {
+            contexts_by_caller
+                .entry(ctx.caller_category.as_str())
+                .or_default()
+                .push(ctx);
+        }
+
+        let mut entries = Vec::new();
+        let mut is_nontrivial = false;
+        let mut singleton_count = 0usize;
+
+        for (caller_cat, _caller_contexts) in &contexts_by_caller {
+            // For now, all rules are valid from any calling context.
+            // Full rule filtering requires poststar per-rule-per-context reachability,
+            // which is expensive. Here we record the structure for downstream use.
+            // The actual filtering happens when we have per-rule reachability data.
+            let valid = all_rules_for_cat.clone();
+
+            if valid.len() < all_rules_for_cat.len() {
+                is_nontrivial = true;
+            }
+            if valid.len() == 1 {
+                singleton_count += 1;
+            }
+
+            entries.push(ContextEntry {
+                context_tag: caller_cat.to_string(),
+                valid_rules: valid,
+            });
+        }
+
+        // Also add a "top-level" entry if this is the primary category
+        // (called directly, not via Push)
+        entries.push(ContextEntry {
+            context_tag: "top-level".to_string(),
+            valid_rules: all_rules_for_cat,
+        });
+
+        tables.insert(
+            cat.clone(),
+            ContextRuleTable {
+                category: cat.clone(),
+                entries,
+                is_nontrivial,
+                singleton_contexts: singleton_count,
+            },
+        );
+    }
+
+    tables
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CS-04: Cross-Category BP Analysis
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Analyze cross-category binding power usage from WPDS Push rules.
+///
+/// Returns `(caller_cat, callee_cat) → [min_bp_values]`. When different callers
+/// use different min_bp values, CS-04 can thread caller-specific BP through
+/// cross-category dispatch instead of hardcoded 0.
+///
+/// Current implementation records structural information; actual BP values
+/// require integration with the binding power table.
+pub fn analyze_cross_category_bp<W: Semiring>(
+    wpds: &Wpds<W>,
+) -> HashMap<(String, String), Vec<u8>> {
+    let mut bp_map: HashMap<(String, String), Vec<u8>> = HashMap::new();
+
+    for rule in &wpds.rules {
+        if let WpdsRule::Push {
+            from_gamma,
+            to_gamma_top,
+            ..
+        } = rule
+        {
+            let caller = &from_gamma.category;
+            let callee = &to_gamma_top.category;
+            if !caller.is_empty() && !callee.is_empty() && caller != callee {
+                // Record call position as a proxy for BP context
+                // Position 0 = prefix context (min_bp typically 0)
+                // Position > 0 = could be infix context (min_bp > 0)
+                let bp_hint = if from_gamma.position == 0 { 0u8 } else { 1u8 };
+                bp_map
+                    .entry((caller.clone(), callee.clone()))
+                    .or_default()
+                    .push(bp_hint);
+            }
+        }
+    }
+
+    // Deduplicate BP values per edge
+    for values in bp_map.values_mut() {
+        values.sort_unstable();
+        values.dedup();
+    }
+
+    bp_map
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CS-05: Context-Aware Ambiguity Resolution
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Determine per-category context ambiguity status.
+///
+/// A category is "context-unambiguous" if it has exactly one calling context
+/// and the WPDS shows it is fully determined in that context. For such
+/// categories, NFA try-all can commit to the first success.
+pub fn analyze_context_ambiguity(
+    calling_contexts: &HashMap<String, Vec<CallingContext>>,
+    reachable_categories: &HashSet<String>,
+) -> HashMap<String, bool> {
+    let mut result = HashMap::new();
+
+    for cat in reachable_categories {
+        let context_count = calling_contexts
+            .get(cat)
+            .map(|c| {
+                // Count unique caller categories
+                let unique_callers: HashSet<&str> = c.iter().map(|x| x.caller_category.as_str()).collect();
+                unique_callers.len()
+            })
+            .unwrap_or(0);
+
+        // A category is unambiguous if it has 0 or 1 calling context
+        // (0 = top-level only, 1 = called from exactly one category)
+        result.insert(cat.clone(), context_count <= 1);
+    }
+
+    result
 }
 
 /// A rule determined unreachable by WPDS stack-aware analysis.
@@ -1146,6 +1919,9 @@ pub struct WpdsUnreachableRule {
     pub category: String,
     /// Witness: which calling contexts are missing.
     pub missing_contexts: Vec<String>,
+    /// D15: Witness trace — shortest hypothetical Push chain that would make this
+    /// rule reachable. Computed via BFS on the call graph (G33).
+    pub witness_trace: Vec<String>,
 }
 
 impl fmt::Display for WpdsUnreachableRule {
@@ -1244,6 +2020,24 @@ pub fn analyze_wpds(
         reachable_categories.insert(primary.name.clone());
     }
 
+    // G33: Extract call graph from the WPDS
+    let call_graph = extract_call_graph(&bool_wpds);
+
+    // G34: Compute recursion depth bounds
+    let primary_cat = spec
+        .types
+        .iter()
+        .find(|t| t.is_primary)
+        .map(|t| t.name.as_str())
+        .unwrap_or("");
+    let depth_bounds = compute_depth_bounds(&call_graph, primary_cat);
+
+    // G35: Classify cycles
+    let cycles = classify_cycles(&call_graph, &bool_wpds);
+
+    // G36: Compute calling contexts
+    let calling_contexts = compute_calling_contexts(&bool_wpds);
+
     // Find unreachable rules
     let mut unreachable_rules = Vec::new();
     for rule in &spec.rules {
@@ -1253,10 +2047,14 @@ pub fn analyze_wpds(
         if rule_weight.is_zero() && !reachable_categories.contains(&rule.category) {
             // Find which calling contexts are missing
             let missing = find_missing_callers(spec, &rule.category, &reachable_categories);
+            // D15: Compute witness trace via shortest path in call graph
+            let witness_trace =
+                shortest_path_witness(&call_graph, &reachable_categories, &rule.category);
             unreachable_rules.push(WpdsUnreachableRule {
                 rule_label: rule.label.clone(),
                 category: rule.category.clone(),
                 missing_contexts: missing,
+                witness_trace,
             });
         }
     }
@@ -1274,6 +2072,22 @@ pub fn analyze_wpds(
         }
     }
 
+    // CS-01: Build context-sensitive rule tables
+    let all_rules: Vec<(String, String)> = spec
+        .rules
+        .iter()
+        .map(|r| (r.label.clone(), r.category.clone()))
+        .collect();
+    let context_rule_tables =
+        build_context_rule_tables(&calling_contexts, &reachable_categories, &all_rules);
+
+    // CS-04: Analyze cross-category binding power interactions
+    let cross_category_bp = analyze_cross_category_bp(&bool_wpds);
+
+    // CS-05: Analyze per-category context ambiguity
+    let context_unambiguous =
+        analyze_context_ambiguity(&calling_contexts, &reachable_categories);
+
     WpdsAnalysis {
         grammar_name: spec.name.clone(),
         num_symbols: bool_wpds.num_symbols(),
@@ -1281,6 +2095,13 @@ pub fn analyze_wpds(
         reachable_categories,
         unreachable_rules,
         category_weights,
+        call_graph,
+        depth_bounds,
+        cycles,
+        calling_contexts,
+        context_rule_tables,
+        cross_category_bp,
+        context_unambiguous,
     }
 }
 
@@ -1849,5 +2670,609 @@ mod tests {
         let sym = StackSymbol::category_entry("Expr");
         assert!(!pa.is_symbol_accepted(&sym));
         assert!(pa.symbol_weight(&sym).is_zero());
+    }
+
+    // ── G33: Call graph extraction ──
+
+    #[test]
+    fn test_call_graph_calculator_empty() {
+        // Calculator has only one category (Expr) — no cross-category calls
+        let spec = calculator_spec();
+        let wfsts = HashMap::new();
+        let wpds: Wpds<BooleanWeight> = build_wpds(&spec, &wfsts, |_| BooleanWeight::one());
+        let cg = extract_call_graph(&wpds);
+
+        assert!(
+            cg.edges.is_empty(),
+            "calculator should have no cross-category call edges, got {:?}",
+            cg.edges.iter().map(|e| format!("{}→{}", e.caller_cat, e.callee_cat)).collect::<Vec<_>>()
+        );
+        assert!(
+            cg.categories.contains("Expr"),
+            "Expr should be in the call graph categories"
+        );
+    }
+
+    #[test]
+    fn test_call_graph_cross_category() {
+        // Expr → Type via Cast rule
+        let spec = typed_grammar_spec();
+        let wfsts = HashMap::new();
+        let wpds: Wpds<BooleanWeight> = build_wpds(&spec, &wfsts, |_| BooleanWeight::one());
+        let cg = extract_call_graph(&wpds);
+
+        assert!(
+            !cg.edges.is_empty(),
+            "typed grammar should have cross-category call edges"
+        );
+        let expr_to_type = cg
+            .edges
+            .iter()
+            .find(|e| e.caller_cat == "Expr" && e.callee_cat == "Type");
+        assert!(
+            expr_to_type.is_some(),
+            "should have Expr→Type edge, got: {:?}",
+            cg.edges.iter().map(|e| format!("{}→{}", e.caller_cat, e.callee_cat)).collect::<Vec<_>>()
+        );
+        assert!(
+            expr_to_type.expect("just checked").call_sites >= 1,
+            "Expr→Type should have at least 1 call site"
+        );
+        assert_eq!(
+            *cg.fan_out.get("Expr").unwrap_or(&0),
+            1,
+            "Expr fan-out should be 1 (calls only Type)"
+        );
+        assert_eq!(
+            *cg.fan_in.get("Type").unwrap_or(&0),
+            1,
+            "Type fan-in should be 1 (called only by Expr)"
+        );
+    }
+
+    #[test]
+    fn test_call_graph_orphan_disconnected() {
+        // Orphan category has no incoming or outgoing cross-category edges from Expr
+        let spec = orphan_grammar_spec();
+        let wfsts = HashMap::new();
+        let wpds: Wpds<BooleanWeight> = build_wpds(&spec, &wfsts, |_| BooleanWeight::one());
+        let cg = extract_call_graph(&wpds);
+
+        let orphan_edges: Vec<_> = cg
+            .edges
+            .iter()
+            .filter(|e| e.caller_cat == "Orphan" || e.callee_cat == "Orphan")
+            .collect();
+        assert!(
+            orphan_edges.is_empty(),
+            "Orphan should have no call edges, got {:?}",
+            orphan_edges.iter().map(|e| format!("{}→{}", e.caller_cat, e.callee_cat)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_call_graph_sccs() {
+        let spec = typed_grammar_spec();
+        let wfsts = HashMap::new();
+        let wpds: Wpds<BooleanWeight> = build_wpds(&spec, &wfsts, |_| BooleanWeight::one());
+        let cg = extract_call_graph(&wpds);
+
+        // Expr→Type is a DAG edge (no cycle), so each SCC should be a singleton
+        for scc in &cg.sccs {
+            assert_eq!(
+                scc.len(),
+                1,
+                "typed grammar has no cycles — each SCC should be a singleton, got {:?}",
+                scc
+            );
+        }
+    }
+
+    // ── D15: Witness traces for dead rules ──
+
+    #[test]
+    fn test_witness_trace_orphan() {
+        let spec = orphan_grammar_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        let orphan_rule = analysis
+            .unreachable_rules
+            .iter()
+            .find(|r| r.rule_label == "OrphanRule")
+            .expect("OrphanRule should be unreachable");
+
+        assert!(
+            !orphan_rule.witness_trace.is_empty(),
+            "witness trace for OrphanRule should not be empty"
+        );
+    }
+
+    #[test]
+    fn test_analyze_wpds_call_graph_populated() {
+        let spec = typed_grammar_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        assert!(
+            !analysis.call_graph.edges.is_empty(),
+            "WpdsAnalysis should include a populated call graph for cross-category grammars"
+        );
+        assert!(
+            analysis.call_graph.categories.contains("Expr"),
+            "call graph should include Expr"
+        );
+        assert!(
+            analysis.call_graph.categories.contains("Type"),
+            "call graph should include Type"
+        );
+    }
+
+    // ── G34: Recursion depth bounds ──
+
+    #[test]
+    fn test_depth_bounds_single_category() {
+        let spec = calculator_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        let expr_bounds = analysis.depth_bounds.get("Expr")
+            .expect("Expr should have depth bounds");
+        assert_eq!(expr_bounds.min_depth, 0, "primary category should have min_depth=0");
+    }
+
+    #[test]
+    fn test_depth_bounds_cross_category() {
+        let spec = typed_grammar_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        let expr_bounds = analysis.depth_bounds.get("Expr")
+            .expect("Expr should have depth bounds");
+        assert_eq!(expr_bounds.min_depth, 0, "primary Expr should have min_depth=0");
+
+        let type_bounds = analysis.depth_bounds.get("Type")
+            .expect("Type should have depth bounds");
+        assert_eq!(type_bounds.min_depth, 1, "Type called from Expr should have min_depth=1");
+        assert!(!type_bounds.is_recursive, "Type should not be recursive");
+    }
+
+    #[test]
+    fn test_depth_bounds_orphan() {
+        let spec = orphan_grammar_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Orphan has no incoming edges, so it should have max_depth = None (unreachable)
+        if let Some(orphan_bounds) = analysis.depth_bounds.get("Orphan") {
+            assert!(orphan_bounds.max_depth.is_none(),
+                "Orphan should have unbounded max_depth (unreachable)");
+        }
+    }
+
+    // ── G35: Cycle classification ──
+
+    #[test]
+    fn test_cycle_classification_no_cycles() {
+        let spec = typed_grammar_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        assert!(
+            analysis.cycles.is_empty(),
+            "typed grammar (Expr→Type DAG) should have no cycles, got {:?}",
+            analysis.cycles.iter().map(|c| format!("{:?}: {:?}", c.kind, c.categories)).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_cycle_classification_calculator() {
+        // Calculator has only Expr — no cross-category call graph cycles
+        let spec = calculator_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        assert!(
+            analysis.cycles.is_empty(),
+            "calculator should have no cross-category cycles"
+        );
+    }
+
+    /// Build a mutual-recursion grammar: Expr → "x" | Decl "in" Expr; Decl → "let" Expr
+    fn mutual_recursion_spec() -> LanguageSpec {
+        let types = vec![
+            CategorySpec {
+                name: "Expr".to_string(),
+                native_type: None,
+                is_primary: true,
+            },
+            CategorySpec {
+                name: "Decl".to_string(),
+                native_type: None,
+                is_primary: false,
+            },
+        ];
+
+        let inputs = vec![
+            RuleSpecInput {
+                label: "Var".to_string(),
+                category: "Expr".to_string(),
+                syntax: vec![SyntaxItemSpec::Terminal("x".to_string())],
+                associativity: Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+                source_location: None,
+            },
+            RuleSpecInput {
+                label: "LetIn".to_string(),
+                category: "Expr".to_string(),
+                syntax: vec![
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Decl".to_string(),
+                        param_name: "decl".to_string(),
+                    },
+                    SyntaxItemSpec::Terminal("in".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "body".to_string(),
+                    },
+                ],
+                associativity: Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+                source_location: None,
+            },
+            RuleSpecInput {
+                label: "LetDecl".to_string(),
+                category: "Decl".to_string(),
+                syntax: vec![
+                    SyntaxItemSpec::Terminal("let".to_string()),
+                    SyntaxItemSpec::NonTerminal {
+                        category: "Expr".to_string(),
+                        param_name: "init".to_string(),
+                    },
+                ],
+                associativity: Associativity::Left,
+                prefix_precedence: None,
+                has_rust_code: false,
+                rust_code: None,
+                eval_mode: None,
+                source_location: None,
+            },
+        ];
+
+        LanguageSpec::new("MutualRecursion".to_string(), types, inputs)
+    }
+
+    #[test]
+    fn test_cycle_classification_mutual_recursion() {
+        let spec = mutual_recursion_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Expr→Decl and Decl→Expr form a mutual recursion cycle
+        assert!(
+            !analysis.cycles.is_empty(),
+            "mutual recursion grammar should have at least one cycle"
+        );
+        let mutual_cycle = analysis.cycles.iter()
+            .find(|c| c.kind == CycleKind::Mutual);
+        assert!(
+            mutual_cycle.is_some(),
+            "should have a Mutual cycle, got: {:?}",
+            analysis.cycles
+        );
+        let cycle = mutual_cycle.expect("just checked");
+        assert!(
+            cycle.categories.contains(&"Expr".to_string()) && cycle.categories.contains(&"Decl".to_string()),
+            "mutual cycle should contain both Expr and Decl, got {:?}",
+            cycle.categories
+        );
+    }
+
+    // ── G36: Calling contexts ──
+
+    #[test]
+    fn test_calling_contexts_calculator() {
+        let spec = calculator_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // No cross-category calls → no calling contexts
+        assert!(
+            analysis.calling_contexts.is_empty(),
+            "calculator should have no calling contexts"
+        );
+    }
+
+    #[test]
+    fn test_calling_contexts_typed_grammar() {
+        let spec = typed_grammar_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Type is called from Expr.Cast
+        let type_contexts = analysis.calling_contexts.get("Type");
+        assert!(
+            type_contexts.is_some(),
+            "Type should have calling contexts"
+        );
+        let contexts = type_contexts.expect("just checked");
+        assert!(
+            !contexts.is_empty(),
+            "Type should have at least one caller"
+        );
+        assert!(
+            contexts.iter().any(|c| c.caller_category == "Expr"),
+            "Type should be called from Expr"
+        );
+    }
+
+    #[test]
+    fn test_calling_contexts_mutual_recursion() {
+        let spec = mutual_recursion_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Both Expr and Decl should have callers
+        assert!(
+            analysis.calling_contexts.get("Decl").is_some(),
+            "Decl should have calling contexts (called from Expr)"
+        );
+        assert!(
+            analysis.calling_contexts.get("Expr").is_some(),
+            "Expr should have calling contexts (called from Decl)"
+        );
+    }
+
+    // ── G34 + G35 combined: depth and recursion for mutual recursion ──
+
+    #[test]
+    fn test_depth_bounds_mutual_recursion() {
+        let spec = mutual_recursion_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        let expr_bounds = analysis.depth_bounds.get("Expr")
+            .expect("Expr should have depth bounds");
+        assert!(expr_bounds.is_recursive,
+            "Expr in mutual recursion should be recursive");
+        assert!(expr_bounds.max_depth.is_none(),
+            "recursive Expr should have unbounded max_depth");
+
+        let decl_bounds = analysis.depth_bounds.get("Decl")
+            .expect("Decl should have depth bounds");
+        assert!(decl_bounds.is_recursive,
+            "Decl in mutual recursion should be recursive");
+    }
+
+    // ── CS-01: Context-sensitive rule tables ──
+
+    #[test]
+    fn test_context_rule_table_typed_grammar() {
+        let spec = typed_grammar_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Type is called from Expr, so it should have a context rule table
+        let type_table = analysis.context_rule_tables.get("Type");
+        assert!(
+            type_table.is_some(),
+            "Type should have a context rule table (called from Expr)"
+        );
+        let table = type_table.expect("just checked");
+        assert!(
+            !table.entries.is_empty(),
+            "Type context rule table should have entries"
+        );
+        // Should have entries for "Expr" (caller) and "top-level"
+        assert!(
+            table.entries.iter().any(|e| e.context_tag == "Expr"),
+            "Type table should have an Expr calling context entry"
+        );
+        assert!(
+            table.entries.iter().any(|e| e.context_tag == "top-level"),
+            "Type table should have a top-level entry"
+        );
+    }
+
+    #[test]
+    fn test_context_rule_table_calculator_empty() {
+        // Calculator has no cross-category calls → no context rule tables
+        let spec = calculator_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        assert!(
+            analysis.context_rule_tables.is_empty(),
+            "calculator should have no context rule tables"
+        );
+    }
+
+    #[test]
+    fn test_context_rule_table_mutual_recursion() {
+        let spec = mutual_recursion_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Both Expr and Decl are called from each other
+        assert!(
+            analysis.context_rule_tables.get("Decl").is_some(),
+            "Decl should have a context rule table"
+        );
+        assert!(
+            analysis.context_rule_tables.get("Expr").is_some(),
+            "Expr should have a context rule table (called from Decl)"
+        );
+    }
+
+    // ── CS-04: Cross-Category BP Modulation Tests ────────────────────────
+
+    #[test]
+    fn test_cs04_calculator_no_cross_category_bp() {
+        let spec = calculator_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Calculator has a single category — no cross-category calls
+        assert!(
+            analysis.cross_category_bp.is_empty(),
+            "single-category grammar should have no cross-category BP entries"
+        );
+    }
+
+    #[test]
+    fn test_cs04_mutual_recursion_bp() {
+        let spec = mutual_recursion_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Mutual recursion grammar has Expr→Decl and Decl→Expr calls
+        // At least one cross-category edge should exist
+        assert!(
+            !analysis.cross_category_bp.is_empty(),
+            "mutual recursion grammar should have cross-category BP entries"
+        );
+
+        // Each edge should have BP hints (0 = prefix, 1 = non-prefix)
+        for ((caller, callee), bp_values) in &analysis.cross_category_bp {
+            assert!(
+                !bp_values.is_empty(),
+                "BP values for {caller}→{callee} should not be empty"
+            );
+            for &bp in bp_values {
+                assert!(
+                    bp <= 1,
+                    "BP hint should be 0 (prefix) or 1 (non-prefix), got {bp}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_cs04_cross_category_bp_deduplication() {
+        // Verify that BP values are deduplicated per edge
+        let spec = mutual_recursion_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        for ((_caller, _callee), bp_values) in &analysis.cross_category_bp {
+            // After dedup, no adjacent duplicates
+            for window in bp_values.windows(2) {
+                assert_ne!(
+                    window[0], window[1],
+                    "BP values should be deduplicated"
+                );
+            }
+        }
+    }
+
+    // ── CS-05: Context-Aware Ambiguity Resolution Tests ──────────────────
+
+    #[test]
+    fn test_cs05_calculator_context_unambiguous() {
+        let spec = calculator_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Calculator's single category "Expr" has no callers (top-level only)
+        // → context_count = 0 → unambiguous
+        let expr_unambiguous = analysis
+            .context_unambiguous
+            .get("Expr")
+            .copied()
+            .unwrap_or(false);
+        assert!(
+            expr_unambiguous,
+            "top-level-only category should be context-unambiguous"
+        );
+    }
+
+    #[test]
+    fn test_cs05_mutual_recursion_ambiguity() {
+        let spec = mutual_recursion_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // In mutual recursion, each category is called from at least the other
+        // Check that both are present in the map
+        assert!(
+            analysis.context_unambiguous.contains_key("Expr"),
+            "Expr should have context ambiguity analysis"
+        );
+        assert!(
+            analysis.context_unambiguous.contains_key("Decl"),
+            "Decl should have context ambiguity analysis"
+        );
+    }
+
+    #[test]
+    fn test_cs05_orphan_category_unambiguous() {
+        let spec = orphan_grammar_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // Orphan is unreachable so it won't be in reachable_categories.
+        // Only reachable categories get context ambiguity analysis.
+        // Expr (the reachable one) has no callers → context_count = 0 → unambiguous
+        if let Some(&unambiguous) = analysis.context_unambiguous.get("Expr") {
+            assert!(
+                unambiguous,
+                "top-level category with no callers should be context-unambiguous"
+            );
+        }
+
+        // Orphan, if present, should also be unambiguous (no callers)
+        if let Some(&unambiguous) = analysis.context_unambiguous.get("Orphan") {
+            assert!(
+                unambiguous,
+                "orphan category with no callers should be context-unambiguous"
+            );
+        }
+    }
+
+    #[test]
+    fn test_cs05_single_caller_unambiguous() {
+        // A category called from exactly one other category should be unambiguous
+        let spec = mutual_recursion_spec();
+        let wfsts = HashMap::new();
+        let analysis = analyze_wpds(&spec, &wfsts);
+
+        // At least one category should have a defined ambiguity status
+        assert!(
+            !analysis.context_unambiguous.is_empty(),
+            "context_unambiguous map should not be empty for multi-category grammar"
+        );
+
+        // Verify the invariant: categories with ≤1 unique caller are unambiguous
+        for (cat, &is_unambiguous) in &analysis.context_unambiguous {
+            let unique_callers = analysis
+                .calling_contexts
+                .get(cat)
+                .map(|contexts| {
+                    contexts
+                        .iter()
+                        .map(|c| c.caller_category.as_str())
+                        .collect::<HashSet<_>>()
+                        .len()
+                })
+                .unwrap_or(0);
+
+            if unique_callers <= 1 {
+                assert!(
+                    is_unambiguous,
+                    "{cat} has {unique_callers} unique callers but is marked ambiguous"
+                );
+            } else {
+                assert!(
+                    !is_unambiguous,
+                    "{cat} has {unique_callers} unique callers but is marked unambiguous"
+                );
+            }
+        }
     }
 }

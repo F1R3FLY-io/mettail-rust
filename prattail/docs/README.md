@@ -78,7 +78,9 @@ adds probabilistic training via the log semiring.
 - [Extended Recovery Strategies](design/wfst/extended-recovery-strategies.md) — New repair actions, multi-step Viterbi, cross-category recovery
 - [RecoveryConfig](design/wfst/recovery-config.md) — Tunable recovery parameters and trained weights
 - [Grammar Composition](design/wfst/grammar-composition.md) — Language union, WFST-aware merging
-- [Dead-Rule Detection](design/wfst/dead-rule-detection.md) — Four-tier analysis: literal, category-reachability, WFST dispatch, semantic liveness
+- [Dead-Rule Detection](design/wfst/dead-rule-detection.md) — Five-tier analysis: literal, category-reachability, WFST dispatch, semantic liveness, WPDS stack-aware
+- [WPDS Analysis](design/wfst/wpds-analysis.md) — Weighted Pushdown System analysis: call graph, depth bounds, cycle classification, context-sensitive tables
+- [WPDS Layer Expansion](design/wfst/wpds-expansion/README.md) — 8-sprint expansion: G33–G36, CS-01/04/05, pipeline integrations, 6 new lints
 - [Weight Training](design/wfst/weight-training.md) — LogWeight SGD, forward-backward, trained models (`wfst-log`)
 - [Token Lattices](design/wfst/token-lattices.md) — Two-path abstraction, generic semiring parametrization, algorithm trade-offs
 
@@ -119,7 +121,7 @@ For a comprehensive guide with examples, diagrams, and decision flowcharts:
 
 ### Diagnostics
 
-- [Diagnostics Catalog](diagnostics/README.md) — All 23 lint diagnostics (G, W, R, C, P categories)
+- [Diagnostics Catalog](diagnostics/README.md) — All lint diagnostics (G, W, R, C, D, P categories)
 - [Lint Layer Design](design/wfst/lint-layer.md) — Unified lint architecture, `LintContext`, `run_lints()`
 
 ---

@@ -4,11 +4,13 @@
 
 This document explains exactly where the WFST subsystem attaches to the
 PraTTaIL compile-time pipeline, what data flows between each stage, and
-how WFST construction is wired into every grammar build. All grammars
+how WFST construction is wired into every grammar build. The pipeline
+runs a four-pass optimization cascade, performs WPDS pushdown analysis,
+detects dead rules, and emits weighted dispatch code. All grammars
 receive WFST-weighted dispatch — there is no feature gate or strategy
 enum controlling whether WFST construction runs. Reading this document
-alongside `pipeline.rs` and `prediction.rs` should leave no gaps about
-when and why WFST code fires.
+alongside `pipeline.rs`, `prediction.rs`, and `wpds.rs` should leave no
+gaps about when and why WFST and WPDS code fires.
 
 ---
 
@@ -86,7 +88,13 @@ output is written to the output buffer. The overall sequence is:
   │       ├─ d. TokenIdMap::from_names()         (token_id.rs)          │
   │       ├─ e. build_recovery_wfsts()           (recovery.rs)          │
   │       ├─ f. dead-rule detection              (BooleanWeight)        │
-  │       └─ g. NFA spillover detection          (trampoline.rs)        │
+  │       ├─ g. NFA spillover detection          (trampoline.rs)        │
+  │       ├─ h. analyze_wpds()                    (wpds.rs)              │
+  │       │       WPDS call graph, depth bounds, cycle classification    │
+  │       ├─ i. wpds_refine_prediction_weights()  (wpds.rs) [INT-01]    │
+  │       ├─ j. wpds_confirm_trie_dead_rules()    (wpds.rs) [COMP-07]   │
+  │       ├─ k. Record WPDS dead-rule labels      (pipeline.rs) [INT-02]│
+  │       └─ l. NFA spillover reduction           (pipeline.rs) [INT-03]│
   │                                                                     │
   ├─ 6. resolve_dispatch_winners() ← composed dispatch resolution       │
   │                                                                     │
@@ -244,7 +252,7 @@ token in the grammar:
 Viterbi over the recovery WFST finds the minimum-cost repair sequence for
 a given error position.
 
-### Step 5f — dead-rule detection (four-tier)
+### Step 5f — dead-rule detection (five-tier)
 
 ```
   Inputs:
@@ -311,17 +319,113 @@ prefix arms that try all alternatives via save/restore. See
 [../../design/disambiguation/08-nfa-wfst-disambiguation.md](../../design/disambiguation/08-nfa-wfst-disambiguation.md)
 for the full Layer 2.5 architecture.
 
+### Step 5h — analyze_wpds (WPDS analysis)
+
+```
+  Inputs:
+    categories           &[CategoryInfo]    — category metadata
+    rd_rules             &[RDRuleInfo]      — recursive-descent rules
+    cross_rules          &[CrossCategoryRule]
+    cast_rules           &[CastRule]
+    prediction_wfsts     &BTreeMap<String, PredictionWfst>
+    decision_trees       &BTreeMap<String, DecisionTree>
+    primary_category     &str
+
+  Process (analyze_wpds() in wpds.rs):
+    1. build_wpds() → Wpds<BooleanWeight>
+    2. extract_call_graph() → WpdsCallGraph
+    3. tarjan_scc() → Vec<Vec<usize>>
+    4. compute_depth_bounds() → DepthBounds
+    5. classify_cycles() → Vec<CycleInfo>
+    6. compute_calling_contexts() → Vec<CallingContext>
+    7. build_context_rule_tables() → ContextRuleTable
+    8. analyze_cross_category_bp() → Vec<BpHint>
+    9. analyze_context_ambiguity() → Vec<(usize, bool)>
+   10. poststar() → PAutomaton<BooleanWeight>
+   11. Check reachability per category → unreachable_rules
+
+  Outputs:
+    WpdsAnalysis {
+      wpds, call_graph, sccs, depth_bounds, cycles,
+      calling_contexts, context_rule_table, bp_hints,
+      context_ambiguity, unreachable_rules, p_automaton,
+      grammar_size
+    }
+```
+
+### Step 5i — wpds_refine_prediction_weights (INT-01)
+
+```
+  Inputs:
+    prediction_wfsts     &mut BTreeMap<String, PredictionWfst>
+    analysis             &WpdsAnalysis
+
+  Process:
+    For each category with depth_bounds data, apply 0.001 weight
+    offset per rank to break ties between equal-weight dispatch
+    alternatives.
+
+  Effect:
+    Prediction WFST weights refined with WPDS-derived tiebreakers.
+```
+
+### Step 5j — wpds_confirm_trie_dead_rules (COMP-07)
+
+```
+  Inputs:
+    decision_trees       &BTreeMap<String, DecisionTree>
+    analysis             &WpdsAnalysis
+
+  Process:
+    Cross-reference WPDS unreachable_rules with PathMap trie
+    rule_labels(). Rules in both sets are "phantom entries" —
+    confirmed dead by independent analysis.
+
+  Outputs:
+    phantom_entries       Vec<String>  — doubly-confirmed dead rules
+```
+
+### Step 5k — Record WPDS dead-rule labels (INT-02)
+
+```
+  Inputs:
+    phantom_entries       Vec<String>
+
+  Process:
+    Collect phantom entries into wpds_dead_rule_labels: HashSet<String>
+    for codegen suppression.
+
+  Effect:
+    Dead rules excluded from generated parser dispatch tables.
+```
+
+### Step 5l — NFA spillover reduction (INT-03)
+
+```
+  Inputs:
+    nfa_spillover_categories  &mut HashSet<String>
+    wpds_dead_rule_labels     &HashSet<String>
+
+  Process:
+    For each NFA spillover category, remove dead rules from the
+    ambiguous group. If the group shrinks to 1 or 0 alternatives,
+    promote the category to deterministic (remove from spillover set).
+
+  Effect:
+    Fewer NFA spillover categories → less save/restore overhead.
+```
+
 ---
 
 ## 4. Dead-Rule Detection
 
-After WFST construction, the pipeline performs a four-tier analysis to
+After WFST construction, the pipeline performs a five-tier analysis to
 identify dead rules.  Detection runs via `detect_dead_rules()` in
 `pipeline.rs:106–207` and is surfaced through the unified lint layer
 (`lint.rs`, lint ID W01).
 
 ```
-  Four-Tier Dead-Rule Detection (pipeline.rs:106–207)
+  Five-Tier Dead-Rule Detection (pipeline.rs:106–207)
   ┌──────────────────────────────────────────────────────────────┐
   │                                                              │
   │  For each rule R:                                            │
@@ -353,6 +457,17 @@ identify dead rules.  Detection runs via `detect_dead_rules()` in
   │                                                              │
   └──────────────────────────────────────────────────────────────┘
 ```
+
+### Tier 5 — WPDS Stack-Aware Unreachability (W13)
+
+Rules surviving Tiers 1–4 undergo WPDS `poststar(BooleanWeight)` analysis.
+The WPDS models inter-category call structure as Push/Pop/Replace rules.
+After saturation, if a category's stack symbol is unreachable in the
+P-automaton, all rules in that category are flagged as W13 warnings.
+
+D15 witness traces provide BFS shortest-path evidence on the G33 call
+graph, showing the hypothetical Push chain from a reachable category to
+the dead one.
 
 See [../../design/wfst/dead-rule-detection.md](../../design/wfst/dead-rule-detection.md)
 for the full design document including correctness properties, complexity
@@ -401,11 +516,19 @@ the pipeline together with the WFST-specific fields added by each step.
          ▼ build_recovery_wfsts()
   recovery_wfsts               ← Vec<RecoveryWfst>
          │
-         ▼ dead-rule detection (four-tier: literal / category-reachability / WFST / semantic-liveness)
+         ▼ dead-rule detection (five-tier: literal / category-reachability / WFST / semantic-liveness / WPDS)
   DeadRuleWarning[]            ← per-rule dead-rule classification
          │
-         ▼ lint::run_lints() (23 lints including W01 dead-rule)
+         ▼ lint::run_lints() (lint diagnostics including W01 dead-rule)
   LintDiagnostic[]             ← structured warnings for unreachable rules
+         │
+         ▼ analyze_wpds() (WPDS pushdown analysis)
+  WpdsAnalysis               ← call graph, depth bounds, cycles, context tables
+         │
+         ├─ INT-01: wpds_refine_prediction_weights()  → refined WFST weights
+         ├─ COMP-07: wpds_confirm_trie_dead_rules()   → phantom entries
+         ├─ INT-02: wpds_dead_rule_labels             → HashSet<String>
+         └─ INT-03: nfa_spillover_categories.retain()  → reduced spillover set
          │
          ▼ resolve_dispatch_winners()
   composed_resolutions         ← BTreeMap<(cat, token), (rule, weight)>
@@ -702,10 +825,10 @@ source location.
 | `ParseSimulator::from_flat()`                                                        | `recovery.rs`                   |
 | `TrainedModel::from_embedded()`                                                      | `training.rs` (wfst-log)        |
 | `RepairAction::edit_cost()`                                                          | `recovery.rs`                   |
-| `detect_dead_rules()` (four-tier)                                                    | `pipeline.rs`                   |
+| `detect_dead_rules()` (five-tier)                                                    | `pipeline.rs`                   |
 | `DeadRuleWarning` enum                                                               | `pipeline.rs`                   |
 | `lint_w01_dead_rule()`                                                               | `lint.rs`                       |
-| `run_lints()` (23 lints)                                                             | `lint.rs`                       |
+| `run_lints()` (lint diagnostics)                                                     | `lint.rs`                       |
 | NFA spillover detection                                                              | `pipeline.rs` + `trampoline.rs` |
 | `categories_needing_nfa_spillover()`                                                 | `trampoline.rs`                 |
 | `group_rd_by_dispatch_token()`                                                       | `trampoline.rs`                 |
@@ -717,6 +840,20 @@ source location.
 | `AMBIGUOUS_WEIGHTS` thread-local                                                     | `language.rs` (macros)          |
 | `PRATTAIL_DUMP_EBNF` handler                                                         | `pipeline.rs`                   |
 | `PRATTAIL_DUMP_PARSER` handler                                                       | `pipeline.rs`                   |
+| `analyze_wpds()`                                                                 | `wpds.rs`                       |
+| `WpdsAnalysis` struct                                                            | `wpds.rs`                       |
+| `build_wpds()`                                                                   | `wpds.rs`                       |
+| `poststar()` / `prestar()`                                                       | `wpds.rs`                       |
+| `extract_call_graph()` / `tarjan_scc()`                                          | `wpds.rs`                       |
+| `compute_depth_bounds()` / `classify_cycles()`                                   | `wpds.rs`                       |
+| `wpds_refine_prediction_weights()` (INT-01)                                      | `wpds.rs`                       |
+| `wpds_confirm_trie_dead_rules()` (COMP-07)                                       | `wpds.rs`                       |
+| `lint_w13_wpds_unreachable()`                                                    | `lint.rs`                       |
+| `lint_d14_wpds_complexity_report()`                                              | `lint.rs`                       |
+| `lint_w14_wpds_confirmed_ambiguity()`                                            | `lint.rs`                       |
+| `lint_w16_wpds_weight_inversion()`                                               | `lint.rs`                       |
+| `lint_comp08_refactoring_suggestions()`                                          | `lint.rs`                       |
+| `lint_p05_wpds_pipeline_cost()`                                                  | `lint.rs`                       |
 
 ---
 

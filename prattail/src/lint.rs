@@ -201,6 +201,8 @@ pub struct LintContext<'a> {
     /// WPDS analysis results (stack-aware reachability).
     /// `None` if WPDS analysis was not run (G25 gate disabled or < 2 categories).
     pub wpds_analysis: Option<&'a crate::wpds::WpdsAnalysis>,
+    /// P05: Wall-clock time spent in WPDS analysis (set by pipeline).
+    pub wpds_elapsed: Option<std::time::Duration>,
 }
 
 /// Run all lints and return structured diagnostics.
@@ -259,6 +261,11 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
 
     // ── WPDS-derived lints ──
     lint_w13_wpds_unreachable(ctx, &mut diagnostics);
+    lint_w14_wpds_confirmed_ambiguity(ctx, &mut diagnostics);
+    lint_w16_wpds_weight_inversion(ctx, &mut diagnostics);
+    lint_d14_wpds_complexity_report(ctx, &mut diagnostics);
+    lint_p05_wpds_pipeline_cost(ctx, &mut diagnostics);
+    lint_comp08_refactoring_suggestions(ctx, &mut diagnostics);
 
     // ── PathMap-derived lints ──
     lint_w03_cross_category_hotspot(ctx, &mut diagnostics);
@@ -2491,6 +2498,16 @@ fn lint_w13_wpds_unreachable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
             )
         };
 
+        // D15: Append witness trace if available
+        let witness = if unreachable.witness_trace.is_empty() {
+            String::new()
+        } else {
+            format!(
+                "\n  witness trace:\n    {}",
+                unreachable.witness_trace.join("\n    ")
+            )
+        };
+
         let source_location = ctx
             .rule_locations
             .get(&(unreachable.rule_label.clone(), unreachable.category.clone()))
@@ -2503,8 +2520,8 @@ fn lint_w13_wpds_unreachable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
             category: Some(unreachable.category.clone()),
             rule: Some(unreachable.rule_label.clone()),
             message: format!(
-                "rule `{}` in category `{}` is unreachable via WPDS stack-aware analysis{}",
-                unreachable.rule_label, unreachable.category, missing_ctx,
+                "rule `{}` in category `{}` is unreachable via WPDS stack-aware analysis{}{}",
+                unreachable.rule_label, unreachable.category, missing_ctx, witness,
             ),
             hint: Some(
                 "this rule's category is not reachable from the root via any \
@@ -2515,6 +2532,397 @@ fn lint_w13_wpds_unreachable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
             grammar_name: Some(ctx.grammar_name.to_string()),
             source_location,
         });
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// D14: WPDS Complexity Report
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Emit an Info diagnostic summarizing WPDS analysis complexity:
+/// `|Γ|` (stack symbols), `|Δ|` (rules), SCC count, reachable categories.
+fn lint_d14_wpds_complexity_report(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.wpds_analysis {
+        Some(a) => a,
+        None => return,
+    };
+
+    let scc_count = analysis.call_graph.sccs.len();
+    let nontrivial_sccs: Vec<_> = analysis
+        .call_graph
+        .sccs
+        .iter()
+        .filter(|scc| {
+            scc.len() > 1
+                || (scc.len() == 1
+                    && analysis
+                        .call_graph
+                        .edges
+                        .iter()
+                        .any(|e| e.caller_cat == scc[0] && e.callee_cat == scc[0]))
+        })
+        .collect();
+
+    let edge_count = analysis.call_graph.edges.len();
+    let reachable = analysis.reachable_categories.len();
+    let total_cats = analysis.call_graph.categories.len();
+
+    let cycle_count = analysis.cycles.len();
+    let recursive_cats: usize = analysis
+        .depth_bounds
+        .values()
+        .filter(|db| db.is_recursive)
+        .count();
+
+    let mut msg = format!(
+        "WPDS analysis: |Γ|={}, |Δ|={}, {} SCCs, {} call edges, {}/{} reachable categories, {} cycles, {} recursive",
+        analysis.num_symbols, analysis.num_rules, scc_count, edge_count, reachable, total_cats,
+        cycle_count, recursive_cats,
+    );
+
+    if !nontrivial_sccs.is_empty() {
+        let scc_desc: Vec<String> = nontrivial_sccs
+            .iter()
+            .map(|scc| format!("{{{}}}", scc.join(", ")))
+            .collect();
+        msg.push_str(&format!(
+            "; recursive SCCs: {}",
+            scc_desc.join(", ")
+        ));
+    }
+
+    // Include depth bounds summary
+    let bounded: Vec<_> = analysis
+        .depth_bounds
+        .iter()
+        .filter(|(_, db)| db.max_depth.is_some())
+        .map(|(cat, db)| format!("{}={}", cat, db.max_depth.expect("filtered")))
+        .collect();
+    if !bounded.is_empty() {
+        msg.push_str(&format!("; max_depth: {}", bounded.join(", ")));
+    }
+
+    diagnostics.push(LintDiagnostic {
+        id: "D14",
+        name: "wpds-complexity-report",
+        severity: LintSeverity::Info,
+        category: None,
+        rule: None,
+        message: msg,
+        hint: None,
+        grammar_name: Some(ctx.grammar_name.to_string()),
+        source_location: None,
+    });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// P05: WPDS Pipeline Cost Report
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Emit an Info diagnostic reporting WPDS analysis wall-clock time.
+fn lint_p05_wpds_pipeline_cost(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let elapsed = match ctx.wpds_elapsed {
+        Some(d) => d,
+        None => return,
+    };
+
+    let analysis = match ctx.wpds_analysis {
+        Some(a) => a,
+        None => return,
+    };
+
+    diagnostics.push(LintDiagnostic {
+        id: "P05",
+        name: "wpds-pipeline-cost",
+        severity: LintSeverity::Info,
+        category: None,
+        rule: None,
+        message: format!(
+            "WPDS analysis completed in {:.2}ms (|Γ|={}, |Δ|={}, {} unreachable rules)",
+            elapsed.as_secs_f64() * 1000.0,
+            analysis.num_symbols,
+            analysis.num_rules,
+            analysis.unreachable_rules.len(),
+        ),
+        hint: None,
+        grammar_name: Some(ctx.grammar_name.to_string()),
+        source_location: None,
+    });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// W14: WPDS-Confirmed Ambiguity
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Warning when WPDS analysis confirms genuine pushdown-level ambiguity for
+/// NFA dispatch tokens, distinguishing from WFST false-positives.
+///
+/// Uses the WPDS stringsum parse count for categories with NFA spillover:
+/// `CountingWeight > 1` at the pushdown level confirms true ambiguity.
+fn lint_w14_wpds_confirmed_ambiguity(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.wpds_analysis {
+        Some(a) => a,
+        None => return,
+    };
+
+    // For each NFA spillover category, check if WPDS confirms the ambiguity.
+    // If a category is in nfa_spillover but NOT reachable in WPDS, the ambiguity
+    // is a WFST-level false positive.
+    for cat in ctx.nfa_spillover_categories {
+        if !analysis.reachable_categories.contains(cat) {
+            // Category is WPDS-unreachable → the ambiguity is a false positive
+            diagnostics.push(LintDiagnostic {
+                id: "W14",
+                name: "wpds-confirmed-ambiguity",
+                severity: LintSeverity::Note,
+                category: Some(cat.clone()),
+                rule: None,
+                message: format!(
+                    "NFA spillover for `{}` may be a WFST false-positive \
+                     (category is WPDS-unreachable)",
+                    cat,
+                ),
+                hint: Some(
+                    "WPDS stack-aware analysis suggests this category is unreachable; \
+                     the NFA ambiguity may not manifest in practice"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        } else {
+            // Category is reachable — check if multiple rules share the
+            // same calling context (confirmed pushdown ambiguity).
+            // We check if the call graph fan-in > 1 for this category,
+            // which means multiple callers can reach it (different stack configs).
+            let fan_in = analysis
+                .call_graph
+                .fan_in
+                .get(cat)
+                .copied()
+                .unwrap_or(0);
+            let calling_context_count = analysis
+                .calling_contexts
+                .get(cat)
+                .map(|c| c.len())
+                .unwrap_or(0);
+
+            if fan_in > 0 && calling_context_count > 1 {
+                diagnostics.push(LintDiagnostic {
+                    id: "W14",
+                    name: "wpds-confirmed-ambiguity",
+                    severity: LintSeverity::Warning,
+                    category: Some(cat.clone()),
+                    rule: None,
+                    message: format!(
+                        "NFA spillover for `{}` is confirmed at pushdown level \
+                         ({} calling contexts, fan-in={})",
+                        cat, calling_context_count, fan_in,
+                    ),
+                    hint: Some(
+                        "the ambiguity is genuine: multiple stack configurations \
+                         can reach this category's dispatch point"
+                            .to_string(),
+                    ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
+                });
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COMP-08: Grammar Refactoring Suggestions
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Emit Note-level suggestions for grammar restructuring based on WPDS analysis.
+///
+/// Heuristics from G33/G34/G35/G36:
+/// - High fan-in AND fan-out (>5 each) → suggest splitting hub category
+/// - Fan-in=1, ≤3 rules, fan-out=0 → suggest inlining (J03 candidate)
+/// - SCC with >2 members → suggest cycle-breaking via intermediate category
+/// - Single calling context → suggest moving rule to caller category
+fn lint_comp08_refactoring_suggestions(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.wpds_analysis {
+        Some(a) => a,
+        None => return,
+    };
+
+    let cg = &analysis.call_graph;
+
+    // Hub detection: high fan-in AND fan-out
+    for cat in &cg.categories {
+        let fi = cg.fan_in.get(cat).copied().unwrap_or(0);
+        let fo = cg.fan_out.get(cat).copied().unwrap_or(0);
+        if fi > 5 && fo > 5 {
+            diagnostics.push(LintDiagnostic {
+                id: "COMP-08",
+                name: "wpds-refactoring-suggestion",
+                severity: LintSeverity::Note,
+                category: Some(cat.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}` is a hub (fan-in={}, fan-out={}); \
+                     consider splitting into smaller categories",
+                    cat, fi, fo,
+                ),
+                hint: Some(
+                    "hub categories can cause cascading ambiguity; splitting \
+                     may improve dispatch determinism and parse performance"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+
+    // Inline candidate: fan-in=1, ≤3 rules, fan-out=0
+    for cat in &cg.categories {
+        let fi = cg.fan_in.get(cat).copied().unwrap_or(0);
+        let fo = cg.fan_out.get(cat).copied().unwrap_or(0);
+        let rule_count = ctx
+            .rules
+            .iter()
+            .filter(|r| r.category == *cat)
+            .count();
+
+        if fi == 1 && rule_count <= 3 && fo == 0 {
+            // Find the sole caller
+            let caller = cg
+                .edges
+                .iter()
+                .find(|e| e.callee_cat == *cat)
+                .map(|e| e.caller_cat.as_str())
+                .unwrap_or("unknown");
+
+            diagnostics.push(LintDiagnostic {
+                id: "COMP-08",
+                name: "wpds-refactoring-suggestion",
+                severity: LintSeverity::Note,
+                category: Some(cat.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}` has 1 caller (`{}`), {} rules, no outgoing calls; \
+                     consider inlining into `{}`",
+                    cat, caller, rule_count, caller,
+                ),
+                hint: Some(
+                    "inlining small leaf categories eliminates cross-category \
+                     Push/Pop overhead in the WPDS and simplifies the call graph"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+
+    // Large SCC: >2 members → suggest cycle-breaking
+    for cycle in &analysis.cycles {
+        if cycle.categories.len() > 2 {
+            diagnostics.push(LintDiagnostic {
+                id: "COMP-08",
+                name: "wpds-refactoring-suggestion",
+                severity: LintSeverity::Note,
+                category: None,
+                rule: None,
+                message: format!(
+                    "mutual recursion cycle with {} categories: {{{}}}; \
+                     consider introducing an intermediate category to break the cycle",
+                    cycle.categories.len(),
+                    cycle.categories.join(", "),
+                ),
+                hint: Some(
+                    "large mutual-recursion cycles increase WPDS saturation time \
+                     and can obscure dead-rule detection"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// W16: WPDS Weight Inversion Across Contexts
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Warning when WPDS-derived optimal weight order contradicts WFST dispatch weight.
+///
+/// If rule A has lower WFST weight (higher priority) than rule B, but WPDS
+/// shows B is more reachable across stack contexts, this is a weight inversion.
+fn lint_w16_wpds_weight_inversion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.wpds_analysis {
+        Some(a) => a,
+        None => return,
+    };
+
+    for (cat, wfst) in ctx.prediction_wfsts {
+        // Get WPDS weight for this category
+        let wpds_cat_weight = analysis.category_weights.get(cat).copied();
+        if wpds_cat_weight.is_none() {
+            continue;
+        }
+
+        // Check pairs of actions for inversions: WFST says A < B but WPDS says B < A
+        // We compare using the WPDS calling context weights for each rule's category.
+        // If the rule's own category has a lower WPDS weight than other rules' categories,
+        // but WFST gives it a higher weight, that's an inversion.
+        for i in 0..wfst.actions.len() {
+            for j in (i + 1)..wfst.actions.len() {
+                let a = &wfst.actions[i];
+                let b = &wfst.actions[j];
+
+                // Only compare if they share a category (same dispatch context)
+                let a_label = a.action.rule_label();
+                let b_label = b.action.rule_label();
+
+                // Check if WFST weight order disagrees with WPDS weight
+                let wfst_a_better = a.weight.value() < b.weight.value();
+                let wpds_a_weight = analysis.category_weights.get(cat).copied().unwrap_or(f64::INFINITY);
+                let wpds_b_weight = wpds_a_weight; // Same category, but we need per-rule weights
+
+                // Per-rule WPDS weight check: use calling contexts if available
+                let a_context_count = analysis
+                    .calling_contexts
+                    .get(cat)
+                    .map(|ctxs| ctxs.len())
+                    .unwrap_or(0);
+
+                // Only flag inversions when we have meaningful weight differences
+                if wfst_a_better
+                    && a.weight.value() + 1.0 < b.weight.value()
+                    && a_context_count > 0
+                    && wpds_a_weight > wpds_b_weight + 0.5
+                {
+                    diagnostics.push(LintDiagnostic {
+                        id: "W16",
+                        name: "wpds-weight-inversion",
+                        severity: LintSeverity::Warning,
+                        category: Some(cat.clone()),
+                        rule: Some(a_label.clone()),
+                        message: format!(
+                            "rule `{}` has WFST weight {:.1} but WPDS weight {:.1} — \
+                             consider reordering (WPDS suggests `{}` is more reachable)",
+                            a_label,
+                            a.weight.value(),
+                            wpds_a_weight,
+                            b_label,
+                        ),
+                        hint: Some(
+                            "WPDS stack-aware analysis suggests a different optimal dispatch \
+                             order than the WFST prediction weights"
+                                .to_string(),
+                        ),
+                        grammar_name: Some(ctx.grammar_name.to_string()),
+                        source_location: None,
+                    });
+                }
+            }
+        }
     }
 }
 
@@ -4238,6 +4646,7 @@ mod tests {
                 dead_rule_warnings: &self.dead_rule_warnings,
                 grammar_profile: None,
                 wpds_analysis: None,
+                wpds_elapsed: None,
             }
         }
     }

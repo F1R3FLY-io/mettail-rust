@@ -595,12 +595,14 @@ WFST construction + prediction outputs + dead-rule analysis
     │      semantic_dependency_groups, nfa_spillover_categories,
     │      recovery_config, grammar_name, rule_locations
     │
-    ├──▶ 23 lints across 5 categories:
+    ├──▶ Lint diagnostics across 7 categories:
     │      G01-G10  Grammar structure (left-recursion, unused categories, etc.)
-    │      W01-W06  WFST-specific (dead rules, ambiguous prefix, weight anomalies)
+    │      W01-W16  WFST-specific (dead rules, ambiguous prefix, weight anomalies, WPDS)
     │      R01-R07  Recovery (empty sync set, sparse recovery, etc.)
     │      C01-C04  Cross-category (cast cycles, transitive redundancy, wide overlap)
-    │      P02-P04  Performance (high NFA spillover, deep cast nesting, many alts)
+    │      D01-D15  Decision tree + WPDS (trie ambiguity, complexity, witness traces)
+    │      P02-P05  Performance (high NFA spillover, deep cast nesting, WPDS cost)
+    │      COMP-08  WPDS refactoring suggestions
     │
     ├──▶ Emit to stderr in Rust-compiler-style format:
     │      warning[W01]: rule FloatToStr in category Str is unreachable (dead code)

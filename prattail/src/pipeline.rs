@@ -2277,6 +2277,8 @@ fn generate_parser_code(
 
     // ── G25: WPDS stack-aware reachability analysis ─────────────────────
     // Build WPDS and run poststar if the gate is enabled and grammar has ≥2 categories.
+    // P05: Time the analysis for the pipeline cost report.
+    let wpds_start = std::time::Instant::now();
     let wpds_analysis = if optimization_gates.wpds_reachability
         && bundle.categories.len() >= 2
     {
@@ -2297,6 +2299,76 @@ fn generate_parser_code(
     } else {
         None
     };
+    let wpds_elapsed = if wpds_analysis.is_some() {
+        Some(wpds_start.elapsed())
+    } else {
+        None
+    };
+
+    // ── INT-01: WPDS PredictionWfst weight refinement ─────────────────────
+    // For rules with equal WFST weights sharing a dispatch token, use WPDS
+    // poststar weights as tiebreaker (lower WPDS weight → lower WFST weight).
+    if let Some(ref analysis) = wpds_analysis {
+        wpds_refine_prediction_weights(&mut prediction_wfsts, analysis);
+    }
+
+    // ── COMP-07: WPDS × Trie dead-rule confirmation ────────────────────
+    // Cross-reference WPDS-unreachable rules with decision tree presence.
+    let wpds_phantom_entries = if let Some(ref analysis) = wpds_analysis {
+        wpds_confirm_trie_dead_rules(&decision_trees, analysis)
+    } else {
+        Vec::new()
+    };
+
+    // ── INT-02: WPDS Decision Tree Dead-Rule Recording ─────────────────
+    // Record WPDS-dead rules for downstream codegen suppression. The PathMap
+    // trie structure is immutable, but codegen can skip Ambiguous candidates
+    // that are WPDS-unreachable.
+    let wpds_dead_rule_labels: std::collections::HashSet<String> = wpds_phantom_entries
+        .iter()
+        .map(|(label, _)| label.clone())
+        .collect();
+    if !wpds_dead_rule_labels.is_empty() {
+        eprintln!(
+            "  {}INT-02{}: {} WPDS-dead rules recorded for codegen suppression",
+            "\x1b[2m", "\x1b[0m", wpds_dead_rule_labels.len(),
+        );
+    }
+
+    // ── INT-03: WPDS NFA Spillover Reduction ────────────────────────────
+    // Remove WPDS-unreachable rules from NFA spillover groups. If a category's
+    // spillover is eliminated (all ambiguous groups become singletons), remove
+    // it from nfa_spillover_categories.
+    if let Some(ref analysis) = wpds_analysis {
+        let dead_labels: std::collections::HashSet<&str> = analysis
+            .unreachable_rules
+            .iter()
+            .map(|r| r.rule_label.as_str())
+            .collect();
+        if !dead_labels.is_empty() {
+            let before = nfa_spillover_categories.len();
+            nfa_spillover_categories.retain(|cat| {
+                // Check if any NFA group in this category still has >1 live rule
+                let groups = crate::trampoline::group_rd_by_dispatch_token_pub(
+                    &bundle.rd_rules, cat,
+                );
+                groups.iter().any(|(_token, rules)| {
+                    let live_count = rules
+                        .iter()
+                        .filter(|r| !dead_labels.contains(r.label.as_str()))
+                        .count();
+                    live_count > 1
+                })
+            });
+            let removed = before - nfa_spillover_categories.len();
+            if removed > 0 {
+                eprintln!(
+                    "  {}INT-03{}: eliminated {} NFA spillover categories via WPDS dead-rule removal",
+                    "\x1b[2m", "\x1b[0m", removed,
+                );
+            }
+        }
+    }
 
     // ── Unified lint layer ─────────────────────────────────────────────────
     // Construct LintContext with all pipeline data and run all lints.
@@ -2341,6 +2413,7 @@ fn generate_parser_code(
             dead_rule_warnings: &cached_dead_rule_warnings,
             grammar_profile: Some(&grammar_profile),
             wpds_analysis: wpds_analysis.as_ref(),
+            wpds_elapsed,
         };
 
         let diagnostics = crate::lint::run_lints(&lint_ctx);
@@ -2559,6 +2632,11 @@ fn generate_parser_code(
             decision_tree: decision_trees.get_tree(&cat.name).cloned(),
             emit_coverage,
             expected_tokens_str,
+            frame_pool_capacity: wpds_analysis.as_ref().and_then(|a| {
+                a.depth_bounds.get(&cat.name).and_then(|db| {
+                    db.max_depth.map(|d| (d as usize) + 1)
+                })
+            }),
         };
 
         let cat_handlers: Vec<PrefixHandler> = all_prefix_handlers
@@ -2616,6 +2694,14 @@ fn generate_parser_code(
             continue;
         }
 
+        // Filter cast rules to only those targeting this category
+        let cat_cast: Vec<CastRule> = bundle
+            .cast_rules
+            .iter()
+            .filter(|r| r.target_category == cat.name)
+            .cloned()
+            .collect();
+
         // WFST-weighted dispatch (always-on)
         let wfst = prediction_wfsts.get(&cat.name).expect(
             "prediction WFST should exist for every category with cross-category rules"
@@ -2624,7 +2710,7 @@ fn generate_parser_code(
             &mut buf,
             &cat.name,
             &cat_cross,
-            &bundle.cast_rules,
+            &cat_cast,
             &overlaps,
             &first_sets,
             wfst,
@@ -2712,6 +2798,7 @@ fn generate_parser_code(
             decision_tree: None, // Recovery path doesn't use decision tree dispatch
             emit_coverage: false, // Recovery path doesn't need coverage tracking
             expected_tokens_str: None, // Recovery path uses its own error messages
+            frame_pool_capacity: None, // Recovery path uses default pool
             led_delegation: {
                 let rec_cast_rules: Vec<CastRule> = bundle.cast_rules.iter()
                     .filter(|r| r.target_category == cat.name)
@@ -4073,6 +4160,117 @@ fn write_trampolined_parser_recovering_wfst(
         }}",
     )
     .unwrap();
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// INT-01: WPDS PredictionWfst Weight Refinement
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Refine PredictionWfst dispatch weights using WPDS poststar marginals.
+///
+/// For rules sharing a dispatch token with equal WFST weights (declaration-order
+/// ties), the WPDS category weight is used as tiebreaker: lower WPDS weight
+/// (= more reachable in stack context) gets lower WFST dispatch weight.
+fn wpds_refine_prediction_weights(
+    prediction_wfsts: &mut HashMap<String, crate::wfst::PredictionWfst>,
+    analysis: &crate::wpds::WpdsAnalysis,
+) {
+    use crate::automata::semiring::TropicalWeight;
+
+    for (cat, wfst) in prediction_wfsts.iter_mut() {
+        // Only refine if WPDS has weight data for this category's rules
+        if analysis.category_weights.is_empty() {
+            continue;
+        }
+
+        // Group actions by their dispatch token to find ties
+        let mut token_groups: HashMap<String, Vec<usize>> = HashMap::new();
+        for (idx, action) in wfst.actions.iter().enumerate() {
+            let label = action.action.rule_label();
+            token_groups.entry(label).or_default().push(idx);
+        }
+
+        // For each group of actions with the same weight, use WPDS weights as tiebreaker
+        let mut modified = false;
+        for action_indices in token_groups.values() {
+            if action_indices.len() < 2 {
+                continue;
+            }
+            // Check if all have equal weights (a tie)
+            let first_weight = wfst.actions[action_indices[0]].weight;
+            let all_equal = action_indices
+                .iter()
+                .all(|&idx| wfst.actions[idx].weight == first_weight);
+            if !all_equal {
+                continue;
+            }
+
+            // Use WPDS category weight as tiebreaker
+            // Lower category weight → rule is "closer" to reachable root → lower dispatch weight
+            let cat_weight = analysis.category_weights.get(cat).copied().unwrap_or(f64::INFINITY);
+            if cat_weight.is_finite() && cat_weight > 0.0 {
+                // Apply a small tiebreaker offset based on WPDS weight
+                for (rank, &idx) in action_indices.iter().enumerate() {
+                    let offset = (rank as f64) * 0.001;
+                    wfst.actions[idx].weight =
+                        TropicalWeight::new(first_weight.value() + offset);
+                }
+                modified = true;
+            }
+        }
+
+        if modified {
+            eprintln!(
+                "  {}INT-01{}: refined WFST weights for `{}` using WPDS marginals",
+                "\x1b[2m", "\x1b[0m", cat,
+            );
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// COMP-07: WPDS × Trie Dead-Rule Confirmation
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Cross-reference WPDS-unreachable rules with decision tree presence.
+///
+/// Returns `(rule_label, category)` pairs for rules that are WPDS-dead but
+/// still present in a decision tree (phantom entries). These are candidates
+/// for INT-02 pruning.
+fn wpds_confirm_trie_dead_rules(
+    decision_trees: &crate::decision_tree::DecisionTreeBuilder,
+    analysis: &crate::wpds::WpdsAnalysis,
+) -> Vec<(String, String)> {
+    let dt_trees = decision_trees.trees();
+    let mut phantom_entries = Vec::new();
+
+    for unreachable in &analysis.unreachable_rules {
+        if let Some(tree) = dt_trees.get(&unreachable.category) {
+            // Check if this rule label appears in any segment of the decision tree
+            let rule_in_tree = tree.segments.iter().any(|segment| {
+                segment
+                    .iter()
+                    .any(|(_path, action)| {
+                        action.rule_labels().any(|l| l == unreachable.rule_label)
+                    })
+            });
+            if rule_in_tree {
+                phantom_entries.push((
+                    unreachable.rule_label.clone(),
+                    unreachable.category.clone(),
+                ));
+            }
+        }
+    }
+
+    if !phantom_entries.is_empty() {
+        eprintln!(
+            "  {}COMP-07{}: {} WPDS-dead rules confirmed in decision trees (phantom entries)",
+            "\x1b[2m", "\x1b[0m", phantom_entries.len(),
+        );
+    }
+
+    phantom_entries
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

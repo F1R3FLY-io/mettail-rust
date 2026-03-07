@@ -2335,6 +2335,12 @@ pub struct TrampolineConfig {
     /// Derived from decision tree dispatch tokens (e.g., `"one of: Plus, Minus, LParen"`).
     /// When `None`, falls back to generic `"Cat expression"`.
     pub expected_tokens_str: Option<String>,
+    /// RT-01: WPDS-derived frame pool capacity hint for this category.
+    ///
+    /// When `Some(n)`, the TLS `FRAME_POOL_Cat` is initialized with
+    /// `Vec::with_capacity(n)` instead of `Vec::new()`. Derived from G34 depth bounds.
+    /// `None` means no WPDS data is available (use default `Vec::new()`).
+    pub frame_pool_capacity: Option<usize>,
 }
 
 /// Write the Frame enum declaration for a category.
@@ -2700,11 +2706,15 @@ pub fn write_trampolined_parser(
     // re-entrant calls from standalone parse functions (Sep, multi-binder,
     // ident-lookahead rules). Nested calls gracefully get a fresh Vec.
     let cat_upper = cat.to_uppercase();
+    let pool_init = match config.frame_pool_capacity {
+        Some(cap) => format!("Vec::with_capacity({})", cap),
+        None => "Vec::new()".to_string(),
+    };
     write!(
         buf,
         "thread_local! {{ \
             static FRAME_POOL_{cat_upper}: std::cell::Cell<Vec<{frame_enum}>> = \
-                std::cell::Cell::new(Vec::new()); \
+                std::cell::Cell::new({pool_init}); \
         }}",
         frame_enum = frame_info.enum_name,
     )

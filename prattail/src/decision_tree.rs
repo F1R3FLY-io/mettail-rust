@@ -228,7 +228,7 @@ impl DistributiveLattice for DecisionAction {
 
 impl DecisionAction {
     /// Iterator over all rule labels in this action.
-    fn rule_labels(&self) -> impl Iterator<Item = &str> {
+    pub fn rule_labels(&self) -> impl Iterator<Item = &str> {
         let v: Vec<&str> = match self {
             DecisionAction::Commit { rule_label, .. } => vec![rule_label.as_str()],
             DecisionAction::Ambiguous { candidates } => {
@@ -708,6 +708,11 @@ impl DecisionTreeBuilder {
     /// Get a reference to all trees.
     pub fn trees(&self) -> &HashMap<String, CategoryDecisionTree> {
         &self.trees
+    }
+
+    /// Get a mutable reference to all trees (for INT-02 pruning).
+    pub fn trees_mut(&mut self) -> &mut HashMap<String, CategoryDecisionTree> {
+        &mut self.trees
     }
 }
 

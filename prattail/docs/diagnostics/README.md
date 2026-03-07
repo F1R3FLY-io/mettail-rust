@@ -39,7 +39,7 @@ Ordering: `Info < Note < Warning < Error`
 | G30                                           | isomorphic-wfst-groups        | Note     | Isomorphic WFST dispatch topology                       |
 | G31                                           | subsumed-equations-eliminated | Note     | N equations eliminated from codegen                     |
 
-### WFST-Specific (W01–W09)
+### WFST-Specific (W01–W16)
 
 | ID                                      | Name                 | Severity | Description                                             |
 |-----------------------------------------|----------------------|----------|---------------------------------------------------------|
@@ -50,6 +50,12 @@ Ordering: `Info < Note < Warning < Error`
 | W05 | composed-dispatch-ambiguity | Warning | N-way ambiguity in composed dispatch table |
 | [W06](wfst/W06-weight-inversion.md)     | weight-inversion     | Note     | Less-specific rule has better weight than more-specific |
 | W09 | cancellation-pair-missing-rewrite | Warning | Suppressed equation has no corresponding rewrite |
+| W10 | multi-token-lookahead-required | Warning | Single-token dispatch insufficient for disambiguation |
+| W11 | context-weight-narrowing | Note | ContextWeight powerset narrowed by 2-token lookahead |
+| W12 | forward-backward-recovery | Note | Forward-backward analysis improved recovery weights |
+| [W13](wfst/W13-wpds-unreachable.md) | wpds-unreachable | Warning | Rule unreachable via WPDS stack-aware analysis |
+| [W14](wfst/W14-wpds-confirmed-ambiguity.md) | wpds-confirmed-ambiguity | Warning | WPDS confirms pushdown-level ambiguity |
+| [W16](wfst/W16-wpds-weight-inversion.md) | wpds-weight-inversion | Warning | WFST vs WPDS weight order disagrees |
 
 ### Recovery (R01–R07)
 
@@ -89,13 +95,22 @@ Ordering: `Info < Note < Warning < Error`
 | [D08](decision-tree/D08-optimization-suggestion.md)   | optimization-suggestion   | Note     | Grammar modifications to resolve PathMap ambiguity        |
 | [D09](decision-tree/D09-conflict-resolution-guide.md) | conflict-resolution-guide | Note     | Strategies for genuine conflicts in PathMap trie          |
 
-### Performance (P02–P04)
+### WPDS (D14–D15, COMP-08)
+
+| ID | Name | Severity | Description |
+|---|---|---|---|
+| [D14](wpds/D14-wpds-complexity-report.md) | wpds-complexity-report | Info | WPDS analysis size: |Γ|, |Δ|, SCCs, depth bounds |
+| [D15](wpds/D15-wpds-witness-trace.md) | wpds-witness-trace | Info | BFS shortest path witness for W13 dead rules |
+| [COMP-08](wpds/COMP-08-refactoring-suggestion.md) | wpds-refactoring-suggestion | Note | Grammar restructuring suggestions from WPDS analysis |
+
+### Performance (P02–P05)
 
 | ID                                           | Name               | Severity | Description                                   |
 |----------------------------------------------|--------------------|----------|-----------------------------------------------|
 | [P02](performance/P02-high-nfa-spillover.md) | high-nfa-spillover | Note     | Many categories need NFA spillover buffers    |
 | [P03](performance/P03-deep-cast-nesting.md)  | deep-cast-nesting  | Note     | Deep cast chain adds Box wrapper overhead     |
 | [P04](performance/P04-many-alternatives.md)  | many-alternatives  | Note     | Token dispatches to many rules (save/restore) |
+| [P05](performance/P05-wpds-pipeline-cost.md) | wpds-pipeline-cost | Info     | WPDS analysis wall-clock time and sizes       |
 
 ### Infrastructure (I01–I12)
 

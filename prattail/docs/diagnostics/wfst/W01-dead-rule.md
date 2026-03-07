@@ -15,6 +15,8 @@ Detects rules that can never be reached during parsing. A dead rule wastes compi
 
 4. **InterCategoryDeadPath** -- Forward-backward analysis with `BooleanWeight` over the inter-category dispatch graph reveals that the rule's category is isolated from the primary (root) category. Either the root cannot reach the category (forward), the category cannot reach back to the root (backward), or both.
 
+> **Note:** W01 covers Tiers 1–4. For Tier 5 (WPDS stack-aware unreachability), see [W13](W13-wpds-unreachable.md). Tier 5 uses weighted pushdown system `poststar(BooleanWeight)` to detect rules that are unreachable when considering the full inter-category call stack. W13 warnings include D15 witness traces showing the shortest path evidence.
+
 ## Trigger Conditions
 
 A W01 diagnostic fires when **any** of the following conditions holds for a rule:
@@ -149,3 +151,4 @@ The four hint messages correspond to the four tiers:
 - [G05](../grammar/G05-empty-category.md) -- Detects categories with zero rules; a degenerate case where W01 would flag every (nonexistent) rule
 - [G08](../grammar/G08-missing-cast-to-root.md) -- Detects categories with no **directed** cast/cross-cat path to the primary. G08 and A4 (W01 Tier 4) are **complementary**: G08 uses a directed cast-only graph, A4 uses a richer undirected graph including syntax-level references. G08 can fire on categories that A4 does NOT flag (syntax-connected but not cast-connected) and vice versa.
 - [D03](../decision-tree/D03-trie-unreachable-rule.md) -- Complementary to Tier 3: Tier 3 + D03 trie confirmation = confirmed dead rule. Already properly composed in `collect_dead_rule_labels()`.
+- [W13](W13-wpds-unreachable.md) -- Tier 5 dead-rule detection: WPDS stack-aware unreachability via `poststar(BooleanWeight)`. Catches rules that survive Tiers 1–4 but are unreachable when the full pushdown call structure is considered. Includes D15 witness traces.

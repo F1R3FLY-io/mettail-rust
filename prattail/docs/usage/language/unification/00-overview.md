@@ -61,7 +61,7 @@ multiple independent parsers).
 `LanguageDef` or `LanguageSpec` before the pipeline runs.  The result is one
 lexer, one parser, one set of FIRST/FOLLOW sets, and one WFST prediction model.
 Ambiguities between the merged fragments are resolved at compile time by the
-pipeline's four-tier dead-rule detection and the lint layer.
+pipeline's five-tier dead-rule detection and the lint layer.
 
 **Delegation-based** mechanisms leave each sub-language's parser intact and
 generate a thin wrapper that dispatches input to the appropriate sub-parser at
@@ -165,8 +165,8 @@ which mechanism produced it.
       ├── Generate  ──> lexer_code + parser_code
       │    ├── FIRST/FOLLOW sets
       │    ├── WFST prediction
-      │    ├── Dead-rule detection (four-tier)
-      │    ├── Lint layer (23 lints)
+      │    ├── Dead-rule detection (five-tier)
+      │    ├── Lint layer
       │    └── Codegen
       ├── Finalize  ──> TokenStream
       │

@@ -10,8 +10,8 @@ PraTTaIL's WFST subsystem is **always-on** — every grammar build produces
 prediction and recovery WFSTs with no feature gate required.  The only gated
 surface is `wfst-log`, which adds log-semiring training, forward-backward
 posteriors, and weight pushing.  At compile time the pipeline constructs WFSTs,
-runs a four-pass optimization cascade, detects dead rules, and emits
-weight-ordered dispatch and recovery code.  At runtime, thread-local state
+runs a four-pass optimization cascade, performs WPDS pushdown analysis,
+detects dead rules, and emits weight-ordered dispatch and recovery code.  At runtime, thread-local state
 carries NFA spillover buffers, bracket balance, and running weights for
 context-sensitive recovery.
 
@@ -33,7 +33,7 @@ context-sensitive recovery.
 | 8  | Error repair engine     | `recovery.rs`           | `RecoveryWfst`, `viterbi_recovery()`, 3-tier context multipliers             |
 | 9  | Grammar composition     | `compose.rs`            | `compose_languages()`, `compose_with_wfst()`, `compose_many()`               |
 | 10 | Optimization passes     | `transducer.rs`         | `TransducerCascade`, `OptimizationPass` trait                                |
-| 11 | Dead-rule detection     | `pipeline.rs`           | Four-tier analysis (§5) with `BooleanWeight` reachability                    |
+| 11 | Dead-rule detection     | `pipeline.rs`           | Five-tier analysis (§5) with `BooleanWeight` reachability                    |
 | 12 | Lint layer              | `lint.rs`               | 23 diagnostics across 5 categories (§6)                                      |
 | 13 | NFA disambiguation      | `trampoline.rs`         | Forced-prefix replay, weight-ordered spillover buffers                       |
 | 14 | NFA spillover TLS       | `trampoline.rs`         | `NFA_PREFIX_SPILL_Cat`, `NFA_FORCED_PREFIX_Cat`, `NFA_PRIMARY_WEIGHT_Cat`    |
@@ -41,14 +41,16 @@ context-sensitive recovery.
 | 16 | Prediction statics      | `pipeline.rs` (codegen) | `WFST_TRANSITIONS_Cat`, `WFST_STATE_OFFSETS_Cat`, `PREDICTION_Cat: LazyLock` |
 | 17 | Recovery statics        | `pipeline.rs` (codegen) | `RECOVERY_SYNC_TOKENS_Cat`, `RECOVERY_SYNC_SOURCES_Cat`                      |
 | 18 | Decision tree           | `decision_tree.rs`      | `PathMap`, `DecisionTreeBuilder`, D01-D09 analysis layers                    |
+| 19 | WPDS analysis           | `wpds.rs`               | Call graph, depth bounds, cycle classification, context-sensitive tables    |
+| 20 | WPDS pipeline integration| `pipeline.rs`           | INT-01 weight refinement, COMP-07 trie confirmation, INT-02/03 dead-rule   |
 
 ### `wfst-log`-Gated (Tier 1)
 
 | #  | Module                | Source File           | Purpose                                                   |
 |----|-----------------------|-----------------------|-----------------------------------------------------------|
-| 19 | Baum-Welch posteriors | `forward_backward.rs` | `forward_scores()`, `backward_scores()`, `total_weight()` |
-| 20 | Mohri weight pushing  | `log_push.rs`         | `log_push_weights()`, `check_normalization()`             |
-| 21 | Weight training       | `training.rs`         | `TrainedModel`, `RuleWeights::train()`, SGD               |
+| 21 | Baum-Welch posteriors | `forward_backward.rs` | `forward_scores()`, `backward_scores()`, `total_weight()` |
+| 22 | Mohri weight pushing  | `log_push.rs`         | `log_push_weights()`, `check_normalization()`             |
+| 23 | Weight training       | `training.rs`         | `TrainedModel`, `RuleWeights::train()`, SGD               |
 
 ---
 
@@ -85,8 +87,13 @@ Steps inside `generate_parser_code()`:
           WeightNorm → DeadStateElim → StateMin (→ BeamPruning)
     5d. TokenIdMap::from_names()                    [token_id.rs]
     5e. build_recovery_wfsts()                      [recovery.rs]
-    5f. detect_dead_rules() (four-tier)             [pipeline.rs]
+    5f. detect_dead_rules() (five-tier)              [pipeline.rs]
     5g. NFA spillover detection                     [trampoline.rs]
+    5h. analyze_wpds() (WPDS analysis)          [wpds.rs]
+    5i. wpds_refine_prediction_weights() (INT-01) [wpds.rs]
+    5j. wpds_confirm_trie_dead_rules() (COMP-07)  [wpds.rs]
+    5k. Record WPDS dead-rule labels (INT-02)    [pipeline.rs]
+    5l. NFA spillover reduction (INT-03)         [pipeline.rs]
  6. resolve_dispatch_winners()
  7. write_rd_handler() × N
  8. write_trampolined_parser() per category
@@ -107,6 +114,7 @@ Steps inside `generate_parser_code()`:
 | 2    | Fixed-point category reachability over FIRST/cast/cross-cat edges         | `BooleanWeight` | `UnreachableCategory` warning             |
 | 3    | WFST query: no FIRST token dispatches to rule via `predict()`             | `BooleanWeight` | `WfstUnreachable` warning                 |
 | 4    | Transitive semantic liveness via equation/rewrite/logic dependency groups | —               | **Resurrects** rules flagged by Tiers 1–3 |
+| 5    | WPDS stack-aware unreachability via poststar(BooleanWeight)               | `BooleanWeight` | `WpdsUnreachable` warning (W13)           |
 
 ---
 
@@ -115,13 +123,14 @@ Steps inside `generate_parser_code()`:
 | Prefix | Category          | Count | Key Source Data                                    |
 |--------|-------------------|------:|----------------------------------------------------|
 | **G**  | Grammar structure |    10 | Rule specs, FIRST/FOLLOW, operator tables          |
-| **W**  | WFST-specific     |     5 | Prediction WFSTs, dispatch weights                 |
+| **W**  | WFST-specific     |    12 | Prediction WFSTs, dispatch weights                 |
 | **R**  | Recovery          |     5 | Sync sets, repair costs, bracket patterns          |
 | **C**  | Cross-category    |     3 | Cast graphs, FIRST-set overlaps                    |
-| **D**  | Decision tree     |     9 | PathMap trie structure, ambiguity, lookahead depth |
-| **P**  | Performance       |     3 | Spillover counts, cast depth, alternative fan-out  |
+| **D**  | Decision tree     |    12 | PathMap trie structure, ambiguity, lookahead depth |
+| **P**  | Performance       |     4 | Spillover counts, cast depth, alternative fan-out  |
+| **COMP** | Composition/WPDS |     1 | WPDS refactoring suggestions                      |
 
-32 total lints emitted by `run_lints()` in `lint.rs` — see [lint-layer.md](../design/lint-layer.md) for the full catalog (includes 9 D-category decision tree lints).
+Lint diagnostics emitted by `run_lints()` in `lint.rs` — see [lint-layer.md](../design/lint-layer.md) for the full catalog (includes 9 D-category decision tree lints).
 
 ---
 
@@ -177,6 +186,10 @@ Steps inside `generate_parser_code()`:
                                                training.rs [log] ──► forward_backward.rs [log]
                                                     ├──► semiring.rs (LogWeight, TropicalWeight)
                                                     └──► serde_json (model I/O)
+
+                                               wpds.rs [core] ──► pipeline.rs [core]
+                                                    ├──► wfst.rs (PredictionWfst)
+                                                    └──► decision_tree.rs (trie confirmation)
 ```
 
 Reading the graph: a module on the left of `──►` imports from the module on the right.
@@ -187,8 +200,8 @@ Reading the graph: a module on the left of `──►` imports from the module o
 
 | Gate               | Modules Enabled | Semirings Added                    | Use Case                                                 |
 |--------------------|-----------------|------------------------------------|----------------------------------------------------------|
-| *(none — default)* | Layers 1–18     | 8 (Tropical through ProductWeight) | All compile-time analysis and runtime parsing            |
-| `wfst-log`         | + Layers 19–21  | + LogWeight, EntropyWeight         | Probabilistic training, weight pushing, entropy analysis |
+| *(none — default)* | Layers 1–20     | 8 (Tropical through ProductWeight) | All compile-time analysis and runtime parsing            |
+| `wfst-log`         | + Layers 21–23  | + LogWeight, EntropyWeight         | Probabilistic training, weight pushing, entropy analysis |
 
 All dispatch, prediction, recovery, dead-rule detection, and lint analysis run **unconditionally**.  The `wfst-log` gate adds only statistical training and log-domain operations.
 
@@ -215,14 +228,16 @@ All dispatch, prediction, recovery, dead-rule detection, and lint analysis run *
 
 | Topic                         | Document                                                                                                      |
 |-------------------------------|---------------------------------------------------------------------------------------------------------------|
-| Four-tier dead-rule detection | [design/wfst/dead-rule-detection.md](../design/wfst/dead-rule-detection.md)                                   |
-| Lint layer (23 lints)         | [design/lint-layer.md](../design/lint-layer.md)                                                               |
+| Five-tier dead-rule detection | [design/wfst/dead-rule-detection.md](../design/wfst/dead-rule-detection.md)                                   |
+| Lint layer                    | [design/lint-layer.md](../design/lint-layer.md)                                                               |
 | Composed dispatch             | [design/composed-dispatch.md](../design/composed-dispatch.md)                                                 |
 | Error recovery strategies     | [design/wfst/error-recovery.md](../design/wfst/error-recovery.md)                                             |
 | NFA disambiguation            | [design/disambiguation/08-nfa-wfst-disambiguation.md](../design/disambiguation/08-nfa-wfst-disambiguation.md) |
 | Grammar composition           | [design/wfst/grammar-composition.md](../design/wfst/grammar-composition.md)                                   |
 | Cost-benefit framework        | [design/wfst/cost-benefit-framework.md](../design/wfst/cost-benefit-framework.md)                             |
 | Recovery config DSL           | [design/wfst/recovery-config.md](../design/wfst/recovery-config.md)                                           |
+| WPDS analysis                 | [design/wfst/wpds-analysis.md](../design/wfst/wpds-analysis.md)                                               |
+| WPDS layer expansion          | [design/wfst/wpds-expansion/README.md](../design/wfst/wpds-expansion/README.md)                               |
 
 ### Theory
 
