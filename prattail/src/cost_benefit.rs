@@ -59,6 +59,16 @@ pub enum Optimization {
     /// Uses poststar saturation to confirm/refute WFST-based dead-rule detection
     /// with full pushdown precision.
     WpdsReachabilityCheck,
+    /// TRS confluence check: Knuth-Bendix critical pair analysis.
+    TrsConfluenceCheck,
+    /// VPA inclusion check: decidable structured sublanguage verification.
+    VpaInclusionCheck,
+    /// Safety verification: WPDS prestar against bad-state automaton.
+    SafetyVerification,
+    /// CEGAR refinement: iterative abstraction refinement loop.
+    CegarRefinement,
+    /// Petri net deadlock check: coverability analysis for concurrent patterns.
+    PetriDeadlockCheck,
 }
 
 impl fmt::Display for Optimization {
@@ -77,6 +87,11 @@ impl fmt::Display for Optimization {
             Self::BacktrackingElimination => write!(f, "G1:BacktrackingElimination"),
             Self::ContextDisambiguation => write!(f, "H1:ContextDisambiguation"),
             Self::WpdsReachabilityCheck => write!(f, "G25:WpdsReachabilityCheck"),
+            Self::TrsConfluenceCheck => write!(f, "T01:TrsConfluenceCheck"),
+            Self::VpaInclusionCheck => write!(f, "V01:VpaInclusionCheck"),
+            Self::SafetyVerification => write!(f, "S01:SafetyVerification"),
+            Self::CegarRefinement => write!(f, "S03:CegarRefinement"),
+            Self::PetriDeadlockCheck => write!(f, "N01:PetriDeadlockCheck"),
         }
     }
 }
@@ -118,13 +133,23 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("BacktrackingElimination") => Ok(Self::BacktrackingElimination),
             s if s.eq_ignore_ascii_case("ContextDisambiguation") => Ok(Self::ContextDisambiguation),
             s if s.eq_ignore_ascii_case("WpdsReachabilityCheck") => Ok(Self::WpdsReachabilityCheck),
+            "T01" => Ok(Self::TrsConfluenceCheck),
+            s if s.eq_ignore_ascii_case("TrsConfluenceCheck") => Ok(Self::TrsConfluenceCheck),
+            "V01" => Ok(Self::VpaInclusionCheck),
+            s if s.eq_ignore_ascii_case("VpaInclusionCheck") => Ok(Self::VpaInclusionCheck),
+            "S01" => Ok(Self::SafetyVerification),
+            s if s.eq_ignore_ascii_case("SafetyVerification") => Ok(Self::SafetyVerification),
+            "S03" => Ok(Self::CegarRefinement),
+            s if s.eq_ignore_ascii_case("CegarRefinement") => Ok(Self::CegarRefinement),
+            "N01" => Ok(Self::PetriDeadlockCheck),
+            s if s.eq_ignore_ascii_case("PetriDeadlockCheck") => Ok(Self::PetriDeadlockCheck),
             // Display format: "A1:LeftFactoring"
             s if s.contains(':') => s
                 .split_once(':')
                 .map(|(code, _)| code)
                 .unwrap_or(s)
                 .parse(),
-            other => Err(format!("unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3, G1, H1, G25", other)),
+            other => Err(format!("unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3, G1, H1, G25, T01, V01, S01, S03, N01", other)),
         }
     }
 }
@@ -488,6 +513,60 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         ),
     ));
 
+    // T01: TRS confluence check — beneficial when rules have overlapping patterns
+    candidates.push(OptimizationCandidate::new(
+        Optimization::TrsConfluenceCheck,
+        0.5, // diagnostic benefit (catches rewriting bugs)
+        0.15, // low cost (critical pair enumeration)
+        profile.rule_count > 3,
+        format!("rule_count={} (threshold: >3)", profile.rule_count),
+    ));
+
+    // V01: VPA inclusion check — beneficial for grammars with delimiter structure
+    candidates.push(OptimizationCandidate::new(
+        Optimization::VpaInclusionCheck,
+        0.6, // diagnostic benefit (identifies zero-backtracking sublanguage)
+        0.1, // low cost (VPA construction)
+        profile.category_count >= 1,
+        format!(
+            "category_count={} (threshold: >=1)",
+            profile.category_count,
+        ),
+    ));
+
+    // S01: Safety verification — beneficial when WPDS detects unreachable rules
+    candidates.push(OptimizationCandidate::new(
+        Optimization::SafetyVerification,
+        0.3, // good benefit (confirms unreachability with prestar)
+        0.25, // moderate cost (prestar saturation)
+        profile.category_count >= 2,
+        format!(
+            "category_count={} (threshold: >=2)",
+            profile.category_count,
+        ),
+    ));
+
+    // S03: CEGAR refinement — beneficial when WPDS reports unreachable rules
+    candidates.push(OptimizationCandidate::new(
+        Optimization::CegarRefinement,
+        0.45, // diagnostic benefit
+        0.3, // medium cost (iterative refinement)
+        profile.category_count >= 2,
+        format!(
+            "category_count={} (threshold: >=2)",
+            profile.category_count,
+        ),
+    ));
+
+    // N01: Petri net deadlock check — beneficial for grammars with parallel composition
+    candidates.push(OptimizationCandidate::new(
+        Optimization::PetriDeadlockCheck,
+        0.7, // diagnostic benefit (deadlock detection)
+        0.1, // low cost (coverability check)
+        profile.rule_count > 5,
+        format!("rule_count={} (threshold: >5)", profile.rule_count),
+    ));
+
     // Sort by score (lexicographic: speedup first, then compile_cost)
     candidates.sort_by(|a, b| a.score.cmp(&b.score));
 
@@ -553,6 +632,19 @@ pub struct OptimizationGates {
     /// G25: WPDS stack-aware reachability check.
     /// When true, poststar analysis refines dead-rule detection.
     pub wpds_reachability: bool,
+    /// T01: TRS confluence check.
+    #[cfg(feature = "trs-analysis")]
+    pub trs_confluence: bool,
+    /// V01: VPA inclusion check.
+    #[cfg(feature = "vpa")]
+    pub vpa_inclusion: bool,
+    /// S01: Safety verification via WPDS prestar.
+    pub safety_verification: bool,
+    /// S03: CEGAR refinement loop.
+    pub cegar_refinement: bool,
+    /// N01: Petri net deadlock check.
+    #[cfg(feature = "petri")]
+    pub petri_deadlock: bool,
 }
 
 impl OptimizationGates {
@@ -572,6 +664,14 @@ impl OptimizationGates {
             backtracking_elimination: true,
             context_disambiguation: true,
             wpds_reachability: true,
+            #[cfg(feature = "trs-analysis")]
+            trs_confluence: true,
+            #[cfg(feature = "vpa")]
+            vpa_inclusion: true,
+            safety_verification: true,
+            cegar_refinement: true,
+            #[cfg(feature = "petri")]
+            petri_deadlock: true,
         }
     }
 
@@ -599,6 +699,14 @@ impl OptimizationGates {
             backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
             context_disambiguation: enabled.contains(&Optimization::ContextDisambiguation),
             wpds_reachability: enabled.contains(&Optimization::WpdsReachabilityCheck),
+            #[cfg(feature = "trs-analysis")]
+            trs_confluence: enabled.contains(&Optimization::TrsConfluenceCheck),
+            #[cfg(feature = "vpa")]
+            vpa_inclusion: enabled.contains(&Optimization::VpaInclusionCheck),
+            safety_verification: enabled.contains(&Optimization::SafetyVerification),
+            cegar_refinement: enabled.contains(&Optimization::CegarRefinement),
+            #[cfg(feature = "petri")]
+            petri_deadlock: enabled.contains(&Optimization::PetriDeadlockCheck),
         }
     }
 
@@ -618,6 +726,14 @@ impl OptimizationGates {
             backtracking_elimination: false,
             context_disambiguation: false,
             wpds_reachability: false,
+            #[cfg(feature = "trs-analysis")]
+            trs_confluence: false,
+            #[cfg(feature = "vpa")]
+            vpa_inclusion: false,
+            safety_verification: false,
+            cegar_refinement: false,
+            #[cfg(feature = "petri")]
+            petri_deadlock: false,
         }
     }
 
@@ -675,6 +791,14 @@ impl OptimizationGates {
             backtracking_elimination: enabled.contains(&Optimization::BacktrackingElimination),
             context_disambiguation: enabled.contains(&Optimization::ContextDisambiguation),
             wpds_reachability: enabled.contains(&Optimization::WpdsReachabilityCheck),
+            #[cfg(feature = "trs-analysis")]
+            trs_confluence: enabled.contains(&Optimization::TrsConfluenceCheck),
+            #[cfg(feature = "vpa")]
+            vpa_inclusion: enabled.contains(&Optimization::VpaInclusionCheck),
+            safety_verification: enabled.contains(&Optimization::SafetyVerification),
+            cegar_refinement: enabled.contains(&Optimization::CegarRefinement),
+            #[cfg(feature = "petri")]
+            petri_deadlock: enabled.contains(&Optimization::PetriDeadlockCheck),
         }))
     }
 
@@ -884,6 +1008,11 @@ impl Optimization {
             // Diagnostic: info messages only, no codegen effect
             Self::AmbiguityTargeting   // A5: per-token ambiguity report
             | Self::WpdsReachabilityCheck // G25: WPDS stack-aware dead-rule verification
+            | Self::TrsConfluenceCheck    // T01: Knuth-Bendix critical pair analysis
+            | Self::VpaInclusionCheck     // V01: VPA structured sublanguage check
+            | Self::SafetyVerification    // S01: WPDS prestar safety check
+            | Self::CegarRefinement       // S03: CEGAR refinement loop
+            | Self::PetriDeadlockCheck    // N01: Petri net coverability
             => OptimizationStatus::Diagnostic,
         }
     }
@@ -1181,7 +1310,7 @@ mod tests {
     fn test_all_candidates_evaluated() {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
-        assert_eq!(all.len(), 13, "should evaluate all 13 optimization candidates");
+        assert_eq!(all.len(), 18, "should evaluate all 18 optimization candidates");
     }
 
     #[test]
@@ -1774,5 +1903,55 @@ mod tests {
         assert_eq!(gates.left_factoring, expected.left_factoring);
         assert_eq!(gates.adaptive_recovery, expected.adaptive_recovery);
         assert_eq!(gates.enhanced_dce, expected.enhanced_dce);
+    }
+
+    #[test]
+    fn test_trs_confluence_check_evaluated() {
+        let profile = simple_profile();
+        let all = evaluate_optimizations(&profile);
+        assert!(
+            all.iter().any(|c| c.optimization == Optimization::TrsConfluenceCheck),
+            "TrsConfluenceCheck should be in evaluated candidates"
+        );
+    }
+
+    #[test]
+    fn test_vpa_inclusion_check_evaluated() {
+        let profile = simple_profile();
+        let all = evaluate_optimizations(&profile);
+        assert!(
+            all.iter().any(|c| c.optimization == Optimization::VpaInclusionCheck),
+            "VpaInclusionCheck should be in evaluated candidates"
+        );
+    }
+
+    #[test]
+    fn test_safety_verification_evaluated() {
+        let profile = simple_profile();
+        let all = evaluate_optimizations(&profile);
+        assert!(
+            all.iter().any(|c| c.optimization == Optimization::SafetyVerification),
+            "SafetyVerification should be in evaluated candidates"
+        );
+    }
+
+    #[test]
+    fn test_cegar_refinement_evaluated() {
+        let profile = simple_profile();
+        let all = evaluate_optimizations(&profile);
+        assert!(
+            all.iter().any(|c| c.optimization == Optimization::CegarRefinement),
+            "CegarRefinement should be in evaluated candidates"
+        );
+    }
+
+    #[test]
+    fn test_petri_deadlock_check_evaluated() {
+        let profile = simple_profile();
+        let all = evaluate_optimizations(&profile);
+        assert!(
+            all.iter().any(|c| c.optimization == Optimization::PetriDeadlockCheck),
+            "PetriDeadlockCheck should be in evaluated candidates"
+        );
     }
 }

@@ -2370,6 +2370,85 @@ fn generate_parser_code(
         }
     }
 
+    // ── Mathematical analysis phase ──────────────────────────────────────
+    // Feature-gated analyses that produce actionable diagnostics during
+    // `language!` macro expansion. Each analysis converts pipeline types
+    // to module-internal types, runs analysis, and returns an Option<Result>.
+
+    let math_analysis_start = std::time::Instant::now();
+
+    // Phase 1: TRS (no dependencies)
+    #[cfg(feature = "trs-analysis")]
+    let confluence_result = crate::confluence::analyze_from_bundle(&bundle.all_syntax, 100);
+    #[cfg(feature = "trs-analysis")]
+    let termination_result = crate::termination::analyze_from_bundle(&bundle.all_syntax);
+
+    // Phase 2: Automata (no dependencies)
+    #[cfg(feature = "vpa")]
+    let vpa_result = crate::vpa::analyze_from_bundle(&bundle.categories, &bundle.all_syntax);
+    #[cfg(feature = "tree-automata")]
+    let wta_result = crate::tree_automaton::analyze_from_bundle(&bundle.categories, &bundle.all_syntax);
+
+    // Phase 3: WPDS-dependent (need wpds_analysis)
+    let safety_result = wpds_analysis.as_ref().and_then(|wa| {
+        crate::verify::verify_from_bundle(wa, &bundle.categories, &bundle.all_syntax)
+    });
+    let cegar_result = wpds_analysis.as_ref().and_then(|wa| {
+        crate::cegar::cegar_from_bundle(wa)
+    });
+    let algebraic_result = wpds_analysis.as_ref().map(|wa| {
+        crate::algebraic::analyze_from_bundle(wa)
+    });
+
+    #[cfg(feature = "wpds-extended")]
+    let ewpds_result = wpds_analysis.as_ref().and_then(|wa| {
+        crate::ewpds::extend_from_bundle(wa, &bundle.all_syntax)
+    });
+    #[cfg(feature = "wpds-ara")]
+    let ara_result = wpds_analysis.as_ref().map(|wa| {
+        crate::ara::analyze_from_bundle(wa, &bundle.all_syntax)
+    });
+
+    // Phase 4: Concurrency (no dependencies)
+    #[cfg(feature = "petri")]
+    let petri_result = {
+        let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = bundle
+            .categories
+            .iter()
+            .map(|c| crate::wpds::WpdsCategoryInfo {
+                name: c.name.clone(),
+                is_primary: c.is_primary,
+            })
+            .collect();
+        Some(crate::petri::analyze_from_bundle(&bundle.all_syntax, &petri_cats))
+    };
+    #[cfg(feature = "nominal")]
+    let nominal_result = Some(crate::nominal::analyze_from_bundle(&bundle.all_syntax));
+    #[cfg(feature = "alternating")]
+    let alternating_result = Some(crate::alternating::analyze_from_bundle(&bundle.all_syntax, &bundle.categories));
+
+    // Phase 5: Temporal (need wpds_analysis + buchi)
+    #[cfg(feature = "ltl")]
+    let ltl_results = wpds_analysis.as_ref().map(|wa| {
+        crate::ltl::check_from_bundle(wa)
+    });
+    #[cfg(feature = "provenance")]
+    let provenance_result = crate::provenance::track_from_bundle(
+        &bundle.all_syntax, &bundle.categories,
+    );
+    #[cfg(feature = "cra")]
+    let cra_result = crate::cra::analyze_from_bundle(&bundle.all_syntax);
+
+    // Phase 6: Meta
+    #[cfg(feature = "morphisms")]
+    let morphism_result = crate::morphism::check_from_bundle(&bundle.all_syntax, &bundle.categories);
+    #[cfg(feature = "kat")]
+    let kat_result = wpds_analysis.as_ref().and_then(|wa| {
+        crate::kat::check_from_bundle(wa, &bundle.all_syntax)
+    });
+
+    let math_analysis_elapsed = math_analysis_start.elapsed();
+
     // ── Unified lint layer ─────────────────────────────────────────────────
     // Construct LintContext with all pipeline data and run all lints.
     // Moved after decision tree construction so PathMap-derived lints
@@ -2414,9 +2493,97 @@ fn generate_parser_code(
             grammar_profile: Some(&grammar_profile),
             wpds_analysis: wpds_analysis.as_ref(),
             wpds_elapsed,
+            // ── Mathematical analysis results ──
+            safety_result: safety_result.as_ref(),
+            cegar_result: cegar_result.as_ref(),
+            algebraic_result: algebraic_result.as_ref(),
+            math_analysis_elapsed: Some(math_analysis_elapsed),
+            #[cfg(feature = "trs-analysis")]
+            confluence_result: confluence_result.as_ref(),
+            #[cfg(feature = "trs-analysis")]
+            termination_result: termination_result.as_ref(),
+            #[cfg(feature = "vpa")]
+            vpa_result: vpa_result.as_ref(),
+            #[cfg(feature = "tree-automata")]
+            wta_result: wta_result.as_ref(),
+            #[cfg(feature = "wpds-extended")]
+            ewpds_result: ewpds_result.as_ref(),
+            #[cfg(feature = "wpds-ara")]
+            ara_result: ara_result.as_ref(),
+            #[cfg(feature = "petri")]
+            petri_result: petri_result.as_ref(),
+            #[cfg(feature = "nominal")]
+            nominal_result: nominal_result.as_ref(),
+            #[cfg(feature = "alternating")]
+            alternating_result: alternating_result.as_ref(),
+            #[cfg(feature = "ltl")]
+            ltl_results: ltl_results.as_ref(),
+            #[cfg(feature = "provenance")]
+            provenance_result: provenance_result.as_ref(),
+            #[cfg(feature = "cra")]
+            cra_result: cra_result.as_ref(),
+            #[cfg(feature = "morphisms")]
+            morphism_result: morphism_result.as_ref(),
+            #[cfg(feature = "kat")]
+            kat_result: kat_result.as_ref(),
         };
 
-        let diagnostics = crate::lint::run_lints(&lint_ctx);
+        let mut diagnostics = crate::lint::run_lints(&lint_ctx);
+
+        // ── Repair enrichment ──
+        // Scan diagnostics for specific lint codes and append repair suggestions.
+        #[cfg(feature = "trs-analysis")]
+        crate::repair::enrich_diagnostics_with_repairs(
+            &mut diagnostics,
+            confluence_result.as_ref(),
+            &bundle.all_syntax,
+        );
+        #[cfg(feature = "morphisms")]
+        crate::repair::enrich_diagnostics_with_morphism_repairs(
+            &mut diagnostics,
+            morphism_result.as_ref(),
+        );
+
+        // ── Proof certificate generation ──
+        #[cfg(feature = "proofs")]
+        {
+            let _confluence_ref: Option<&crate::confluence::ConfluenceAnalysis> = {
+                #[cfg(feature = "trs-analysis")]
+                { confluence_result.as_ref() }
+                #[cfg(not(feature = "trs-analysis"))]
+                { None }
+            };
+            let _termination_ref: Option<&crate::termination::TerminationResult> = {
+                #[cfg(feature = "trs-analysis")]
+                { termination_result.as_ref() }
+                #[cfg(not(feature = "trs-analysis"))]
+                { None }
+            };
+            let certificates = crate::proof_output::generate_certificates(
+                _confluence_ref,
+                _termination_ref,
+                safety_result.as_ref(),
+            );
+            if !certificates.is_empty() {
+                for cert in &certificates {
+                    diagnostics.push(crate::lint::LintDiagnostic {
+                        id: "Z01",
+                        name: "proof-certificate",
+                        severity: crate::lint::LintSeverity::Note,
+                        category: None,
+                        rule: None,
+                        message: format!(
+                            "proof certificate generated: {} ({})",
+                            cert.property, cert.verdict,
+                        ),
+                        hint: None,
+                        grammar_name: Some(bundle.grammar_name.clone()),
+                        source_location: None,
+                    });
+                }
+            }
+        }
+
         crate::lint::emit_diagnostics_for_grammar(&bundle.grammar_name, &diagnostics);
     }
 

@@ -1,0 +1,25 @@
+# Rocq project file for Mathematical Analyses correctness proofs (Phase 6)
+#
+# Verifies correctness of mathematical analysis algorithms:
+#
+#   6.1. Semiring Laws           — Semiring axioms for Provenance, Relational, KAT
+#   6.2. WPDS Correctness        — Poststar/prestar compute MOVP fixpoints
+#   6.3. VPA Closure Properties  — Complement, intersection, decidable equivalence
+#   6.4. KAT Soundness           — Hoare triple encoding soundness
+#   6.5. Buchi × WPDS Product    — Product construction correctness
+#
+# Dependency order:
+#   SemiringLaws.v          — 6.1 (standalone)
+#   WpdsCorrectness.v       — 6.2 (standalone)
+#   VpaClosureProperties.v  — 6.3 (standalone)
+#   KatSoundness.v          — 6.4 (depends on SemiringLaws)
+#   BuchiWpdsProduct.v      — 6.5 (depends on WpdsCorrectness)
+
+-Q theories MathematicalAnalyses
+
+# Source files (dependency order)
+theories/SemiringLaws.v
+theories/WpdsCorrectness.v
+theories/VpaClosureProperties.v
+theories/KatSoundness.v
+theories/BuchiWpdsProduct.v

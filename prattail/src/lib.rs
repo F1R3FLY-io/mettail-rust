@@ -59,8 +59,18 @@ pub mod lint;
 pub mod prefix_trie;
 pub mod recovery;
 pub mod runtime_types;
+pub mod tensor;
 pub mod transducer;
 pub mod wpds;
+
+// ── Algebraic program analysis (always-on — generic over any StarSemiring) ──
+// Tarjan path expression algorithm + interprocedural extension
+// (Kincaid, Cyphert, Breck & Reps, 2019).
+pub mod algebraic;
+
+// ── Newton's method for semiring fixpoints (always-on — generic over any
+// StarSemiring) ─────────────────────────────────────────────────────────────
+pub mod newton;
 
 // ── Forward-backward analysis (always-on — generic over any semiring) ──────
 // The core algorithm is semiring-generic and used by A4 (BooleanWeight).
@@ -75,6 +85,85 @@ pub mod training;
 
 #[cfg(feature = "grammar-gen")]
 pub mod grammar_gen;
+
+// ── Mathematical Analysis & Theorem Proving modules ─────────────────────────
+
+/// Provenance semiring N[X]: polynomial semiring tracking HOW facts are derived.
+#[cfg(feature = "provenance")]
+pub mod provenance;
+
+/// Relational weight domain: binary relations on finite sets for WPDS analysis.
+#[cfg(feature = "wpds-relational")]
+pub mod relational;
+
+/// EWPDS: Extended WPDS with merging functions for local variable handling.
+#[cfg(feature = "wpds-extended")]
+pub mod ewpds;
+
+/// ARA: Affine-Relation Analysis weight domain (vector spaces of matrices).
+/// Discovers all interprocedural affine relationships via WPDS analysis.
+#[cfg(feature = "wpds-ara")]
+pub mod ara;
+
+/// Kleene Algebra with Tests: decidable Hoare logic and program equivalence.
+#[cfg(feature = "kat")]
+pub mod kat;
+
+/// Visibly Pushdown Automata: decidable equivalence/inclusion for structured grammars.
+#[cfg(feature = "vpa")]
+pub mod vpa;
+
+/// TRS analysis: confluence checking (critical pairs) and termination (dependency pairs).
+#[cfg(feature = "trs-analysis")]
+pub mod confluence;
+#[cfg(feature = "trs-analysis")]
+pub mod termination;
+
+/// Buchi/Parity automata: infinite-word acceptance for liveness properties.
+#[cfg(feature = "omega")]
+pub mod buchi;
+
+/// LTL model checking: WPDS x Buchi product for temporal property verification.
+#[cfg(feature = "ltl")]
+pub mod ltl;
+
+/// Weighted Tree Automata: term recognition, ranking, and transduction.
+#[cfg(feature = "tree-automata")]
+pub mod tree_automaton;
+
+/// Alternating automata: universal branching for game semantics and CTL.
+#[cfg(feature = "alternating")]
+pub mod alternating;
+
+/// Nominal automata: orbit-finite sets for name-passing calculi.
+#[cfg(feature = "nominal")]
+pub mod nominal;
+
+/// Petri nets / VASS: concurrent process analysis.
+#[cfg(feature = "petri")]
+pub mod petri;
+
+/// Cost Register Automata: streaming quantitative computation.
+#[cfg(feature = "cra")]
+pub mod cra;
+
+/// Theory morphisms: cross-theory translation and proof transfer.
+#[cfg(feature = "morphisms")]
+pub mod morphism;
+
+/// Layered proof output: verdicts, human-readable explanations, Rocq certificates.
+#[cfg(feature = "proofs")]
+pub mod proof_output;
+
+/// Safety/liveness verification API: WPDS-based property checking.
+pub mod verify;
+
+/// Counterexample-Guided Abstraction Refinement (CEGAR): iterative abstraction
+/// refinement over the BooleanWeight -> CountingWeight -> TropicalWeight ladder.
+pub mod cegar;
+
+/// Repair suggestion engine: analysis-driven fix recommendations.
+pub mod repair;
 
 #[cfg(test)]
 mod tests;

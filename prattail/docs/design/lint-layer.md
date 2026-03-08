@@ -86,6 +86,11 @@ note[R07]: 36 operator pair(s) differ by 1 character (SwapTokens repair candidat
 | Weight analysis (gaps, inversions) | **TropicalWeight** | `(min, +)` — on all WFST actions |
 | Recovery cost analysis | **TropicalWeight + EditWeight** | Recovery costs are tropical |
 | Structural checks | None | Pattern matching on `ParserBundle` data |
+| Safety verification (prestar) | **BooleanWeight** | `(∨, ∧)` — reachability to bad states |
+| CEGAR refinement ladder | **Boolean → Counting → Tropical** | Progressive precision for abstraction refinement |
+| Provenance tracking | **ProvenanceWeight** | N[X] polynomial — tracks derivation source |
+| KAT decision | None (algebraic structure) | Automata-based PSPACE decision |
+| Repair ranking | **FuzzyWeight + EditWeight + CountingWeight** | Multi-criteria suggestion scoring |
 
 ## Severity Levels
 
@@ -173,13 +178,82 @@ Ordering: `Info < Note < Warning < Error`
 | D08 | `optimization-suggestion`   | Note     | Grammar modifications to resolve PathMap ambiguity        |
 | D09 | `conflict-resolution-guide` | Note     | Strategies for genuine conflicts in PathMap trie          |
 
-### Performance (P02–P04)
+### TRS Analysis (T01–T04)
 
-| ID  | Name                 | Severity | Description                           |
-|-----|----------------------|----------|---------------------------------------|
-| P02 | `high-nfa-spillover` | Note     | > 3 categories need spillover buffers |
-| P03 | `deep-cast-nesting`  | Note     | Cast chain depth > 3                  |
-| P04 | `many-alternatives`  | Note     | Token dispatches to > 4 rules         |
+| ID  | Name                           | Severity | Feature Gate    | Description                                           |
+|-----|--------------------------------|----------|-----------------|-------------------------------------------------------|
+| T01 | `non-joinable-critical-pair`   | Warning  | `trs-analysis`  | Critical pair not joinable — confluence failure       |
+| T02 | `confluence-verified`          | Note     | `trs-analysis`  | All critical pairs joinable — system is confluent     |
+| T03 | `non-terminating-cycle`        | Warning  | `trs-analysis`  | Dependency pair SCC with non-decreasing cycle         |
+| T04 | `termination-verified`         | Note     | `trs-analysis`  | All SCCs have decreasing measures — system terminates |
+
+### Automata Analysis (V01–V04)
+
+| ID  | Name                     | Severity | Feature Gate     | Description                                              |
+|-----|--------------------------|----------|------------------|----------------------------------------------------------|
+| V01 | `vpa-determinizable`     | Note     | `vpa`            | Grammar admits zero-backtracking VPA                     |
+| V02 | `vpa-alphabet-mismatch`  | Warning  | `vpa`            | Delimiter classified as both call and return              |
+| V03 | `wta-unrecognized-term`  | Warning  | `tree-automata`  | Term pattern not in regular tree language                |
+| V04 | `wta-hot-path`           | Note     | `tree-automata`  | High-frequency term pattern — specialization candidate   |
+
+### Safety & Verification (S01–S06)
+
+| ID  | Name                  | Severity | Feature Gate     | Description                                  |
+|-----|-----------------------|----------|------------------|----------------------------------------------|
+| S01 | `safety-violation`    | Warning  | always-on        | Bad state reachable via WPDS prestar         |
+| S02 | `safety-verified`     | Note     | always-on        | No bad states reachable — safety verified    |
+| S03 | `cegar-refinement`    | Note     | always-on        | CEGAR refinement step count and verdict      |
+| S04 | `ewpds-merge-site`    | Note     | `wpds-extended`  | EWPDS merge function attachment points       |
+| S05 | `ara-invariant`       | Note     | `wpds-ara`       | ARA affine-relation invariants discovered    |
+| S06 | `algebraic-summary`   | Note     | always-on        | Tarjan SCC path expression summary           |
+
+### Concurrency (N01–N05)
+
+| ID  | Name                 | Severity | Feature Gate   | Description                                           |
+|-----|----------------------|----------|----------------|-------------------------------------------------------|
+| N01 | `deadlock-risk`      | Warning  | `petri`        | Petri net coverability detects potential deadlock      |
+| N02 | `unbounded-channel`  | Warning  | `petri`        | Place has unbounded token capacity                    |
+| N03 | `scope-violation`    | Warning  | `nominal`      | Name used outside its binding scope                   |
+| N04 | `scope-narrowing`    | Note     | `nominal`      | PNew scope can be tightened                           |
+| N05 | `non-bisimilar`      | Warning  | `alternating`  | Categories not bisimilar — attacker wins game         |
+
+### Temporal (L01–L02)
+
+| ID  | Name            | Severity | Feature Gate | Description                                      |
+|-----|-----------------|----------|--------------|--------------------------------------------------|
+| L01 | `ltl-violated`  | Warning  | `ltl`        | LTL property violated — Buchi product non-empty  |
+| L02 | `ltl-verified`  | Note     | `ltl`        | LTL properties satisfied                         |
+
+### Extension (E01–E02)
+
+| ID  | Name                 | Severity | Feature Gate   | Description                                      |
+|-----|----------------------|----------|----------------|--------------------------------------------------|
+| E01 | `provenance-trace`   | Note     | `provenance`   | How-provenance polynomial tracking summary       |
+| E02 | `cra-cost-anomaly`   | Warning  | `cra`          | CRA register value exceeds threshold             |
+
+### Morphism (M01–M02)
+
+| ID  | Name                             | Severity | Feature Gate | Description                                     |
+|-----|----------------------------------|----------|--------------|-------------------------------------------------|
+| M01 | `morphism-gap`                   | Warning  | `morphisms`  | Theory morphism missing sort/operation mapping  |
+| M02 | `morphism-preservation-failure`  | Warning  | `morphisms`  | Axiom not preserved under morphism              |
+
+### KAT (K01–K02)
+
+| ID  | Name               | Severity | Feature Gate | Description                      |
+|-----|---------------------|----------|--------------|----------------------------------|
+| K01 | `hoare-failure`     | Warning  | `kat`        | Hoare triple {p} e {q} fails    |
+| K02 | `kat-equivalence`   | Note     | `kat`        | KAT expression equivalence result |
+
+### Performance (P02–P06)
+
+| ID  | Name                    | Severity | Description                                   |
+|-----|-------------------------|----------|-----------------------------------------------|
+| P02 | `high-nfa-spillover`    | Note     | > 3 categories need spillover buffers         |
+| P03 | `deep-cast-nesting`     | Note     | Cast chain depth > 3                          |
+| P04 | `many-alternatives`     | Note     | Token dispatches to > 4 rules                 |
+| P05 | `wpds-pipeline-cost`    | Info     | WPDS analysis wall-clock time and sizes       |
+| P06 | `analysis-pipeline-cost`| Note     | Mathematical analysis phase wall-clock time   |
 
 ### Infrastructure (I01–I12)
 
@@ -219,6 +293,24 @@ Ordering: `Info < Note < Warning < Error`
 | `prattail/src/compose.rs`      | X06 composition verification violations                                            |
 | `prattail/src/ebnf.rs`         | I11, I12 EBNF dump diagnostics                                                     |
 | `macros/src/logic/mod.rs`      | G25–G31, W09, I10 macro-phase diagnostics                                          |
+| `prattail/src/verify.rs` | S01-S02 safety verification results |
+| `prattail/src/cegar.rs` | S03 CEGAR refinement log |
+| `prattail/src/ewpds.rs` | S04 EWPDS merge site detection |
+| `prattail/src/ara.rs` | S05 ARA invariant discovery |
+| `prattail/src/algebraic.rs` | S06 Tarjan path expression summary |
+| `prattail/src/confluence.rs` | T01-T02 confluence analysis |
+| `prattail/src/termination.rs` | T03-T04 termination analysis |
+| `prattail/src/vpa.rs` | V01-V02 VPA analysis |
+| `prattail/src/tree_automaton.rs` | V03-V04 WTA analysis |
+| `prattail/src/petri.rs` | N01-N02 Petri net analysis |
+| `prattail/src/nominal.rs` | N03-N04 nominal scope analysis |
+| `prattail/src/alternating.rs` | N05 alternating bisimulation |
+| `prattail/src/ltl.rs` | L01-L02 LTL model checking |
+| `prattail/src/provenance.rs` | E01 provenance tracking |
+| `prattail/src/cra.rs` | E02 CRA cost analysis |
+| `prattail/src/morphism.rs` | M01-M02 morphism checking |
+| `prattail/src/kat.rs` | K01-K02 KAT verification |
+| `prattail/src/repair.rs` | Repair suggestion engine integration |
 
 ## Migration from Ad-Hoc Warnings
 

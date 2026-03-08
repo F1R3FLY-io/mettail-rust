@@ -860,11 +860,6 @@ pub fn prestar<W: Semiring>(wpds: &Wpds<W>, target: &PAutomaton<W>) -> PAutomato
     let mut worklist: VecDeque<(PAutomatonStateId, StackSymbol, PAutomatonStateId, W)> =
         VecDeque::new();
 
-    // Seed worklist with all existing transitions
-    for trans in &automaton.transitions {
-        worklist.push_back((trans.from, trans.symbol.clone(), trans.to, trans.weight));
-    }
-
     let mut existing: HashMap<(PAutomatonStateId, StackSymbol, PAutomatonStateId), W> =
         HashMap::new();
     for trans in &automaton.transitions {
@@ -873,35 +868,50 @@ pub fn prestar<W: Semiring>(wpds: &Wpds<W>, target: &PAutomaton<W>) -> PAutomato
         *entry = entry.plus(&trans.weight);
     }
 
+    // Phase 1: Initialize pop rules (processed once, not per-worklist-item).
+    // Pop rule ⟨p, γ⟩ → ⟨p', ε⟩ means: if at state p with γ on stack, transition
+    // to p' with empty stack. In prestar terms: add (p, γ, p') unconditionally.
+    for rule in &wpds.rules {
+        if let WpdsRule::Pop { from_gamma, weight } = rule {
+            let key = (p_state, from_gamma.clone(), p_state);
+            let new_weight = *weight;
+            let changed = match existing.get(&key) {
+                Some(old_w) => {
+                    let combined = old_w.plus(&new_weight);
+                    if !combined.approx_eq(old_w, 1e-10) {
+                        existing.insert(key.clone(), combined);
+                        true
+                    } else {
+                        false
+                    }
+                }
+                None => {
+                    existing.insert(key.clone(), new_weight);
+                    true
+                }
+            };
+            if changed {
+                let cw = *existing.get(&key).expect("just inserted");
+                automaton.add_transition(p_state, from_gamma.clone(), p_state, cw);
+                worklist.push_back((p_state, from_gamma.clone(), p_state, cw));
+            }
+        }
+    }
+
+    // Also seed worklist with all existing target transitions (after pop init,
+    // so replace/push rules can chain off both target and pop transitions).
+    for trans in &target.transitions {
+        worklist.push_back((trans.from, trans.symbol.clone(), trans.to, trans.weight));
+    }
+
+    // Phase 2: Worklist saturation for replace and push rules only.
+    // When we dequeue transition (from, gamma, to), we check replace/push rules
+    // whose RHS produces gamma.
     while let Some((_from, gamma, _to, _w)) = worklist.pop_front() {
-        // Process all rules that produce gamma on their RHS
         for rule in &wpds.rules {
             match rule {
-                WpdsRule::Pop { from_gamma, weight } => {
-                    // Pop: ⟨p, from_gamma⟩ → ⟨p', ε⟩
-                    // For prestar: add (p, from_gamma, p') with f(r)
-                    let key = (p_state, from_gamma.clone(), p_state);
-                    let new_weight = *weight;
-                    let should_add = match existing.get(&key) {
-                        Some(old_w) => {
-                            let combined = old_w.plus(&new_weight);
-                            if !combined.approx_eq(old_w, 1e-10) {
-                                existing.insert(key.clone(), combined);
-                                true
-                            } else {
-                                false
-                            }
-                        }
-                        None => {
-                            existing.insert(key.clone(), new_weight);
-                            true
-                        }
-                    };
-                    if should_add {
-                        let cw = *existing.get(&key).expect("just inserted");
-                        automaton.add_transition(p_state, from_gamma.clone(), p_state, cw);
-                        worklist.push_back((p_state, from_gamma.clone(), p_state, cw));
-                    }
+                WpdsRule::Pop { .. } => {
+                    // Pop rules are already handled in Phase 1.
                 }
                 WpdsRule::Replace { from_gamma, to_gamma, weight } => {
                     // Replace: ⟨p, from_gamma⟩ → ⟨p', to_gamma⟩

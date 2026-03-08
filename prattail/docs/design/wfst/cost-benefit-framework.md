@@ -595,3 +595,230 @@ corpus of grammars.
 - `semirings/tropical-weight.md` -- TropicalWeight semiring definition
 - `lint-layer.md` -- Unified lint layer (runs immediately before D1)
 - `dead-rule-detection.md` -- Five-tier dead-rule analysis (used by A4:EnhancedDCE)
+
+---
+
+## 9. Mathematical Analysis Optimizations
+
+> **Date:** 2026-03-08
+
+Five optimization candidates were added to the cost-benefit framework as
+part of the mathematical analyses expansion (Phase 7). Unlike the codegen
+optimizations (A1--F3) documented in section 4, these are all
+**Diagnostic-only**: they produce informational lint messages but do not
+modify the generated parser code.
+
+### 9.1 Optimization Roster
+
+| Code | Name                  | Description                                                     |
+|------|-----------------------|-----------------------------------------------------------------|
+| T01  | `TrsConfluenceCheck`  | Knuth-Bendix critical pair analysis on grammar rewrite rules    |
+| V01  | `VpaInclusionCheck`   | Decidable structured sublanguage verification via VPA inclusion |
+| S01  | `SafetyVerification`  | WPDS prestar analysis against bad-state automaton               |
+| S03  | `CegarRefinement`     | Iterative counterexample-guided abstraction refinement loop     |
+| N01  | `PetriDeadlockCheck`  | Coverability analysis for concurrent/parallel grammar patterns  |
+
+### 9.2 Scoring Table
+
+| Code | Speedup | Cost | Predicate                  | Status     |
+|------|---------|------|----------------------------|------------|
+| T01  | 0.50    | 0.15 | `rule_count > 3`           | Diagnostic |
+| V01  | 0.60    | 0.10 | `category_count >= 1`      | Diagnostic |
+| S01  | 0.30    | 0.25 | `category_count >= 2`      | Diagnostic |
+| S03  | 0.45    | 0.30 | `category_count >= 2`      | Diagnostic |
+| N01  | 0.70    | 0.10 | `rule_count > 5`           | Diagnostic |
+
+### 9.3 Scoring Formula Interpretation
+
+Each optimization is scored as:
+
+```
+Score  =  ProductWeight<TropicalWeight, TropicalWeight>
+       =  (speedup, cost)
+```
+
+Both components use tropical (lower = better) semantics. The speedup and
+cost values are **fixed constants** rather than grammar-dependent `-ln(x)`
+formulas, because the mathematical analyses do not directly improve
+runtime performance -- they produce diagnostic insights whose value is
+not easily parameterized by grammar metrics.
+
+For the codegen optimizations in section 4, `-ln(x)` maps a grammar
+ratio `x in (0, 1]` to a speedup weight:
+
+```
+x close to 0  =>  -ln(x) -> +inf  =>  no benefit (tropical zero)
+x close to 1  =>  -ln(x) -> 0.0   =>  maximum benefit
+```
+
+For the analysis optimizations, the fixed speedup values express relative
+diagnostic value:
+
+| Speedup | Interpretation                                                   |
+|---------|------------------------------------------------------------------|
+| 0.30    | High diagnostic value (S01: confirms unreachability with proof)  |
+| 0.45    | Good diagnostic value (S03: iterative refinement closes gaps)    |
+| 0.50    | Moderate diagnostic value (T01: catches rewriting conflicts)     |
+| 0.60    | Moderate diagnostic value (V01: identifies zero-backtrack region)|
+| 0.70    | Lower diagnostic value (N01: concurrent-pattern deadlock)        |
+
+Lower speedup weight = higher diagnostic value = ranked higher by the
+lexicographic ordering.
+
+### 9.4 Applicability Predicates
+
+| Code | Predicate              | Rationale                                                                                                                          |
+|------|------------------------|------------------------------------------------------------------------------------------------------------------------------------|
+| T01  | `rule_count > 3`       | With 3 or fewer rules, critical pair enumeration is trivial and confluence is almost always trivially satisfied. The analysis overhead (O(r^2) pair enumeration) exceeds the diagnostic value for minimal grammars. |
+| V01  | `category_count >= 1`  | Any grammar with at least one category has delimiter structure (parentheses, braces, brackets) that can be analyzed for VPA inclusion. The threshold is intentionally low because VPA analysis is inexpensive and broadly useful. |
+| S01  | `category_count >= 2`  | Safety verification via WPDS prestar requires inter-category interaction to be meaningful. A single-category grammar has no call/return structure for the pushdown system to analyze. |
+| S03  | `category_count >= 2`  | CEGAR refinement builds on the same WPDS infrastructure as S01 and requires the same inter-category structure. The iterative loop adds cost proportional to the number of refinement steps. |
+| N01  | `rule_count > 5`       | Petri net deadlock analysis models rule interactions as concurrent processes. With 5 or fewer rules, the interaction graph is too sparse for meaningful deadlock detection. |
+
+### 9.5 OptimizationStatus::Diagnostic
+
+All five analysis optimizations have status `Diagnostic`, which differs
+from the `Active` status of codegen optimizations (A1--F3):
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  OptimizationStatus::Active (codegen optimizations A1-F3)           │
+│                                                                      │
+│  - Gates control whether codegen emits optimized paths               │
+│  - When disabled, codegen falls back to unoptimized default          │
+│  - Directly affects generated parser behavior and performance        │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────┤
+│  OptimizationStatus::Diagnostic (analysis optimizations T01-N01)    │
+│                                                                      │
+│  - Gates control whether analysis runs and emits diagnostics         │
+│  - When disabled, the analysis is skipped entirely                   │
+│  - No effect on generated parser code                                │
+│  - Produces informational lint messages:                             │
+│      T01-T04: TRS confluence diagnostics                             │
+│      V01-V04: VPA inclusion diagnostics                              │
+│      S01-S06: Safety verification diagnostics                        │
+│      N01-N05: Petri net analysis diagnostics                         │
+│  - Feature-gated: T01 behind "trs-analysis", V01 behind "vpa",      │
+│    N01 behind "petri"                                                │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+Unlike codegen optimizations, analysis optimizations produce
+**informational lint messages** but do not modify the generated parser
+code. A grammar that triggers T01 (confluence check) will receive
+diagnostic output about overlapping rewrite rules, but the parser's
+dispatch logic, recovery strategy, and generated Rust code are identical
+whether or not T01 runs.
+
+### 9.6 Lexicographic Ranking with Codegen Optimizations
+
+The five analysis optimizations participate in the same lexicographic
+ranking as the ten codegen optimizations. Their fixed speedup values
+place them in the middle of the ranking:
+
+```
+Rank by speedup (lower = better = higher rank):
+
+  0.10  F2:EarlyTermination          (codegen)
+  0.20  F1:SpilloverPruning          (codegen)
+  0.30  B2:AdaptiveRecovery          (codegen)
+  0.30  S01:SafetyVerification       (diagnostic)    <-- analysis
+  0.30  F3:LazySpillover             (codegen)
+  0.40  G25:WpdsReachabilityCheck    (codegen)
+  0.45  S03:CegarRefinement          (diagnostic)    <-- analysis
+  0.50  A4:EnhancedDCE               (codegen)
+  0.50  T01:TrsConfluenceCheck       (diagnostic)    <-- analysis
+  0.60  V01:VpaInclusionCheck        (diagnostic)    <-- analysis
+  0.70  N01:PetriDeadlockCheck       (diagnostic)    <-- analysis
+  ...   (grammar-dependent: A1, A2, A5, B1, B3)
+```
+
+When two optimizations share the same speedup (e.g., B2 and S01 both at
+0.30), the lexicographic tiebreaker uses the cost component. B2 has cost
+0.10 and S01 has cost 0.25, so B2 ranks higher (score `(0.30, 0.10)` <
+`(0.30, 0.25)` in lexicographic order).
+
+### 9.7 Worked Example: 20-Rule Calculator Grammar
+
+Using the calculator grammar profile from section 6:
+
+```rust
+GrammarProfile {
+    rule_count: 20,
+    category_count: 4,
+    // ... other fields unchanged ...
+}
+```
+
+| Code | Speedup | Cost | Score          | Applicable? | Reason                            |
+|------|---------|------|----------------|-------------|-----------------------------------|
+| T01  | 0.50    | 0.15 | `(0.50, 0.15)` | Yes         | `rule_count=20 > 3`              |
+| V01  | 0.60    | 0.10 | `(0.60, 0.10)` | Yes         | `category_count=4 >= 1`          |
+| S01  | 0.30    | 0.25 | `(0.30, 0.25)` | Yes         | `category_count=4 >= 2`          |
+| S03  | 0.45    | 0.30 | `(0.45, 0.30)` | Yes         | `category_count=4 >= 2`          |
+| N01  | 0.70    | 0.10 | `(0.70, 0.10)` | Yes         | `rule_count=20 > 5`             |
+
+All five are applicable for this grammar. Sorted by lexicographic score:
+
+```
+1. S01:SafetyVerification    (0.30, 0.25)
+2. S03:CegarRefinement       (0.45, 0.30)
+3. T01:TrsConfluenceCheck    (0.50, 0.15)
+4. V01:VpaInclusionCheck     (0.60, 0.10)
+5. N01:PetriDeadlockCheck    (0.70, 0.10)
+```
+
+Combined with the codegen rankings from section 6, the full
+recommendation list for this grammar would interleave analysis
+optimizations among codegen optimizations based on their scores.
+
+### 9.8 Feature Gates and OptimizationGates
+
+Three of the five analysis optimizations are feature-gated in
+`OptimizationGates`:
+
+```rust
+pub struct OptimizationGates {
+    // ... codegen gates ...
+
+    /// T01: TRS confluence check.
+    #[cfg(feature = "trs-analysis")]
+    pub trs_confluence: bool,
+
+    /// V01: VPA inclusion check.
+    #[cfg(feature = "vpa")]
+    pub vpa_inclusion: bool,
+
+    /// S01: Safety verification via WPDS prestar.
+    pub safety_verification: bool,
+
+    /// S03: CEGAR refinement loop.
+    pub cegar_refinement: bool,
+
+    /// N01: Petri net deadlock check.
+    #[cfg(feature = "petri")]
+    pub petri_deadlock: bool,
+}
+```
+
+When a feature gate is disabled, the corresponding `Optimization` enum
+variant is still evaluated by `evaluate_optimizations()`, but the gate
+field is absent from `OptimizationGates`, so the pipeline cannot enable
+the analysis. This ensures that the cost-benefit ranking is stable across
+feature configurations while the actual analysis execution respects
+compile-time feature selection.
+
+### 9.9 Source Reference
+
+| Component                                       | Location                   |
+|-------------------------------------------------|----------------------------|
+| T01 candidate construction                      | `cost_benefit.rs:517-523`  |
+| V01 candidate construction                      | `cost_benefit.rs:526-535`  |
+| S01 candidate construction                      | `cost_benefit.rs:538-547`  |
+| S03 candidate construction                      | `cost_benefit.rs:550-559`  |
+| N01 candidate construction                      | `cost_benefit.rs:562-568`  |
+| `Optimization` enum (T01, V01, S01, S03, N01)   | `cost_benefit.rs:63-71`    |
+| `OptimizationGates` analysis fields              | `cost_benefit.rs:636-648`  |
+| Feature-gated gate population                    | `cost_benefit.rs:682-700`  |
+| Cost-benefit tests for analysis optimizations    | `cost_benefit.rs` (5 tests)|

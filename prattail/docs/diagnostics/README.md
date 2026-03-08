@@ -103,7 +103,74 @@ Ordering: `Info < Note < Warning < Error`
 | [D15](wpds/D15-wpds-witness-trace.md) | wpds-witness-trace | Info | BFS shortest path witness for W13 dead rules |
 | [COMP-08](wpds/COMP-08-refactoring-suggestion.md) | wpds-refactoring-suggestion | Note | Grammar restructuring suggestions from WPDS analysis |
 
-### Performance (P02–P05)
+### TRS Analysis (T01–T04)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [T01](analysis/trs/T01-non-joinable-critical-pair.md) | non-joinable-critical-pair | Warning | `trs-analysis` | Critical pair not joinable — confluence failure |
+| [T02](analysis/trs/T02-confluence-verified.md) | confluence-verified | Note | `trs-analysis` | All critical pairs joinable — system is confluent |
+| [T03](analysis/trs/T03-non-terminating-cycle.md) | non-terminating-cycle | Warning | `trs-analysis` | Dependency pair SCC with non-decreasing cycle |
+| [T04](analysis/trs/T04-termination-verified.md) | termination-verified | Note | `trs-analysis` | All SCCs have decreasing measures — system terminates |
+
+### Automata Analysis (V01–V04)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [V01](analysis/automata/V01-vpa-determinizable.md) | vpa-determinizable | Note | `vpa` | Grammar admits zero-backtracking VPA |
+| [V02](analysis/automata/V02-vpa-alphabet-mismatch.md) | vpa-alphabet-mismatch | Warning | `vpa` | Delimiter classified as both call and return |
+| [V03](analysis/automata/V03-wta-unrecognized-term.md) | wta-unrecognized-term | Warning | `tree-automata` | Term pattern not in regular tree language |
+| [V04](analysis/automata/V04-wta-hot-path.md) | wta-hot-path | Note | `tree-automata` | High-frequency term pattern — specialization candidate |
+
+### Safety & Verification (S01–S06)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [S01](analysis/safety/S01-safety-violation.md) | safety-violation | Warning | always-on | Bad state reachable via WPDS prestar |
+| [S02](analysis/safety/S02-safety-verified.md) | safety-verified | Note | always-on | No bad states reachable — safety verified |
+| [S03](analysis/safety/S03-cegar-refinement.md) | cegar-refinement | Note | always-on | CEGAR refinement step count and verdict |
+| [S04](analysis/safety/S04-ewpds-merge-site.md) | ewpds-merge-site | Note | `wpds-extended` | EWPDS merge function attachment points |
+| [S05](analysis/safety/S05-ara-invariant.md) | ara-invariant | Note | `wpds-ara` | ARA affine-relation invariants discovered |
+| [S06](analysis/safety/S06-algebraic-summary.md) | algebraic-summary | Note | always-on | Tarjan SCC path expression summary |
+
+### Concurrency (N01–N05)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [N01](analysis/concurrency/N01-deadlock-risk.md) | deadlock-risk | Warning | `petri` | Petri net coverability detects potential deadlock |
+| [N02](analysis/concurrency/N02-unbounded-channel.md) | unbounded-channel | Warning | `petri` | Place has unbounded token capacity |
+| [N03](analysis/concurrency/N03-scope-violation.md) | scope-violation | Warning | `nominal` | Name used outside its binding scope |
+| [N04](analysis/concurrency/N04-scope-narrowing.md) | scope-narrowing | Note | `nominal` | PNew scope can be tightened |
+| [N05](analysis/concurrency/N05-non-bisimilar.md) | non-bisimilar | Warning | `alternating` | Categories not bisimilar — attacker wins game |
+
+### Temporal (L01–L02)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [L01](analysis/temporal/L01-ltl-violated.md) | ltl-violated | Warning | `ltl` | LTL property violated — Buchi product non-empty |
+| [L02](analysis/temporal/L02-ltl-verified.md) | ltl-verified | Note | `ltl` | LTL properties satisfied |
+
+### Extension (E01–E02)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [E01](analysis/extension/E01-provenance-trace.md) | provenance-trace | Note | `provenance` | How-provenance polynomial tracking summary |
+| [E02](analysis/extension/E02-cra-cost-anomaly.md) | cra-cost-anomaly | Warning | `cra` | CRA register value exceeds threshold |
+
+### Morphism (M01–M02)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [M01](analysis/morphism/M01-morphism-gap.md) | morphism-gap | Warning | `morphisms` | Theory morphism missing sort/operation mapping |
+| [M02](analysis/morphism/M02-morphism-preservation-failure.md) | morphism-preservation-failure | Warning | `morphisms` | Axiom not preserved under morphism |
+
+### KAT (K01–K02)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [K01](analysis/kat/K01-hoare-failure.md) | hoare-failure | Warning | `kat` | Hoare triple {p} e {q} fails |
+| [K02](analysis/kat/K02-kat-equivalence.md) | kat-equivalence | Note | `kat` | KAT expression equivalence result |
+
+### Performance (P02–P06)
 
 | ID                                           | Name               | Severity | Description                                   |
 |----------------------------------------------|--------------------|----------|-----------------------------------------------|
@@ -111,6 +178,7 @@ Ordering: `Info < Note < Warning < Error`
 | [P03](performance/P03-deep-cast-nesting.md)  | deep-cast-nesting  | Note     | Deep cast chain adds Box wrapper overhead     |
 | [P04](performance/P04-many-alternatives.md)  | many-alternatives  | Note     | Token dispatches to many rules (save/restore) |
 | [P05](performance/P05-wpds-pipeline-cost.md) | wpds-pipeline-cost | Info     | WPDS analysis wall-clock time and sizes       |
+| [P06](analysis/P06-analysis-pipeline-cost.md) | analysis-pipeline-cost | Note | Mathematical analysis phase wall-clock time   |
 
 ### Infrastructure (I01–I12)
 
@@ -176,4 +244,6 @@ in [`prattail/src/lint.rs`](../../src/lint.rs). The public API includes:
 
 Grammar-level lints (G/W/R/C/P) run during the Generate phase via `run_lints()`. Pipeline
 info messages (I01–I12) are emitted inline. Macro-phase lints (G25–G31, W09, I10) are
-emitted by the macros crate via `emit_diagnostic()`.
+emitted by the macros crate via `emit_diagnostic()`. Mathematical analysis lints
+(T/V/S/N/L/E/M/K) run in the same phase, with results provided by the 6-phase analysis
+pipeline (feature-gated).

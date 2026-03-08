@@ -5196,8 +5196,12 @@ mod tests {
                 let loaded = IncrementalState::load(&path).expect("load should succeed");
                 prop_assert!(loaded.is_valid());
 
+                // Only check entries that were actually recorded (first
+                // occurrence of each name). Re-derive the dedup set to get
+                // the correct (name, hash, code) triple for each name.
+                let mut checked = std::collections::HashSet::new();
                 for (name, hash, code) in &entries {
-                    if seen.contains(name) {
+                    if checked.insert(name.clone()) {
                         prop_assert!(
                             loaded.is_unchanged(name, *hash),
                             "hash mismatch for {}",

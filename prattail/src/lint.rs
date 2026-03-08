@@ -203,6 +203,60 @@ pub struct LintContext<'a> {
     pub wpds_analysis: Option<&'a crate::wpds::WpdsAnalysis>,
     /// P05: Wall-clock time spent in WPDS analysis (set by pipeline).
     pub wpds_elapsed: Option<std::time::Duration>,
+
+    // ── Mathematical analysis results ──────────────────────────────────────
+
+    /// Safety verification result (always-on when WPDS runs).
+    pub safety_result: Option<&'a crate::verify::SafetyResult<crate::automata::semiring::BooleanWeight>>,
+    /// CEGAR verification result (always-on when WPDS runs).
+    pub cegar_result: Option<&'a crate::cegar::CegarLog>,
+    /// Algebraic program analysis (Tarjan path expressions).
+    pub algebraic_result: Option<&'a crate::algebraic::AlgebraicSummary>,
+    /// P06: Wall-clock time spent in mathematical analysis phase.
+    pub math_analysis_elapsed: Option<std::time::Duration>,
+
+    /// Confluence analysis (TRS critical pairs).
+    #[cfg(feature = "trs-analysis")]
+    pub confluence_result: Option<&'a crate::confluence::ConfluenceAnalysis>,
+    /// Termination analysis (dependency pairs).
+    #[cfg(feature = "trs-analysis")]
+    pub termination_result: Option<&'a crate::termination::TerminationResult>,
+    /// VPA analysis (structured sublanguage).
+    #[cfg(feature = "vpa")]
+    pub vpa_result: Option<&'a crate::vpa::VpaAnalysis>,
+    /// Weighted tree automaton analysis.
+    #[cfg(feature = "tree-automata")]
+    pub wta_result: Option<&'a crate::tree_automaton::WtaAnalysis>,
+    /// EWPDS merge site analysis.
+    #[cfg(feature = "wpds-extended")]
+    pub ewpds_result: Option<&'a crate::ewpds::EwpdsAnalysis>,
+    /// ARA affine-relation analysis.
+    #[cfg(feature = "wpds-ara")]
+    pub ara_result: Option<&'a crate::ara::AraAnalysis>,
+    /// Petri net analysis.
+    #[cfg(feature = "petri")]
+    pub petri_result: Option<&'a crate::petri::PetriAnalysis>,
+    /// Nominal automaton analysis.
+    #[cfg(feature = "nominal")]
+    pub nominal_result: Option<&'a crate::nominal::NominalAnalysis>,
+    /// Alternating automaton analysis.
+    #[cfg(feature = "alternating")]
+    pub alternating_result: Option<&'a crate::alternating::AlternatingAnalysis>,
+    /// LTL model checking results.
+    #[cfg(feature = "ltl")]
+    pub ltl_results: Option<&'a Vec<crate::ltl::LtlCheckResult>>,
+    /// Provenance tracking results.
+    #[cfg(feature = "provenance")]
+    pub provenance_result: Option<&'a crate::provenance::ProvenanceAnalysis>,
+    /// Cost register automaton analysis.
+    #[cfg(feature = "cra")]
+    pub cra_result: Option<&'a crate::cra::CraAnalysis>,
+    /// Theory morphism check.
+    #[cfg(feature = "morphisms")]
+    pub morphism_result: Option<&'a crate::morphism::MorphismCheck>,
+    /// KAT check (Hoare triples, equivalences).
+    #[cfg(feature = "kat")]
+    pub kat_result: Option<&'a crate::kat::KatCheck>,
 }
 
 /// Run all lints and return structured diagnostics.
@@ -272,6 +326,99 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_g32_prefix_isomorphism(ctx, &mut diagnostics);
     lint_d10_lookahead_waste(ctx, &mut diagnostics);
     lint_d13_ascent_trie_correlation(ctx, &mut diagnostics);
+
+    // ── Mathematical analysis lints ──
+
+    // TRS analysis (confluence + termination)
+    #[cfg(feature = "trs-analysis")]
+    {
+        lint_t01_non_joinable_critical_pair(ctx, &mut diagnostics);
+        lint_t02_confluence_verified(ctx, &mut diagnostics);
+        lint_t03_non_terminating_cycle(ctx, &mut diagnostics);
+        lint_t04_termination_verified(ctx, &mut diagnostics);
+    }
+
+    // VPA analysis
+    #[cfg(feature = "vpa")]
+    {
+        lint_v01_vpa_determinizable(ctx, &mut diagnostics);
+        lint_v02_vpa_alphabet_mismatch(ctx, &mut diagnostics);
+    }
+
+    // WTA analysis
+    #[cfg(feature = "tree-automata")]
+    {
+        lint_v03_wta_unrecognized_term(ctx, &mut diagnostics);
+        lint_v04_wta_hot_path(ctx, &mut diagnostics);
+    }
+
+    // Safety verification
+    lint_s01_safety_violation(ctx, &mut diagnostics);
+    lint_s02_safety_verified(ctx, &mut diagnostics);
+
+    // CEGAR
+    lint_s03_cegar_refinement(ctx, &mut diagnostics);
+
+    // EWPDS
+    #[cfg(feature = "wpds-extended")]
+    lint_s04_ewpds_merge_site(ctx, &mut diagnostics);
+
+    // ARA
+    #[cfg(feature = "wpds-ara")]
+    lint_s05_ara_invariant(ctx, &mut diagnostics);
+
+    // Algebraic
+    lint_s06_algebraic_summary(ctx, &mut diagnostics);
+
+    // Petri nets
+    #[cfg(feature = "petri")]
+    {
+        lint_n01_deadlock_risk(ctx, &mut diagnostics);
+        lint_n02_unbounded_channel(ctx, &mut diagnostics);
+    }
+
+    // Nominal automata
+    #[cfg(feature = "nominal")]
+    {
+        lint_n03_scope_violation(ctx, &mut diagnostics);
+        lint_n04_scope_narrowing(ctx, &mut diagnostics);
+    }
+
+    // Alternating automata
+    #[cfg(feature = "alternating")]
+    lint_n05_non_bisimilar(ctx, &mut diagnostics);
+
+    // LTL model checking
+    #[cfg(feature = "ltl")]
+    {
+        lint_l01_ltl_violated(ctx, &mut diagnostics);
+        lint_l02_ltl_verified(ctx, &mut diagnostics);
+    }
+
+    // Provenance
+    #[cfg(feature = "provenance")]
+    lint_e01_provenance_trace(ctx, &mut diagnostics);
+
+    // CRA
+    #[cfg(feature = "cra")]
+    lint_e02_cra_cost_anomaly(ctx, &mut diagnostics);
+
+    // Morphisms
+    #[cfg(feature = "morphisms")]
+    {
+        lint_m01_morphism_gap(ctx, &mut diagnostics);
+        lint_m02_morphism_preservation_failure(ctx, &mut diagnostics);
+    }
+
+    // KAT
+    #[cfg(feature = "kat")]
+    {
+        lint_k01_hoare_failure(ctx, &mut diagnostics);
+        lint_k02_kat_equivalence(ctx, &mut diagnostics);
+    }
+
+    // P06: Analysis pipeline timing
+    lint_p06_analysis_pipeline_cost(ctx, &mut diagnostics);
 
     diagnostics
 }
@@ -4528,6 +4675,755 @@ fn lint_d13_ascent_trie_correlation(ctx: &LintContext, diagnostics: &mut Vec<Lin
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Mathematical Analysis Lints
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── TRS analysis lints (T01-T04) ────────────────────────────────────────────
+
+#[cfg(feature = "trs-analysis")]
+fn lint_t01_non_joinable_critical_pair(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.confluence_result {
+        Some(a) => a,
+        None => return,
+    };
+    for (i, cp) in analysis.critical_pairs.iter().enumerate() {
+        if matches!(
+            analysis.joinability_results.get(i),
+            Some(crate::confluence::JoinabilityResult::NotJoinable { .. })
+        ) {
+            diagnostics.push(LintDiagnostic {
+                id: "T01",
+                name: "non-joinable-critical-pair",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: format!(
+                    "critical pair (rules {}, {}) is not joinable — confluence failure: {} ≠ {}",
+                    cp.rule1_index, cp.rule2_index, cp.term1, cp.term2,
+                ),
+                hint: Some(
+                    "add an equation or oriented rewrite to make the terms joinable"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+#[cfg(feature = "trs-analysis")]
+fn lint_t02_confluence_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.confluence_result {
+        Some(a) => a,
+        None => return,
+    };
+    if analysis.is_confluent {
+        diagnostics.push(LintDiagnostic {
+            id: "T02",
+            name: "confluence-verified",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "all {} critical pairs are joinable — system is confluent",
+                analysis.critical_pairs.len(),
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "trs-analysis")]
+fn lint_t03_non_terminating_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.termination_result {
+        Some(r) => r,
+        None => return,
+    };
+    if let crate::termination::TerminationResult::PotentiallyNonTerminating {
+        reason,
+        problematic_sccs,
+    } = result
+    {
+        diagnostics.push(LintDiagnostic {
+            id: "T03",
+            name: "non-terminating-cycle",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "potential non-termination: {} ({} problematic SCC(s))",
+                reason,
+                problematic_sccs.len(),
+            ),
+            hint: Some(
+                "add a decreasing measure or simplify the rewrite cycle".to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "trs-analysis")]
+fn lint_t04_termination_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.termination_result {
+        Some(r) => r,
+        None => return,
+    };
+    if matches!(result, crate::termination::TerminationResult::Terminating) {
+        diagnostics.push(LintDiagnostic {
+            id: "T04",
+            name: "termination-verified",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: "all SCCs have decreasing measures — system terminates".to_string(),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── VPA lints (V01-V02) ─────────────────────────────────────────────────────
+
+#[cfg(feature = "vpa")]
+fn lint_v01_vpa_determinizable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.vpa_result {
+        Some(a) => a,
+        None => return,
+    };
+    if analysis.is_determinizable {
+        diagnostics.push(LintDiagnostic {
+            id: "V01",
+            name: "vpa-determinizable",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "grammar's structured sublanguage admits zero-backtracking VPA ({} states)",
+                analysis.state_count,
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "vpa")]
+fn lint_v02_vpa_alphabet_mismatch(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.vpa_result {
+        Some(a) => a,
+        None => return,
+    };
+    for mismatch in &analysis.alphabet_mismatches {
+        diagnostics.push(LintDiagnostic {
+            id: "V02",
+            name: "vpa-alphabet-mismatch",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "delimiter classification inconsistency: token `{}` classified as both call and return",
+                mismatch,
+            ),
+            hint: Some(
+                "ensure each delimiter token is used consistently as either opening or closing"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── WTA lints (V03-V04) ─────────────────────────────────────────────────────
+
+#[cfg(feature = "tree-automata")]
+fn lint_v03_wta_unrecognized_term(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.wta_result {
+        Some(a) => a,
+        None => return,
+    };
+    for term in &analysis.unrecognized_terms {
+        diagnostics.push(LintDiagnostic {
+            id: "V03",
+            name: "wta-unrecognized-term",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "term pattern `{}` not in regular tree language",
+                term,
+            ),
+            hint: Some(
+                "add a rule or transition to recognize this term pattern".to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "tree-automata")]
+fn lint_v04_wta_hot_path(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let analysis = match ctx.wta_result {
+        Some(a) => a,
+        None => return,
+    };
+    for path in &analysis.hot_paths {
+        diagnostics.push(LintDiagnostic {
+            id: "V04",
+            name: "wta-hot-path",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "frequently weighted term pattern: {} — specialization candidate",
+                path,
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Safety verification lints (S01-S06) ─────────────────────────────────────
+
+fn lint_s01_safety_violation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.safety_result {
+        Some(r) => r,
+        None => return,
+    };
+    if !result.safe {
+        diagnostics.push(LintDiagnostic {
+            id: "S01",
+            name: "safety-violation",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "bad state reachable via WPDS prestar (initial weight: {})",
+                result.initial_weight,
+            ),
+            hint: Some(
+                "review the grammar for unreachable-yet-dispatched rules".to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+fn lint_s02_safety_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.safety_result {
+        Some(r) => r,
+        None => return,
+    };
+    if result.safe {
+        diagnostics.push(LintDiagnostic {
+            id: "S02",
+            name: "safety-verified",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: "no bad states reachable — safety property verified".to_string(),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+fn lint_s03_cegar_refinement(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let log = match ctx.cegar_result {
+        Some(l) => l,
+        None => return,
+    };
+    let final_verdict = log
+        .steps
+        .last()
+        .map(|s| format!("{}", s.verdict))
+        .unwrap_or_else(|| "unknown".to_string());
+    diagnostics.push(LintDiagnostic {
+        id: "S03",
+        name: "cegar-refinement",
+        severity: LintSeverity::Note,
+        category: None,
+        rule: None,
+        message: format!(
+            "CEGAR loop: {} refinement step(s), final verdict: {}",
+            log.steps.len(),
+            final_verdict,
+        ),
+        hint: None,
+        grammar_name: Some(ctx.grammar_name.to_string()),
+        source_location: None,
+    });
+}
+
+#[cfg(feature = "wpds-extended")]
+fn lint_s04_ewpds_merge_site(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.ewpds_result {
+        Some(r) => r,
+        None => return,
+    };
+    if result.merge_site_count > 0 {
+        diagnostics.push(LintDiagnostic {
+            id: "S04",
+            name: "ewpds-merge-site",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "identified {} merge function site(s): {}",
+                result.merge_site_count,
+                result.merge_site_labels.join(", "),
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "wpds-ara")]
+fn lint_s05_ara_invariant(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.ara_result {
+        Some(r) => r,
+        None => return,
+    };
+    diagnostics.push(LintDiagnostic {
+        id: "S05",
+        name: "ara-invariant",
+        severity: LintSeverity::Note,
+        category: None,
+        rule: None,
+        message: format!(
+            "ARA weight domain: dimension={}, {} invariant(s) discovered",
+            result.dimension, result.invariant_count,
+        ),
+        hint: None,
+        grammar_name: Some(ctx.grammar_name.to_string()),
+        source_location: None,
+    });
+}
+
+fn lint_s06_algebraic_summary(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.algebraic_result {
+        Some(r) => r,
+        None => return,
+    };
+    diagnostics.push(LintDiagnostic {
+        id: "S06",
+        name: "algebraic-summary",
+        severity: LintSeverity::Note,
+        category: None,
+        rule: None,
+        message: format!(
+            "Tarjan path expression summary: {} SCC(s), {} expression(s)",
+            result.scc_count, result.path_expression_count,
+        ),
+        hint: None,
+        grammar_name: Some(ctx.grammar_name.to_string()),
+        source_location: None,
+    });
+}
+
+// ── Concurrency lints (N01-N05) ─────────────────────────────────────────────
+
+#[cfg(feature = "petri")]
+fn lint_n01_deadlock_risk(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.petri_result {
+        Some(r) => r,
+        None => return,
+    };
+    if result.has_deadlock_risk {
+        diagnostics.push(LintDiagnostic {
+            id: "N01",
+            name: "deadlock-risk",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "Petri net coverability detects potential deadlock ({} places, {} transitions)",
+                result.place_count, result.transition_count,
+            ),
+            hint: Some(
+                "review parallel composition operators for potential blocking patterns"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "petri")]
+fn lint_n02_unbounded_channel(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.petri_result {
+        Some(r) => r,
+        None => return,
+    };
+    for place in &result.unbounded_places {
+        diagnostics.push(LintDiagnostic {
+            id: "N02",
+            name: "unbounded-channel",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "place `{}` has unbounded token capacity",
+                place,
+            ),
+            hint: Some(
+                "consider adding a capacity bound to prevent resource exhaustion"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "nominal")]
+fn lint_n03_scope_violation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.nominal_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (name, context) in &result.scope_violations {
+        diagnostics.push(LintDiagnostic {
+            id: "N03",
+            name: "scope-violation",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "name `{}` used outside its binding scope ({})",
+                name, context,
+            ),
+            hint: Some(
+                "ensure the name is only used within the scope of its binder".to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "nominal")]
+fn lint_n04_scope_narrowing(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.nominal_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (binder, suggestion) in &result.narrowing_candidates {
+        diagnostics.push(LintDiagnostic {
+            id: "N04",
+            name: "scope-narrowing",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "`PNew` scope for binder `{}` can be tightened: {}",
+                binder, suggestion,
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "alternating")]
+fn lint_n05_non_bisimilar(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.alternating_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (cat_a, cat_b) in &result.non_bisimilar_pairs {
+        diagnostics.push(LintDiagnostic {
+            id: "N05",
+            name: "non-bisimilar",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "categories `{}` and `{}` are not bisimilar (attacker wins game)",
+                cat_a, cat_b,
+            ),
+            hint: Some(
+                "these categories have structurally different observable behavior"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Temporal lints (L01-L02) ────────────────────────────────────────────────
+
+#[cfg(feature = "ltl")]
+fn lint_l01_ltl_violated(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let results = match ctx.ltl_results {
+        Some(r) => r,
+        None => return,
+    };
+    for (i, result) in results.iter().enumerate() {
+        if let crate::ltl::LtlCheckResult::Violated { prefix, .. } = result {
+            let desc = prefix.first().map(|s| s.as_str()).unwrap_or("unknown");
+            diagnostics.push(LintDiagnostic {
+                id: "L01",
+                name: "ltl-violated",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: format!(
+                    "LTL property #{} violated (Buchi product non-empty): {}",
+                    i, desc,
+                ),
+                hint: Some(
+                    "the grammar's execution traces can violate this temporal property"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+#[cfg(feature = "ltl")]
+fn lint_l02_ltl_verified(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let results = match ctx.ltl_results {
+        Some(r) => r,
+        None => return,
+    };
+    let satisfied_count = results
+        .iter()
+        .filter(|r| matches!(r, crate::ltl::LtlCheckResult::Satisfied))
+        .count();
+    if satisfied_count > 0 {
+        diagnostics.push(LintDiagnostic {
+            id: "L02",
+            name: "ltl-verified",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} LTL propert{} satisfied",
+                satisfied_count,
+                if satisfied_count == 1 { "y" } else { "ies" },
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Extension lints (E01-E02) ───────────────────────────────────────────────
+
+#[cfg(feature = "provenance")]
+fn lint_e01_provenance_trace(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.provenance_result {
+        Some(r) => r,
+        None => return,
+    };
+    if !result.provenance_traces.is_empty() {
+        diagnostics.push(LintDiagnostic {
+            id: "E01",
+            name: "provenance-trace",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "how-provenance: {} polynomial(s) computed",
+                result.provenance_traces.len(),
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "cra")]
+fn lint_e02_cra_cost_anomaly(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.cra_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (desc, value) in &result.cost_anomalies {
+        diagnostics.push(LintDiagnostic {
+            id: "E02",
+            name: "cra-cost-anomaly",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "CRA register value exceeds threshold: {} = {}",
+                desc, value,
+            ),
+            hint: Some(
+                "review the grammar's quantitative cost model".to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Morphism lints (M01-M02) ────────────────────────────────────────────────
+
+#[cfg(feature = "morphisms")]
+fn lint_m01_morphism_gap(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.morphism_result {
+        Some(r) => r,
+        None => return,
+    };
+    for gap in &result.gaps {
+        diagnostics.push(LintDiagnostic {
+            id: "M01",
+            name: "morphism-gap",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "theory morphism incomplete — missing constructor mapping: {}",
+                gap,
+            ),
+            hint: Some(
+                "add a cross-category rule or constructor to complete the morphism"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "morphisms")]
+fn lint_m02_morphism_preservation_failure(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    let result = match ctx.morphism_result {
+        Some(r) => r,
+        None => return,
+    };
+    for failure in &result.preservation_failures {
+        diagnostics.push(LintDiagnostic {
+            id: "M02",
+            name: "morphism-preservation-failure",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "equation not preserved under morphism: {}",
+                failure,
+            ),
+            hint: Some(
+                "the morphism does not preserve this algebraic equation".to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── KAT lints (K01-K02) ────────────────────────────────────────────────────
+
+#[cfg(feature = "kat")]
+fn lint_k01_hoare_failure(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.kat_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (desc, passed) in &result.hoare_results {
+        if !passed {
+            diagnostics.push(LintDiagnostic {
+                id: "K01",
+                name: "hoare-failure",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: format!(
+                    "Hoare triple failed: {}",
+                    desc,
+                ),
+                hint: Some(
+                    "p·e·¬q ≠ 0 — the program does not satisfy its specification"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+#[cfg(feature = "kat")]
+fn lint_k02_kat_equivalence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.kat_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (expr1, expr2, equivalent) in &result.equivalence_results {
+        diagnostics.push(LintDiagnostic {
+            id: "K02",
+            name: "kat-equivalence",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "KAT equivalence: {} {} {}",
+                expr1,
+                if *equivalent { "≡" } else { "≢" },
+                expr2,
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Pipeline timing lint (P06) ──────────────────────────────────────────────
+
+fn lint_p06_analysis_pipeline_cost(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let elapsed = match ctx.math_analysis_elapsed {
+        Some(d) => d,
+        None => return,
+    };
+    // Only emit if there's meaningful work done (> 100µs)
+    if elapsed.as_micros() < 100 {
+        return;
+    }
+    diagnostics.push(LintDiagnostic {
+        id: "P06",
+        name: "analysis-pipeline-cost",
+        severity: LintSeverity::Note,
+        category: None,
+        rule: None,
+        message: format!(
+            "mathematical analysis phase completed in {:.2}ms",
+            elapsed.as_secs_f64() * 1000.0,
+        ),
+        hint: None,
+        grammar_name: Some(ctx.grammar_name.to_string()),
+        source_location: None,
+    });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -4592,6 +5488,39 @@ mod tests {
         decision_trees: HashMap<String, CategoryDecisionTree>,
         token_id_map: TokenIdMap,
         dead_rule_warnings: Vec<crate::pipeline::DeadRuleWarning>,
+        // ── Mathematical analysis result fields ──
+        safety_result_data: Option<crate::verify::SafetyResult<crate::automata::semiring::BooleanWeight>>,
+        cegar_result_data: Option<crate::cegar::CegarLog>,
+        algebraic_result_data: Option<crate::algebraic::AlgebraicSummary>,
+        math_analysis_elapsed_data: Option<std::time::Duration>,
+        #[cfg(feature = "trs-analysis")]
+        confluence_result_data: Option<crate::confluence::ConfluenceAnalysis>,
+        #[cfg(feature = "trs-analysis")]
+        termination_result_data: Option<crate::termination::TerminationResult>,
+        #[cfg(feature = "vpa")]
+        vpa_result_data: Option<crate::vpa::VpaAnalysis>,
+        #[cfg(feature = "tree-automata")]
+        wta_result_data: Option<crate::tree_automaton::WtaAnalysis>,
+        #[cfg(feature = "wpds-extended")]
+        ewpds_result_data: Option<crate::ewpds::EwpdsAnalysis>,
+        #[cfg(feature = "wpds-ara")]
+        ara_result_data: Option<crate::ara::AraAnalysis>,
+        #[cfg(feature = "petri")]
+        petri_result_data: Option<crate::petri::PetriAnalysis>,
+        #[cfg(feature = "nominal")]
+        nominal_result_data: Option<crate::nominal::NominalAnalysis>,
+        #[cfg(feature = "alternating")]
+        alternating_result_data: Option<crate::alternating::AlternatingAnalysis>,
+        #[cfg(feature = "ltl")]
+        ltl_results_data: Option<Vec<crate::ltl::LtlCheckResult>>,
+        #[cfg(feature = "provenance")]
+        provenance_result_data: Option<crate::provenance::ProvenanceAnalysis>,
+        #[cfg(feature = "cra")]
+        cra_result_data: Option<crate::cra::CraAnalysis>,
+        #[cfg(feature = "morphisms")]
+        morphism_result_data: Option<crate::morphism::MorphismCheck>,
+        #[cfg(feature = "kat")]
+        kat_result_data: Option<crate::kat::KatCheck>,
     }
 
     impl CtxBuilder {
@@ -4618,6 +5547,39 @@ mod tests {
                 decision_trees: HashMap::new(),
                 token_id_map: TokenIdMap::new(),
                 dead_rule_warnings: Vec::new(),
+                // ── Mathematical analysis result fields ──
+                safety_result_data: None,
+                cegar_result_data: None,
+                algebraic_result_data: None,
+                math_analysis_elapsed_data: None,
+                #[cfg(feature = "trs-analysis")]
+                confluence_result_data: None,
+                #[cfg(feature = "trs-analysis")]
+                termination_result_data: None,
+                #[cfg(feature = "vpa")]
+                vpa_result_data: None,
+                #[cfg(feature = "tree-automata")]
+                wta_result_data: None,
+                #[cfg(feature = "wpds-extended")]
+                ewpds_result_data: None,
+                #[cfg(feature = "wpds-ara")]
+                ara_result_data: None,
+                #[cfg(feature = "petri")]
+                petri_result_data: None,
+                #[cfg(feature = "nominal")]
+                nominal_result_data: None,
+                #[cfg(feature = "alternating")]
+                alternating_result_data: None,
+                #[cfg(feature = "ltl")]
+                ltl_results_data: None,
+                #[cfg(feature = "provenance")]
+                provenance_result_data: None,
+                #[cfg(feature = "cra")]
+                cra_result_data: None,
+                #[cfg(feature = "morphisms")]
+                morphism_result_data: None,
+                #[cfg(feature = "kat")]
+                kat_result_data: None,
             }
         }
 
@@ -4647,6 +5609,39 @@ mod tests {
                 grammar_profile: None,
                 wpds_analysis: None,
                 wpds_elapsed: None,
+                // ── Mathematical analysis results ──
+                safety_result: self.safety_result_data.as_ref(),
+                cegar_result: self.cegar_result_data.as_ref(),
+                algebraic_result: self.algebraic_result_data.as_ref(),
+                math_analysis_elapsed: self.math_analysis_elapsed_data,
+                #[cfg(feature = "trs-analysis")]
+                confluence_result: self.confluence_result_data.as_ref(),
+                #[cfg(feature = "trs-analysis")]
+                termination_result: self.termination_result_data.as_ref(),
+                #[cfg(feature = "vpa")]
+                vpa_result: self.vpa_result_data.as_ref(),
+                #[cfg(feature = "tree-automata")]
+                wta_result: self.wta_result_data.as_ref(),
+                #[cfg(feature = "wpds-extended")]
+                ewpds_result: self.ewpds_result_data.as_ref(),
+                #[cfg(feature = "wpds-ara")]
+                ara_result: self.ara_result_data.as_ref(),
+                #[cfg(feature = "petri")]
+                petri_result: self.petri_result_data.as_ref(),
+                #[cfg(feature = "nominal")]
+                nominal_result: self.nominal_result_data.as_ref(),
+                #[cfg(feature = "alternating")]
+                alternating_result: self.alternating_result_data.as_ref(),
+                #[cfg(feature = "ltl")]
+                ltl_results: self.ltl_results_data.as_ref(),
+                #[cfg(feature = "provenance")]
+                provenance_result: self.provenance_result_data.as_ref(),
+                #[cfg(feature = "cra")]
+                cra_result: self.cra_result_data.as_ref(),
+                #[cfg(feature = "morphisms")]
+                morphism_result: self.morphism_result_data.as_ref(),
+                #[cfg(feature = "kat")]
+                kat_result: self.kat_result_data.as_ref(),
             }
         }
     }
@@ -6692,5 +7687,884 @@ mod tests {
         assert!(result[0].message.contains("3 rules on nearly-dead paths"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Bool: R3"), "message: {}", result[0].message);
         assert!(result[0].message.contains("Str: R1, R2"), "message: {}", result[0].message);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // S01: Safety Violation
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn s01_fires_on_unsafe() {
+        let mut b = CtxBuilder::new();
+        b.safety_result_data = Some(crate::verify::SafetyResult {
+            safe: false,
+            initial_weight: crate::automata::semiring::BooleanWeight(true),
+            witness_trace: vec![],
+        });
+        let mut diags = Vec::new();
+        lint_s01_safety_violation(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "S01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[test]
+    fn s01_silent_when_safe() {
+        let mut b = CtxBuilder::new();
+        b.safety_result_data = Some(crate::verify::SafetyResult {
+            safe: true,
+            initial_weight: crate::automata::semiring::BooleanWeight(true),
+            witness_trace: vec![],
+        });
+        let mut diags = Vec::new();
+        lint_s01_safety_violation(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // S02: Safety Verified
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn s02_fires_when_safe() {
+        let mut b = CtxBuilder::new();
+        b.safety_result_data = Some(crate::verify::SafetyResult {
+            safe: true,
+            initial_weight: crate::automata::semiring::BooleanWeight(true),
+            witness_trace: vec![],
+        });
+        let mut diags = Vec::new();
+        lint_s02_safety_verified(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "S02");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[test]
+    fn s02_silent_when_unsafe() {
+        let mut b = CtxBuilder::new();
+        b.safety_result_data = Some(crate::verify::SafetyResult {
+            safe: false,
+            initial_weight: crate::automata::semiring::BooleanWeight(true),
+            witness_trace: vec![],
+        });
+        let mut diags = Vec::new();
+        lint_s02_safety_verified(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // S03: CEGAR Refinement
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn s03_fires_with_cegar_log() {
+        let mut b = CtxBuilder::new();
+        b.cegar_result_data = Some(crate::cegar::CegarLog {
+            steps: vec![crate::cegar::RefinementStep {
+                level: crate::cegar::AbstractionLevel::Boolean,
+                verdict: crate::verify::Verdict::Verified,
+                counterexample: None,
+                is_spurious: false,
+                refinement_action: "none".to_string(),
+            }],
+        });
+        let mut diags = Vec::new();
+        lint_s03_cegar_refinement(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "S03");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[test]
+    fn s03_silent_when_none() {
+        let b = CtxBuilder::new();
+        let mut diags = Vec::new();
+        lint_s03_cegar_refinement(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // S06: Algebraic Summary
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn s06_fires_with_summary() {
+        let mut b = CtxBuilder::new();
+        b.algebraic_result_data = Some(crate::algebraic::AlgebraicSummary {
+            scc_count: 3,
+            path_expression_count: 2,
+            scc_summaries: vec!["SCC0".to_string()],
+        });
+        let mut diags = Vec::new();
+        lint_s06_algebraic_summary(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "S06");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[test]
+    fn s06_silent_when_none() {
+        let b = CtxBuilder::new();
+        let mut diags = Vec::new();
+        lint_s06_algebraic_summary(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // P06: Analysis Pipeline Cost
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn p06_fires_on_meaningful_elapsed() {
+        let mut b = CtxBuilder::new();
+        b.math_analysis_elapsed_data = Some(std::time::Duration::from_millis(5));
+        let mut diags = Vec::new();
+        lint_p06_analysis_pipeline_cost(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "P06");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[test]
+    fn p06_silent_on_trivial_elapsed() {
+        let mut b = CtxBuilder::new();
+        b.math_analysis_elapsed_data = Some(std::time::Duration::from_micros(10));
+        let mut diags = Vec::new();
+        lint_p06_analysis_pipeline_cost(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // T01-T04: TRS Analysis (feature = "trs-analysis")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "trs-analysis")]
+    #[test]
+    fn t01_fires_on_non_joinable() {
+        use crate::confluence::{ConfluenceAnalysis, CriticalPair, JoinabilityResult, Term};
+        let mut b = CtxBuilder::new();
+        b.confluence_result_data = Some(ConfluenceAnalysis {
+            is_confluent: false,
+            critical_pairs: vec![CriticalPair {
+                term1: Term::var("x"),
+                term2: Term::var("y"),
+                rule1_index: 0,
+                rule2_index: 1,
+                overlap_position: vec![0],
+            }],
+            joinability_results: vec![JoinabilityResult::NotJoinable {
+                normal_form1: Term::var("x"),
+                normal_form2: Term::var("y"),
+            }],
+            non_joinable_count: 1,
+            unknown_count: 0,
+        });
+        let mut diags = Vec::new();
+        lint_t01_non_joinable_critical_pair(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "T01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "trs-analysis")]
+    #[test]
+    fn t01_silent_when_none() {
+        let b = CtxBuilder::new();
+        let mut diags = Vec::new();
+        lint_t01_non_joinable_critical_pair(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "trs-analysis")]
+    #[test]
+    fn t02_fires_when_confluent() {
+        use crate::confluence::ConfluenceAnalysis;
+        let mut b = CtxBuilder::new();
+        b.confluence_result_data = Some(ConfluenceAnalysis {
+            is_confluent: true,
+            critical_pairs: vec![],
+            joinability_results: vec![],
+            non_joinable_count: 0,
+            unknown_count: 0,
+        });
+        let mut diags = Vec::new();
+        lint_t02_confluence_verified(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "T02");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "trs-analysis")]
+    #[test]
+    fn t02_silent_when_not_confluent() {
+        use crate::confluence::ConfluenceAnalysis;
+        let mut b = CtxBuilder::new();
+        b.confluence_result_data = Some(ConfluenceAnalysis {
+            is_confluent: false,
+            critical_pairs: vec![],
+            joinability_results: vec![],
+            non_joinable_count: 0,
+            unknown_count: 0,
+        });
+        let mut diags = Vec::new();
+        lint_t02_confluence_verified(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "trs-analysis")]
+    #[test]
+    fn t03_fires_on_non_terminating() {
+        use crate::termination::TerminationResult;
+        let mut b = CtxBuilder::new();
+        b.termination_result_data = Some(TerminationResult::PotentiallyNonTerminating {
+            reason: "cycle in SCC".to_string(),
+            problematic_sccs: vec![0],
+        });
+        let mut diags = Vec::new();
+        lint_t03_non_terminating_cycle(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "T03");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "trs-analysis")]
+    #[test]
+    fn t03_silent_when_terminating() {
+        use crate::termination::TerminationResult;
+        let mut b = CtxBuilder::new();
+        b.termination_result_data = Some(TerminationResult::Terminating);
+        let mut diags = Vec::new();
+        lint_t03_non_terminating_cycle(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "trs-analysis")]
+    #[test]
+    fn t04_fires_when_terminating() {
+        use crate::termination::TerminationResult;
+        let mut b = CtxBuilder::new();
+        b.termination_result_data = Some(TerminationResult::Terminating);
+        let mut diags = Vec::new();
+        lint_t04_termination_verified(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "T04");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "trs-analysis")]
+    #[test]
+    fn t04_silent_when_not_terminating() {
+        use crate::termination::TerminationResult;
+        let mut b = CtxBuilder::new();
+        b.termination_result_data = Some(TerminationResult::PotentiallyNonTerminating {
+            reason: "cycle".to_string(),
+            problematic_sccs: vec![0],
+        });
+        let mut diags = Vec::new();
+        lint_t04_termination_verified(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // V01-V02: VPA (feature = "vpa")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn v01_fires_when_determinizable() {
+        let mut b = CtxBuilder::new();
+        b.vpa_result_data = Some(crate::vpa::VpaAnalysis {
+            is_determinizable: true,
+            alphabet_mismatches: vec![],
+            state_count: 5,
+        });
+        let mut diags = Vec::new();
+        lint_v01_vpa_determinizable(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "V01");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn v01_silent_when_not_determinizable() {
+        let mut b = CtxBuilder::new();
+        b.vpa_result_data = Some(crate::vpa::VpaAnalysis {
+            is_determinizable: false,
+            alphabet_mismatches: vec![],
+            state_count: 5,
+        });
+        let mut diags = Vec::new();
+        lint_v01_vpa_determinizable(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn v02_fires_on_mismatch() {
+        let mut b = CtxBuilder::new();
+        b.vpa_result_data = Some(crate::vpa::VpaAnalysis {
+            is_determinizable: false,
+            alphabet_mismatches: vec!["|".to_string()],
+            state_count: 3,
+        });
+        let mut diags = Vec::new();
+        lint_v02_vpa_alphabet_mismatch(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "V02");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn v02_silent_when_no_mismatch() {
+        let mut b = CtxBuilder::new();
+        b.vpa_result_data = Some(crate::vpa::VpaAnalysis {
+            is_determinizable: true,
+            alphabet_mismatches: vec![],
+            state_count: 3,
+        });
+        let mut diags = Vec::new();
+        lint_v02_vpa_alphabet_mismatch(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // V03-V04: WTA (feature = "tree-automata")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "tree-automata")]
+    #[test]
+    fn v03_fires_on_unrecognized() {
+        let mut b = CtxBuilder::new();
+        b.wta_result_data = Some(crate::tree_automaton::WtaAnalysis {
+            unrecognized_terms: vec!["BadTerm".to_string()],
+            hot_paths: vec![],
+            state_count: 3,
+            transition_count: 2,
+        });
+        let mut diags = Vec::new();
+        lint_v03_wta_unrecognized_term(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "V03");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "tree-automata")]
+    #[test]
+    fn v03_silent_when_all_recognized() {
+        let mut b = CtxBuilder::new();
+        b.wta_result_data = Some(crate::tree_automaton::WtaAnalysis {
+            unrecognized_terms: vec![],
+            hot_paths: vec![],
+            state_count: 3,
+            transition_count: 2,
+        });
+        let mut diags = Vec::new();
+        lint_v03_wta_unrecognized_term(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "tree-automata")]
+    #[test]
+    fn v04_fires_on_hot_path() {
+        let mut b = CtxBuilder::new();
+        b.wta_result_data = Some(crate::tree_automaton::WtaAnalysis {
+            unrecognized_terms: vec![],
+            hot_paths: vec!["Add→Int".to_string()],
+            state_count: 3,
+            transition_count: 2,
+        });
+        let mut diags = Vec::new();
+        lint_v04_wta_hot_path(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "V04");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "tree-automata")]
+    #[test]
+    fn v04_silent_when_no_hot_paths() {
+        let mut b = CtxBuilder::new();
+        b.wta_result_data = Some(crate::tree_automaton::WtaAnalysis {
+            unrecognized_terms: vec![],
+            hot_paths: vec![],
+            state_count: 3,
+            transition_count: 2,
+        });
+        let mut diags = Vec::new();
+        lint_v04_wta_hot_path(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // S04: EWPDS Merge Site (feature = "wpds-extended")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "wpds-extended")]
+    #[test]
+    fn s04_fires_with_merge_sites() {
+        let mut b = CtxBuilder::new();
+        b.ewpds_result_data = Some(crate::ewpds::EwpdsAnalysis {
+            merge_site_count: 2,
+            merge_site_labels: vec!["PNew".to_string(), "Match".to_string()],
+        });
+        let mut diags = Vec::new();
+        lint_s04_ewpds_merge_site(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "S04");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "wpds-extended")]
+    #[test]
+    fn s04_silent_when_no_sites() {
+        let mut b = CtxBuilder::new();
+        b.ewpds_result_data = Some(crate::ewpds::EwpdsAnalysis {
+            merge_site_count: 0,
+            merge_site_labels: vec![],
+        });
+        let mut diags = Vec::new();
+        lint_s04_ewpds_merge_site(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // S05: ARA Invariant (feature = "wpds-ara")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "wpds-ara")]
+    #[test]
+    fn s05_fires_with_ara() {
+        let mut b = CtxBuilder::new();
+        b.ara_result_data = Some(crate::ara::AraAnalysis {
+            dimension: 3,
+            invariant_count: 2,
+            invariants: vec![
+                ("Cat_A".to_string(), "x >= 0".to_string()),
+                ("Cat_B".to_string(), "y <= 1".to_string()),
+            ],
+        });
+        let mut diags = Vec::new();
+        lint_s05_ara_invariant(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "S05");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "wpds-ara")]
+    #[test]
+    fn s05_silent_when_none() {
+        let b = CtxBuilder::new();
+        let mut diags = Vec::new();
+        lint_s05_ara_invariant(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // N01-N02: Petri Net (feature = "petri")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "petri")]
+    #[test]
+    fn n01_fires_on_deadlock() {
+        let mut b = CtxBuilder::new();
+        b.petri_result_data = Some(crate::petri::PetriAnalysis {
+            has_deadlock_risk: true,
+            unbounded_places: vec![],
+            place_count: 4,
+            transition_count: 3,
+        });
+        let mut diags = Vec::new();
+        lint_n01_deadlock_risk(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "N01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "petri")]
+    #[test]
+    fn n01_silent_when_no_deadlock() {
+        let mut b = CtxBuilder::new();
+        b.petri_result_data = Some(crate::petri::PetriAnalysis {
+            has_deadlock_risk: false,
+            unbounded_places: vec![],
+            place_count: 4,
+            transition_count: 3,
+        });
+        let mut diags = Vec::new();
+        lint_n01_deadlock_risk(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "petri")]
+    #[test]
+    fn n02_fires_on_unbounded() {
+        let mut b = CtxBuilder::new();
+        b.petri_result_data = Some(crate::petri::PetriAnalysis {
+            has_deadlock_risk: false,
+            unbounded_places: vec!["channel_in".to_string()],
+            place_count: 4,
+            transition_count: 3,
+        });
+        let mut diags = Vec::new();
+        lint_n02_unbounded_channel(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "N02");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "petri")]
+    #[test]
+    fn n02_silent_when_bounded() {
+        let mut b = CtxBuilder::new();
+        b.petri_result_data = Some(crate::petri::PetriAnalysis {
+            has_deadlock_risk: false,
+            unbounded_places: vec![],
+            place_count: 4,
+            transition_count: 3,
+        });
+        let mut diags = Vec::new();
+        lint_n02_unbounded_channel(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // N03-N04: Nominal (feature = "nominal")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "nominal")]
+    #[test]
+    fn n03_fires_on_scope_violation() {
+        let mut b = CtxBuilder::new();
+        b.nominal_result_data = Some(crate::nominal::NominalAnalysis {
+            scope_violations: vec![("x".to_string(), "rule Y".to_string())],
+            narrowing_candidates: vec![],
+            orbit_count: 1,
+        });
+        let mut diags = Vec::new();
+        lint_n03_scope_violation(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "N03");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "nominal")]
+    #[test]
+    fn n03_silent_when_no_violations() {
+        let mut b = CtxBuilder::new();
+        b.nominal_result_data = Some(crate::nominal::NominalAnalysis {
+            scope_violations: vec![],
+            narrowing_candidates: vec![],
+            orbit_count: 1,
+        });
+        let mut diags = Vec::new();
+        lint_n03_scope_violation(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "nominal")]
+    #[test]
+    fn n04_fires_on_narrowing() {
+        let mut b = CtxBuilder::new();
+        b.nominal_result_data = Some(crate::nominal::NominalAnalysis {
+            scope_violations: vec![],
+            narrowing_candidates: vec![("x".to_string(), "narrow to inner scope".to_string())],
+            orbit_count: 1,
+        });
+        let mut diags = Vec::new();
+        lint_n04_scope_narrowing(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "N04");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "nominal")]
+    #[test]
+    fn n04_silent_when_no_candidates() {
+        let mut b = CtxBuilder::new();
+        b.nominal_result_data = Some(crate::nominal::NominalAnalysis {
+            scope_violations: vec![],
+            narrowing_candidates: vec![],
+            orbit_count: 1,
+        });
+        let mut diags = Vec::new();
+        lint_n04_scope_narrowing(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // N05: Alternating Bisimulation (feature = "alternating")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "alternating")]
+    #[test]
+    fn n05_fires_on_non_bisimilar() {
+        let mut b = CtxBuilder::new();
+        b.alternating_result_data = Some(crate::alternating::AlternatingAnalysis {
+            non_bisimilar_pairs: vec![("Proc".to_string(), "Name".to_string())],
+            state_count: 4,
+        });
+        let mut diags = Vec::new();
+        lint_n05_non_bisimilar(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "N05");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "alternating")]
+    #[test]
+    fn n05_silent_when_bisimilar() {
+        let mut b = CtxBuilder::new();
+        b.alternating_result_data = Some(crate::alternating::AlternatingAnalysis {
+            non_bisimilar_pairs: vec![],
+            state_count: 4,
+        });
+        let mut diags = Vec::new();
+        lint_n05_non_bisimilar(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // L01-L02: LTL (feature = "ltl")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "ltl")]
+    #[test]
+    fn l01_fires_on_violated() {
+        let mut b = CtxBuilder::new();
+        b.ltl_results_data = Some(vec![crate::ltl::LtlCheckResult::Violated {
+            prefix: vec!["cat_A".to_string()],
+            lasso: vec!["loop".to_string()],
+        }]);
+        let mut diags = Vec::new();
+        lint_l01_ltl_violated(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "L01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "ltl")]
+    #[test]
+    fn l01_silent_when_satisfied() {
+        let mut b = CtxBuilder::new();
+        b.ltl_results_data = Some(vec![crate::ltl::LtlCheckResult::Satisfied]);
+        let mut diags = Vec::new();
+        lint_l01_ltl_violated(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "ltl")]
+    #[test]
+    fn l02_fires_when_satisfied() {
+        let mut b = CtxBuilder::new();
+        b.ltl_results_data = Some(vec![crate::ltl::LtlCheckResult::Satisfied]);
+        let mut diags = Vec::new();
+        lint_l02_ltl_verified(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "L02");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "ltl")]
+    #[test]
+    fn l02_silent_when_violated() {
+        let mut b = CtxBuilder::new();
+        b.ltl_results_data = Some(vec![crate::ltl::LtlCheckResult::Violated {
+            prefix: vec!["cat_A".to_string()],
+            lasso: vec!["loop".to_string()],
+        }]);
+        let mut diags = Vec::new();
+        lint_l02_ltl_verified(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // E01: Provenance Trace (feature = "provenance")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "provenance")]
+    #[test]
+    fn e01_fires_with_traces() {
+        let mut b = CtxBuilder::new();
+        b.provenance_result_data = Some(crate::provenance::ProvenanceAnalysis {
+            provenance_traces: vec![("rule1".to_string(), "x + y".to_string())],
+        });
+        let mut diags = Vec::new();
+        lint_e01_provenance_trace(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "E01");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "provenance")]
+    #[test]
+    fn e01_silent_when_no_traces() {
+        let mut b = CtxBuilder::new();
+        b.provenance_result_data = Some(crate::provenance::ProvenanceAnalysis {
+            provenance_traces: vec![],
+        });
+        let mut diags = Vec::new();
+        lint_e01_provenance_trace(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // E02: CRA Cost Anomaly (feature = "cra")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "cra")]
+    #[test]
+    fn e02_fires_on_anomaly() {
+        let mut b = CtxBuilder::new();
+        b.cra_result_data = Some(crate::cra::CraAnalysis {
+            cost_anomalies: vec![("register_0".to_string(), "999".to_string())],
+            state_count: 3,
+            register_count: 2,
+        });
+        let mut diags = Vec::new();
+        lint_e02_cra_cost_anomaly(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "E02");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "cra")]
+    #[test]
+    fn e02_silent_when_no_anomalies() {
+        let mut b = CtxBuilder::new();
+        b.cra_result_data = Some(crate::cra::CraAnalysis {
+            cost_anomalies: vec![],
+            state_count: 3,
+            register_count: 2,
+        });
+        let mut diags = Vec::new();
+        lint_e02_cra_cost_anomaly(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // M01-M02: Morphism (feature = "morphisms")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "morphisms")]
+    #[test]
+    fn m01_fires_on_gap() {
+        let mut b = CtxBuilder::new();
+        b.morphism_result_data = Some(crate::morphism::MorphismCheck {
+            gaps: vec![crate::morphism::MorphismGap {
+                kind: crate::morphism::GapKind::MissingSort,
+                source_name: "Bool".to_string(),
+                description: "no target sort for Bool".to_string(),
+            }],
+            preservation_failures: vec![],
+            is_complete: false,
+        });
+        let mut diags = Vec::new();
+        lint_m01_morphism_gap(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "M01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "morphisms")]
+    #[test]
+    fn m01_silent_when_complete() {
+        let mut b = CtxBuilder::new();
+        b.morphism_result_data = Some(crate::morphism::MorphismCheck {
+            gaps: vec![],
+            preservation_failures: vec![],
+            is_complete: true,
+        });
+        let mut diags = Vec::new();
+        lint_m01_morphism_gap(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "morphisms")]
+    #[test]
+    fn m02_fires_on_failure() {
+        let mut b = CtxBuilder::new();
+        b.morphism_result_data = Some(crate::morphism::MorphismCheck {
+            gaps: vec![],
+            preservation_failures: vec!["eq1 not preserved".to_string()],
+            is_complete: true,
+        });
+        let mut diags = Vec::new();
+        lint_m02_morphism_preservation_failure(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "M02");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "morphisms")]
+    #[test]
+    fn m02_silent_when_preserved() {
+        let mut b = CtxBuilder::new();
+        b.morphism_result_data = Some(crate::morphism::MorphismCheck {
+            gaps: vec![],
+            preservation_failures: vec![],
+            is_complete: true,
+        });
+        let mut diags = Vec::new();
+        lint_m02_morphism_preservation_failure(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // K01-K02: KAT (feature = "kat")
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "kat")]
+    #[test]
+    fn k01_fires_on_hoare_failure() {
+        let mut b = CtxBuilder::new();
+        b.kat_result_data = Some(crate::kat::KatCheck {
+            hoare_results: vec![("triple1".to_string(), false)],
+            equivalence_results: vec![],
+        });
+        let mut diags = Vec::new();
+        lint_k01_hoare_failure(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "K01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+    }
+
+    #[cfg(feature = "kat")]
+    #[test]
+    fn k01_silent_when_hoare_passes() {
+        let mut b = CtxBuilder::new();
+        b.kat_result_data = Some(crate::kat::KatCheck {
+            hoare_results: vec![("triple1".to_string(), true)],
+            equivalence_results: vec![],
+        });
+        let mut diags = Vec::new();
+        lint_k01_hoare_failure(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    #[cfg(feature = "kat")]
+    #[test]
+    fn k02_fires_with_equivalence() {
+        let mut b = CtxBuilder::new();
+        b.kat_result_data = Some(crate::kat::KatCheck {
+            hoare_results: vec![],
+            equivalence_results: vec![("e1".to_string(), "e2".to_string(), true)],
+        });
+        let mut diags = Vec::new();
+        lint_k02_kat_equivalence(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "K02");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[cfg(feature = "kat")]
+    #[test]
+    fn k02_silent_when_none() {
+        let b = CtxBuilder::new();
+        let mut diags = Vec::new();
+        lint_k02_kat_equivalence(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
     }
 }

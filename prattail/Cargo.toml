@@ -14,6 +14,61 @@ quantum = ["dep:num-complex"]
 ## Grammar-aware expression generator (proptest-based) for benchmarks and tests.
 grammar-gen = ["dep:proptest"]
 
+# ── Mathematical Analysis & Theorem Proving Features ─────────────────────────
+
+## Relational weight domain: binary relations on finite sets (SLAM/BLAST-style).
+## Heap-allocated semiring; needed for Boolean program analysis via WPDSs.
+wpds-relational = []
+## EWPDS: Extended WPDS with merging functions for local variable analysis.
+wpds-extended = []
+## ARA: Affine-Relation Analysis weight domain (vector spaces of matrices).
+## Depends on wpds-relational for the HeapSemiring trait.
+wpds-ara = ["dep:nalgebra", "wpds-relational"]
+## Provenance semiring N[X]: polynomial semiring tracking HOW facts are derived.
+provenance = []
+## Layered proof output: human-readable explanations + Rocq certificates.
+proofs = ["provenance"]
+## TRS analysis: confluence (critical pairs), termination (dependency pairs).
+trs-analysis = []
+## Visibly Pushdown Automata: decidable equivalence/inclusion for structured parsing.
+vpa = []
+## Weighted Tree Automata: term recognition, ranking, and transduction.
+tree-automata = []
+## Buchi/Parity automata: infinite-word acceptance for liveness properties.
+omega = []
+## LTL model checking: WPDS x Buchi product for temporal property verification.
+ltl = ["omega"]
+## Alternating automata: universal branching for game semantics and CTL.
+alternating = []
+## Nominal automata: orbit-finite sets for name-passing calculi.
+nominal = []
+## Petri nets / VASS: concurrent process analysis (deadlock, boundedness).
+petri = []
+## Cost Register Automata: streaming quantitative computation.
+cra = []
+## Kleene Algebra with Tests: decidable Hoare logic, program equivalence.
+kat = []
+## Theory morphisms: cross-theory translation and proof transfer.
+morphisms = []
+
+# ── Convenience groups ───────────────────────────────────────────────────────
+
+## Grammar-level analysis (tree automata + VPA + TRS).
+analysis = ["tree-automata", "vpa", "trs-analysis"]
+## Program verification (omega + LTL + KAT + relational WPDS).
+verification = ["omega", "ltl", "kat", "wpds-relational"]
+## Process algebra analysis (nominal + Petri + omega + alternating).
+process-algebra = ["nominal", "petri", "omega", "alternating"]
+## Everything: all analysis and verification features.
+full-analysis = [
+    "wfst-log", "quantum",
+    "wpds-relational", "wpds-extended", "wpds-ara",
+    "provenance", "proofs",
+    "trs-analysis", "vpa", "tree-automata",
+    "omega", "ltl", "alternating",
+    "nominal", "petri", "cra", "kat", "morphisms",
+]
+
 [dependencies]
 proc-macro2 = { workspace = true }
 quote = { workspace = true }
@@ -22,6 +77,7 @@ serde = { version = "1", features = ["derive"], optional = true }
 postcard = { version = "1", features = ["alloc"], optional = true }
 proptest = { version = "1", optional = true }
 num-complex = { version = "0.4", optional = true }
+nalgebra = { version = "0.33", optional = true }
 pathmap = { git = "https://github.com/dylon/PathMap.git", branch = "feature/mettatron-fixes" }
 
 [dev-dependencies]

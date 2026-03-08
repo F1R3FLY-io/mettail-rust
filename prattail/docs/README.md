@@ -121,8 +121,31 @@ For a comprehensive guide with examples, diagrams, and decision flowcharts:
 
 ### Diagnostics
 
-- [Diagnostics Catalog](diagnostics/README.md) — All lint diagnostics (G, W, R, C, D, P categories)
+- [Diagnostics Catalog](diagnostics/README.md) — All lint diagnostics (G, W, R, C, D, P, T, V, S, N, L, E, M, K categories)
 - [Lint Layer Design](design/wfst/lint-layer.md) — Unified lint architecture, `LintContext`, `run_lints()`
+
+### Mathematical Analysis
+
+Formal analysis and theorem-proving infrastructure for `language!` specifications:
+
+- [Overview](../../docs/design/mathematical-analyses.md) — Architecture, feature gates, module summary
+- [Framework Design](design/analysis/README.md) — Module taxonomy, dependency graph, semiring usage matrix
+- [TRS Analysis](design/analysis/trs-analysis.md) — Confluence (Knuth-Bendix) and termination (dependency pairs)
+- [Pushdown Verification](design/analysis/pushdown-verification.md) — Safety, CEGAR, EWPDS, ARA, Newton, algebraic
+- [Automata Extensions](design/analysis/automata-extensions.md) — VPA, WTA, Buchi, alternating automata
+- [Concurrency Analysis](design/analysis/concurrency-analysis.md) — Petri nets, nominal automata, bisimulation
+- [Temporal & Provenance](design/analysis/temporal-and-provenance.md) — LTL, provenance semiring, CRA
+- [Meta-Level Analysis](design/analysis/meta-level-analysis.md) — Morphisms, KAT, tensor products, repair engine
+- [Analysis Diagnostics](diagnostics/analysis/) — 28 lint codes (T01–T04, V01–V04, S01–S06, N01–N05, L01–L02, E01–E02, M01–M02, K01–K02, P06)
+
+### Formal Verification
+
+- [Rocq Proofs Overview](theory/formal-verification/README.md) — 5 machine-checked correctness proofs
+- [Semiring Laws](theory/formal-verification/semiring-laws.md) — Provenance, Relational, KAT axioms
+- [WPDS Correctness](theory/formal-verification/wpds-correctness.md) — Poststar/prestar soundness
+- [VPA Closure](theory/formal-verification/vpa-closure.md) — Complement, intersection, decidable equivalence
+- [KAT Soundness](theory/formal-verification/kat-soundness.md) — Hoare triple encoding
+- [Buchi × WPDS Product](theory/formal-verification/buchi-wpds-product.md) — LTL model checking reduction
 
 ---
 
@@ -134,6 +157,8 @@ For a comprehensive guide with examples, diagrams, and decision flowcharts:
 | [benchmarks/](benchmarks/)     | Parse performance comparison, optimization ledger                                            |
 | [design/](design/)             | Pipeline, engines, generators, disambiguation, WFST design                                   |
 | [diagnostics/](diagnostics/)   | Per-lint documentation, runtime error catalog                                                |
+| [design/analysis/](design/analysis/) | Mathematical analysis framework: TRS, pushdown verification, automata, concurrency, meta-level |
+| [theory/formal-verification/](theory/formal-verification/) | Rocq machine-checked proofs for semiring, WPDS, VPA, KAT, Buchi correctness |
 | [theory/](theory/)             | Formal foundations: automata, prediction, Pratt, semirings                                   |
 | [usage/](usage/)               | Quick start, grammar features, language unification, EBNF dump, troubleshooting, WFST config |
 
