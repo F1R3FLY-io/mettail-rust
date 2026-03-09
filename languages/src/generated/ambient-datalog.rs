@@ -10,17 +10,17 @@ relation proc(Proc);
 
 #[ds(crate::eqrel)] relation eq_proc(Proc, Proc);
 
-relation rw_proc(Proc, Proc);
+#[ds(crate::dual_indexed)] relation rw_proc(Proc, Proc);
 
 relation name(Name);
 
 #[ds(crate::eqrel)] relation eq_name(Name, Name);
 
-relation rw_name(Name, Name);
+#[ds(crate::dual_indexed)] relation rw_name(Name, Name);
 
 relation step_term(Proc);
 
-relation ppar_contains(Proc, Proc);
+#[ds(crate::dual_indexed)] relation ppar_contains(Proc, Proc);
 
 
     // Category rules
@@ -129,7 +129,8 @@ name(sub.clone()) <--
 
 proc(c1.clone().normalize()) <--
     proc(c0),
-    rw_proc(c0, c1);
+    rw_proc(c0, c1),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); c1.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_EXPAND : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_EXPAND.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) };
 
 ppar_contains(parent.clone(), elem.clone()) <--
     proc(parent),
@@ -192,7 +193,8 @@ rw_proc(t.clone(), match t {
 
 name(c1.clone().normalize()) <--
     name(c0),
-    rw_name(c0, c1);
+    rw_name(c0, c1),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); c1.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_EXPAND : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_EXPAND.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) };
 
 rw_name(t.clone(), match t {
     Name::ApplyName(_, arg) => Name::ApplyName(Box::new(new_lam.clone()), arg.clone()),
@@ -235,6 +237,8 @@ eq_name(t.clone(), t.clone()) <--
 eq_proc(s.clone(), t.clone()) <--
     proc(s),
     proc(t),
+    if std::mem::discriminant(s) == std::mem::discriminant(t),
+    if matches!(s, Proc::PIn(..) | Proc::POut(..) | Proc::POpen(..) | Proc::PAmb(..)),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_PROC_EQ_CONG_0 : std::cell::Cell < Vec < (Name, Proc, Name, Proc) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_EQ_CONG_0.with(| p | p.take()); buf.clear(); match (s, t) {
         (Proc::PIn(sf0, sf1), Proc::PIn(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
@@ -264,6 +268,7 @@ proc(t.clone()) <--
     let s_f0_body_f0_binder = s_f0_body_f0.unsafe_pattern().clone(),
     let s_f0_body_f0_body_boxed = s_f0_body_f0.unsafe_body(),
     let s_f0_body_f0_body = &** s_f0_body_f0_body_boxed,
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_body_f0_binder.clone().clone(), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f0_body.clone()).clone()))))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -277,6 +282,7 @@ proc(t.clone()) <--
     let s_f0_body_f0_binder = s_f0_body_f0.unsafe_pattern().clone(),
     let s_f0_body_f0_body_boxed = s_f0_body_f0.unsafe_body(),
     let s_f0_body_f0_body = &** s_f0_body_f0_body_boxed,
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_body_f0_binder.clone().clone(), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f0_body.clone()).clone()))))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -290,6 +296,7 @@ proc(t.clone()) <--
     let s_f0_e0_f0_body = &** s_f0_e0_f0_body_boxed,
     let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag },
     if s_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime::BoundTerm::free_vars(elem).contains(& s_f0_e0_f0_binder.0.clone())),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_e0_f0_binder.clone().clone(), Box::new(Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f0_body.clone()).clone()); bag }))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -303,6 +310,7 @@ proc(t.clone()) <--
     for (s_f0_body_f0_e0, _count_0) in s_f0_body_f0.iter(),
     let s_f0_body_f0_rest = { let mut bag = s_f0_body_f0.clone(); bag.remove(& s_f0_body_f0_e0); bag },
     if s_f0_body_f0_rest.clone().clone().iter().all(| (elem, _) | ! mettail_runtime::BoundTerm::free_vars(elem).contains(& s_f0_binder.0.clone())),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PPar({ let mut bag = (s_f0_body_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f0_e0.clone()).clone())))); bag })).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -316,6 +324,7 @@ proc(t.clone()) <--
     let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
     let s_f1_deref_f0_body = &** s_f1_deref_f0_body_boxed,
     if ! mettail_runtime::BoundTerm::free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box::new(Proc::PIn(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -329,6 +338,7 @@ proc(t.clone()) <--
     let s_f0_body_f0_deref = &** s_f0_body_f0,
     let s_f0_body_f1_deref = &** s_f0_body_f1,
     if ! mettail_runtime::BoundTerm::free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PIn(Box::new((s_f0_body_f0_deref.clone()).clone()), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -342,6 +352,7 @@ proc(t.clone()) <--
     let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
     let s_f1_deref_f0_body = &** s_f1_deref_f0_body_boxed,
     if ! mettail_runtime::BoundTerm::free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box::new(Proc::POut(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -355,6 +366,7 @@ proc(t.clone()) <--
     let s_f0_body_f0_deref = &** s_f0_body_f0,
     let s_f0_body_f1_deref = &** s_f0_body_f1,
     if ! mettail_runtime::BoundTerm::free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::POut(Box::new((s_f0_body_f0_deref.clone()).clone()), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -368,6 +380,7 @@ proc(t.clone()) <--
     let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
     let s_f1_deref_f0_body = &** s_f1_deref_f0_body_boxed,
     if ! mettail_runtime::BoundTerm::free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box::new(Proc::POpen(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -381,6 +394,7 @@ proc(t.clone()) <--
     let s_f0_body_f0_deref = &** s_f0_body_f0,
     let s_f0_body_f1_deref = &** s_f0_body_f1,
     if ! mettail_runtime::BoundTerm::free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::POpen(Box::new((s_f0_body_f0_deref.clone()).clone()), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -394,6 +408,7 @@ proc(t.clone()) <--
     let s_f1_deref_f0_body_boxed = s_f1_deref_f0.unsafe_body(),
     let s_f1_deref_f0_body = &** s_f1_deref_f0_body_boxed,
     if ! mettail_runtime::BoundTerm::free_vars(& s_f1_deref_f0_body.clone()).contains(& s_f1_deref_f0_binder.0.clone()),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f1_deref_f0_binder.clone().clone(), Box::new(Proc::PAmb(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_body.clone()).clone())))))).normalize();
 
 eq_proc(s.clone(), t.clone()),
@@ -407,6 +422,7 @@ proc(t.clone()) <--
     let s_f0_body_f0_deref = &** s_f0_body_f0,
     let s_f0_body_f1_deref = &** s_f0_body_f1,
     if ! mettail_runtime::BoundTerm::free_vars(& s_f0_body_f1_deref.clone()).contains(& s_f0_binder.0.clone()),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PAmb(Box::new((s_f0_body_f0_deref.clone()).clone()), Box::new(Proc::PNew(mettail_runtime::Scope::from_parts_unsafe(s_f0_binder.clone().clone(), Box::new((s_f0_body_f1_deref.clone()).clone())))))).normalize();
 
 
@@ -431,6 +447,7 @@ rw_proc(s_orig.clone(), t) <--
     eq_name(s_f0_e0_f1_deref_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
     let s_f0_e1_f1_deref = &** s_f0_e1_f1,
     let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag.remove(& s_f0_e1); bag },
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_e0_f1_deref_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = mettail_runtime::HashBag::new(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = (s_f0_e0_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f1_deref_f0_e0_f1_deref.clone()).clone()); bag })))); Proc::insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone()); bag })))); bag })).normalize();
 
 rw_proc(s_orig.clone(), t) <--
@@ -453,6 +470,7 @@ rw_proc(s_orig.clone(), t) <--
     for (s_f1_deref_f0_e1, _count_2) in s_f1_deref_f0.iter(),
     if & s_f1_deref_f0_e1 != & s_f1_deref_f0_e0,
     let s_f1_deref_f0_rest = { let mut bag = s_f1_deref_f0.clone(); bag.remove(& s_f1_deref_f0_e0); bag.remove(& s_f1_deref_f0_e1); bag },
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PPar({ let mut bag = (s_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f1_deref_f0_e0_f0_deref.clone()).clone()), Box::new(Proc::PPar({ let mut bag = (s_f1_deref_f0_e0_f1_deref_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f1_deref_f0_e0_f1_deref_f0_e0_f1_deref.clone()).clone()); bag })))); Proc::insert_into_ppar(& mut bag, Proc::PAmb(Box::new((s_f0_deref.clone()).clone()), Box::new((s_f1_deref_f0_e1.clone()).clone()))); bag })).normalize();
 
 rw_proc(s_orig.clone(), t) <--
@@ -469,6 +487,7 @@ rw_proc(s_orig.clone(), t) <--
     eq_name(s_f0_e0_f0_deref.clone(), s_f0_e1_f0_deref.clone()),
     let s_f0_e1_f1_deref = &** s_f0_e1_f1,
     let s_f0_rest = { let mut bag = s_f0.clone(); bag.remove(& s_f0_e0); bag.remove(& s_f0_e1); bag },
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = (Proc::PPar({ let mut bag = (s_f0_rest.clone()).clone(); Proc::insert_into_ppar(& mut bag, (s_f0_e0_f1_deref.clone()).clone()); Proc::insert_into_ppar(& mut bag, (s_f0_e1_f1_deref.clone()).clone()); bag })).normalize();
 
 rw_proc(parent.clone(), result) <--
@@ -491,6 +510,7 @@ rw_proc(lhs.clone(), match (lhs, vi) {
     _ => unreachable!(),
 }) <--
     proc(lhs),
+    if matches!(lhs, Proc::PAmb(..)),
     for (field_val, vi) in { std::thread_local! { static POOL_PROC_SCONG_PROC : std::cell::Cell < Vec < (Proc, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_PROC_SCONG_PROC.with(| p | p.take()); buf.clear(); match lhs {
         Proc::PAmb(_, x1) => {
             buf.push(((** x1).clone(), 0usize));

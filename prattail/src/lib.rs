@@ -1,3 +1,6 @@
+// AL03: SIMD-accelerated whitespace skipping requires portable_simd (nightly).
+#![cfg_attr(feature = "simd-whitespace", feature(portable_simd))]
+
 //! # PraTTaIL — Pratt + Recursive Descent Parser Generator for MeTTaIL
 //!
 //! PraTTaIL is a custom parser generator combining **Pratt parsing**,

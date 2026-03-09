@@ -25,6 +25,11 @@ pub mod composition;
 // The generated code uses `#[ds(crate::eqrel)]` which expects eqrel at crate root
 pub use ascent_byods_rels::eqrel;
 
+// Dual-indexed binary relation provider (A-RT03).
+// The generated code uses `#[ds(crate::dual_indexed)]` for rw_cat, fold_cat,
+// and collection projection relations to ensure O(1) lookups on both columns.
+pub mod dual_indexed;
+
 // Re-export the aliased macro names from the modules
 pub use ambient::ambient_source;
 pub use calculator::calculator_source;

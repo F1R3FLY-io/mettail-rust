@@ -950,3 +950,44 @@ fn test_ambiguous_dispatch_gt_env() {
         displays
     );
 }
+
+// --- BCG05 regression test ---
+
+/// Regression test for BCG05 normalize-on-insert dedup epoch bug.
+///
+/// BCG05 uses thread-local HashSets to skip redundant normalize() calls.
+/// Without epoch-based clearing, these HashSets persist across Ascent
+/// evaluations within the same thread, causing the second (and subsequent)
+/// evaluations to skip rule firings for previously-seen hashes, producing
+/// incorrect (unreduced) results.
+#[test]
+fn test_bcg05_repeated_evaluation_produces_correct_results() {
+    let lang = calc::CalculatorLanguage;
+
+    // First evaluation: 3 + 5 = 8
+    calc_normal_form("3 + 5", "8");
+
+    // Second evaluation of the SAME expression on the SAME thread:
+    // must still produce 8 (not the unreduced form).
+    calc_normal_form("3 + 5", "8");
+
+    // Third evaluation: different expression with overlapping substructure.
+    calc_normal_form("3 + 5 + 2", "10");
+
+    // Fourth: repeat the different expression — must still reduce correctly.
+    calc_normal_form("3 + 5 + 2", "10");
+
+    // Fifth: original expression again — still correct.
+    let term = lang.parse_term("3 + 5").expect("parse");
+    let results = lang.run_ascent(term.as_ref()).expect("run_ascent");
+    let displays: Vec<String> = results
+        .normal_forms()
+        .iter()
+        .map(|nf| nf.display.clone())
+        .collect();
+    assert!(
+        displays.contains(&"8".to_string()),
+        "BCG05 regression: fifth evaluation of '3 + 5' should produce '8', got: {:?}",
+        displays
+    );
+}

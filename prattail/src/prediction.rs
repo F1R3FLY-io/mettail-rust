@@ -54,6 +54,11 @@ impl FirstSet {
         }
     }
 
+    /// Check if two FIRST sets are disjoint (no tokens in common).
+    pub fn is_disjoint(&self, other: &FirstSet) -> bool {
+        self.tokens.is_disjoint(&other.tokens)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.tokens.is_empty()
     }
@@ -748,6 +753,421 @@ fn copy_follow(
         }
     }
     false
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DB01: Incremental FIRST/FOLLOW recomputation via dependency graph
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Statistics from an incremental FIRST/FOLLOW computation pass.
+///
+/// Used by the I18 diagnostic to report how many categories were visited per
+/// iteration versus the total, demonstrating the effectiveness of the
+/// dependency-graph pruning.
+#[derive(Debug, Clone, Default)]
+pub struct IncrementalStats {
+    /// Total number of categories in the grammar.
+    pub total_categories: usize,
+    /// Number of fixed-point iterations performed.
+    pub iterations: usize,
+    /// Total category visits across all iterations.
+    pub total_visits: usize,
+    /// Maximum categories visited in any single iteration.
+    pub max_visits_per_iteration: usize,
+}
+
+impl IncrementalStats {
+    /// True if the incremental approach reduced work compared to visiting
+    /// all categories on every iteration.
+    pub fn reduced_work(&self) -> bool {
+        if self.iterations == 0 || self.total_categories == 0 {
+            return false;
+        }
+        // Baseline: total_categories * iterations (what non-incremental would do)
+        let baseline = self.total_categories * self.iterations;
+        self.total_visits < baseline
+    }
+}
+
+/// Build a dependency graph for FIRST set computation.
+///
+/// Returns `depends_on: HashMap<category, HashSet<upstream_category>>` where
+/// category A depends on category B if B appears as a `NonTerminal` in any of
+/// A's non-infix rules' `first_items`. When B's FIRST set changes, A's FIRST
+/// set may need recomputation.
+///
+/// Also returns `dependents_of: HashMap<category, Vec<downstream_category>>`
+/// — the reverse mapping used to propagate dirtiness forward.
+pub fn build_first_set_deps(
+    rules: &[RuleInfo],
+    categories: &[String],
+) -> (HashMap<String, HashSet<String>>, HashMap<String, Vec<String>>) {
+    let mut depends_on: HashMap<String, HashSet<String>> = HashMap::with_capacity(categories.len());
+    for cat in categories {
+        depends_on.insert(cat.clone(), HashSet::new());
+    }
+
+    for rule in rules {
+        if rule.is_infix {
+            continue;
+        }
+        for item in &rule.first_items {
+            if let FirstItem::NonTerminal(ref upstream_cat) = item {
+                if let Some(deps) = depends_on.get_mut(&rule.category) {
+                    deps.insert(upstream_cat.clone());
+                }
+            }
+        }
+    }
+
+    // Build reverse map: dependents_of[upstream] = [downstream1, downstream2, ...]
+    let mut dependents_of: HashMap<String, Vec<String>> = HashMap::with_capacity(categories.len());
+    for cat in categories {
+        dependents_of.insert(cat.clone(), Vec::new());
+    }
+    for (downstream, upstreams) in &depends_on {
+        for upstream in upstreams {
+            if let Some(deps) = dependents_of.get_mut(upstream) {
+                deps.push(downstream.clone());
+            }
+        }
+    }
+
+    (depends_on, dependents_of)
+}
+
+/// Build a dependency graph for FOLLOW set computation.
+///
+/// Returns `dependents_of: HashMap<category, Vec<downstream_category>>` where
+/// category A is a downstream dependent of category B if a rule in A's category
+/// references B as a NonTerminal (so FOLLOW(B) depends on FOLLOW(A) and FIRST
+/// of the suffix after B).
+///
+/// The FOLLOW set propagation rule is:
+/// - If `B` appears in a rule of category `A`, then `FOLLOW(B)` may include
+///   `FOLLOW(A)` (when the suffix after `B` is nullable).
+/// - If `B` appears before `C` in a rule, then `FOLLOW(B)` may include
+///   `FIRST(C)`.
+///
+/// So when `FOLLOW(A)` changes, all categories referenced by rules in `A` need
+/// revisiting. When `FIRST(C)` is stable (already computed), only FOLLOW
+/// propagation matters.
+pub fn build_follow_set_deps(
+    inputs: &[FollowSetInput],
+    categories: &[String],
+) -> HashMap<String, Vec<String>> {
+    // dependents_of[X] = categories whose FOLLOW may change when FOLLOW(X) changes
+    let mut dependents_of: HashMap<String, Vec<String>> = HashMap::with_capacity(categories.len());
+    for cat in categories {
+        dependents_of.insert(cat.clone(), Vec::new());
+    }
+
+    for input in inputs {
+        let referenced = collect_follow_referenced_categories(&input.syntax);
+        // When FOLLOW(input.category) changes, all referenced categories' FOLLOW
+        // sets may also change (via the copy_follow path).
+        for ref_cat in &referenced {
+            if let Some(deps) = dependents_of.get_mut(&input.category) {
+                if !deps.contains(ref_cat) {
+                    deps.push(ref_cat.clone());
+                }
+            }
+        }
+    }
+
+    dependents_of
+}
+
+/// Collect all category names referenced as NonTerminals or Collections in
+/// a sequence of syntax items (recursive).
+fn collect_follow_referenced_categories(items: &[crate::SyntaxItemSpec]) -> HashSet<String> {
+    let mut referenced = HashSet::new();
+    for item in items {
+        match item {
+            crate::SyntaxItemSpec::NonTerminal { category, .. } => {
+                referenced.insert(category.clone());
+            },
+            crate::SyntaxItemSpec::Collection { element_category, .. } => {
+                referenced.insert(element_category.clone());
+            },
+            crate::SyntaxItemSpec::Binder { category, .. } => {
+                referenced.insert(category.clone());
+            },
+            crate::SyntaxItemSpec::Sep { body, .. } => {
+                let inner = collect_follow_referenced_categories(
+                    std::slice::from_ref(body.as_ref()),
+                );
+                referenced.extend(inner);
+            },
+            crate::SyntaxItemSpec::Map { body_items } => {
+                let inner = collect_follow_referenced_categories(body_items);
+                referenced.extend(inner);
+            },
+            crate::SyntaxItemSpec::Zip { body, left_category, right_category, .. } => {
+                referenced.insert(left_category.clone());
+                referenced.insert(right_category.clone());
+                let inner = collect_follow_referenced_categories(
+                    std::slice::from_ref(body.as_ref()),
+                );
+                referenced.extend(inner);
+            },
+            crate::SyntaxItemSpec::Optional { inner } => {
+                let cats = collect_follow_referenced_categories(inner);
+                referenced.extend(cats);
+            },
+            _ => {},
+        }
+    }
+    referenced
+}
+
+/// Compute FIRST sets using dependency-graph-driven incremental iteration.
+///
+/// Functionally equivalent to `compute_first_sets()` but uses a dependency
+/// graph to avoid visiting categories whose upstream dependencies did not
+/// change in the previous iteration. On grammars with many independent
+/// categories this can substantially reduce the number of per-iteration
+/// visits.
+///
+/// ## Algorithm
+///
+/// 1. Build `dependents_of[C]` = categories whose FIRST sets may change when
+///    C's FIRST set changes.
+/// 2. Initialize all categories as dirty (first pass must visit all).
+/// 3. On each iteration, visit only dirty categories. For each rule in a dirty
+///    category, propagate terminal/nonterminal tokens as usual. If any FIRST
+///    set changes, mark all dependents of that category dirty for the next
+///    iteration.
+/// 4. Converge when no categories are dirty.
+///
+/// Returns `(first_sets, stats)` where `stats` reports visit counts for the
+/// I18 diagnostic.
+pub fn compute_first_sets_incremental(
+    rules: &[RuleInfo],
+    categories: &[String],
+) -> (HashMap<String, FirstSet>, IncrementalStats) {
+    let mut first_sets: HashMap<String, FirstSet> = HashMap::with_capacity(categories.len());
+    for cat in categories {
+        first_sets.insert(cat.clone(), FirstSet::new());
+    }
+
+    let (_depends_on, dependents_of) = build_first_set_deps(rules, categories);
+
+    // Group rules by category for efficient lookup
+    let mut rules_by_cat: HashMap<&str, Vec<&RuleInfo>> = HashMap::with_capacity(categories.len());
+    for cat in categories {
+        rules_by_cat.insert(cat.as_str(), Vec::new());
+    }
+    for rule in rules {
+        if rule.is_infix {
+            continue;
+        }
+        if let Some(cat_rules) = rules_by_cat.get_mut(rule.category.as_str()) {
+            cat_rules.push(rule);
+        }
+    }
+
+    // Initial pass: all categories are dirty
+    let mut dirty: HashSet<String> = categories.iter().cloned().collect();
+    let mut next_dirty: HashSet<String> = HashSet::with_capacity(categories.len());
+
+    let mut stats = IncrementalStats {
+        total_categories: categories.len(),
+        iterations: 0,
+        total_visits: 0,
+        max_visits_per_iteration: 0,
+    };
+
+    let mut tokens_to_add: Vec<String> = Vec::with_capacity(16);
+
+    loop {
+        if dirty.is_empty() {
+            break;
+        }
+
+        stats.iterations += 1;
+        let visits_this_iter = dirty.len();
+        stats.total_visits += visits_this_iter;
+        if visits_this_iter > stats.max_visits_per_iteration {
+            stats.max_visits_per_iteration = visits_this_iter;
+        }
+
+        next_dirty.clear();
+
+        for cat in &dirty {
+            let cat_rules = match rules_by_cat.get(cat.as_str()) {
+                Some(r) => r,
+                None => continue,
+            };
+
+            let mut cat_changed = false;
+
+            for rule in cat_rules {
+                for item in &rule.first_items {
+                    tokens_to_add.clear();
+                    match item {
+                        FirstItem::Terminal(t) => {
+                            tokens_to_add.push(terminal_to_variant_name(t));
+                        },
+                        FirstItem::NonTerminal(ref_cat) => {
+                            if let Some(cat_first) = first_sets.get(ref_cat) {
+                                tokens_to_add.extend(cat_first.tokens.iter().cloned());
+                            }
+                        },
+                        FirstItem::Ident => {
+                            tokens_to_add.push("Ident".to_string());
+                        },
+                    };
+
+                    if let Some(cat_first) = first_sets.get_mut(&rule.category) {
+                        for token in &tokens_to_add {
+                            if cat_first.tokens.insert(token.clone()) {
+                                cat_changed = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if cat_changed {
+                // Mark all downstream dependents dirty for the next iteration
+                if let Some(deps) = dependents_of.get(cat) {
+                    for dep in deps {
+                        next_dirty.insert(dep.clone());
+                    }
+                }
+                // Also re-mark self if it depends on itself (self-referential rules)
+                // This is handled automatically since if A depends on A, A is in
+                // dependents_of[A].
+            }
+        }
+
+        std::mem::swap(&mut dirty, &mut next_dirty);
+    }
+
+    (first_sets, stats)
+}
+
+/// Compute FOLLOW sets using dependency-graph-driven incremental iteration.
+///
+/// Functionally equivalent to `compute_follow_sets_from_inputs()` but uses
+/// a dependency graph to skip rules whose category's FOLLOW set (and whose
+/// referenced categories' FOLLOW sets) did not change in the previous
+/// iteration.
+///
+/// ## Algorithm
+///
+/// 1. Build `dependents_of[C]` = categories whose FOLLOW sets may change
+///    when FOLLOW(C) changes (i.e., C appears in those rules and suffix is
+///    nullable, triggering `copy_follow`).
+/// 2. Initialize all categories as dirty.
+/// 3. On each iteration, visit only rules belonging to dirty categories.
+///    If any FOLLOW set changes, mark dependents dirty.
+/// 4. Converge when no categories are dirty.
+///
+/// Returns `(follow_sets, stats)`.
+pub fn compute_follow_sets_incremental(
+    inputs: &[FollowSetInput],
+    categories: &[String],
+    first_sets: &HashMap<String, FirstSet>,
+    primary_category: &str,
+) -> (HashMap<String, FirstSet>, IncrementalStats) {
+    let mut follow_sets: HashMap<String, FirstSet> = HashMap::with_capacity(categories.len());
+    for cat in categories {
+        follow_sets.insert(cat.clone(), FirstSet::new());
+    }
+
+    if let Some(follow) = follow_sets.get_mut(primary_category) {
+        follow.insert("Eof");
+    }
+
+    let dependents_of = build_follow_set_deps(inputs, categories);
+
+    // Group inputs by category for efficient lookup
+    let mut inputs_by_cat: HashMap<&str, Vec<&FollowSetInput>> =
+        HashMap::with_capacity(categories.len());
+    for cat in categories {
+        inputs_by_cat.insert(cat.as_str(), Vec::new());
+    }
+    for input in inputs {
+        if let Some(cat_inputs) = inputs_by_cat.get_mut(input.category.as_str()) {
+            cat_inputs.push(input);
+        }
+    }
+
+    // Initial pass: all categories dirty
+    let mut dirty: HashSet<String> = categories.iter().cloned().collect();
+    let mut next_dirty: HashSet<String> = HashSet::with_capacity(categories.len());
+
+    let mut stats = IncrementalStats {
+        total_categories: categories.len(),
+        iterations: 0,
+        total_visits: 0,
+        max_visits_per_iteration: 0,
+    };
+
+    // Track per-category FOLLOW set sizes for change detection.
+    // We snapshot token counts before processing and compare after.
+    let mut prev_sizes: HashMap<String, usize> = HashMap::with_capacity(categories.len());
+
+    loop {
+        if dirty.is_empty() {
+            break;
+        }
+
+        stats.iterations += 1;
+        let visits_this_iter = dirty.len();
+        stats.total_visits += visits_this_iter;
+        if visits_this_iter > stats.max_visits_per_iteration {
+            stats.max_visits_per_iteration = visits_this_iter;
+        }
+
+        // Snapshot sizes of ALL categories (not just dirty) because rules in
+        // dirty categories may modify FOLLOW sets of non-dirty categories.
+        prev_sizes.clear();
+        for cat in categories {
+            let size = follow_sets.get(cat).map_or(0, |fs| fs.tokens.len());
+            prev_sizes.insert(cat.clone(), size);
+        }
+
+        next_dirty.clear();
+
+        for cat in &dirty {
+            let cat_inputs = match inputs_by_cat.get(cat.as_str()) {
+                Some(r) => r,
+                None => continue,
+            };
+
+            for input in cat_inputs {
+                propagate_follow_from_items(
+                    &input.syntax,
+                    &input.category,
+                    first_sets,
+                    &mut follow_sets,
+                );
+            }
+        }
+
+        // Check which categories' FOLLOW sets actually changed
+        for cat in categories {
+            let new_size = follow_sets.get(cat).map_or(0, |fs| fs.tokens.len());
+            let old_size = prev_sizes.get(cat).copied().unwrap_or(0);
+            if new_size != old_size {
+                // This category's FOLLOW set changed — mark its dependents dirty
+                if let Some(deps) = dependents_of.get(cat) {
+                    for dep in deps {
+                        next_dirty.insert(dep.clone());
+                    }
+                }
+                // Also mark the category itself dirty if it has self-dependencies
+                // (handled by dependents_of if properly built)
+            }
+        }
+
+        std::mem::swap(&mut dirty, &mut next_dirty);
+    }
+
+    (follow_sets, stats)
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1760,7 +2180,8 @@ pub fn compute_composed_dispatch(
                             alts_desc.join("\n"), entries[0].rule_label,
                         ),
                         hint: Some(
-                            "assign distinct WFST weights to disambiguate, or restructure rules to avoid shared prefixes".to_string(),
+                            "WFST weights are auto-assigned by rule specificity and declaration order; \
+                             restructure rules to have distinct first tokens, or reorder rule declarations to change priority".to_string(),
                         ),
                         grammar_name: Some(grammar_name.to_string()),
                         source_location: None,
@@ -2361,6 +2782,524 @@ mod composed_dispatch_tests {
         // Int entries should NOT have WFST weight 10.0 — they use specificity fallback
         for entry in int_entries {
             assert_eq!(entry.token_variant_name, "Ident");
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DB01: Incremental FIRST/FOLLOW tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod incremental_first_follow_tests {
+    use super::*;
+
+    /// Helper: build a RuleInfo with NonTerminal first items.
+    fn rule_nt(label: &str, category: &str, first_nts: &[&str]) -> RuleInfo {
+        RuleInfo {
+            label: label.to_string(),
+            category: category.to_string(),
+            first_items: first_nts.iter().map(|nt| FirstItem::NonTerminal(nt.to_string())).collect(),
+            is_infix: false,
+            is_var: false,
+            is_literal: false,
+            is_cross_category: false,
+            is_cast: false,
+        }
+    }
+
+    /// Helper: build a RuleInfo with a Terminal first item.
+    fn rule_term(label: &str, category: &str, terminal: &str) -> RuleInfo {
+        RuleInfo {
+            label: label.to_string(),
+            category: category.to_string(),
+            first_items: vec![FirstItem::Terminal(terminal.to_string())],
+            is_infix: false,
+            is_var: false,
+            is_literal: false,
+            is_cross_category: false,
+            is_cast: false,
+        }
+    }
+
+    // ── Test 1: Dependency graph construction ─────────────────────────────
+
+    #[test]
+    fn first_set_dependency_graph_correct() {
+        // Grammar:
+        //   A -> "x"       (A has terminal first, no NT deps)
+        //   B -> A          (B depends on A)
+        //   C -> B          (C depends on B)
+        //   D -> "y"       (D independent)
+        let categories = vec![
+            "A".to_string(), "B".to_string(), "C".to_string(), "D".to_string(),
+        ];
+        let rules = vec![
+            rule_term("ARule", "A", "x"),
+            rule_nt("BRule", "B", &["A"]),
+            rule_nt("CRule", "C", &["B"]),
+            rule_term("DRule", "D", "y"),
+        ];
+
+        let (depends_on, dependents_of) = build_first_set_deps(&rules, &categories);
+
+        // A depends on nothing (terminal-only)
+        assert!(depends_on["A"].is_empty(), "A should have no deps");
+
+        // B depends on A
+        assert_eq!(depends_on["B"].len(), 1);
+        assert!(depends_on["B"].contains("A"), "B should depend on A");
+
+        // C depends on B
+        assert_eq!(depends_on["C"].len(), 1);
+        assert!(depends_on["C"].contains("B"), "C should depend on B");
+
+        // D depends on nothing
+        assert!(depends_on["D"].is_empty(), "D should have no deps");
+
+        // Reverse: dependents_of[A] = [B], dependents_of[B] = [C]
+        assert!(dependents_of["A"].contains(&"B".to_string()), "A's dependents should include B");
+        assert!(dependents_of["B"].contains(&"C".to_string()), "B's dependents should include C");
+        assert!(dependents_of["C"].is_empty(), "C should have no dependents");
+        assert!(dependents_of["D"].is_empty(), "D should have no dependents");
+    }
+
+    #[test]
+    fn follow_set_dependency_graph_correct() {
+        // Grammar rules with syntax items:
+        //   Rule in category A:  A -> B "+" C
+        //   Rule in category D:  D -> "y"
+        let categories = vec![
+            "A".to_string(), "B".to_string(), "C".to_string(), "D".to_string(),
+        ];
+        let inputs = vec![
+            FollowSetInput {
+                category: "A".to_string(),
+                syntax: vec![
+                    crate::SyntaxItemSpec::NonTerminal {
+                        category: "B".to_string(),
+                        param_name: "lhs".to_string(),
+                    },
+                    crate::SyntaxItemSpec::Terminal("+".to_string()),
+                    crate::SyntaxItemSpec::NonTerminal {
+                        category: "C".to_string(),
+                        param_name: "rhs".to_string(),
+                    },
+                ],
+            },
+            FollowSetInput {
+                category: "D".to_string(),
+                syntax: vec![
+                    crate::SyntaxItemSpec::Terminal("y".to_string()),
+                ],
+            },
+        ];
+
+        let dependents_of = build_follow_set_deps(&inputs, &categories);
+
+        // Rule in A references B and C.
+        // dependents_of["A"] should contain B and C (when FOLLOW(A) changes,
+        // FOLLOW(B) and FOLLOW(C) may change because of suffix-nullable propagation).
+        let a_deps = &dependents_of["A"];
+        assert!(a_deps.contains(&"B".to_string()), "A's dependents should include B");
+        assert!(a_deps.contains(&"C".to_string()), "A's dependents should include C");
+
+        // D has only a terminal, no NT references
+        assert!(dependents_of["D"].is_empty(), "D should have no dependents");
+    }
+
+    // ── Test 2: Incremental produces same results as non-incremental ──────
+
+    #[test]
+    fn incremental_first_sets_match_baseline() {
+        // Chain grammar: A -> "x", B -> A, C -> B, D -> "y", E -> C | D
+        let categories: Vec<String> = vec!["A", "B", "C", "D", "E"]
+            .into_iter().map(String::from).collect();
+        let rules = vec![
+            rule_term("ARule", "A", "x"),
+            rule_nt("BRule", "B", &["A"]),
+            rule_nt("CRule", "C", &["B"]),
+            rule_term("DRule", "D", "y"),
+            rule_nt("ERule1", "E", &["C"]),
+            rule_nt("ERule2", "E", &["D"]),
+        ];
+
+        let baseline = compute_first_sets(&rules, &categories);
+        let (incremental, stats) = compute_first_sets_incremental(&rules, &categories);
+
+        for cat in &categories {
+            let b_tokens = &baseline[cat].tokens;
+            let i_tokens = &incremental[cat].tokens;
+            assert_eq!(
+                b_tokens, i_tokens,
+                "FIRST({}) mismatch: baseline={:?}, incremental={:?}",
+                cat, b_tokens, i_tokens,
+            );
+        }
+
+        // Stats should show iterations and total categories
+        assert!(stats.iterations > 0, "should have at least 1 iteration");
+        assert_eq!(stats.total_categories, 5);
+    }
+
+    #[test]
+    fn incremental_follow_sets_match_baseline() {
+        // Grammar: A -> B "+", B -> "x"
+        // FOLLOW(B) should include {Plus} from the rule in A.
+        let categories: Vec<String> = vec!["A", "B"].into_iter().map(String::from).collect();
+        let rules = vec![
+            rule_nt("ARule", "A", &["B"]),
+            rule_term("BRule", "B", "x"),
+        ];
+        let first_sets = compute_first_sets(&rules, &categories);
+
+        let inputs = vec![
+            FollowSetInput {
+                category: "A".to_string(),
+                syntax: vec![
+                    crate::SyntaxItemSpec::NonTerminal {
+                        category: "B".to_string(),
+                        param_name: "b".to_string(),
+                    },
+                    crate::SyntaxItemSpec::Terminal("+".to_string()),
+                ],
+            },
+            FollowSetInput {
+                category: "B".to_string(),
+                syntax: vec![
+                    crate::SyntaxItemSpec::Terminal("x".to_string()),
+                ],
+            },
+        ];
+
+        let baseline = compute_follow_sets_from_inputs(
+            &inputs, &categories, &first_sets, "A",
+        );
+        let (incremental, stats) = compute_follow_sets_incremental(
+            &inputs, &categories, &first_sets, "A",
+        );
+
+        for cat in &categories {
+            let b_tokens = &baseline[cat].tokens;
+            let i_tokens = &incremental[cat].tokens;
+            assert_eq!(
+                b_tokens, i_tokens,
+                "FOLLOW({}) mismatch: baseline={:?}, incremental={:?}",
+                cat, b_tokens, i_tokens,
+            );
+        }
+
+        assert!(stats.iterations > 0, "should have at least 1 iteration");
+    }
+
+    // ── Test 3: Incremental reduces visits for independent categories ─────
+
+    #[test]
+    fn incremental_reduces_visits_independent_categories() {
+        // 4 independent categories, each with a terminal rule.
+        // After the first iteration, none should be dirty.
+        let categories: Vec<String> = vec!["A", "B", "C", "D"]
+            .into_iter().map(String::from).collect();
+        let rules = vec![
+            rule_term("ARule", "A", "a"),
+            rule_term("BRule", "B", "b"),
+            rule_term("CRule", "C", "c"),
+            rule_term("DRule", "D", "d"),
+        ];
+
+        let (first_sets, stats) = compute_first_sets_incremental(&rules, &categories);
+
+        // All FIRST sets should have exactly 1 token
+        for cat in &categories {
+            assert_eq!(first_sets[cat].tokens.len(), 1,
+                "FIRST({}) should have 1 token", cat);
+        }
+
+        // Should converge in 2 iterations: first adds all tokens, second finds no changes
+        // But since no dependencies propagate, the second iteration should visit 0 categories.
+        // Actually: iteration 1 visits all 4 (all dirty initially). Since terminals are
+        // added and no deps exist, next_dirty is empty. Loop ends after 1 iteration.
+        assert_eq!(stats.iterations, 1, "should converge in 1 iteration");
+        assert_eq!(stats.total_visits, 4, "should visit all 4 categories once");
+    }
+
+    #[test]
+    fn incremental_chain_propagation() {
+        // Chain: A -> "x", B -> A, C -> B
+        // Iteration 1: all dirty. A gets {KwX}, B gets {KwX} from A, C gets {KwX} from B.
+        // All converge in iteration 1 if lucky (B reads A's newly-updated set).
+        // But propagation may require 2 iterations depending on visit order.
+        let categories: Vec<String> = vec!["A", "B", "C"]
+            .into_iter().map(String::from).collect();
+        let rules = vec![
+            rule_term("ARule", "A", "x"),
+            rule_nt("BRule", "B", &["A"]),
+            rule_nt("CRule", "C", &["B"]),
+        ];
+
+        let baseline = compute_first_sets(&rules, &categories);
+        let (incremental, stats) = compute_first_sets_incremental(&rules, &categories);
+
+        // Results must match
+        for cat in &categories {
+            assert_eq!(
+                baseline[cat].tokens, incremental[cat].tokens,
+                "FIRST({}) should match baseline", cat,
+            );
+        }
+
+        // The chain should converge, and the number of visits should be
+        // less than or equal to total_categories * iterations (the baseline approach).
+        // With incremental, after iteration 1, only categories downstream of changes
+        // are revisited.
+        assert!(stats.iterations <= 3,
+            "chain of 3 should converge in at most 3 iterations; got {}",
+            stats.iterations);
+    }
+
+    #[test]
+    fn incremental_stats_reports_reduced_work() {
+        // Mix of independent and dependent categories.
+        // A -> "x", B -> "y", C -> A, D -> B, E -> "z"
+        // After iteration 1, all terminal-only categories converge.
+        // Iteration 2 only needs to revisit C and D (dependents of A and B).
+        // But since C and D also converge, nothing more is needed.
+        let categories: Vec<String> = vec!["A", "B", "C", "D", "E"]
+            .into_iter().map(String::from).collect();
+        let rules = vec![
+            rule_term("ARule", "A", "x"),
+            rule_term("BRule", "B", "y"),
+            rule_nt("CRule", "C", &["A"]),
+            rule_nt("DRule", "D", &["B"]),
+            rule_term("ERule", "E", "z"),
+        ];
+
+        let (_, stats) = compute_first_sets_incremental(&rules, &categories);
+
+        // Iteration 1: visits 5 (all dirty). A, B, E get terminals. C gets A's FIRST.
+        // D gets B's FIRST. All change. dependents_of[A]=[C], dependents_of[B]=[D].
+        // So next_dirty = {C, D} (only those whose upstreams changed... but wait,
+        // C and D also changed, but they have no dependents).
+        //
+        // Actually: in iteration 1, C and D successfully pull from A and B which
+        // already have their tokens. So C and D also converge in iteration 1.
+        // But their own FIRST sets changed, so we mark their dependents... which are empty.
+        // So next_dirty = {C, D} (because A and B changed, and C depends on A, D depends on B).
+        //
+        // Iteration 2: visits C and D. No new tokens. No changes. Loop ends.
+        assert_eq!(stats.iterations, 2, "should converge in 2 iterations; got {}", stats.iterations);
+        // Visits: 5 (iter1) + 2 (iter2) = 7. Baseline would do 5 * 2 = 10.
+        assert_eq!(stats.total_visits, 7, "should have 7 total visits; got {}", stats.total_visits);
+        assert!(stats.reduced_work(), "incremental should have reduced work");
+    }
+}
+
+#[cfg(test)]
+mod first_set_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // ── Unit tests ──────────────────────────────────────────────────────
+
+    #[test]
+    fn test_first_set_new() {
+        let fs = FirstSet::new();
+        assert!(fs.is_empty(), "new FirstSet should be empty");
+        assert!(!fs.nullable, "new FirstSet should not be nullable");
+        assert_eq!(fs.len(), 0);
+    }
+
+    #[test]
+    fn test_first_set_insert_and_contains() {
+        let mut fs = FirstSet::new();
+        fs.insert("Plus");
+        assert!(fs.contains("Plus"), "should contain inserted token 'Plus'");
+        assert!(!fs.contains("Minus"), "should not contain non-inserted token 'Minus'");
+        assert_eq!(fs.len(), 1);
+    }
+
+    #[test]
+    fn test_first_set_union() {
+        let mut a = FirstSet::new();
+        a.insert("Plus");
+        a.insert("Minus");
+
+        let mut b = FirstSet::new();
+        b.insert("Minus");
+        b.insert("Star");
+
+        a.union(&b);
+
+        assert!(a.contains("Plus"), "union should retain 'Plus' from self");
+        assert!(a.contains("Minus"), "union should retain shared 'Minus'");
+        assert!(a.contains("Star"), "union should gain 'Star' from other");
+        assert_eq!(a.len(), 3);
+    }
+
+    #[test]
+    fn test_first_set_union_nullable_propagation() {
+        // non-nullable ∪ nullable → nullable
+        let mut a = FirstSet::new();
+        a.nullable = false;
+        let mut b = FirstSet::new();
+        b.nullable = true;
+
+        a.union(&b);
+        assert!(a.nullable, "non-nullable ∪ nullable should be nullable");
+
+        // nullable ∪ non-nullable → nullable (already nullable stays)
+        let mut c = FirstSet::new();
+        c.nullable = true;
+        let d = FirstSet::new(); // not nullable
+        c.union(&d);
+        assert!(c.nullable, "nullable ∪ non-nullable should stay nullable");
+
+        // non-nullable ∪ non-nullable → non-nullable
+        let mut e = FirstSet::new();
+        e.nullable = false;
+        let f = FirstSet::new();
+        e.union(&f);
+        assert!(!e.nullable, "non-nullable ∪ non-nullable should stay non-nullable");
+    }
+
+    #[test]
+    fn test_first_set_intersection() {
+        let mut a = FirstSet::new();
+        for tok in &["A", "B", "C"] { a.insert(tok); }
+
+        let mut b = FirstSet::new();
+        for tok in &["B", "C", "D"] { b.insert(tok); }
+
+        let result = a.intersection(&b);
+        assert_eq!(result.len(), 2, "intersection of {{A,B,C}} and {{B,C,D}} should have 2 tokens");
+        assert!(result.contains("B"));
+        assert!(result.contains("C"));
+        assert!(!result.contains("A"));
+        assert!(!result.contains("D"));
+    }
+
+    #[test]
+    fn test_first_set_intersection_nullable() {
+        let mut a = FirstSet::new();
+        a.nullable = true;
+        let mut b = FirstSet::new();
+        b.nullable = true;
+        assert!(a.intersection(&b).nullable, "nullable ∩ nullable → nullable");
+
+        let mut c = FirstSet::new();
+        c.nullable = true;
+        let mut d = FirstSet::new();
+        d.nullable = false;
+        assert!(!c.intersection(&d).nullable, "nullable ∩ non-nullable → not nullable");
+
+        let mut e = FirstSet::new();
+        e.nullable = false;
+        let mut f = FirstSet::new();
+        f.nullable = true;
+        assert!(!e.intersection(&f).nullable, "non-nullable ∩ nullable → not nullable");
+    }
+
+    #[test]
+    fn test_first_set_difference() {
+        let mut a = FirstSet::new();
+        for tok in &["A", "B", "C"] { a.insert(tok); }
+
+        let mut b = FirstSet::new();
+        b.insert("B");
+
+        let result = a.difference(&b);
+        assert_eq!(result.len(), 2, "{{A,B,C}} - {{B}} should have 2 tokens");
+        assert!(result.contains("A"));
+        assert!(result.contains("C"));
+        assert!(!result.contains("B"));
+    }
+
+    #[test]
+    fn test_first_set_is_disjoint() {
+        let mut a = FirstSet::new();
+        a.insert("A");
+        a.insert("B");
+
+        let mut b = FirstSet::new();
+        b.insert("C");
+        b.insert("D");
+
+        assert!(a.is_disjoint(&b), "{{A,B}} and {{C,D}} should be disjoint");
+
+        let mut c = FirstSet::new();
+        c.insert("B");
+        c.insert("C");
+
+        assert!(!a.is_disjoint(&c), "{{A,B}} and {{B,C}} should NOT be disjoint");
+    }
+
+    #[test]
+    fn test_first_set_sorted_tokens() {
+        let mut fs = FirstSet::new();
+        fs.insert("Zebra");
+        fs.insert("Alpha");
+        fs.insert("Mango");
+
+        let sorted = fs.sorted_tokens();
+        assert_eq!(sorted, vec!["Alpha", "Mango", "Zebra"],
+            "sorted_tokens should return alphabetically sorted list");
+    }
+
+    #[test]
+    fn test_first_set_len_and_empty() {
+        let mut fs = FirstSet::new();
+        assert!(fs.is_empty(), "new set should be empty");
+        assert_eq!(fs.len(), 0, "new set should have len 0");
+
+        fs.insert("X");
+        assert!(!fs.is_empty(), "set with 1 element should not be empty");
+        assert_eq!(fs.len(), 1, "set with 1 element should have len 1");
+
+        fs.insert("Y");
+        fs.insert("Z");
+        assert_eq!(fs.len(), 3, "set with 3 elements should have len 3");
+
+        // Duplicate insert should not increase length
+        fs.insert("X");
+        assert_eq!(fs.len(), 3, "duplicate insert should not increase len");
+    }
+
+    // ── Property-based tests ────────────────────────────────────────────
+
+    fn arb_first_set() -> impl Strategy<Value = FirstSet> {
+        (proptest::collection::hash_set("[A-Z][a-z]{0,5}", 0..10), proptest::bool::ANY)
+            .prop_map(|(tokens, nullable)| FirstSet { tokens, nullable })
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(200))]
+
+        #[test]
+        fn prop_first_set_union_idempotent(a in arb_first_set()) {
+            let original_tokens = a.tokens.clone();
+            let original_nullable = a.nullable;
+
+            let mut result = a.clone();
+            result.union(&a);
+
+            prop_assert_eq!(&result.tokens, &original_tokens,
+                "union with self should not change tokens");
+            prop_assert_eq!(result.nullable, original_nullable,
+                "union with self should not change nullable");
+        }
+
+        #[test]
+        fn prop_first_set_union_commutative(a in arb_first_set(), b in arb_first_set()) {
+            let mut ab = a.clone();
+            ab.union(&b);
+
+            let mut ba = b.clone();
+            ba.union(&a);
+
+            prop_assert_eq!(&ab.tokens, &ba.tokens,
+                "a ∪ b should have same tokens as b ∪ a");
+            prop_assert_eq!(ab.nullable, ba.nullable,
+                "a ∪ b should have same nullable as b ∪ a");
         }
     }
 }

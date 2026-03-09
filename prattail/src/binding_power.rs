@@ -127,15 +127,27 @@ impl BindingPowerTable {
     }
 
     /// Generate the `infix_bp` function for a specific category.
+    ///
+    /// Groups operators that share the same (left_bp, right_bp) pair into
+    /// a single match arm with `|`-separated patterns for compact codegen.
     pub fn generate_bp_function(&self, category: &str) -> TokenStream {
-        let mut arms: Vec<TokenStream> = Vec::new();
-
+        // Group operators by (left_bp, right_bp) pair
+        let mut bp_groups: std::collections::BTreeMap<(u8, u8), Vec<proc_macro2::Ident>> =
+            std::collections::BTreeMap::new();
         for op in self.operators_for_category(category) {
             let variant = format_ident!("{}", terminal_to_variant_name(&op.terminal));
-            let left_bp = op.left_bp;
-            let right_bp = op.right_bp;
+            bp_groups
+                .entry((op.left_bp, op.right_bp))
+                .or_default()
+                .push(variant);
+        }
+
+        let mut arms: Vec<TokenStream> = Vec::with_capacity(bp_groups.len() + 1);
+        for ((left_bp, right_bp), variants) in &bp_groups {
+            let left_bp = *left_bp;
+            let right_bp = *right_bp;
             arms.push(quote! {
-                Token::#variant => Some((#left_bp, #right_bp))
+                #(Token::#variants)|* => Some((#left_bp, #right_bp))
             });
         }
 
@@ -147,6 +159,55 @@ impl BindingPowerTable {
                 match token {
                     #(#arms),*
                 }
+            }
+        }
+    }
+
+    /// BP03: Generate the `infix_bp` function using a static array lookup.
+    ///
+    /// When the category has >= `threshold` operators and `variant_map` is provided,
+    /// emits a `static` array indexed by `token_variant_id()` instead of a match.
+    /// Falls back to `generate_bp_function()` when the threshold is not met.
+    ///
+    /// Requires that `token_variant_id()` is emitted elsewhere (e.g., by
+    /// `write_token_variant_id()` in `codegen.rs`).
+    pub fn generate_bp_function_array(
+        &self,
+        category: &str,
+        variant_map: &crate::automata::codegen::TokenVariantMap,
+        threshold: usize,
+    ) -> TokenStream {
+        let ops = self.operators_for_category(category);
+        if ops.len() < threshold {
+            return self.generate_bp_function(category);
+        }
+
+        let array_len = variant_map.count as usize;
+        let cat_upper = format_ident!("INFIX_BP_{}", category.to_uppercase());
+
+        // Build array entries
+        let mut entries = vec![(0u8, 0u8); array_len];
+        for op in &ops {
+            let variant_name = terminal_to_variant_name(&op.terminal);
+            if let Some(id) = variant_map.get_id(&variant_name) {
+                entries[id as usize] = (op.left_bp, op.right_bp);
+            }
+        }
+
+        let entry_tokens: Vec<TokenStream> = entries
+            .iter()
+            .map(|(l, r)| quote! { (#l, #r) })
+            .collect();
+        let len_lit = array_len;
+
+        quote! {
+            static #cat_upper: [(u8, u8); #len_lit] = [#(#entry_tokens),*];
+
+            /// Get the binding power pair for an infix operator in this category.
+            #[inline]
+            fn infix_bp(token: &Token) -> Option<(u8, u8)> {
+                let bp = #cat_upper[token_variant_id(token) as usize];
+                if bp != (0, 0) { Some(bp) } else { None }
             }
         }
     }
@@ -296,4 +357,271 @@ pub struct InfixRuleInfo {
     pub is_mixfix: bool,
     /// Mixfix parts (operand-separator pairs after the trigger). Empty for non-mixfix.
     pub mixfix_parts: Vec<MixfixPart>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Helper to create an InfixRuleInfo with default flags (non-cross, non-postfix, non-mixfix).
+    fn make_rule(label: &str, terminal: &str, category: &str, assoc: Associativity) -> InfixRuleInfo {
+        InfixRuleInfo {
+            label: label.to_string(),
+            terminal: terminal.to_string(),
+            category: category.to_string(),
+            result_category: category.to_string(),
+            associativity: assoc,
+            is_cross_category: false,
+            is_postfix: false,
+            is_mixfix: false,
+            mixfix_parts: Vec::new(),
+        }
+    }
+
+    /// Helper to create an InfixOperator directly (for filter tests that bypass analyze).
+    fn make_op(
+        label: &str,
+        terminal: &str,
+        category: &str,
+        result_category: &str,
+        left_bp: u8,
+        right_bp: u8,
+        is_cross_category: bool,
+        is_postfix: bool,
+        is_mixfix: bool,
+    ) -> InfixOperator {
+        InfixOperator {
+            terminal: terminal.to_string(),
+            category: category.to_string(),
+            result_category: result_category.to_string(),
+            left_bp,
+            right_bp,
+            label: label.to_string(),
+            is_cross_category,
+            is_postfix,
+            is_mixfix,
+            mixfix_parts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn test_bp_table_new_empty() {
+        let table = BindingPowerTable::new();
+        assert!(table.operators.is_empty(), "new table should have zero operators");
+    }
+
+    #[test]
+    fn test_operators_for_category_filter() {
+        let mut table = BindingPowerTable::new();
+        // Two Int operators, one Bool operator
+        table.operators.push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
+        table.operators.push(make_op("Mul", "*", "Int", "Int", 4, 5, false, false, false));
+        table.operators.push(make_op("And", "&&", "Bool", "Bool", 2, 3, false, false, false));
+
+        let int_ops = table.operators_for_category("Int");
+        assert_eq!(int_ops.len(), 2, "should return only Int operators");
+        assert_eq!(int_ops[0].label, "Add");
+        assert_eq!(int_ops[1].label, "Mul");
+
+        let bool_ops = table.operators_for_category("Bool");
+        assert_eq!(bool_ops.len(), 1);
+        assert_eq!(bool_ops[0].label, "And");
+
+        let empty = table.operators_for_category("String");
+        assert!(empty.is_empty(), "non-existent category should return empty");
+    }
+
+    #[test]
+    fn test_postfix_operators_for_category() {
+        let mut table = BindingPowerTable::new();
+        table.operators.push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
+        table.operators.push(make_op("Fact", "!", "Int", "Int", 10, 0, false, true, false));
+        table.operators.push(make_op("Incr", "++", "Int", "Int", 12, 0, false, true, false));
+
+        let postfix = table.postfix_operators_for_category("Int");
+        assert_eq!(postfix.len(), 2, "should return only postfix operators");
+        assert_eq!(postfix[0].label, "Fact");
+        assert_eq!(postfix[1].label, "Incr");
+    }
+
+    #[test]
+    fn test_mixfix_operators_for_category() {
+        let mut table = BindingPowerTable::new();
+        table.operators.push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
+        let mut ternary = make_op("Ternary", "?", "Int", "Int", 2, 3, false, false, true);
+        ternary.mixfix_parts = vec![
+            MixfixPart {
+                operand_category: "Int".to_string(),
+                param_name: "b".to_string(),
+                following_terminal: Some(":".to_string()),
+            },
+            MixfixPart {
+                operand_category: "Int".to_string(),
+                param_name: "c".to_string(),
+                following_terminal: None,
+            },
+        ];
+        table.operators.push(ternary);
+
+        let mixfix = table.mixfix_operators_for_category("Int");
+        assert_eq!(mixfix.len(), 1, "should return only mixfix operators");
+        assert_eq!(mixfix[0].label, "Ternary");
+        assert_eq!(mixfix[0].mixfix_parts.len(), 2);
+    }
+
+    #[test]
+    fn test_cross_category_operators() {
+        let mut table = BindingPowerTable::new();
+        // Regular same-category op
+        table.operators.push(make_op("Add", "+", "Int", "Int", 2, 3, false, false, false));
+        // Cross-category: Int == Int -> Bool
+        table.operators.push(make_op("Eq", "==", "Int", "Bool", 2, 3, true, false, false));
+        // Cross-category: Int < Int -> Bool
+        table.operators.push(make_op("Lt", "<", "Int", "Bool", 2, 3, true, false, false));
+
+        let cross = table.cross_category_operators("Bool");
+        assert_eq!(cross.len(), 2, "should return cross-cat ops producing Bool");
+        assert_eq!(cross[0].label, "Eq");
+        assert_eq!(cross[1].label, "Lt");
+
+        let cross_int = table.cross_category_operators("Int");
+        assert!(cross_int.is_empty(), "no cross-cat ops produce Int");
+    }
+
+    #[test]
+    fn test_analyze_bp_left_assoc() {
+        let rules = vec![
+            make_rule("Add", "+", "Int", Associativity::Left),
+            make_rule("Sub", "-", "Int", Associativity::Left),
+        ];
+        let table = analyze_binding_powers(&rules);
+        assert_eq!(table.operators.len(), 2);
+
+        for op in &table.operators {
+            assert!(
+                op.left_bp < op.right_bp,
+                "left-assoc operator {} should have left_bp({}) < right_bp({})",
+                op.label, op.left_bp, op.right_bp
+            );
+        }
+    }
+
+    #[test]
+    fn test_analyze_bp_right_assoc() {
+        let rules = vec![
+            make_rule("Pow", "^", "Int", Associativity::Right),
+            make_rule("Assign", "=", "Int", Associativity::Right),
+        ];
+        let table = analyze_binding_powers(&rules);
+        assert_eq!(table.operators.len(), 2);
+
+        for op in &table.operators {
+            assert!(
+                op.left_bp > op.right_bp,
+                "right-assoc operator {} should have left_bp({}) > right_bp({})",
+                op.label, op.left_bp, op.right_bp
+            );
+        }
+    }
+
+    #[test]
+    fn test_analyze_bp_precedence_ordering() {
+        // Add declared first (lower precedence), Mul declared second (higher precedence)
+        let rules = vec![
+            make_rule("Add", "+", "Int", Associativity::Left),
+            make_rule("Mul", "*", "Int", Associativity::Left),
+        ];
+        let table = analyze_binding_powers(&rules);
+
+        let add = table.operators.iter().find(|op| op.label == "Add").expect("Add not found");
+        let mul = table.operators.iter().find(|op| op.label == "Mul").expect("Mul not found");
+
+        // Mul should have strictly higher binding powers than Add
+        assert!(
+            mul.left_bp > add.left_bp,
+            "Mul.left_bp({}) should be > Add.left_bp({})",
+            mul.left_bp, add.left_bp
+        );
+        assert!(
+            mul.right_bp > add.right_bp,
+            "Mul.right_bp({}) should be > Add.right_bp({})",
+            mul.right_bp, add.right_bp
+        );
+    }
+
+    #[test]
+    fn test_postfix_above_infix() {
+        let rules = vec![
+            make_rule("Add", "+", "Int", Associativity::Left),
+            make_rule("Mul", "*", "Int", Associativity::Left),
+            {
+                let mut r = make_rule("Fact", "!", "Int", Associativity::Left);
+                r.is_postfix = true;
+                r
+            },
+        ];
+        let table = analyze_binding_powers(&rules);
+
+        let max_infix_bp = table
+            .operators
+            .iter()
+            .filter(|op| !op.is_postfix)
+            .map(|op| op.left_bp.max(op.right_bp))
+            .max()
+            .expect("should have infix operators");
+
+        let fact = table.operators.iter().find(|op| op.label == "Fact").expect("Fact not found");
+        assert!(fact.is_postfix, "Fact should be postfix");
+        assert!(
+            fact.left_bp > max_infix_bp,
+            "postfix left_bp({}) should be > max infix bp({})",
+            fact.left_bp, max_infix_bp
+        );
+    }
+
+    #[test]
+    fn test_associativity_method() {
+        let left_op = InfixOperator {
+            terminal: "+".to_string(),
+            category: "Int".to_string(),
+            result_category: "Int".to_string(),
+            left_bp: 2,
+            right_bp: 3,
+            label: "Add".to_string(),
+            is_cross_category: false,
+            is_postfix: false,
+            is_mixfix: false,
+            mixfix_parts: Vec::new(),
+        };
+        assert_eq!(left_op.associativity(), Associativity::Left);
+
+        let right_op = InfixOperator {
+            terminal: "^".to_string(),
+            category: "Int".to_string(),
+            result_category: "Int".to_string(),
+            left_bp: 3,
+            right_bp: 2,
+            label: "Pow".to_string(),
+            is_cross_category: false,
+            is_postfix: false,
+            is_mixfix: false,
+            mixfix_parts: Vec::new(),
+        };
+        assert_eq!(right_op.associativity(), Associativity::Right);
+
+        // Equal BP should return Right (left_bp < right_bp is false)
+        let equal_op = InfixOperator {
+            terminal: "=".to_string(),
+            category: "Int".to_string(),
+            result_category: "Int".to_string(),
+            left_bp: 5,
+            right_bp: 5,
+            label: "Eq".to_string(),
+            is_cross_category: false,
+            is_postfix: false,
+            is_mixfix: false,
+            mixfix_parts: Vec::new(),
+        };
+        assert_eq!(equal_op.associativity(), Associativity::Right);
+    }
 }

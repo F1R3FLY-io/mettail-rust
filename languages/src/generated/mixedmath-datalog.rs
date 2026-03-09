@@ -10,15 +10,15 @@ relation bool(Bool);
 
 #[ds(crate::eqrel)] relation eq_bool(Bool, Bool);
 
-relation rw_bool(Bool, Bool);
+#[ds(crate::dual_indexed)] relation rw_bool(Bool, Bool);
 
 relation int(Int);
 
 #[ds(crate::eqrel)] relation eq_int(Int, Int);
 
-relation rw_int(Int, Int);
+#[ds(crate::dual_indexed)] relation rw_int(Int, Int);
 
-relation fold_int(Int, Int);
+#[ds(crate::dual_indexed)] relation fold_int(Int, Int);
 
 relation step_term(Bool);
 
@@ -116,7 +116,8 @@ int(sub.clone()) <--
 
 bool(c1.clone().normalize()) <--
     bool(c0),
-    rw_bool(c0, c1);
+    rw_bool(c0, c1),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); c1.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_EXPAND : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_EXPAND.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) };
 
 rw_bool(t.clone(), match t {
     Bool::ApplyBool(_, arg) => Bool::ApplyBool(Box::new(new_lam.clone()), arg.clone()),
@@ -150,7 +151,8 @@ rw_bool(t.clone(), match t {
 
 int(c1.clone().normalize()) <--
     int(c0),
-    rw_int(c0, c1);
+    rw_int(c0, c1),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); c1.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_EXPAND : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_EXPAND.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) };
 
 rw_int(t.clone(), match t {
     Int::ApplyInt(_, arg) => Int::ApplyInt(Box::new(new_lam.clone()), arg.clone()),
@@ -193,6 +195,8 @@ eq_int(t.clone(), t.clone()) <--
 eq_bool(s.clone(), t.clone()) <--
     bool(s),
     bool(t),
+    if std::mem::discriminant(s) == std::mem::discriminant(t),
+    if matches!(s, Bool::Not(..)),
     for (s_f0, t_f0) in { std::thread_local! { static POOL_BOOL_EQ_CONG_0 : std::cell::Cell < Vec < (Bool, Bool) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_BOOL_EQ_CONG_0.with(| p | p.take()); buf.clear(); match (s, t) {
         (Bool::Not(sf0), Bool::Not(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
@@ -204,6 +208,8 @@ eq_bool(s.clone(), t.clone()) <--
 eq_bool(s.clone(), t.clone()) <--
     bool(s),
     bool(t),
+    if std::mem::discriminant(s) == std::mem::discriminant(t),
+    if matches!(s, Bool::And(..) | Bool::Or(..)),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_BOOL_EQ_CONG_1 : std::cell::Cell < Vec < (Bool, Bool, Bool, Bool) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_BOOL_EQ_CONG_1.with(| p | p.take()); buf.clear(); match (s, t) {
         (Bool::And(sf0, sf1), Bool::And(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
@@ -219,6 +225,8 @@ eq_bool(s.clone(), t.clone()) <--
 eq_int(s.clone(), t.clone()) <--
     int(s),
     int(t),
+    if std::mem::discriminant(s) == std::mem::discriminant(t),
+    if matches!(s, Int::Neg(..)),
     for (s_f0, t_f0) in { std::thread_local! { static POOL_INT_EQ_CONG_2 : std::cell::Cell < Vec < (Int, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_INT_EQ_CONG_2.with(| p | p.take()); buf.clear(); match (s, t) {
         (Int::Neg(sf0), Int::Neg(tf0)) => {
             buf.push((sf0.as_ref().clone(), tf0.as_ref().clone()));
@@ -230,6 +238,8 @@ eq_int(s.clone(), t.clone()) <--
 eq_int(s.clone(), t.clone()) <--
     int(s),
     int(t),
+    if std::mem::discriminant(s) == std::mem::discriminant(t),
+    if matches!(s, Int::AddInt(..) | Int::SubInt(..) | Int::MulInt(..)),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_INT_EQ_CONG_3 : std::cell::Cell < Vec < (Int, Int, Int, Int) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_INT_EQ_CONG_3.with(| p | p.take()); buf.clear(); match (s, t) {
         (Int::AddInt(sf0, sf1), Int::AddInt(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
@@ -337,6 +347,7 @@ rw_bool(lhs.clone(), match (lhs, vi) {
     _ => unreachable!(),
 }) <--
     bool(lhs),
+    if matches!(lhs, Bool::And(..) | Bool::Not(..) | Bool::Or(..)),
     for (field_val, vi) in { std::thread_local! { static POOL_BOOL_SCONG_BOOL : std::cell::Cell < Vec < (Bool, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_BOOL_SCONG_BOOL.with(| p | p.take()); buf.clear(); match lhs {
         Bool::And(x0, x1) => {
             buf.push(((** x0).clone(), 0usize));
@@ -364,6 +375,7 @@ rw_int(lhs.clone(), match (lhs, vi) {
     _ => unreachable!(),
 }) <--
     int(lhs),
+    if matches!(lhs, Int::AddInt(..) | Int::MulInt(..) | Int::Neg(..) | Int::SubInt(..)),
     for (field_val, vi) in { std::thread_local! { static POOL_INT_SCONG_INT : std::cell::Cell < Vec < (Int, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_INT_SCONG_INT.with(| p | p.take()); buf.clear(); match lhs {
         Int::AddInt(x0, x1) => {
             buf.push(((** x0).clone(), 0usize));

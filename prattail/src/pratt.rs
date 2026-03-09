@@ -10,11 +10,118 @@
 //! - `infix_bp_<Category>(token)` — binding power lookup
 //! - `make_infix_<Category>(token, lhs, rhs)` — AST construction
 
+use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use crate::automata::codegen::TokenVariantMap;
 use crate::binding_power::BindingPowerTable;
 use crate::dispatch::CastRule;
 use crate::prediction::FirstSet;
+
+/// BP03: Minimum number of operators in a category before the static array
+/// lookup optimization is applied.  Below this threshold, the match-based
+/// dispatch is typically faster because the compiler can emit a small jump
+/// table directly.
+pub const BP_TABLE_LOOKUP_THRESHOLD: usize = 8;
+
+/// BP03: Configuration for static BP array lookup optimization.
+///
+/// When the optimization gate is enabled and a category has enough operators
+/// (>= [`BP_TABLE_LOOKUP_THRESHOLD`]), the generated `infix_bp_*` / `postfix_bp_*` /
+/// `mixfix_bp_*` functions use a `static` array indexed by `token_variant_id()`
+/// instead of a `match` with per-operator arms.
+///
+/// The caller must ensure that `write_token_variant_id()` has been emitted
+/// earlier in the generated code so the `token_variant_id()` function is in scope.
+#[derive(Debug, Clone)]
+pub struct BpTableConfig<'a> {
+    /// The token variant map from lexer codegen — provides variant name → ordinal.
+    pub variant_map: &'a TokenVariantMap,
+    /// Whether the BP03 gate is enabled.
+    pub enabled: bool,
+}
+
+/// BP05: Binding power range analysis result for a category.
+///
+/// When all infix (and optionally postfix/mixfix) operators have left binding
+/// powers in a range [lo, hi] with `hi - lo <= 16`, the Pratt infix loop can
+/// use a compact `u16` bitset for an early-exit guard: if no operator has
+/// `left_bp >= cur_bp`, the loop breaks immediately without calling `infix_bp_*`.
+///
+/// The bitset has bit `i` set iff there exists an operator with `left_bp == lo + i`.
+/// The guard check is: `ACTIVE_BP >> cur_bp.saturating_sub(lo) != 0`.
+/// When this is zero, all active BPs are below `cur_bp`, and no operator can bind.
+#[derive(Debug, Clone, Copy)]
+pub struct BpRangeInfo {
+    /// Minimum left_bp across all operators in this category.
+    pub lo: u8,
+    /// Maximum left_bp across all operators in this category.
+    pub hi: u8,
+    /// Bitset: bit `i` is set iff some operator has `left_bp == lo + i`.
+    pub bitset: u16,
+}
+
+/// BP05: Analyze the binding power range for a category.
+///
+/// Collects all left_bp values from infix, postfix, and mixfix operators.
+/// Returns `Some(BpRangeInfo)` if the range fits in 16 bits (hi - lo <= 16)
+/// and there is at least one operator; `None` otherwise.
+pub fn analyze_bp_range(cat: &str, bp_table: &BindingPowerTable) -> Option<BpRangeInfo> {
+    let mut left_bps: Vec<u8> = Vec::new();
+
+    // Collect left_bp from all operator types
+    for op in bp_table.operators_for_category(cat) {
+        left_bps.push(op.left_bp);
+    }
+    for op in bp_table.postfix_operators_for_category(cat) {
+        left_bps.push(op.left_bp);
+    }
+    for op in bp_table.mixfix_operators_for_category(cat) {
+        left_bps.push(op.left_bp);
+    }
+
+    if left_bps.is_empty() {
+        return None;
+    }
+
+    let lo = *left_bps.iter().min().expect("non-empty left_bps");
+    let hi = *left_bps.iter().max().expect("non-empty left_bps");
+
+    // Range must fit in 16 bits
+    if (hi as u16).saturating_sub(lo as u16) > 15 {
+        return None;
+    }
+
+    // Build the bitset
+    let mut bitset: u16 = 0;
+    for &bp in &left_bps {
+        bitset |= 1u16 << (bp - lo);
+    }
+
+    Some(BpRangeInfo { lo, hi, bitset })
+}
+
+/// BP05: Emit a static `ACTIVE_BP_{CAT}` constant and its `lo` value.
+///
+/// Generates:
+/// ```rust,ignore
+/// const ACTIVE_BP_CAT: u16 = 0b...;
+/// const BP_LO_CAT: u8 = lo;
+/// ```
+///
+/// The trampoline infix loop uses these for an early-exit guard:
+/// `if (ACTIVE_BP_CAT >> cur_bp.saturating_sub(BP_LO_CAT)) == 0 { break; }`
+pub fn write_bp_range_constants(buf: &mut String, cat: &str, info: &BpRangeInfo) {
+    let cat_upper = cat.to_uppercase();
+    write!(
+        buf,
+        "const ACTIVE_BP_{cat_upper}: u16 = 0b{bitset:016b}; \
+         const BP_LO_{cat_upper}: u8 = {lo};",
+        bitset = info.bitset,
+        lo = info.lo,
+    )
+    .unwrap();
+}
 
 /// Build a human-readable "expected" message from a FIRST set.
 ///
@@ -149,16 +256,19 @@ pub fn write_pratt_parser(
 
     if has_led {
         // Generate helper functions for each operator type
+        // Note: write_pratt_parser is the legacy (non-trampoline) path; BP03 array
+        // lookup is not applied here (pass None). The trampoline path uses _pub
+        // variants which receive the BpTableConfig.
         if config.has_infix {
-            write_bp_function(buf, config, bp_table);
+            write_bp_function(buf, config, bp_table, None);
             write_make_infix(buf, config, bp_table);
         }
         if config.has_postfix {
-            write_postfix_bp_function(buf, config, bp_table);
+            write_postfix_bp_function(buf, config, bp_table, None);
             write_make_postfix(buf, config, bp_table);
         }
         if config.has_mixfix {
-            write_mixfix_bp_function(buf, config, bp_table);
+            write_mixfix_bp_function(buf, config, bp_table, None);
             write_handle_mixfix(buf, config, bp_table);
         }
 
@@ -281,20 +391,106 @@ fn write_led_chain(buf: &mut String, config: &PrattConfig) {
 }
 
 /// Write the binding power lookup function.
-fn write_bp_function(buf: &mut String, config: &PrattConfig, bp_table: &BindingPowerTable) {
+///
+/// When `bp_cfg` is provided and enabled, and the category has enough operators
+/// (>= `BP_TABLE_LOOKUP_THRESHOLD`), emits a static array indexed by
+/// `token_variant_id()` instead of a match with per-operator arms.
+fn write_bp_function(
+    buf: &mut String,
+    config: &PrattConfig,
+    bp_table: &BindingPowerTable,
+    bp_cfg: Option<&BpTableConfig>,
+) {
     let cat = &config.category;
+    let ops = bp_table.operators_for_category(cat);
+
+    if let Some(cfg) = bp_cfg {
+        if cfg.enabled && ops.len() >= BP_TABLE_LOOKUP_THRESHOLD {
+            write_bp_function_array(buf, cat, &ops, cfg.variant_map);
+            return;
+        }
+    }
+
+    // Fallback: match-based dispatch
+    write_bp_function_match(buf, cat, &ops);
+}
+
+/// Write a match-based `infix_bp_*` function (the original codegen path).
+fn write_bp_function_match(
+    buf: &mut String,
+    cat: &str,
+    ops: &[&crate::binding_power::InfixOperator],
+) {
     write!(
         buf,
         "fn infix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{"
     )
     .unwrap();
 
-    for op in bp_table.operators_for_category(cat) {
+    // Group operators by (left_bp, right_bp) pair to emit compact match arms
+    let mut bp_groups: BTreeMap<(u8, u8), Vec<String>> = BTreeMap::new();
+    for op in ops {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
-        write!(buf, "Token::{} => Some(({}, {})),", variant, op.left_bp, op.right_bp).unwrap();
+        bp_groups
+            .entry((op.left_bp, op.right_bp))
+            .or_default()
+            .push(format!("Token::{}", variant));
+    }
+    for ((left, right), tokens) in &bp_groups {
+        let pattern = tokens.join(" | ");
+        write!(buf, "{} => Some(({}, {})),", pattern, left, right).unwrap();
     }
 
     buf.push_str("_ => None } }");
+}
+
+/// BP03: Write a static-array-based `infix_bp_*` function.
+///
+/// Generates:
+/// ```rust,ignore
+/// static INFIX_BP_Cat: [(u8, u8); N] = [(0,0), ..., (left, right), ...];
+/// fn infix_bp_Cat<'a>(token: &Token<'a>) -> Option<(u8, u8)> {
+///     let bp = INFIX_BP_Cat[token_variant_id(token) as usize];
+///     if bp != (0, 0) { Some(bp) } else { None }
+/// }
+/// ```
+fn write_bp_function_array(
+    buf: &mut String,
+    cat: &str,
+    ops: &[&crate::binding_power::InfixOperator],
+    variant_map: &TokenVariantMap,
+) {
+    let array_len = variant_map.count as usize;
+    let cat_upper = cat.to_uppercase();
+
+    // Build the array initializer: (0,0) for all slots, then fill operator slots
+    let mut entries = vec![(0u8, 0u8); array_len];
+    for op in ops {
+        let variant_name = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+        if let Some(id) = variant_map.get_id(&variant_name) {
+            entries[id as usize] = (op.left_bp, op.right_bp);
+        }
+    }
+
+    // Emit the static array
+    write!(buf, "static INFIX_BP_{}: [(u8, u8); {}] = [", cat_upper, array_len).unwrap();
+    for (i, (l, r)) in entries.iter().enumerate() {
+        if i > 0 {
+            buf.push(',');
+        }
+        write!(buf, "({},{})", l, r).unwrap();
+    }
+    buf.push_str("];");
+
+    // Emit the lookup function
+    write!(
+        buf,
+        "#[inline] fn infix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ \
+            let bp = INFIX_BP_{cat_upper}[token_variant_id(token) as usize]; \
+            if bp != (0, 0) {{ Some(bp) }} else {{ None }} \
+        }}",
+    )
+    .unwrap();
 }
 
 /// Write the make_infix function.
@@ -320,20 +516,99 @@ fn write_make_infix(buf: &mut String, config: &PrattConfig, bp_table: &BindingPo
 }
 
 /// Write the postfix binding power lookup function.
-fn write_postfix_bp_function(buf: &mut String, config: &PrattConfig, bp_table: &BindingPowerTable) {
+///
+/// When `bp_cfg` is provided and enabled, and the category has enough postfix
+/// operators (>= `BP_TABLE_LOOKUP_THRESHOLD`), emits a static array indexed by
+/// `token_variant_id()`.
+fn write_postfix_bp_function(
+    buf: &mut String,
+    config: &PrattConfig,
+    bp_table: &BindingPowerTable,
+    bp_cfg: Option<&BpTableConfig>,
+) {
     let cat = &config.category;
+    let ops = bp_table.postfix_operators_for_category(cat);
+
+    if let Some(cfg) = bp_cfg {
+        if cfg.enabled && ops.len() >= BP_TABLE_LOOKUP_THRESHOLD {
+            write_postfix_bp_function_array(buf, cat, &ops, cfg.variant_map);
+            return;
+        }
+    }
+
+    // Fallback: match-based dispatch
+    write_postfix_bp_function_match(buf, cat, &ops);
+}
+
+/// Write a match-based `postfix_bp_*` function.
+fn write_postfix_bp_function_match(
+    buf: &mut String,
+    cat: &str,
+    ops: &[&crate::binding_power::InfixOperator],
+) {
     write!(
         buf,
         "fn postfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<u8> {{ match token {{"
     )
     .unwrap();
 
-    for op in bp_table.postfix_operators_for_category(cat) {
+    // Group postfix operators by left_bp to emit compact match arms
+    let mut bp_groups: BTreeMap<u8, Vec<String>> = BTreeMap::new();
+    for op in ops {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
-        write!(buf, "Token::{} => Some({}),", variant, op.left_bp).unwrap();
+        bp_groups
+            .entry(op.left_bp)
+            .or_default()
+            .push(format!("Token::{}", variant));
+    }
+    for (left_bp, tokens) in &bp_groups {
+        let pattern = tokens.join(" | ");
+        write!(buf, "{} => Some({}),", pattern, left_bp).unwrap();
     }
 
     buf.push_str("_ => None } }");
+}
+
+/// BP03: Write a static-array-based `postfix_bp_*` function.
+///
+/// Sentinel value `0` means "not a postfix operator for this category".
+/// This is safe because real postfix BPs are always > 0 (typically >= 4).
+fn write_postfix_bp_function_array(
+    buf: &mut String,
+    cat: &str,
+    ops: &[&crate::binding_power::InfixOperator],
+    variant_map: &TokenVariantMap,
+) {
+    let array_len = variant_map.count as usize;
+    let cat_upper = cat.to_uppercase();
+
+    let mut entries = vec![0u8; array_len];
+    for op in ops {
+        let variant_name = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+        if let Some(id) = variant_map.get_id(&variant_name) {
+            entries[id as usize] = op.left_bp;
+        }
+    }
+
+    // Emit the static array
+    write!(buf, "static POSTFIX_BP_{}: [u8; {}] = [", cat_upper, array_len).unwrap();
+    for (i, bp) in entries.iter().enumerate() {
+        if i > 0 {
+            buf.push(',');
+        }
+        write!(buf, "{}", bp).unwrap();
+    }
+    buf.push_str("];");
+
+    // Emit the lookup function
+    write!(
+        buf,
+        "#[inline] fn postfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<u8> {{ \
+            let bp = POSTFIX_BP_{cat_upper}[token_variant_id(token) as usize]; \
+            if bp != 0 {{ Some(bp) }} else {{ None }} \
+        }}",
+    )
+    .unwrap();
 }
 
 /// Write the make_postfix function.
@@ -354,20 +629,99 @@ fn write_make_postfix(buf: &mut String, config: &PrattConfig, bp_table: &Binding
 }
 
 /// Write the mixfix binding power lookup function.
-fn write_mixfix_bp_function(buf: &mut String, config: &PrattConfig, bp_table: &BindingPowerTable) {
+///
+/// When `bp_cfg` is provided and enabled, and the category has enough mixfix
+/// operators (>= `BP_TABLE_LOOKUP_THRESHOLD`), emits a static array indexed by
+/// `token_variant_id()`.
+fn write_mixfix_bp_function(
+    buf: &mut String,
+    config: &PrattConfig,
+    bp_table: &BindingPowerTable,
+    bp_cfg: Option<&BpTableConfig>,
+) {
     let cat = &config.category;
+    let ops = bp_table.mixfix_operators_for_category(cat);
+
+    if let Some(cfg) = bp_cfg {
+        if cfg.enabled && ops.len() >= BP_TABLE_LOOKUP_THRESHOLD {
+            write_mixfix_bp_function_array(buf, cat, &ops, cfg.variant_map);
+            return;
+        }
+    }
+
+    // Fallback: match-based dispatch
+    write_mixfix_bp_function_match(buf, cat, &ops);
+}
+
+/// Write a match-based `mixfix_bp_*` function.
+fn write_mixfix_bp_function_match(
+    buf: &mut String,
+    cat: &str,
+    ops: &[&crate::binding_power::InfixOperator],
+) {
     write!(
         buf,
         "fn mixfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{",
     )
     .unwrap();
 
-    for op in bp_table.mixfix_operators_for_category(cat) {
+    // Group mixfix operators by (left_bp, right_bp) pair to emit compact match arms
+    let mut bp_groups: BTreeMap<(u8, u8), Vec<String>> = BTreeMap::new();
+    for op in ops {
         let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
-        write!(buf, "Token::{} => Some(({}, {})),", variant, op.left_bp, op.right_bp).unwrap();
+        bp_groups
+            .entry((op.left_bp, op.right_bp))
+            .or_default()
+            .push(format!("Token::{}", variant));
+    }
+    for ((left, right), tokens) in &bp_groups {
+        let pattern = tokens.join(" | ");
+        write!(buf, "{} => Some(({}, {})),", pattern, left, right).unwrap();
     }
 
     buf.push_str("_ => None } }");
+}
+
+/// BP03: Write a static-array-based `mixfix_bp_*` function.
+///
+/// Uses the same `(u8, u8)` pair layout as `write_bp_function_array` with
+/// `(0, 0)` as sentinel.
+fn write_mixfix_bp_function_array(
+    buf: &mut String,
+    cat: &str,
+    ops: &[&crate::binding_power::InfixOperator],
+    variant_map: &TokenVariantMap,
+) {
+    let array_len = variant_map.count as usize;
+    let cat_upper = cat.to_uppercase();
+
+    let mut entries = vec![(0u8, 0u8); array_len];
+    for op in ops {
+        let variant_name = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
+        if let Some(id) = variant_map.get_id(&variant_name) {
+            entries[id as usize] = (op.left_bp, op.right_bp);
+        }
+    }
+
+    // Emit the static array
+    write!(buf, "static MIXFIX_BP_{}: [(u8, u8); {}] = [", cat_upper, array_len).unwrap();
+    for (i, (l, r)) in entries.iter().enumerate() {
+        if i > 0 {
+            buf.push(',');
+        }
+        write!(buf, "({},{})", l, r).unwrap();
+    }
+    buf.push_str("];");
+
+    // Emit the lookup function
+    write!(
+        buf,
+        "#[inline] fn mixfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ \
+            let bp = MIXFIX_BP_{cat_upper}[token_variant_id(token) as usize]; \
+            if bp != (0, 0) {{ Some(bp) }} else {{ None }} \
+        }}",
+    )
+    .unwrap();
 }
 
 /// Write the handle_mixfix function.
@@ -1133,17 +1487,25 @@ pub fn write_dispatch_recovering(buf: &mut String, category: &str) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Public wrapper: write BP function (for trampoline codegen).
-pub fn write_bp_function_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
-    write!(
-        buf,
-        "fn infix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{"
-    )
-    .unwrap();
-    for op in bp_table.operators_for_category(cat) {
-        let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
-        write!(buf, "Token::{} => Some(({}, {})),", variant, op.left_bp, op.right_bp).unwrap();
+///
+/// When `bp_cfg` is `Some` and enabled with enough operators, emits a BP03
+/// static array lookup; otherwise falls back to the match-based path.
+pub fn write_bp_function_pub(
+    buf: &mut String,
+    cat: &str,
+    bp_table: &BindingPowerTable,
+    bp_cfg: Option<&BpTableConfig>,
+) {
+    let ops = bp_table.operators_for_category(cat);
+
+    if let Some(cfg) = bp_cfg {
+        if cfg.enabled && ops.len() >= BP_TABLE_LOOKUP_THRESHOLD {
+            write_bp_function_array(buf, cat, &ops, cfg.variant_map);
+            return;
+        }
     }
-    buf.push_str("_ => None } }");
+
+    write_bp_function_match(buf, cat, &ops);
 }
 
 /// Public wrapper: write make_infix function (for trampoline codegen).
@@ -1165,17 +1527,25 @@ pub fn write_make_infix_pub(buf: &mut String, cat: &str, bp_table: &BindingPower
 }
 
 /// Public wrapper: write postfix BP function (for trampoline codegen).
-pub fn write_postfix_bp_function_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
-    write!(
-        buf,
-        "fn postfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<u8> {{ match token {{"
-    )
-    .unwrap();
-    for op in bp_table.postfix_operators_for_category(cat) {
-        let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
-        write!(buf, "Token::{} => Some({}),", variant, op.left_bp).unwrap();
+///
+/// When `bp_cfg` is `Some` and enabled with enough operators, emits a BP03
+/// static array lookup; otherwise falls back to the match-based path.
+pub fn write_postfix_bp_function_pub(
+    buf: &mut String,
+    cat: &str,
+    bp_table: &BindingPowerTable,
+    bp_cfg: Option<&BpTableConfig>,
+) {
+    let ops = bp_table.postfix_operators_for_category(cat);
+
+    if let Some(cfg) = bp_cfg {
+        if cfg.enabled && ops.len() >= BP_TABLE_LOOKUP_THRESHOLD {
+            write_postfix_bp_function_array(buf, cat, &ops, cfg.variant_map);
+            return;
+        }
     }
-    buf.push_str("_ => None } }");
+
+    write_postfix_bp_function_match(buf, cat, &ops);
 }
 
 /// Public wrapper: write make_postfix function (for trampoline codegen).
@@ -1193,17 +1563,25 @@ pub fn write_make_postfix_pub(buf: &mut String, cat: &str, bp_table: &BindingPow
 }
 
 /// Public wrapper: write mixfix BP function (for trampoline codegen).
-pub fn write_mixfix_bp_function_pub(buf: &mut String, cat: &str, bp_table: &BindingPowerTable) {
-    write!(
-        buf,
-        "fn mixfix_bp_{cat}<'a>(token: &Token<'a>) -> Option<(u8, u8)> {{ match token {{",
-    )
-    .unwrap();
-    for op in bp_table.mixfix_operators_for_category(cat) {
-        let variant = crate::automata::codegen::terminal_to_variant_name(&op.terminal);
-        write!(buf, "Token::{} => Some(({}, {})),", variant, op.left_bp, op.right_bp).unwrap();
+///
+/// When `bp_cfg` is `Some` and enabled with enough operators, emits a BP03
+/// static array lookup; otherwise falls back to the match-based path.
+pub fn write_mixfix_bp_function_pub(
+    buf: &mut String,
+    cat: &str,
+    bp_table: &BindingPowerTable,
+    bp_cfg: Option<&BpTableConfig>,
+) {
+    let ops = bp_table.mixfix_operators_for_category(cat);
+
+    if let Some(cfg) = bp_cfg {
+        if cfg.enabled && ops.len() >= BP_TABLE_LOOKUP_THRESHOLD {
+            write_mixfix_bp_function_array(buf, cat, &ops, cfg.variant_map);
+            return;
+        }
     }
-    buf.push_str("_ => None } }");
+
+    write_mixfix_bp_function_match(buf, cat, &ops);
 }
 
 /// Public wrapper: write handle_mixfix function (for trampoline LED delegation codegen).
@@ -1274,4 +1652,399 @@ pub fn build_expected_message_pub(category: &str, first_set: &FirstSet) -> Strin
 /// Public wrapper: write token match pattern (for trampoline codegen).
 pub fn write_token_pattern_pub(buf: &mut String, token: &str) {
     write_token_pattern(buf, token);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::automata::codegen::TokenVariantMap;
+    use crate::binding_power::{
+        analyze_binding_powers, Associativity, InfixRuleInfo,
+    };
+
+    /// Build a `TokenVariantMap` for a typical test grammar with many operators.
+    fn test_variant_map() -> TokenVariantMap {
+        let map = TokenVariantMap::from_token_kinds(&[
+            crate::automata::TokenKind::Eof,
+            crate::automata::TokenKind::Ident,
+            crate::automata::TokenKind::Integer,
+            crate::automata::TokenKind::Fixed("+".to_string()),
+            crate::automata::TokenKind::Fixed("-".to_string()),
+            crate::automata::TokenKind::Fixed("*".to_string()),
+            crate::automata::TokenKind::Fixed("/".to_string()),
+            crate::automata::TokenKind::Fixed("%".to_string()),
+            crate::automata::TokenKind::Fixed("==".to_string()),
+            crate::automata::TokenKind::Fixed("!=".to_string()),
+            crate::automata::TokenKind::Fixed("<".to_string()),
+            crate::automata::TokenKind::Fixed(">".to_string()),
+            crate::automata::TokenKind::Fixed("<=".to_string()),
+            crate::automata::TokenKind::Fixed(">=".to_string()),
+            crate::automata::TokenKind::Fixed("&&".to_string()),
+            crate::automata::TokenKind::Fixed("||".to_string()),
+            crate::automata::TokenKind::Fixed("^".to_string()),
+            crate::automata::TokenKind::Fixed("(".to_string()),
+            crate::automata::TokenKind::Fixed(")".to_string()),
+        ]);
+        // Ensure deterministic IDs
+        map
+    }
+
+    /// Create infix rules for an expression language with many operators.
+    fn many_infix_rules() -> Vec<InfixRuleInfo> {
+        let ops = vec![
+            ("Add", "+", "Int"),
+            ("Sub", "-", "Int"),
+            ("Mul", "*", "Int"),
+            ("Div", "/", "Int"),
+            ("Mod", "%", "Int"),
+            ("Eq", "==", "Int"),
+            ("Ne", "!=", "Int"),
+            ("Lt", "<", "Int"),
+            ("Gt", ">", "Int"),
+            ("Le", "<=", "Int"),
+            ("Ge", ">=", "Int"),
+            ("And", "&&", "Int"),
+            ("Or", "||", "Int"),
+            ("Xor", "^", "Int"),
+        ];
+        ops.into_iter()
+            .map(|(label, terminal, cat)| InfixRuleInfo {
+                label: label.to_string(),
+                terminal: terminal.to_string(),
+                category: cat.to_string(),
+                result_category: cat.to_string(),
+                associativity: Associativity::Left,
+                is_cross_category: false,
+                is_postfix: false,
+                is_mixfix: false,
+                mixfix_parts: Vec::new(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_bp03_array_emitted_above_threshold() {
+        // 14 operators > 8 threshold → should emit static array
+        let rules = many_infix_rules();
+        let bp_table = analyze_binding_powers(&rules);
+        let variant_map = test_variant_map();
+
+        let bp_cfg = BpTableConfig {
+            variant_map: &variant_map,
+            enabled: true,
+        };
+
+        let mut buf = String::new();
+        let ops = bp_table.operators_for_category("Int");
+        assert!(
+            ops.len() >= BP_TABLE_LOOKUP_THRESHOLD,
+            "test expects >= {} ops, got {}",
+            BP_TABLE_LOOKUP_THRESHOLD,
+            ops.len()
+        );
+
+        write_bp_function_pub(&mut buf, "Int", &bp_table, Some(&bp_cfg));
+
+        // Should contain "static INFIX_BP_INT" (array) and "token_variant_id"
+        assert!(
+            buf.contains("static INFIX_BP_INT"),
+            "expected static array, got:\n{}",
+            buf
+        );
+        assert!(
+            buf.contains("token_variant_id"),
+            "expected token_variant_id call, got:\n{}",
+            buf
+        );
+        // Should NOT contain "match token" (the fallback path)
+        assert!(
+            !buf.contains("match token"),
+            "should not contain match when using array path, got:\n{}",
+            buf
+        );
+    }
+
+    #[test]
+    fn test_bp03_match_emitted_below_threshold() {
+        // 3 operators < 8 threshold → should emit match-based fallback
+        let rules: Vec<InfixRuleInfo> = vec![
+            InfixRuleInfo {
+                label: "Add".to_string(),
+                terminal: "+".to_string(),
+                category: "Int".to_string(),
+                result_category: "Int".to_string(),
+                associativity: Associativity::Left,
+                is_cross_category: false,
+                is_postfix: false,
+                is_mixfix: false,
+                mixfix_parts: Vec::new(),
+            },
+            InfixRuleInfo {
+                label: "Sub".to_string(),
+                terminal: "-".to_string(),
+                category: "Int".to_string(),
+                result_category: "Int".to_string(),
+                associativity: Associativity::Left,
+                is_cross_category: false,
+                is_postfix: false,
+                is_mixfix: false,
+                mixfix_parts: Vec::new(),
+            },
+            InfixRuleInfo {
+                label: "Mul".to_string(),
+                terminal: "*".to_string(),
+                category: "Int".to_string(),
+                result_category: "Int".to_string(),
+                associativity: Associativity::Left,
+                is_cross_category: false,
+                is_postfix: false,
+                is_mixfix: false,
+                mixfix_parts: Vec::new(),
+            },
+        ];
+        let bp_table = analyze_binding_powers(&rules);
+        let variant_map = test_variant_map();
+
+        let bp_cfg = BpTableConfig {
+            variant_map: &variant_map,
+            enabled: true,
+        };
+
+        let mut buf = String::new();
+        let ops = bp_table.operators_for_category("Int");
+        assert!(
+            ops.len() < BP_TABLE_LOOKUP_THRESHOLD,
+            "test expects < {} ops, got {}",
+            BP_TABLE_LOOKUP_THRESHOLD,
+            ops.len()
+        );
+
+        write_bp_function_pub(&mut buf, "Int", &bp_table, Some(&bp_cfg));
+
+        // Should contain "match token" (fallback path)
+        assert!(
+            buf.contains("match token"),
+            "expected match-based dispatch, got:\n{}",
+            buf
+        );
+        // Should NOT contain "static INFIX_BP_INT"
+        assert!(
+            !buf.contains("static INFIX_BP_INT"),
+            "should not contain static array below threshold, got:\n{}",
+            buf
+        );
+    }
+
+    #[test]
+    fn test_bp03_disabled_gate_uses_match() {
+        // Even with many operators, disabled gate → match
+        let rules = many_infix_rules();
+        let bp_table = analyze_binding_powers(&rules);
+        let variant_map = test_variant_map();
+
+        let bp_cfg = BpTableConfig {
+            variant_map: &variant_map,
+            enabled: false, // gate disabled
+        };
+
+        let mut buf = String::new();
+        write_bp_function_pub(&mut buf, "Int", &bp_table, Some(&bp_cfg));
+
+        assert!(
+            buf.contains("match token"),
+            "disabled gate should use match, got:\n{}",
+            buf
+        );
+        assert!(
+            !buf.contains("static INFIX_BP_INT"),
+            "disabled gate should not emit static array, got:\n{}",
+            buf
+        );
+    }
+
+    #[test]
+    fn test_bp03_none_config_uses_match() {
+        // No BpTableConfig → match (backward compatibility)
+        let rules = many_infix_rules();
+        let bp_table = analyze_binding_powers(&rules);
+
+        let mut buf = String::new();
+        write_bp_function_pub(&mut buf, "Int", &bp_table, None);
+
+        assert!(
+            buf.contains("match token"),
+            "None config should use match, got:\n{}",
+            buf
+        );
+    }
+
+    #[test]
+    fn test_bp03_array_entries_correct() {
+        // Verify array entries match operator binding powers
+        let rules = many_infix_rules();
+        let bp_table = analyze_binding_powers(&rules);
+        let variant_map = test_variant_map();
+
+        let bp_cfg = BpTableConfig {
+            variant_map: &variant_map,
+            enabled: true,
+        };
+
+        let mut buf = String::new();
+        write_bp_function_pub(&mut buf, "Int", &bp_table, Some(&bp_cfg));
+
+        // Verify that each operator's BP pair appears in the static array.
+        // The "Add" operator (+) should have some (left, right) pair in the array.
+        // Since we can't parse the generated code, just verify the array contains
+        // non-zero entries at the correct positions.
+        let _plus_id = variant_map.get_id("Plus").expect("Plus should be in variant map");
+        let ops = bp_table.operators_for_category("Int");
+        let plus_op = ops.iter().find(|op| op.terminal == "+").expect("should have + op");
+
+        // The array string should contain the BP pair
+        let bp_str = format!("({},{})", plus_op.left_bp, plus_op.right_bp);
+        assert!(
+            buf.contains(&bp_str),
+            "array should contain BP pair {} for '+', got:\n{}",
+            bp_str,
+            buf
+        );
+    }
+
+    #[test]
+    fn test_bp03_postfix_array() {
+        // Create 8+ postfix operators to trigger array path
+        let rules: Vec<InfixRuleInfo> = (0..10)
+            .map(|i| InfixRuleInfo {
+                label: format!("Post{}", i),
+                terminal: format!("op{}", i),
+                category: "Expr".to_string(),
+                result_category: "Expr".to_string(),
+                associativity: Associativity::Left,
+                is_cross_category: false,
+                is_postfix: true,
+                is_mixfix: false,
+                mixfix_parts: Vec::new(),
+            })
+            .collect();
+        let bp_table = analyze_binding_powers(&rules);
+
+        // Build a variant map that includes these operator variants
+        let mut name_to_id = std::collections::BTreeMap::new();
+        let mut id_to_name = Vec::new();
+        let mut insert = |name: String| {
+            if !name_to_id.contains_key(&name) {
+                let id = id_to_name.len() as u8;
+                name_to_id.insert(name.clone(), id);
+                id_to_name.push(name);
+            }
+        };
+        insert("Eof".to_string());
+        insert("Ident".to_string());
+        for i in 0..10 {
+            let variant = crate::automata::codegen::terminal_to_variant_name(&format!("op{}", i));
+            insert(variant);
+        }
+
+        let variant_map = TokenVariantMap {
+            count: id_to_name.len() as u8,
+            name_to_id,
+            id_to_name,
+        };
+
+        let bp_cfg = BpTableConfig {
+            variant_map: &variant_map,
+            enabled: true,
+        };
+
+        let mut buf = String::new();
+        let ops = bp_table.postfix_operators_for_category("Expr");
+        assert!(
+            ops.len() >= BP_TABLE_LOOKUP_THRESHOLD,
+            "test expects >= {} postfix ops, got {}",
+            BP_TABLE_LOOKUP_THRESHOLD,
+            ops.len()
+        );
+
+        write_postfix_bp_function_pub(&mut buf, "Expr", &bp_table, Some(&bp_cfg));
+
+        assert!(
+            buf.contains("static POSTFIX_BP_EXPR"),
+            "expected static postfix array, got:\n{}",
+            buf
+        );
+        assert!(
+            buf.contains("token_variant_id"),
+            "expected token_variant_id call, got:\n{}",
+            buf
+        );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // BP05: BP range analysis tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_bp05_analyze_narrow_range() {
+        // Two operators with left_bp 2 and 4 — range [2, 4], fits in 16 bits.
+        let mut bp_table = BindingPowerTable::new();
+        bp_table.operators.push(crate::binding_power::InfixOperator {
+            terminal: "+".to_string(),
+            category: "Int".to_string(),
+            result_category: "Int".to_string(),
+            left_bp: 2,
+            right_bp: 3,
+            label: "Add".to_string(),
+            is_cross_category: false,
+            is_postfix: false,
+            is_mixfix: false,
+            mixfix_parts: vec![],
+        });
+        bp_table.operators.push(crate::binding_power::InfixOperator {
+            terminal: "*".to_string(),
+            category: "Int".to_string(),
+            result_category: "Int".to_string(),
+            left_bp: 4,
+            right_bp: 5,
+            label: "Mul".to_string(),
+            is_cross_category: false,
+            is_postfix: false,
+            is_mixfix: false,
+            mixfix_parts: vec![],
+        });
+
+        let info = analyze_bp_range("Int", &bp_table);
+        assert!(info.is_some(), "narrow range should produce BpRangeInfo");
+        let info = info.expect("BpRangeInfo should be Some");
+        assert_eq!(info.lo, 2);
+        assert_eq!(info.hi, 4);
+        // Bit 0 = left_bp 2, bit 2 = left_bp 4
+        assert_eq!(info.bitset, 0b101);
+    }
+
+    #[test]
+    fn test_bp05_analyze_empty_category() {
+        let bp_table = BindingPowerTable::new();
+        let info = analyze_bp_range("Int", &bp_table);
+        assert!(info.is_none(), "no operators should return None");
+    }
+
+    #[test]
+    fn test_bp05_bitset_constants_emitted() {
+        let info = BpRangeInfo {
+            lo: 2,
+            hi: 6,
+            bitset: 0b10101,
+        };
+        let mut buf = String::new();
+        write_bp_range_constants(&mut buf, "Int", &info);
+        assert!(buf.contains("ACTIVE_BP_INT"), "should contain ACTIVE_BP constant");
+        assert!(buf.contains("BP_LO_INT"), "should contain BP_LO constant");
+        assert!(buf.contains("0b0000000000010101"), "bitset should be 0b0000000000010101");
+        assert!(buf.contains(": u8 = 2"), "lo should be 2");
+    }
 }

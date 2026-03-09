@@ -75,6 +75,7 @@ pub fn language(input: TokenStream) -> TokenStream {
     let raw_ascent_content = ascent_output.raw_content;
     let core_raw_ascent_content = ascent_output.core_raw_content;
     let pre_stratum_content = ascent_output.pre_stratum_content;
+    let ground_rewrite_seeds = ascent_output.ground_rewrite_seeds;
 
     // Generate metadata for REPL introspection
     let metadata_code = generate_metadata(&language_def);
@@ -83,11 +84,13 @@ pub fn language(input: TokenStream) -> TokenStream {
     // Pass raw Ascent content for direct inclusion in ascent! { struct Foo; ... }
     // Also pass core content for SCC-split struct (if available)
     // Also pass pre-stratum content for ground rewrite pre-computation (Sprint 5)
+    // Also pass ground rewrite seeds for B-CG04 short-circuit optimization
     let language_code = generate_language_impl(
         &language_def,
         &raw_ascent_content,
         core_raw_ascent_content.as_ref(),
         pre_stratum_content.as_ref(),
+        &ground_rewrite_seeds,
     );
 
     // Generate Blockly block definitions

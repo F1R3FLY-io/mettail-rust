@@ -75,8 +75,147 @@ fn has_complex_sep(rule: &RDRuleInfo) -> bool {
 /// be trampolined. This includes:
 /// - Rules with Sep items (complex parsing logic)
 /// - Rules with multi-binder items (complex binder handling)
-fn should_use_standalone_fn(rule: &RDRuleInfo) -> bool {
+pub fn should_use_standalone_fn(rule: &RDRuleInfo) -> bool {
     has_complex_sep(rule) || rule.has_multi_binder
+}
+
+/// BP02: Information about a tail-call-eligible rule.
+///
+/// A rule is tail-call-eligible when its last same-category NonTerminal is in
+/// "tail position": the NT result (with trivial wrapping into a single-field
+/// constructor) IS the rule's result, with no further terminals to consume.
+///
+/// For these rules, the trampoline can skip pushing a full continuation frame.
+/// Instead, it sets a lightweight `tail_wrap` local variable that records the
+/// constructor to apply when `lhs` returns from the NT parse.
+#[derive(Debug, Clone)]
+pub struct TailCallInfo {
+    /// Rule label (e.g., "Neg", "Deref").
+    pub label: String,
+    /// Tag index for the `tail_wrap` match dispatch (assigned during codegen).
+    pub tag: u8,
+    /// The constructor pattern string: how to wrap `lhs` into the final result.
+    /// E.g., `"Cat::Neg(Box::new(lhs))"`.
+    pub constructor: String,
+    /// `cur_bp` value to set before `continue 'drive`.
+    pub bp: u8,
+}
+
+/// BP02: Check if an RD rule is eligible for tail-call elimination.
+///
+/// Returns `Some(constructor_pattern)` if the rule qualifies, `None` otherwise.
+///
+/// A rule is tail-call-eligible when:
+/// 1. It has exactly one same-category NonTerminal (the first segment) in tail position
+/// 2. The first segment has NO accumulated captures before the NT (no ident captures,
+///    no cross-category NTs — only terminal items that are consumed inline)
+/// 3. The final segment (constructor) has no inline items to consume
+/// 4. The ONLY capture is the tail NT result itself
+/// 5. The rule is not a binder, multi-binder, or collection rule
+/// 6. The rule is not dispatched to a standalone function
+///
+/// The restriction to zero prior captures is essential: the tail-wrap constructor
+/// is applied at the TOP of the 'unwind loop, which is a different scope from the
+/// prefix match arm where the inline items were processed. Prior capture variables
+/// (idents, cross-category NTs) would be out of scope at the tail-wrap application
+/// site.
+///
+/// Eligible patterns include:
+/// - `[Terminal("x"), NonTerminal(SameCat, "v")]` → `Cat::X(Box::new(lhs))`
+///   (unary prefix operators — also handled by UnaryPrefix, but this generalizes)
+/// - `[Terminal("x"), Terminal("y"), NonTerminal(SameCat, "v")]` → `Cat::XY(Box::new(lhs))`
+///   (multi-terminal prefix followed by a single same-category NT)
+fn is_tail_call_eligible(rule: &RDRuleInfo) -> Option<String> {
+    // Exclude binder, multi-binder, collection, standalone rules
+    if rule.has_binder || rule.has_multi_binder || rule.is_collection {
+        return None;
+    }
+    if should_use_standalone_fn(rule) {
+        return None;
+    }
+
+    let segments = split_rd_handler(rule);
+    if segments.is_empty() {
+        return None;
+    }
+
+    // Must have exactly one same-category NT (first segment) — no multi-segment support
+    let nt_count = segments.iter().filter(|s| s.nonterminal.is_some()).count();
+    if nt_count != 1 {
+        return None;
+    }
+
+    // The NT must be in the first segment (last_nt_idx == 0)
+    let first_seg = &segments[0];
+    let nt = first_seg.nonterminal.as_ref()?;
+
+    // Only same-category NTs are trampolined
+    if nt.category != rule.category {
+        return None;
+    }
+
+    // CRITICAL: The first segment must have NO accumulated captures before the NT.
+    // Only terminal items (which are consumed inline and produce no captures) are allowed.
+    // If there are ident captures, cross-category NTs, binders, or collections,
+    // those variables would go out of scope before the tail_wrap is applied.
+    if !first_seg.accumulated_captures.is_empty() {
+        return None;
+    }
+
+    // The final segment (after the NT) must have no inline items (no more terminals to consume)
+    if let Some(final_seg) = segments.get(1) {
+        if final_seg.nonterminal.is_some() || !final_seg.inline_items.is_empty() {
+            return None;
+        }
+    }
+
+    // The constructor has exactly one capture: the tail NT result.
+    // This produces `Cat::Label(Box::new(lhs))`.
+    Some(format!(
+        "lhs = {}::{}(Box::new(lhs));",
+        rule.category, rule.label
+    ))
+}
+
+/// BP02: Collect tail-call-eligible rules for a category and assign tags.
+///
+/// Returns a map from rule label to `TailCallInfo` for all eligible rules.
+fn collect_tail_call_rules(
+    rd_rules: &[RDRuleInfo],
+    cat: &str,
+) -> std::collections::BTreeMap<String, TailCallInfo> {
+    let mut result = std::collections::BTreeMap::new();
+    let mut tag: u8 = 0;
+
+    for rd_rule in rd_rules {
+        if rd_rule.category != *cat {
+            continue;
+        }
+        if rd_rule.prefix_bp.is_some() || is_simple_collection(rd_rule) {
+            continue;
+        }
+        if let Some(constructor) = is_tail_call_eligible(rd_rule) {
+            let segments = split_rd_handler(rd_rule);
+            let bp = segments
+                .first()
+                .and_then(|s| s.nonterminal.as_ref())
+                .map(|nt| nt.bp)
+                .unwrap_or(0);
+
+            result.insert(
+                rd_rule.label.clone(),
+                TailCallInfo {
+                    label: rd_rule.label.clone(),
+                    tag,
+                    constructor,
+                    bp,
+                },
+            );
+            tag = tag.saturating_add(1);
+        }
+    }
+
+    result
 }
 
 /// Group terminal-first RD rules by their dispatch token variant.
@@ -2341,6 +2480,20 @@ pub struct TrampolineConfig {
     /// `Vec::with_capacity(n)` instead of `Vec::new()`. Derived from G34 depth bounds.
     /// `None` means no WPDS data is available (use default `Vec::new()`).
     pub frame_pool_capacity: Option<usize>,
+    /// BP03: Token variant map from lexer codegen.
+    ///
+    /// When `Some`, enables the BP03 static array lookup optimization for
+    /// categories with >= 8 infix/postfix/mixfix operators (gated by
+    /// `optimization_gates.bp_table_lookup`).
+    pub token_variant_map: Option<crate::automata::codegen::TokenVariantMap>,
+    /// CD05: Prefix CSE hints for shared nonterminal parses.
+    ///
+    /// When non-empty and `optimization_gates.prefix_cse` is true, contains
+    /// detected opportunities where multiple rules share a nonterminal parse
+    /// at the same trie prefix. The codegen emits diagnostic comments showing
+    /// how the shared nonterminal could be parsed once and cached. Full codegen
+    /// integration is a future step.
+    pub prefix_cse_hints: Vec<crate::decision_tree::SharedNonterminalPrefix>,
 }
 
 /// Write the Frame enum declaration for a category.
@@ -2676,20 +2829,39 @@ pub fn write_trampolined_parser(
     };
 
     let has_delegation = !config.led_delegation.is_empty();
-    let has_led = config.has_infix || config.has_postfix || config.has_mixfix || has_delegation;
+    let _has_led = config.has_infix || config.has_postfix || config.has_mixfix || has_delegation;
 
     // ── 1. Generate helper functions (same as pratt.rs) ──
 
+    // BP03: Build BpTableConfig if the gate is enabled and a variant map is available.
+    let bp_cfg = config.token_variant_map.as_ref().map(|vm| {
+        crate::pratt::BpTableConfig {
+            variant_map: vm,
+            enabled: config.optimization_gates.bp_table_lookup,
+        }
+    });
+    let bp_cfg_ref = bp_cfg.as_ref();
+
     if config.has_infix {
-        crate::pratt::write_bp_function_pub(buf, cat, bp_table);
+        crate::pratt::write_bp_function_pub(buf, cat, bp_table, bp_cfg_ref);
         crate::pratt::write_make_infix_pub(buf, cat, bp_table);
     }
     if config.has_postfix {
-        crate::pratt::write_postfix_bp_function_pub(buf, cat, bp_table);
+        crate::pratt::write_postfix_bp_function_pub(buf, cat, bp_table, bp_cfg_ref);
         crate::pratt::write_make_postfix_pub(buf, cat, bp_table);
     }
     if config.has_mixfix {
-        crate::pratt::write_mixfix_bp_function_pub(buf, cat, bp_table);
+        crate::pratt::write_mixfix_bp_function_pub(buf, cat, bp_table, bp_cfg_ref);
+    }
+
+    // ── 1b. BP05: Generate BP range constants for early-exit guard ──
+    let bp_range_info = if config.optimization_gates.bp_range_loop {
+        crate::pratt::analyze_bp_range(cat, bp_table)
+    } else {
+        None
+    };
+    if let Some(ref info) = bp_range_info {
+        crate::pratt::write_bp_range_constants(buf, cat, info);
     }
 
     // ── 1a. Generate LED delegation functions (sum-type categories) ──
@@ -2883,7 +3055,7 @@ pub fn write_trampolined_parser(
     // in the final output (they need to be visible at the call site).
     let mut cold_fns = String::new();
     let mut body_buf = String::new();
-    write_trampoline_body(&mut body_buf, &mut cold_fns, config, bp_table, prefix_handlers, rd_rules, &frame_info, &parse_fn);
+    write_trampoline_body(&mut body_buf, &mut cold_fns, config, bp_table, prefix_handlers, rd_rules, &frame_info, &parse_fn, bp_range_info.as_ref());
     buf.push_str(&cold_fns);
     buf.push_str(&body_buf);
 }
@@ -2898,9 +3070,20 @@ fn write_trampoline_body(
     rd_rules: &[RDRuleInfo],
     frame_info: &FrameInfo,
     parse_fn: &str,
+    bp_range_info: Option<&crate::pratt::BpRangeInfo>,
 ) {
     let cat = &config.category;
     let has_led = config.has_infix || config.has_postfix || config.has_mixfix;
+
+    // BP02: Collect tail-call-eligible rules for this category.
+    // When the gate is enabled and there are eligible rules, we emit a
+    // `tail_wrap: Option<u8>` local that avoids full frame pushes for
+    // single-segment rules whose last same-category NT is in tail position.
+    let tail_call_rules = if config.optimization_gates.tail_call_elim {
+        collect_tail_call_rules(rd_rules, cat)
+    } else {
+        std::collections::BTreeMap::new()
+    };
 
     // Build expected message for error reporting
     let expected_msg = crate::pratt::build_expected_message_pub(cat, &config.own_first_set);
@@ -2924,6 +3107,15 @@ fn write_trampoline_body(
     buf.push_str("stack.clear();");
     buf.push_str("let mut cur_bp = min_bp;");
 
+    // BP02: Emit tail_wrap local variable when there are tail-call-eligible rules.
+    // The Option<(u8, u8)> stores (tag, saved_bp): the tag identifies which
+    // constructor to apply after the tail NT returns, and saved_bp is the
+    // binding power to restore afterwards (which the full frame would have stored).
+    // Cost: one Option<(u8, u8)> (3 bytes) on the stack + one branch per 'unwind.
+    if !tail_call_rules.is_empty() {
+        buf.push_str("let mut tail_wrap: Option<(u8, u8)> = None;");
+    }
+
     // ═══ Main trampoline loop ═══
     buf.push_str("'drive: loop {");
 
@@ -2943,14 +3135,27 @@ fn write_trampoline_body(
     }
 
     // ═══ Phase A: Prefix dispatch ═══
-    write_prefix_phase(buf, cold_fns, config, prefix_handlers, rd_rules, frame_info, &expected_escaped);
+    write_prefix_phase(buf, cold_fns, config, prefix_handlers, rd_rules, frame_info, &expected_escaped, &tail_call_rules);
 
     // ═══ Phase B: Infix loop + continuation unwinding ═══
     buf.push_str("'unwind: loop {");
 
+    // BP02: Apply pending tail-call constructor before the infix loop.
+    // When a tail-call-eligible prefix arm sets `tail_wrap = Some((tag, saved_bp))`
+    // and does `continue 'drive` without pushing a frame, the NT result arrives
+    // as `lhs`. Before entering the infix loop (which expects a fully-formed
+    // LHS), apply the deferred constructor wrapping and restore cur_bp.
+    if !tail_call_rules.is_empty() {
+        buf.push_str("if let Some((tw, tw_bp)) = tail_wrap.take() { match tw {");
+        for info in tail_call_rules.values() {
+            write!(buf, "{} => {{ {} }},", info.tag, info.constructor).unwrap();
+        }
+        buf.push_str("_ => {} } cur_bp = tw_bp; }");
+    }
+
     // Infix loop (iterative — left-assoc chains stay here)
     if has_led {
-        write_infix_loop(buf, config, bp_table, frame_info);
+        write_infix_loop(buf, config, bp_table, frame_info, bp_range_info);
     }
 
     // Pop continuation
@@ -2964,6 +3169,24 @@ fn write_trampoline_body(
 /// Write Phase A: prefix dispatch.
 ///
 /// Produces a value (break 'prefix) or pushes a frame and continues 'drive.
+///
+/// ## CD03 (Computed Goto) — Not applicable to trampoline prefix dispatch
+///
+/// The CD03 computed goto optimization (function pointer table dispatch) is
+/// implemented in `dispatch.rs` for cross-category dispatch where all arms
+/// have a uniform signature `fn(tokens, pos, min_bp) -> Result<Cat, ParseError>`.
+///
+/// Trampoline prefix dispatch cannot use function pointer tables because:
+/// 1. Arms use `break 'prefix expr` to produce a value to the enclosing labeled block
+/// 2. Arms use `continue 'drive` to re-enter the trampoline loop after pushing a frame
+/// 3. Arms reference `stack`, `cur_bp`, and frame enum variants by name
+/// 4. The heterogeneous control flow (break vs continue vs return) prevents
+///    factoring arms into standalone functions with a unified return type
+///
+/// A future refactoring could introduce a `PrefixAction` enum
+/// (`Break(Cat)` / `Continue` / `Error(ParseError)`) to unify control flow,
+/// but that would add an extra branch on every prefix dispatch — the opposite
+/// of the optimization's intent.
 fn write_prefix_phase(
     buf: &mut String,
     cold_fns: &mut String,
@@ -2972,6 +3195,7 @@ fn write_prefix_phase(
     rd_rules: &[RDRuleInfo],
     frame_info: &FrameInfo,
     expected_escaped: &str,
+    tail_call_rules: &std::collections::BTreeMap<String, TailCallInfo>,
 ) {
     let cat = &config.category;
 
@@ -3038,7 +3262,7 @@ fn write_prefix_phase(
 
     // Generate match arms (same code in both paths — WFST ordering affects
     // cross-category dispatch backtracking order, not prefix match semantics)
-    write_prefix_match_arms(buf, cold_fns, config, prefix_handlers, rd_rules, frame_info, expected_escaped);
+    write_prefix_match_arms(buf, cold_fns, config, prefix_handlers, rd_rules, frame_info, expected_escaped, tail_call_rules);
 
     buf.push_str("} };"); // close match and 'prefix block
 }
@@ -3052,6 +3276,7 @@ fn write_prefix_match_arms(
     rd_rules: &[RDRuleInfo],
     frame_info: &FrameInfo,
     expected_escaped: &str,
+    tail_call_rules: &std::collections::BTreeMap<String, TailCallInfo>,
 ) {
     let cat = &config.category;
 
@@ -3093,6 +3318,42 @@ fn write_prefix_match_arms(
             rd_by_token_raw
         };
 
+    // CD01: Sort RD dispatch arms by WFST frequency weight (lowest = most
+    // frequent first) for better branch prediction.  Gated by
+    // `optimization_gates.frequency_ordering`.  Falls back to the
+    // BTreeMap's lexicographic order when the gate is disabled or no
+    // weight source is available.
+    let rd_ordered: Vec<(&String, &Vec<&RDRuleInfo>)> = {
+        let mut entries: Vec<(&String, &Vec<&RDRuleInfo>)> = rd_by_token.iter().collect();
+        if config.optimization_gates.frequency_ordering {
+            if let Some(ref wfst) = config.prediction_wfst {
+                entries.sort_by(|(va, _), (vb, _)| {
+                    let wa = wfst.predict(va)
+                        .first()
+                        .map(|a| a.weight.value())
+                        .unwrap_or(f64::INFINITY);
+                    let wb = wfst.predict(vb)
+                        .first()
+                        .map(|a| a.weight.value())
+                        .unwrap_or(f64::INFINITY);
+                    wa.partial_cmp(&wb).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            } else if let Some(ref wm) = config.complete_weight_map {
+                entries.sort_by(|(va, _), (vb, _)| {
+                    let wa = wm.get(&(config.category.clone(), (*va).clone()))
+                        .copied()
+                        .unwrap_or(f64::INFINITY);
+                    let wb = wm.get(&(config.category.clone(), (*vb).clone()))
+                        .copied()
+                        .unwrap_or(f64::INFINITY);
+                    wa.partial_cmp(&wb).unwrap_or(std::cmp::Ordering::Equal)
+                });
+            }
+            // else: no weights available — keep BTreeMap lexicographic order
+        }
+        entries
+    };
+
     // Track whether LParen has been handled by an RD rule arm so we can
     // suppress the later grouping handler and avoid duplicate match arms.
     let mut lparen_handled = false;
@@ -3100,7 +3361,27 @@ fn write_prefix_match_arms(
     // D07: Coverage path counter — each dispatch arm gets a unique path_id
     let mut coverage_path_counter: u32 = 0;
 
-    for (variant, rules) in &rd_by_token {
+    // CD05: Emit prefix CSE diagnostic comments when the gate is enabled
+    if config.optimization_gates.prefix_cse && !config.prefix_cse_hints.is_empty() {
+        // Build a minimal TokenIdMap for name resolution
+        let cse_token_ids = {
+            let mut all_tokens: Vec<String> = Vec::new();
+            for fs in config.all_first_sets.values() {
+                all_tokens.extend(fs.tokens.iter().cloned());
+            }
+            for v in &["Eof", "RParen", "RBrace", "RBracket", "Semi", "Comma",
+                       "LParen", "LBrace", "LBracket"] {
+                all_tokens.push(v.to_string());
+            }
+            crate::token_id::TokenIdMap::from_names(all_tokens)
+        };
+        for hint in &config.prefix_cse_hints {
+            let annotation = crate::decision_tree::format_cse_annotation(hint, &cse_token_ids);
+            buf.push_str(&annotation);
+        }
+    }
+
+    for (variant, rules) in rd_ordered {
         if rules.len() == 1 {
             // Singleton: emit the original single-rule arm
             let rd_rule = rules[0];
@@ -3306,27 +3587,36 @@ fn write_prefix_match_arms(
             write_inline_items(buf, &segments[0].inline_items, true); // skip first terminal (it's the match)
 
             if let Some(ref nt) = segments[0].nonterminal {
-                // Same-category nonterminal: push frame for continuation, continue 'drive
-                write!(
-                    buf,
-                    "stack.push({}::{} {{",
-                    frame_info.enum_name, segments[0].frame_variant
-                )
-                .unwrap();
-                write!(buf, "saved_bp: cur_bp,").unwrap();
-                for capture in &segments[0].accumulated_captures {
-                    match capture {
-                        SegmentCapture::Ident { name }
-                        | SegmentCapture::Binder { name }
-                        | SegmentCapture::NonTerminal { name, .. } => {
-                            write!(buf, "{},", name).unwrap();
-                        },
-                        _ => {},
+                // BP02: Check if this is a tail-call-eligible rule
+                if let Some(tc_info) = tail_call_rules.get(&rd_rule.label) {
+                    // Tail call: skip frame push, set wrap tag + saved_bp.
+                    // The deferred constructor is applied at the top of 'unwind.
+                    write!(buf, "tail_wrap = Some(({}, cur_bp));", tc_info.tag).unwrap();
+                    write!(buf, "cur_bp = {};", nt.bp).unwrap();
+                    buf.push_str("continue 'drive;");
+                } else {
+                    // Same-category nonterminal: push frame for continuation, continue 'drive
+                    write!(
+                        buf,
+                        "stack.push({}::{} {{",
+                        frame_info.enum_name, segments[0].frame_variant
+                    )
+                    .unwrap();
+                    write!(buf, "saved_bp: cur_bp,").unwrap();
+                    for capture in &segments[0].accumulated_captures {
+                        match capture {
+                            SegmentCapture::Ident { name }
+                            | SegmentCapture::Binder { name }
+                            | SegmentCapture::NonTerminal { name, .. } => {
+                                write!(buf, "{},", name).unwrap();
+                            },
+                            _ => {},
+                        }
                     }
+                    buf.push_str("});");
+                    write!(buf, "cur_bp = {};", nt.bp).unwrap();
+                    buf.push_str("continue 'drive;");
                 }
-                buf.push_str("});");
-                write!(buf, "cur_bp = {};", nt.bp).unwrap();
-                buf.push_str("continue 'drive;");
             } else {
                 // No same-category nonterminal — fully inline the constructor
                 write_rd_constructor_inline(buf, rd_rule, &segments);
@@ -4046,10 +4336,35 @@ fn write_infix_loop(
     config: &TrampolineConfig,
     bp_table: &BindingPowerTable,
     frame_info: &FrameInfo,
+    bp_range_info: Option<&crate::pratt::BpRangeInfo>,
 ) {
     let cat = &config.category;
+    let cat_upper = cat.to_uppercase();
 
-    buf.push_str("loop { if *pos >= tokens.len() { break; } let token = &tokens[*pos].0;");
+    buf.push_str("loop { if *pos >= tokens.len() { break; }");
+
+    // BP05: Early-exit guard using BP range bitset.
+    // If `cur_bp` is so high that no operator has left_bp >= cur_bp, the bitset
+    // right-shifted by (cur_bp - lo) yields zero, and we break without even
+    // looking at the current token. This avoids calling infix_bp_*/postfix_bp_*/
+    // mixfix_bp_* when the BP is too high for any operator to bind.
+    //
+    // IMPORTANT: Skip this guard for categories with LED delegation because
+    // delegated operators (from constituent categories) may have BPs outside
+    // the range of this category's own operators. The early exit would prevent
+    // the delegation fallback from being reached.
+    let has_delegation = !config.led_delegation.is_empty();
+    if let Some(_info) = bp_range_info {
+        if !has_delegation {
+            write!(
+                buf,
+                "if (ACTIVE_BP_{cat_upper} >> cur_bp.saturating_sub(BP_LO_{cat_upper})) == 0 {{ break; }}",
+            )
+            .unwrap();
+        }
+    }
+
+    buf.push_str("let token = &tokens[*pos].0;");
 
     let mut wrote_first = false;
 
@@ -4237,7 +4552,7 @@ fn write_led_delegate_from_source(
     buf: &mut String,
     cat: &str,
     source: &crate::pratt::LedDelegationSource,
-    bp_table: &BindingPowerTable,
+    _bp_table: &BindingPowerTable,
 ) {
     let src = &source.source_category;
 
@@ -5290,5 +5605,190 @@ fn capitalize_first(s: &str) -> String {
             result.extend(chars);
             result
         },
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::recursive::{RDRuleInfo, RDSyntaxItem};
+
+    /// Build a simple RD rule for testing.
+    fn make_rd_rule(
+        label: &str,
+        category: &str,
+        items: Vec<RDSyntaxItem>,
+    ) -> RDRuleInfo {
+        RDRuleInfo {
+            label: label.to_string(),
+            category: category.to_string(),
+            items,
+            is_collection: false,
+            collection_type: None,
+            separator: None,
+            has_binder: false,
+            has_multi_binder: false,
+            prefix_bp: None,
+            eval_mode: None,
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // BP02: Tail-call eligibility tests
+    // ═══════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_bp02_simple_tail_call_eligible() {
+        // Rule: [Terminal("neg"), NonTerminal(SameCat, "v")]
+        // Single same-category NT, no prior captures → tail-call eligible
+        let rule = make_rd_rule("Neg", "Int", vec![
+            RDSyntaxItem::Terminal("neg".to_string()),
+            RDSyntaxItem::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "v".to_string(),
+            },
+        ]);
+
+        let result = is_tail_call_eligible(&rule);
+        assert!(result.is_some(), "simple [Terminal, NonTerminal(same_cat)] should be tail-call eligible");
+        let ctor = result.expect("constructor pattern should be Some");
+        assert!(
+            ctor.contains("Int::Neg(Box::new(lhs))"),
+            "constructor should wrap lhs: got '{}'", ctor
+        );
+    }
+
+    #[test]
+    fn test_bp02_not_eligible_with_prior_capture() {
+        // Rule: [Terminal("let"), IdentCapture("name"), Terminal("="), NonTerminal(SameCat, "v")]
+        // Prior ident capture → NOT eligible (capture goes out of scope)
+        let rule = make_rd_rule("Let", "Proc", vec![
+            RDSyntaxItem::Terminal("let".to_string()),
+            RDSyntaxItem::IdentCapture { param_name: "name".to_string() },
+            RDSyntaxItem::Terminal("=".to_string()),
+            RDSyntaxItem::NonTerminal {
+                category: "Proc".to_string(),
+                param_name: "v".to_string(),
+            },
+        ]);
+
+        let result = is_tail_call_eligible(&rule);
+        assert!(result.is_none(), "rule with prior ident capture should NOT be tail-call eligible");
+    }
+
+    #[test]
+    fn test_bp02_not_eligible_multi_nt() {
+        // Rule: [Terminal("if"), NonTerminal(SameCat, "cond"), Terminal("then"), NonTerminal(SameCat, "body")]
+        // Two same-category NTs → NOT eligible
+        let rule = make_rd_rule("IfThen", "Proc", vec![
+            RDSyntaxItem::Terminal("if".to_string()),
+            RDSyntaxItem::NonTerminal {
+                category: "Proc".to_string(),
+                param_name: "cond".to_string(),
+            },
+            RDSyntaxItem::Terminal("then".to_string()),
+            RDSyntaxItem::NonTerminal {
+                category: "Proc".to_string(),
+                param_name: "body".to_string(),
+            },
+        ]);
+
+        let result = is_tail_call_eligible(&rule);
+        assert!(result.is_none(), "rule with two same-category NTs should NOT be tail-call eligible");
+    }
+
+    #[test]
+    fn test_bp02_not_eligible_cross_category() {
+        // Rule: [Terminal("wrap"), NonTerminal(DifferentCat, "v")]
+        // Cross-category NT → NOT eligible (not trampolined)
+        let rule = make_rd_rule("Wrap", "Proc", vec![
+            RDSyntaxItem::Terminal("wrap".to_string()),
+            RDSyntaxItem::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "v".to_string(),
+            },
+        ]);
+
+        let result = is_tail_call_eligible(&rule);
+        assert!(result.is_none(), "cross-category NT should NOT be tail-call eligible");
+    }
+
+    #[test]
+    fn test_bp02_not_eligible_binder_rule() {
+        // Binder rules need special constructor logic
+        let mut rule = make_rd_rule("Lam", "Proc", vec![
+            RDSyntaxItem::Terminal("lam".to_string()),
+            RDSyntaxItem::NonTerminal {
+                category: "Proc".to_string(),
+                param_name: "body".to_string(),
+            },
+        ]);
+        rule.has_binder = true;
+
+        let result = is_tail_call_eligible(&rule);
+        assert!(result.is_none(), "binder rule should NOT be tail-call eligible");
+    }
+
+    #[test]
+    fn test_bp02_collect_tail_call_rules() {
+        let rules = vec![
+            make_rd_rule("Neg", "Int", vec![
+                RDSyntaxItem::Terminal("-".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "v".to_string(),
+                },
+            ]),
+            // Not eligible: two same-cat NTs
+            make_rd_rule("Add", "Int", vec![
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::Terminal("+".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "b".to_string(),
+                },
+            ]),
+            make_rd_rule("Not", "Int", vec![
+                RDSyntaxItem::Terminal("not".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "v".to_string(),
+                },
+            ]),
+        ];
+
+        let tc_rules = collect_tail_call_rules(&rules, "Int");
+        assert_eq!(tc_rules.len(), 2, "should find 2 tail-call-eligible rules (Neg, Not)");
+        assert!(tc_rules.contains_key("Neg"), "Neg should be eligible");
+        assert!(tc_rules.contains_key("Not"), "Not should be eligible");
+        assert!(!tc_rules.contains_key("Add"), "Add should NOT be eligible");
+
+        // Check that tags are unique
+        let tags: Vec<u8> = tc_rules.values().map(|i| i.tag).collect();
+        assert_ne!(tags[0], tags[1], "tags should be unique");
+    }
+
+    #[test]
+    fn test_bp02_multi_terminal_prefix_eligible() {
+        // Rule: [Terminal("x"), Terminal("y"), NonTerminal(SameCat, "v")]
+        // Multiple terminals followed by single same-cat NT, no captures → eligible
+        let rule = make_rd_rule("XY", "Proc", vec![
+            RDSyntaxItem::Terminal("x".to_string()),
+            RDSyntaxItem::Terminal("y".to_string()),
+            RDSyntaxItem::NonTerminal {
+                category: "Proc".to_string(),
+                param_name: "v".to_string(),
+            },
+        ]);
+
+        let result = is_tail_call_eligible(&rule);
+        assert!(result.is_some(), "multi-terminal prefix with single same-cat NT should be eligible");
     }
 }

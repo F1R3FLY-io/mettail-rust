@@ -10,9 +10,9 @@ relation num(Num);
 
 #[ds(crate::eqrel)] relation eq_num(Num, Num);
 
-relation rw_num(Num, Num);
+#[ds(crate::dual_indexed)] relation rw_num(Num, Num);
 
-relation fold_num(Num, Num);
+#[ds(crate::dual_indexed)] relation fold_num(Num, Num);
 
 relation step_term(Num);
 
@@ -52,7 +52,8 @@ num(sub.clone()) <--
 
 num(c1.clone().normalize()) <--
     num(c0),
-    rw_num(c0, c1);
+    rw_num(c0, c1),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); c1.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_EXPAND : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_EXPAND.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) };
 
 rw_num(t.clone(), match t {
     Num::ApplyNum(_, arg) => Num::ApplyNum(Box::new(new_lam.clone()), arg.clone()),
@@ -92,6 +93,7 @@ eq_num(t.clone(), t.clone()) <--
 eq_num(s.clone(), t.clone()) <--
     num(s),
     num(t),
+    if std::mem::discriminant(s) == std::mem::discriminant(t),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_NUM_EQ_CONG_0 : std::cell::Cell < Vec < (Num, Num, Num, Num) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_NUM_EQ_CONG_0.with(| p | p.take()); buf.clear(); match (s, t) {
         (Num::Add(sf0, sf1), Num::Add(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
@@ -166,6 +168,7 @@ rw_num(lhs.clone(), match (lhs, vi) {
     _ => unreachable!(),
 }) <--
     num(lhs),
+    if matches!(lhs, Num::Add(..) | Num::Div(..) | Num::Sub(..)),
     for (field_val, vi) in { std::thread_local! { static POOL_NUM_SCONG_NUM : std::cell::Cell < Vec < (Num, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_NUM_SCONG_NUM.with(| p | p.take()); buf.clear(); match lhs {
         Num::Add(x0, x1) => {
             buf.push(((** x0).clone(), 0usize));

@@ -1374,7 +1374,7 @@ mod composition_edge_cases {
 
 #[cfg(feature = "test-languages")]
 mod led_test_edge_cases {
-    use mettail_languages::led_test::{self as lt, Expr, LedTestLanguage, Num};
+    use mettail_languages::led_test::LedTestLanguage;
     use mettail_runtime::Language;
 
     fn led_normal_form(input: &str, expected: &str) {

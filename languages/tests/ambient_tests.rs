@@ -1,6 +1,9 @@
 use ascent::*;
 use ascent_byods_rels::*;
 use mettail_languages::ambient::*;
+// A-RT03: re-export dual_indexed at crate root so `#[ds(crate::dual_indexed)]`
+// in included ascent sources resolves correctly.
+use mettail_languages::dual_indexed;
 
 fn parse_proc(input: &str) -> Result<Proc, String> {
     Proc::parse(input)

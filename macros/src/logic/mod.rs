@@ -21,14 +21,16 @@ use crate::ast::grammar::{GrammarItem, TermParam};
 use crate::ast::types::{EvalMode, TypeExpr};
 use crate::{ast::language::LanguageDef, logic::rules::generate_base_rewrites};
 use common::{in_cat_filter, CategoryFilter};
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use proc_macro2::{Ident, TokenStream};
 use quote::{format_ident, quote};
 
+mod antipattern;
 mod bloom_filter;
 mod categories;
 pub mod common;
 mod equations;
+pub mod fusion;
 pub mod helpers;
 mod pattern_codec;
 pub mod pattern_trie;
@@ -41,7 +43,11 @@ pub mod rules;
 // Re-export key functions
 pub use categories::generate_category_rules;
 pub use equations::generate_equation_rules;
-pub use relations::{generate_relations, list_all_relations_for_extraction};
+// BCG06: Stratified equation evaluation — re-export for cross-module access.
+#[allow(unused_imports)]
+pub use equations::{stratify_equation_rules, EqRuleKind, StratificationInfo};
+pub use relations::generate_relations;
+pub use relations::list_all_relations_for_extraction;
 
 // Re-export congruence function
 pub use congruence::generate_all_explicit_congruences;
@@ -106,6 +112,13 @@ pub struct AscentSourceOutput {
     /// in O(depth) iterations. Only `Some` when ground HOL step rules exist.
     /// The main fixpoint is then seeded with the pre-stratum's results.
     pub pre_stratum_content: Option<TokenStream>,
+    /// B-CG04: Ground rewrite seed tuples.
+    ///
+    /// Each entry is a `TokenStream` fragment of the form:
+    ///   `prog.rw_cat.push((lhs_expr, rhs_expr));`
+    /// that directly seeds the rewrite relation at Ascent initialization,
+    /// bypassing per-iteration pattern matching for fully ground LHS rewrites.
+    pub ground_rewrite_seeds: Vec<TokenStream>,
 }
 
 /// Main entry point: Generate complete Ascent source for a theory.
@@ -139,11 +152,121 @@ pub fn generate_ascent_source(
         crate::ast::pattern::detect_cancellation_pairs(language);
     emit_cancellation_pair_lints(&cancellation_pairs, language, &grammar_name);
 
+    // A-RT05: Compile-time depth delta analysis.
+    // Analyze equation/rewrite patterns for depth-increasing rules that could
+    // cause fixpoint non-convergence.
+    emit_depth_delta_lints(language, &grammar_name);
+
+    // A-RT02: Semi-naive delta guard analysis.
+    // Analyze the rule-relation dependency graph to identify delta groups,
+    // always-active rules, and feedback cycles in the generated Ascent code.
+    emit_delta_guard_lints(language, &grammar_name);
+
+    // C-AP01 through C-AP05: Ascent antipattern detection.
+    // Detects common performance antipatterns in user-defined logic blocks,
+    // grammar constructors, and rewrite rules.
+    emit_antipattern_lints(language, &grammar_name);
+
+    // BCG05: Normalize-on-insert deduplication diagnostic.
+    // The hash-based dedup guards are unconditionally emitted in the generated
+    // Ascent code (categories.rs and rules.rs). Emit a single G41 note so the
+    // user knows the optimization is active.
+    {
+        let rule_count = language.equations.len() + language.rewrites.len();
+        let cat_count = language.types.len();
+        mettail_prattail::lint::emit_diagnostic(&build_lint(
+            "G41", "normalize-dedup-active",
+            mettail_prattail::lint::LintSeverity::Note,
+            format!(
+                "BCG05 normalize-on-insert dedup: hash guards emitted for {} rule(s) across {} category(ies)",
+                rule_count, cat_count,
+            ),
+            Some("structural hash pre-check avoids redundant normalize() calls in the Ascent fixpoint".to_string()),
+            Some(grammar_name.clone()),
+        ));
+    }
+
+    // BCG02: Rule fusion analysis for chained deconstruction-rewrite patterns.
+    // Detects chains where a deconstruction rule extracts subterms that are then
+    // matched by a rewrite rule, producing intermediate tuples that could be
+    // eliminated by fusing the two rules. Emits G42 diagnostics with the analysis
+    // results (safe/blocked candidates and estimated tuple reduction).
+    fusion::emit_fusion_diagnostics(language, &grammar_name);
+
+    // ART06 Extended Demand Filtering: compute demanded categories once and share
+    // across all codegen functions. Categories not in the demanded set have no
+    // equation/rewrite/logic rule referencing them, so their eq/rw/fold relations
+    // and associated rules are dead code.
+    let demanded = common::compute_demanded_categories(language);
+
+    // BCG06: Compute stratification once for both diagnostics and rule ordering.
+    let strat_info = stratify_equation_rules(language);
+
+    // BCG06: Stratified equation evaluation diagnostic.
+    // Performs SCC-based stratification analysis of equation rules (reflexivity,
+    // congruence, user-defined) and emits a diagnostic note summarizing the
+    // stratum structure. This informs the user about the dependency layers
+    // in their equation rules.
+    {
+        if strat_info.total_rules > 0 {
+            let stratum_details: Vec<String> = strat_info
+                .strata
+                .iter()
+                .map(|s| {
+                    let kinds: Vec<String> = s.rules.iter().map(|r| r.label.clone()).collect();
+                    format!("stratum {}: [{}]", s.index, kinds.join(", "))
+                })
+                .collect();
+            let verbose = std::env::var("PRATTAIL_LINT_VERBOSE").is_ok();
+            let hint_text = if verbose || stratum_details.len() <= 5 {
+                stratum_details.join("; ")
+            } else {
+                // Truncate for readability; full listing available via PRATTAIL_LINT_VERBOSE
+                let mut truncated = stratum_details[..5].to_vec();
+                truncated.push(format!("... and {} more strata (set PRATTAIL_LINT_VERBOSE=1 to see all)", stratum_details.len() - 5));
+                truncated.join("; ")
+            };
+            mettail_prattail::lint::emit_diagnostic(&build_lint(
+                "G42", "eq-strata-analysis",
+                mettail_prattail::lint::LintSeverity::Note,
+                format!(
+                    "BCG06 equation stratification: {}",
+                    strat_info,
+                ),
+                Some(hint_text),
+                Some(grammar_name.clone()),
+            ));
+        }
+    }
+
     let helper_fns = helpers::generate_helper_functions(language);
-    let relations = generate_relations(language);
+    let relations = generate_relations(language, &demanded);
     let category_rules = generate_category_rules(language, None);
-    let equation_rules = generate_equation_rules(language, None, analysis, &subsumed_equations, &cancellation_equations);
-    let rewrite_rules = generate_rewrite_rules(language, None, analysis);
+    let equation_rules = generate_equation_rules(language, None, analysis, &subsumed_equations, &cancellation_equations, true, &demanded, Some(&strat_info));
+    let rewrite_rules = generate_rewrite_rules(language, None, analysis, true, &demanded);
+
+    // BCG02: Generate fused rules for safe deconstruction-rewrite chains.
+    // These are ADDITIVE — the original unfused rules remain. The fused rules
+    // provide an alternative derivation path that fires in the same iteration
+    // as the parent deconstruction, eliminating the intermediate tuple step.
+    let (fused_rules, fused_count) = fusion::generate_all_fused_rules(language);
+    let fused_content = if fused_rules.is_empty() {
+        quote! {}
+    } else {
+        // Emit diagnostic for fused rule generation
+        mettail_prattail::lint::emit_diagnostic(&build_lint(
+            "G42", "rule-fusion-codegen",
+            mettail_prattail::lint::LintSeverity::Note,
+            format!(
+                "BCG02: {} fused rule(s) generated for safe deconstruction-rewrite chains",
+                fused_count,
+            ),
+            Some("fused rules provide an alternative derivation path, eliminating intermediate tuples".to_string()),
+            Some(grammar_name.clone()),
+        ));
+        quote! { #(#fused_rules)* }
+    };
+
     let custom_logic = language
         .logic
         .as_ref()
@@ -159,17 +282,20 @@ pub fn generate_ascent_source(
 
         #rewrite_rules
 
+        #fused_content
+
         #custom_logic
     };
 
     // Generate core content if this is a multi-category language with non-trivial core
     let core_raw_content = common::compute_core_categories(language).map(|core_cats| {
+        let core_relations = generate_relations(language, &demanded);
         let core_category_rules = generate_category_rules(language, Some(&core_cats));
-        let core_equation_rules = generate_equation_rules(language, Some(&core_cats), analysis, &subsumed_equations, &cancellation_equations);
-        let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats), analysis);
+        let core_equation_rules = generate_equation_rules(language, Some(&core_cats), analysis, &subsumed_equations, &cancellation_equations, false, &demanded, Some(&strat_info));
+        let core_rewrite_rules = generate_rewrite_rules(language, Some(&core_cats), analysis, false, &demanded);
 
         quote! {
-            #relations
+            #core_relations
 
             #core_category_rules
 
@@ -356,11 +482,31 @@ pub fn generate_ascent_source(
     // the main fixpoint, reducing SCC iteration count.
     let pre_stratum_content = generate_pre_stratum_content(language, analysis);
 
+    // B-CG04: Detect ground-LHS rewrite rules and generate seed tuples.
+    // These are pushed into rw_cat at Ascent initialization (iteration 0),
+    // making the rewrite result immediately available without fixpoint scanning.
+    let (ground_rewrite_seeds, ground_count) =
+        rules::generate_ground_rewrite_seeds(language);
+    if ground_count > 0 {
+        emit_collected_diagnostics(vec![build_lint(
+            "G35",
+            "ground-rewrite-short-circuit",
+            mettail_prattail::lint::LintSeverity::Note,
+            format!(
+                "{} ground-LHS rewrite(s) detected — results seeded at initialization (B-CG04)",
+                ground_count,
+            ),
+            Some("ground rewrites produce statically known results; seeding avoids per-iteration scanning".to_string()),
+            Some(grammar_name.clone()),
+        )]);
+    }
+
     AscentSourceOutput {
         full_output,
         raw_content,
         core_raw_content,
         pre_stratum_content,
+        ground_rewrite_seeds,
     }
 }
 
@@ -524,6 +670,837 @@ fn emit_cancellation_pair_lints(
     }
 }
 
+/// A-RT05: Emit compile-time lint diagnostics for depth delta analysis.
+///
+/// Analyzes all equation/rewrite patterns and warns when:
+/// - Individual rules have positive depth delta (depth-increasing)
+/// - The grammar as a whole is not depth-bounded (fixpoint may not converge)
+fn emit_depth_delta_lints(language: &LanguageDef, grammar_name: &str) {
+    if language.equations.is_empty() && language.rewrites.is_empty() {
+        return;
+    }
+
+    let results = rules::analyze_depth_delta(language);
+    if results.is_empty() {
+        return;
+    }
+
+    let is_bounded = rules::is_depth_bounded(&results);
+
+    let mut diagnostics = Vec::new();
+
+    // Collect individual depth-increasing rules
+    let increasing: Vec<&rules::DepthDeltaResult> = results.iter().filter(|r| r.delta > 0).collect();
+
+    for r in &increasing {
+        let rule_kind = if r.is_equation { "equation" } else { "rewrite" };
+
+        // Derive the category from the equation/rewrite's LHS pattern
+        let category = if r.is_equation {
+            language.equations.iter()
+                .find(|eq| eq.name.to_string() == r.rule_name)
+                .and_then(|eq| eq.left.category(language))
+                .map(|c| c.to_string())
+        } else {
+            language.rewrites.iter()
+                .find(|rw| rw.name.to_string() == r.rule_name)
+                .and_then(|rw| rw.left.category(language))
+                .map(|c| c.to_string())
+        };
+
+        diagnostics.push(mettail_prattail::lint::LintDiagnostic {
+            id: "A01",
+            name: "depth-increasing-rule",
+            severity: mettail_prattail::lint::LintSeverity::Note,
+            category,
+            rule: Some(r.rule_name.clone()),
+            message: format!(
+                "{} `{}` is depth-increasing (LHS depth {}, RHS depth {}, delta +{})",
+                rule_kind, r.rule_name, r.lhs_depth, r.rhs_depth, r.delta,
+            ),
+            hint: Some(
+                "depth-increasing rules can cause unbounded term growth during fixpoint computation; \
+                 consider whether a complementary depth-reducing rule exists"
+                    .to_string(),
+            ),
+            grammar_name: Some(grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+
+    // Summary diagnostic: bounded vs unbounded
+    if is_bounded {
+        diagnostics.push(build_lint(
+            "A01",
+            "depth-bounded-grammar",
+            mettail_prattail::lint::LintSeverity::Note,
+            format!(
+                "all {} equation/rewrite rules are depth-non-increasing — fixpoint convergence guaranteed",
+                results.len(),
+            ),
+            None,
+            Some(grammar_name.to_string()),
+        ));
+    } else if !increasing.is_empty() {
+        diagnostics.push(build_lint(
+            "A01",
+            "depth-unbounded-grammar",
+            mettail_prattail::lint::LintSeverity::Warning,
+            format!(
+                "grammar has {} depth-increasing rule(s) out of {} total — \
+                 fixpoint may not converge without runtime depth bound (A-RT05)",
+                increasing.len(),
+                results.len(),
+            ),
+            Some(
+                "a runtime depth bound of 100 is applied to detect non-convergence; \
+                 review depth-increasing rules or increase the bound if needed"
+                    .to_string(),
+            ),
+            Some(grammar_name.to_string()),
+        ));
+    }
+
+    emit_collected_diagnostics(diagnostics);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// C-AP01 through C-AP05: Ascent Antipattern Detection
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Emit lint diagnostics for all detected Ascent antipatterns.
+///
+/// Runs the five antipattern detectors (C-AP01 through C-AP05) and emits
+/// collected diagnostics via the PraTTaIL lint system.
+fn emit_antipattern_lints(language: &LanguageDef, grammar_name: &str) {
+    let ap_warnings = antipattern::detect_antipatterns(language);
+    if ap_warnings.is_empty() {
+        return;
+    }
+
+    let diagnostics: Vec<mettail_prattail::lint::LintDiagnostic> = ap_warnings
+        .iter()
+        .map(|w| {
+            let severity = match w.code {
+                // C-AP01 and C-AP04 are performance warnings (cubic blowup, non-convergence)
+                "C-AP01" | "C-AP04" => mettail_prattail::lint::LintSeverity::Warning,
+                // C-AP02 is a performance warning (quadratic blowup)
+                "C-AP02" => mettail_prattail::lint::LintSeverity::Warning,
+                // C-AP03 and C-AP05 are notes (informational)
+                _ => mettail_prattail::lint::LintSeverity::Note,
+            };
+            build_lint(
+                // Map antipattern code to a lint id (reuse the code as id)
+                match w.code {
+                    "C-AP01" => "C-AP01",
+                    "C-AP02" => "C-AP02",
+                    "C-AP03" => "C-AP03",
+                    "C-AP04" => "C-AP04",
+                    "C-AP05" => "C-AP05",
+                    _ => "C-AP00", // should not happen
+                },
+                match w.code {
+                    "C-AP01" => "cubic-transitivity-blowup",
+                    "C-AP02" => "quadratic-extension-along-equality",
+                    "C-AP03" => "deep-congruence-chain",
+                    "C-AP04" => "unbounded-rewrite-growth",
+                    "C-AP05" => "clone-storm-collection-field",
+                    _ => "unknown-antipattern",
+                },
+                severity,
+                w.message.clone(),
+                w.hint.clone(),
+                Some(grammar_name.to_string()),
+            )
+        })
+        .collect();
+
+    emit_collected_diagnostics(diagnostics);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// A-RT02: Incremental Semi-Naive Delta Guard Analysis
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A generated Ascent rule descriptor for dependency analysis.
+///
+/// Captures which relations a rule reads (body) and writes (head),
+/// enabling compile-time analysis of the fixpoint iteration structure.
+#[derive(Debug, Clone)]
+struct RuleDescriptor {
+    /// Human-readable rule name (e.g., "reflexivity/Proc", "eq-congruence/Proc/Name").
+    name: String,
+    /// Rule kind for grouping.
+    kind: RuleKind,
+    /// Relations read in the rule body (e.g., `["proc", "eq_name"]`).
+    body_relations: BTreeSet<String>,
+    /// Relations written in the rule head (e.g., `["eq_proc"]`).
+    head_relations: BTreeSet<String>,
+}
+
+/// Classification of generated rule kinds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum RuleKind {
+    /// `eq_cat(t, t) <-- cat(t);`
+    Reflexivity,
+    /// `eq_cat(s, t) <-- cat(s), cat(t), eq_fld(sf, tf), ...;`
+    EqCongruence,
+    /// `eq_cat(s, t), cat(t) <-- cat(s), if let ...;`
+    UserEquation,
+    /// `rw_cat(s_orig, t) <-- eq_cat(s_orig, s), if let ...;`
+    BaseRewrite,
+    /// `rw_cat(s, t) <-- cat(s), rw_fld(fld, fld'), ...;` (HOL step)
+    HolStep,
+    /// `fold_cat(s, t) <-- cat(s), ...;`
+    Fold,
+    /// `rw_cat(s, t) <-- cat(s), rw_fld(s_f, t_f), ...;` (explicit congruence)
+    ExplicitCongruence,
+    /// `rw_cat(a, c) <-- eq_cat(a, b), rw_cat(b, c);`
+    EqRwClosure,
+    /// `cat(c1) <-- cat(c0), rw_cat(c0, c1);`
+    CategoryExpansion,
+    /// `tgt(field) <-- cat(s), if let ...;`
+    Deconstruction,
+}
+
+impl RuleKind {
+    fn label(self) -> &'static str {
+        match self {
+            RuleKind::Reflexivity => "reflexivity",
+            RuleKind::EqCongruence => "eq-congruence",
+            RuleKind::UserEquation => "user-equation",
+            RuleKind::BaseRewrite => "base-rewrite",
+            RuleKind::HolStep => "hol-step",
+            RuleKind::Fold => "fold",
+            RuleKind::ExplicitCongruence => "explicit-congruence",
+            RuleKind::EqRwClosure => "eq-rw-closure",
+            RuleKind::CategoryExpansion => "category-expansion",
+            RuleKind::Deconstruction => "deconstruction",
+        }
+    }
+}
+
+/// Result of the A-RT02 semi-naive delta guard analysis.
+#[derive(Debug)]
+struct DeltaGuardAnalysis {
+    /// Total number of generated Ascent rules.
+    total_rules: usize,
+    /// Rules grouped by their body relation signature (set of body relations).
+    /// Rules with the same body signature form a "delta group": they become
+    /// active under exactly the same conditions (when any shared body relation
+    /// has new tuples).
+    delta_groups: BTreeMap<BTreeSet<String>, Vec<String>>,
+    /// Rules that reference >= 3 distinct body relations from different families.
+    /// These are "always-active" during fixpoint: at least one of their body
+    /// relations is likely to have deltas each iteration, so they cannot be
+    /// skipped by a simple delta guard.
+    always_active_rules: Vec<String>,
+    /// Feedback cycles: relations that appear in both head and body of the same
+    /// rule (self-loops in the rule-relation dependency graph).
+    feedback_relations: BTreeSet<String>,
+    /// Number of distinct relation families (cat, eq, rw, fold, projection, custom).
+    relation_family_count: usize,
+    /// Per-rule-kind breakdown of rule counts (for diagnostic summary).
+    rule_kind_counts: BTreeMap<&'static str, usize>,
+}
+
+/// Build rule descriptors for all generated Ascent rules.
+///
+/// This mirrors the logic in `generate_ascent_source` but instead of generating
+/// TokenStream, it builds lightweight descriptors capturing the relation
+/// dependencies of each rule.
+fn build_rule_descriptors(language: &LanguageDef) -> Vec<RuleDescriptor> {
+    let mut descriptors = Vec::new();
+
+    for lang_type in &language.types {
+        let cat = &lang_type.name;
+        let cat_lower = cat.to_string().to_lowercase();
+        let eq_rel = format!("eq_{}", cat_lower);
+        let rw_rel = format!("rw_{}", cat_lower);
+
+        // 1. Reflexivity: eq_cat(t, t) <-- cat(t)
+        descriptors.push(RuleDescriptor {
+            name: format!("reflexivity/{}", cat),
+            kind: RuleKind::Reflexivity,
+            body_relations: [cat_lower.clone()].into_iter().collect(),
+            head_relations: [eq_rel.clone()].into_iter().collect(),
+        });
+
+        // 2. Category expansion: cat(c1) <-- cat(c0), rw_cat(c0, c1)
+        descriptors.push(RuleDescriptor {
+            name: format!("category-expansion/{}", cat),
+            kind: RuleKind::CategoryExpansion,
+            body_relations: [cat_lower.clone(), rw_rel.clone()].into_iter().collect(),
+            head_relations: [cat_lower.clone()].into_iter().collect(),
+        });
+
+        // 3. Eq-Rw closure: rw_cat(a, c) <-- eq_cat(a, b), rw_cat(b, c)
+        descriptors.push(RuleDescriptor {
+            name: format!("eq-rw-closure/{}", cat),
+            kind: RuleKind::EqRwClosure,
+            body_relations: [eq_rel.clone(), rw_rel.clone()].into_iter().collect(),
+            head_relations: [rw_rel.clone()].into_iter().collect(),
+        });
+    }
+
+    // 4. Eq congruence rules: group by (category, field_types)
+    for lang_type in &language.types {
+        let cat = &lang_type.name;
+        let cat_lower = cat.to_string().to_lowercase();
+        let eq_rel = format!("eq_{}", cat_lower);
+
+        // Find constructors for this category with non-terminal args
+        let constructors_with_args: Vec<&crate::ast::grammar::GrammarRule> = language
+            .terms
+            .iter()
+            .filter(|r| {
+                r.category == *cat
+                    && r.bindings.is_empty()
+                    && !r.items.iter().any(|i| matches!(i, GrammarItem::Collection { .. }))
+            })
+            .collect();
+
+        // Collect unique field type sets
+        let mut seen_field_sigs: HashSet<Vec<String>> = HashSet::new();
+        for rule in &constructors_with_args {
+            let arg_cats: Vec<String> = rule
+                .items
+                .iter()
+                .filter_map(|item| {
+                    if let GrammarItem::NonTerminal(c) = item {
+                        Some(c.to_string())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if arg_cats.is_empty()
+                || arg_cats.iter().any(|c| c == "Var" || c == "Integer")
+            {
+                continue;
+            }
+
+            if seen_field_sigs.insert(arg_cats.clone()) {
+                let mut body = BTreeSet::new();
+                body.insert(cat_lower.clone());
+                for fld_cat in &arg_cats {
+                    body.insert(format!("eq_{}", fld_cat.to_lowercase()));
+                }
+
+                descriptors.push(RuleDescriptor {
+                    name: format!(
+                        "eq-congruence/{}/{}",
+                        cat,
+                        arg_cats.join(",")
+                    ),
+                    kind: RuleKind::EqCongruence,
+                    body_relations: body,
+                    head_relations: [eq_rel.clone()].into_iter().collect(),
+                });
+            }
+        }
+    }
+
+    // 5. User-defined equation rules
+    for eq in &language.equations {
+        let category = eq
+            .left
+            .category(language)
+            .or_else(|| eq.right.category(language));
+
+        if let Some(cat) = category {
+            let cat_lower = cat.to_string().to_lowercase();
+            let eq_rel = format!("eq_{}", cat_lower);
+
+            descriptors.push(RuleDescriptor {
+                name: format!("user-equation/{}", eq.name),
+                kind: RuleKind::UserEquation,
+                body_relations: [cat_lower.clone()].into_iter().collect(),
+                head_relations: [eq_rel, cat_lower].into_iter().collect(),
+            });
+        }
+    }
+
+    // 6. Base rewrite rules
+    for rw in &language.rewrites {
+        if rw.is_congruence_rule() {
+            continue;
+        }
+
+        if let Some(cat) = rw.left.category(language) {
+            let cat_lower = cat.to_string().to_lowercase();
+            let eq_rel = format!("eq_{}", cat_lower);
+            let rw_rel = format!("rw_{}", cat_lower);
+
+            // Base rewrites read eq_cat (via equation matching)
+            let mut body = BTreeSet::new();
+            body.insert(eq_rel);
+
+            // Also check for EnvQuery relations in premises
+            for premise in &rw.premises {
+                if let crate::ast::language::Premise::RelationQuery { relation, .. } = premise {
+                    body.insert(relation.to_string());
+                }
+            }
+
+            descriptors.push(RuleDescriptor {
+                name: format!("base-rewrite/{}", rw.name),
+                kind: RuleKind::BaseRewrite,
+                body_relations: body,
+                head_relations: [rw_rel].into_iter().collect(),
+            });
+        }
+    }
+
+    // 7. Explicit congruence rewrites
+    for rw in &language.rewrites {
+        if !rw.is_congruence_rule() {
+            continue;
+        }
+
+        if let Some(cat) = rw
+            .left
+            .category(language)
+            .or_else(|| rw.right.category(language))
+        {
+            let cat_lower = cat.to_string().to_lowercase();
+            let rw_rel = format!("rw_{}", cat_lower);
+
+            let mut body = BTreeSet::new();
+            body.insert(cat_lower);
+
+            // The congruence premise references rw_field_cat
+            if let Some((source, _target)) = rw.congruence_premise() {
+                // Determine field category from the source variable's context
+                // The source var appears in the LHS pattern; its category is the
+                // field type that the congruence rewrites through.
+                if let Some(field_cat) = rw.left.category(language) {
+                    // For congruence rules, the source variable's type determines
+                    // the rw relation we join on. Since we don't have direct access
+                    // to the field type from here, we use a conservative approach:
+                    // look up what category the source variable should be.
+                    let source_str = source.to_string();
+                    // The congruence reads rw_<source_category>
+                    // We need to find which category the premise variable belongs to
+                    // by examining the grammar rule for the LHS constructor
+                    if let Some(field_cat_name) =
+                        find_congruence_field_category(&rw.left, &source_str, language)
+                    {
+                        body.insert(format!(
+                            "rw_{}",
+                            field_cat_name.to_lowercase()
+                        ));
+                    } else {
+                        // Conservative: add rw_<same_cat> as fallback
+                        body.insert(format!(
+                            "rw_{}",
+                            field_cat.to_string().to_lowercase()
+                        ));
+                    }
+                }
+            }
+
+            descriptors.push(RuleDescriptor {
+                name: format!("explicit-congruence/{}", rw.name),
+                kind: RuleKind::ExplicitCongruence,
+                body_relations: body,
+                head_relations: [rw_rel].into_iter().collect(),
+            });
+        }
+    }
+
+    // 8. HOL step rules (rust_code constructors in step mode)
+    for rule in &language.terms {
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if rule.eval_mode == Some(EvalMode::Fold) {
+            continue;
+        }
+
+        let cat_lower = rule.category.to_string().to_lowercase();
+        let rw_rel = format!("rw_{}", cat_lower);
+
+        let mut body = BTreeSet::new();
+        body.insert(cat_lower);
+
+        // HOL step rules join on rw_<field_cat> for each non-terminal arg
+        for item in &rule.items {
+            if let GrammarItem::NonTerminal(field_cat) = item {
+                body.insert(format!(
+                    "rw_{}",
+                    field_cat.to_string().to_lowercase()
+                ));
+            }
+        }
+
+        descriptors.push(RuleDescriptor {
+            name: format!("hol-step/{}", rule.label),
+            kind: RuleKind::HolStep,
+            body_relations: body,
+            head_relations: [rw_rel].into_iter().collect(),
+        });
+    }
+
+    // 9. Fold rules (rust_code constructors in fold mode)
+    for rule in &language.terms {
+        if rule.rust_code.is_none() {
+            continue;
+        }
+        if rule.eval_mode != Some(EvalMode::Fold) {
+            continue;
+        }
+
+        let cat_lower = rule.category.to_string().to_lowercase();
+        let fold_rel = format!("fold_{}", cat_lower);
+
+        let mut body = BTreeSet::new();
+        body.insert(cat_lower);
+
+        // Fold rules join on fold_<field_cat> for each non-terminal arg
+        for item in &rule.items {
+            if let GrammarItem::NonTerminal(field_cat) = item {
+                body.insert(format!(
+                    "fold_{}",
+                    field_cat.to_string().to_lowercase()
+                ));
+            }
+        }
+
+        descriptors.push(RuleDescriptor {
+            name: format!("fold/{}", rule.label),
+            kind: RuleKind::Fold,
+            body_relations: body,
+            head_relations: [fold_rel].into_iter().collect(),
+        });
+    }
+
+    // 10. Deconstruction rules: cat(s) -> tgt(field) for each reachable (src, tgt)
+    let mut decon_pairs: BTreeSet<(String, String)> = BTreeSet::new();
+    for lang_type in &language.types {
+        let src = lang_type.name.to_string();
+        for rule in &language.terms {
+            if rule.category.to_string() != src {
+                continue;
+            }
+            for item in &rule.items {
+                match item {
+                    GrammarItem::NonTerminal(tgt) => {
+                        decon_pairs.insert((src.clone(), tgt.to_string()));
+                    }
+                    GrammarItem::Collection { element_type, .. } => {
+                        decon_pairs.insert((src.clone(), element_type.to_string()));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    for (src, tgt) in &decon_pairs {
+        let src_lower = src.to_lowercase();
+        let tgt_lower = tgt.to_lowercase();
+
+        descriptors.push(RuleDescriptor {
+            name: format!("deconstruction/{}->{}", src, tgt),
+            kind: RuleKind::Deconstruction,
+            body_relations: [src_lower].into_iter().collect(),
+            head_relations: [tgt_lower].into_iter().collect(),
+        });
+    }
+
+    descriptors
+}
+
+/// Determine the category of the field variable in a congruence rewrite's LHS pattern.
+///
+/// For a congruence rule like `if S ~> T then (Ctor ... S ...) ~> (Ctor ... T ...)`,
+/// this finds the category of the field position where `S` appears in the constructor.
+fn find_congruence_field_category(
+    lhs: &crate::ast::pattern::Pattern,
+    source_var: &str,
+    language: &LanguageDef,
+) -> Option<String> {
+    use crate::ast::pattern::{Pattern, PatternTerm};
+
+    match lhs {
+        Pattern::Term(PatternTerm::Apply { constructor, args }) => {
+            let grammar_rule = language.get_constructor(constructor)?;
+            let mut nt_idx = 0;
+            for item in &grammar_rule.items {
+                match item {
+                    GrammarItem::NonTerminal(field_cat) => {
+                        if nt_idx < args.len() {
+                            if let Pattern::Term(PatternTerm::Var(v)) = &args[nt_idx] {
+                                if v.to_string() == source_var {
+                                    return Some(field_cat.to_string());
+                                }
+                            }
+                        }
+                        nt_idx += 1;
+                    }
+                    GrammarItem::Collection { element_type, .. } => {
+                        // Check if source_var appears in the collection position
+                        if nt_idx < args.len() {
+                            if let Pattern::Term(PatternTerm::Var(v)) = &args[nt_idx] {
+                                if v.to_string() == source_var {
+                                    return Some(element_type.to_string());
+                                }
+                            }
+                        }
+                        nt_idx += 1;
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Analyze the rule-relation dependency graph for semi-naive delta guard efficiency.
+///
+/// This is the core A-RT02 analysis. It builds the dependency graph, computes
+/// delta groups, identifies always-active rules, and detects feedback cycles.
+fn analyze_delta_guards(language: &LanguageDef) -> DeltaGuardAnalysis {
+    let descriptors = build_rule_descriptors(language);
+    let total_rules = descriptors.len();
+
+    // Group rules by their body relation signature
+    let mut delta_groups: BTreeMap<BTreeSet<String>, Vec<String>> = BTreeMap::new();
+    for desc in &descriptors {
+        delta_groups
+            .entry(desc.body_relations.clone())
+            .or_default()
+            .push(desc.name.clone());
+    }
+
+    // Identify "always-active" rules: those whose body spans >= 3 distinct
+    // relation families. A relation family is determined by prefix:
+    // cat_* (category), eq_* (equality), rw_* (rewrite), fold_* (fold),
+    // *_contains (projection), or custom.
+    let always_active_rules: Vec<String> = descriptors
+        .iter()
+        .filter(|desc| {
+            let families: HashSet<&str> = desc
+                .body_relations
+                .iter()
+                .map(|rel| classify_relation_family(rel))
+                .collect();
+            families.len() >= 3
+        })
+        .map(|desc| desc.name.clone())
+        .collect();
+
+    // Detect feedback relations: relations that appear in both head and body
+    // of any single rule (direct self-dependency).
+    let mut feedback_relations = BTreeSet::new();
+    for desc in &descriptors {
+        for rel in &desc.head_relations {
+            if desc.body_relations.contains(rel) {
+                feedback_relations.insert(rel.clone());
+            }
+        }
+    }
+
+    // Count distinct relation families across all rules
+    let mut all_families: HashSet<&str> = HashSet::new();
+    for desc in &descriptors {
+        for rel in desc.body_relations.iter().chain(desc.head_relations.iter()) {
+            all_families.insert(classify_relation_family(rel));
+        }
+    }
+
+    // Per-rule-kind breakdown
+    let mut rule_kind_counts: BTreeMap<&'static str, usize> = BTreeMap::new();
+    for desc in &descriptors {
+        *rule_kind_counts.entry(desc.kind.label()).or_insert(0) += 1;
+    }
+
+    DeltaGuardAnalysis {
+        total_rules,
+        delta_groups,
+        always_active_rules,
+        feedback_relations,
+        relation_family_count: all_families.len(),
+        rule_kind_counts,
+    }
+}
+
+/// Classify a relation name into its family for delta group analysis.
+///
+/// Families:
+/// - `"cat"` — category relations (e.g., `proc`, `name`, `int`)
+/// - `"eq"` — equality relations (e.g., `eq_proc`)
+/// - `"rw"` — rewrite relations (e.g., `rw_proc`)
+/// - `"fold"` — fold relations (e.g., `fold_int`)
+/// - `"projection"` — collection projections (e.g., `ppar_contains`)
+/// - `"custom"` — user-defined relations
+fn classify_relation_family(rel: &str) -> &str {
+    if rel.starts_with("eq_") {
+        "eq"
+    } else if rel.starts_with("rw_") {
+        "rw"
+    } else if rel.starts_with("fold_") {
+        "fold"
+    } else if rel.ends_with("_contains") {
+        "projection"
+    } else if rel == "step_term" {
+        "custom"
+    } else {
+        // Bare category names (e.g., "proc", "name") are in the "cat" family
+        "cat"
+    }
+}
+
+/// A-RT02: Emit compile-time lint diagnostics for semi-naive delta guard analysis.
+///
+/// Analyzes the rule-relation dependency graph of the generated Ascent program and
+/// emits informational diagnostics about the fixpoint iteration structure:
+///
+/// - **G39 (note)**: Summary of delta groups, feedback relations, and always-active rules.
+///   Helps users understand which rules drive the fixpoint and where Ascent's built-in
+///   semi-naive evaluation is most/least effective.
+///
+/// - **G40 (note)**: Emitted for each rule with >= 3 body relation families. These rules
+///   are "always-active" — they must be checked every iteration because at least one of
+///   their body relations is likely to have new tuples.
+fn emit_delta_guard_lints(language: &LanguageDef, grammar_name: &str) {
+    if language.types.is_empty() {
+        return;
+    }
+
+    let analysis = analyze_delta_guards(language);
+
+    if analysis.total_rules == 0 {
+        return;
+    }
+
+    let mut diagnostics = Vec::new();
+
+    // G39: Summary diagnostic — delta group structure
+    let singleton_groups = analysis
+        .delta_groups
+        .values()
+        .filter(|rules| rules.len() == 1)
+        .count();
+    let multi_groups = analysis.delta_groups.len() - singleton_groups;
+    let largest_group = analysis
+        .delta_groups
+        .values()
+        .map(|rules| rules.len())
+        .max()
+        .unwrap_or(0);
+
+    // Build a compact summary of the multi-rule delta groups
+    let mut group_summaries = Vec::new();
+    for (body_sig, rules) in &analysis.delta_groups {
+        if rules.len() > 1 {
+            group_summaries.push(format!(
+                "  [{} rules] body={{{}}}",
+                rules.len(),
+                body_sig.iter().cloned().collect::<Vec<_>>().join(", "),
+            ));
+        }
+    }
+
+    let feedback_str = if analysis.feedback_relations.is_empty() {
+        "none".to_string()
+    } else {
+        analysis
+            .feedback_relations
+            .iter()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+
+    // Per-kind breakdown string
+    let kind_breakdown: String = analysis
+        .rule_kind_counts
+        .iter()
+        .map(|(kind, count)| format!("{}:{}", kind, count))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut message = format!(
+        "A-RT02 delta guard analysis: {} rules [{}], {} delta group(s) \
+         ({} singleton, {} multi-rule, largest group: {} rules), \
+         {} relation families, feedback relations: {}",
+        analysis.total_rules,
+        kind_breakdown,
+        analysis.delta_groups.len(),
+        singleton_groups,
+        multi_groups,
+        largest_group,
+        analysis.relation_family_count,
+        feedback_str,
+    );
+
+    // Append multi-rule group details
+    if !group_summaries.is_empty() {
+        if std::env::var("PRATTAIL_LINT_VERBOSE").is_ok() {
+            message.push_str("\nmulti-rule delta groups (rules sharing identical body relations):\n");
+            message.push_str(&group_summaries.join("\n"));
+        } else {
+            message.push_str(&format!("\n{} multi-rule delta group(s) (set PRATTAIL_LINT_VERBOSE=1 for details)", group_summaries.len()));
+        }
+    }
+
+    let hint = if analysis.always_active_rules.is_empty() && analysis.feedback_relations.is_empty()
+    {
+        "all rules have narrow body dependencies — Ascent's semi-naive evaluation \
+         handles them efficiently"
+            .to_string()
+    } else if !analysis.feedback_relations.is_empty() {
+        format!(
+            "feedback relation(s) [{}] create self-dependency cycles; \
+             these drive the fixpoint iteration until convergence",
+            feedback_str,
+        )
+    } else {
+        format!(
+            "{} always-active rule(s) span multiple relation families; \
+             these rules must be checked every iteration",
+            analysis.always_active_rules.len(),
+        )
+    };
+
+    diagnostics.push(build_lint(
+        "G39",
+        "semi-naive-delta-groups",
+        mettail_prattail::lint::LintSeverity::Note,
+        message,
+        Some(hint),
+        Some(grammar_name.to_string()),
+    ));
+
+    // G40: Per-rule detail for always-active rules
+    for rule_name in &analysis.always_active_rules {
+        diagnostics.push(build_lint(
+            "G40",
+            "always-active-rule",
+            mettail_prattail::lint::LintSeverity::Note,
+            format!(
+                "rule `{}` is always-active (body spans 3+ relation families) — \
+                 cannot benefit from delta guard skipping",
+                rule_name,
+            ),
+            Some(
+                "this rule must be evaluated every fixpoint iteration because its \
+                 body relations span multiple independent families (cat/eq/rw/fold); \
+                 consider whether the rule can be split or simplified"
+                    .to_string(),
+            ),
+            Some(grammar_name.to_string()),
+        ));
+    }
+
+    emit_collected_diagnostics(diagnostics);
+}
+
 /// Format Ascent source for display and file output
 fn format_ascent_source(
     theory_name: &str,
@@ -599,10 +1576,17 @@ fn format_ascent_source(
 ///
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
 /// When `analysis` is `Some`, dead constructors are skipped (Sprint 1 DCE).
+/// ## ART06 Extended Demand Filtering
+///
+/// The `demanded` set specifies categories referenced by at least one rule.
+/// Rewrite rules and equation-rewrite closure for categories NOT in the demanded
+/// set are skipped (their rw_cat and eq_cat relations are not declared).
 pub fn generate_rewrite_rules(
     language: &LanguageDef,
     cat_filter: CategoryFilter,
     analysis: Option<&mettail_prattail::PipelineAnalysis>,
+    emit_diagnostics: bool,
+    demanded: &BTreeSet<String>,
 ) -> TokenStream {
     let mut rules = Vec::new();
 
@@ -620,15 +1604,19 @@ pub fn generate_rewrite_rules(
 
     // Generate explicit congruence rules (with premise: if S => T then ...)
     // These are user-declared rules that control where rewrites propagate
-    let congruence_rules = generate_all_explicit_congruences(language, cat_filter);
+    let congruence_rules = generate_all_explicit_congruences(language, cat_filter, emit_diagnostics);
     rules.extend(congruence_rules);
 
     // Equation-rewrite closure: if a is equation-equivalent to b and b rewrites
     // to c, then a also rewrites to c. Needed because congruence rules match
     // `proc(lhs)` directly rather than through `eq_cat(s_orig, s)`.
     // When eq only has reflexive entries this is a no-op.
+    // ART06: Skip categories not in the demanded set (no eq_cat/rw_cat relations).
     for lang_type in &language.types {
         if !in_cat_filter(&lang_type.name, cat_filter) {
+            continue;
+        }
+        if !demanded.contains(&lang_type.name.to_string()) {
             continue;
         }
         let rn = common::relation_names(&lang_type.name);
@@ -691,8 +1679,10 @@ fn generate_pre_stratum_content(
         }
     }
 
-    // Relations: same as full struct (Ascent requires matching declarations)
-    let relations = generate_relations(language);
+    // Relations: same as full struct (Ascent requires matching declarations).
+    // Pre-stratum needs all categories for relation compatibility, so pass all as demanded.
+    let all_cats: BTreeSet<String> = language.types.iter().map(|t| t.name.to_string()).collect();
+    let relations = generate_relations(language, &all_cats);
 
     // Category deconstruction rules: discover sub-terms of the initial term
     let category_rules = generate_category_rules(language, None);
@@ -714,7 +1704,7 @@ fn generate_pre_stratum_content(
     let expansion = quote! { #(#expansion_rules)* };
 
     // Reflexivity rules for eq relations (needed because some rules may reference eq_*)
-    let reflexivity = equations::generate_equation_rules_reflexivity_only(language, None);
+    let reflexivity = equations::generate_equation_rules_reflexivity_only(language, None, &all_cats);
 
     Some(quote! {
         #relations
@@ -2000,5 +2990,111 @@ mod tests {
         let once = format_block_arm(arm, "    ");
         let twice = format_block_arm(&once, "    ");
         assert_eq!(twice, once);
+    }
+
+    // ── A-RT02: Delta Guard Analysis Tests ─────────────────────────────────
+
+    #[test]
+    fn test_classify_relation_family() {
+        assert_eq!(classify_relation_family("proc"), "cat");
+        assert_eq!(classify_relation_family("name"), "cat");
+        assert_eq!(classify_relation_family("int"), "cat");
+        assert_eq!(classify_relation_family("eq_proc"), "eq");
+        assert_eq!(classify_relation_family("eq_name"), "eq");
+        assert_eq!(classify_relation_family("rw_proc"), "rw");
+        assert_eq!(classify_relation_family("rw_int"), "rw");
+        assert_eq!(classify_relation_family("fold_int"), "fold");
+        assert_eq!(classify_relation_family("ppar_contains"), "projection");
+        assert_eq!(classify_relation_family("step_term"), "custom");
+    }
+
+    #[test]
+    fn test_rule_kind_labels() {
+        assert_eq!(RuleKind::Reflexivity.label(), "reflexivity");
+        assert_eq!(RuleKind::EqCongruence.label(), "eq-congruence");
+        assert_eq!(RuleKind::UserEquation.label(), "user-equation");
+        assert_eq!(RuleKind::BaseRewrite.label(), "base-rewrite");
+        assert_eq!(RuleKind::HolStep.label(), "hol-step");
+        assert_eq!(RuleKind::Fold.label(), "fold");
+        assert_eq!(RuleKind::ExplicitCongruence.label(), "explicit-congruence");
+        assert_eq!(RuleKind::EqRwClosure.label(), "eq-rw-closure");
+        assert_eq!(RuleKind::CategoryExpansion.label(), "category-expansion");
+        assert_eq!(RuleKind::Deconstruction.label(), "deconstruction");
+    }
+
+    #[test]
+    fn test_rule_descriptor_feedback_detection() {
+        // A category-expansion rule reads cat(c0) and writes cat(c1) — same relation
+        let desc = RuleDescriptor {
+            name: "category-expansion/Proc".to_string(),
+            kind: RuleKind::CategoryExpansion,
+            body_relations: ["proc".to_string(), "rw_proc".to_string()]
+                .into_iter()
+                .collect(),
+            head_relations: ["proc".to_string()].into_iter().collect(),
+        };
+
+        // "proc" appears in both body and head — feedback
+        let feedback: BTreeSet<String> = desc
+            .head_relations
+            .iter()
+            .filter(|rel| desc.body_relations.contains(*rel))
+            .cloned()
+            .collect();
+
+        assert!(feedback.contains("proc"));
+        assert_eq!(feedback.len(), 1);
+    }
+
+    #[test]
+    fn test_always_active_detection() {
+        // A rule spanning cat + eq + rw families should be "always-active"
+        let desc = RuleDescriptor {
+            name: "test-rule".to_string(),
+            kind: RuleKind::HolStep,
+            body_relations: [
+                "proc".to_string(),     // cat family
+                "eq_name".to_string(),  // eq family
+                "rw_int".to_string(),   // rw family
+            ]
+            .into_iter()
+            .collect(),
+            head_relations: ["rw_proc".to_string()].into_iter().collect(),
+        };
+
+        let families: HashSet<&str> = desc
+            .body_relations
+            .iter()
+            .map(|rel| classify_relation_family(rel))
+            .collect();
+
+        assert_eq!(families.len(), 3);
+        assert!(families.contains("cat"));
+        assert!(families.contains("eq"));
+        assert!(families.contains("rw"));
+    }
+
+    #[test]
+    fn test_delta_group_signature() {
+        // Two rules with identical body relations share a delta group
+        let desc1 = RuleDescriptor {
+            name: "reflexivity/Proc".to_string(),
+            kind: RuleKind::Reflexivity,
+            body_relations: ["proc".to_string()].into_iter().collect(),
+            head_relations: ["eq_proc".to_string()].into_iter().collect(),
+        };
+
+        let desc2 = RuleDescriptor {
+            name: "deconstruction/Proc->Name".to_string(),
+            kind: RuleKind::Deconstruction,
+            body_relations: ["proc".to_string()].into_iter().collect(),
+            head_relations: ["name".to_string()].into_iter().collect(),
+        };
+
+        // Both read only "proc" — same body signature → same delta group
+        assert_eq!(desc1.body_relations, desc2.body_relations);
+
+        // But they write different relations
+        assert_ne!(desc1.head_relations, desc2.head_relations);
     }
 }

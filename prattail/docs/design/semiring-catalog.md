@@ -70,22 +70,30 @@ in PraTTaIL's WFST pipeline.
 - **Properties:** commutative, idempotent, complete, star (always 1.0)
 - **Use case:** Direct probability I/O, recovery confidence scoring
 - **Isomorphism:** `TropicalWeight` via `w = -ln(p)` (bidirectional conversion provided)
+- **Documentation:**
+  - Theory: [theory/wfst/semirings/viterbi-weight.md](../../theory/wfst/semirings/viterbi-weight.md)
 
 ### 1.12 ArcticWeight *(new)*
 - **Algebra:** `(ℝ ∪ {-∞}, max, +, -∞, 0)` — dual of tropical (longest path)
 - **Properties:** commutative, idempotent, complete, star (`0` if `a ≤ 0`)
 - **Use case:** Critical-path analysis, maximum-benefit optimization, worst-case propagation
+- **Documentation:**
+  - Design: [arctic-weight.md](wfst/semirings/arctic-weight.md) *(planned)*
 
 ### 1.13 FuzzyWeight *(new)*
 - **Algebra:** `([0,1], max, min, 0, 1)` — possibilistic/confidence semiring
 - **Properties:** commutative, idempotent, complete, star (always 1.0)
 - **Use case:** Dispatch confidence scoring, recovery plausibility, lint true-positive likelihood
+- **Documentation:**
+  - Design: [fuzzy-weight.md](wfst/semirings/fuzzy-weight.md) *(planned)*
 
 ### 1.14 TruncationWeight\<K\> *(new)*
 - **Algebra:** `({0,...,K}, max, min(a+b,K))` — bounded ambiguity counting
 - **Properties:** commutative, idempotent, complete
 - **Use case:** Tiered ambiguity severity (1/2/3/K+)
 - **Note:** `zero = one = 0`; does NOT satisfy full zero-annihilation axiom
+- **Documentation:**
+  - Design: [truncation-weight.md](wfst/semirings/truncation-weight.md) *(planned)*
 
 ### 1.15 AmplitudeWeight *(feature: `quantum`)*
 - **Algebra:** `(ℂ, +, ×, 0+0i, 1+0i)` — complex amplitude semiring
@@ -95,6 +103,8 @@ in PraTTaIL's WFST pipeline.
 - **Caveat:** Viterbi does not apply directly; use forward propagation + Born-rule measurement, or `ProductWeight<AmplitudeWeight, TropicalWeight>` with a classical priority channel
 - **Dependencies:** `num-complex = "0.4"` (feature-gated)
 - **Conversions:** `from_probability(p)` → `√p + 0i`; `to_probability()` → `|z|²`; `from_log_weight(w)` (requires `quantum` + `wfst-log`)
+- **Documentation:**
+  - Design: [amplitude-weight.md](wfst/semirings/amplitude-weight.md) *(planned)*
 
 ## 2. Deferred Semirings
 
@@ -202,7 +212,44 @@ closure of an n×n adjacency matrix over any star semiring in O(n³).
 - `CountingWeight` → path counts (saturates for reachable pairs)
 - `EditWeight` → all-pairs minimum edit distance
 
-## 5. Sources
+## 5. Documentation Cross-Reference
+
+### Theory Docs (per semiring)
+
+| Semiring          | Feature    | Theory Document                                                                                        |
+|-------------------|------------|--------------------------------------------------------------------------------------------------------|
+| TropicalWeight    | always     | [theory/wfst/semirings/tropical-weight.md](../../theory/wfst/semirings/tropical-weight.md)             |
+| CountingWeight    | always     | [theory/wfst/semirings/counting-weight.md](../../theory/wfst/semirings/counting-weight.md)             |
+| BooleanWeight     | always     | [theory/wfst/semirings/boolean-weight.md](../../theory/wfst/semirings/boolean-weight.md)               |
+| EditWeight        | always     | [theory/wfst/semirings/edit-weight.md](../../theory/wfst/semirings/edit-weight.md)                     |
+| ProductWeight     | always     | [theory/wfst/semirings/product-weight.md](../../theory/wfst/semirings/product-weight.md)               |
+| ContextWeight     | always     | [theory/wfst/semirings/context-weight.md](../../theory/wfst/semirings/context-weight.md)               |
+| ComplexityWeight  | always     | [theory/wfst/semirings/complexity-weight.md](../../theory/wfst/semirings/complexity-weight.md)          |
+| LogWeight         | wfst-log   | [theory/wfst/semirings/log-weight.md](../../theory/wfst/semirings/log-weight.md)                       |
+| EntropyWeight     | wfst-log   | [theory/wfst/semirings/entropy-weight.md](../../theory/wfst/semirings/entropy-weight.md)               |
+| NbestWeight       | always     | [theory/wfst/semirings/nbest-weight.md](../../theory/wfst/semirings/nbest-weight.md)                   |
+| ViterbiWeight     | always     | [theory/wfst/semirings/viterbi-weight.md](../../theory/wfst/semirings/viterbi-weight.md)               |
+| ProvenanceWeight  | provenance | [theory/wfst/semirings/provenance-weight.md](../../theory/wfst/semirings/provenance-weight.md)         |
+
+### Design Docs (per semiring)
+
+| Semiring          | Feature          | Design Document                                                                                  |
+|-------------------|------------------|--------------------------------------------------------------------------------------------------|
+| TropicalWeight    | always           | [design/wfst/semirings/tropical-weight.md](wfst/semirings/tropical-weight.md)                    |
+| CountingWeight    | always           | [design/wfst/semirings/counting-weight.md](wfst/semirings/counting-weight.md)                    |
+| BooleanWeight     | always           | [design/wfst/semirings/boolean-weight.md](wfst/semirings/boolean-weight.md)                      |
+| EditWeight        | always           | [design/wfst/semirings/edit-weight.md](wfst/semirings/edit-weight.md)                            |
+| ProductWeight     | always           | [design/wfst/semirings/product-weight.md](wfst/semirings/product-weight.md)                      |
+| ContextWeight     | always           | [design/wfst/semirings/context-weight.md](wfst/semirings/context-weight.md)                      |
+| ComplexityWeight  | always           | [design/wfst/semirings/complexity-weight.md](wfst/semirings/complexity-weight.md)                |
+| LogWeight         | wfst-log         | [design/wfst/semirings/log-weight.md](wfst/semirings/log-weight.md)                              |
+| EntropyWeight     | wfst-log         | [design/wfst/semirings/entropy-weight.md](wfst/semirings/entropy-weight.md)                      |
+| NbestWeight       | always           | [design/wfst/semirings/nbest-weight.md](wfst/semirings/nbest-weight.md)                          |
+| ProvenanceWeight  | provenance       | [design/wfst/semirings/provenance-weight.md](wfst/semirings/provenance-weight.md)                |
+| RelationalWeight  | wpds-relational  | [design/wfst/semirings/relational-weight.md](wfst/semirings/relational-weight.md)                |
+| TensorWeight      | tensor           | [design/wfst/semirings/tensor-weight.md](wfst/semirings/tensor-weight.md)                        |
+
+## 6. Sources
 
 - CMU CDM: Sutner, "Semirings, Rings, Fields" (2025)
 - Wikipedia: "Semiring" — comprehensive examples, star/Conway/complete semirings

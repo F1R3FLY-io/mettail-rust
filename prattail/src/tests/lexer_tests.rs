@@ -1,6 +1,9 @@
 //! Tests for the lexer pipeline orchestration.
 
 use crate::lexer::{extract_terminals, generate_lexer, GrammarRuleInfo, TypeInfo};
+use crate::runtime_types::skip_whitespace_scalar;
+#[cfg(feature = "simd-whitespace")]
+use crate::runtime_types::skip_whitespace_simd;
 
 #[test]
 fn test_extract_terminals_simple() {
@@ -199,4 +202,240 @@ fn test_lexer_stats_rhocalc() {
         "RhoCalc minimized DFA should have <30 states, got {}",
         stats.num_minimized_states
     );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AL03: SIMD whitespace skipping tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Helper: run scalar skip and return (pos, line, col).
+fn scalar_skip(input: &[u8], pos: usize, line: usize, col: usize) -> (usize, usize, usize) {
+    skip_whitespace_scalar(input, pos, line, col)
+}
+
+/// Helper: run SIMD skip and return (pos, line, col) — only available with feature.
+#[cfg(feature = "simd-whitespace")]
+fn simd_skip(input: &[u8], pos: usize, line: usize, col: usize) -> (usize, usize, usize) {
+    let r = skip_whitespace_simd(input, pos, line, col);
+    (r.pos, r.line, r.col)
+}
+
+#[test]
+fn test_skip_whitespace_scalar_empty() {
+    let (pos, line, col) = scalar_skip(b"", 0, 0, 0);
+    assert_eq!((pos, line, col), (0, 0, 0));
+}
+
+#[test]
+fn test_skip_whitespace_scalar_no_whitespace() {
+    let (pos, line, col) = scalar_skip(b"hello", 0, 0, 0);
+    assert_eq!((pos, line, col), (0, 0, 0));
+}
+
+#[test]
+fn test_skip_whitespace_scalar_spaces_only() {
+    let (pos, line, col) = scalar_skip(b"   hello", 0, 0, 0);
+    assert_eq!(pos, 3);
+    assert_eq!(line, 0);
+    assert_eq!(col, 3);
+}
+
+#[test]
+fn test_skip_whitespace_scalar_newlines() {
+    let (pos, line, col) = scalar_skip(b"\n\n  hello", 0, 0, 0);
+    assert_eq!(pos, 4);
+    assert_eq!(line, 2);
+    assert_eq!(col, 2);
+}
+
+#[test]
+fn test_skip_whitespace_scalar_mixed() {
+    let input = b"  \t\r\n  \t\nhello";
+    let (pos, line, col) = scalar_skip(input, 0, 0, 0);
+    assert_eq!(pos, 9);
+    assert_eq!(line, 2);
+    assert_eq!(col, 0, "last ws char is newline so col resets");
+}
+
+#[test]
+fn test_skip_whitespace_scalar_all_whitespace() {
+    let input = b"   \n\t\r  ";
+    let (pos, line, col) = scalar_skip(input, 0, 0, 0);
+    assert_eq!(pos, input.len());
+    assert_eq!(line, 1);
+    // After \n: col resets to 0, then \t(1) \r(2) space(3) space(4)
+    assert_eq!(col, 4);
+}
+
+#[test]
+fn test_skip_whitespace_scalar_start_offset() {
+    let input = b"abc   def";
+    let (pos, line, col) = scalar_skip(input, 3, 0, 3);
+    assert_eq!(pos, 6);
+    assert_eq!(line, 0);
+    assert_eq!(col, 6);
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_empty() {
+    let (pos, line, col) = simd_skip(b"", 0, 0, 0);
+    assert_eq!((pos, line, col), (0, 0, 0));
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_no_whitespace() {
+    let (pos, line, col) = simd_skip(b"hello", 0, 0, 0);
+    assert_eq!((pos, line, col), (0, 0, 0));
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_spaces_only() {
+    let (pos, line, col) = simd_skip(b"   hello", 0, 0, 0);
+    assert_eq!(pos, 3);
+    assert_eq!(line, 0);
+    assert_eq!(col, 3);
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_short() {
+    // Test inputs shorter than 16 bytes (scalar tail path only)
+    let inputs: &[&[u8]] = &[
+        b"",
+        b" ",
+        b"  \t\n",
+        b"   hello",
+        b"\n\nhello",
+        b"\r\n\t world",
+        b"no_ws_here",
+    ];
+    for input in inputs {
+        let scalar = scalar_skip(input, 0, 0, 0);
+        let simd = simd_skip(input, 0, 0, 0);
+        assert_eq!(scalar, simd, "mismatch for input {:?}", String::from_utf8_lossy(input));
+    }
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_exact_16() {
+    // Exactly 16 bytes of whitespace
+    let input = b"                hello";  // 16 spaces + "hello"
+    let scalar = scalar_skip(input, 0, 0, 0);
+    let simd = simd_skip(input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for 16-space input");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_over_16() {
+    // More than 16 bytes of whitespace (exercises full SIMD + tail)
+    let input = b"                      hello";  // 22 spaces + "hello"
+    let scalar = scalar_skip(input, 0, 0, 0);
+    let simd = simd_skip(input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for 22-space input");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_with_newlines() {
+    // Whitespace run > 16 bytes containing newlines
+    let input = b"    \n    \n    \n    \nhello";  // 4*5=20 ws bytes + "hello"
+    let scalar = scalar_skip(input, 0, 0, 0);
+    let simd = simd_skip(input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for newline-heavy input");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_mixed_ws() {
+    // Mix of space, tab, CR, LF
+    let input = b" \t\r\n \t\r\n \t\r\n \t\r\n \t\r\nX";  // 20 ws bytes + "X"
+    let scalar = scalar_skip(input, 0, 0, 0);
+    let simd = simd_skip(input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for mixed whitespace");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_all_whitespace() {
+    // Input is entirely whitespace (no non-ws terminator)
+    let input = b"                                ";  // 32 spaces
+    let scalar = scalar_skip(input, 0, 0, 0);
+    let simd = simd_skip(input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for all-whitespace input");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_partial_chunk() {
+    // Non-ws byte in the middle of the first 16-byte chunk
+    let input = b"       X        ";  // 7 spaces + X + 8 spaces
+    let scalar = scalar_skip(input, 0, 0, 0);
+    let simd = simd_skip(input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for partial-chunk input");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_with_offset() {
+    // Starting from a non-zero offset
+    let input = b"abcde     \n    fgh";
+    let scalar = scalar_skip(input, 5, 0, 5);
+    let simd = simd_skip(input, 5, 0, 5);
+    assert_eq!(scalar, simd, "mismatch for offset input");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_large() {
+    // Large whitespace run: 200 spaces with interspersed newlines
+    let mut input = Vec::with_capacity(220);
+    for i in 0..200 {
+        if i % 30 == 29 {
+            input.push(b'\n');
+        } else if i % 10 == 9 {
+            input.push(b'\t');
+        } else {
+            input.push(b' ');
+        }
+    }
+    input.extend_from_slice(b"token");
+
+    let scalar = scalar_skip(&input, 0, 0, 0);
+    let simd = simd_skip(&input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for large whitespace run");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_cr_lf_sequences() {
+    // Windows-style \r\n line endings, > 16 bytes
+    let input = b"  \r\n  \r\n  \r\n  \r\n  \r\nhello";
+    let scalar = scalar_skip(input, 0, 0, 0);
+    let simd = simd_skip(input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for CR+LF sequences");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_15_bytes() {
+    // Exactly 15 bytes of whitespace (just under SIMD lane width)
+    let input = b"               X";  // 15 spaces + "X"
+    let scalar = scalar_skip(input, 0, 0, 0);
+    let simd = simd_skip(input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for 15-byte input");
+}
+
+#[cfg(feature = "simd-whitespace")]
+#[test]
+fn test_skip_whitespace_simd_matches_scalar_17_bytes() {
+    // 17 bytes of whitespace (SIMD chunk + 1 tail byte)
+    let input = b"                 X";  // 17 spaces + "X"
+    let scalar = scalar_skip(input, 0, 0, 0);
+    let simd = simd_skip(input, 0, 0, 0);
+    assert_eq!(scalar, simd, "mismatch for 17-byte input");
 }

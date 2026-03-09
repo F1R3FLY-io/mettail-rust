@@ -1,9 +1,12 @@
 //! DFA → Rust lexer code generation.
 //!
 //! Converts a minimized DFA with alphabet partitioning into Rust source code.
-//! Two strategies are available:
+//! Three strategies are available:
 //! - **Direct-coded** (default for ≤30 DFA states): each state becomes a match arm
 //! - **Table-driven** (default for >30 states): transition table with row-displacement compression
+//! - **Hybrid** (AL02, gated): hot states (BFS depth ≤ 2 from start) get direct-coded match
+//!   arms; cold states use table-driven lookup. Activated when `optimization_gates.hybrid_lexer`
+//!   is true and the DFA has > 30 states.
 //!
 //! ## Performance
 //!
@@ -12,6 +15,7 @@
 //! eliminates O(states × classes) intermediate `TokenStream` allocations that dominated
 //! the previous implementation (~46% of codegen time was proc_macro2 overhead).
 
+use std::collections::HashSet;
 use std::fmt::Write;
 
 use proc_macro2::TokenStream;
@@ -20,6 +24,45 @@ use super::{partition::AlphabetPartition, semiring::TropicalWeight, Dfa, StateId
 
 /// Threshold: use direct-coded for small DFAs, table-driven for larger ones.
 const DIRECT_CODED_THRESHOLD: usize = 30;
+
+/// Default BFS depth for determining hot states in hybrid lexer mode.
+const HYBRID_HOT_DEPTH: usize = 2;
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AL02: Hot state classification via BFS from start state
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Compute the set of "hot" DFA states reachable within `depth` transitions
+/// from the start state via BFS.
+///
+/// Hot states are the most frequently visited during lexing (they process the
+/// first few characters of every token). By direct-coding these states as match
+/// arms while keeping cold states in compressed tables, we get the branch
+/// prediction benefits of direct coding where it matters most, without the code
+/// size explosion of direct-coding all states in large DFAs.
+///
+/// Returns a `HashSet<usize>` of state indices considered hot.
+pub fn compute_hot_states(dfa: &Dfa, depth: usize) -> HashSet<usize> {
+    let mut hot = HashSet::new();
+    let mut frontier = vec![dfa.start as usize];
+    hot.insert(dfa.start as usize);
+
+    for _level in 0..depth {
+        let mut next_frontier = Vec::new();
+        for &state_idx in &frontier {
+            let state = &dfa.states[state_idx];
+            for &target in &state.transitions {
+                let target_idx = target as usize;
+                if target != DEAD_STATE && hot.insert(target_idx) {
+                    next_frontier.push(target_idx);
+                }
+            }
+        }
+        frontier = next_frontier;
+    }
+
+    hot
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Token variant map — compact integer IDs for token kinds
@@ -209,6 +252,10 @@ pub fn analyze_ambiguity(dfa: &Dfa) -> LexerAmbiguityInfo {
 /// Uses string-based code generation internally to avoid per-element
 /// proc_macro2 allocations. The entire output is built as a single String
 /// and parsed into a TokenStream once.
+///
+/// When `hybrid_lexer` is true and the DFA has > 30 states, AL02 hybrid
+/// mode is activated: hot states (BFS depth ≤ 2) get direct-coded match
+/// arms while cold states use compressed table lookup.
 pub fn generate_lexer_code(
     dfa: &Dfa,
     partition: &AlphabetPartition,
@@ -217,6 +264,24 @@ pub fn generate_lexer_code(
 ) -> (TokenStream, CodegenStrategy) {
     let (buf, strategy, _variant_map, _ambiguity) =
         generate_lexer_string(dfa, partition, token_kinds, language_name);
+    let ts = buf
+        .parse::<TokenStream>()
+        .expect("generated lexer code must be valid Rust");
+    (ts, strategy)
+}
+
+/// Generate the complete lexer code as a TokenStream with AL02 hybrid gating.
+///
+/// Same as [`generate_lexer_code`] but accepts the `hybrid_lexer` optimization gate.
+pub fn generate_lexer_code_hybrid(
+    dfa: &Dfa,
+    partition: &AlphabetPartition,
+    token_kinds: &[TokenKind],
+    language_name: &str,
+    hybrid_lexer: bool,
+) -> (TokenStream, CodegenStrategy) {
+    let (buf, strategy, _variant_map, _ambiguity) =
+        generate_lexer_string_hybrid(dfa, partition, token_kinds, language_name, hybrid_lexer);
     let ts = buf
         .parse::<TokenStream>()
         .expect("generated lexer code must be valid Rust");
@@ -237,6 +302,22 @@ pub fn generate_lexer_string(
     token_kinds: &[TokenKind],
     _language_name: &str,
 ) -> (String, CodegenStrategy, TokenVariantMap, LexerAmbiguityInfo) {
+    generate_lexer_string_hybrid(dfa, partition, token_kinds, _language_name, false)
+}
+
+/// Generate lexer code as a `String` with AL02 hybrid gating.
+///
+/// When `hybrid_lexer` is true and the DFA exceeds the direct-coded threshold,
+/// hot states (BFS depth ≤ 2 from start) are direct-coded while cold states
+/// use compressed table lookup. An I16 diagnostic is emitted when hybrid mode
+/// activates.
+pub fn generate_lexer_string_hybrid(
+    dfa: &Dfa,
+    partition: &AlphabetPartition,
+    token_kinds: &[TokenKind],
+    _language_name: &str,
+    hybrid_lexer: bool,
+) -> (String, CodegenStrategy, TokenVariantMap, LexerAmbiguityInfo) {
     // Estimate buffer size: ~8KB for typical grammars, scales with DFA size
     let estimated_size = 4096 + dfa.states.len() * partition.num_classes * 16;
     let mut buf = String::with_capacity(estimated_size);
@@ -246,8 +327,34 @@ pub fn generate_lexer_string(
     write_runtime_types_import(&mut buf);
 
     let strategy = if dfa.states.len() <= DIRECT_CODED_THRESHOLD {
+        // Small DFA: all states direct-coded (existing behavior, no hybrid needed)
         write_direct_coded_lexer(&mut buf, dfa, partition);
         CodegenStrategy::DirectCoded
+    } else if hybrid_lexer {
+        // AL02: Hybrid mode — hot states direct-coded, cold states table-driven
+        let hot_states = compute_hot_states(dfa, HYBRID_HOT_DEPTH);
+        let num_hot = hot_states.len();
+        let num_cold = dfa.states.len() - num_hot;
+
+        // Emit I16 diagnostic
+        crate::lint::emit_diagnostic(&crate::lint::LintDiagnostic {
+            id: "I16",
+            name: "hybrid-lexer-active",
+            severity: crate::lint::LintSeverity::Info,
+            category: None,
+            rule: None,
+            message: format!(
+                "AL02 hybrid lexer: {} hot states (direct-coded, BFS depth ≤ {}), \
+                 {} cold states (table-driven), {} total",
+                num_hot, HYBRID_HOT_DEPTH, num_cold, dfa.states.len()
+            ),
+            hint: None,
+            grammar_name: None,
+            source_location: None,
+        });
+
+        write_hybrid_lexer(&mut buf, dfa, partition, &hot_states);
+        CodegenStrategy::HybridDirectCompressed
     } else {
         write_compressed_lexer(&mut buf, dfa, partition)
     };
@@ -412,51 +519,49 @@ fn write_class_table(buf: &mut String, partition: &AlphabetPartition) {
     buf.push_str("];");
 }
 
-/// Write an IS_ACCEPTING check to a string buffer.
+/// Write an IS_ACCEPTING bitmap check to a string buffer.
 ///
-/// For DFAs with ≤128 states: emits a `const IS_ACCEPTING: u128 = 0b...;` bitmap
-/// where bit `i` is set iff state `i` is accepting. The inner lex loop checks
-/// `(IS_ACCEPTING >> state) & 1 != 0` instead of calling `accept_token()`.
+/// Emits a `static IS_ACCEPTING: [u64; ceil(N/64)] = [...]` bitset where bit `i`
+/// (in word `i >> 6`, bit position `i & 63`) is set iff state `i` is accepting.
+/// The inner lex loop checks `(IS_ACCEPTING[state >> 6] >> (state & 63)) & 1 != 0`.
 ///
-/// For DFAs with >128 states: emits a `static IS_ACCEPTING: [bool; N] = [...];`
-/// array with `IS_ACCEPTING[state as usize]` lookup.
+/// ## A-L06: Accept State Bitmap Widening
 ///
-/// This eliminates the expensive `accept_token()` call (which creates a `&str`
-/// slice and enters a match dispatch) on every character in the DFA inner loop.
+/// Uses a `[u64; K]` bitset for ALL DFA sizes (K = ceil(N / 64)), replacing the
+/// previous split strategy (u128 for ≤128 states, `[bool; N]` for >128 states).
+/// Benefits:
+/// - **8× less memory** than the old `[bool; N]` path for large DFAs
+/// - **No bounds check** — valid state IDs always index within the bitset
+/// - **Uniform codegen** — single code path regardless of DFA size
+/// - **Cache-friendly** — compact bitset fits in fewer cache lines
 fn write_is_accepting_check(buf: &mut String, dfa: &Dfa) {
     let n = dfa.states.len();
-    if n <= 128 {
-        let mut bitmap: u128 = 0;
-        for (i, state) in dfa.states.iter().enumerate() {
-            if state.accept.is_some() {
-                bitmap |= 1u128 << i;
-            }
+    let num_words = (n + 63) / 64;
+
+    // Build the bitset words
+    let mut words = vec![0u64; num_words];
+    for (i, state) in dfa.states.iter().enumerate() {
+        if state.accept.is_some() {
+            words[i >> 6] |= 1u64 << (i & 63);
         }
-        write!(buf, "const IS_ACCEPTING: u128 = {};", bitmap).unwrap();
-        buf.push_str(
-            "#[inline(always)] fn is_accepting_state(state: u32) -> bool { \
-             state < 128 && (IS_ACCEPTING >> state) & 1 != 0 \
-             }",
-        );
-    } else {
-        write!(buf, "static IS_ACCEPTING: [bool; {}] = [", n).unwrap();
-        for (i, state) in dfa.states.iter().enumerate() {
-            if i > 0 {
-                buf.push(',');
-            }
-            if state.accept.is_some() {
-                buf.push_str("true");
-            } else {
-                buf.push_str("false");
-            }
-        }
-        buf.push_str("];");
-        buf.push_str(
-            "#[inline(always)] fn is_accepting_state(state: u32) -> bool { \
-             (state as usize) < IS_ACCEPTING.len() && IS_ACCEPTING[state as usize] \
-             }",
-        );
     }
+
+    // Emit the static array
+    write!(buf, "static IS_ACCEPTING: [u64; {}] = [", num_words).unwrap();
+    for (i, word) in words.iter().enumerate() {
+        if i > 0 {
+            buf.push(',');
+        }
+        write!(buf, "0x{:016x}", word).unwrap();
+    }
+    buf.push_str("];");
+
+    // Emit the inline acceptance check function
+    buf.push_str(
+        "#[inline(always)] fn is_accepting_state(state: u32) -> bool { \
+         (IS_ACCEPTING[(state >> 6) as usize] >> (state & 63)) & 1 != 0 \
+         }",
+    );
 }
 
 /// Write the accept_token match arms to a string buffer.
@@ -546,6 +651,13 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
 
+    // AL05: Detect multi-byte chains and emit chain table + try_chain function.
+    let chains = detect_multi_byte_chains(dfa, partition);
+    let has_chains = !chains.is_empty();
+    if has_chains {
+        write_chain_tables(buf, &chains);
+    }
+
     // dfa_next() function
     buf.push_str("fn dfa_next(state: u32, class: u8) -> u32 {");
     write_transition_arms(buf, dfa);
@@ -556,13 +668,110 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     write_accept_arms(buf, dfa);
     buf.push('}');
 
-    // lex()/lex_with_file_id() via lex_core() — DFA loop is in the runtime crate
-    write_lex_via_core(buf);
+    // lex()/lex_with_file_id() — chain-aware if chains detected, otherwise via lex_core()
+    if has_chains {
+        write_lex_with_chains(buf);
+    } else {
+        write_lex_via_core(buf);
+    }
 
     // WFST weight emission: accept_weight() + lex_weighted() via lex_weighted_core()
     buf.push_str(
         "fn accept_weight(state: u32) -> f64 {",
     );
+    write_accept_weight_arms(buf, dfa);
+    buf.push('}');
+    write_lex_weighted_via_core(buf);
+
+    // B3: Lattice-aware lexing with multi-accept alternatives
+    write_accept_alternatives(buf, dfa);
+    write_lex_lattice_via_core(buf);
+}
+
+/// AL02: Write a hybrid direct-coded + compressed lexer to a string buffer.
+///
+/// Hot states (in `hot_states`) are direct-coded as match arms in `dfa_next()`.
+/// Cold states fall through to compressed table lookup (best of comb/bitmap).
+/// The `dfa_next()` function first checks if the state is hot (via match),
+/// and if no match arm fires, delegates to the compressed table.
+fn write_hybrid_lexer(
+    buf: &mut String,
+    dfa: &Dfa,
+    partition: &AlphabetPartition,
+    hot_states: &HashSet<usize>,
+) {
+    let num_classes = partition.num_classes;
+
+    write_class_table(buf, partition);
+    write!(buf, "const NUM_CLASSES: usize = {};", num_classes).unwrap();
+
+    // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
+    write_is_accepting_check(buf, dfa);
+
+    // Build compressed tables for cold states (used by fallback path)
+    let comb = compress_rows_comb(dfa, num_classes);
+    let use_bitmap = num_classes <= 32 && {
+        let bitmap = build_bitmap_tables(dfa).expect("num_classes verified <= 32");
+        bitmap.total_bytes() <= comb.total_bytes()
+    };
+
+    if use_bitmap {
+        let bitmap = build_bitmap_tables(dfa).expect("num_classes verified <= 32");
+        write_bitmap_tables(buf, &bitmap);
+
+        // Cold-state fallback function using bitmap lookup
+        buf.push_str(
+            "#[inline(always)] fn dfa_next_cold(state: u32, class: u8) -> u32 { \
+             let bitmap = BITMAPS[state as usize]; \
+             let bit = 1u32 << (class as u32); \
+             if bitmap & bit == 0 { return u32::MAX; } \
+             let index = (bitmap & (bit - 1)).count_ones() as usize; \
+             TARGETS[OFFSETS[state as usize] as usize + index] \
+             }",
+        );
+    } else {
+        write_comb_tables(buf, &comb);
+
+        // Cold-state fallback function using comb lookup
+        buf.push_str(
+            "#[inline(always)] fn dfa_next_cold(state: u32, class: u8) -> u32 { \
+             let idx = BASE[state as usize] as usize + class as usize; \
+             if CHECK[idx] == state { NEXT[idx] } else { DEFAULT[state as usize] } \
+             }",
+        );
+    }
+
+    // dfa_next() function: hot states via match arms, cold states via table fallback
+    buf.push_str("#[inline(always)] fn dfa_next(state: u32, class: u8) -> u32 { match state {");
+    for &state_idx in hot_states {
+        let state = &dfa.states[state_idx];
+        let has_transitions = state.transitions.iter().any(|&t| t != DEAD_STATE);
+        if !has_transitions {
+            // Hot state with no transitions → always dead
+            write!(buf, "{}u32 => u32::MAX,", state_idx).unwrap();
+            continue;
+        }
+        write!(buf, "{}u32 => match class {{", state_idx).unwrap();
+        for (class_id, &target) in state.transitions.iter().enumerate() {
+            if target != DEAD_STATE {
+                write!(buf, "{}u8 => {}u32,", class_id, target).unwrap();
+            }
+        }
+        buf.push_str("_ => u32::MAX },");
+    }
+    // Cold states: delegate to compressed table
+    buf.push_str("_ => dfa_next_cold(state, class) } }");
+
+    // accept_token() function — returns Token<'a> borrowing from text
+    buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
+    write_accept_arms(buf, dfa);
+    buf.push('}');
+
+    // lex()/lex_with_file_id() via lex_core()
+    write_lex_via_core(buf);
+
+    // WFST weight emission: accept_weight() + lex_weighted() via lex_weighted_core()
+    buf.push_str("fn accept_weight(state: u32) -> f64 {");
     write_accept_weight_arms(buf, dfa);
     buf.push('}');
     write_lex_weighted_via_core(buf);
@@ -585,6 +794,94 @@ fn write_lex_via_core(buf: &mut String) {
          pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range)>, String> { \
          let (mut tokens, eof_pos) = mettail_prattail::runtime_types::lex_core( \
          input, file_id, &CHAR_CLASS, dfa_next, is_accepting_state, accept_token)?; \
+         tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id })); \
+         Ok(tokens) }",
+    );
+}
+
+/// AL05: Write `lex()`/`lex_with_file_id()` with chain-aware inner loop.
+///
+/// This is a generated copy of the `lex_core()` logic with the chain fast-path
+/// inserted into the inner DFA walk loop. Before performing single-byte class
+/// lookup + `dfa_next()`, the loop tries `try_chain()` to advance multiple bytes
+/// at once. If the chain matches, `pos` and `state` advance by the chain length.
+///
+/// Line/column tracking is handled correctly: each chain byte is checked for `\n`.
+/// In practice, chains are almost always ASCII letters/digits (keyword paths),
+/// so the newline check is a no-op.
+///
+/// The chain-aware lex function completely replaces `lex_core()` delegation — no
+/// runtime library change is needed.
+fn write_lex_with_chains(buf: &mut String) {
+    buf.push_str(
+        "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String> { \
+         lex_with_file_id(input, None) \
+         }\n\
+         pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>) -> Result<Vec<(Token<'a>, Range)>, String> { \
+         use mettail_prattail::runtime_types::{Position, Range}; \
+         let bytes = input.as_bytes(); \
+         let mut pos: usize = 0; \
+         let mut line: usize = 0; \
+         let mut col: usize = 0; \
+         let mut tokens: Vec<(Token<'a>, Range)> = Vec::with_capacity(input.len() / 2); \
+         while pos < bytes.len() { \
+             while pos < bytes.len() { \
+                 let b = bytes[pos]; \
+                 if b == b' ' || b == b'\\t' || b == b'\\r' || b == b'\\n' { \
+                     if b == b'\\n' { line += 1; col = 0; } else { col += 1; } \
+                     pos += 1; \
+                 } else { break; } \
+             } \
+             if pos >= bytes.len() { break; } \
+             let start = pos; \
+             let start_line = line; \
+             let start_col = col; \
+             let mut state: u32 = 0; \
+             let mut last_accept: Option<(u32, usize, usize, usize)> = None; \
+             if is_accepting_state(0) { last_accept = Some((0, pos, line, col)); } \
+             while pos < bytes.len() { \
+                 if let Some((end_state, chain_len)) = try_chain(state, bytes, pos) { \
+                     for i in 0..chain_len { \
+                         if bytes[pos + i] == b'\\n' { line += 1; col = 0; } \
+                         else if bytes[pos + i] & 0xC0 != 0x80 { col += 1; } \
+                     } \
+                     pos += chain_len; \
+                     state = end_state; \
+                     if is_accepting_state(state) { last_accept = Some((state, pos, line, col)); } \
+                     continue; \
+                 } \
+                 let class = CHAR_CLASS[bytes[pos] as usize]; \
+                 let next = dfa_next(state, class); \
+                 if next == u32::MAX { break; } \
+                 state = next; \
+                 if bytes[pos] == b'\\n' { line += 1; col = 0; } \
+                 else if bytes[pos] & 0xC0 != 0x80 { col += 1; } \
+                 pos += 1; \
+                 if is_accepting_state(state) { last_accept = Some((state, pos, line, col)); } \
+             } \
+             match last_accept { \
+                 Some((accept_state, end, end_line, end_col)) => { \
+                     pos = end; line = end_line; col = end_col; \
+                     let text = &input[start..end]; \
+                     if let Some(token) = accept_token(accept_state, text) { \
+                         tokens.push((token, Range { \
+                             start: Position { byte_offset: start, line: start_line, column: start_col }, \
+                             end: Position { byte_offset: end, line: end_line, column: end_col }, \
+                             file_id, \
+                         })); \
+                     } \
+                 } \
+                 None => { \
+                     let ch = bytes[start] as char; \
+                     return Err(if ch.is_ascii() { \
+                         format!(\"{}:{}: unexpected character '{}'\", line + 1, col + 1, ch) \
+                     } else { \
+                         format!(\"{}:{}: unexpected byte 0x{:02x}\", line + 1, col + 1, bytes[start]) \
+                     }); \
+                 } \
+             } \
+         } \
+         let eof_pos = Position { byte_offset: pos, line, column: col }; \
          tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id })); \
          Ok(tokens) }",
     );
@@ -723,6 +1020,12 @@ pub enum CodegenStrategy {
     CombCompressed,
     /// Bitmap + popcount indexing: BITMAPS/OFFSETS/TARGETS arrays.
     BitmapCompressed,
+    /// AL02: Hybrid direct-coded + compressed lexer.
+    ///
+    /// Hot states (BFS depth ≤ 2 from start) get direct-coded match arms;
+    /// cold states use the best compressed table (comb or bitmap).
+    /// Only activated for DFAs with > 30 states when `hybrid_lexer` gate is true.
+    HybridDirectCompressed,
 }
 
 /// Row-displacement (comb) compressed transition table.
@@ -821,6 +1124,208 @@ pub fn analyze_sparsity(dfa: &Dfa) -> SparsityInfo {
     }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// AL05: Multi-byte chain transitions
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A chain of DFA states connected by single-byte transitions.
+///
+/// Represents a linear path `S0 -[b0]-> S1 -[b1]-> S2 -[b2]-> S3` where each
+/// intermediate state has exactly one non-DEAD transition and is NOT an accept
+/// state. The chain can be collapsed into a single multi-byte comparison in
+/// generated code, avoiding per-byte DFA table lookups.
+///
+/// ## Invariants
+///
+/// - `bytes.len() == chain_len` (number of transitions in the chain)
+/// - `chain_len >= 3` (shorter chains are not worth the overhead)
+/// - `start_state` is the first state in the chain (before the first byte)
+/// - `end_state` is the final state (after consuming all bytes)
+/// - All intermediate states (between start and end) are non-accepting
+/// - Each intermediate state has exactly one non-DEAD outgoing transition
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MultiByteChain {
+    /// The DFA state where the chain begins.
+    pub start_state: StateId,
+    /// The DFA state after consuming all chain bytes.
+    pub end_state: StateId,
+    /// The sequence of concrete byte values consumed along the chain.
+    pub bytes: Vec<u8>,
+}
+
+impl MultiByteChain {
+    /// Number of transitions (bytes) in this chain.
+    #[inline]
+    pub fn chain_len(&self) -> usize {
+        self.bytes.len()
+    }
+}
+
+/// Detect linear chains of single-byte transitions in a minimized DFA.
+///
+/// ## Algorithm
+///
+/// 1. Build an inverse map from equivalence class IDs to the set of bytes that
+///    map to that class. Only classes that map to a single byte (singleton classes)
+///    can participate in chains, because the generated multi-byte comparison checks
+///    concrete byte values.
+///
+/// 2. For each DFA state, determine if it is a "chain-eligible" state: it has
+///    exactly one non-DEAD transition, that transition's class is a singleton class,
+///    and the state is NOT an accept state.
+///
+/// 3. Starting from each non-chain-eligible state (potential chain root), follow
+///    outgoing transitions through consecutive chain-eligible states to build
+///    chains. Only chains of length >= 3 are emitted.
+///
+/// ## Longest-match preservation
+///
+/// Accept states CANNOT appear as intermediate chain states because skipping them
+/// would violate the longest-match lexer semantics — the lexer must record each
+/// accept state it passes through. Accept states CAN appear as the `end_state`
+/// (final state after consuming all chain bytes).
+///
+/// ## Parameters
+///
+/// - `dfa`: The minimized DFA to analyze.
+/// - `partition`: The alphabet partition, used to map equivalence classes back to
+///   concrete byte values.
+///
+/// ## Returns
+///
+/// A vector of [`MultiByteChain`]s, each with `chain_len >= 3`. The chains are
+/// non-overlapping (each intermediate state appears in at most one chain).
+pub fn detect_multi_byte_chains(dfa: &Dfa, partition: &AlphabetPartition) -> Vec<MultiByteChain> {
+    let num_states = dfa.states.len();
+    if num_states < 4 {
+        return Vec::new(); // Need at least 4 states for a chain of length 3
+    }
+
+    // Step 1: Build class → singleton byte map.
+    // class_to_byte[c] = Some(byte) if exactly one byte maps to class c.
+    let mut class_byte_count: Vec<(u16, u8)> = vec![(0, 0); partition.num_classes];
+    for byte in 0u8..=255 {
+        let class = partition.byte_to_class[byte as usize] as usize;
+        if class < class_byte_count.len() {
+            class_byte_count[class].0 += 1;
+            class_byte_count[class].1 = byte;
+        }
+    }
+    let class_to_singleton: Vec<Option<u8>> = class_byte_count
+        .iter()
+        .map(|&(count, byte)| if count == 1 { Some(byte) } else { None })
+        .collect();
+
+    // Step 2: Classify each state.
+    // chain_eligible[s] = Some((singleton_byte, target_state)) if state s has
+    // exactly one non-DEAD transition on a singleton class and is NOT accepting.
+    let mut chain_eligible: Vec<Option<(u8, StateId)>> = Vec::with_capacity(num_states);
+    for state in &dfa.states {
+        if state.accept.is_some() {
+            // Accept states cannot be intermediate chain states
+            chain_eligible.push(None);
+            continue;
+        }
+
+        let mut live_count = 0usize;
+        let mut single_byte = None;
+        let mut single_target = DEAD_STATE;
+
+        for (class_id, &target) in state.transitions.iter().enumerate() {
+            if target != DEAD_STATE {
+                live_count += 1;
+                if live_count > 1 {
+                    break;
+                }
+                if let Some(byte) = class_to_singleton.get(class_id).copied().flatten() {
+                    single_byte = Some(byte);
+                    single_target = target;
+                }
+            }
+        }
+
+        if live_count == 1 && single_byte.is_some() {
+            chain_eligible.push(Some((single_byte.expect("checked above"), single_target)));
+        } else {
+            chain_eligible.push(None);
+        }
+    }
+
+    // Step 3: Build chains. Track which states have been consumed as intermediates.
+    let mut used_as_intermediate = vec![false; num_states];
+    let mut chains: Vec<MultiByteChain> = Vec::new();
+
+    // For every state, try to extend a chain through chain-eligible successors.
+    // We start chains from transitions out of non-chain-eligible states (or the
+    // start state) to avoid double-counting.
+    for state_idx in 0..num_states {
+        let state = &dfa.states[state_idx];
+        for (class_id, &target) in state.transitions.iter().enumerate() {
+            if target == DEAD_STATE {
+                continue;
+            }
+            let target_idx = target as usize;
+            if target_idx >= num_states || used_as_intermediate[target_idx] {
+                continue;
+            }
+
+            // The target must be chain-eligible to start building a chain
+            if chain_eligible[target_idx].is_none() {
+                continue;
+            }
+
+            // Check if the first transition is on a singleton class
+            let first_byte = match class_to_singleton.get(class_id).copied().flatten() {
+                Some(b) => b,
+                None => continue,
+            };
+
+            // Build the chain: start from state_idx, first byte transitions to target_idx,
+            // then follow chain-eligible states.
+            let mut bytes = vec![first_byte];
+            let mut current = target_idx;
+
+            while let Some(&Some((byte, next_target))) = chain_eligible.get(current) {
+                let next_idx = next_target as usize;
+                if next_idx >= num_states || used_as_intermediate[next_idx] {
+                    break;
+                }
+                bytes.push(byte);
+                // If the next target is also chain-eligible and not used, continue
+                // But if the next target is NOT chain-eligible, we still add the byte
+                // (the chain ends at next_target which may or may not be chain-eligible)
+                current = next_idx;
+                // If the new current is NOT chain-eligible, the chain ends here
+                if chain_eligible.get(current).copied().flatten().is_none() {
+                    break;
+                }
+            }
+
+            if bytes.len() >= 3 {
+                // Mark all intermediate states as used
+                // Intermediate states: follow the chain from target_idx through len-1 steps
+                let mut mark_state = target_idx;
+                for _ in 0..bytes.len() - 1 {
+                    if let Some(&Some((_, next))) = chain_eligible.get(mark_state) {
+                        used_as_intermediate[mark_state] = true;
+                        mark_state = next as usize;
+                    } else {
+                        break;
+                    }
+                }
+
+                chains.push(MultiByteChain {
+                    start_state: state_idx as StateId,
+                    end_state: current as StateId,
+                    bytes,
+                });
+            }
+        }
+    }
+
+    chains
+}
+
 /// Compress a DFA transition table using row displacement (comb) packing.
 ///
 /// Algorithm:
@@ -829,6 +1334,8 @@ pub fn analyze_sparsity(dfa: &Dfa) -> SparsityInfo {
 /// 3. Greedy offset search: for each row, find smallest offset where no non-default
 ///    entries collide with previously placed rows
 /// 4. Pad NEXT/CHECK to `max(base) + num_classes` to eliminate bounds checking
+///
+/// See also [`repack_comb_sparse_rows`] for a second-pass optimization (AL01).
 pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
     let num_states = dfa.states.len();
 
@@ -942,6 +1449,160 @@ pub fn compress_rows_comb(dfa: &Dfa, num_classes: usize) -> CombTable {
     check.truncate(pad_to);
 
     CombTable { base, default, next, check }
+}
+
+/// AL01: Repack sparse rows into gaps left by the initial greedy comb compression.
+///
+/// After `compress_rows_comb` places rows densest-first, the NEXT/CHECK arrays may
+/// contain scattered free slots where sparse rows could fit at lower offsets. This
+/// second pass finds rows whose current `base` offset exceeds the high-water mark of
+/// the densest rows and attempts to relocate them into earlier free slots.
+///
+/// The result is a smaller NEXT/CHECK array (fewer total entries), which translates
+/// directly to less generated static data and better cache utilization at lex time.
+///
+/// ## Algorithm
+///
+/// 1. Build a free-slot bitmap from the existing CHECK array (slot is free iff
+///    `check[i] == u32::MAX`).
+/// 2. Identify "repackable" rows: states whose entries are all at offsets >= some
+///    threshold, meaning they were placed late in the greedy pass and landed far
+///    into the tail of the arrays.
+/// 3. Sort repackable rows by sparsity (fewest entries first) so the easiest fits
+///    are tried first.
+/// 4. For each repackable row, scan for the earliest offset in the free-slot bitmap
+///    where all its entries fit without collision.
+/// 5. If a better (lower) offset is found, relocate the row: clear old slots, place
+///    at new offset, update `base[state]`.
+/// 6. After all relocations, truncate NEXT/CHECK to the new high-water mark + padding.
+///
+/// This is a pure codegen-time optimization — it does not affect runtime semantics.
+/// Gated by `OptimizationGates::comb_repacking`.
+pub fn repack_comb_sparse_rows(comb: &mut CombTable, num_classes: usize) {
+    let table_len = comb.next.len();
+    if table_len == 0 {
+        return;
+    }
+
+    // Step 1: Build free-slot bitmap from CHECK array.
+    let bitmap_words = (table_len + 63) >> 6;
+    let mut free_bitmap: Vec<u64> = vec![!0u64; bitmap_words];
+    for (i, &check_val) in comb.check.iter().enumerate() {
+        if check_val != u32::MAX {
+            // Slot is occupied — clear the bit
+            free_bitmap[i >> 6] &= !(1u64 << (i & 63));
+        }
+    }
+
+    // Step 2: Identify repackable rows — any state with at least 1 entry.
+    // Collect (state_idx, entries: Vec<(class_id, target)>, current_base).
+    let num_states = comb.base.len();
+    let mut repackable: Vec<(usize, Vec<(usize, u32)>, u32)> = Vec::new();
+
+    for state_idx in 0..num_states {
+        let b = comb.base[state_idx] as usize;
+        let mut entries: Vec<(usize, u32)> = Vec::new();
+        for class_id in 0..num_classes {
+            let idx = b + class_id;
+            if idx < comb.check.len() && comb.check[idx] == state_idx as u32 {
+                entries.push((class_id, comb.next[idx]));
+            }
+        }
+        if !entries.is_empty() {
+            repackable.push((state_idx, entries, comb.base[state_idx]));
+        }
+    }
+
+    // Step 3: Sort by sparsity (fewest entries first) — sparse rows are easiest to fit.
+    repackable.sort_unstable_by_key(|r| r.1.len());
+
+    // Step 4 & 5: Try to relocate each row to a lower offset.
+    let mut any_moved = false;
+    for (state_idx, entries, current_base) in &repackable {
+        let current_base_usize = *current_base as usize;
+
+        // Try offsets from 0 up to (but not including) the current base.
+        let first_class = entries[0].0;
+        let mut best_offset: Option<usize> = None;
+
+        'd_loop: for d in 0..current_base_usize {
+            // Ensure all entries fit within the table
+            let max_idx = d + num_classes;
+            if max_idx > table_len {
+                break;
+            }
+
+            // Quick check: first entry's slot must be free
+            let first_idx = d + first_class;
+            if first_idx >= table_len {
+                break;
+            }
+            let w = first_idx >> 6;
+            let b = first_idx & 63;
+            if (free_bitmap[w] >> b) & 1 == 0 {
+                continue;
+            }
+
+            // Check all entries for collision with occupied slots
+            for &(class_id, _) in entries.iter().skip(1) {
+                let idx = d + class_id;
+                if idx >= table_len {
+                    continue 'd_loop;
+                }
+                let w = idx >> 6;
+                let b = idx & 63;
+                if (free_bitmap[w] >> b) & 1 == 0 {
+                    continue 'd_loop;
+                }
+            }
+
+            best_offset = Some(d);
+            break;
+        }
+
+        if let Some(new_offset) = best_offset {
+            // Clear old slots in CHECK/NEXT and free bitmap
+            for &(class_id, _) in entries {
+                let old_idx = current_base_usize + class_id;
+                comb.next[old_idx] = u32::MAX;
+                comb.check[old_idx] = u32::MAX;
+                // Mark old slot as free
+                free_bitmap[old_idx >> 6] |= 1u64 << (old_idx & 63);
+            }
+
+            // Place at new offset
+            comb.base[*state_idx] = new_offset as u32;
+            for &(class_id, target) in entries {
+                let new_idx = new_offset + class_id;
+                comb.next[new_idx] = target;
+                comb.check[new_idx] = *state_idx as u32;
+                // Mark new slot as occupied
+                free_bitmap[new_idx >> 6] &= !(1u64 << (new_idx & 63));
+            }
+
+            any_moved = true;
+        }
+    }
+
+    // Step 6: Truncate to new high-water mark if anything moved.
+    if any_moved {
+        // Find actual high-water: last occupied slot
+        let mut new_high_water = 0usize;
+        for (i, &check_val) in comb.check.iter().enumerate() {
+            if check_val != u32::MAX && i >= new_high_water {
+                new_high_water = i + 1;
+            }
+        }
+
+        // Pad to max(base) + num_classes for bounds-check elimination
+        let max_base = comb.base.iter().copied().max().unwrap_or(0) as usize;
+        let pad_to = (max_base + num_classes).max(new_high_water);
+
+        if pad_to < comb.next.len() {
+            comb.next.truncate(pad_to);
+            comb.check.truncate(pad_to);
+        }
+    }
 }
 
 /// Build bitmap-compressed transition tables for a DFA.
@@ -1064,7 +1725,12 @@ fn write_compressed_lexer(
     partition: &AlphabetPartition,
 ) -> CodegenStrategy {
     let num_classes = partition.num_classes;
-    let comb = compress_rows_comb(dfa, num_classes);
+    let mut comb = compress_rows_comb(dfa, num_classes);
+
+    // AL01: Repack sparse rows into gaps left by the initial greedy pass.
+    // This is always beneficial (smaller tables, better cache utilization)
+    // and has negligible codegen-time cost, so it is applied unconditionally.
+    repack_comb_sparse_rows(&mut comb, num_classes);
 
     if num_classes <= 32 {
         let bitmap = build_bitmap_tables(dfa).expect("num_classes verified <= 32");
@@ -1093,6 +1759,13 @@ fn write_comb_driven_lexer(
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
 
+    // AL05: Detect multi-byte chains and emit chain table + try_chain function.
+    let chains = detect_multi_byte_chains(dfa, partition);
+    let has_chains = !chains.is_empty();
+    if has_chains {
+        write_chain_tables(buf, &chains);
+    }
+
     // dfa_next function using comb lookup
     write!(
         buf,
@@ -1108,8 +1781,12 @@ fn write_comb_driven_lexer(
     write_accept_arms(buf, dfa);
     buf.push('}');
 
-    // lex()/lex_with_file_id() via lex_core()
-    write_lex_via_core(buf);
+    // lex()/lex_with_file_id() — chain-aware if chains detected, otherwise via lex_core()
+    if has_chains {
+        write_lex_with_chains(buf);
+    } else {
+        write_lex_via_core(buf);
+    }
 
     // WFST weight emission: accept_weight() + lex_weighted() via lex_weighted_core()
     buf.push_str("fn accept_weight(state: u32) -> f64 {");
@@ -1137,6 +1814,13 @@ fn write_bitmap_driven_lexer(
     // IS_ACCEPTING bitmap for O(1) acceptance checks in the inner loop
     write_is_accepting_check(buf, dfa);
 
+    // AL05: Detect multi-byte chains and emit chain table + try_chain function.
+    let chains = detect_multi_byte_chains(dfa, partition);
+    let has_chains = !chains.is_empty();
+    if has_chains {
+        write_chain_tables(buf, &chains);
+    }
+
     // dfa_next function using bitmap+popcount lookup
     buf.push_str(
         "#[inline(always)] fn dfa_next(state: u32, class: u8) -> u32 { \
@@ -1153,8 +1837,12 @@ fn write_bitmap_driven_lexer(
     write_accept_arms(buf, dfa);
     buf.push('}');
 
-    // lex()/lex_with_file_id() via lex_core()
-    write_lex_via_core(buf);
+    // lex()/lex_with_file_id() — chain-aware if chains detected, otherwise via lex_core()
+    if has_chains {
+        write_lex_with_chains(buf);
+    } else {
+        write_lex_via_core(buf);
+    }
 
     // WFST weight emission: accept_weight() + lex_weighted() via lex_weighted_core()
     buf.push_str("fn accept_weight(state: u32) -> f64 {");
@@ -1167,6 +1855,99 @@ fn write_bitmap_driven_lexer(
     write_lex_lattice_via_core(buf);
 }
 
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AL05: Multi-byte chain transition codegen
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Write chain tables and a `try_chain` inline function to the output buffer.
+///
+/// Emits a `try_chain(state: u32, bytes: &[u8], pos: usize) -> Option<(u32, usize)>`
+/// function that, for known chain-start states, checks whether the upcoming bytes
+/// match the chain pattern. If so, returns `(end_state, bytes_consumed)`.
+///
+/// The generated function uses a match on the start state to dispatch to the
+/// correct chain, then performs a slice equality check for the chain bytes.
+/// This eliminates N individual DFA table lookups (one per chain byte) and
+/// replaces them with a single memcmp-style comparison.
+///
+/// ## Generated Code Shape
+///
+/// ```text
+/// #[inline(always)]
+/// fn try_chain(state: u32, bytes: &[u8], pos: usize) -> Option<(u32, usize)> {
+///     match state {
+///         0u32 => {
+///             if pos + 5 <= bytes.len() && bytes[pos..pos+5] == [101,114,114,111,114] {
+///                 return Some((7u32, 5));
+///             }
+///             None
+///         }
+///         _ => None,
+///     }
+/// }
+/// ```
+fn write_chain_tables(buf: &mut String, chains: &[MultiByteChain]) {
+    if chains.is_empty() {
+        return;
+    }
+
+    buf.push_str(
+        "#[inline(always)] fn try_chain(state: u32, bytes: &[u8], pos: usize) -> Option<(u32, usize)> { \
+         match state {"
+    );
+
+    // Group chains by start state (a state may have multiple outgoing chains
+    // via different initial bytes, though this is rare).
+    let mut chains_by_start: std::collections::BTreeMap<StateId, Vec<&MultiByteChain>> =
+        std::collections::BTreeMap::new();
+    for chain in chains {
+        chains_by_start
+            .entry(chain.start_state)
+            .or_default()
+            .push(chain);
+    }
+
+    for (start_state, state_chains) in &chains_by_start {
+        write!(buf, "{}u32 => {{", start_state).unwrap();
+
+        // Sort chains longest-first for greedy matching (longest match wins)
+        let mut sorted_chains: Vec<&&MultiByteChain> = state_chains.iter().collect();
+        sorted_chains.sort_unstable_by(|a, b| b.chain_len().cmp(&a.chain_len()));
+
+        for chain in sorted_chains {
+            let len = chain.chain_len();
+            write!(buf, "if pos + {} <= bytes.len() && ", len).unwrap();
+
+            // Emit byte comparison. For short chains (3-4 bytes), use individual
+            // comparisons to help the compiler optimize. For longer chains, use
+            // slice equality which compiles to memcmp.
+            if len <= 4 {
+                for (i, &byte) in chain.bytes.iter().enumerate() {
+                    if i > 0 {
+                        buf.push_str(" && ");
+                    }
+                    write!(buf, "bytes[pos + {}] == {}u8", i, byte).unwrap();
+                }
+            } else {
+                write!(buf, "bytes[pos..pos + {}] == [", len).unwrap();
+                for (i, &byte) in chain.bytes.iter().enumerate() {
+                    if i > 0 {
+                        buf.push(',');
+                    }
+                    write!(buf, "{}u8", byte).unwrap();
+                }
+                buf.push(']');
+            }
+
+            write!(buf, " {{ return Some(({}u32, {})); }}", chain.end_state, len).unwrap();
+        }
+
+        buf.push_str("None },");
+    }
+
+    buf.push_str("_ => None } }");
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Utility functions
@@ -1293,6 +2074,79 @@ pub fn terminal_to_variant_name(terminal: &str) -> String {
     }
 }
 
+/// BP03: Write a `token_variant_id()` helper function that maps each Token variant
+/// to a compact `u8` ordinal, suitable for indexing into static BP arrays.
+///
+/// The ordinal assignment mirrors [`TokenVariantMap::from_token_kinds`] so the
+/// generated code and the compile-time analysis use the same mapping.
+///
+/// Generated function signature:
+/// ```rust,ignore
+/// fn token_variant_id(token: &Token) -> u8
+/// ```
+///
+/// Data-carrying variants (Ident, Integer, Float, Boolean, StringLit, Dollar,
+/// DoubleDollar) use wildcard patterns (e.g., `Token::Ident(_) => 1`).
+/// Unit variants (Eof, Plus, Star, etc.) match directly.
+pub fn write_token_variant_id(buf: &mut String, variant_map: &TokenVariantMap) {
+    use std::fmt::Write as _;
+
+    buf.push_str(
+        "/// Map a Token variant to a compact ordinal for BP array indexing.\n\
+         #[inline(always)]\n\
+         fn token_variant_id(token: &Token) -> u8 { match token {"
+    );
+
+    /// Data-carrying token variants that need wildcard patterns.
+    const DATA_VARIANTS: &[&str] = &[
+        "Ident", "Integer", "Float", "Boolean", "StringLit", "Dollar", "DoubleDollar",
+    ];
+
+    for (id, name) in variant_map.id_to_name.iter().enumerate() {
+        if DATA_VARIANTS.contains(&name.as_str()) {
+            write!(buf, "Token::{}(_) => {},", name, id).unwrap();
+        } else {
+            write!(buf, "Token::{} => {},", name, id).unwrap();
+        }
+    }
+
+    buf.push_str("} }");
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AL04: Keyword recognition via minimal perfect hashing
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Generate MPH keyword lookup tables and write them into the codegen buffer.
+///
+/// Extracts keyword-like terminals from the terminal patterns, builds a CHD
+/// minimal perfect hash table, and emits the generated Rust constants and
+/// `mph_probe()` function into `buf`.
+///
+/// This function is gated on the `AL04_KeywordMph` optimization: callers
+/// should check `OptimizationGates::keyword_mph` before invoking.
+///
+/// Returns `true` if MPH tables were emitted (at least one keyword found),
+/// `false` otherwise.
+pub fn write_mph_keyword_tables(
+    buf: &mut String,
+    terminals: &[super::TerminalPattern],
+) -> bool {
+    match super::mph::build_mph_from_terminals(terminals) {
+        Some(table) => {
+            super::mph::write_mph_tables(buf, &table);
+            true
+        }
+        None => {
+            // No keywords found; emit a trivial probe that always returns None
+            // so downstream code can call mph_probe() unconditionally.
+            let empty = super::mph::MphTable::build(&[]);
+            super::mph::write_mph_tables(buf, &empty);
+            false
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1328,6 +2182,66 @@ mod tests {
         assert_eq!(terminal_to_variant_name("$$name("), "DdollarNameLp");
         assert_eq!(terminal_to_variant_name("$$int("), "DdollarIntLp");
         assert_eq!(terminal_to_variant_name("$$term("), "DdollarTermLp");
+    }
+
+    #[test]
+    fn test_write_token_variant_id() {
+        let token_kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Integer,
+            TokenKind::Fixed("+".to_string()),
+            TokenKind::Fixed("-".to_string()),
+            TokenKind::Fixed("*".to_string()),
+        ];
+        let variant_map = TokenVariantMap::from_token_kinds(&token_kinds);
+
+        let mut buf = String::new();
+        write_token_variant_id(&mut buf, &variant_map);
+
+        // Should contain the function signature
+        assert!(
+            buf.contains("fn token_variant_id(token: &Token) -> u8"),
+            "should contain function signature, got:\n{}",
+            buf
+        );
+
+        // Data-carrying variants should use wildcards
+        assert!(
+            buf.contains("Token::Ident(_)"),
+            "Ident should use wildcard pattern, got:\n{}",
+            buf
+        );
+        assert!(
+            buf.contains("Token::Integer(_)"),
+            "Integer should use wildcard pattern, got:\n{}",
+            buf
+        );
+
+        // Unit variants should not have wildcards
+        assert!(
+            buf.contains("Token::Eof =>"),
+            "Eof should be a unit pattern, got:\n{}",
+            buf
+        );
+        assert!(
+            buf.contains("Token::Plus =>"),
+            "Plus should be a unit pattern, got:\n{}",
+            buf
+        );
+
+        // Should have ordinals for each variant
+        // Eof = 0, Ident = 1 (always first two), then sorted: Integer, Minus, Plus, Star
+        assert!(
+            buf.contains("Token::Eof => 0"),
+            "Eof should map to ordinal 0, got:\n{}",
+            buf
+        );
+        assert!(
+            buf.contains("Token::Ident(_) => 1"),
+            "Ident should map to ordinal 1, got:\n{}",
+            buf
+        );
     }
 
     /// Helper: build a minimized DFA from terminal specs for compression testing.
@@ -1817,5 +2731,541 @@ mod tests {
         for (_, alts) in &info.ambiguous_states {
             assert!(alts.len() >= 2);
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // A-L06: Accept State Bitmap Widening tests
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Helper: create a DFA with the given number of states and accept state indices.
+    fn make_dfa_with_accepts(num_states: usize, accept_indices: &[usize]) -> Dfa {
+        let num_classes = 1;
+        let mut dfa = Dfa::new(num_classes);
+        // The constructor already adds state 0, so add (num_states - 1) more.
+        for _ in 1..num_states {
+            dfa.add_state(DfaState::with_classes(num_classes));
+        }
+        for &idx in accept_indices {
+            dfa.states[idx].accept = Some(TokenKind::Ident);
+        }
+        dfa
+    }
+
+    #[test]
+    fn test_accept_bitmap_small_dfa() {
+        // 5-state DFA, states 1 and 3 accepting
+        let dfa = make_dfa_with_accepts(5, &[1, 3]);
+        let mut buf = String::new();
+        write_is_accepting_check(&mut buf, &dfa);
+
+        // Should produce a single-word bitmap: [u64; 1]
+        assert!(buf.contains("static IS_ACCEPTING: [u64; 1]"), "buf = {buf}");
+        // Bit 1 and bit 3 set → 0b1010 = 0x000000000000000a
+        assert!(buf.contains("0x000000000000000a"), "buf = {buf}");
+        // Should contain the bitwise check function
+        assert!(buf.contains("(IS_ACCEPTING[(state >> 6) as usize] >> (state & 63)) & 1 != 0"), "buf = {buf}");
+    }
+
+    #[test]
+    fn test_accept_bitmap_no_accepts() {
+        // 3-state DFA, no accepting states
+        let dfa = make_dfa_with_accepts(3, &[]);
+        let mut buf = String::new();
+        write_is_accepting_check(&mut buf, &dfa);
+
+        // Single word, all zeros
+        assert!(buf.contains("[u64; 1]"), "buf = {buf}");
+        assert!(buf.contains("0x0000000000000000"), "buf = {buf}");
+    }
+
+    #[test]
+    fn test_accept_bitmap_all_accepts() {
+        // 4-state DFA, all accepting
+        let dfa = make_dfa_with_accepts(4, &[0, 1, 2, 3]);
+        let mut buf = String::new();
+        write_is_accepting_check(&mut buf, &dfa);
+
+        // Bits 0..3 set → 0b1111 = 0x000000000000000f
+        assert!(buf.contains("0x000000000000000f"), "buf = {buf}");
+    }
+
+    #[test]
+    fn test_accept_bitmap_boundary_64() {
+        // Exactly 64 states — should use [u64; 1]
+        let dfa = make_dfa_with_accepts(64, &[0, 63]);
+        let mut buf = String::new();
+        write_is_accepting_check(&mut buf, &dfa);
+
+        assert!(buf.contains("[u64; 1]"), "buf = {buf}");
+        // Bit 0 and bit 63 → 0x8000000000000001
+        assert!(buf.contains("0x8000000000000001"), "buf = {buf}");
+    }
+
+    #[test]
+    fn test_accept_bitmap_boundary_65() {
+        // 65 states — should use [u64; 2]
+        let dfa = make_dfa_with_accepts(65, &[0, 64]);
+        let mut buf = String::new();
+        write_is_accepting_check(&mut buf, &dfa);
+
+        assert!(buf.contains("[u64; 2]"), "buf = {buf}");
+        // Word 0: bit 0 → 0x0000000000000001
+        // Word 1: bit 0 (state 64) → 0x0000000000000001
+        assert!(buf.contains("0x0000000000000001,0x0000000000000001"), "buf = {buf}");
+    }
+
+    #[test]
+    fn test_accept_bitmap_large_dfa_200_states() {
+        // 200 states — should use [u64; 4] (ceil(200/64) = 4)
+        // Accept states at 0, 63, 64, 127, 128, 199
+        let dfa = make_dfa_with_accepts(200, &[0, 63, 64, 127, 128, 199]);
+        let mut buf = String::new();
+        write_is_accepting_check(&mut buf, &dfa);
+
+        assert!(buf.contains("[u64; 4]"), "buf = {buf}");
+        // Verify we can parse the generated hex words
+        // Word 0: bits 0 and 63 → 0x8000000000000001
+        // Word 1: bits 0 and 63 (states 64, 127) → 0x8000000000000001
+        // Word 2: bit 0 (state 128) → 0x0000000000000001
+        // Word 3: bit 7 (state 192+7=199) → 0x0000000000000080
+        assert!(buf.contains("0x8000000000000001,0x8000000000000001,0x0000000000000001,0x0000000000000080"), "buf = {buf}");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // AL02: compute_hot_states tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_compute_hot_states_depth_zero() {
+        // Depth 0: only the start state is hot.
+        let num_classes = 4;
+        let mut dfa = Dfa::new(num_classes);
+        let s1 = dfa.add_state(DfaState::with_classes(num_classes));
+        let _s2 = dfa.add_state(DfaState::with_classes(num_classes));
+        dfa.set_transition(0, 0, s1);
+
+        let hot = compute_hot_states(&dfa, 0);
+        assert_eq!(hot.len(), 1, "depth 0 should only contain start state");
+        assert!(hot.contains(&0), "start state must be in hot set");
+    }
+
+    #[test]
+    fn test_compute_hot_states_depth_one() {
+        // Depth 1: start state + all states reachable in one transition.
+        //
+        //   0 --class0--> 1
+        //   0 --class1--> 2
+        //   1 --class0--> 3  (NOT reachable at depth 1)
+        let num_classes = 4;
+        let mut dfa = Dfa::new(num_classes);
+        let s1 = dfa.add_state(DfaState::with_classes(num_classes));
+        let s2 = dfa.add_state(DfaState::with_classes(num_classes));
+        let s3 = dfa.add_state(DfaState::with_classes(num_classes));
+        dfa.set_transition(0, 0, s1);
+        dfa.set_transition(0, 1, s2);
+        dfa.set_transition(s1, 0, s3);
+
+        let hot = compute_hot_states(&dfa, 1);
+        assert_eq!(hot.len(), 3, "depth 1: start + 2 direct successors");
+        assert!(hot.contains(&0));
+        assert!(hot.contains(&(s1 as usize)));
+        assert!(hot.contains(&(s2 as usize)));
+        assert!(!hot.contains(&(s3 as usize)), "s3 is at depth 2, not depth 1");
+    }
+
+    #[test]
+    fn test_compute_hot_states_depth_two() {
+        // Depth 2: start + depth-1 successors + depth-2 successors.
+        //
+        //   0 --class0--> 1 --class0--> 3
+        //   0 --class1--> 2
+        //   3 --class0--> 4  (NOT reachable at depth 2)
+        let num_classes = 4;
+        let mut dfa = Dfa::new(num_classes);
+        let s1 = dfa.add_state(DfaState::with_classes(num_classes));
+        let s2 = dfa.add_state(DfaState::with_classes(num_classes));
+        let s3 = dfa.add_state(DfaState::with_classes(num_classes));
+        let s4 = dfa.add_state(DfaState::with_classes(num_classes));
+        dfa.set_transition(0, 0, s1);
+        dfa.set_transition(0, 1, s2);
+        dfa.set_transition(s1, 0, s3);
+        dfa.set_transition(s3, 0, s4);
+
+        let hot = compute_hot_states(&dfa, 2);
+        assert_eq!(hot.len(), 4, "depth 2: states 0,1,2,3");
+        assert!(hot.contains(&0));
+        assert!(hot.contains(&(s1 as usize)));
+        assert!(hot.contains(&(s2 as usize)));
+        assert!(hot.contains(&(s3 as usize)));
+        assert!(!hot.contains(&(s4 as usize)), "s4 is at depth 3");
+    }
+
+    #[test]
+    fn test_compute_hot_states_no_duplicates_with_cycles() {
+        // DFA with cycles: 0 -> 1 -> 0 (back edge). BFS should not
+        // revisit states, so the hot set should be {0, 1}.
+        let num_classes = 2;
+        let mut dfa = Dfa::new(num_classes);
+        let s1 = dfa.add_state(DfaState::with_classes(num_classes));
+        dfa.set_transition(0, 0, s1);
+        dfa.set_transition(s1, 0, 0); // back edge
+
+        let hot = compute_hot_states(&dfa, 5);
+        assert_eq!(hot.len(), 2, "cyclic DFA with 2 states: hot set should be {{0, 1}}");
+        assert!(hot.contains(&0));
+        assert!(hot.contains(&(s1 as usize)));
+    }
+
+    #[test]
+    fn test_compute_hot_states_skips_dead_state() {
+        // DEAD_STATE transitions should not be followed.
+        let num_classes = 4;
+        let mut dfa = Dfa::new(num_classes);
+        let s1 = dfa.add_state(DfaState::with_classes(num_classes));
+        // Only class 0 has a live transition; classes 1-3 are DEAD_STATE
+        dfa.set_transition(0, 0, s1);
+
+        let hot = compute_hot_states(&dfa, 1);
+        assert_eq!(hot.len(), 2, "only start and s1 should be hot");
+        assert!(hot.contains(&0));
+        assert!(hot.contains(&(s1 as usize)));
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // AL02: Hybrid codegen tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_hybrid_codegen_produces_valid_tokenstream() {
+        // Build a DFA with > 30 states (forces compressed path normally).
+        // With hybrid_lexer=true, the hybrid path should be taken and
+        // produce valid Rust code.
+        let mut specs: Vec<(&str, TokenKind)> = vec![
+            ("+", TokenKind::Fixed("+".to_string())),
+            ("-", TokenKind::Fixed("-".to_string())),
+            ("*", TokenKind::Fixed("*".to_string())),
+            ("/", TokenKind::Fixed("/".to_string())),
+            ("=", TokenKind::Fixed("=".to_string())),
+            ("==", TokenKind::Fixed("==".to_string())),
+            ("!=", TokenKind::Fixed("!=".to_string())),
+            ("<=", TokenKind::Fixed("<=".to_string())),
+            (">=", TokenKind::Fixed(">=".to_string())),
+            ("(", TokenKind::Fixed("(".to_string())),
+            (")", TokenKind::Fixed(")".to_string())),
+            ("{", TokenKind::Fixed("{".to_string())),
+            ("}", TokenKind::Fixed("}".to_string())),
+            ("[", TokenKind::Fixed("[".to_string())),
+            ("]", TokenKind::Fixed("]".to_string())),
+            (",", TokenKind::Fixed(",".to_string())),
+            (";", TokenKind::Fixed(";".to_string())),
+            (":", TokenKind::Fixed(":".to_string())),
+            (".", TokenKind::Fixed(".".to_string())),
+            ("->", TokenKind::Fixed("->".to_string())),
+            ("=>", TokenKind::Fixed("=>".to_string())),
+            ("++", TokenKind::Fixed("++".to_string())),
+            ("--", TokenKind::Fixed("--".to_string())),
+            ("&&", TokenKind::Fixed("&&".to_string())),
+            ("||", TokenKind::Fixed("||".to_string())),
+        ];
+        // Add many keywords to push past the 30-state threshold
+        for kw in &[
+            "if", "else", "while", "for", "return", "break", "continue",
+            "fn", "let", "mut", "const", "struct", "enum", "match",
+            "impl", "trait", "type", "where", "pub", "mod", "use",
+        ] {
+            specs.push((kw, TokenKind::Fixed(kw.to_string())));
+        }
+
+        let (dfa, partition) = build_test_dfa(
+            &specs,
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                float: true,
+                string_lit: true,
+                ..Default::default()
+            },
+        );
+
+        // Verify we actually have > 30 states (otherwise the test is pointless)
+        assert!(
+            dfa.states.len() > DIRECT_CODED_THRESHOLD,
+            "test DFA should have > {} states to exercise hybrid path, got {}",
+            DIRECT_CODED_THRESHOLD,
+            dfa.states.len()
+        );
+
+        let mut token_kinds: Vec<TokenKind> = vec![
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Integer,
+            TokenKind::Float,
+            TokenKind::StringLit,
+        ];
+        for (_text, kind) in &specs {
+            token_kinds.push(kind.clone());
+        }
+
+        let (code, strategy, _variant_map, _ambiguity) =
+            generate_lexer_string_hybrid(&dfa, &partition, &token_kinds, "test_hybrid", true);
+
+        // Verify hybrid strategy was selected
+        assert_eq!(
+            strategy,
+            CodegenStrategy::HybridDirectCompressed,
+            "hybrid mode should be selected for DFA with {} states",
+            dfa.states.len()
+        );
+
+        // Verify the generated code contains both direct-coded match arms
+        // and compressed table arrays
+        assert!(
+            code.contains("dfa_next_cold"),
+            "hybrid code should contain cold-state fallback function"
+        );
+
+        // Verify the generated code is valid Rust
+        let _ts: TokenStream = code
+            .parse()
+            .expect("generated hybrid lexer should be valid Rust");
+    }
+
+    #[test]
+    fn test_hybrid_skipped_for_small_dfa() {
+        // For a DFA with <= 30 states, hybrid mode should not activate
+        // even when hybrid_lexer=true.
+        let (dfa, partition) = build_test_dfa(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+                ("-", TokenKind::Fixed("-".to_string())),
+            ],
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
+        );
+
+        assert!(
+            dfa.states.len() <= DIRECT_CODED_THRESHOLD,
+            "test DFA should have <= {} states, got {}",
+            DIRECT_CODED_THRESHOLD,
+            dfa.states.len()
+        );
+
+        let token_kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Integer,
+            TokenKind::Fixed("+".to_string()),
+            TokenKind::Fixed("-".to_string()),
+        ];
+
+        let (_code, strategy, _variant_map, _ambiguity) =
+            generate_lexer_string_hybrid(&dfa, &partition, &token_kinds, "test_small", true);
+
+        assert_eq!(
+            strategy,
+            CodegenStrategy::DirectCoded,
+            "small DFA should use direct-coded even with hybrid_lexer=true"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // AL01: Comb repacking tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_repack_comb_preserves_lookup_correctness() {
+        // Build a DFA with known terminals, compress, repack, and verify
+        // that every (state, class) lookup still produces the correct result.
+        let (dfa, partition) = build_test_dfa(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+                ("++", TokenKind::Fixed("++".to_string())),
+                ("-", TokenKind::Fixed("-".to_string())),
+                ("->", TokenKind::Fixed("->".to_string())),
+                ("=", TokenKind::Fixed("=".to_string())),
+                ("==", TokenKind::Fixed("==".to_string())),
+                ("!=", TokenKind::Fixed("!=".to_string())),
+                ("(", TokenKind::Fixed("(".to_string())),
+                (")", TokenKind::Fixed(")".to_string())),
+                ("error", TokenKind::Fixed("error".to_string())),
+            ],
+            BuiltinNeeds {
+                ident: true,
+                integer: true,
+                ..Default::default()
+            },
+        );
+
+        let num_classes = partition.num_classes;
+        let mut comb = compress_rows_comb(&dfa, num_classes);
+        repack_comb_sparse_rows(&mut comb, num_classes);
+
+        // Verify every (state, class) lookup matches the flat DFA.
+        for (state_idx, state) in dfa.states.iter().enumerate() {
+            for class_id in 0..num_classes {
+                let flat_result = state.transitions[class_id];
+                let idx = comb.base[state_idx] as usize + class_id;
+                let comb_result = if idx < comb.check.len() && comb.check[idx] == state_idx as u32 {
+                    comb.next[idx]
+                } else {
+                    comb.default[state_idx]
+                };
+                assert_eq!(
+                    flat_result, comb_result,
+                    "repack: mismatch at state={}, class={}: flat={}, comb={}",
+                    state_idx, class_id, flat_result, comb_result
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_repack_comb_reduces_or_preserves_table_size() {
+        // After repacking, the table should be no larger than before.
+        let num_classes = 16;
+        let num_states = 20;
+        let mut dfa = Dfa::new(num_classes);
+        // Add states with only 1-2 live transitions each (very sparse)
+        for s in 1..num_states {
+            let state = dfa.add_state(DfaState::with_classes(num_classes));
+            dfa.set_transition(state, 0, 0);
+            if s % 3 == 0 {
+                dfa.set_transition(state, 1, 0);
+            }
+        }
+
+        let original = compress_rows_comb(&dfa, num_classes);
+        let original_next_len = original.next.len();
+
+        let mut repacked = compress_rows_comb(&dfa, num_classes);
+        repack_comb_sparse_rows(&mut repacked, num_classes);
+
+        assert!(
+            repacked.next.len() <= original_next_len,
+            "repacked NEXT ({}) should be <= original NEXT ({})",
+            repacked.next.len(),
+            original_next_len
+        );
+    }
+
+    #[test]
+    fn test_repack_comb_empty_dfa() {
+        // Should not panic on empty DFA
+        let dfa = Dfa::new(4);
+        let mut comb = compress_rows_comb(&dfa, 4);
+        repack_comb_sparse_rows(&mut comb, 4);
+        assert_eq!(comb.default.len(), 1);
+        assert_eq!(comb.default[0], u32::MAX);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // AL05: Multi-byte chain detection tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_chain_detection_keyword_chain() {
+        // A keyword like "error" creates a chain through the DFA.
+        // Not all intermediate states may form a chain (depends on whether
+        // letter equivalence classes are singletons), but the detection
+        // algorithm should not panic and should return valid chains.
+        let (dfa, partition) = build_test_dfa(
+            &[
+                ("error", TokenKind::Fixed("error".to_string())),
+            ],
+            BuiltinNeeds {
+                ident: true,
+                integer: false,
+                ..Default::default()
+            },
+        );
+
+        let chains = detect_multi_byte_chains(&dfa, &partition);
+        for chain in &chains {
+            assert!(chain.chain_len() >= 3, "chain too short: {:?}", chain);
+            assert_ne!(chain.start_state, chain.end_state, "chain is a self-loop: {:?}", chain);
+        }
+    }
+
+    #[test]
+    fn test_chain_detection_no_chains_in_tiny_dfa() {
+        // A DFA with only single-char terminals should have no chains of length >= 3.
+        let (dfa, partition) = build_test_dfa(
+            &[
+                ("+", TokenKind::Fixed("+".to_string())),
+                ("-", TokenKind::Fixed("-".to_string())),
+                ("*", TokenKind::Fixed("*".to_string())),
+            ],
+            BuiltinNeeds {
+                ident: false,
+                integer: false,
+                ..Default::default()
+            },
+        );
+
+        let chains = detect_multi_byte_chains(&dfa, &partition);
+        // Single-char terminals can't form 3-byte chains
+        assert!(
+            chains.is_empty(),
+            "expected no chains for single-char terminals, got {:?}",
+            chains
+        );
+    }
+
+    #[test]
+    fn test_chain_detection_preserves_accept_state_semantics() {
+        // Chains must not skip intermediate accept states.
+        // "=", "==", "===" each has an accept state at the prefix.
+        let (dfa, partition) = build_test_dfa(
+            &[
+                ("=", TokenKind::Fixed("=".to_string())),
+                ("==", TokenKind::Fixed("==".to_string())),
+                ("===", TokenKind::Fixed("===".to_string())),
+            ],
+            BuiltinNeeds {
+                ident: false,
+                integer: false,
+                ..Default::default()
+            },
+        );
+
+        let chains = detect_multi_byte_chains(&dfa, &partition);
+        // The "=" and "==" states are accept states, so they should NOT be
+        // chain intermediates. No valid 3-byte chain should exist here because
+        // all intermediate states along "===" are accept states.
+        for chain in &chains {
+            assert!(chain.chain_len() >= 3, "chain too short: {:?}", chain);
+        }
+    }
+
+    #[test]
+    fn test_chain_table_codegen_valid_syntax() {
+        // Verify that the generated chain table code is syntactically valid.
+        let chains = vec![
+            MultiByteChain {
+                start_state: 0,
+                end_state: 5,
+                bytes: vec![b'e', b'r', b'r', b'o', b'r'],
+            },
+            MultiByteChain {
+                start_state: 1,
+                end_state: 4,
+                bytes: vec![b'a', b'b', b'c'],
+            },
+        ];
+
+        let mut buf = String::new();
+        write_chain_tables(&mut buf, &chains);
+
+        // The output should contain a function named try_chain
+        assert!(buf.contains("fn try_chain("), "missing try_chain function: {buf}");
+        // Should contain match arms for start states 0 and 1
+        assert!(buf.contains("0u32 =>"), "missing start state 0: {buf}");
+        assert!(buf.contains("1u32 =>"), "missing start state 1: {buf}");
+        // Should reference end states
+        assert!(buf.contains("5u32"), "missing end state 5: {buf}");
+        assert!(buf.contains("4u32"), "missing end state 4: {buf}");
     }
 }

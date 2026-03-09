@@ -633,4 +633,134 @@ mod tests {
             .any(|expr| matches!(expr, SyntaxExpr::Op(PatternOp::Zip { .. })));
         assert!(has_zip, "Pattern should contain Zip operation");
     }
+
+    // ════════════════════════════════════════════════════════════════════════════
+    // B-CG04: is_ground_pattern tests
+    // ════════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn is_ground_pattern_variable_is_not_ground() {
+        let input = quote! {
+            name: TestGround,
+            types { Proc },
+            terms {
+                PNil . Proc ::= "nil" ;
+                PPar . Proc ::= "(" Proc "|" Proc ")" ;
+            },
+            rewrites {
+                R1 . |- (PPar P Q) ~> P ;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        let rw = &language.rewrites[0];
+        // LHS is (PPar P Q) — contains variables P, Q → not ground
+        assert!(!rw.left.is_ground_pattern(&language));
+    }
+
+    #[test]
+    fn is_ground_pattern_nullary_constructor_is_ground() {
+        let input = quote! {
+            name: TestGround2,
+            types { Proc },
+            terms {
+                PNil . Proc ::= "nil" ;
+                PPar . Proc ::= "(" Proc "|" Proc ")" ;
+            },
+            rewrites {
+                R1 . |- (PPar PNil PNil) ~> PNil ;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        let rw = &language.rewrites[0];
+        // LHS is (PPar PNil PNil) — all positions are nullary constructors → ground
+        assert!(rw.left.is_ground_pattern(&language));
+        // RHS is PNil — nullary constructor → ground
+        assert!(rw.right.is_ground_pattern(&language));
+    }
+
+    #[test]
+    fn is_ground_pattern_nested_constructors_are_ground() {
+        let input = quote! {
+            name: TestGround3,
+            types { Proc },
+            terms {
+                PNil . Proc ::= "nil" ;
+                PPar . Proc ::= "(" Proc "|" Proc ")" ;
+            },
+            rewrites {
+                R1 . |- (PPar (PPar PNil PNil) PNil) ~> PNil ;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        let rw = &language.rewrites[0];
+        // LHS is (PPar (PPar PNil PNil) PNil) — deeply nested, all ground
+        assert!(rw.left.is_ground_pattern(&language));
+    }
+
+    #[test]
+    fn is_ground_pattern_mixed_ground_and_var() {
+        let input = quote! {
+            name: TestGround4,
+            types { Proc },
+            terms {
+                PNil . Proc ::= "nil" ;
+                PPar . Proc ::= "(" Proc "|" Proc ")" ;
+            },
+            rewrites {
+                R1 . |- (PPar PNil P) ~> P ;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        let rw = &language.rewrites[0];
+        // LHS is (PPar PNil P) — one ground, one variable → not ground
+        assert!(!rw.left.is_ground_pattern(&language));
+    }
+
+    #[test]
+    fn generate_ground_rewrite_seeds_detects_ground_rules() {
+        let input = quote! {
+            name: TestGroundSeeds,
+            types { Proc },
+            terms {
+                PNil . Proc ::= "nil" ;
+                POne . Proc ::= "one" ;
+                PPar . Proc ::= "(" Proc "|" Proc ")" ;
+            },
+            rewrites {
+                // Ground rewrite: (PPar PNil PNil) ~> PNil
+                Ground1 . |- (PPar PNil PNil) ~> PNil ;
+                // Non-ground rewrite: (PPar P Q) ~> P  (has variables)
+                NonGround . |- (PPar P Q) ~> P ;
+                // Ground rewrite: (PPar POne PNil) ~> POne
+                Ground2 . |- (PPar POne PNil) ~> POne ;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        let (seeds, count) = crate::logic::rules::generate_ground_rewrite_seeds(&language);
+        // Should detect exactly 2 ground rewrites (Ground1 and Ground2)
+        assert_eq!(count, 2, "expected 2 ground rewrites, got {}", count);
+        assert_eq!(seeds.len(), 2, "expected 2 seed token streams");
+    }
+
+    #[test]
+    fn generate_ground_rewrite_seeds_skips_premise_rules() {
+        let input = quote! {
+            name: TestGroundPremise,
+            types { Proc },
+            terms {
+                PNil . Proc ::= "nil" ;
+                PPar . Proc ::= "(" Proc "|" Proc ")" ;
+            },
+            rewrites {
+                // Congruence (has premise): should be skipped
+                Cong . | S ~> T |- (PPar S PNil) ~> (PPar T PNil) ;
+                // Ground rewrite (no premise): should be detected
+                Ground . |- (PPar PNil PNil) ~> PNil ;
+            }
+        };
+        let language = parse2::<LanguageDef>(input).expect("parse ok");
+        let (_, count) = crate::logic::rules::generate_ground_rewrite_seeds(&language);
+        // Congruence rule has a premise → skipped. Only the ground rule is detected.
+        assert_eq!(count, 1, "expected 1 ground rewrite, got {}", count);
+    }
 }

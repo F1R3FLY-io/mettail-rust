@@ -12,7 +12,8 @@ use proc_macro2::TokenStream;
 
 use crate::automata::{
     codegen::{
-        analyze_sparsity, generate_lexer_code, generate_lexer_string, terminal_to_variant_name,
+        analyze_sparsity, generate_lexer_code, generate_lexer_string,
+        generate_lexer_string_hybrid, terminal_to_variant_name,
         CodegenStrategy, LexerAmbiguityInfo, TokenVariantMap,
     },
     minimize::minimize_dfa,
@@ -169,6 +170,72 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     // Step 6: Generate code as string
     let (code, codegen_strategy, variant_map, ambiguity_info) =
         generate_lexer_string(&min_dfa, &partition, &token_kinds, &input.language_name);
+
+    let stats = LexerStats {
+        num_terminals: input.terminals.len(),
+        num_nfa_states,
+        num_dfa_states,
+        num_minimized_states,
+        num_equiv_classes,
+        codegen_strategy,
+        dead_fraction: sparsity.dead_fraction,
+        variant_map,
+        ambiguity_info,
+    };
+
+    (code, stats)
+}
+
+/// Run the full lexer generation pipeline with AL02 hybrid gating.
+///
+/// Same as [`generate_lexer_as_string`] but accepts the `hybrid_lexer` optimization gate.
+/// When true and the DFA exceeds the direct-coded threshold, hot states (BFS depth ≤ 2)
+/// are direct-coded while cold states use compressed table lookup.
+pub fn generate_lexer_as_string_hybrid(input: &LexerInput, hybrid_lexer: bool) -> (String, LexerStats) {
+    // Step 1: Build NFA from terminal patterns
+    let nfa = build_nfa(&input.terminals, &input.needs, &input.literal_patterns);
+    let num_nfa_states = nfa.states.len();
+
+    // Step 2: Compute alphabet equivalence classes
+    let partition = compute_equivalence_classes(&nfa);
+    let num_equiv_classes = partition.num_classes;
+
+    // Step 3: Subset construction (NFA → DFA)
+    let dfa = subset_construction(&nfa, &partition);
+    let num_dfa_states = dfa.states.len();
+
+    // Step 4: Minimize DFA
+    let min_dfa = minimize_dfa(&dfa);
+    let num_minimized_states = min_dfa.states.len();
+
+    // Collect all token kinds for enum generation
+    let mut token_kinds: Vec<TokenKind> = vec![TokenKind::Eof];
+    if input.needs.ident {
+        token_kinds.push(TokenKind::Ident);
+    }
+    if input.needs.integer {
+        token_kinds.push(TokenKind::Integer);
+    }
+    if input.needs.float {
+        token_kinds.push(TokenKind::Float);
+    }
+    if input.needs.boolean {
+        token_kinds.push(TokenKind::True);
+        token_kinds.push(TokenKind::False);
+    }
+    if input.needs.string_lit {
+        token_kinds.push(TokenKind::StringLit);
+    }
+    for terminal in &input.terminals {
+        token_kinds.push(terminal.kind.clone());
+    }
+
+    // Step 5: Analyze sparsity
+    let sparsity = analyze_sparsity(&min_dfa);
+
+    // Step 6: Generate code as string with hybrid gating
+    let (code, codegen_strategy, variant_map, ambiguity_info) =
+        generate_lexer_string_hybrid(&min_dfa, &partition, &token_kinds, &input.language_name, hybrid_lexer);
 
     let stats = LexerStats {
         num_terminals: input.terminals.len(),

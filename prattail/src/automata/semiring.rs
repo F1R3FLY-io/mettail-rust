@@ -3538,7 +3538,7 @@ mod tests {
         #[test]
         fn test_entropy_weight_semiring_laws() {
             let a = EntropyWeight::new(2.0, 1.5);
-            let b = EntropyWeight::new(3.0, 2.0);
+            let _b = EntropyWeight::new(3.0, 2.0);
             let z = EntropyWeight::zero();
             let one = EntropyWeight::one();
 
@@ -4715,6 +4715,946 @@ mod tests {
             let lw = LogWeight::zero(); // +inf = probability 0
             let a = AmplitudeWeight::from_log_weight(lw);
             assert!(a.is_zero());
+        }
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // Proptest-based algebraic law verification for all semiring types
+    // ════════════════════════════════════════════════════════════════════════
+    //
+    // Tests the 10 fundamental semiring laws:
+    //   1. plus_associativity:    (a + b) + c == a + (b + c)
+    //   2. times_associativity:   (a * b) * c == a * (b * c)
+    //   3. plus_commutativity:    a + b == b + a
+    //   4. plus_identity:         a + 0 == a
+    //   5. times_left_identity:   1 * a == a
+    //   6. times_right_identity:  a * 1 == a
+    //   7. left_annihilation:     0 * a == 0
+    //   8. right_annihilation:    a * 0 == 0
+    //   9. left_distributivity:   a * (b + c) == (a * b) + (a * c)
+    //  10. right_distributivity:  (a + b) * c == (a * c) + (b * c)
+    //
+    // Each type is tested with 300 randomly generated inputs per law.
+
+    /// Generates proptest-based algebraic law tests for a semiring type.
+    ///
+    /// The macro generates a submodule containing proptest functions for all
+    /// 10 semiring laws (8 core + 2 distributivity).
+    macro_rules! semiring_law_tests {
+        ($mod_name:ident, $type:ty, $arb:expr) => {
+            mod $mod_name {
+                use super::super::*;
+                use proptest::prelude::*;
+
+                proptest! {
+                    #![proptest_config(ProptestConfig::with_cases(300))]
+
+                    // Law 1: Plus associativity — (a + b) + c == a + (b + c)
+                    #[test]
+                    fn plus_associativity(a in $arb, b in $arb, c in $arb) {
+                        let ab_c = a.plus(&b).plus(&c);
+                        let a_bc = a.plus(&b.plus(&c));
+                        prop_assert!(ab_c.approx_eq(&a_bc, 1e-10),
+                            "({:?} + {:?}) + {:?} = {:?}  !=  {:?} = {:?} + ({:?} + {:?})",
+                            a, b, c, ab_c, a_bc, a, b, c);
+                    }
+
+                    // Law 2: Times associativity — (a * b) * c == a * (b * c)
+                    #[test]
+                    fn times_associativity(a in $arb, b in $arb, c in $arb) {
+                        let ab_c = a.times(&b).times(&c);
+                        let a_bc = a.times(&b.times(&c));
+                        prop_assert!(ab_c.approx_eq(&a_bc, 1e-10),
+                            "({:?} * {:?}) * {:?} = {:?}  !=  {:?} = {:?} * ({:?} * {:?})",
+                            a, b, c, ab_c, a_bc, a, b, c);
+                    }
+
+                    // Law 3: Plus commutativity — a + b == b + a
+                    #[test]
+                    fn plus_commutativity(a in $arb, b in $arb) {
+                        let ab = a.plus(&b);
+                        let ba = b.plus(&a);
+                        prop_assert!(ab.approx_eq(&ba, 1e-10),
+                            "{:?} + {:?} = {:?}  !=  {:?} = {:?} + {:?}",
+                            a, b, ab, ba, b, a);
+                    }
+
+                    // Law 4: Plus identity — a + 0 == a
+                    #[test]
+                    fn plus_identity(a in $arb) {
+                        let z = <$type>::zero();
+                        let a_plus_z = a.plus(&z);
+                        let z_plus_a = z.plus(&a);
+                        prop_assert!(a_plus_z.approx_eq(&a, 1e-10),
+                            "{:?} + zero = {:?}  !=  {:?}", a, a_plus_z, a);
+                        prop_assert!(z_plus_a.approx_eq(&a, 1e-10),
+                            "zero + {:?} = {:?}  !=  {:?}", a, z_plus_a, a);
+                    }
+
+                    // Law 5: Times left identity — 1 * a == a
+                    #[test]
+                    fn times_left_identity(a in $arb) {
+                        let one = <$type>::one();
+                        let one_a = one.times(&a);
+                        prop_assert!(one_a.approx_eq(&a, 1e-10),
+                            "one * {:?} = {:?}  !=  {:?}", a, one_a, a);
+                    }
+
+                    // Law 6: Times right identity — a * 1 == a
+                    #[test]
+                    fn times_right_identity(a in $arb) {
+                        let one = <$type>::one();
+                        let a_one = a.times(&one);
+                        prop_assert!(a_one.approx_eq(&a, 1e-10),
+                            "{:?} * one = {:?}  !=  {:?}", a, a_one, a);
+                    }
+
+                    // Law 7: Left annihilation — 0 * a == 0
+                    #[test]
+                    fn left_annihilation(a in $arb) {
+                        let z = <$type>::zero();
+                        let z_a = z.times(&a);
+                        prop_assert!(z_a.approx_eq(&z, 1e-10),
+                            "zero * {:?} = {:?}  !=  zero = {:?}", a, z_a, z);
+                    }
+
+                    // Law 8: Right annihilation — a * 0 == 0
+                    #[test]
+                    fn right_annihilation(a in $arb) {
+                        let z = <$type>::zero();
+                        let a_z = a.times(&z);
+                        prop_assert!(a_z.approx_eq(&z, 1e-10),
+                            "{:?} * zero = {:?}  !=  zero = {:?}", a, a_z, z);
+                    }
+
+                    // Law 9: Left distributivity — a * (b + c) == (a * b) + (a * c)
+                    #[test]
+                    fn left_distributivity(a in $arb, b in $arb, c in $arb) {
+                        let lhs = a.times(&b.plus(&c));
+                        let rhs = a.times(&b).plus(&a.times(&c));
+                        prop_assert!(lhs.approx_eq(&rhs, 1e-10),
+                            "{:?} * ({:?} + {:?}) = {:?}  !=  {:?} = ({:?}*{:?}) + ({:?}*{:?})",
+                            a, b, c, lhs, rhs, a, b, a, c);
+                    }
+
+                    // Law 10: Right distributivity — (a + b) * c == (a * c) + (b * c)
+                    #[test]
+                    fn right_distributivity(a in $arb, b in $arb, c in $arb) {
+                        let lhs = a.plus(&b).times(&c);
+                        let rhs = a.times(&c).plus(&b.times(&c));
+                        prop_assert!(lhs.approx_eq(&rhs, 1e-10),
+                            "({:?} + {:?}) * {:?} = {:?}  !=  {:?} = ({:?}*{:?}) + ({:?}*{:?})",
+                            a, b, c, lhs, rhs, a, c, b, c);
+                    }
+                }
+            }
+        };
+    }
+
+    // TropicalWeight: (R+ union {+inf}, min, +, +inf, 0.0)
+    // Non-negative values only to ensure star convergence and valid domain.
+    semiring_law_tests!(
+        tropical_laws,
+        TropicalWeight,
+        (0.0f64..1000.0).prop_map(TropicalWeight::new)
+    );
+
+    // CountingWeight: (N, +, *, 0, 1) with saturating arithmetic
+    semiring_law_tests!(
+        counting_laws,
+        CountingWeight,
+        (0u64..1000).prop_map(CountingWeight::new)
+    );
+
+    // BooleanWeight: ({false, true}, or, and, false, true)
+    semiring_law_tests!(
+        boolean_laws,
+        BooleanWeight,
+        proptest::bool::ANY.prop_map(BooleanWeight::new)
+    );
+
+    // EditWeight: (N union {inf}, min, +, inf, 0)
+    // Capped at 50 to avoid overflow in saturating_add for 3-element products.
+    semiring_law_tests!(
+        edit_laws,
+        EditWeight,
+        (0u32..50).prop_map(EditWeight::new)
+    );
+
+    // ContextWeight: (P(Labels), union, intersection, empty, U)
+    // Using small bitsets to keep tests fast.
+    semiring_law_tests!(
+        context_laws,
+        ContextWeight,
+        (any::<u64>(), any::<u64>()).prop_map(|(lo, hi)| ContextWeight::new(lo as u128 | ((hi as u128) << 64)))
+    );
+
+    // ComplexityWeight: (N union {inf}, min, max, inf, 0)
+    // Bottleneck semiring: plus=min, times=max. Distributivity holds (lattice).
+    semiring_law_tests!(
+        complexity_laws,
+        ComplexityWeight,
+        (0u32..1000).prop_map(ComplexityWeight::new)
+    );
+
+    // ViterbiWeight: ([0,1], max, *, 0, 1)
+    // Probabilities in [0,1]. Distributivity: a * max(b,c) = max(a*b, a*c)
+    // holds for non-negative a.
+    semiring_law_tests!(
+        viterbi_laws,
+        ViterbiWeight,
+        (0.0f64..=1.0).prop_map(ViterbiWeight::new)
+    );
+
+    // ArcticWeight: (R union {-inf}, max, +, -inf, 0)
+    // Uses finite non-positive values for star convergence compatibility,
+    // but all laws hold for arbitrary finite values.
+    semiring_law_tests!(
+        arctic_laws,
+        ArcticWeight,
+        (-1000.0f64..1000.0).prop_map(ArcticWeight::new)
+    );
+
+    // FuzzyWeight: ([0,1], max, min, 0, 1)
+    // Possibilistic semiring. Distributivity: min(a, max(b,c)) = max(min(a,b), min(a,c))
+    // holds (lattice distributivity).
+    semiring_law_tests!(
+        fuzzy_laws,
+        FuzzyWeight,
+        (0.0f64..=1.0).prop_map(FuzzyWeight::new)
+    );
+
+    // ProductWeight<TropicalWeight, EditWeight>: component-wise operations
+    // Tests that the product of two valid semirings is itself a valid semiring.
+    semiring_law_tests!(
+        product_tropical_edit_laws,
+        ProductWeight<TropicalWeight, EditWeight>,
+        ((0.0f64..1000.0).prop_map(TropicalWeight::new),
+         (0u32..50).prop_map(EditWeight::new))
+            .prop_map(|(t, e)| ProductWeight::new(t, e))
+    );
+
+    // ProductWeight<BooleanWeight, CountingWeight>: component-wise operations
+    semiring_law_tests!(
+        product_boolean_counting_laws,
+        ProductWeight<BooleanWeight, CountingWeight>,
+        (proptest::bool::ANY.prop_map(BooleanWeight::new),
+         (0u64..1000).prop_map(CountingWeight::new))
+            .prop_map(|(b, c)| ProductWeight::new(b, c))
+    );
+
+    // ── TruncationWeight special handling ────────────────────────────────
+    //
+    // TruncationWeight<K> has zero() == one() == TruncationWeight(0), which
+    // means it is NOT a proper semiring in the strict algebraic sense:
+    //   - Left/right annihilation fails: zero * a = min(0 + a, K) = a != 0
+    //   - The fact that zero == one conflates additive and multiplicative
+    //     identities, which is only valid in the trivial ring {0}.
+    //
+    // However, the remaining laws (associativity, commutativity, identity,
+    // distributivity) DO hold. We test those individually.
+    mod truncation_laws {
+        use super::super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(300))]
+
+            // Law 1: Plus associativity
+            #[test]
+            fn plus_associativity(
+                a in (0u32..8).prop_map(TruncationWeight::<8>::new),
+                b in (0u32..8).prop_map(TruncationWeight::<8>::new),
+                c in (0u32..8).prop_map(TruncationWeight::<8>::new),
+            ) {
+                let ab_c = a.plus(&b).plus(&c);
+                let a_bc = a.plus(&b.plus(&c));
+                prop_assert!(ab_c.approx_eq(&a_bc, 1e-10),
+                    "plus_assoc: ({:?} + {:?}) + {:?} = {:?}  !=  {:?}", a, b, c, ab_c, a_bc);
+            }
+
+            // Law 2: Times associativity
+            #[test]
+            fn times_associativity(
+                a in (0u32..4).prop_map(TruncationWeight::<8>::new),
+                b in (0u32..4).prop_map(TruncationWeight::<8>::new),
+                c in (0u32..4).prop_map(TruncationWeight::<8>::new),
+            ) {
+                let ab_c = a.times(&b).times(&c);
+                let a_bc = a.times(&b.times(&c));
+                prop_assert!(ab_c.approx_eq(&a_bc, 1e-10),
+                    "times_assoc: ({:?} * {:?}) * {:?} = {:?}  !=  {:?}", a, b, c, ab_c, a_bc);
+            }
+
+            // Law 3: Plus commutativity
+            #[test]
+            fn plus_commutativity(
+                a in (0u32..8).prop_map(TruncationWeight::<8>::new),
+                b in (0u32..8).prop_map(TruncationWeight::<8>::new),
+            ) {
+                let ab = a.plus(&b);
+                let ba = b.plus(&a);
+                prop_assert!(ab.approx_eq(&ba, 1e-10),
+                    "plus_comm: {:?} + {:?} = {:?}  !=  {:?}", a, b, ab, ba);
+            }
+
+            // Law 4: Plus identity — a + 0 == a
+            // NOTE: zero() == TruncationWeight(0) and plus = max, so
+            // max(a, 0) = a for all a >= 0. This holds.
+            #[test]
+            fn plus_identity(
+                a in (0u32..8).prop_map(TruncationWeight::<8>::new),
+            ) {
+                let z = TruncationWeight::<8>::zero();
+                let a_z = a.plus(&z);
+                let z_a = z.plus(&a);
+                prop_assert!(a_z.approx_eq(&a, 1e-10),
+                    "plus_id: {:?} + zero = {:?}  !=  {:?}", a, a_z, a);
+                prop_assert!(z_a.approx_eq(&a, 1e-10),
+                    "plus_id: zero + {:?} = {:?}  !=  {:?}", a, z_a, a);
+            }
+
+            // Law 5+6: Times identity — 1 * a == a and a * 1 == a
+            // one() = TruncationWeight(0), times = min(a+b, K).
+            // one * a = min(0 + a.0, K) = a (since a.0 <= K). Holds.
+            #[test]
+            fn times_identity(
+                a in (0u32..8).prop_map(TruncationWeight::<8>::new),
+            ) {
+                let one = TruncationWeight::<8>::one();
+                let one_a = one.times(&a);
+                let a_one = a.times(&one);
+                prop_assert!(one_a.approx_eq(&a, 1e-10),
+                    "times_left_id: one * {:?} = {:?}  !=  {:?}", a, one_a, a);
+                prop_assert!(a_one.approx_eq(&a, 1e-10),
+                    "times_right_id: {:?} * one = {:?}  !=  {:?}", a, a_one, a);
+            }
+
+            // Laws 7+8 (annihilation) SKIPPED: zero == one == TruncationWeight(0),
+            // so zero * a = min(0 + a, K) = a, not zero. Annihilation fails
+            // because the additive and multiplicative identities coincide at 0,
+            // yet the "annihilator" should send everything to 0 under times.
+
+            // Laws 9+10: Distributivity
+            // a * (b + c) = min(a + max(b, c), K)
+            // (a*b) + (a*c) = max(min(a+b, K), min(a+c, K))
+            // These are equal when a+max(b,c) <= K and a+min(b,c) <= K,
+            // but can differ near the saturation boundary.
+            // Use small values to stay below K=8.
+            #[test]
+            fn left_distributivity(
+                a in (0u32..3).prop_map(TruncationWeight::<8>::new),
+                b in (0u32..3).prop_map(TruncationWeight::<8>::new),
+                c in (0u32..3).prop_map(TruncationWeight::<8>::new),
+            ) {
+                let lhs = a.times(&b.plus(&c));
+                let rhs = a.times(&b).plus(&a.times(&c));
+                prop_assert!(lhs.approx_eq(&rhs, 1e-10),
+                    "left_dist: {:?} * ({:?} + {:?}) = {:?}  !=  {:?}", a, b, c, lhs, rhs);
+            }
+
+            #[test]
+            fn right_distributivity(
+                a in (0u32..3).prop_map(TruncationWeight::<8>::new),
+                b in (0u32..3).prop_map(TruncationWeight::<8>::new),
+                c in (0u32..3).prop_map(TruncationWeight::<8>::new),
+            ) {
+                let lhs = a.plus(&b).times(&c);
+                let rhs = a.times(&c).plus(&b.times(&c));
+                prop_assert!(lhs.approx_eq(&rhs, 1e-10),
+                    "right_dist: ({:?} + {:?}) * {:?} = {:?}  !=  {:?}", a, b, c, lhs, rhs);
+            }
+        }
+    }
+
+    // ── Additional type-specific proptest properties ─────────────────────
+
+    mod idempotent_plus_tests {
+        use super::super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(300))]
+
+            // TropicalWeight is idempotent: a + a == a (min(a, a) = a)
+            #[test]
+            fn prop_tropical_idempotent_plus(
+                a in (0.0f64..1000.0).prop_map(TropicalWeight::new),
+            ) {
+                prop_assert!(a.plus(&a).approx_eq(&a, 1e-10),
+                    "tropical idempotent: {:?} + {:?} = {:?}  !=  {:?}",
+                    a, a, a.plus(&a), a);
+            }
+
+            // BooleanWeight is idempotent: a + a == a (a || a = a)
+            #[test]
+            fn prop_boolean_idempotent_plus(
+                a in proptest::bool::ANY.prop_map(BooleanWeight::new),
+            ) {
+                prop_assert!(a.plus(&a).approx_eq(&a, 1e-10),
+                    "boolean idempotent: {:?} + {:?} = {:?}  !=  {:?}",
+                    a, a, a.plus(&a), a);
+            }
+
+            // EditWeight is idempotent: a + a == a (min(a, a) = a)
+            #[test]
+            fn prop_edit_idempotent_plus(
+                a in (0u32..50).prop_map(EditWeight::new),
+            ) {
+                prop_assert!(a.plus(&a).approx_eq(&a, 1e-10),
+                    "edit idempotent: {:?} + {:?} = {:?}  !=  {:?}",
+                    a, a, a.plus(&a), a);
+            }
+
+            // ContextWeight is idempotent: a + a == a (a | a = a)
+            #[test]
+            fn prop_context_idempotent_plus(
+                a in any::<u128>().prop_map(ContextWeight::new),
+            ) {
+                prop_assert!(a.plus(&a).approx_eq(&a, 1e-10),
+                    "context idempotent: {:?} + {:?} = {:?}  !=  {:?}",
+                    a, a, a.plus(&a), a);
+            }
+
+            // ComplexityWeight is idempotent: a + a == a (min(a, a) = a)
+            #[test]
+            fn prop_complexity_idempotent_plus(
+                a in (0u32..1000).prop_map(ComplexityWeight::new),
+            ) {
+                prop_assert!(a.plus(&a).approx_eq(&a, 1e-10),
+                    "complexity idempotent: {:?} + {:?} = {:?}  !=  {:?}",
+                    a, a, a.plus(&a), a);
+            }
+
+            // ViterbiWeight is idempotent: a + a == a (max(a, a) = a)
+            #[test]
+            fn prop_viterbi_idempotent_plus(
+                a in (0.0f64..=1.0).prop_map(ViterbiWeight::new),
+            ) {
+                prop_assert!(a.plus(&a).approx_eq(&a, 1e-10),
+                    "viterbi idempotent: {:?} + {:?} = {:?}  !=  {:?}",
+                    a, a, a.plus(&a), a);
+            }
+
+            // ArcticWeight is idempotent: a + a == a (max(a, a) = a)
+            #[test]
+            fn prop_arctic_idempotent_plus(
+                a in (-1000.0f64..1000.0).prop_map(ArcticWeight::new),
+            ) {
+                prop_assert!(a.plus(&a).approx_eq(&a, 1e-10),
+                    "arctic idempotent: {:?} + {:?} = {:?}  !=  {:?}",
+                    a, a, a.plus(&a), a);
+            }
+
+            // FuzzyWeight is idempotent: a + a == a (max(a, a) = a)
+            #[test]
+            fn prop_fuzzy_idempotent_plus(
+                a in (0.0f64..=1.0).prop_map(FuzzyWeight::new),
+            ) {
+                prop_assert!(a.plus(&a).approx_eq(&a, 1e-10),
+                    "fuzzy idempotent: {:?} + {:?} = {:?}  !=  {:?}",
+                    a, a, a.plus(&a), a);
+            }
+
+            // TruncationWeight is idempotent: a + a == a (max(a, a) = a)
+            #[test]
+            fn prop_truncation_idempotent_plus(
+                a in (0u32..8).prop_map(TruncationWeight::<8>::new),
+            ) {
+                prop_assert!(a.plus(&a).approx_eq(&a, 1e-10),
+                    "truncation idempotent: {:?} + {:?} = {:?}  !=  {:?}",
+                    a, a, a.plus(&a), a);
+            }
+        }
+    }
+
+    mod star_fixpoint_tests {
+        use super::super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(300))]
+
+            // Star fixpoint for TropicalWeight:
+            // a.star() should satisfy: a* = 1 + a * a*
+            // For non-negative TropicalWeight, star(a) = one = 0.0.
+            // Then 1 + a * a* = min(0.0, a + 0.0) = min(0.0, a) = 0.0 for a >= 0.
+            #[test]
+            fn prop_star_fixpoint_tropical(
+                a in (0.0f64..100.0).prop_map(TropicalWeight::new),
+            ) {
+                let star_a = a.star();
+                let rhs = TropicalWeight::one().plus(&a.times(&star_a));
+                prop_assert!(star_a.approx_eq(&rhs, 1e-10),
+                    "star fixpoint: star({:?}) = {:?}  !=  1 + {:?} * star({:?}) = {:?}",
+                    a, star_a, a, a, rhs);
+            }
+
+            // Star fixpoint for BooleanWeight:
+            // star(a) = true for all a. 1 + a * star(a) = true || (a && true) = true.
+            #[test]
+            fn prop_star_fixpoint_boolean(
+                a in proptest::bool::ANY.prop_map(BooleanWeight::new),
+            ) {
+                let star_a = a.star();
+                let rhs = BooleanWeight::one().plus(&a.times(&star_a));
+                prop_assert!(star_a.approx_eq(&rhs, 1e-10),
+                    "star fixpoint: star({:?}) = {:?}  !=  {:?}", a, star_a, rhs);
+            }
+
+            // Star fixpoint for EditWeight:
+            // star(a) = one = EditWeight(0). 1 + a * a* = min(0, a + 0) = 0.
+            #[test]
+            fn prop_star_fixpoint_edit(
+                a in (0u32..50).prop_map(EditWeight::new),
+            ) {
+                let star_a = a.star();
+                let rhs = EditWeight::one().plus(&a.times(&star_a));
+                prop_assert!(star_a.approx_eq(&rhs, 1e-10),
+                    "star fixpoint: star({:?}) = {:?}  !=  {:?}", a, star_a, rhs);
+            }
+
+            // Star fixpoint for ViterbiWeight:
+            // star(a) = 1.0. 1 + a * a* = max(1.0, a * 1.0) = max(1.0, a) = 1.0
+            // since a in [0,1].
+            #[test]
+            fn prop_star_fixpoint_viterbi(
+                a in (0.0f64..=1.0).prop_map(ViterbiWeight::new),
+            ) {
+                let star_a = a.star();
+                let rhs = ViterbiWeight::one().plus(&a.times(&star_a));
+                prop_assert!(star_a.approx_eq(&rhs, 1e-10),
+                    "star fixpoint: star({:?}) = {:?}  !=  {:?}", a, star_a, rhs);
+            }
+
+            // Star fixpoint for ArcticWeight (non-positive values):
+            // star(a) = one = 0.0 for a <= 0.
+            // 1 + a * a* = max(0.0, a + 0.0) = max(0.0, a) = 0.0 for a <= 0.
+            #[test]
+            fn prop_star_fixpoint_arctic(
+                a in (-100.0f64..=0.0).prop_map(ArcticWeight::new),
+            ) {
+                let star_a = a.star();
+                let rhs = ArcticWeight::one().plus(&a.times(&star_a));
+                prop_assert!(star_a.approx_eq(&rhs, 1e-10),
+                    "star fixpoint: star({:?}) = {:?}  !=  {:?}", a, star_a, rhs);
+            }
+
+            // Star fixpoint for FuzzyWeight:
+            // star(a) = 1.0. 1 + a * a* = max(1.0, min(a, 1.0)) = 1.0.
+            #[test]
+            fn prop_star_fixpoint_fuzzy(
+                a in (0.0f64..=1.0).prop_map(FuzzyWeight::new),
+            ) {
+                let star_a = a.star();
+                let rhs = FuzzyWeight::one().plus(&a.times(&star_a));
+                prop_assert!(star_a.approx_eq(&rhs, 1e-10),
+                    "star fixpoint: star({:?}) = {:?}  !=  {:?}", a, star_a, rhs);
+            }
+
+            // Star fixpoint for ComplexityWeight:
+            // star(a) = one = ComplexityWeight(0).
+            // 1 + a * a* = min(0, max(a.0, 0)) = min(0, a.0) = 0 for a.0 >= 0.
+            // Wait: min(0, max(a.0, 0)) = min(0, a.0) only if a.0 >= 0,
+            // but max(a.0, 0) = a.0 for a.0 >= 0. And min(0, a.0) = 0 for a.0 >= 0.
+            // Actually: 1 + a * a* where + is min and * is max:
+            //   a * a* = max(a.0, 0) = a.0 for a.0 >= 0
+            //   1 + (a * a*) = min(0, a.0) = 0 for a.0 >= 0
+            // So a* = 0 == one. And rhs = 0 == one. They match.
+            #[test]
+            fn prop_star_fixpoint_complexity(
+                a in (0u32..1000).prop_map(ComplexityWeight::new),
+            ) {
+                let star_a = a.star();
+                let rhs = ComplexityWeight::one().plus(&a.times(&star_a));
+                prop_assert!(star_a.approx_eq(&rhs, 1e-10),
+                    "star fixpoint: star({:?}) = {:?}  !=  {:?}", a, star_a, rhs);
+            }
+
+            // Star fixpoint for ContextWeight:
+            // star(a) = one = U (all bits set).
+            // 1 + a * a* = U | (a & U) = U | a = U. Matches.
+            #[test]
+            fn prop_star_fixpoint_context(
+                a in any::<u128>().prop_map(ContextWeight::new),
+            ) {
+                let star_a = a.star();
+                let rhs = ContextWeight::one().plus(&a.times(&star_a));
+                prop_assert!(star_a.approx_eq(&rhs, 1e-10),
+                    "star fixpoint: star({:?}) = {:?}  !=  {:?}", a, star_a, rhs);
+            }
+        }
+    }
+
+    // ── Feature-gated proptest suites ────────────────────────────────────
+
+    #[cfg(feature = "wfst-log")]
+    mod log_weight_proptest_laws {
+        use super::super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(300))]
+
+            // Law 1: Plus associativity for LogWeight
+            #[test]
+            fn plus_associativity(
+                a in (0.0f64..100.0).prop_map(LogWeight::new),
+                b in (0.0f64..100.0).prop_map(LogWeight::new),
+                c in (0.0f64..100.0).prop_map(LogWeight::new),
+            ) {
+                let ab_c = a.plus(&b).plus(&c);
+                let a_bc = a.plus(&b.plus(&c));
+                prop_assert!(ab_c.approx_eq(&a_bc, 1e-8),
+                    "log plus_assoc: ({:?} + {:?}) + {:?} = {:?}  !=  {:?}",
+                    a, b, c, ab_c, a_bc);
+            }
+
+            // Law 2: Times associativity for LogWeight
+            #[test]
+            fn times_associativity(
+                a in (0.0f64..100.0).prop_map(LogWeight::new),
+                b in (0.0f64..100.0).prop_map(LogWeight::new),
+                c in (0.0f64..100.0).prop_map(LogWeight::new),
+            ) {
+                let ab_c = a.times(&b).times(&c);
+                let a_bc = a.times(&b.times(&c));
+                prop_assert!(ab_c.approx_eq(&a_bc, 1e-10),
+                    "log times_assoc: ({:?} * {:?}) * {:?} = {:?}  !=  {:?}",
+                    a, b, c, ab_c, a_bc);
+            }
+
+            // Law 3: Plus commutativity for LogWeight
+            #[test]
+            fn plus_commutativity(
+                a in (0.0f64..100.0).prop_map(LogWeight::new),
+                b in (0.0f64..100.0).prop_map(LogWeight::new),
+            ) {
+                let ab = a.plus(&b);
+                let ba = b.plus(&a);
+                prop_assert!(ab.approx_eq(&ba, 1e-10),
+                    "log plus_comm: {:?} + {:?} = {:?}  !=  {:?}", a, b, ab, ba);
+            }
+
+            // Law 4: Plus identity
+            #[test]
+            fn plus_identity(a in (0.0f64..100.0).prop_map(LogWeight::new)) {
+                let z = LogWeight::zero();
+                prop_assert!(a.plus(&z).approx_eq(&a, 1e-10),
+                    "log plus_id right: {:?}", a);
+                prop_assert!(z.plus(&a).approx_eq(&a, 1e-10),
+                    "log plus_id left: {:?}", a);
+            }
+
+            // Law 5: Times left identity
+            #[test]
+            fn times_left_identity(a in (0.0f64..100.0).prop_map(LogWeight::new)) {
+                let one = LogWeight::one();
+                prop_assert!(one.times(&a).approx_eq(&a, 1e-10),
+                    "log times_left_id: {:?}", a);
+            }
+
+            // Law 6: Times right identity
+            #[test]
+            fn times_right_identity(a in (0.0f64..100.0).prop_map(LogWeight::new)) {
+                let one = LogWeight::one();
+                prop_assert!(a.times(&one).approx_eq(&a, 1e-10),
+                    "log times_right_id: {:?}", a);
+            }
+
+            // Law 7: Left annihilation
+            #[test]
+            fn left_annihilation(a in (0.0f64..100.0).prop_map(LogWeight::new)) {
+                let z = LogWeight::zero();
+                let result = z.times(&a);
+                prop_assert!(result.is_zero(),
+                    "log left_annih: zero * {:?} = {:?}", a, result);
+            }
+
+            // Law 8: Right annihilation
+            #[test]
+            fn right_annihilation(a in (0.0f64..100.0).prop_map(LogWeight::new)) {
+                let z = LogWeight::zero();
+                let result = a.times(&z);
+                prop_assert!(result.is_zero(),
+                    "log right_annih: {:?} * zero = {:?}", a, result);
+            }
+
+            // Law 9: Left distributivity
+            // LogWeight times is +, plus is log-sum-exp.
+            // a * (b + c) = a + logsumexp(b, c)
+            // (a*b) + (a*c) = logsumexp(a+b, a+c)
+            // These are equal because logsumexp(a+b, a+c) = a + logsumexp(b, c).
+            #[test]
+            fn left_distributivity(
+                a in (0.0f64..50.0).prop_map(LogWeight::new),
+                b in (0.0f64..50.0).prop_map(LogWeight::new),
+                c in (0.0f64..50.0).prop_map(LogWeight::new),
+            ) {
+                let lhs = a.times(&b.plus(&c));
+                let rhs = a.times(&b).plus(&a.times(&c));
+                prop_assert!(lhs.approx_eq(&rhs, 1e-8),
+                    "log left_dist: {:?} * ({:?} + {:?}) = {:?}  !=  {:?}",
+                    a, b, c, lhs, rhs);
+            }
+
+            // Law 10: Right distributivity
+            #[test]
+            fn right_distributivity(
+                a in (0.0f64..50.0).prop_map(LogWeight::new),
+                b in (0.0f64..50.0).prop_map(LogWeight::new),
+                c in (0.0f64..50.0).prop_map(LogWeight::new),
+            ) {
+                let lhs = a.plus(&b).times(&c);
+                let rhs = a.times(&c).plus(&b.times(&c));
+                prop_assert!(lhs.approx_eq(&rhs, 1e-8),
+                    "log right_dist: ({:?} + {:?}) * {:?} = {:?}  !=  {:?}",
+                    a, b, c, lhs, rhs);
+            }
+
+            // LogWeight is NOT idempotent: a + a != a
+            // Verify: logsumexp(a, a) = a - ln(2) != a
+            #[test]
+            fn non_idempotent_plus(
+                a in (0.1f64..50.0).prop_map(LogWeight::new),
+            ) {
+                let aa = a.plus(&a);
+                // a + a = a - ln(2) in log space
+                let expected_value = a.0 - 2.0_f64.ln();
+                prop_assert!(aa.approx_eq(&LogWeight::new(expected_value), 1e-10),
+                    "log non-idempotent: {:?} + {:?} = {:?}, expected LogWeight({:.4})",
+                    a, a, aa, expected_value);
+            }
+
+            // Star fixpoint: star(a) ≈ 1 + a * star(a) for a > 0
+            #[test]
+            fn star_fixpoint(
+                a in (0.1f64..10.0).prop_map(LogWeight::new),
+            ) {
+                let star_a = a.star();
+                let rhs = LogWeight::one().plus(&a.times(&star_a));
+                prop_assert!(star_a.approx_eq(&rhs, 1e-4),
+                    "log star fixpoint: star({:?}) = {:?}  !=  {:?}", a, star_a, rhs);
+            }
+        }
+    }
+
+    #[cfg(feature = "wfst-log")]
+    mod entropy_weight_proptest_laws {
+        use super::super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(300))]
+
+            // Law 2: Times associativity for EntropyWeight
+            #[test]
+            fn times_associativity(
+                a in (0.0f64..50.0, 0.0f64..50.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+                b in (0.0f64..50.0, 0.0f64..50.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+                c in (0.0f64..50.0, 0.0f64..50.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+            ) {
+                let ab_c = a.times(&b).times(&c);
+                let a_bc = a.times(&b.times(&c));
+                prop_assert!(ab_c.approx_eq(&a_bc, 1e-8),
+                    "entropy times_assoc: {:?} vs {:?}", ab_c, a_bc);
+            }
+
+            // Law 3: Plus commutativity for EntropyWeight
+            #[test]
+            fn plus_commutativity(
+                a in (0.0f64..50.0, 0.0f64..50.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+                b in (0.0f64..50.0, 0.0f64..50.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+            ) {
+                let ab = a.plus(&b);
+                let ba = b.plus(&a);
+                prop_assert!(ab.approx_eq(&ba, 1e-8),
+                    "entropy plus_comm: {:?} + {:?} = {:?}  !=  {:?}", a, b, ab, ba);
+            }
+
+            // Law 4: Plus identity
+            #[test]
+            fn plus_identity(
+                a in (0.0f64..50.0, 0.0f64..50.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+            ) {
+                let z = EntropyWeight::zero();
+                prop_assert!(a.plus(&z).approx_eq(&a, 1e-10),
+                    "entropy plus_id right: {:?}", a);
+                prop_assert!(z.plus(&a).approx_eq(&a, 1e-10),
+                    "entropy plus_id left: {:?}", a);
+            }
+
+            // Law 5+6: Times identity
+            #[test]
+            fn times_identity(
+                a in (0.0f64..50.0, 0.0f64..50.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+            ) {
+                let one = EntropyWeight::one();
+                prop_assert!(one.times(&a).approx_eq(&a, 1e-10),
+                    "entropy times_left_id: {:?}", a);
+                prop_assert!(a.times(&one).approx_eq(&a, 1e-10),
+                    "entropy times_right_id: {:?}", a);
+            }
+
+            // Law 7+8: Annihilation
+            // zero.times(a) should give zero.
+            // zero = (inf, 0). zero.times(a) = (inf + a.w, 0 + a.e) = (inf, a.e).
+            // But zero = (inf, 0.0) and is_zero checks weight == inf.
+            // So the result is_zero() = true even though expectation differs.
+            // approx_eq checks: both zero -> true. So this works.
+            #[test]
+            fn left_annihilation(
+                a in (0.0f64..50.0, 0.0f64..50.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+            ) {
+                let z = EntropyWeight::zero();
+                let result = z.times(&a);
+                prop_assert!(result.is_zero(),
+                    "entropy left_annih: zero * {:?} = {:?}", a, result);
+            }
+
+            #[test]
+            fn right_annihilation(
+                a in (0.0f64..50.0, 0.0f64..50.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+            ) {
+                let z = EntropyWeight::zero();
+                let result = a.times(&z);
+                prop_assert!(result.is_zero(),
+                    "entropy right_annih: {:?} * zero = {:?}", a, result);
+            }
+
+            // Star fixpoint for EntropyWeight:
+            // star(a) ≈ 1 + a * star(a)
+            #[test]
+            fn star_fixpoint(
+                a in (0.5f64..10.0, 0.0f64..5.0).prop_map(|(w, e)| EntropyWeight::new(w, e)),
+            ) {
+                let star_a = a.star();
+                if !star_a.is_zero() {
+                    let rhs = EntropyWeight::one().plus(&a.times(&star_a));
+                    prop_assert!(star_a.approx_eq(&rhs, 1e-4),
+                        "entropy star fixpoint: star({:?}) = {:?}  !=  {:?}", a, star_a, rhs);
+                }
+            }
+        }
+    }
+
+    #[cfg(feature = "quantum")]
+    mod amplitude_weight_proptest_laws {
+        use super::super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig::with_cases(300))]
+
+            // Law 1: Plus associativity
+            #[test]
+            fn plus_associativity(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+                b in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+                c in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let ab_c = a.plus(&b).plus(&c);
+                let a_bc = a.plus(&b.plus(&c));
+                prop_assert!(ab_c.approx_eq(&a_bc, 1e-10),
+                    "amplitude plus_assoc: {:?} vs {:?}", ab_c, a_bc);
+            }
+
+            // Law 2: Times associativity
+            #[test]
+            fn times_associativity(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+                b in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+                c in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let ab_c = a.times(&b).times(&c);
+                let a_bc = a.times(&b.times(&c));
+                prop_assert!(ab_c.approx_eq(&a_bc, 1e-8),
+                    "amplitude times_assoc: {:?} vs {:?}", ab_c, a_bc);
+            }
+
+            // Law 3: Plus commutativity
+            #[test]
+            fn plus_commutativity(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+                b in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let ab = a.plus(&b);
+                let ba = b.plus(&a);
+                prop_assert!(ab.approx_eq(&ba, 1e-10),
+                    "amplitude plus_comm: {:?} vs {:?}", ab, ba);
+            }
+
+            // Law 4: Plus identity
+            #[test]
+            fn plus_identity(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let z = AmplitudeWeight::zero();
+                prop_assert!(a.plus(&z).approx_eq(&a, 1e-10), "amplitude plus_id right");
+                prop_assert!(z.plus(&a).approx_eq(&a, 1e-10), "amplitude plus_id left");
+            }
+
+            // Law 5: Times left identity
+            #[test]
+            fn times_left_identity(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let one = AmplitudeWeight::one();
+                prop_assert!(one.times(&a).approx_eq(&a, 1e-10), "amplitude times_left_id");
+            }
+
+            // Law 6: Times right identity
+            #[test]
+            fn times_right_identity(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let one = AmplitudeWeight::one();
+                prop_assert!(a.times(&one).approx_eq(&a, 1e-10), "amplitude times_right_id");
+            }
+
+            // Law 7: Left annihilation
+            #[test]
+            fn left_annihilation(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let z = AmplitudeWeight::zero();
+                prop_assert!(z.times(&a).approx_eq(&z, 1e-10), "amplitude left_annih");
+            }
+
+            // Law 8: Right annihilation
+            #[test]
+            fn right_annihilation(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let z = AmplitudeWeight::zero();
+                prop_assert!(a.times(&z).approx_eq(&z, 1e-10), "amplitude right_annih");
+            }
+
+            // Law 9: Left distributivity — holds for complex numbers (ring)
+            #[test]
+            fn left_distributivity(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+                b in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+                c in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let lhs = a.times(&b.plus(&c));
+                let rhs = a.times(&b).plus(&a.times(&c));
+                prop_assert!(lhs.approx_eq(&rhs, 1e-8),
+                    "amplitude left_dist: {:?} vs {:?}", lhs, rhs);
+            }
+
+            // Law 10: Right distributivity
+            #[test]
+            fn right_distributivity(
+                a in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+                b in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+                c in (-10.0f64..10.0, -10.0f64..10.0).prop_map(|(r, i)| AmplitudeWeight::new(r, i)),
+            ) {
+                let lhs = a.plus(&b).times(&c);
+                let rhs = a.times(&c).plus(&b.times(&c));
+                prop_assert!(lhs.approx_eq(&rhs, 1e-8),
+                    "amplitude right_dist: {:?} vs {:?}", lhs, rhs);
+            }
         }
     }
 }

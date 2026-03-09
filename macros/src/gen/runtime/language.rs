@@ -26,6 +26,7 @@ pub fn generate_language_impl(
     raw_ascent_content: &TokenStream,
     core_raw_ascent_content: Option<&TokenStream>,
     pre_stratum_content: Option<&TokenStream>,
+    ground_rewrite_seeds: &[TokenStream],
 ) -> TokenStream {
     let name = &language.name;
     let name_str = name.to_string();
@@ -49,6 +50,7 @@ pub fn generate_language_impl(
                 raw_ascent_content,
                 core_raw_ascent_content,
                 pre_stratum_content,
+                ground_rewrite_seeds,
             ),
             generate_language_trait_impl_multi(name, &name_str, &name_lower, language),
         )
@@ -63,6 +65,7 @@ pub fn generate_language_impl(
                 language,
                 raw_ascent_content,
                 pre_stratum_content,
+                ground_rewrite_seeds,
             ),
             generate_language_trait_impl(name, primary_type, &name_str, &name_lower, language),
         )
@@ -511,6 +514,7 @@ fn generate_language_struct(
     language: &LanguageDef,
     raw_ascent_content: &TokenStream,
     pre_stratum_content: Option<&TokenStream>,
+    ground_rewrite_seeds: &[TokenStream],
 ) -> TokenStream {
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
@@ -555,6 +559,18 @@ fn generate_language_struct(
         }
     });
 
+    // B-CG04: Ground rewrite seed block (injected before prog.run())
+    let ground_seed_block = if ground_rewrite_seeds.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            // B-CG04: Seed statically known ground rewrite results at initialization.
+            // These rewrites have fully ground LHS patterns, so their results are
+            // available without per-iteration equation scanning.
+            #(#ground_rewrite_seeds)*
+        }
+    };
+
     // Sprint 5: Generate pre-stratum phase for run_ascent_typed
     let pre_stratum_phase = if pre_stratum_content.is_some() {
         quote! {
@@ -585,6 +601,7 @@ fn generate_language_struct(
             for (s, t) in &ground_rw {
                 prog.#rw_relation.push((s.clone(), t.clone()));
             }
+            #ground_seed_block
             prog.run();
         }
     } else {
@@ -592,6 +609,7 @@ fn generate_language_struct(
             let mut prog = #prog_struct_name::default();
             prog.#primary_relation.push((initial.clone(),));
             prog.step_term.push((initial.clone(),));
+            #ground_seed_block
             prog.run();
         }
     };
@@ -621,15 +639,51 @@ fn generate_language_struct(
                 #parse_preserving_vars_body
             }
 
+            /// A-RT05: Maximum term depth threshold for post-fixpoint convergence check.
+            ///
+            /// If any term in the fixpoint result exceeds this depth, a warning is
+            /// emitted to stderr. This catches pathological grammars where depth-increasing
+            /// rules cause unbounded term growth.
+            const MAX_FIXPOINT_TERM_DEPTH: u32 = 100;
+
             /// Run Ascent on a typed term (seeds with term as-is so step-by-step rewrites are visible)
             pub fn run_ascent_typed(term: &#term_name) -> mettail_runtime::AscentResults {
                 // Sprint B (R1): Clear term equality cache to prevent stale entries
                 // from a previous evaluation affecting this fixpoint computation.
                 mettail_runtime::clear_term_eq_cache();
 
+                // BCG05 epoch: increment the runtime epoch counter so that BCG05
+                // dedup HashSets in Ascent rule guards detect the new epoch and
+                // clear themselves. Without this, hashes from a previous
+                // run_ascent_typed() call persist and cause dedup guards to skip
+                // rule firings for previously-seen terms.
+                mettail_runtime::bump_bcg05_epoch();
+
                 let initial = term.0.clone();
 
                 #pre_stratum_phase
+
+                // A-RT05: Post-fixpoint depth check.
+                // Scan all terms produced by the fixpoint and warn if any exceed the
+                // depth threshold. This detects non-convergence caused by depth-increasing
+                // rules (e.g., f(x) => f(f(x))).
+                {
+                    let mut __rt05_max_depth: u32 = 0;
+                    for (__t,) in prog.#primary_relation.iter() {
+                        let __d = __t.term_depth();
+                        if __d > __rt05_max_depth {
+                            __rt05_max_depth = __d;
+                        }
+                    }
+                    if __rt05_max_depth > Self::MAX_FIXPOINT_TERM_DEPTH {
+                        eprintln!(
+                            "warning[A-RT05]: fixpoint produced term of depth {} (threshold: {}); \
+                             possible non-convergence from depth-increasing rules",
+                            __rt05_max_depth,
+                            Self::MAX_FIXPOINT_TERM_DEPTH,
+                        );
+                    }
+                }
 
                 // Extract results
                 let all_terms: Vec<#primary_type> = prog.#primary_relation
@@ -1213,6 +1267,7 @@ fn generate_language_struct_multi(
     raw_ascent_content: &TokenStream,
     core_raw_ascent_content: Option<&TokenStream>,
     pre_stratum_content: Option<&TokenStream>,
+    ground_rewrite_seeds: &[TokenStream],
 ) -> TokenStream {
     let language_name = format_ident!("{}Language", name);
     let term_name = format_ident!("{}Term", name);
@@ -1586,6 +1641,50 @@ fn generate_language_struct_multi(
         (quote! {}, quote! {})
     };
 
+    // B-CG04: Ground rewrite seed block for multi-category struct
+    let ground_seed_block_multi = if ground_rewrite_seeds.is_empty() {
+        quote! {}
+    } else {
+        quote! {
+            // B-CG04: Seed statically known ground rewrite results at initialization.
+            // These rewrites have fully ground LHS patterns, so their results are
+            // available without per-iteration equation scanning.
+            #(#ground_rewrite_seeds)*
+        }
+    };
+
+    // A-RT05: Generate per-category depth check lines for multi-category languages.
+    // Each line computes max term_depth() across all terms in that category's relation.
+    let depth_check_lines: Vec<TokenStream> = language
+        .types
+        .iter()
+        .map(|t| {
+            let cat_lower = format_ident!("{}", t.name.to_string().to_lowercase());
+            quote! {
+                for (__t,) in prog.#cat_lower.iter() {
+                    let __d = __t.term_depth();
+                    if __d > __rt05_max_depth {
+                        __rt05_max_depth = __d;
+                    }
+                }
+            }
+        })
+        .collect();
+    let depth_check_block = quote! {
+        {
+            let mut __rt05_max_depth: u32 = 0;
+            #(#depth_check_lines)*
+            if __rt05_max_depth > Self::MAX_FIXPOINT_TERM_DEPTH {
+                eprintln!(
+                    "warning[A-RT05]: fixpoint produced term of depth {} (threshold: {}); \
+                     possible non-convergence from depth-increasing rules",
+                    __rt05_max_depth,
+                    Self::MAX_FIXPOINT_TERM_DEPTH,
+                );
+            }
+        }
+    };
+
     // Build dispatcher: core-category inputs use the core struct (if available),
     // non-core inputs use the full struct.
     let core_prog_name = format_ident!("{}AscentProgCore", name);
@@ -1720,7 +1819,10 @@ fn generate_language_struct_multi(
                         _ => unreachable!(),
                     }
                     #seed_from_pre_stratum
+                    #ground_seed_block_multi
                     prog.run();
+                    // A-RT05: Post-fixpoint depth check
+                    #depth_check_block
                     match &term.0 {
                         #(#core_extract_arms)*
                         _ => unreachable!(),
@@ -1735,7 +1837,10 @@ fn generate_language_struct_multi(
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
                     }
                     #seed_from_pre_stratum
+                    #ground_seed_block_multi
                     prog.run();
+                    // A-RT05: Post-fixpoint depth check
+                    #depth_check_block
                     match &term.0 {
                         #(#extract_arms)*
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
@@ -1760,7 +1865,10 @@ fn generate_language_struct_multi(
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
                     }
                     #seed_from_pre_stratum
+                    #ground_seed_block_multi
                     prog.run();
+                    // A-RT05: Post-fixpoint depth check
+                    #depth_check_block
                     match &term.0 {
                         #(#extract_arms)*
                         #inner_enum_name::Ambiguous(_) => unreachable!(),
@@ -1807,6 +1915,13 @@ fn generate_language_struct_multi(
         }
 
         impl #language_name {
+            /// A-RT05: Maximum term depth threshold for post-fixpoint convergence check.
+            ///
+            /// If any term in the fixpoint result exceeds this depth, a warning is
+            /// emitted to stderr. This catches pathological grammars where depth-increasing
+            /// rules cause unbounded term growth.
+            const MAX_FIXPOINT_TERM_DEPTH: u32 = 100;
+
             /// Parse a term from a string (clears var cache). Tries all category parsers.
             pub fn parse(input: &str) -> Result<#term_name, std::string::String> {
                 mettail_runtime::clear_var_cache();
@@ -1872,6 +1987,13 @@ fn generate_language_struct_multi(
                 // Sprint B (R1): Clear term equality cache to prevent stale entries
                 // from a previous evaluation affecting this fixpoint computation.
                 mettail_runtime::clear_term_eq_cache();
+
+                // BCG05 epoch: increment the runtime epoch counter so that BCG05
+                // dedup HashSets in Ascent rule guards detect the new epoch and
+                // clear themselves. Without this, hashes from a previous
+                // run_ascent_typed() call persist and cause dedup guards to skip
+                // rule firings for previously-seen terms.
+                mettail_runtime::bump_bcg05_epoch();
 
                 #run_ascent_body
             }

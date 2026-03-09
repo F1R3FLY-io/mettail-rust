@@ -31,6 +31,10 @@ pub use language::*;
 mod matchings;
 pub use matchings::*;
 
+// Hash-consing infrastructure for recursive term types (A-RT01)
+mod hash_consing;
+pub use hash_consing::*;
+
 /// Wrapper that provides `Display` for slices/Vecs of `Display` items.
 ///
 /// Renders as a comma-separated list, e.g. `a, b, c`.

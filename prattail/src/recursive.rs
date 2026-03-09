@@ -160,6 +160,58 @@ pub fn write_rd_handler(buf: &mut String, rule: &RDRuleInfo) -> PrefixHandler {
     }
 }
 
+/// Create PrefixHandler metadata for a rule WITHOUT generating a standalone
+/// parse function.
+///
+/// Used by the B-P04 optimization (Prefix Handler Inlining for Trivial Rules):
+/// when the trampoline parser will inline a rule's body directly into the prefix
+/// match arm, there is no need to generate a standalone `parse_<label>` function.
+/// This eliminates dead code from the generated output, reducing compile time.
+///
+/// A rule is eligible for this optimization when:
+/// - It starts with a terminal (not a nonterminal/ident capture)
+/// - `should_use_standalone_fn()` returns false (no Sep items, no multi-binder)
+///
+/// The returned PrefixHandler has the same metadata fields as what
+/// `write_rd_handler` would produce — only the standalone function emission is
+/// skipped.
+pub fn make_prefix_handler_metadata(rule: &RDRuleInfo) -> PrefixHandler {
+    let parse_fn_name = format!("parse_{}", rule.label.to_lowercase());
+
+    let starts_with_nonterminal = matches!(
+        rule.items.first(),
+        Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
+    );
+
+    let first_terminal = rule.items.iter().find_map(|item| {
+        if let RDSyntaxItem::Terminal(t) = item {
+            Some(t.clone())
+        } else {
+            None
+        }
+    });
+
+    let (match_arm, ident_lookahead) = if starts_with_nonterminal {
+        (String::new(), first_terminal.clone())
+    } else if let Some(ref terminal) = first_terminal {
+        let variant = terminal_to_variant_name(terminal);
+        // B-P04: match_arm references parse_fn_name for legacy compatibility,
+        // but the standalone function is not emitted. The trampoline path never
+        // uses this match_arm — it inlines the rule body directly.
+        (format!("Token::{} => {{ {}(tokens, pos) }}", variant, parse_fn_name), None)
+    } else {
+        (String::new(), None)
+    };
+
+    PrefixHandler {
+        category: rule.category.clone(),
+        label: rule.label.clone(),
+        match_arm,
+        ident_lookahead,
+        parse_fn_name,
+    }
+}
+
 /// A captured value during parsing.
 #[derive(Debug, Clone)]
 struct Capture {

@@ -22,6 +22,8 @@ parsers from HOL-style language definitions.
 3. [Pratt Parsing](theory/pratt-parsing.md) — Binding power pairs, precedence, associativity
 4. [Disambiguation (overview)](design/disambiguation/README.md) — Six-layer model for resolving parse ambiguity
 5. [Mathematical Foundations](theory/foundations/README.md) — Order theory, automata theory, language theory, compiler theory, parsing algebra, optimization theory, machine learning
+6. [Analysis Module Theory](theory/analysis/README.md) — Per-module mathematical foundations for 23 analysis modules
+7. [Decision Tree Theory](theory/decision-tree/) — PathMap dispatch foundations and grammar algebra
 
 ### Deep-Dive Design
 
@@ -49,16 +51,20 @@ adds probabilistic training via the log semiring.
 
 **Theory — Per-Semiring:**
 
-| Semiring       | Feature  | Document                                                                             |
-|----------------|----------|--------------------------------------------------------------------------------------|
-| TropicalWeight | always   | [theory/wfst/semirings/tropical-weight.md](theory/wfst/semirings/tropical-weight.md) |
-| CountingWeight | always   | [theory/wfst/semirings/counting-weight.md](theory/wfst/semirings/counting-weight.md) |
-| BooleanWeight  | always   | [theory/wfst/semirings/boolean-weight.md](theory/wfst/semirings/boolean-weight.md)   |
-| EditWeight     | always   | [theory/wfst/semirings/edit-weight.md](theory/wfst/semirings/edit-weight.md)         |
-| ProductWeight  | always   | [theory/wfst/semirings/product-weight.md](theory/wfst/semirings/product-weight.md)   |
-| LogWeight      | wfst-log | [theory/wfst/semirings/log-weight.md](theory/wfst/semirings/log-weight.md)           |
-| EntropyWeight  | wfst-log | [theory/wfst/semirings/entropy-weight.md](theory/wfst/semirings/entropy-weight.md)   |
-| NbestWeight    | always   | [theory/wfst/semirings/nbest-weight.md](theory/wfst/semirings/nbest-weight.md)       |
+| Semiring         | Feature    | Document                                                                                       |
+|------------------|------------|------------------------------------------------------------------------------------------------|
+| TropicalWeight   | always     | [theory/wfst/semirings/tropical-weight.md](theory/wfst/semirings/tropical-weight.md)           |
+| CountingWeight   | always     | [theory/wfst/semirings/counting-weight.md](theory/wfst/semirings/counting-weight.md)           |
+| BooleanWeight    | always     | [theory/wfst/semirings/boolean-weight.md](theory/wfst/semirings/boolean-weight.md)             |
+| EditWeight       | always     | [theory/wfst/semirings/edit-weight.md](theory/wfst/semirings/edit-weight.md)                   |
+| ProductWeight    | always     | [theory/wfst/semirings/product-weight.md](theory/wfst/semirings/product-weight.md)             |
+| ContextWeight    | always     | [theory/wfst/semirings/context-weight.md](theory/wfst/semirings/context-weight.md)             |
+| ComplexityWeight | always     | [theory/wfst/semirings/complexity-weight.md](theory/wfst/semirings/complexity-weight.md)       |
+| LogWeight        | wfst-log   | [theory/wfst/semirings/log-weight.md](theory/wfst/semirings/log-weight.md)                     |
+| EntropyWeight    | wfst-log   | [theory/wfst/semirings/entropy-weight.md](theory/wfst/semirings/entropy-weight.md)             |
+| NbestWeight      | always     | [theory/wfst/semirings/nbest-weight.md](theory/wfst/semirings/nbest-weight.md)                 |
+| ViterbiWeight    | always     | [theory/wfst/semirings/viterbi-weight.md](theory/wfst/semirings/viterbi-weight.md)             |
+| ProvenanceWeight | provenance | [theory/wfst/semirings/provenance-weight.md](theory/wfst/semirings/provenance-weight.md)       |
 
 **Theory — Optimization:**
 
@@ -86,16 +92,21 @@ adds probabilistic training via the log semiring.
 
 **Design — Per-Semiring:**
 
-| Semiring       | Document                                                                             |
-|----------------|--------------------------------------------------------------------------------------|
-| TropicalWeight | [design/wfst/semirings/tropical-weight.md](design/wfst/semirings/tropical-weight.md) |
-| CountingWeight | [design/wfst/semirings/counting-weight.md](design/wfst/semirings/counting-weight.md) |
-| BooleanWeight  | [design/wfst/semirings/boolean-weight.md](design/wfst/semirings/boolean-weight.md)   |
-| EditWeight     | [design/wfst/semirings/edit-weight.md](design/wfst/semirings/edit-weight.md)         |
-| ProductWeight  | [design/wfst/semirings/product-weight.md](design/wfst/semirings/product-weight.md)   |
-| LogWeight      | [design/wfst/semirings/log-weight.md](design/wfst/semirings/log-weight.md)           |
-| EntropyWeight  | [design/wfst/semirings/entropy-weight.md](design/wfst/semirings/entropy-weight.md)   |
-| NbestWeight    | [design/wfst/semirings/nbest-weight.md](design/wfst/semirings/nbest-weight.md)       |
+| Semiring          | Document                                                                                     |
+|-------------------|----------------------------------------------------------------------------------------------|
+| TropicalWeight    | [design/wfst/semirings/tropical-weight.md](design/wfst/semirings/tropical-weight.md)         |
+| CountingWeight    | [design/wfst/semirings/counting-weight.md](design/wfst/semirings/counting-weight.md)         |
+| BooleanWeight     | [design/wfst/semirings/boolean-weight.md](design/wfst/semirings/boolean-weight.md)           |
+| EditWeight        | [design/wfst/semirings/edit-weight.md](design/wfst/semirings/edit-weight.md)                 |
+| ProductWeight     | [design/wfst/semirings/product-weight.md](design/wfst/semirings/product-weight.md)           |
+| ContextWeight     | [design/wfst/semirings/context-weight.md](design/wfst/semirings/context-weight.md)           |
+| ComplexityWeight  | [design/wfst/semirings/complexity-weight.md](design/wfst/semirings/complexity-weight.md)     |
+| LogWeight         | [design/wfst/semirings/log-weight.md](design/wfst/semirings/log-weight.md)                   |
+| EntropyWeight     | [design/wfst/semirings/entropy-weight.md](design/wfst/semirings/entropy-weight.md)           |
+| NbestWeight       | [design/wfst/semirings/nbest-weight.md](design/wfst/semirings/nbest-weight.md)               |
+| ProvenanceWeight  | [design/wfst/semirings/provenance-weight.md](design/wfst/semirings/provenance-weight.md)     |
+| RelationalWeight  | [design/wfst/semirings/relational-weight.md](design/wfst/semirings/relational-weight.md)     |
+| TensorWeight      | [design/wfst/semirings/tensor-weight.md](design/wfst/semirings/tensor-weight.md)             |
 
 **Usage:**
 
@@ -121,8 +132,19 @@ For a comprehensive guide with examples, diagrams, and decision flowcharts:
 
 ### Diagnostics
 
-- [Diagnostics Catalog](diagnostics/README.md) — All lint diagnostics (G, W, R, C, D, P, T, V, S, N, L, E, M, K categories)
+- [Diagnostics Catalog](diagnostics/README.md) — All lint diagnostics (G, W, R, C, D, P, A, X, DIS, LEX, PAR, C-AP, I, T, V, S, N, L, E, M, K categories)
 - [Lint Layer Design](design/wfst/lint-layer.md) — Unified lint architecture, `LintContext`, `run_lints()`
+
+Diagnostic categories:
+- **Grammar (G)**, **WFST (W)**, **Recovery (R)**, **Cross-Category (C)**, **Decision Tree (D)**, **Performance (P)** -- core pipeline lints
+- **Ascent (A01--A10)** -- fixpoint convergence, equivalence class, struct size
+- **Composition (X01--X06)** -- ambiguity introduction, priority shadowing, dead rules, cast chains, terminal collision
+- **Dispatch (DIS01--DIS05)** -- hot-path alignment, cold arms, backtracking, NFA set size
+- **Lexer (LEX01--LEX05)** -- token overlap, DFA state explosion, float/integer ambiguity
+- **Parser (PAR01--PAR05)** -- RD chain depth, BP gaps, postfix/prefix collision, mixfix delimiters
+- **Codegen Antipattern (C-AP01--C-AP05)** -- transitivity blowup, extension along equality, congruence chains
+- **Infrastructure (I01--I19)** -- pipeline progress, cache hits, hybrid lexer activation
+- **Analysis (T, V, S, N, L, E, M, K)** -- TRS, automata, safety, concurrency, temporal, extension, morphism, KAT
 
 ### Mathematical Analysis
 
@@ -151,16 +173,18 @@ Formal analysis and theorem-proving infrastructure for `language!` specification
 
 ## Documentation by Category
 
-| Directory                      | Contents                                                                                     |
-|--------------------------------|----------------------------------------------------------------------------------------------|
-| [architecture/](architecture/) | Crate structure, data flow, generated code anatomy, WFST module map                          |
-| [benchmarks/](benchmarks/)     | Parse performance comparison, optimization ledger                                            |
-| [design/](design/)             | Pipeline, engines, generators, disambiguation, WFST design                                   |
-| [diagnostics/](diagnostics/)   | Per-lint documentation, runtime error catalog                                                |
-| [design/analysis/](design/analysis/) | Mathematical analysis framework: TRS, pushdown verification, automata, concurrency, meta-level |
-| [theory/formal-verification/](theory/formal-verification/) | Rocq machine-checked proofs for semiring, WPDS, VPA, KAT, Buchi correctness |
-| [theory/](theory/)             | Formal foundations: automata, prediction, Pratt, semirings                                   |
-| [usage/](usage/)               | Quick start, grammar features, language unification, EBNF dump, troubleshooting, WFST config |
+| Directory                                                   | Contents                                                                                     |
+|-------------------------------------------------------------|----------------------------------------------------------------------------------------------|
+| [architecture/](architecture/)                               | Crate structure, data flow, generated code anatomy, WFST module map                          |
+| [benchmarks/](benchmarks/)                                   | Parse performance comparison, optimization ledger                                            |
+| [design/](design/)                                           | Pipeline, engines, generators, disambiguation, WFST design                                   |
+| [design/analysis/](design/analysis/)                         | Mathematical analysis framework: TRS, pushdown verification, automata, concurrency, meta-level |
+| [diagnostics/](diagnostics/)                                 | Per-lint documentation (G, W, R, C, D, P, A, X, DIS, LEX, PAR, C-AP, I, T, V, S, N, L, E, M, K) |
+| [theory/](theory/)                                           | Formal foundations: automata, prediction, Pratt, semirings                                   |
+| [theory/analysis/](theory/analysis/)                         | Per-module analysis theory: CEGAR, VPA, algebraic, Petri, LTL, ARA, confluence, WTA, morphisms, Newton, tensor |
+| [theory/decision-tree/](theory/decision-tree/)               | PathMap dispatch theory: foundations and grammar algebra                                     |
+| [theory/formal-verification/](theory/formal-verification/)   | Rocq machine-checked proofs for semiring, WPDS, VPA, KAT, Buchi correctness                 |
+| [usage/](usage/)                                             | Quick start, grammar features, language unification, EBNF dump, troubleshooting, WFST config |
 
 ---
 

@@ -283,6 +283,28 @@ impl Pattern {
         matches!(self, Pattern::Term(PatternTerm::Var(_)))
     }
 
+    /// Check if this pattern is ground (no free variables at any position).
+    ///
+    /// A ground pattern consists entirely of concrete constructors, literals,
+    /// and nullary constructors — no `Var`, `Lambda`, `MultiLambda`, `Subst`,
+    /// `MultiSubst`, `Map`, or `Zip` nodes. Collection patterns are ground if
+    /// all elements are ground and there is no rest variable.
+    ///
+    /// Used by B-CG04 (GroundShortCircuit) to detect rewrite rules whose LHS
+    /// can match at most one specific term shape, enabling direct seed insertion
+    /// at Ascent initialization instead of per-iteration pattern matching.
+    pub fn is_ground_pattern(&self, language: &LanguageDef) -> bool {
+        match self {
+            Pattern::Term(pt) => pt.is_ground_pattern(language),
+            Pattern::Collection { elements, rest, .. } => {
+                // Ground only if no rest variable and all elements are ground
+                rest.is_none() && elements.iter().all(|e| e.is_ground_pattern(language))
+            },
+            // Map and Zip involve iteration over collections — never ground
+            Pattern::Map { .. } | Pattern::Zip { .. } => false,
+        }
+    }
+
     /// Get the constructor name if this is a constructor application
     /// NOTE: Collection patterns no longer have constructors - they get it from enclosing Apply
     #[allow(dead_code)]
@@ -360,6 +382,29 @@ impl Pattern {
 }
 
 impl PatternTerm {
+    /// Check if this pattern term is ground (no free variables).
+    ///
+    /// - `Var` is never ground (it's a free variable).
+    /// - `Apply` is ground if all args are ground (nullary constructors are ground).
+    /// - `Lambda`, `MultiLambda`, `Subst`, `MultiSubst` are never ground
+    ///   (they involve variable binding/substitution, which is non-ground by design).
+    pub fn is_ground_pattern(&self, language: &LanguageDef) -> bool {
+        match self {
+            PatternTerm::Var(v) => {
+                // A bare identifier could be a nullary constructor (e.g., `PNil`).
+                // Check if it's a known constructor with no arguments.
+                language.get_constructor(v).is_some()
+            },
+            PatternTerm::Apply { args, .. } => {
+                args.iter().all(|arg| arg.is_ground_pattern(language))
+            },
+            // Lambda/MultiLambda introduce binders — not ground for our purposes
+            PatternTerm::Lambda { .. } | PatternTerm::MultiLambda { .. } => false,
+            // Subst/MultiSubst involve variable references — not ground
+            PatternTerm::Subst { .. } | PatternTerm::MultiSubst { .. } => false,
+        }
+    }
+
     /// Infer the category this pattern term produces
     pub fn category<'a>(&self, language: &'a LanguageDef) -> Option<&'a Ident> {
         match self {
@@ -448,6 +493,27 @@ pub struct AscentClauses {
     pub bindings: HashMap<String, VariableBinding>,
     /// Equational checks needed for duplicate variables
     pub equational_checks: Vec<TokenStream>,
+    /// BCG01: Maps each binding variable name to the clause index at which it
+    /// becomes available. Populated by `record_binding()`. Used by join ordering
+    /// to determine the earliest clause position where a condition's required
+    /// variables are all satisfied.
+    pub binding_clause_index: HashMap<String, usize>,
+}
+
+impl AscentClauses {
+    /// Record a new variable binding and associate it with the current clause index.
+    ///
+    /// BCG01: This tracks when each variable becomes available in the clause
+    /// sequence, enabling join ordering to interleave condition checks at the
+    /// earliest valid position for fail-fast evaluation.
+    pub fn record_binding(&mut self, name: String, binding: VariableBinding) {
+        // The binding becomes available at the current clause count.
+        // If no clauses have been pushed yet (clause index 0), the variable
+        // is available from the start (bound by the initial relation lookup).
+        let clause_idx = self.clauses.len();
+        self.binding_clause_index.entry(name.clone()).or_insert(clause_idx);
+        self.bindings.insert(name, binding);
+    }
 }
 
 impl Pattern {
@@ -623,7 +689,7 @@ impl Pattern {
                             }
                         });
                     }
-                    result.bindings.insert(
+                    result.record_binding(
                         rest_var.to_string(),
                         VariableBinding {
                             expression: quote! { #rest_ident.clone() },
@@ -683,7 +749,7 @@ impl Pattern {
                     let collected_var = format_ident!("__zip_collected_{}", iter_idx);
 
                     // Bind first_param to first_elem for body pattern matching
-                    result.bindings.insert(
+                    result.record_binding(
                         first_param.to_string(),
                         VariableBinding {
                             expression: quote! { #first_elem.clone() },
@@ -763,7 +829,7 @@ impl Pattern {
                     });
 
                     // Bind second (qs) to the collected results
-                    result.bindings.insert(
+                    result.record_binding(
                         second_var_name,
                         VariableBinding {
                             expression: quote! { #collected_var.clone() },
@@ -795,7 +861,7 @@ impl Pattern {
                     // Bind each param to the element (or element parts for multi-param)
                     if params.len() == 1 {
                         let param = &params[0];
-                        result.bindings.insert(
+                        result.record_binding(
                             param.to_string(),
                             VariableBinding {
                                 expression: quote! { #elem_var },
@@ -805,7 +871,7 @@ impl Pattern {
                         );
                     } else if params.len() == 2 {
                         // For zipped pairs
-                        result.bindings.insert(
+                        result.record_binding(
                             params[0].to_string(),
                             VariableBinding {
                                 expression: quote! { #elem_var.0 },
@@ -813,7 +879,7 @@ impl Pattern {
                                 scope_kind: None,
                             },
                         );
-                        result.bindings.insert(
+                        result.record_binding(
                             params[1].to_string(),
                             VariableBinding {
                                 expression: quote! { #elem_var.1 },
@@ -866,7 +932,7 @@ impl Pattern {
                 if let Some(first_name) = &first_var_name {
                     if !result.bindings.contains_key(first_name) {
                         let first_ident = format_ident!("{}", first_name);
-                        result.bindings.insert(
+                        result.record_binding(
                             first_name.clone(),
                             VariableBinding {
                                 expression: quote! { #first_ident.clone() },
@@ -880,7 +946,7 @@ impl Pattern {
                 if let Some(second_name) = &second_var_name {
                     if !result.bindings.contains_key(second_name) {
                         let second_ident = format_ident!("{}", second_name);
-                        result.bindings.insert(
+                        result.record_binding(
                             second_name.clone(),
                             VariableBinding {
                                 expression: quote! { #second_ident.clone() },
@@ -943,7 +1009,7 @@ impl PatternTerm {
                     // Duplicate variable - need equational check
                     if first_occurrences.insert(var_name.clone()) {
                         // First occurrence: bind it
-                        result.bindings.insert(
+                        result.record_binding(
                             var_name.clone(),
                             VariableBinding {
                                 expression: quote! { #term_var.clone() },
@@ -972,7 +1038,7 @@ impl PatternTerm {
                     }
                 } else {
                     // Single-occurrence variable: just bind
-                    result.bindings.insert(
+                    result.record_binding(
                         var_name.clone(),
                         VariableBinding {
                             expression: quote! { #term_var.clone() },
@@ -1086,7 +1152,7 @@ impl PatternTerm {
                                 {
                                     // Single binder: binder_var is Binder<String>
                                     // Bind the Lambda's binder name to the inner FreeVar (Binder.0)
-                                    result.bindings.insert(
+                                    result.record_binding(
                                         binder.to_string(),
                                         VariableBinding {
                                             expression: quote! { #binder_var.0.clone() },
@@ -1096,7 +1162,7 @@ impl PatternTerm {
                                     );
 
                                     // Also bind the full binder for RHS reconstruction
-                                    result.bindings.insert(
+                                    result.record_binding(
                                         format!("__binder_{}", binder),
                                         VariableBinding {
                                             expression: quote! { #binder_var.clone() },
@@ -1135,7 +1201,7 @@ impl PatternTerm {
 
                                     if is_collection_var {
                                         let var_name = &binders[0];
-                                        result.bindings.insert(
+                                        result.record_binding(
                                             var_name.to_string(),
                                             VariableBinding {
                                                 expression: quote! { #binder_var.clone() },
@@ -1154,7 +1220,7 @@ impl PatternTerm {
                                                 let #binder_elem_var = #binder_var[#idx].clone()
                                             });
 
-                                            result.bindings.insert(
+                                            result.record_binding(
                                                 binder.to_string(),
                                                 VariableBinding {
                                                     expression: quote! { #binder_elem_var.0.clone() },
@@ -1163,7 +1229,7 @@ impl PatternTerm {
                                                 },
                                             );
 
-                                            result.bindings.insert(
+                                            result.record_binding(
                                                 format!("__binder_{}", binder),
                                                 VariableBinding {
                                                     expression: quote! { #binder_elem_var.clone() },
@@ -1190,7 +1256,7 @@ impl PatternTerm {
                                     // Simple variable in binder position - bind to the FULL SCOPE
                                     // This is for patterns like (PInputs ns scope) where scope
                                     // should capture the entire Scope object for later use with multisubst
-                                    result.bindings.insert(
+                                    result.record_binding(
                                         v.to_string(),
                                         VariableBinding {
                                             expression: quote! { #field_var.clone() },
@@ -1235,7 +1301,7 @@ impl PatternTerm {
                                         // No term_context, assume single binder (old syntax)
                                         ScopeKind::Single
                                     };
-                                    result.bindings.insert(
+                                    result.record_binding(
                                         v.to_string(),
                                         VariableBinding {
                                             expression: quote! { #field_var.clone() },
@@ -1287,7 +1353,7 @@ impl PatternTerm {
 
                 // Bind the binder variable - use .0 to get FreeVar from Binder
                 // This is needed because substitute methods expect FreeVar<String>, not Binder<String>
-                result.bindings.insert(
+                result.record_binding(
                     binder.to_string(),
                     VariableBinding {
                         expression: quote! { #binder_var.0.clone() },
@@ -1297,7 +1363,7 @@ impl PatternTerm {
                 );
 
                 // Also bind the full binder for RHS reconstruction
-                result.bindings.insert(
+                result.record_binding(
                     format!("__binder_{}", binder),
                     VariableBinding {
                         expression: quote! { #binder_var.clone() },
@@ -1349,7 +1415,7 @@ impl PatternTerm {
                     });
 
                     // Bind the binder name to its FreeVar (the .0 field)
-                    result.bindings.insert(
+                    result.record_binding(
                         binder.to_string(),
                         VariableBinding {
                             expression: quote! { #binder_elem_var.0.clone() },
@@ -1359,7 +1425,7 @@ impl PatternTerm {
                     );
 
                     // Also bind the full binder for RHS reconstruction
-                    result.bindings.insert(
+                    result.record_binding(
                         format!("__binder_{}", binder),
                         VariableBinding {
                             expression: quote! { #binder_elem_var.clone() },

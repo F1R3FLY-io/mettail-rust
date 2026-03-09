@@ -26,20 +26,23 @@ use crate::dispatch::{
     categories_needing_dispatch, write_category_dispatch, CastRule, CrossCategoryRule,
 };
 use crate::automata::codegen::{LexerAmbiguityInfo, TokenVariantMap};
-use crate::lexer::{extract_terminals, generate_lexer_as_string, GrammarRuleInfo, TypeInfo};
+use crate::lexer::{extract_terminals, generate_lexer_as_string_hybrid, GrammarRuleInfo, TypeInfo};
 use crate::pratt::{
     write_dispatch_recovering, write_parser_helpers, write_recovery_helpers, PrefixHandler,
 };
 use crate::prediction::{
-    analyze_cross_category_overlaps, compute_first_sets, compute_follow_sets_from_inputs,
+    analyze_cross_category_overlaps, compute_first_sets, compute_first_sets_incremental,
+    compute_follow_sets_from_inputs, compute_follow_sets_incremental,
     generate_sync_predicate, FirstItem, FirstSet, FollowSetInput,
     RuleInfo,
 };
 use crate::recursive::{
-    write_dollar_handlers, write_lambda_handlers, write_rd_handler, RDRuleInfo, RDSyntaxItem,
+    make_prefix_handler_metadata, write_dollar_handlers, write_lambda_handlers, write_rd_handler,
+    RDRuleInfo, RDSyntaxItem,
 };
 use crate::trampoline::{
-    write_trampolined_parser, write_trampolined_parser_recovering, TrampolineConfig,
+    should_use_standalone_fn, write_trampolined_parser, write_trampolined_parser_recovering,
+    TrampolineConfig,
 };
 use crate::wfst::PredictionWfst;
 use crate::{LanguageSpec, LiteralPatterns, SyntaxItemSpec};
@@ -946,8 +949,11 @@ impl PipelineState {
     pub fn advance(self) -> Self {
         match self {
             PipelineState::Ready { lexer_bundle, parser_bundle } => {
+                // AL02: hybrid_lexer defaults to true in PipelineState path
+                // (cost-benefit analysis is not available here; hybrid is safe
+                // because it only activates for DFAs > 30 states)
                 let (lexer_code, variant_map, ambiguity_info) =
-                    generate_lexer_code_with_map(&lexer_bundle);
+                    generate_lexer_code_with_map(&lexer_bundle, true);
                 let parser_code = generate_parser_code_with_context(
                     &parser_bundle,
                     &variant_map,
@@ -1030,8 +1036,10 @@ pub fn run_pipeline_with_analysis(spec: &LanguageSpec) -> (TokenStream, crate::P
     }
 
     // Run lexer codegen
+    // AL02: hybrid_lexer defaults to true; optimization gate will be checked
+    // inside codegen (only activates for DFAs > 30 states)
     let (lexer_code, variant_map, ambiguity_info) =
-        generate_lexer_code_with_map(&lexer_bundle);
+        generate_lexer_code_with_map(&lexer_bundle, true);
 
     // Run parser codegen with analysis capture
     let (parser_code, analysis) = generate_parser_code_with_analysis(
@@ -1315,8 +1323,13 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
 
 /// Generate lexer code from the lexer bundle, returning the variant map
 /// and ambiguity info alongside the generated code string.
+///
+/// When `hybrid_lexer` is true and the DFA exceeds the direct-coded threshold,
+/// AL02 hybrid mode is activated: hot states (BFS depth ≤ 2) are direct-coded
+/// while cold states use compressed table lookup.
 fn generate_lexer_code_with_map(
     bundle: &LexerBundle,
+    hybrid_lexer: bool,
 ) -> (String, TokenVariantMap, LexerAmbiguityInfo) {
     let mut lexer_input = extract_terminals(
         &bundle.grammar_rules,
@@ -1325,7 +1338,7 @@ fn generate_lexer_code_with_map(
         &bundle.category_names,
     );
     lexer_input.literal_patterns = bundle.literal_patterns.clone();
-    let (lexer_str, stats) = generate_lexer_as_string(&lexer_input);
+    let (lexer_str, stats) = generate_lexer_as_string_hybrid(&lexer_input, hybrid_lexer);
     (lexer_str, stats.variant_map, stats.ambiguity_info)
 }
 
@@ -1353,6 +1366,360 @@ fn generate_parser_code_with_analysis(
     ambiguity_info: &LexerAmbiguityInfo,
 ) -> (String, crate::PipelineAnalysis) {
     generate_parser_code(bundle, variant_map, ambiguity_info)
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DB03: Parallel analysis phase execution
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Collected results from the mathematical analysis phase.
+///
+/// All fields correspond to the individual analysis results that the lint
+/// layer and downstream pipeline stages consume. Feature-gated analyses
+/// are behind `#[cfg]` attributes matching the analysis module gates.
+///
+/// This struct allows returning all results from both the parallel and
+/// sequential execution paths without needing uninitialized variable
+/// assignments inside closures.
+pub(crate) struct MathAnalysisResults {
+    /// Number of analysis phases that were executed (for I19 diagnostic).
+    pub phase_count: u32,
+
+    // ── Always-on analyses ──
+    pub safety_result: Option<crate::verify::SafetyResult<crate::automata::semiring::BooleanWeight>>,
+    pub cegar_result: Option<crate::cegar::CegarLog>,
+    pub algebraic_result: Option<crate::algebraic::AlgebraicSummary>,
+
+    // ── Feature-gated analyses ──
+    #[cfg(feature = "trs-analysis")]
+    pub confluence_result: Option<crate::confluence::ConfluenceAnalysis>,
+    #[cfg(feature = "trs-analysis")]
+    pub termination_result: Option<crate::termination::TerminationResult>,
+    #[cfg(feature = "vpa")]
+    pub vpa_result: Option<crate::vpa::VpaAnalysis>,
+    #[cfg(feature = "tree-automata")]
+    pub wta_result: Option<crate::tree_automaton::WtaAnalysis>,
+    #[cfg(feature = "wpds-extended")]
+    pub ewpds_result: Option<crate::ewpds::EwpdsAnalysis>,
+    #[cfg(feature = "wpds-ara")]
+    pub ara_result: Option<crate::ara::AraAnalysis>,
+    #[cfg(feature = "petri")]
+    pub petri_result: Option<crate::petri::PetriAnalysis>,
+    #[cfg(feature = "nominal")]
+    pub nominal_result: Option<crate::nominal::NominalAnalysis>,
+    #[cfg(feature = "alternating")]
+    pub alternating_result: Option<crate::alternating::AlternatingAnalysis>,
+    #[cfg(feature = "ltl")]
+    pub ltl_results: Option<Vec<crate::ltl::LtlCheckResult>>,
+    #[cfg(feature = "provenance")]
+    pub provenance_result: Option<crate::provenance::ProvenanceAnalysis>,
+    #[cfg(feature = "cra")]
+    pub cra_result: Option<crate::cra::CraAnalysis>,
+    #[cfg(feature = "morphisms")]
+    pub morphism_result: Option<crate::morphism::MorphismCheck>,
+    #[cfg(feature = "kat")]
+    pub kat_result: Option<crate::kat::KatCheck>,
+}
+
+/// Count the number of analysis phases based on enabled features.
+///
+/// Always-on: safety, cegar, algebraic (3). Each feature-gated
+/// analysis adds 1 (trs-analysis adds 2 for confluence + termination).
+pub(crate) fn count_analysis_phases() -> u32 {
+    #[allow(unused_mut)] // mut needed when feature flags add to count
+    let mut count = 3u32; // safety, cegar, algebraic
+    #[cfg(feature = "trs-analysis")]
+    { count += 2; } // confluence, termination
+    #[cfg(feature = "vpa")]
+    { count += 1; }
+    #[cfg(feature = "tree-automata")]
+    { count += 1; }
+    #[cfg(feature = "wpds-extended")]
+    { count += 1; }
+    #[cfg(feature = "wpds-ara")]
+    { count += 1; }
+    #[cfg(feature = "petri")]
+    { count += 1; }
+    #[cfg(feature = "nominal")]
+    { count += 1; }
+    #[cfg(feature = "alternating")]
+    { count += 1; }
+    #[cfg(feature = "ltl")]
+    { count += 1; }
+    #[cfg(feature = "provenance")]
+    { count += 1; }
+    #[cfg(feature = "cra")]
+    { count += 1; }
+    #[cfg(feature = "morphisms")]
+    { count += 1; }
+    #[cfg(feature = "kat")]
+    { count += 1; }
+    count
+}
+
+/// Run all mathematical analyses in parallel using `std::thread::scope`.
+///
+/// All inputs are borrowed references that are `Send + Sync`, allowing
+/// scoped threads to share them without cloning. Each analysis runs in
+/// its own thread; results are joined when the scope exits.
+///
+/// # Panics
+///
+/// Propagates panics from any analysis thread via `.join().expect(...)`.
+fn run_math_analyses_parallel(
+    bundle: &ParserBundle,
+    wpds_analysis: Option<&crate::wpds::WpdsAnalysis>,
+) -> MathAnalysisResults {
+    let all_syntax = &bundle.all_syntax;
+    let categories = &bundle.categories;
+    let wpds_ref = wpds_analysis;
+
+    // Pre-build petri category info outside the thread scope.
+    #[cfg(feature = "petri")]
+    let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = categories
+        .iter()
+        .map(|c| crate::wpds::WpdsCategoryInfo {
+            name: c.name.clone(),
+            is_primary: c.is_primary,
+        })
+        .collect();
+
+    let phase_count = count_analysis_phases();
+
+    std::thread::scope(|s| {
+        // Phase 1: TRS (no dependencies)
+        #[cfg(feature = "trs-analysis")]
+        let h_confluence = s.spawn(|| {
+            crate::confluence::analyze_from_bundle(all_syntax, 100)
+        });
+        #[cfg(feature = "trs-analysis")]
+        let h_termination = s.spawn(|| {
+            crate::termination::analyze_from_bundle(all_syntax)
+        });
+
+        // Phase 2: Automata (no dependencies)
+        #[cfg(feature = "vpa")]
+        let h_vpa = s.spawn(|| {
+            crate::vpa::analyze_from_bundle(categories, all_syntax)
+        });
+        #[cfg(feature = "tree-automata")]
+        let h_wta = s.spawn(|| {
+            crate::tree_automaton::analyze_from_bundle(categories, all_syntax)
+        });
+
+        // Phase 3: WPDS-dependent
+        let h_safety = s.spawn(|| {
+            wpds_ref.and_then(|wa| {
+                crate::verify::verify_from_bundle(wa, categories, all_syntax)
+            })
+        });
+        let h_cegar = s.spawn(|| {
+            wpds_ref.and_then(|wa| {
+                crate::cegar::cegar_from_bundle(wa)
+            })
+        });
+        let h_algebraic = s.spawn(|| {
+            wpds_ref.map(|wa| {
+                crate::algebraic::analyze_from_bundle(wa)
+            })
+        });
+
+        #[cfg(feature = "wpds-extended")]
+        let h_ewpds = s.spawn(|| {
+            wpds_ref.and_then(|wa| {
+                crate::ewpds::extend_from_bundle(wa, all_syntax)
+            })
+        });
+        #[cfg(feature = "wpds-ara")]
+        let h_ara = s.spawn(|| {
+            wpds_ref.map(|wa| {
+                crate::ara::analyze_from_bundle(wa, all_syntax)
+            })
+        });
+
+        // Phase 4: Concurrency (no dependencies)
+        #[cfg(feature = "petri")]
+        let h_petri = s.spawn(|| {
+            Some(crate::petri::analyze_from_bundle(all_syntax, &petri_cats))
+        });
+        #[cfg(feature = "nominal")]
+        let h_nominal = s.spawn(|| {
+            Some(crate::nominal::analyze_from_bundle(all_syntax))
+        });
+        #[cfg(feature = "alternating")]
+        let h_alternating = s.spawn(|| {
+            Some(crate::alternating::analyze_from_bundle(all_syntax, categories))
+        });
+
+        // Phase 5: Temporal
+        #[cfg(feature = "ltl")]
+        let h_ltl = s.spawn(|| {
+            wpds_ref.map(|wa| {
+                crate::ltl::check_from_bundle(wa)
+            })
+        });
+        #[cfg(feature = "provenance")]
+        let h_provenance = s.spawn(|| {
+            crate::provenance::track_from_bundle(all_syntax, categories)
+        });
+        #[cfg(feature = "cra")]
+        let h_cra = s.spawn(|| {
+            crate::cra::analyze_from_bundle(all_syntax)
+        });
+
+        // Phase 6: Meta
+        #[cfg(feature = "morphisms")]
+        let h_morphism = s.spawn(|| {
+            crate::morphism::check_from_bundle(all_syntax, categories)
+        });
+        #[cfg(feature = "kat")]
+        let h_kat = s.spawn(|| {
+            wpds_ref.and_then(|wa| {
+                crate::kat::check_from_bundle(wa, all_syntax)
+            })
+        });
+
+        // ── Collect results ──────────────────────────────────────────────
+        MathAnalysisResults {
+            phase_count,
+            safety_result: h_safety.join().expect("DB03: safety verification thread panicked"),
+            cegar_result: h_cegar.join().expect("DB03: CEGAR refinement thread panicked"),
+            algebraic_result: h_algebraic.join().expect("DB03: algebraic analysis thread panicked"),
+            #[cfg(feature = "trs-analysis")]
+            confluence_result: h_confluence.join().expect("DB03: confluence analysis thread panicked"),
+            #[cfg(feature = "trs-analysis")]
+            termination_result: h_termination.join().expect("DB03: termination analysis thread panicked"),
+            #[cfg(feature = "vpa")]
+            vpa_result: h_vpa.join().expect("DB03: VPA analysis thread panicked"),
+            #[cfg(feature = "tree-automata")]
+            wta_result: h_wta.join().expect("DB03: WTA analysis thread panicked"),
+            #[cfg(feature = "wpds-extended")]
+            ewpds_result: h_ewpds.join().expect("DB03: EWPDS analysis thread panicked"),
+            #[cfg(feature = "wpds-ara")]
+            ara_result: h_ara.join().expect("DB03: ARA analysis thread panicked"),
+            #[cfg(feature = "petri")]
+            petri_result: h_petri.join().expect("DB03: Petri net analysis thread panicked"),
+            #[cfg(feature = "nominal")]
+            nominal_result: h_nominal.join().expect("DB03: nominal analysis thread panicked"),
+            #[cfg(feature = "alternating")]
+            alternating_result: h_alternating.join().expect("DB03: alternating analysis thread panicked"),
+            #[cfg(feature = "ltl")]
+            ltl_results: h_ltl.join().expect("DB03: LTL check thread panicked"),
+            #[cfg(feature = "provenance")]
+            provenance_result: h_provenance.join().expect("DB03: provenance tracking thread panicked"),
+            #[cfg(feature = "cra")]
+            cra_result: h_cra.join().expect("DB03: CRA analysis thread panicked"),
+            #[cfg(feature = "morphisms")]
+            morphism_result: h_morphism.join().expect("DB03: morphism check thread panicked"),
+            #[cfg(feature = "kat")]
+            kat_result: h_kat.join().expect("DB03: KAT check thread panicked"),
+        }
+    })
+}
+
+/// Run all mathematical analyses sequentially (fallback when DB03 gate is off
+/// or grammar is not eligible).
+fn run_math_analyses_sequential(
+    bundle: &ParserBundle,
+    wpds_analysis: Option<&crate::wpds::WpdsAnalysis>,
+    eligible: bool,
+) -> MathAnalysisResults {
+    MathAnalysisResults {
+        phase_count: 0,
+
+        // Always-on analyses
+        safety_result: if eligible {
+            wpds_analysis.and_then(|wa| {
+                crate::verify::verify_from_bundle(wa, &bundle.categories, &bundle.all_syntax)
+            })
+        } else { None },
+        cegar_result: if eligible {
+            wpds_analysis.and_then(|wa| {
+                crate::cegar::cegar_from_bundle(wa)
+            })
+        } else { None },
+        algebraic_result: if eligible {
+            wpds_analysis.map(|wa| {
+                crate::algebraic::analyze_from_bundle(wa)
+            })
+        } else { None },
+
+        // Feature-gated analyses
+        #[cfg(feature = "trs-analysis")]
+        confluence_result: if eligible {
+            crate::confluence::analyze_from_bundle(&bundle.all_syntax, 100)
+        } else { None },
+        #[cfg(feature = "trs-analysis")]
+        termination_result: if eligible {
+            crate::termination::analyze_from_bundle(&bundle.all_syntax)
+        } else { None },
+        #[cfg(feature = "vpa")]
+        vpa_result: if eligible {
+            crate::vpa::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
+        } else { None },
+        #[cfg(feature = "tree-automata")]
+        wta_result: if eligible {
+            crate::tree_automaton::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
+        } else { None },
+        #[cfg(feature = "wpds-extended")]
+        ewpds_result: if eligible {
+            wpds_analysis.and_then(|wa| {
+                crate::ewpds::extend_from_bundle(wa, &bundle.all_syntax)
+            })
+        } else { None },
+        #[cfg(feature = "wpds-ara")]
+        ara_result: if eligible {
+            wpds_analysis.map(|wa| {
+                crate::ara::analyze_from_bundle(wa, &bundle.all_syntax)
+            })
+        } else { None },
+        #[cfg(feature = "petri")]
+        petri_result: if eligible {
+            let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = bundle
+                .categories
+                .iter()
+                .map(|c| crate::wpds::WpdsCategoryInfo {
+                    name: c.name.clone(),
+                    is_primary: c.is_primary,
+                })
+                .collect();
+            Some(crate::petri::analyze_from_bundle(&bundle.all_syntax, &petri_cats))
+        } else { None },
+        #[cfg(feature = "nominal")]
+        nominal_result: if eligible {
+            Some(crate::nominal::analyze_from_bundle(&bundle.all_syntax))
+        } else { None },
+        #[cfg(feature = "alternating")]
+        alternating_result: if eligible {
+            Some(crate::alternating::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+        } else { None },
+        #[cfg(feature = "ltl")]
+        ltl_results: if eligible {
+            wpds_analysis.map(|wa| {
+                crate::ltl::check_from_bundle(wa)
+            })
+        } else { None },
+        #[cfg(feature = "provenance")]
+        provenance_result: if eligible {
+            crate::provenance::track_from_bundle(
+                &bundle.all_syntax, &bundle.categories,
+            )
+        } else { None },
+        #[cfg(feature = "cra")]
+        cra_result: if eligible {
+            crate::cra::analyze_from_bundle(&bundle.all_syntax)
+        } else { None },
+        #[cfg(feature = "morphisms")]
+        morphism_result: if eligible {
+            crate::morphism::check_from_bundle(&bundle.all_syntax, &bundle.categories)
+        } else { None },
+        #[cfg(feature = "kat")]
+        kat_result: if eligible {
+            wpds_analysis.and_then(|wa| {
+                crate::kat::check_from_bundle(wa, &bundle.all_syntax)
+            })
+        } else { None },
+    }
 }
 
 /// Generate parser code from the parser bundle.
@@ -1388,8 +1755,39 @@ fn generate_parser_code(
         ..Default::default()
     };
 
-    // Compute FIRST sets
-    let mut first_sets = compute_first_sets(&bundle.rule_infos, &category_names);
+    // ── DB01: Early gate check for incremental FIRST/FOLLOW ──────────────
+    // The full optimization gates are computed later (after FIRST/FOLLOW and
+    // WFST construction). DB01 controls HOW FIRST/FOLLOW sets are computed,
+    // so we pre-check the gate here. When the env var is unset, default to
+    // enabled for grammars with >=3 categories (matches cost-benefit threshold).
+    let use_incremental_ff = {
+        match std::env::var("PRATTAIL_AUTO_OPTIMIZE") {
+            Ok(val) => {
+                let trimmed = val.trim();
+                if trimmed.eq_ignore_ascii_case("all") {
+                    true
+                } else if trimmed.eq_ignore_ascii_case("none") {
+                    false
+                } else {
+                    // Comma-separated list: check if DB01 or IncrementalFirstFollow is present
+                    trimmed.split(',').any(|part| {
+                        let p = part.trim();
+                        p.eq_ignore_ascii_case("DB01")
+                            || p.eq_ignore_ascii_case("IncrementalFirstFollow")
+                            || p.eq_ignore_ascii_case("DB01:IncrementalFirstFollow")
+                    })
+                }
+            },
+            Err(_) => category_names.len() >= 3, // Default: enable for non-trivial grammars
+        }
+    };
+
+    // Compute FIRST sets (DB01: incremental when gate is active)
+    let (mut first_sets, first_stats) = if use_incremental_ff {
+        compute_first_sets_incremental(&bundle.rule_infos, &category_names)
+    } else {
+        (compute_first_sets(&bundle.rule_infos, &category_names), Default::default())
+    };
 
     // Augment FIRST sets with native literal tokens
     for cat in &bundle.categories {
@@ -1458,13 +1856,50 @@ fn generate_parser_code(
 
     let overlaps = analyze_cross_category_overlaps(&category_names, &first_sets);
 
-    // Compute FOLLOW sets from extracted inputs
-    let follow_sets = compute_follow_sets_from_inputs(
-        &bundle.follow_inputs,
-        &category_names,
-        &first_sets,
-        primary_category,
-    );
+    // Compute FOLLOW sets (DB01: incremental when gate is active)
+    let (follow_sets, follow_stats) = if use_incremental_ff {
+        compute_follow_sets_incremental(
+            &bundle.follow_inputs,
+            &category_names,
+            &first_sets,
+            primary_category,
+        )
+    } else {
+        (compute_follow_sets_from_inputs(
+            &bundle.follow_inputs,
+            &category_names,
+            &first_sets,
+            primary_category,
+        ), Default::default())
+    };
+
+    // ── DB01: Emit I18 diagnostic if incremental mode reduced work ────────
+    if use_incremental_ff && (first_stats.reduced_work() || follow_stats.reduced_work()) {
+        let first_baseline = first_stats.total_categories * first_stats.iterations;
+        let follow_baseline = follow_stats.total_categories * follow_stats.iterations;
+        pipeline_diagnostic(
+            &bundle.grammar_name, "I18", "incremental-first-follow",
+            crate::lint::LintSeverity::Info,
+            format!(
+                "DB01 incremental FIRST/FOLLOW: FIRST {}/{} visits ({} iters, {} cats), \
+                 FOLLOW {}/{} visits ({} iters, {} cats)",
+                first_stats.total_visits,
+                first_baseline,
+                first_stats.iterations,
+                first_stats.total_categories,
+                follow_stats.total_visits,
+                follow_baseline,
+                follow_stats.iterations,
+                follow_stats.total_categories,
+            ),
+            Some(format!(
+                "FIRST max/iter={}, FOLLOW max/iter={} (vs {} total categories)",
+                first_stats.max_visits_per_iteration,
+                follow_stats.max_visits_per_iteration,
+                category_names.len(),
+            )),
+        );
+    }
 
     // ── WFST construction ─────────────────────────────────────────────────
     // Build prediction WFSTs and recovery WFSTs from FIRST/FOLLOW/overlap data.
@@ -1772,11 +2207,36 @@ fn generate_parser_code(
     emit_token_to_id_fn(&mut buf, &token_id_map, &grammar_token_variants);
 
     // Generate RD handlers
+    //
+    // B-P04 optimization (Prefix Handler Inlining for Trivial Rules):
+    // Skip standalone function generation for rules that the trampoline will inline
+    // directly into the prefix match arm. A rule is inlined when it starts with a
+    // terminal and `should_use_standalone_fn()` returns false (no Sep items, no
+    // multi-binder). For such rules, only the PrefixHandler metadata is created —
+    // the standalone `parse_<label>` function is dead code that would otherwise
+    // bloat the generated output and slow compilation.
+    //
+    // This optimization is always applied (cost_benefit BP04 gate defaults to true
+    // and is marked "always applicable"). The optimization_gates struct is computed
+    // later in the pipeline; if gating is needed in the future, move gate
+    // computation earlier or check the gate here.
     let mut all_prefix_handlers: Vec<PrefixHandler> = Vec::with_capacity(bundle.rd_rules.len());
 
     for rd_rule in &bundle.rd_rules {
-        let handler = write_rd_handler(&mut buf, rd_rule);
-        all_prefix_handlers.push(handler);
+        let starts_with_terminal = !matches!(
+            rd_rule.items.first(),
+            Some(RDSyntaxItem::NonTerminal { .. }) | Some(RDSyntaxItem::IdentCapture { .. })
+        );
+
+        if starts_with_terminal && !should_use_standalone_fn(rd_rule) {
+            // B-P04: trampoline inlines this rule — skip standalone function generation
+            let handler = make_prefix_handler_metadata(rd_rule);
+            all_prefix_handlers.push(handler);
+        } else {
+            // Rule needs standalone function (ident-lookahead dispatch, Sep, multi-binder)
+            let handler = write_rd_handler(&mut buf, rd_rule);
+            all_prefix_handlers.push(handler);
+        }
     }
 
     // Generate lambda handlers for primary category if grammar has binders
@@ -1867,15 +2327,23 @@ fn generate_parser_code(
         let recommended = crate::cost_benefit::recommended_optimizations(&grammar_profile);
         let gates = crate::cost_benefit::OptimizationGates::from_env_or_recommendations(&recommended);
         if !recommended.is_empty() {
+            let verbose = std::env::var("PRATTAIL_LINT_VERBOSE").is_ok();
             let detail_lines: Vec<String> = recommended.iter().map(|c| {
                 format!("  {} (speedup={:.2}, cost={:.2}): {}", c.optimization, c.speedup.value(), c.compile_cost.value(), c.reason)
             }).collect();
+            let display_lines = if !verbose && detail_lines.len() > 5 {
+                let mut truncated = detail_lines[..5].to_vec();
+                truncated.push(format!("  ... and {} more (set PRATTAIL_LINT_VERBOSE=1 to see all)", detail_lines.len() - 5));
+                truncated
+            } else {
+                detail_lines
+            };
             pipeline_diagnostic(
                 &bundle.grammar_name, "I05", "cost-benefit-recommendations",
                 crate::lint::LintSeverity::Info,
                 format!(
                     "cost-benefit analysis recommends {} optimization(s):\n{}",
-                    recommended.len(), detail_lines.join("\n"),
+                    recommended.len(), display_lines.join("\n"),
                 ),
                 None,
             );
@@ -1922,6 +2390,13 @@ fn generate_parser_code(
     // second-token lookahead, suffix disjointness, etc.) into a single
     // unified trie-based mechanism. Built after FIRST sets and dead rules
     // are available; threaded into TrampolineConfig for codegen queries.
+    // ── D-B02: Lazy analysis skip — decision tree ──────────────────────────
+    // Skip decision tree construction for trivial grammars with fewer than 3
+    // total rules (rd + cross + cast), where trie dispatch provides no benefit.
+    let total_rule_count = bundle.rd_rules.len()
+        + bundle.cross_rules.len()
+        + bundle.cast_rules.len();
+
     let decision_trees = {
         use crate::decision_tree::DecisionTreeBuilder;
         let mut dt_builder = DecisionTreeBuilder::new(
@@ -1930,80 +2405,93 @@ fn generate_parser_code(
             category_names.clone(),
             dead_rules.clone(),
         );
-        dt_builder.build_all(
-            &bundle.rd_rules,
-            &bundle.cross_rules,
-            &bundle.cast_rules,
-        );
 
-        // ── Decision-tree diagnostics (D01–D09) ─────────────────────────────
-        // Collect all DT diagnostics into a single Vec, then emit via the
-        // standard lint framework for batching, grouping, and PRATTAIL_LINT_VERBOSE.
-        let mut dt_diagnostics: Vec<crate::lint::LintDiagnostic> = Vec::new();
+        if total_rule_count >= 3 {
+            dt_builder.build_all(
+                &bundle.rd_rules,
+                &bundle.cross_rules,
+                &bundle.cast_rules,
+            );
 
-        for cat_name in &category_names {
-            if let Some(tree) = dt_builder.get_tree(cat_name) {
-                // D05: complexity metrics
-                if tree.stats.total_states > 0 {
-                    dt_diagnostics.push(
-                        crate::decision_tree::complexity_metrics(tree, &bundle.grammar_name)
+            // ── Decision-tree diagnostics (D01–D09) ─────────────────────────────
+            // Collect all DT diagnostics into a single Vec, then emit via the
+            // standard lint framework for batching, grouping, and PRATTAIL_LINT_VERBOSE.
+            let mut dt_diagnostics: Vec<crate::lint::LintDiagnostic> = Vec::new();
+
+            for cat_name in &category_names {
+                if let Some(tree) = dt_builder.get_tree(cat_name) {
+                    // D05: complexity metrics
+                    if tree.stats.total_states > 0 {
+                        dt_diagnostics.push(
+                            crate::decision_tree::complexity_metrics(tree, &bundle.grammar_name)
+                        );
+                    }
+
+                    // D01: precision ambiguity
+                    dt_diagnostics.extend(
+                        crate::decision_tree::precision_ambiguity_reports(tree, &token_id_map, &bundle.grammar_name)
+                    );
+
+                    // D02: unresolvable ambiguity
+                    dt_diagnostics.extend(
+                        crate::decision_tree::unresolvable_ambiguity_reports(tree, &token_id_map, &bundle.grammar_name)
+                    );
+
+                    // D03: unreachable rules
+                    let all_labels: std::collections::HashSet<String> = bundle.rd_rules
+                        .iter()
+                        .filter(|r| r.category == *cat_name && !r.is_collection && r.prefix_bp.is_none())
+                        .filter(|r| !matches!(
+                            r.items.first(),
+                            Some(crate::recursive::RDSyntaxItem::NonTerminal { .. }) |
+                            Some(crate::recursive::RDSyntaxItem::IdentCapture { .. })
+                        ))
+                        .map(|r| r.label.clone())
+                        .collect();
+                    dt_diagnostics.extend(
+                        crate::decision_tree::unreachable_rule_detection(tree, &all_labels, &bundle.grammar_name)
+                    );
+
+                    // D04: min lookahead
+                    if tree.stats.total_states > 0 {
+                        dt_diagnostics.push(
+                            crate::decision_tree::min_lookahead_report(tree, &bundle.grammar_name)
+                        );
+                    }
+                }
+
+                // D06: WFST consistency (needs both tree and wfst)
+                if let (Some(tree), Some(wfst)) = (dt_builder.get_tree(cat_name), prediction_wfsts.get(cat_name)) {
+                    dt_diagnostics.extend(
+                        crate::decision_tree::wfst_consistency_check(tree, wfst, &token_id_map, &bundle.grammar_name)
                     );
                 }
 
-                // D01: precision ambiguity
-                dt_diagnostics.extend(
-                    crate::decision_tree::precision_ambiguity_reports(tree, &token_id_map, &bundle.grammar_name)
-                );
+                if let Some(tree) = dt_builder.get_tree(cat_name) {
+                    // D08: optimization suggestions
+                    dt_diagnostics.extend(
+                        crate::decision_tree::optimization_suggestions(tree, &bundle.grammar_name)
+                    );
 
-                // D02: unresolvable ambiguity
-                dt_diagnostics.extend(
-                    crate::decision_tree::unresolvable_ambiguity_reports(tree, &token_id_map, &bundle.grammar_name)
-                );
-
-                // D03: unreachable rules
-                let all_labels: std::collections::HashSet<String> = bundle.rd_rules
-                    .iter()
-                    .filter(|r| r.category == *cat_name && !r.is_collection && r.prefix_bp.is_none())
-                    .filter(|r| !matches!(
-                        r.items.first(),
-                        Some(crate::recursive::RDSyntaxItem::NonTerminal { .. }) |
-                        Some(crate::recursive::RDSyntaxItem::IdentCapture { .. })
-                    ))
-                    .map(|r| r.label.clone())
-                    .collect();
-                dt_diagnostics.extend(
-                    crate::decision_tree::unreachable_rule_detection(tree, &all_labels, &bundle.grammar_name)
-                );
-
-                // D04: min lookahead
-                if tree.stats.total_states > 0 {
-                    dt_diagnostics.push(
-                        crate::decision_tree::min_lookahead_report(tree, &bundle.grammar_name)
+                    // D09: conflict resolution guidance
+                    dt_diagnostics.extend(
+                        crate::decision_tree::conflict_resolution_guidance(tree, &bundle.grammar_name)
                     );
                 }
             }
 
-            // D06: WFST consistency (needs both tree and wfst)
-            if let (Some(tree), Some(wfst)) = (dt_builder.get_tree(cat_name), prediction_wfsts.get(cat_name)) {
-                dt_diagnostics.extend(
-                    crate::decision_tree::wfst_consistency_check(tree, wfst, &token_id_map, &bundle.grammar_name)
-                );
-            }
-
-            if let Some(tree) = dt_builder.get_tree(cat_name) {
-                // D08: optimization suggestions
-                dt_diagnostics.extend(
-                    crate::decision_tree::optimization_suggestions(tree, &bundle.grammar_name)
-                );
-
-                // D09: conflict resolution guidance
-                dt_diagnostics.extend(
-                    crate::decision_tree::conflict_resolution_guidance(tree, &bundle.grammar_name)
-                );
-            }
+            crate::lint::emit_diagnostics_for_grammar(&bundle.grammar_name, &dt_diagnostics);
+        } else {
+            pipeline_diagnostic(
+                &bundle.grammar_name, "I15", "lazy-analysis-skip",
+                crate::lint::LintSeverity::Info,
+                format!(
+                    "decision tree construction skipped: {} rule(s) < 3 threshold",
+                    total_rule_count,
+                ),
+                None,
+            );
         }
-
-        crate::lint::emit_diagnostics_for_grammar(&bundle.grammar_name, &dt_diagnostics);
 
         dt_builder
     };
@@ -2297,6 +2785,18 @@ fn generate_parser_code(
             &prediction_wfsts,
         ))
     } else {
+        // ── D-B02: Lazy analysis skip — WPDS ──────────────────────────────
+        if bundle.categories.len() < 2 {
+            pipeline_diagnostic(
+                &bundle.grammar_name, "I13", "lazy-analysis-skip",
+                crate::lint::LintSeverity::Info,
+                format!(
+                    "WPDS analysis skipped: {} category(ies) < 2 threshold",
+                    bundle.categories.len(),
+                ),
+                None,
+            );
+        }
         None
     };
     let wpds_elapsed = if wpds_analysis.is_some() {
@@ -2374,80 +2874,108 @@ fn generate_parser_code(
     // Feature-gated analyses that produce actionable diagnostics during
     // `language!` macro expansion. Each analysis converts pipeline types
     // to module-internal types, runs analysis, and returns an Option<Result>.
+    //
+    // ── D-B02: Lazy analysis skip — mathematical analyses ─────────────────
+    // Skip expensive mathematical analyses for trivial grammars (< 3 categories)
+    // where cross-category interactions are too simple to benefit from them.
+    let math_analysis_eligible = bundle.categories.len() >= 3;
 
     let math_analysis_start = std::time::Instant::now();
 
-    // Phase 1: TRS (no dependencies)
-    #[cfg(feature = "trs-analysis")]
-    let confluence_result = crate::confluence::analyze_from_bundle(&bundle.all_syntax, 100);
-    #[cfg(feature = "trs-analysis")]
-    let termination_result = crate::termination::analyze_from_bundle(&bundle.all_syntax);
+    if !math_analysis_eligible {
+        pipeline_diagnostic(
+            &bundle.grammar_name, "I14", "lazy-analysis-skip",
+            crate::lint::LintSeverity::Info,
+            format!(
+                "mathematical analyses skipped: {} category(ies) < 3 threshold",
+                bundle.categories.len(),
+            ),
+            None,
+        );
+    }
 
-    // Phase 2: Automata (no dependencies)
+    // ── DB03: Parallel analysis phase execution ──────────────────────────
+    // When the parallel_analysis gate is enabled and the grammar is eligible,
+    // run all independent mathematical analyses in parallel using
+    // `std::thread::scope`. All analysis inputs (bundle.all_syntax,
+    // bundle.categories, wpds_analysis) are `Send + Sync` references, so
+    // they can be shared across scoped threads without cloning.
+    //
+    // Dependency structure:
+    //   Group A (no WPDS dep): confluence, termination, vpa, wta, petri,
+    //     nominal, alternating, provenance, cra, morphism
+    //   Group B (WPDS-dependent): safety, cegar, algebraic, ewpds, ara,
+    //     ltl, kat
+    // Since wpds_analysis is already computed before this point, ALL
+    // analyses are independent of each other and can run in parallel.
+    //
+    // When parallel_analysis is disabled, falls back to sequential execution.
+    //
+    // Implementation: results are collected into a MathAnalysisResults struct
+    // returned from `run_math_analyses_parallel` / `run_math_analyses_sequential`
+    // to avoid uninitialized-variable issues with scoped thread closures.
+
+    let (math_results, parallel_phase_count) =
+        if optimization_gates.parallel_analysis && math_analysis_eligible {
+            let r = run_math_analyses_parallel(bundle, wpds_analysis.as_ref());
+            let count = r.phase_count;
+            (r, count)
+        } else {
+            (run_math_analyses_sequential(bundle, wpds_analysis.as_ref(), math_analysis_eligible), 0u32)
+        };
+
+    // Destructure into individual result bindings for downstream use.
+    #[cfg(feature = "trs-analysis")]
+    let confluence_result = math_results.confluence_result;
+    #[cfg(feature = "trs-analysis")]
+    let termination_result = math_results.termination_result;
     #[cfg(feature = "vpa")]
-    let vpa_result = crate::vpa::analyze_from_bundle(&bundle.categories, &bundle.all_syntax);
+    let vpa_result = math_results.vpa_result;
     #[cfg(feature = "tree-automata")]
-    let wta_result = crate::tree_automaton::analyze_from_bundle(&bundle.categories, &bundle.all_syntax);
-
-    // Phase 3: WPDS-dependent (need wpds_analysis)
-    let safety_result = wpds_analysis.as_ref().and_then(|wa| {
-        crate::verify::verify_from_bundle(wa, &bundle.categories, &bundle.all_syntax)
-    });
-    let cegar_result = wpds_analysis.as_ref().and_then(|wa| {
-        crate::cegar::cegar_from_bundle(wa)
-    });
-    let algebraic_result = wpds_analysis.as_ref().map(|wa| {
-        crate::algebraic::analyze_from_bundle(wa)
-    });
-
+    let wta_result = math_results.wta_result;
+    let safety_result = math_results.safety_result;
+    let cegar_result = math_results.cegar_result;
+    let algebraic_result = math_results.algebraic_result;
     #[cfg(feature = "wpds-extended")]
-    let ewpds_result = wpds_analysis.as_ref().and_then(|wa| {
-        crate::ewpds::extend_from_bundle(wa, &bundle.all_syntax)
-    });
+    let ewpds_result = math_results.ewpds_result;
     #[cfg(feature = "wpds-ara")]
-    let ara_result = wpds_analysis.as_ref().map(|wa| {
-        crate::ara::analyze_from_bundle(wa, &bundle.all_syntax)
-    });
-
-    // Phase 4: Concurrency (no dependencies)
+    let ara_result = math_results.ara_result;
     #[cfg(feature = "petri")]
-    let petri_result = {
-        let petri_cats: Vec<crate::wpds::WpdsCategoryInfo> = bundle
-            .categories
-            .iter()
-            .map(|c| crate::wpds::WpdsCategoryInfo {
-                name: c.name.clone(),
-                is_primary: c.is_primary,
-            })
-            .collect();
-        Some(crate::petri::analyze_from_bundle(&bundle.all_syntax, &petri_cats))
-    };
+    let petri_result = math_results.petri_result;
     #[cfg(feature = "nominal")]
-    let nominal_result = Some(crate::nominal::analyze_from_bundle(&bundle.all_syntax));
+    let nominal_result = math_results.nominal_result;
     #[cfg(feature = "alternating")]
-    let alternating_result = Some(crate::alternating::analyze_from_bundle(&bundle.all_syntax, &bundle.categories));
-
-    // Phase 5: Temporal (need wpds_analysis + buchi)
+    let alternating_result = math_results.alternating_result;
     #[cfg(feature = "ltl")]
-    let ltl_results = wpds_analysis.as_ref().map(|wa| {
-        crate::ltl::check_from_bundle(wa)
-    });
+    let ltl_results = math_results.ltl_results;
     #[cfg(feature = "provenance")]
-    let provenance_result = crate::provenance::track_from_bundle(
-        &bundle.all_syntax, &bundle.categories,
-    );
+    let provenance_result = math_results.provenance_result;
     #[cfg(feature = "cra")]
-    let cra_result = crate::cra::analyze_from_bundle(&bundle.all_syntax);
-
-    // Phase 6: Meta
+    let cra_result = math_results.cra_result;
     #[cfg(feature = "morphisms")]
-    let morphism_result = crate::morphism::check_from_bundle(&bundle.all_syntax, &bundle.categories);
+    let morphism_result = math_results.morphism_result;
     #[cfg(feature = "kat")]
-    let kat_result = wpds_analysis.as_ref().and_then(|wa| {
-        crate::kat::check_from_bundle(wa, &bundle.all_syntax)
-    });
+    let kat_result = math_results.kat_result;
 
     let math_analysis_elapsed = math_analysis_start.elapsed();
+
+    // ── DB03: I19 diagnostic — parallel analysis speedup ─────────────────
+    if parallel_phase_count > 0 {
+        pipeline_diagnostic(
+            &bundle.grammar_name, "I19", "parallel-analysis",
+            crate::lint::LintSeverity::Info,
+            format!(
+                "DB03 parallel analysis: {} phases executed in parallel ({:.1}ms wall-clock)",
+                parallel_phase_count,
+                math_analysis_elapsed.as_secs_f64() * 1000.0,
+            ),
+            Some(format!(
+                "gate: optimization_gates.parallel_analysis=true, \
+                 eligible: {} categories >= 3",
+                bundle.categories.len(),
+            )),
+        );
+    }
 
     // ── Unified lint layer ─────────────────────────────────────────────────
     // Construct LintContext with all pipeline data and run all lints.
@@ -2528,7 +3056,13 @@ fn generate_parser_code(
             kat_result: kat_result.as_ref(),
         };
 
-        let mut diagnostics = crate::lint::run_lints(&lint_ctx);
+        // DB04: Use cached lint results when the optimization gate is enabled.
+        // If the grammar spec hash matches the cached hash, all lints are skipped.
+        #[allow(unused_mut)]
+        let mut diagnostics = crate::lint::run_lints_cached(
+            &lint_ctx,
+            optimization_gates.cached_lints,
+        );
 
         // ── Repair enrichment ──
         // Scan diagnostics for specific lint codes and append repair suggestions.
@@ -2696,6 +3230,33 @@ fn generate_parser_code(
         }
     }
 
+    // BP03: Emit `token_variant_id()` when the gate is enabled and any category has
+    // enough operators to benefit from static array lookup.
+    if optimization_gates.bp_table_lookup {
+        let bp03_needed = bundle.categories.iter().any(|cat| {
+            let infix_count = bundle.bp_table.operators_for_category(&cat.name).len();
+            let postfix_count = bundle.bp_table.postfix_operators_for_category(&cat.name).len();
+            let mixfix_count = bundle.bp_table.mixfix_operators_for_category(&cat.name).len();
+            infix_count >= crate::pratt::BP_TABLE_LOOKUP_THRESHOLD
+                || postfix_count >= crate::pratt::BP_TABLE_LOOKUP_THRESHOLD
+                || mixfix_count >= crate::pratt::BP_TABLE_LOOKUP_THRESHOLD
+        });
+        if bp03_needed {
+            crate::automata::codegen::write_token_variant_id(&mut buf, variant_map);
+        }
+    }
+
+    // CD05: Detect shared nonterminal prefixes across all categories (computed once).
+    let prefix_cse_all = if optimization_gates.prefix_cse {
+        crate::decision_tree::detect_shared_nonterminal_prefixes(
+            &decision_trees,
+            &first_sets,
+            &token_id_map,
+        )
+    } else {
+        Vec::new()
+    };
+
     // Write trampolined parsers per category (stack-safe via explicit continuation stack)
     for cat in &bundle.categories {
         let has_infix = !bundle.bp_table.operators_for_category(&cat.name).is_empty();
@@ -2804,6 +3365,12 @@ fn generate_parser_code(
                     db.max_depth.map(|d| (d as usize) + 1)
                 })
             }),
+            token_variant_map: Some(variant_map.clone()),
+            prefix_cse_hints: prefix_cse_all
+                .iter()
+                .filter(|h| h.category == cat.name)
+                .cloned()
+                .collect(),
         };
 
         let cat_handlers: Vec<PrefixHandler> = all_prefix_handlers
@@ -2886,6 +3453,7 @@ fn generate_parser_code(
             &optimization_gates,
             &dead_rules,
             &bundle.rd_rules,
+            Some(&token_id_map),
         );
     }
 
@@ -2981,6 +3549,10 @@ fn generate_parser_code(
                     &rec_proj,
                 )
             },
+            // Recovery path doesn't need BP03 optimization (fewer operators)
+            token_variant_map: None,
+            // Recovery path doesn't use CD05 prefix CSE
+            prefix_cse_hints: Vec::new(),
         };
 
         // Emit cross-category cast recovery static: for each source category
@@ -4857,5 +5429,103 @@ mod tests {
         let warnings = detect_inter_category_dead_paths(&rules, &cats, &first_sets, &all_syntax);
         assert!(warnings.is_empty(),
             "Arg should be reachable via Collection from Proc: {:?}", warnings);
+    }
+
+    // ── DB03: Parallel analysis phase execution tests ────────────────────
+
+    #[test]
+    fn test_db03_count_analysis_phases_baseline() {
+        // count_analysis_phases() should return at least 3 (safety, cegar,
+        // algebraic) even with no feature flags enabled.
+        let count = super::count_analysis_phases();
+        assert!(count >= 3,
+            "count_analysis_phases should include at least 3 always-on phases, got {}",
+            count);
+    }
+
+    #[test]
+    fn test_db03_sequential_ineligible_returns_none() {
+        // When eligible=false, run_math_analyses_sequential should return
+        // None for all result fields and phase_count=0.
+        let bundle = ParserBundle {
+            grammar_name: "Test".to_string(),
+            categories: vec![
+                category("Proc", true),
+                category("Int", false),
+            ],
+            bp_table: crate::binding_power::BindingPowerTable {
+                operators: Vec::new(),
+            },
+            rule_infos: vec![rule("Add", "Int")],
+            follow_inputs: Vec::new(),
+            rd_rules: Vec::new(),
+            cross_rules: Vec::new(),
+            cast_rules: Vec::new(),
+            has_binders: false,
+            beam_width: crate::BeamWidthConfig::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
+            all_syntax: Vec::new(),
+            rule_locations: std::collections::HashMap::new(),
+            semantic_dependency_groups: Vec::new(),
+        };
+
+        let results = super::run_math_analyses_sequential(&bundle, None, false);
+        assert_eq!(results.phase_count, 0, "phase_count should be 0 for sequential path");
+        assert!(results.safety_result.is_none(), "safety_result should be None when ineligible");
+        assert!(results.cegar_result.is_none(), "cegar_result should be None when ineligible");
+        assert!(results.algebraic_result.is_none(), "algebraic_result should be None when ineligible");
+    }
+
+    #[test]
+    fn test_db03_parallel_returns_results() {
+        // run_math_analyses_parallel should run without panicking and
+        // return valid MathAnalysisResults with phase_count > 0.
+        // With no WPDS analysis, WPDS-dependent results should be None,
+        // but the function should still complete successfully.
+        let bundle = ParserBundle {
+            grammar_name: "TestParallel".to_string(),
+            categories: vec![
+                category("Proc", true),
+                category("Int", false),
+                category("Bool", false),
+            ],
+            bp_table: crate::binding_power::BindingPowerTable {
+                operators: Vec::new(),
+            },
+            rule_infos: vec![
+                rule("PPar", "Proc"),
+                rule("Add", "Int"),
+                rule("BTrue", "Bool"),
+            ],
+            follow_inputs: Vec::new(),
+            rd_rules: Vec::new(),
+            cross_rules: Vec::new(),
+            cast_rules: Vec::new(),
+            has_binders: false,
+            beam_width: crate::BeamWidthConfig::default(),
+            recovery_config: crate::recovery::RecoveryConfig::default(),
+            all_syntax: vec![
+                ("PPar".to_string(), "Proc".to_string(), vec![
+                    SyntaxItemSpec::NonTerminal { category: "Proc".to_string(), param_name: "p".to_string() },
+                    SyntaxItemSpec::Terminal("|".to_string()),
+                    SyntaxItemSpec::NonTerminal { category: "Proc".to_string(), param_name: "q".to_string() },
+                ]),
+                ("Add".to_string(), "Int".to_string(), vec![
+                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "a".to_string() },
+                    SyntaxItemSpec::Terminal("+".to_string()),
+                    SyntaxItemSpec::NonTerminal { category: "Int".to_string(), param_name: "b".to_string() },
+                ]),
+            ],
+            rule_locations: std::collections::HashMap::new(),
+            semantic_dependency_groups: Vec::new(),
+        };
+
+        let results = super::run_math_analyses_parallel(&bundle, None);
+        assert!(results.phase_count >= 3,
+            "parallel phase_count should be >= 3, got {}", results.phase_count);
+        // Without WPDS analysis, WPDS-dependent results should be None
+        assert!(results.safety_result.is_none(), "safety_result should be None without WPDS");
+        assert!(results.cegar_result.is_none(), "cegar_result should be None without WPDS");
+        assert!(results.algebraic_result.is_none(), "algebraic_result should be None without WPDS");
     }
 }

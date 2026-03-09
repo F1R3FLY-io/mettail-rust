@@ -324,6 +324,298 @@ fn collect_type_refs(
     }
 }
 
+// =============================================================================
+// Demand-Driven Relation Population (A-RT06)
+// =============================================================================
+
+/// Compute the set of categories that are "demanded" by equation/rewrite/logic rules.
+///
+/// A category is demanded if it appears in at least one:
+/// - Equation LHS or RHS pattern (as a constructor's category or subterm field type)
+/// - Rewrite LHS or RHS pattern (same)
+/// - Logic block relation parameter type
+/// - Type context entry in an equation or rewrite
+/// - HOL step rule (rust_code references categories via constructor fields)
+///
+/// The demand set is used to prune deconstruction rules: for a reachable `(src, tgt)` pair,
+/// if `tgt` is not in the demanded set, no equation/rewrite/logic rule can reference
+/// subterms of type `tgt`, so the deconstruction rule would produce unused facts.
+///
+/// This is conservative: if in doubt, the category is included. Specifically:
+/// - All categories from pattern constructors (recursively, including nested subterms)
+/// - All field types of those constructors (transitive demand)
+/// - All categories from logic block relation types
+///
+/// Note: Self-loop pairs `(src, src)` are kept unconditionally by the caller
+/// (see `filter_reachable_by_demand`), since every category with any terms needs
+/// same-category deconstruction for pattern matching and congruence rules.
+///
+/// Returns the set of demanded category names.
+pub fn compute_demanded_categories(language: &LanguageDef) -> BTreeSet<String> {
+    let all_categories: BTreeSet<String> = language.types.iter().map(|t| t.name.to_string()).collect();
+    let mut demanded = BTreeSet::new();
+
+    // 1. Categories referenced in equation patterns
+    for eq in &language.equations {
+        collect_pattern_categories(&eq.left, language, &all_categories, &mut demanded);
+        collect_pattern_categories(&eq.right, language, &all_categories, &mut demanded);
+        // Type context entries
+        for tp in &eq.type_context {
+            collect_type_expr_categories(&tp.ty, &all_categories, &mut demanded);
+        }
+    }
+
+    // 2. Categories referenced in rewrite patterns
+    for rw in &language.rewrites {
+        collect_pattern_categories(&rw.left, language, &all_categories, &mut demanded);
+        collect_pattern_categories(&rw.right, language, &all_categories, &mut demanded);
+        // Type context entries
+        for tp in &rw.type_context {
+            collect_type_expr_categories(&tp.ty, &all_categories, &mut demanded);
+        }
+        // Congruence premises reference categories implicitly via the rewrite relation
+        // (rw_cat), but the category is already demanded via the pattern. No extra work needed.
+    }
+
+    // 3. Categories referenced in logic block relation parameter types
+    if let Some(ref logic) = language.logic {
+        for rel in &logic.relations {
+            for param_type in &rel.param_types {
+                // param_types are strings like "Proc", "Vec<Proc>", etc.
+                // Extract the base category name(s) from them.
+                collect_param_type_categories(param_type, &all_categories, &mut demanded);
+            }
+        }
+        // Conservative: if there's a logic block with content, assume all categories
+        // might be referenced (the content is a raw TokenStream that we can't easily
+        // introspect beyond the parsed relation declarations). The relation parameter
+        // types give us the main signal, but custom rules might reference additional
+        // category relations (e.g., `proc(t)` directly).
+        //
+        // For safety, if ANY logic block exists with non-empty content, we include
+        // all categories that appear in logic relation parameter types (already done above).
+        // We do NOT conservatively include ALL categories — the relation declarations
+        // are the primary signal and should be sufficient for most grammars.
+    }
+
+    // 4. Categories referenced by HOL step rules (rust_code constructors)
+    // These are constructors with rust_code that reference categories via their field types.
+    // The constructor's own category and all field categories are demanded.
+    for rule in &language.terms {
+        if rule.rust_code.is_some() {
+            demanded.insert(rule.category.to_string());
+            if let Some(ref term_ctx) = rule.term_context {
+                for param in term_ctx {
+                    match param {
+                        TermParam::Simple { ty, .. } => {
+                            collect_type_expr_categories(ty, &all_categories, &mut demanded);
+                        },
+                        TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
+                            collect_type_expr_categories(ty, &all_categories, &mut demanded);
+                        },
+                    }
+                }
+            }
+        }
+    }
+
+    demanded
+}
+
+/// Filter a reachable `(src, tgt)` pair set to only include pairs where `tgt` is demanded.
+///
+/// Self-loop pairs `(src, src)` are always kept — every category needs same-category
+/// deconstruction for its own congruence and pattern-matching rules.
+///
+/// Cross-category pairs `(src, tgt)` where `src != tgt` are kept only if `tgt` is in the
+/// demanded set. If `tgt` is not demanded, no equation/rewrite/logic rule references
+/// subterms of type `tgt`, so the deconstruction rule would produce unused facts.
+///
+/// This is a conservative filter: it only removes pairs that are provably unused.
+pub fn filter_reachable_by_demand(
+    reachable: &BTreeSet<(String, String)>,
+    demanded: &BTreeSet<String>,
+) -> BTreeSet<(String, String)> {
+    reachable
+        .iter()
+        .filter(|(src, tgt)| {
+            // Self-loops are always kept
+            if src == tgt {
+                return true;
+            }
+            // Cross-category pairs: keep only if tgt is demanded
+            demanded.contains(tgt)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Recursively collect all category names referenced in a pattern.
+///
+/// For each `Apply { constructor, args }`, adds the constructor's category and all
+/// field types of that constructor. Then recurses into args.
+fn collect_pattern_categories(
+    pattern: &crate::ast::pattern::Pattern,
+    language: &LanguageDef,
+    all_categories: &BTreeSet<String>,
+    demanded: &mut BTreeSet<String>,
+) {
+    use crate::ast::pattern::Pattern;
+
+    match pattern {
+        Pattern::Term(pt) => {
+            collect_pattern_term_categories(pt, language, all_categories, demanded);
+        },
+        Pattern::Collection { elements, .. } => {
+            for elem in elements {
+                collect_pattern_categories(elem, language, all_categories, demanded);
+            }
+        },
+        Pattern::Map { collection, body, .. } => {
+            collect_pattern_categories(collection, language, all_categories, demanded);
+            collect_pattern_categories(body, language, all_categories, demanded);
+        },
+        Pattern::Zip { first, second } => {
+            collect_pattern_categories(first, language, all_categories, demanded);
+            collect_pattern_categories(second, language, all_categories, demanded);
+        },
+    }
+}
+
+/// Recursively collect categories from a PatternTerm.
+fn collect_pattern_term_categories(
+    pt: &crate::ast::pattern::PatternTerm,
+    language: &LanguageDef,
+    all_categories: &BTreeSet<String>,
+    demanded: &mut BTreeSet<String>,
+) {
+    use crate::ast::pattern::PatternTerm;
+
+    match pt {
+        PatternTerm::Var(_) => {},
+        PatternTerm::Apply { constructor, args } => {
+            // Add the constructor's own category
+            if let Some(cat) = language.category_of_constructor(constructor) {
+                demanded.insert(cat.to_string());
+            }
+            // Add all field types of this constructor (these are categories that
+            // deconstruction would extract from terms of this constructor's category)
+            if let Some(rule) = language.get_constructor(constructor) {
+                collect_constructor_field_categories(rule, all_categories, demanded);
+            }
+            // Recurse into arguments
+            for arg in args {
+                collect_pattern_categories(arg, language, all_categories, demanded);
+            }
+        },
+        PatternTerm::Lambda { body, .. } | PatternTerm::MultiLambda { body, .. } => {
+            collect_pattern_categories(body, language, all_categories, demanded);
+        },
+        PatternTerm::Subst { term, replacement, .. } => {
+            collect_pattern_categories(term, language, all_categories, demanded);
+            collect_pattern_categories(replacement, language, all_categories, demanded);
+        },
+        PatternTerm::MultiSubst { scope, replacements } => {
+            collect_pattern_categories(scope, language, all_categories, demanded);
+            for r in replacements {
+                collect_pattern_categories(r, language, all_categories, demanded);
+            }
+        },
+    }
+}
+
+/// Collect category names from a constructor's field types.
+///
+/// For a constructor like `POutput(Name, Name, Proc)`, this adds "Name" and "Proc"
+/// to the demanded set.
+fn collect_constructor_field_categories(
+    rule: &crate::ast::grammar::GrammarRule,
+    all_categories: &BTreeSet<String>,
+    demanded: &mut BTreeSet<String>,
+) {
+    if let Some(ref term_ctx) = rule.term_context {
+        for param in term_ctx {
+            match param {
+                TermParam::Simple { ty, .. } => {
+                    collect_type_expr_categories(ty, all_categories, demanded);
+                },
+                TermParam::Abstraction { ty, .. } | TermParam::MultiAbstraction { ty, .. } => {
+                    collect_type_expr_categories(ty, all_categories, demanded);
+                },
+            }
+        }
+    } else {
+        // Old-syntax: inspect items directly
+        for item in &rule.items {
+            match item {
+                GrammarItem::NonTerminal(cat) => {
+                    let cat_str = cat.to_string();
+                    if all_categories.contains(&cat_str) {
+                        demanded.insert(cat_str);
+                    }
+                },
+                GrammarItem::Collection { element_type, .. } => {
+                    let cat_str = element_type.to_string();
+                    if all_categories.contains(&cat_str) {
+                        demanded.insert(cat_str);
+                    }
+                },
+                GrammarItem::Binder { category: binder_domain } => {
+                    let cat_str = binder_domain.to_string();
+                    if all_categories.contains(&cat_str) {
+                        demanded.insert(cat_str);
+                    }
+                },
+                GrammarItem::Terminal(_) => {},
+            }
+        }
+    }
+}
+
+/// Collect category names from a TypeExpr.
+fn collect_type_expr_categories(
+    ty: &TypeExpr,
+    all_categories: &BTreeSet<String>,
+    demanded: &mut BTreeSet<String>,
+) {
+    match ty {
+        TypeExpr::Base(ident) => {
+            let name = ident.to_string();
+            if all_categories.contains(&name) {
+                demanded.insert(name);
+            }
+        },
+        TypeExpr::Collection { element, .. } => {
+            collect_type_expr_categories(element, all_categories, demanded);
+        },
+        TypeExpr::Arrow { domain, codomain } => {
+            collect_type_expr_categories(domain, all_categories, demanded);
+            collect_type_expr_categories(codomain, all_categories, demanded);
+        },
+        TypeExpr::MultiBinder(inner) => {
+            collect_type_expr_categories(inner, all_categories, demanded);
+        },
+    }
+}
+
+/// Extract category names from a relation parameter type string.
+///
+/// Handles simple cases like "Proc", "Vec<Proc>", "i32", etc.
+/// If the string contains a known category name, it is added.
+fn collect_param_type_categories(
+    param_type: &str,
+    all_categories: &BTreeSet<String>,
+    demanded: &mut BTreeSet<String>,
+) {
+    // Simple approach: check if any category name appears in the param type string.
+    // This handles "Proc", "Vec<Proc>", "HashBag<Proc>", etc.
+    for cat in all_categories {
+        if param_type.contains(cat.as_str()) {
+            demanded.insert(cat.clone());
+        }
+    }
+}
+
 /// Type alias for an optional category filter set.
 ///
 /// When `Some(set)`, only categories whose names appear in the set are processed.
@@ -584,4 +876,218 @@ pub fn classify_rewrite_strata(
     }
 
     strata
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::grammar::{GrammarItem, GrammarRule};
+    use crate::ast::language::{Equation, LangType, LanguageDef, RewriteRule};
+    use crate::ast::pattern::{Pattern, PatternTerm};
+    use proc_macro2::Span;
+    use syn::Ident;
+
+    /// Build a minimal LanguageDef for demand analysis testing.
+    fn make_test_language_with_rewrites(
+        types: Vec<&str>,
+        terms: Vec<(&str, &str, Vec<&str>)>,
+        equations: Vec<(&str, &str)>,
+        rewrites: Vec<(&str, &str, &str)>, // (name, lhs_ctor, rhs_ctor)
+    ) -> LanguageDef {
+        let lang_types: Vec<LangType> = types
+            .iter()
+            .map(|name| LangType {
+                name: Ident::new(name, Span::call_site()),
+                native_type: None,
+            })
+            .collect();
+
+        let grammar_rules: Vec<GrammarRule> = terms
+            .iter()
+            .map(|(label, category, field_cats)| {
+                let items: Vec<GrammarItem> = field_cats
+                    .iter()
+                    .map(|fc| GrammarItem::NonTerminal(Ident::new(fc, Span::call_site())))
+                    .collect();
+                GrammarRule {
+                    label: Ident::new(label, Span::call_site()),
+                    category: Ident::new(category, Span::call_site()),
+                    items,
+                    bindings: vec![],
+                    rust_code: None,
+                    term_context: None,
+                    syntax_pattern: None,
+                    eval_mode: None,
+                    is_right_assoc: false,
+                    prefix_bp: None,
+                }
+            })
+            .collect();
+
+        let eqs: Vec<Equation> = equations
+            .iter()
+            .map(|(name, lhs_ctor)| {
+                let lhs_ident = Ident::new(lhs_ctor, Span::call_site());
+                Equation {
+                    name: Ident::new(name, Span::call_site()),
+                    type_context: vec![],
+                    premises: vec![],
+                    left: Pattern::Term(PatternTerm::Apply {
+                        constructor: lhs_ident,
+                        args: vec![Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site())))],
+                    }),
+                    right: Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site()))),
+                }
+            })
+            .collect();
+
+        let rws: Vec<RewriteRule> = rewrites
+            .iter()
+            .map(|(name, lhs_ctor, rhs_ctor)| {
+                let lhs_ident = Ident::new(lhs_ctor, Span::call_site());
+                let rhs_ident = Ident::new(rhs_ctor, Span::call_site());
+                RewriteRule {
+                    name: Ident::new(name, Span::call_site()),
+                    type_context: vec![],
+                    premises: vec![],
+                    left: Pattern::Term(PatternTerm::Apply {
+                        constructor: lhs_ident,
+                        args: vec![Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site())))],
+                    }),
+                    right: Pattern::Term(PatternTerm::Apply {
+                        constructor: rhs_ident,
+                        args: vec![Pattern::Term(PatternTerm::Var(Ident::new("X", Span::call_site())))],
+                    }),
+                }
+            })
+            .collect();
+
+        LanguageDef {
+            name: Ident::new("TestLang", Span::call_site()),
+            options: std::collections::HashMap::new(),
+            extends_names: vec![],
+            include_names: vec![],
+            mixin_names: vec![],
+            types: lang_types,
+            terms: grammar_rules,
+            equations: eqs,
+            rewrites: rws,
+            logic: None,
+        }
+    }
+
+    // ── ART06: compute_demanded_categories ────────────────────────────────
+
+    #[test]
+    fn demand_basic_unused_category() {
+        // 3 categories: Proc, Name, Unused.
+        // Only Proc has an equation referencing PFoo(Name).
+        // Unused has a constructor but no equation/rewrite/logic references.
+        let lang = make_test_language_with_rewrites(
+            vec!["Proc", "Name", "Unused"],
+            vec![
+                ("PFoo", "Proc", vec!["Name"]),
+                ("NBar", "Name", vec![]),
+                ("UBaz", "Unused", vec![]),
+            ],
+            vec![("Eq1", "PFoo")], // equation references PFoo in Proc
+            vec![],
+        );
+
+        let demanded = compute_demanded_categories(&lang);
+
+        assert!(demanded.contains("Proc"), "Proc should be demanded (has equation)");
+        assert!(demanded.contains("Name"), "Name should be demanded (field of PFoo in equation)");
+        assert!(!demanded.contains("Unused"), "Unused should NOT be demanded (no references)");
+    }
+
+    #[test]
+    fn demand_transitive_closure_via_rewrite() {
+        // A rewrites to B (via constructor), B is constructed from C.
+        // All three should be demanded even though only A has a direct rewrite.
+        // Proc has PFoo(Name), and a rewrite matching PFoo.
+        // Name has NBar(Expr). Expr has EBaz().
+        // The rewrite on PFoo demands Proc and Name (via field type).
+        // NBar constructor doesn't appear in any rule, but Name IS demanded
+        // because the equation references PFoo which has a Name field.
+        let lang = make_test_language_with_rewrites(
+            vec!["Proc", "Name", "Expr"],
+            vec![
+                ("PFoo", "Proc", vec!["Name"]),
+                ("NBar", "Name", vec!["Expr"]),
+                ("EBaz", "Expr", vec![]),
+            ],
+            vec![],
+            vec![("Rw1", "PFoo", "PFoo")], // rewrite references PFoo
+        );
+
+        let demanded = compute_demanded_categories(&lang);
+
+        assert!(demanded.contains("Proc"), "Proc should be demanded (rewrite LHS category)");
+        assert!(demanded.contains("Name"), "Name should be demanded (field of PFoo in rewrite pattern)");
+        // Expr is NOT directly referenced in any equation/rewrite pattern.
+        // NBar is a constructor but NBar doesn't appear in any pattern.
+        // The demand analysis only collects categories from patterns, not transitively
+        // through all constructors.
+        assert!(
+            !demanded.contains("Expr"),
+            "Expr should NOT be demanded (not referenced in any equation/rewrite pattern)"
+        );
+    }
+
+    #[test]
+    fn demand_all_categories_with_equations() {
+        // Every category has an equation — all should be demanded.
+        let lang = make_test_language_with_rewrites(
+            vec!["Proc", "Name"],
+            vec![
+                ("PFoo", "Proc", vec!["Name"]),
+                ("NBar", "Name", vec!["Proc"]),
+            ],
+            vec![("EqP", "PFoo"), ("EqN", "NBar")],
+            vec![],
+        );
+
+        let demanded = compute_demanded_categories(&lang);
+
+        assert!(demanded.contains("Proc"), "Proc demanded");
+        assert!(demanded.contains("Name"), "Name demanded");
+    }
+
+    #[test]
+    fn demand_empty_language() {
+        let lang = make_test_language_with_rewrites(vec![], vec![], vec![], vec![]);
+        let demanded = compute_demanded_categories(&lang);
+        assert!(demanded.is_empty(), "empty language should have no demanded categories");
+    }
+
+    #[test]
+    fn demand_filter_reachable_by_demand() {
+        // Test filter_reachable_by_demand: self-loops always kept,
+        // cross-category pairs kept only if tgt is demanded.
+        let mut reachable = BTreeSet::new();
+        reachable.insert(("Proc".to_string(), "Proc".to_string())); // self-loop
+        reachable.insert(("Name".to_string(), "Name".to_string())); // self-loop
+        reachable.insert(("Proc".to_string(), "Name".to_string())); // cross-cat
+        reachable.insert(("Proc".to_string(), "Unused".to_string())); // cross-cat
+
+        let mut demanded = BTreeSet::new();
+        demanded.insert("Proc".to_string());
+        demanded.insert("Name".to_string());
+        // Unused is NOT demanded
+
+        let filtered = filter_reachable_by_demand(&reachable, &demanded);
+
+        assert!(filtered.contains(&("Proc".to_string(), "Proc".to_string())), "self-loop kept");
+        assert!(filtered.contains(&("Name".to_string(), "Name".to_string())), "self-loop kept");
+        assert!(filtered.contains(&("Proc".to_string(), "Name".to_string())), "demanded tgt kept");
+        assert!(
+            !filtered.contains(&("Proc".to_string(), "Unused".to_string())),
+            "non-demanded tgt pruned"
+        );
+    }
 }

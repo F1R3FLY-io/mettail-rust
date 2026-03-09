@@ -13,6 +13,9 @@ wfst-log = ["dep:serde", "dep:postcard"]
 quantum = ["dep:num-complex"]
 ## Grammar-aware expression generator (proptest-based) for benchmarks and tests.
 grammar-gen = ["dep:proptest"]
+## AL03: SIMD-accelerated whitespace skipping using portable SIMD (std::simd).
+## Requires nightly Rust. Processes 16 bytes at a time for whitespace scanning.
+simd-whitespace = []
 
 # ── Mathematical Analysis & Theorem Proving Features ─────────────────────────
 

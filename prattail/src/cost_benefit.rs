@@ -69,6 +69,78 @@ pub enum Optimization {
     CegarRefinement,
     /// Petri net deadlock check: coverability analysis for concurrent patterns.
     PetriDeadlockCheck,
+
+    // ── Codegen Optimization Catalog ─────────────────────────────────────────
+
+    /// ART01: Hash-consing for recursive term types (Rc/Arc + interning).
+    HashConsing,
+    /// ART02: Incremental semi-naive delta guards.
+    IncrementalDelta,
+    /// ART03: Relation indexing hints via #[index] annotations.
+    RelationIndexing,
+    /// ART04: Bloom filter pre-check for congruence rules.
+    CongruenceBloom,
+    /// ART05: Fixpoint convergence bound via term-depth analysis.
+    DepthBound,
+    /// ART06: Demand-driven relation population.
+    DemandDriven,
+
+    /// BCG01: Join ordering optimization (reorder body clauses by cost).
+    JoinOrdering,
+    /// BCG02: Rule fusion for chained deconstruction-rewrite.
+    RuleFusion,
+    /// BCG03: Selective equality congruence pruning.
+    EqCongruencePrune,
+    /// BCG04: Ground-term short-circuit in rewrite rules.
+    GroundShortCircuit,
+    /// BCG05: Normalize-on-insert deduplication.
+    NormalizeDedup,
+    /// BCG06: Stratified equation evaluation.
+    EqStrata,
+
+    /// AL01: DFA transition table multi-row repacking.
+    CombRepacking,
+    /// AL02: Hybrid direct-coded + compressed lexer.
+    HybridLexer,
+    /// AL03: SIMD-accelerated whitespace skipping.
+    SimdWhitespace,
+    /// AL04: Keyword recognition via minimal perfect hashing.
+    KeywordMph,
+    /// AL05: Multi-byte chain transitions.
+    MultiByteChain,
+    /// AL06: Accept state bitmap widening.
+    AcceptBitmapWiden,
+
+    /// BP01: Pratt BP table compaction via range encoding.
+    BpCompaction,
+    /// BP02: Tail-call elimination in recursive descent.
+    TailCallElim,
+    /// BP03: Token peek cache / BP table lookup.
+    BpTableLookup,
+    /// BP04: Prefix handler inlining for trivial rules.
+    TrivialInline,
+    /// BP05: Specialized Pratt loop for fixed BP ranges.
+    BpRangeLoop,
+
+    /// CD01: Hot-path arm reordering via WFST frequency weights.
+    FrequencyOrdering,
+    /// CD02: Decision tree segment merging at safe nonterminal boundaries.
+    SegmentMerging,
+    /// CD03: Computed goto dispatch via function pointer tables.
+    ComputedGoto,
+    /// CD04: Jump threading through decision tree branches.
+    JumpThreading,
+    /// CD05: Prefix CSE for shared nonterminal parses.
+    PrefixCse,
+
+    /// DB01: Incremental FIRST/FOLLOW recomputation.
+    IncrementalFirstFollow,
+    /// DB02: Lazy analysis phase execution (skip for small grammars).
+    LazyAnalysis,
+    /// DB03: Parallel analysis phase execution.
+    ParallelAnalysis,
+    /// DB04: Cached lint results across builds.
+    CachedLints,
 }
 
 impl fmt::Display for Optimization {
@@ -92,6 +164,38 @@ impl fmt::Display for Optimization {
             Self::SafetyVerification => write!(f, "S01:SafetyVerification"),
             Self::CegarRefinement => write!(f, "S03:CegarRefinement"),
             Self::PetriDeadlockCheck => write!(f, "N01:PetriDeadlockCheck"),
+            Self::HashConsing => write!(f, "ART01:HashConsing"),
+            Self::IncrementalDelta => write!(f, "ART02:IncrementalDelta"),
+            Self::RelationIndexing => write!(f, "ART03:RelationIndexing"),
+            Self::CongruenceBloom => write!(f, "ART04:CongruenceBloom"),
+            Self::DepthBound => write!(f, "ART05:DepthBound"),
+            Self::DemandDriven => write!(f, "ART06:DemandDriven"),
+            Self::JoinOrdering => write!(f, "BCG01:JoinOrdering"),
+            Self::RuleFusion => write!(f, "BCG02:RuleFusion"),
+            Self::EqCongruencePrune => write!(f, "BCG03:EqCongruencePrune"),
+            Self::GroundShortCircuit => write!(f, "BCG04:GroundShortCircuit"),
+            Self::NormalizeDedup => write!(f, "BCG05:NormalizeDedup"),
+            Self::EqStrata => write!(f, "BCG06:EqStrata"),
+            Self::CombRepacking => write!(f, "AL01:CombRepacking"),
+            Self::HybridLexer => write!(f, "AL02:HybridLexer"),
+            Self::SimdWhitespace => write!(f, "AL03:SimdWhitespace"),
+            Self::KeywordMph => write!(f, "AL04:KeywordMph"),
+            Self::MultiByteChain => write!(f, "AL05:MultiByteChain"),
+            Self::AcceptBitmapWiden => write!(f, "AL06:AcceptBitmapWiden"),
+            Self::BpCompaction => write!(f, "BP01:BpCompaction"),
+            Self::TailCallElim => write!(f, "BP02:TailCallElim"),
+            Self::BpTableLookup => write!(f, "BP03:BpTableLookup"),
+            Self::TrivialInline => write!(f, "BP04:TrivialInline"),
+            Self::BpRangeLoop => write!(f, "BP05:BpRangeLoop"),
+            Self::FrequencyOrdering => write!(f, "CD01:FrequencyOrdering"),
+            Self::SegmentMerging => write!(f, "CD02:SegmentMerging"),
+            Self::ComputedGoto => write!(f, "CD03:ComputedGoto"),
+            Self::JumpThreading => write!(f, "CD04:JumpThreading"),
+            Self::PrefixCse => write!(f, "CD05:PrefixCse"),
+            Self::IncrementalFirstFollow => write!(f, "DB01:IncrementalFirstFollow"),
+            Self::LazyAnalysis => write!(f, "DB02:LazyAnalysis"),
+            Self::ParallelAnalysis => write!(f, "DB03:ParallelAnalysis"),
+            Self::CachedLints => write!(f, "DB04:CachedLints"),
         }
     }
 }
@@ -143,13 +247,81 @@ impl std::str::FromStr for Optimization {
             s if s.eq_ignore_ascii_case("CegarRefinement") => Ok(Self::CegarRefinement),
             "N01" => Ok(Self::PetriDeadlockCheck),
             s if s.eq_ignore_ascii_case("PetriDeadlockCheck") => Ok(Self::PetriDeadlockCheck),
+            "ART01" => Ok(Self::HashConsing),
+            "ART02" => Ok(Self::IncrementalDelta),
+            "ART03" => Ok(Self::RelationIndexing),
+            "ART04" => Ok(Self::CongruenceBloom),
+            "ART05" => Ok(Self::DepthBound),
+            "ART06" => Ok(Self::DemandDriven),
+            "BCG01" => Ok(Self::JoinOrdering),
+            "BCG02" => Ok(Self::RuleFusion),
+            "BCG03" => Ok(Self::EqCongruencePrune),
+            "BCG04" => Ok(Self::GroundShortCircuit),
+            "BCG05" => Ok(Self::NormalizeDedup),
+            "BCG06" => Ok(Self::EqStrata),
+            "AL01" => Ok(Self::CombRepacking),
+            "AL02" => Ok(Self::HybridLexer),
+            "AL03" => Ok(Self::SimdWhitespace),
+            "AL04" => Ok(Self::KeywordMph),
+            "AL05" => Ok(Self::MultiByteChain),
+            "AL06" => Ok(Self::AcceptBitmapWiden),
+            "BP01" => Ok(Self::BpCompaction),
+            "BP02" => Ok(Self::TailCallElim),
+            "BP03" => Ok(Self::BpTableLookup),
+            "BP04" => Ok(Self::TrivialInline),
+            "BP05" => Ok(Self::BpRangeLoop),
+            "CD01" => Ok(Self::FrequencyOrdering),
+            "CD02" => Ok(Self::SegmentMerging),
+            "CD03" => Ok(Self::ComputedGoto),
+            "CD04" => Ok(Self::JumpThreading),
+            "CD05" => Ok(Self::PrefixCse),
+            "DB01" => Ok(Self::IncrementalFirstFollow),
+            "DB02" => Ok(Self::LazyAnalysis),
+            "DB03" => Ok(Self::ParallelAnalysis),
+            "DB04" => Ok(Self::CachedLints),
+            s if s.eq_ignore_ascii_case("HashConsing") => Ok(Self::HashConsing),
+            s if s.eq_ignore_ascii_case("IncrementalDelta") => Ok(Self::IncrementalDelta),
+            s if s.eq_ignore_ascii_case("RelationIndexing") => Ok(Self::RelationIndexing),
+            s if s.eq_ignore_ascii_case("CongruenceBloom") => Ok(Self::CongruenceBloom),
+            s if s.eq_ignore_ascii_case("DepthBound") => Ok(Self::DepthBound),
+            s if s.eq_ignore_ascii_case("DemandDriven") => Ok(Self::DemandDriven),
+            s if s.eq_ignore_ascii_case("JoinOrdering") => Ok(Self::JoinOrdering),
+            s if s.eq_ignore_ascii_case("RuleFusion") => Ok(Self::RuleFusion),
+            s if s.eq_ignore_ascii_case("EqCongruencePrune") => Ok(Self::EqCongruencePrune),
+            s if s.eq_ignore_ascii_case("GroundShortCircuit") => Ok(Self::GroundShortCircuit),
+            s if s.eq_ignore_ascii_case("NormalizeDedup") => Ok(Self::NormalizeDedup),
+            s if s.eq_ignore_ascii_case("EqStrata") => Ok(Self::EqStrata),
+            s if s.eq_ignore_ascii_case("CombRepacking") => Ok(Self::CombRepacking),
+            s if s.eq_ignore_ascii_case("HybridLexer") => Ok(Self::HybridLexer),
+            s if s.eq_ignore_ascii_case("SimdWhitespace") => Ok(Self::SimdWhitespace),
+            s if s.eq_ignore_ascii_case("KeywordMph") => Ok(Self::KeywordMph),
+            s if s.eq_ignore_ascii_case("MultiByteChain") => Ok(Self::MultiByteChain),
+            s if s.eq_ignore_ascii_case("AcceptBitmapWiden") => Ok(Self::AcceptBitmapWiden),
+            s if s.eq_ignore_ascii_case("BpCompaction") => Ok(Self::BpCompaction),
+            s if s.eq_ignore_ascii_case("TailCallElim") => Ok(Self::TailCallElim),
+            s if s.eq_ignore_ascii_case("BpTableLookup") => Ok(Self::BpTableLookup),
+            s if s.eq_ignore_ascii_case("TrivialInline") => Ok(Self::TrivialInline),
+            s if s.eq_ignore_ascii_case("BpRangeLoop") => Ok(Self::BpRangeLoop),
+            s if s.eq_ignore_ascii_case("FrequencyOrdering") => Ok(Self::FrequencyOrdering),
+            s if s.eq_ignore_ascii_case("SegmentMerging") => Ok(Self::SegmentMerging),
+            s if s.eq_ignore_ascii_case("ComputedGoto") => Ok(Self::ComputedGoto),
+            s if s.eq_ignore_ascii_case("JumpThreading") => Ok(Self::JumpThreading),
+            s if s.eq_ignore_ascii_case("PrefixCse") => Ok(Self::PrefixCse),
+            s if s.eq_ignore_ascii_case("IncrementalFirstFollow") => Ok(Self::IncrementalFirstFollow),
+            s if s.eq_ignore_ascii_case("LazyAnalysis") => Ok(Self::LazyAnalysis),
+            s if s.eq_ignore_ascii_case("ParallelAnalysis") => Ok(Self::ParallelAnalysis),
+            s if s.eq_ignore_ascii_case("CachedLints") => Ok(Self::CachedLints),
             // Display format: "A1:LeftFactoring"
             s if s.contains(':') => s
                 .split_once(':')
                 .map(|(code, _)| code)
                 .unwrap_or(s)
                 .parse(),
-            other => Err(format!("unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3, G1, H1, G25, T01, V01, S01, S03, N01", other)),
+            other => Err(format!(
+                "unknown optimization: '{}'. Valid values: A1, A2, A4, A5, B1, B2, B3, F1, F2, F3, G1, H1, G25, T01, V01, S01, S03, N01, \
+                 ART01-ART06, BCG01-BCG06, AL01-AL06, BP01-BP05, CD01-CD05, DB01-DB04",
+                other
+            )),
         }
     }
 }
@@ -337,7 +509,7 @@ pub fn build_grammar_profile(
 /// on `ProductWeight<speedup, compile_cost>`). Only `applicable` candidates
 /// should be acted upon.
 pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandidate> {
-    let mut candidates = Vec::with_capacity(10);
+    let mut candidates = Vec::with_capacity(50);
 
     // A1: Left-factoring — beneficial when many rules share prefixes
     candidates.push(OptimizationCandidate::new(
@@ -567,6 +739,333 @@ pub fn evaluate_optimizations(profile: &GrammarProfile) -> Vec<OptimizationCandi
         format!("rule_count={} (threshold: >5)", profile.rule_count),
     ));
 
+    // ── Tier 1: Low complexity ───────────────────────────────────────────
+
+    // ART03: Relation indexing — beneficial for grammars with many rules
+    candidates.push(OptimizationCandidate::new(
+        Optimization::RelationIndexing,
+        0.3,
+        0.05,
+        profile.rule_count > 3,
+        format!("rule_count={} (threshold: >3)", profile.rule_count),
+    ));
+
+    // BCG04: Ground-term short-circuit — beneficial for grammars with rewrite rules
+    candidates.push(OptimizationCandidate::new(
+        Optimization::GroundShortCircuit,
+        0.4,
+        0.05,
+        profile.rule_count > 2,
+        format!("rule_count={} (threshold: >2)", profile.rule_count),
+    ));
+
+    // BP04: Prefix handler inlining for trivial rules — always applicable
+    candidates.push(OptimizationCandidate::new(
+        Optimization::TrivialInline,
+        0.3,
+        0.05,
+        true,
+        "always applicable (trivial prefix handlers)".to_string(),
+    ));
+
+    // BP01: Pratt BP table compaction — beneficial when categories exist
+    candidates.push(OptimizationCandidate::new(
+        Optimization::BpCompaction,
+        0.25,
+        0.05,
+        profile.category_count >= 1,
+        format!(
+            "category_count={} (threshold: >=1)",
+            profile.category_count
+        ),
+    ));
+
+    // AL06: Accept state bitmap widening — always applicable
+    candidates.push(OptimizationCandidate::new(
+        Optimization::AcceptBitmapWiden,
+        0.15,
+        0.02,
+        true,
+        "always applicable (bitmap widening)".to_string(),
+    ));
+
+    // DB02: Lazy analysis phase execution — beneficial for small grammars
+    candidates.push(OptimizationCandidate::new(
+        Optimization::LazyAnalysis,
+        0.5,
+        0.02,
+        profile.category_count < 3,
+        format!(
+            "category_count={} (threshold: <3)",
+            profile.category_count
+        ),
+    ));
+
+    // ── Tier 2: Moderate complexity ──────────────────────────────────────
+
+    // ART04: Bloom filter pre-check for congruence rules
+    candidates.push(OptimizationCandidate::new(
+        Optimization::CongruenceBloom,
+        0.35,
+        0.15,
+        profile.rule_count > 5,
+        format!("rule_count={} (threshold: >5)", profile.rule_count),
+    ));
+
+    // ART05: Fixpoint convergence bound via term-depth analysis
+    candidates.push(OptimizationCandidate::new(
+        Optimization::DepthBound,
+        0.4,
+        0.1,
+        profile.rule_count > 2,
+        format!("rule_count={} (threshold: >2)", profile.rule_count),
+    ));
+
+    // ART06: Demand-driven relation population
+    candidates.push(OptimizationCandidate::new(
+        Optimization::DemandDriven,
+        0.5,
+        0.1,
+        profile.category_count >= 2,
+        format!(
+            "category_count={} (threshold: >=2)",
+            profile.category_count
+        ),
+    ));
+
+    // BCG01: Join ordering optimization
+    candidates.push(OptimizationCandidate::new(
+        Optimization::JoinOrdering,
+        0.4,
+        0.15,
+        profile.rule_count > 5,
+        format!("rule_count={} (threshold: >5)", profile.rule_count),
+    ));
+
+    // BCG03: Selective equality congruence pruning
+    candidates.push(OptimizationCandidate::new(
+        Optimization::EqCongruencePrune,
+        0.35,
+        0.15,
+        profile.rule_count > 3,
+        format!("rule_count={} (threshold: >3)", profile.rule_count),
+    ));
+
+    // AL02: Hybrid direct-coded + compressed lexer
+    candidates.push(OptimizationCandidate::new(
+        Optimization::HybridLexer,
+        0.3,
+        0.2,
+        profile.total_wfst_states > 30,
+        format!(
+            "total_wfst_states={} (threshold: >30)",
+            profile.total_wfst_states
+        ),
+    ));
+
+    // BP03: Token peek cache / BP table lookup
+    candidates.push(OptimizationCandidate::new(
+        Optimization::BpTableLookup,
+        0.3,
+        0.15,
+        profile.rule_count > 8,
+        format!("rule_count={} (threshold: >8)", profile.rule_count),
+    ));
+
+    // CD01: Hot-path arm reordering via WFST frequency weights — always applicable
+    candidates.push(OptimizationCandidate::new(
+        Optimization::FrequencyOrdering,
+        0.35,
+        0.1,
+        true,
+        "always applicable (WFST frequency-based arm reordering)".to_string(),
+    ));
+
+    // CD03: Computed goto dispatch — beneficial for large grammars
+    candidates.push(OptimizationCandidate::new(
+        Optimization::ComputedGoto,
+        0.25,
+        0.15,
+        profile.rule_count > 20,
+        format!("rule_count={} (threshold: >20)", profile.rule_count),
+    ));
+
+    // DB01: Incremental FIRST/FOLLOW recomputation
+    candidates.push(OptimizationCandidate::new(
+        Optimization::IncrementalFirstFollow,
+        0.4,
+        0.2,
+        profile.category_count >= 3,
+        format!(
+            "category_count={} (threshold: >=3)",
+            profile.category_count
+        ),
+    ));
+
+    // ── Tier 3: High complexity ──────────────────────────────────────────
+
+    // ART01: Hash-consing for recursive term types
+    candidates.push(OptimizationCandidate::new(
+        Optimization::HashConsing,
+        0.15,
+        0.5,
+        profile.rule_count > 10,
+        format!("rule_count={} (threshold: >10)", profile.rule_count),
+    ));
+
+    // ART02: Incremental semi-naive delta guards
+    candidates.push(OptimizationCandidate::new(
+        Optimization::IncrementalDelta,
+        0.3,
+        0.35,
+        profile.rule_count > 5,
+        format!("rule_count={} (threshold: >5)", profile.rule_count),
+    ));
+
+    // BCG02: Rule fusion for chained deconstruction-rewrite
+    candidates.push(OptimizationCandidate::new(
+        Optimization::RuleFusion,
+        0.4,
+        0.4,
+        profile.rule_count > 5,
+        format!("rule_count={} (threshold: >5)", profile.rule_count),
+    ));
+
+    // BCG05: Normalize-on-insert deduplication
+    candidates.push(OptimizationCandidate::new(
+        Optimization::NormalizeDedup,
+        0.45,
+        0.1,
+        profile.rule_count > 3,
+        format!("rule_count={} (threshold: >3)", profile.rule_count),
+    ));
+
+    // BCG06: Stratified equation evaluation
+    candidates.push(OptimizationCandidate::new(
+        Optimization::EqStrata,
+        0.3,
+        0.4,
+        profile.category_count >= 2,
+        format!(
+            "category_count={} (threshold: >=2)",
+            profile.category_count
+        ),
+    ));
+
+    // AL01: DFA transition table multi-row repacking — always applicable
+    candidates.push(OptimizationCandidate::new(
+        Optimization::CombRepacking,
+        0.4,
+        0.1,
+        true,
+        "always applicable (DFA table repacking)".to_string(),
+    ));
+
+    // AL03: SIMD-accelerated whitespace skipping — always applicable (feature-gated at codegen)
+    candidates.push(OptimizationCandidate::new(
+        Optimization::SimdWhitespace,
+        0.2,
+        0.3,
+        true,
+        "always applicable (feature-gated at codegen)".to_string(),
+    ));
+
+    // AL04: Keyword recognition via minimal perfect hashing
+    candidates.push(OptimizationCandidate::new(
+        Optimization::KeywordMph,
+        0.2,
+        0.3,
+        profile.rule_count > 15,
+        format!("rule_count={} (threshold: >15)", profile.rule_count),
+    ));
+
+    // AL05: Multi-byte chain transitions
+    candidates.push(OptimizationCandidate::new(
+        Optimization::MultiByteChain,
+        0.25,
+        0.35,
+        profile.rule_count > 10,
+        format!("rule_count={} (threshold: >10)", profile.rule_count),
+    ));
+
+    // BP02: Tail-call elimination in recursive descent
+    candidates.push(OptimizationCandidate::new(
+        Optimization::TailCallElim,
+        0.4,
+        0.2,
+        profile.category_count >= 2,
+        format!(
+            "category_count={} (threshold: >=2)",
+            profile.category_count
+        ),
+    ));
+
+    // BP05: Specialized Pratt loop for fixed BP ranges
+    candidates.push(OptimizationCandidate::new(
+        Optimization::BpRangeLoop,
+        0.45,
+        0.15,
+        profile.rule_count > 5,
+        format!("rule_count={} (threshold: >5)", profile.rule_count),
+    ));
+
+    // CD02: Decision tree segment merging
+    candidates.push(OptimizationCandidate::new(
+        Optimization::SegmentMerging,
+        0.3,
+        0.35,
+        profile.avg_trie_depth > 3.0,
+        format!(
+            "avg_trie_depth={:.1} (threshold: >3.0)",
+            profile.avg_trie_depth
+        ),
+    ));
+
+    // CD04: Jump threading through decision tree branches
+    candidates.push(OptimizationCandidate::new(
+        Optimization::JumpThreading,
+        0.35,
+        0.25,
+        profile.avg_trie_depth > 2.0,
+        format!(
+            "avg_trie_depth={:.1} (threshold: >2.0)",
+            profile.avg_trie_depth
+        ),
+    ));
+
+    // CD05: Prefix CSE for shared nonterminal parses
+    candidates.push(OptimizationCandidate::new(
+        Optimization::PrefixCse,
+        0.15,
+        0.45,
+        profile.shared_prefix_ratio > 0.2,
+        format!(
+            "shared_prefix_ratio={:.2} (threshold: >0.2)",
+            profile.shared_prefix_ratio
+        ),
+    ));
+
+    // DB03: Parallel analysis phase execution
+    candidates.push(OptimizationCandidate::new(
+        Optimization::ParallelAnalysis,
+        0.3,
+        0.3,
+        profile.category_count >= 3,
+        format!(
+            "category_count={} (threshold: >=3)",
+            profile.category_count
+        ),
+    ));
+
+    // DB04: Cached lint results across builds
+    candidates.push(OptimizationCandidate::new(
+        Optimization::CachedLints,
+        0.45,
+        0.2,
+        profile.rule_count > 10,
+        format!("rule_count={} (threshold: >10)", profile.rule_count),
+    ));
+
     // Sort by score (lexicographic: speedup first, then compile_cost)
     candidates.sort_by(|a, b| a.score.cmp(&b.score));
 
@@ -645,6 +1144,77 @@ pub struct OptimizationGates {
     /// N01: Petri net deadlock check.
     #[cfg(feature = "petri")]
     pub petri_deadlock: bool,
+
+    // ── Codegen Optimization Catalog ─────────────────────────────────────────
+    /// ART01: Hash-consing for recursive term types.
+    pub hash_consing: bool,
+    /// ART02: Incremental semi-naive delta guards.
+    pub incremental_delta: bool,
+    /// ART03: Relation indexing hints.
+    pub relation_indexing: bool,
+    /// ART04: Bloom filter pre-check for congruence rules.
+    pub congruence_bloom: bool,
+    /// ART05: Fixpoint convergence bound via term-depth analysis.
+    pub depth_bound: bool,
+    /// ART06: Demand-driven relation population.
+    pub demand_driven: bool,
+
+    /// BCG01: Join ordering optimization.
+    pub join_ordering: bool,
+    /// BCG02: Rule fusion for chained deconstruction-rewrite.
+    pub rule_fusion: bool,
+    /// BCG03: Selective equality congruence pruning.
+    pub eq_congruence_prune: bool,
+    /// BCG04: Ground-term short-circuit in rewrite rules.
+    pub ground_short_circuit: bool,
+    /// BCG05: Normalize-on-insert deduplication.
+    pub normalize_dedup: bool,
+    /// BCG06: Stratified equation evaluation.
+    pub eq_strata: bool,
+
+    /// AL01: DFA transition table multi-row repacking.
+    pub comb_repacking: bool,
+    /// AL02: Hybrid direct-coded + compressed lexer.
+    pub hybrid_lexer: bool,
+    /// AL03: SIMD-accelerated whitespace skipping.
+    pub simd_whitespace: bool,
+    /// AL04: Keyword recognition via minimal perfect hashing.
+    pub keyword_mph: bool,
+    /// AL05: Multi-byte chain transitions.
+    pub multi_byte_chain: bool,
+    /// AL06: Accept state bitmap widening.
+    pub accept_bitmap_widen: bool,
+
+    /// BP01: Pratt BP table compaction via range encoding.
+    pub bp_compaction: bool,
+    /// BP02: Tail-call elimination in recursive descent.
+    pub tail_call_elim: bool,
+    /// BP03: Token peek cache / BP table lookup.
+    pub bp_table_lookup: bool,
+    /// BP04: Prefix handler inlining for trivial rules.
+    pub trivial_inline: bool,
+    /// BP05: Specialized Pratt loop for fixed BP ranges.
+    pub bp_range_loop: bool,
+
+    /// CD01: Hot-path arm reordering via WFST frequency weights.
+    pub frequency_ordering: bool,
+    /// CD02: Decision tree segment merging.
+    pub segment_merging: bool,
+    /// CD03: Computed goto dispatch via function pointer tables.
+    pub computed_goto: bool,
+    /// CD04: Jump threading through decision tree branches.
+    pub jump_threading: bool,
+    /// CD05: Prefix CSE for shared nonterminal parses.
+    pub prefix_cse: bool,
+
+    /// DB01: Incremental FIRST/FOLLOW recomputation.
+    pub incremental_first_follow: bool,
+    /// DB02: Lazy analysis phase execution.
+    pub lazy_analysis: bool,
+    /// DB03: Parallel analysis phase execution.
+    pub parallel_analysis: bool,
+    /// DB04: Cached lint results across builds.
+    pub cached_lints: bool,
 }
 
 impl OptimizationGates {
@@ -672,6 +1242,38 @@ impl OptimizationGates {
             cegar_refinement: true,
             #[cfg(feature = "petri")]
             petri_deadlock: true,
+            hash_consing: true,
+            incremental_delta: true,
+            relation_indexing: true,
+            congruence_bloom: true,
+            depth_bound: true,
+            demand_driven: true,
+            join_ordering: true,
+            rule_fusion: true,
+            eq_congruence_prune: true,
+            ground_short_circuit: true,
+            normalize_dedup: true,
+            eq_strata: true,
+            comb_repacking: true,
+            hybrid_lexer: true,
+            simd_whitespace: true,
+            keyword_mph: true,
+            multi_byte_chain: true,
+            accept_bitmap_widen: true,
+            bp_compaction: true,
+            tail_call_elim: true,
+            bp_table_lookup: true,
+            trivial_inline: true,
+            bp_range_loop: true,
+            frequency_ordering: true,
+            segment_merging: true,
+            computed_goto: true,
+            jump_threading: true,
+            prefix_cse: true,
+            incremental_first_follow: true,
+            lazy_analysis: true,
+            parallel_analysis: true,
+            cached_lints: true,
         }
     }
 
@@ -707,6 +1309,38 @@ impl OptimizationGates {
             cegar_refinement: enabled.contains(&Optimization::CegarRefinement),
             #[cfg(feature = "petri")]
             petri_deadlock: enabled.contains(&Optimization::PetriDeadlockCheck),
+            hash_consing: enabled.contains(&Optimization::HashConsing),
+            incremental_delta: enabled.contains(&Optimization::IncrementalDelta),
+            relation_indexing: enabled.contains(&Optimization::RelationIndexing),
+            congruence_bloom: enabled.contains(&Optimization::CongruenceBloom),
+            depth_bound: enabled.contains(&Optimization::DepthBound),
+            demand_driven: enabled.contains(&Optimization::DemandDriven),
+            join_ordering: enabled.contains(&Optimization::JoinOrdering),
+            rule_fusion: enabled.contains(&Optimization::RuleFusion),
+            eq_congruence_prune: enabled.contains(&Optimization::EqCongruencePrune),
+            ground_short_circuit: enabled.contains(&Optimization::GroundShortCircuit),
+            normalize_dedup: enabled.contains(&Optimization::NormalizeDedup),
+            eq_strata: enabled.contains(&Optimization::EqStrata),
+            comb_repacking: enabled.contains(&Optimization::CombRepacking),
+            hybrid_lexer: enabled.contains(&Optimization::HybridLexer),
+            simd_whitespace: enabled.contains(&Optimization::SimdWhitespace),
+            keyword_mph: enabled.contains(&Optimization::KeywordMph),
+            multi_byte_chain: enabled.contains(&Optimization::MultiByteChain),
+            accept_bitmap_widen: enabled.contains(&Optimization::AcceptBitmapWiden),
+            bp_compaction: enabled.contains(&Optimization::BpCompaction),
+            tail_call_elim: enabled.contains(&Optimization::TailCallElim),
+            bp_table_lookup: enabled.contains(&Optimization::BpTableLookup),
+            trivial_inline: enabled.contains(&Optimization::TrivialInline),
+            bp_range_loop: enabled.contains(&Optimization::BpRangeLoop),
+            frequency_ordering: enabled.contains(&Optimization::FrequencyOrdering),
+            segment_merging: enabled.contains(&Optimization::SegmentMerging),
+            computed_goto: enabled.contains(&Optimization::ComputedGoto),
+            jump_threading: enabled.contains(&Optimization::JumpThreading),
+            prefix_cse: enabled.contains(&Optimization::PrefixCse),
+            incremental_first_follow: enabled.contains(&Optimization::IncrementalFirstFollow),
+            lazy_analysis: enabled.contains(&Optimization::LazyAnalysis),
+            parallel_analysis: enabled.contains(&Optimization::ParallelAnalysis),
+            cached_lints: enabled.contains(&Optimization::CachedLints),
         }
     }
 
@@ -734,6 +1368,38 @@ impl OptimizationGates {
             cegar_refinement: false,
             #[cfg(feature = "petri")]
             petri_deadlock: false,
+            hash_consing: false,
+            incremental_delta: false,
+            relation_indexing: false,
+            congruence_bloom: false,
+            depth_bound: false,
+            demand_driven: false,
+            join_ordering: false,
+            rule_fusion: false,
+            eq_congruence_prune: false,
+            ground_short_circuit: false,
+            normalize_dedup: false,
+            eq_strata: false,
+            comb_repacking: false,
+            hybrid_lexer: false,
+            simd_whitespace: false,
+            keyword_mph: false,
+            multi_byte_chain: false,
+            accept_bitmap_widen: false,
+            bp_compaction: false,
+            tail_call_elim: false,
+            bp_table_lookup: false,
+            trivial_inline: false,
+            bp_range_loop: false,
+            frequency_ordering: false,
+            segment_merging: false,
+            computed_goto: false,
+            jump_threading: false,
+            prefix_cse: false,
+            incremental_first_follow: false,
+            lazy_analysis: false,
+            parallel_analysis: false,
+            cached_lints: false,
         }
     }
 
@@ -799,6 +1465,38 @@ impl OptimizationGates {
             cegar_refinement: enabled.contains(&Optimization::CegarRefinement),
             #[cfg(feature = "petri")]
             petri_deadlock: enabled.contains(&Optimization::PetriDeadlockCheck),
+            hash_consing: enabled.contains(&Optimization::HashConsing),
+            incremental_delta: enabled.contains(&Optimization::IncrementalDelta),
+            relation_indexing: enabled.contains(&Optimization::RelationIndexing),
+            congruence_bloom: enabled.contains(&Optimization::CongruenceBloom),
+            depth_bound: enabled.contains(&Optimization::DepthBound),
+            demand_driven: enabled.contains(&Optimization::DemandDriven),
+            join_ordering: enabled.contains(&Optimization::JoinOrdering),
+            rule_fusion: enabled.contains(&Optimization::RuleFusion),
+            eq_congruence_prune: enabled.contains(&Optimization::EqCongruencePrune),
+            ground_short_circuit: enabled.contains(&Optimization::GroundShortCircuit),
+            normalize_dedup: enabled.contains(&Optimization::NormalizeDedup),
+            eq_strata: enabled.contains(&Optimization::EqStrata),
+            comb_repacking: enabled.contains(&Optimization::CombRepacking),
+            hybrid_lexer: enabled.contains(&Optimization::HybridLexer),
+            simd_whitespace: enabled.contains(&Optimization::SimdWhitespace),
+            keyword_mph: enabled.contains(&Optimization::KeywordMph),
+            multi_byte_chain: enabled.contains(&Optimization::MultiByteChain),
+            accept_bitmap_widen: enabled.contains(&Optimization::AcceptBitmapWiden),
+            bp_compaction: enabled.contains(&Optimization::BpCompaction),
+            tail_call_elim: enabled.contains(&Optimization::TailCallElim),
+            bp_table_lookup: enabled.contains(&Optimization::BpTableLookup),
+            trivial_inline: enabled.contains(&Optimization::TrivialInline),
+            bp_range_loop: enabled.contains(&Optimization::BpRangeLoop),
+            frequency_ordering: enabled.contains(&Optimization::FrequencyOrdering),
+            segment_merging: enabled.contains(&Optimization::SegmentMerging),
+            computed_goto: enabled.contains(&Optimization::ComputedGoto),
+            jump_threading: enabled.contains(&Optimization::JumpThreading),
+            prefix_cse: enabled.contains(&Optimization::PrefixCse),
+            incremental_first_follow: enabled.contains(&Optimization::IncrementalFirstFollow),
+            lazy_analysis: enabled.contains(&Optimization::LazyAnalysis),
+            parallel_analysis: enabled.contains(&Optimization::ParallelAnalysis),
+            cached_lints: enabled.contains(&Optimization::CachedLints),
         }))
     }
 
@@ -1013,6 +1711,39 @@ impl Optimization {
             | Self::SafetyVerification    // S01: WPDS prestar safety check
             | Self::CegarRefinement       // S03: CEGAR refinement loop
             | Self::PetriDeadlockCheck    // N01: Petri net coverability
+            // Codegen catalog: planned optimizations (diagnostic until implemented)
+            | Self::HashConsing           // ART01
+            | Self::IncrementalDelta      // ART02
+            | Self::RelationIndexing      // ART03
+            | Self::CongruenceBloom       // ART04
+            | Self::DepthBound            // ART05
+            | Self::DemandDriven          // ART06
+            | Self::JoinOrdering          // BCG01
+            | Self::RuleFusion            // BCG02
+            | Self::EqCongruencePrune     // BCG03
+            | Self::GroundShortCircuit    // BCG04
+            | Self::NormalizeDedup        // BCG05
+            | Self::EqStrata              // BCG06
+            | Self::CombRepacking         // AL01
+            | Self::HybridLexer           // AL02
+            | Self::SimdWhitespace        // AL03
+            | Self::KeywordMph            // AL04
+            | Self::MultiByteChain        // AL05
+            | Self::AcceptBitmapWiden      // AL06
+            | Self::BpCompaction          // BP01
+            | Self::TailCallElim          // BP02
+            | Self::BpTableLookup         // BP03
+            | Self::TrivialInline         // BP04
+            | Self::BpRangeLoop           // BP05
+            | Self::FrequencyOrdering     // CD01
+            | Self::SegmentMerging        // CD02
+            | Self::ComputedGoto          // CD03
+            | Self::JumpThreading         // CD04
+            | Self::PrefixCse             // CD05
+            | Self::IncrementalFirstFollow // DB01
+            | Self::LazyAnalysis          // DB02
+            | Self::ParallelAnalysis      // DB03
+            | Self::CachedLints           // DB04
             => OptimizationStatus::Diagnostic,
         }
     }
@@ -1192,6 +1923,12 @@ impl GrammarComplexityReport {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Mutex to serialize tests that read/write the `PRATTAIL_AUTO_OPTIMIZE`
+    /// environment variable. Env vars are process-global, so concurrent
+    /// set/remove from parallel test threads causes non-deterministic failures.
+    static ENV_MUTEX: Mutex<()> = Mutex::new(());
 
     fn simple_profile() -> GrammarProfile {
         GrammarProfile {
@@ -1310,7 +2047,7 @@ mod tests {
     fn test_all_candidates_evaluated() {
         let profile = simple_profile();
         let all = evaluate_optimizations(&profile);
-        assert_eq!(all.len(), 18, "should evaluate all 18 optimization candidates");
+        assert_eq!(all.len(), 50, "should evaluate all 50 optimization candidates");
     }
 
     #[test]
@@ -1826,6 +2563,7 @@ mod tests {
 
     #[test]
     fn test_from_env_with_specific_opts() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         // Set env var to enable only A1 and F3
         std::env::set_var("PRATTAIL_AUTO_OPTIMIZE", "A1,F3");
         let result = OptimizationGates::from_env();
@@ -1842,6 +2580,7 @@ mod tests {
 
     #[test]
     fn test_from_env_all() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         std::env::set_var("PRATTAIL_AUTO_OPTIMIZE", "all");
         let result = OptimizationGates::from_env();
         std::env::remove_var("PRATTAIL_AUTO_OPTIMIZE");
@@ -1862,6 +2601,7 @@ mod tests {
 
     #[test]
     fn test_from_env_none() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         std::env::set_var("PRATTAIL_AUTO_OPTIMIZE", "none");
         let result = OptimizationGates::from_env();
         std::env::remove_var("PRATTAIL_AUTO_OPTIMIZE");
@@ -1874,6 +2614,7 @@ mod tests {
 
     #[test]
     fn test_from_env_unset() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         std::env::remove_var("PRATTAIL_AUTO_OPTIMIZE");
         let result = OptimizationGates::from_env();
         assert!(result.expect("no error").is_none(), "unset should return None");
@@ -1881,6 +2622,7 @@ mod tests {
 
     #[test]
     fn test_from_env_invalid_value() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         std::env::set_var("PRATTAIL_AUTO_OPTIMIZE", "A1,bogus,F3");
         let result = OptimizationGates::from_env();
         std::env::remove_var("PRATTAIL_AUTO_OPTIMIZE");
@@ -1890,6 +2632,7 @@ mod tests {
 
     #[test]
     fn test_from_env_or_recommendations_fallback() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
         // Ensure env var is unset so it falls back to recommendations
         std::env::remove_var("PRATTAIL_AUTO_OPTIMIZE");
         let profile = GrammarProfile {
@@ -1953,5 +2696,446 @@ mod tests {
             all.iter().any(|c| c.optimization == Optimization::PetriDeadlockCheck),
             "PetriDeadlockCheck should be in evaluated candidates"
         );
+    }
+
+    // ── New codegen catalog tests ────────────────────────────────────────
+
+    #[test]
+    fn test_art03_from_str() {
+        use std::str::FromStr;
+        assert_eq!(
+            Optimization::from_str("ART03").expect("ART03"),
+            Optimization::RelationIndexing
+        );
+        assert_eq!(
+            Optimization::from_str("relationindexing").expect("lower"),
+            Optimization::RelationIndexing
+        );
+        assert_eq!(
+            Optimization::from_str("ART03:RelationIndexing").expect("display"),
+            Optimization::RelationIndexing
+        );
+    }
+
+    #[test]
+    fn test_db02_applicable_small_grammar() {
+        // DB02 (LazyAnalysis) is applicable when category_count < 3
+        let profile = GrammarProfile {
+            category_count: 2,
+            ..simple_profile()
+        };
+        let all = evaluate_optimizations(&profile);
+        let db02 = all.iter().find(|c| c.optimization == Optimization::LazyAnalysis);
+        assert!(db02.is_some(), "DB02 should be in evaluated candidates");
+        assert!(
+            db02.expect("db02").applicable,
+            "DB02 should be applicable when category_count=2 < 3"
+        );
+
+        // Not applicable for large grammars
+        let profile_large = GrammarProfile {
+            category_count: 5,
+            ..simple_profile()
+        };
+        let all_large = evaluate_optimizations(&profile_large);
+        let db02_large = all_large.iter().find(|c| c.optimization == Optimization::LazyAnalysis);
+        assert!(
+            !db02_large.expect("db02_large").applicable,
+            "DB02 should not be applicable when category_count=5 >= 3"
+        );
+    }
+
+    #[test]
+    fn test_evaluate_includes_new_optimizations() {
+        let profile = simple_profile();
+        let all = evaluate_optimizations(&profile);
+        let opt_set: std::collections::HashSet<Optimization> =
+            all.iter().map(|c| c.optimization).collect();
+
+        // Spot-check representatives from each category
+        assert!(opt_set.contains(&Optimization::HashConsing), "ART01 missing");
+        assert!(opt_set.contains(&Optimization::RelationIndexing), "ART03 missing");
+        assert!(opt_set.contains(&Optimization::DemandDriven), "ART06 missing");
+        assert!(opt_set.contains(&Optimization::JoinOrdering), "BCG01 missing");
+        assert!(opt_set.contains(&Optimization::GroundShortCircuit), "BCG04 missing");
+        assert!(opt_set.contains(&Optimization::EqStrata), "BCG06 missing");
+        assert!(opt_set.contains(&Optimization::CombRepacking), "AL01 missing");
+        assert!(opt_set.contains(&Optimization::HybridLexer), "AL02 missing");
+        assert!(opt_set.contains(&Optimization::AcceptBitmapWiden), "AL06 missing");
+        assert!(opt_set.contains(&Optimization::BpCompaction), "BP01 missing");
+        assert!(opt_set.contains(&Optimization::TrivialInline), "BP04 missing");
+        assert!(opt_set.contains(&Optimization::BpRangeLoop), "BP05 missing");
+        assert!(opt_set.contains(&Optimization::FrequencyOrdering), "CD01 missing");
+        assert!(opt_set.contains(&Optimization::ComputedGoto), "CD03 missing");
+        assert!(opt_set.contains(&Optimization::PrefixCse), "CD05 missing");
+        assert!(opt_set.contains(&Optimization::IncrementalFirstFollow), "DB01 missing");
+        assert!(opt_set.contains(&Optimization::LazyAnalysis), "DB02 missing");
+        assert!(opt_set.contains(&Optimization::ParallelAnalysis), "DB03 missing");
+        assert!(opt_set.contains(&Optimization::CachedLints), "DB04 missing");
+    }
+
+    #[test]
+    fn test_new_optimization_from_str_all_codes() {
+        use std::str::FromStr;
+        let codes_and_variants = [
+            ("ART01", Optimization::HashConsing),
+            ("ART02", Optimization::IncrementalDelta),
+            ("ART03", Optimization::RelationIndexing),
+            ("ART04", Optimization::CongruenceBloom),
+            ("ART05", Optimization::DepthBound),
+            ("ART06", Optimization::DemandDriven),
+            ("BCG01", Optimization::JoinOrdering),
+            ("BCG02", Optimization::RuleFusion),
+            ("BCG03", Optimization::EqCongruencePrune),
+            ("BCG04", Optimization::GroundShortCircuit),
+            ("BCG05", Optimization::NormalizeDedup),
+            ("BCG06", Optimization::EqStrata),
+            ("AL01", Optimization::CombRepacking),
+            ("AL02", Optimization::HybridLexer),
+            ("AL03", Optimization::SimdWhitespace),
+            ("AL04", Optimization::KeywordMph),
+            ("AL05", Optimization::MultiByteChain),
+            ("AL06", Optimization::AcceptBitmapWiden),
+            ("BP01", Optimization::BpCompaction),
+            ("BP02", Optimization::TailCallElim),
+            ("BP03", Optimization::BpTableLookup),
+            ("BP04", Optimization::TrivialInline),
+            ("BP05", Optimization::BpRangeLoop),
+            ("CD01", Optimization::FrequencyOrdering),
+            ("CD02", Optimization::SegmentMerging),
+            ("CD03", Optimization::ComputedGoto),
+            ("CD04", Optimization::JumpThreading),
+            ("CD05", Optimization::PrefixCse),
+            ("DB01", Optimization::IncrementalFirstFollow),
+            ("DB02", Optimization::LazyAnalysis),
+            ("DB03", Optimization::ParallelAnalysis),
+            ("DB04", Optimization::CachedLints),
+        ];
+        for (code, expected) in &codes_and_variants {
+            assert_eq!(
+                Optimization::from_str(code).unwrap_or_else(|e| panic!("{}: {}", code, e)),
+                *expected,
+                "short code {} should parse",
+                code
+            );
+        }
+    }
+
+    #[test]
+    fn test_new_optimization_gates_from_env_codegen() {
+        let _lock = ENV_MUTEX.lock().expect("env mutex poisoned");
+        std::env::set_var("PRATTAIL_AUTO_OPTIMIZE", "ART03,BP04,CD01");
+        let result = OptimizationGates::from_env();
+        std::env::remove_var("PRATTAIL_AUTO_OPTIMIZE");
+
+        let gates = result.expect("parse").expect("should be Some");
+        assert!(gates.relation_indexing, "ART03 should be enabled");
+        assert!(gates.trivial_inline, "BP04 should be enabled");
+        assert!(gates.frequency_ordering, "CD01 should be enabled");
+        assert!(!gates.hash_consing, "ART01 should not be enabled");
+        assert!(!gates.computed_goto, "CD03 should not be enabled");
+    }
+
+    // ── Display / FromStr roundtrip tests ────────────────────────────────
+
+    /// Returns all 52 `Optimization` variants in declaration order.
+    fn all_optimizations() -> Vec<Optimization> {
+        vec![
+            Optimization::LeftFactoring,
+            Optimization::HotColdSplitting,
+            Optimization::EnhancedDeadCodeElimination,
+            Optimization::AmbiguityTargeting,
+            Optimization::MultiTokenLookahead,
+            Optimization::AdaptiveRecovery,
+            Optimization::WfstMinimization,
+            Optimization::SpilloverPruning,
+            Optimization::EarlyTermination,
+            Optimization::LazySpillover,
+            Optimization::BacktrackingElimination,
+            Optimization::ContextDisambiguation,
+            Optimization::WpdsReachabilityCheck,
+            Optimization::TrsConfluenceCheck,
+            Optimization::VpaInclusionCheck,
+            Optimization::SafetyVerification,
+            Optimization::CegarRefinement,
+            Optimization::PetriDeadlockCheck,
+            Optimization::HashConsing,
+            Optimization::IncrementalDelta,
+            Optimization::RelationIndexing,
+            Optimization::CongruenceBloom,
+            Optimization::DepthBound,
+            Optimization::DemandDriven,
+            Optimization::JoinOrdering,
+            Optimization::RuleFusion,
+            Optimization::EqCongruencePrune,
+            Optimization::GroundShortCircuit,
+            Optimization::NormalizeDedup,
+            Optimization::EqStrata,
+            Optimization::CombRepacking,
+            Optimization::HybridLexer,
+            Optimization::SimdWhitespace,
+            Optimization::KeywordMph,
+            Optimization::MultiByteChain,
+            Optimization::AcceptBitmapWiden,
+            Optimization::BpCompaction,
+            Optimization::TailCallElim,
+            Optimization::BpTableLookup,
+            Optimization::TrivialInline,
+            Optimization::BpRangeLoop,
+            Optimization::FrequencyOrdering,
+            Optimization::SegmentMerging,
+            Optimization::ComputedGoto,
+            Optimization::JumpThreading,
+            Optimization::PrefixCse,
+            Optimization::IncrementalFirstFollow,
+            Optimization::LazyAnalysis,
+            Optimization::ParallelAnalysis,
+            Optimization::CachedLints,
+        ]
+    }
+
+    #[test]
+    fn test_optimization_display_fromstr_roundtrip_all() {
+        use std::str::FromStr;
+        let variants = all_optimizations();
+        assert_eq!(variants.len(), 50, "expected exactly 50 variants");
+
+        for variant in &variants {
+            let display = variant.to_string();
+            // Display format is "CODE:Name" — verify it contains a colon
+            assert!(
+                display.contains(':'),
+                "Display output for {:?} should contain ':', got: {}",
+                variant,
+                display
+            );
+
+            let (short_code, name) = display.split_once(':').expect("split on ':'");
+
+            // Roundtrip via short code
+            let parsed_code = Optimization::from_str(short_code).unwrap_or_else(|e| {
+                panic!(
+                    "FromStr should accept short code '{}' for {:?}: {}",
+                    short_code, variant, e
+                )
+            });
+            assert_eq!(
+                parsed_code, *variant,
+                "short code '{}' should roundtrip to {:?}",
+                short_code, variant
+            );
+
+            // Roundtrip via name
+            let parsed_name = Optimization::from_str(name).unwrap_or_else(|e| {
+                panic!(
+                    "FromStr should accept name '{}' for {:?}: {}",
+                    name, variant, e
+                )
+            });
+            assert_eq!(
+                parsed_name, *variant,
+                "name '{}' should roundtrip to {:?}",
+                name, variant
+            );
+
+            // Roundtrip via full Display output (colon-separated form)
+            let parsed_full = Optimization::from_str(&display).unwrap_or_else(|e| {
+                panic!(
+                    "FromStr should accept full display '{}' for {:?}: {}",
+                    display, variant, e
+                )
+            });
+            assert_eq!(
+                parsed_full, *variant,
+                "full display '{}' should roundtrip to {:?}",
+                display, variant
+            );
+        }
+    }
+
+    #[test]
+    fn test_optimization_fromstr_short_codes() {
+        use std::str::FromStr;
+        let all_codes: Vec<(&str, Optimization)> = vec![
+            ("A1", Optimization::LeftFactoring),
+            ("A2", Optimization::HotColdSplitting),
+            ("A4", Optimization::EnhancedDeadCodeElimination),
+            ("A5", Optimization::AmbiguityTargeting),
+            ("B1", Optimization::MultiTokenLookahead),
+            ("B2", Optimization::AdaptiveRecovery),
+            ("B3", Optimization::WfstMinimization),
+            ("F1", Optimization::SpilloverPruning),
+            ("F2", Optimization::EarlyTermination),
+            ("F3", Optimization::LazySpillover),
+            ("G1", Optimization::BacktrackingElimination),
+            ("H1", Optimization::ContextDisambiguation),
+            ("G25", Optimization::WpdsReachabilityCheck),
+            ("T01", Optimization::TrsConfluenceCheck),
+            ("V01", Optimization::VpaInclusionCheck),
+            ("S01", Optimization::SafetyVerification),
+            ("S03", Optimization::CegarRefinement),
+            ("N01", Optimization::PetriDeadlockCheck),
+            ("ART01", Optimization::HashConsing),
+            ("ART02", Optimization::IncrementalDelta),
+            ("ART03", Optimization::RelationIndexing),
+            ("ART04", Optimization::CongruenceBloom),
+            ("ART05", Optimization::DepthBound),
+            ("ART06", Optimization::DemandDriven),
+            ("BCG01", Optimization::JoinOrdering),
+            ("BCG02", Optimization::RuleFusion),
+            ("BCG03", Optimization::EqCongruencePrune),
+            ("BCG04", Optimization::GroundShortCircuit),
+            ("BCG05", Optimization::NormalizeDedup),
+            ("BCG06", Optimization::EqStrata),
+            ("AL01", Optimization::CombRepacking),
+            ("AL02", Optimization::HybridLexer),
+            ("AL03", Optimization::SimdWhitespace),
+            ("AL04", Optimization::KeywordMph),
+            ("AL05", Optimization::MultiByteChain),
+            ("AL06", Optimization::AcceptBitmapWiden),
+            ("BP01", Optimization::BpCompaction),
+            ("BP02", Optimization::TailCallElim),
+            ("BP03", Optimization::BpTableLookup),
+            ("BP04", Optimization::TrivialInline),
+            ("BP05", Optimization::BpRangeLoop),
+            ("CD01", Optimization::FrequencyOrdering),
+            ("CD02", Optimization::SegmentMerging),
+            ("CD03", Optimization::ComputedGoto),
+            ("CD04", Optimization::JumpThreading),
+            ("CD05", Optimization::PrefixCse),
+            ("DB01", Optimization::IncrementalFirstFollow),
+            ("DB02", Optimization::LazyAnalysis),
+            ("DB03", Optimization::ParallelAnalysis),
+            ("DB04", Optimization::CachedLints),
+        ];
+        assert_eq!(all_codes.len(), 50, "expected 50 short codes for all 50 variants");
+
+        for (code, expected) in &all_codes {
+            let parsed = Optimization::from_str(code).unwrap_or_else(|e| {
+                panic!("FromStr should accept short code '{}': {}", code, e)
+            });
+            assert_eq!(
+                parsed, *expected,
+                "short code '{}' should parse to {:?}",
+                code, expected
+            );
+        }
+    }
+
+    #[test]
+    fn test_optimization_fromstr_invalid() {
+        use std::str::FromStr;
+        let result = Optimization::from_str("NotAnOptimization");
+        assert!(
+            result.is_err(),
+            "FromStr should reject 'NotAnOptimization', got: {:?}",
+            result
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.contains("unknown optimization"),
+            "error message should contain 'unknown optimization', got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_optimization_fromstr_case_insensitive() {
+        use std::str::FromStr;
+        // Test several case variations for LeftFactoring
+        for input in &["leftfactoring", "LEFTFACTORING", "LeftFactoring", "lEfTfAcToRiNg"] {
+            let parsed = Optimization::from_str(input).unwrap_or_else(|e| {
+                panic!("FromStr should accept '{}': {}", input, e)
+            });
+            assert_eq!(
+                parsed,
+                Optimization::LeftFactoring,
+                "'{}' should parse to LeftFactoring",
+                input
+            );
+        }
+
+        // Test case insensitivity for EnhancedDCE (the abbreviated Display name)
+        for input in &["enhanceddce", "ENHANCEDDCE", "EnhancedDCE"] {
+            let parsed = Optimization::from_str(input).unwrap_or_else(|e| {
+                panic!("FromStr should accept '{}': {}", input, e)
+            });
+            assert_eq!(
+                parsed,
+                Optimization::EnhancedDeadCodeElimination,
+                "'{}' should parse to EnhancedDeadCodeElimination",
+                input
+            );
+        }
+
+        // Test case insensitivity for a catalog name
+        for input in &["hashconsing", "HASHCONSING", "HashConsing"] {
+            let parsed = Optimization::from_str(input).unwrap_or_else(|e| {
+                panic!("FromStr should accept '{}': {}", input, e)
+            });
+            assert_eq!(
+                parsed,
+                Optimization::HashConsing,
+                "'{}' should parse to HashConsing",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn test_all_variants_covered() {
+        use std::collections::HashSet;
+        use std::str::FromStr;
+
+        // Collect all variants from all_optimizations() into a set
+        let variants: HashSet<Optimization> = all_optimizations().into_iter().collect();
+        assert_eq!(
+            variants.len(),
+            50,
+            "all_optimizations() should return exactly 50 unique variants"
+        );
+
+        // Also verify each variant has a unique Display representation
+        let display_strings: HashSet<String> =
+            all_optimizations().iter().map(|o| o.to_string()).collect();
+        assert_eq!(
+            display_strings.len(),
+            50,
+            "each variant should have a unique Display string"
+        );
+
+        // Verify all short codes parse to unique variants
+        let all_short_codes = [
+            "A1", "A2", "A4", "A5", "B1", "B2", "B3", "F1", "F2", "F3",
+            "G1", "H1", "G25", "T01", "V01", "S01", "S03", "N01",
+            "ART01", "ART02", "ART03", "ART04", "ART05", "ART06",
+            "BCG01", "BCG02", "BCG03", "BCG04", "BCG05", "BCG06",
+            "AL01", "AL02", "AL03", "AL04", "AL05", "AL06",
+            "BP01", "BP02", "BP03", "BP04", "BP05",
+            "CD01", "CD02", "CD03", "CD04", "CD05",
+            "DB01", "DB02", "DB03", "DB04",
+        ];
+        let parsed_variants: HashSet<Optimization> = all_short_codes
+            .iter()
+            .map(|code| {
+                Optimization::from_str(code)
+                    .unwrap_or_else(|e| panic!("short code '{}' should parse: {}", code, e))
+            })
+            .collect();
+
+        // All 50 short codes should map to 50 unique variants (one per variant).
+        assert_eq!(
+            parsed_variants.len(),
+            all_short_codes.len(),
+            "each short code should map to a unique variant"
+        );
+        // Verify every variant from all_optimizations() is reachable via some short code
+        for variant in &variants {
+            assert!(
+                parsed_variants.contains(variant),
+                "variant {:?} should be reachable via a short code",
+                variant
+            );
+        }
     }
 }

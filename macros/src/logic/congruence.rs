@@ -17,6 +17,7 @@ use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{LanguageDef, RewriteRule};
 use crate::ast::pattern::{Pattern, PatternTerm};
 use crate::ast::types::TypeExpr;
+use crate::logic::bloom_filter::BloomFilter;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::BTreeMap;
@@ -36,6 +37,7 @@ struct SimpleCongruenceEntry {
 pub fn generate_all_explicit_congruences(
     language: &LanguageDef,
     cat_filter: CategoryFilter,
+    emit_diagnostics: bool,
 ) -> Vec<TokenStream> {
     let mut rules = Vec::new();
 
@@ -66,14 +68,50 @@ pub fn generate_all_explicit_congruences(
     }
 
     // Generate consolidated rules for each simple congruence group
+    let mut art04_rw_guarded_count: usize = 0;
+    let mut art04_total_constructors: usize = 0;
     for ((src_str, fld_str), entries) in &simple_groups {
         let source_cat = format_ident!("{}", src_str);
         let field_cat = format_ident!("{}", fld_str);
+        // Count distinct constructors in this group for diagnostics
+        let distinct_constructors: std::collections::BTreeSet<String> = entries
+            .iter()
+            .map(|e| e.constructor.to_string())
+            .collect();
+        art04_total_constructors += distinct_constructors.len();
         if let Some(rule) =
             generate_consolidated_simple_congruence(&source_cat, &field_cat, entries)
         {
+            art04_rw_guarded_count += 1;
             rules.push(rule);
         }
+    }
+
+    // A-RT04: Emit lint diagnostic for bloom filter / matches!() pre-check on
+    // rewrite congruence rules.
+    if emit_diagnostics && art04_rw_guarded_count > 0 {
+        mettail_prattail::lint::emit_diagnostic(
+            &mettail_prattail::lint::LintDiagnostic {
+                id: "G38",
+                name: "bloom-filter-rw-congruence-guard",
+                severity: mettail_prattail::lint::LintSeverity::Note,
+                category: None,
+                rule: None,
+                message: format!(
+                    "{} rewrite congruence group(s) guarded by discriminant pre-check (A-RT04) \
+                     — {} constructor(s) participate; non-participating terms skipped before pool evaluation",
+                    art04_rw_guarded_count,
+                    art04_total_constructors,
+                ),
+                hint: Some(
+                    "compile-time bloom filter verified zero false negatives; \
+                     generated matches!() guard uses exact discriminant comparison"
+                        .to_string(),
+                ),
+                grammar_name: Some(language.name.to_string()),
+                source_location: None,
+            },
+        );
     }
 
     rules
@@ -547,12 +585,45 @@ fn generate_consolidated_simple_congruence(
     let match_expr = quote! { lhs };
     let for_iter = generate_tls_pool_iter(&pool_name, &elem_type, &match_expr, &pool_arms);
 
+    // A-RT04: Bloom filter pre-check for rewrite congruence.
+    //
+    // The pool only returns elements for constructors that have congruence
+    // entries. For all other constructors, the pool match falls through to
+    // `_ => {}` and the `for` yields zero iterations. Adding a `matches!()`
+    // guard on the constructor discriminant skips these non-participating
+    // constructors with a single discriminant comparison, avoiding the pool
+    // match evaluation entirely.
+    //
+    // At codegen time, we build a BloomFilter of participating constructor
+    // labels and verify all entries are present (no false negatives). The
+    // generated `matches!()` guard is exact (no false positives) since we
+    // know the full set at compile time.
+    let mut bloom = BloomFilter::new(by_constructor.len().max(1));
+    let participating_labels: Vec<&Ident> = by_constructor.values()
+        .map(|ctor_entries| &ctor_entries[0].1.constructor)
+        .collect();
+    for label in &participating_labels {
+        bloom.insert_str(&label.to_string());
+    }
+    // Verify no false negatives (invariant check at codegen time)
+    debug_assert!(
+        participating_labels.iter().all(|l| bloom.might_contain_str(&l.to_string())),
+        "A-RT04: bloom filter false negative detected for rewrite congruence constructors"
+    );
+
+    let match_patterns: Vec<TokenStream> = participating_labels
+        .iter()
+        .map(|label| quote! { #source_cat::#label(..) })
+        .collect();
+    let matches_guard = quote! { if matches!(lhs, #(#match_patterns)|*) };
+
     Some(quote! {
         #rw_rel(lhs.clone(), match (lhs, vi) {
             #(#rebuild_arms)*
             _ => unreachable!(),
         }) <--
             #cat_lower(lhs),
+            #matches_guard,
             for (field_val, vi) in #for_iter,
             #field_rw_rel(field_val, t);
     })

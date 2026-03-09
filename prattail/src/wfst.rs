@@ -1212,7 +1212,7 @@ impl PredictionWfst {
     #[cfg(feature = "wfst-log")]
     pub fn compute_entropy(&self) -> (f64, f64) {
         use crate::automata::semiring::{EntropyWeight, Semiring};
-        use crate::forward_backward::{forward_scores, backward_scores};
+        use crate::forward_backward::forward_scores;
 
         let n = self.states.len();
         if n == 0 {
@@ -3240,7 +3240,7 @@ mod tests {
         );
         let wfst = builder.build();
 
-        let (entropy_nats, entropy_bits) = wfst.compute_entropy();
+        let (_entropy_nats, entropy_bits) = wfst.compute_entropy();
         // Two equal-weight paths: H = ln(2) ≈ 0.693 nats ≈ 1.0 bits
         assert!((entropy_bits - 1.0).abs() < 0.15,
             "two equal actions should have ~1 bit entropy, got {}", entropy_bits);
@@ -3760,8 +3760,6 @@ mod tests {
     fn test_enrich_terminal_second_items() {
         // enrich_with_two_token_paths should add paths when 2nd items are disjoint terminals
         use crate::recursive::{RDRuleInfo, RDSyntaxItem};
-        use crate::prediction::FirstSet;
-
         let rd_rules = vec![
             RDRuleInfo {
                 label: "IfThen".to_string(),

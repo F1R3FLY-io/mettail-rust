@@ -74,19 +74,45 @@ pub fn get_or_insert_var(var: &FreeVar<String>) -> FreeVar<String> {
 // TERM EQUALITY CACHE (Sprint B: R1)
 //=============================================================================
 
-/// Thread-local cache for `Scope::term_eq()` results.
-///
-/// Keyed by `(hash_a, hash_b)` where each hash is a 64-bit structural hash of
-/// a `Scope`'s `unsafe_pattern` and `unsafe_body`. The key pair is canonicalized
-/// (smaller hash first) so that `(a, b)` and `(b, a)` share the same cache entry.
-///
-/// Uses `Cell<HashMap>` with take/set pattern for zero-overhead thread-local access
-/// (no borrow tracking at runtime, same pattern as pipeline TLS buffer pools).
-///
-/// Collision probability for N distinct terms: ≈ N²/2⁶⁴. For N = 10,000: ≈ 5.4 × 10⁻¹².
+// Thread-local cache for `Scope::term_eq()` results.
+//
+// Keyed by `(hash_a, hash_b)` where each hash is a 64-bit structural hash of
+// a `Scope`'s `unsafe_pattern` and `unsafe_body`. The key pair is canonicalized
+// (smaller hash first) so that `(a, b)` and `(b, a)` share the same cache entry.
+//
+// Uses `Cell<HashMap>` with take/set pattern for zero-overhead thread-local access
+// (no borrow tracking at runtime, same pattern as pipeline TLS buffer pools).
+//
+// Collision probability for N distinct terms: ≈ N²/2⁶⁴. For N = 10,000: ≈ 5.4 × 10⁻¹².
 thread_local! {
     static TERM_EQ_CACHE: Cell<HashMap<(u64, u64), bool>> =
         Cell::new(HashMap::new());
+}
+
+// BCG05 epoch counter: incremented at the start of each Ascent evaluation
+// so that BCG05 normalize-on-insert dedup guards detect the new epoch and
+// clear their HashSets. Without this, hashes from a prior run persist and
+// cause the dedup guard to skip rule firings for previously-seen terms,
+// leading to incorrect results on repeated evaluations (e.g., REPL `exec`).
+thread_local! {
+    static BCG05_EPOCH: Cell<u64> = const { Cell::new(0) };
+}
+
+/// Increment the BCG05 dedup epoch counter.
+///
+/// Call at the start of each `run_ascent_typed()` invocation. BCG05 dedup
+/// guards in generated Ascent rules compare their local epoch against
+/// this counter and clear their HashSet when a mismatch is detected.
+pub fn bump_bcg05_epoch() {
+    BCG05_EPOCH.with(|e| e.set(e.get().wrapping_add(1)));
+}
+
+/// Get the current BCG05 epoch value.
+///
+/// Called from generated BCG05 dedup guards in Ascent rules to check
+/// whether the current epoch matches their cached epoch.
+pub fn bcg05_epoch() -> u64 {
+    BCG05_EPOCH.with(|e| e.get())
 }
 
 /// Clear the term equality cache.
@@ -430,5 +456,327 @@ impl From<OrdVar> for Var<String> {
 impl fmt::Display for OrdVar {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::hash_map::DefaultHasher;
+
+    // =========================================================================
+    // 1. get_or_create_var: same name returns same FreeVar
+    // =========================================================================
+    #[test]
+    fn test_get_or_create_var_same_instance() {
+        clear_var_cache();
+        let v1 = get_or_create_var("alpha");
+        let v2 = get_or_create_var("alpha");
+        assert_eq!(v1.pretty_name, v2.pretty_name, "pretty_name must match");
+        assert_eq!(v1.unique_id, v2.unique_id, "unique_id must match for same name");
+    }
+
+    // =========================================================================
+    // 2. get_or_create_var: different names produce different FreeVars
+    // =========================================================================
+    #[test]
+    fn test_get_or_create_var_different_names() {
+        clear_var_cache();
+        let v1 = get_or_create_var("alpha");
+        let v2 = get_or_create_var("beta");
+        assert_ne!(
+            v1.unique_id, v2.unique_id,
+            "different names must yield different unique_ids"
+        );
+    }
+
+    // =========================================================================
+    // 3. clear_var_cache: clearing then recreating yields a NEW FreeVar
+    // =========================================================================
+    #[test]
+    fn test_clear_var_cache_resets() {
+        clear_var_cache();
+        let v1 = get_or_create_var("gamma");
+        let uid1 = v1.unique_id;
+        clear_var_cache();
+        let v2 = get_or_create_var("gamma");
+        assert_ne!(
+            uid1, v2.unique_id,
+            "after clear, same name must produce a fresh unique_id"
+        );
+    }
+
+    // =========================================================================
+    // 4. var_cache_size tracks inserts and clears
+    // =========================================================================
+    #[test]
+    fn test_var_cache_size() {
+        clear_var_cache();
+        assert_eq!(var_cache_size(), 0, "cache should be empty after clear");
+
+        get_or_create_var("a");
+        assert_eq!(var_cache_size(), 1);
+
+        get_or_create_var("b");
+        assert_eq!(var_cache_size(), 2);
+
+        // Duplicate does not increase size
+        get_or_create_var("a");
+        assert_eq!(var_cache_size(), 2);
+
+        clear_var_cache();
+        assert_eq!(var_cache_size(), 0, "cache should be empty after second clear");
+    }
+
+    // =========================================================================
+    // 5. get_or_insert_var preserves existing cached var
+    // =========================================================================
+    #[test]
+    fn test_get_or_insert_var_preserves_existing() {
+        clear_var_cache();
+        // Seed the cache with a var for "delta"
+        let cached = get_or_create_var("delta");
+
+        // Create a fresh FreeVar with the same pretty_name but a different unique_id
+        let fresh = FreeVar::fresh_named("delta");
+        assert_ne!(
+            cached.unique_id, fresh.unique_id,
+            "fresh var should have a different unique_id than cached"
+        );
+
+        // get_or_insert_var should return the *cached* one, not the fresh one
+        let result = get_or_insert_var(&fresh);
+        assert_eq!(
+            result.unique_id, cached.unique_id,
+            "get_or_insert_var must return the previously cached var"
+        );
+    }
+
+    // =========================================================================
+    // 6. OrdVar ordering: Free < Bound
+    // =========================================================================
+    #[test]
+    fn test_ordvar_ordering_free_before_bound() {
+        clear_var_cache();
+        let free_var = OrdVar(Var::Free(FreeVar::fresh_named("x")));
+        let bound_var = OrdVar(Var::Bound(BoundVar {
+            scope: moniker::ScopeOffset(0),
+            binder: moniker::BinderIndex(0),
+            pretty_name: Some("x".to_string()),
+        }));
+
+        assert!(
+            free_var < bound_var,
+            "OrdVar(Free) must be less than OrdVar(Bound)"
+        );
+        assert!(
+            bound_var > free_var,
+            "OrdVar(Bound) must be greater than OrdVar(Free)"
+        );
+    }
+
+    // =========================================================================
+    // 7. OrdVar display works without panic
+    // =========================================================================
+    #[test]
+    fn test_ordvar_display() {
+        clear_var_cache();
+        let free_var = OrdVar(Var::Free(FreeVar::fresh_named("x")));
+        let bound_var = OrdVar(Var::Bound(BoundVar {
+            scope: moniker::ScopeOffset(0),
+            binder: moniker::BinderIndex(0),
+            pretty_name: Some("y".to_string()),
+        }));
+
+        // Just verify Display doesn't panic and produces non-empty output
+        let s1 = format!("{}", free_var);
+        let s2 = format!("{}", bound_var);
+        assert!(!s1.is_empty(), "Display for free OrdVar must produce output");
+        assert!(!s2.is_empty(), "Display for bound OrdVar must produce output");
+    }
+
+    // =========================================================================
+    // 8. OrdVar::from / Var::from roundtrip
+    // =========================================================================
+    #[test]
+    fn test_ordvar_from_var_roundtrip() {
+        clear_var_cache();
+        let original_var: Var<String> = Var::Free(FreeVar::fresh_named("z"));
+        let ord = OrdVar::from(original_var.clone());
+        let back: Var<String> = Var::from(ord);
+        assert_eq!(original_var, back, "OrdVar::from / Var::from must roundtrip");
+    }
+
+    // =========================================================================
+    // 9. Scope: equal scopes produce equal hashes
+    // =========================================================================
+    #[test]
+    fn test_scope_hash_consistent_with_eq() {
+        clear_var_cache();
+        let v = get_or_create_var("w");
+        let binder1 = Binder(v.clone());
+        let body1 = OrdVar(Var::Free(v.clone()));
+
+        let binder2 = Binder(v.clone());
+        let body2 = OrdVar(Var::Free(v.clone()));
+
+        let scope1 = Scope::<Binder<String>, OrdVar>::new::<String>(binder1, body1);
+        let scope2 = Scope::<Binder<String>, OrdVar>::new::<String>(binder2, body2);
+
+        assert_eq!(scope1, scope2, "scopes with same binder/body must be equal");
+
+        let hash_of = |s: &Scope<Binder<String>, OrdVar>| -> u64 {
+            let mut h = DefaultHasher::new();
+            s.hash(&mut h);
+            h.finish()
+        };
+
+        assert_eq!(
+            hash_of(&scope1),
+            hash_of(&scope2),
+            "equal scopes must have equal hashes"
+        );
+    }
+
+    // =========================================================================
+    // 10. Scope: Ord transitivity (a < b, b < c => a < c)
+    // =========================================================================
+    #[test]
+    fn test_scope_ord_transitivity() {
+        clear_var_cache();
+
+        // Create three distinct bound vars with increasing (scope, binder) indices
+        // to give a predictable ordering via the body's Ord impl.
+        let body_a = OrdVar(Var::Bound(BoundVar {
+            scope: moniker::ScopeOffset(0),
+            binder: moniker::BinderIndex(0),
+            pretty_name: None,
+        }));
+        let body_b = OrdVar(Var::Bound(BoundVar {
+            scope: moniker::ScopeOffset(0),
+            binder: moniker::BinderIndex(1),
+            pretty_name: None,
+        }));
+        let body_c = OrdVar(Var::Bound(BoundVar {
+            scope: moniker::ScopeOffset(1),
+            binder: moniker::BinderIndex(0),
+            pretty_name: None,
+        }));
+
+        // Use the same binder for all three so the hash-based pattern comparison
+        // is Equal and the ordering depends entirely on body comparison.
+        let v = FreeVar::fresh_named("t");
+
+        let scope_a = Scope::<Binder<String>, OrdVar>::new::<String>(
+            Binder(v.clone()),
+            body_a,
+        );
+        let scope_b = Scope::<Binder<String>, OrdVar>::new::<String>(
+            Binder(v.clone()),
+            body_b,
+        );
+        let scope_c = Scope::<Binder<String>, OrdVar>::new::<String>(
+            Binder(v.clone()),
+            body_c,
+        );
+
+        // Verify a < b, b < c
+        assert!(
+            scope_a < scope_b,
+            "scope_a must be less than scope_b"
+        );
+        assert!(
+            scope_b < scope_c,
+            "scope_b must be less than scope_c"
+        );
+        // Transitivity: a < c
+        assert!(
+            scope_a < scope_c,
+            "transitivity: scope_a must be less than scope_c"
+        );
+    }
+
+    // =========================================================================
+    // 11. proptest: var cache idempotent
+    // =========================================================================
+    proptest::proptest! {
+        #![proptest_config(proptest::prelude::ProptestConfig::with_cases(200))]
+        #[test]
+        fn prop_var_cache_idempotent(name in "[a-z]{1,10}") {
+            clear_var_cache();
+            let v1 = get_or_create_var(&name);
+            let v2 = get_or_create_var(&name);
+            proptest::prop_assert_eq!(v1.pretty_name, v2.pretty_name);
+            proptest::prop_assert_eq!(v1.unique_id, v2.unique_id);
+        }
+    }
+
+    // =========================================================================
+    // 12. bump_bcg05_epoch increments by 1
+    // =========================================================================
+    #[test]
+    fn test_bump_bcg05_epoch_increments() {
+        let before = bcg05_epoch();
+        bump_bcg05_epoch();
+        let after = bcg05_epoch();
+        assert_eq!(
+            after,
+            before.wrapping_add(1),
+            "bump_bcg05_epoch must increment by exactly 1"
+        );
+    }
+
+    // =========================================================================
+    // 13. bcg05_epoch: bumping increases relative to current
+    // =========================================================================
+    #[test]
+    fn test_bcg05_epoch_relative_increment() {
+        // Since tests may share TLS, we just verify relative behavior
+        let e1 = bcg05_epoch();
+        bump_bcg05_epoch();
+        bump_bcg05_epoch();
+        let e3 = bcg05_epoch();
+        assert_eq!(
+            e3,
+            e1.wrapping_add(2),
+            "two bumps must advance epoch by 2"
+        );
+    }
+
+    // =========================================================================
+    // 14-15. term_eq cache: clear + size work correctly
+    // =========================================================================
+    #[test]
+    fn test_clear_term_eq_cache_and_size() {
+        clear_var_cache();
+        clear_term_eq_cache();
+        assert_eq!(term_eq_cache_size(), 0, "cache should be empty after clear");
+
+        // Populate the cache by comparing two Scopes
+        let v1 = FreeVar::fresh_named("p");
+        let v2 = FreeVar::fresh_named("q");
+
+        let scope1 = Scope::<Binder<String>, OrdVar>::new::<String>(
+            Binder(v1.clone()),
+            OrdVar(Var::Free(v1)),
+        );
+        let scope2 = Scope::<Binder<String>, OrdVar>::new::<String>(
+            Binder(v2.clone()),
+            OrdVar(Var::Free(v2)),
+        );
+
+        // term_eq populates the cache
+        let _eq = scope1.term_eq(&scope2);
+        assert!(
+            term_eq_cache_size() > 0,
+            "cache must have at least one entry after term_eq"
+        );
+
+        clear_term_eq_cache();
+        assert_eq!(
+            term_eq_cache_size(),
+            0,
+            "cache should be empty after clearing"
+        );
     }
 }

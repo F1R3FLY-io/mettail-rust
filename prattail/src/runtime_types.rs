@@ -254,14 +254,24 @@ pub fn lex_core<'a, T>(
 
     while pos < bytes.len() {
         // Skip whitespace
-        while pos < bytes.len() && is_whitespace(bytes[pos]) {
-            if bytes[pos] == b'\n' {
-                line += 1;
-                col = 0;
-            } else {
-                col += 1;
+        #[cfg(feature = "simd-whitespace")]
+        {
+            let result = skip_whitespace_simd(bytes, pos, line, col);
+            pos = result.pos;
+            line = result.line;
+            col = result.col;
+        }
+        #[cfg(not(feature = "simd-whitespace"))]
+        {
+            while pos < bytes.len() && is_whitespace(bytes[pos]) {
+                if bytes[pos] == b'\n' {
+                    line += 1;
+                    col = 0;
+                } else {
+                    col += 1;
+                }
+                pos += 1;
             }
-            pos += 1;
         }
         if pos >= bytes.len() {
             break;
@@ -369,14 +379,24 @@ pub fn lex_weighted_core<'a, T>(
     let mut tokens: Vec<(T, Range, f64)> = Vec::with_capacity(input.len() / 2);
 
     while pos < bytes.len() {
-        while pos < bytes.len() && is_whitespace(bytes[pos]) {
-            if bytes[pos] == b'\n' {
-                line += 1;
-                col = 0;
-            } else {
-                col += 1;
+        #[cfg(feature = "simd-whitespace")]
+        {
+            let result = skip_whitespace_simd(bytes, pos, line, col);
+            pos = result.pos;
+            line = result.line;
+            col = result.col;
+        }
+        #[cfg(not(feature = "simd-whitespace"))]
+        {
+            while pos < bytes.len() && is_whitespace(bytes[pos]) {
+                if bytes[pos] == b'\n' {
+                    line += 1;
+                    col = 0;
+                } else {
+                    col += 1;
+                }
+                pos += 1;
             }
-            pos += 1;
         }
         if pos >= bytes.len() {
             break;
@@ -505,14 +525,24 @@ pub fn lex_lattice_core<'a, T: Clone>(
     let mut token_alts: Vec<TokenAlts<T>> = Vec::new();
 
     while pos < bytes.len() {
-        while pos < bytes.len() && is_whitespace(bytes[pos]) {
-            if bytes[pos] == b'\n' {
-                line += 1;
-                col = 0;
-            } else {
-                col += 1;
+        #[cfg(feature = "simd-whitespace")]
+        {
+            let result = skip_whitespace_simd(bytes, pos, line, col);
+            pos = result.pos;
+            line = result.line;
+            col = result.col;
+        }
+        #[cfg(not(feature = "simd-whitespace"))]
+        {
+            while pos < bytes.len() && is_whitespace(bytes[pos]) {
+                if bytes[pos] == b'\n' {
+                    line += 1;
+                    col = 0;
+                } else {
+                    col += 1;
+                }
+                pos += 1;
             }
-            pos += 1;
         }
         if pos >= bytes.len() {
             break;
@@ -637,4 +667,360 @@ pub fn lex_lattice_core<'a, T: Clone>(
 #[inline(always)]
 pub fn is_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | b'\r')
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// AL03: SIMD-accelerated whitespace skipping (feature = "simd-whitespace")
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Result of SIMD whitespace skipping: the new cursor position and updated
+/// line/column tracking.
+#[cfg(feature = "simd-whitespace")]
+#[derive(Debug, Clone, Copy)]
+pub struct SkipResult {
+    pub pos: usize,
+    pub line: usize,
+    pub col: usize,
+}
+
+/// Skip whitespace using portable SIMD (16-byte lanes).
+///
+/// Processes 16 bytes at a time, comparing against all four whitespace
+/// characters (space, tab, newline, carriage return) in parallel. Falls
+/// back to scalar processing for the tail (< 16 bytes) and for newline
+/// counting within SIMD chunks.
+///
+/// # Safety
+///
+/// Uses only safe `std::simd` APIs. No unsafe code.
+#[cfg(feature = "simd-whitespace")]
+#[inline]
+pub fn skip_whitespace_simd(bytes: &[u8], mut pos: usize, mut line: usize, mut col: usize) -> SkipResult {
+    use std::simd::{Simd, cmp::SimdPartialEq};
+
+    const LANE_WIDTH: usize = 16;
+
+    let space = Simd::<u8, LANE_WIDTH>::splat(b' ');
+    let tab = Simd::<u8, LANE_WIDTH>::splat(b'\t');
+    let newline = Simd::<u8, LANE_WIDTH>::splat(b'\n');
+    let cr = Simd::<u8, LANE_WIDTH>::splat(b'\r');
+
+    // ── SIMD phase: process 16-byte chunks ──────────────────────────────
+    while pos + LANE_WIDTH <= bytes.len() {
+        let chunk = Simd::<u8, LANE_WIDTH>::from_slice(&bytes[pos..pos + LANE_WIDTH]);
+
+        // Compare chunk against each whitespace character and OR the masks
+        let is_ws = chunk.simd_eq(space)
+            | chunk.simd_eq(tab)
+            | chunk.simd_eq(newline)
+            | chunk.simd_eq(cr);
+
+        if is_ws.all() {
+            // Entire 16-byte chunk is whitespace — count newlines for line tracking
+            for i in 0..LANE_WIDTH {
+                if bytes[pos + i] == b'\n' {
+                    line += 1;
+                    col = 0;
+                } else {
+                    col += 1;
+                }
+            }
+            pos += LANE_WIDTH;
+        } else if !is_ws.test(0) {
+            // First byte is not whitespace — stop immediately
+            break;
+        } else {
+            // Partial whitespace chunk — find first non-whitespace byte
+            let mask = is_ws.to_bitmask();
+            // trailing_ones() counts consecutive 1-bits from bit 0
+            let ws_count = mask.trailing_ones() as usize;
+            for i in 0..ws_count {
+                if bytes[pos + i] == b'\n' {
+                    line += 1;
+                    col = 0;
+                } else {
+                    col += 1;
+                }
+            }
+            pos += ws_count;
+            // Non-whitespace found within this chunk — stop
+            break;
+        }
+    }
+
+    // ── Scalar tail: remaining bytes (< 16) ─────────────────────────────
+    while pos < bytes.len() && is_whitespace(bytes[pos]) {
+        if bytes[pos] == b'\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+        pos += 1;
+    }
+
+    SkipResult { pos, line, col }
+}
+
+/// Scalar whitespace skip (non-SIMD fallback, always available).
+///
+/// Used when `simd-whitespace` feature is not enabled and also as the
+/// reference implementation for testing SIMD correctness.
+#[inline]
+pub fn skip_whitespace_scalar(bytes: &[u8], mut pos: usize, mut line: usize, mut col: usize) -> (usize, usize, usize) {
+    while pos < bytes.len() && is_whitespace(bytes[pos]) {
+        if bytes[pos] == b'\n' {
+            line += 1;
+            col = 0;
+        } else {
+            col += 1;
+        }
+        pos += 1;
+    }
+    (pos, line, col)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::borrow::Cow;
+
+    #[test]
+    fn test_position_zero() {
+        let p = Position::zero();
+        assert_eq!(p.byte_offset, 0);
+        assert_eq!(p.line, 0);
+        assert_eq!(p.column, 0);
+    }
+
+    #[test]
+    fn test_position_display() {
+        // Display is 1-indexed: line+1, column+1
+        let p = Position { byte_offset: 0, line: 0, column: 0 };
+        assert_eq!(p.to_string(), "1:1");
+
+        let p2 = Position { byte_offset: 42, line: 3, column: 7 };
+        assert_eq!(p2.to_string(), "4:8");
+    }
+
+    #[test]
+    fn test_range_zero() {
+        let r = Range::zero();
+        assert_eq!(r.start, Position::zero());
+        assert_eq!(r.end, Position::zero());
+        assert_eq!(r.file_id, None);
+    }
+
+    #[test]
+    fn test_range_display() {
+        let r = Range {
+            start: Position { byte_offset: 0, line: 0, column: 0 },
+            end: Position { byte_offset: 5, line: 0, column: 5 },
+            file_id: None,
+        };
+        // Format: "start-end" where start and end use Position::Display (1-indexed)
+        assert_eq!(r.to_string(), "1:1-1:6");
+    }
+
+    #[test]
+    fn test_parse_error_unexpected_token_display() {
+        let err = ParseError::UnexpectedToken {
+            expected: Cow::Borrowed("number or identifier"),
+            found: "'+'".to_string(),
+            range: Range {
+                start: Position { byte_offset: 10, line: 2, column: 4 },
+                end: Position { byte_offset: 11, line: 2, column: 5 },
+                file_id: None,
+            },
+            hint: None,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("expected number or identifier"), "msg: {}", msg);
+        assert!(msg.contains("found '+'"), "msg: {}", msg);
+        assert!(msg.starts_with("3:5:"), "should show 1-indexed line:col, msg: {}", msg);
+    }
+
+    #[test]
+    fn test_parse_error_unexpected_eof_display() {
+        let err = ParseError::UnexpectedEof {
+            expected: Cow::Borrowed("')'"),
+            range: Range {
+                start: Position { byte_offset: 20, line: 1, column: 10 },
+                end: Position { byte_offset: 20, line: 1, column: 10 },
+                file_id: None,
+            },
+            hint: None,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("unexpected end of input"), "msg: {}", msg);
+        assert!(msg.contains("expected ')'"), "msg: {}", msg);
+    }
+
+    #[test]
+    fn test_parse_error_lex_error_display() {
+        let err = ParseError::LexError {
+            message: "invalid character '@'".to_string(),
+            position: Position { byte_offset: 5, line: 0, column: 5 },
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("invalid character '@'"), "msg: {}", msg);
+        assert!(msg.starts_with("1:6:"), "should show 1-indexed position, msg: {}", msg);
+    }
+
+    #[test]
+    fn test_parse_error_trailing_tokens_display() {
+        let err = ParseError::TrailingTokens {
+            found: "'}'".to_string(),
+            range: Range {
+                start: Position { byte_offset: 15, line: 0, column: 15 },
+                end: Position { byte_offset: 16, line: 0, column: 16 },
+                file_id: None,
+            },
+            hint: None,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("unexpected '}'"), "msg: {}", msg);
+        assert!(msg.contains("after parsing"), "msg: {}", msg);
+    }
+
+    #[test]
+    fn test_parse_error_recovery_display() {
+        let inner = ParseError::UnexpectedToken {
+            expected: Cow::Borrowed("';'"),
+            found: "'}'".to_string(),
+            range: Range {
+                start: Position { byte_offset: 5, line: 0, column: 5 },
+                end: Position { byte_offset: 6, line: 0, column: 6 },
+                file_id: None,
+            },
+            hint: None,
+        };
+        let err = ParseError::RecoveryApplied {
+            original_error: Box::new(inner),
+            repair_description: "skip 1 token(s) to ';'".to_string(),
+            range: Range {
+                start: Position { byte_offset: 5, line: 0, column: 5 },
+                end: Position { byte_offset: 8, line: 0, column: 8 },
+                file_id: None,
+            },
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("recovered: skip 1 token(s) to ';'"), "msg: {}", msg);
+        assert!(msg.contains("expected ';'"), "should include original error, msg: {}", msg);
+    }
+
+    #[test]
+    fn test_parse_error_range_accessor() {
+        let range1 = Range {
+            start: Position { byte_offset: 0, line: 0, column: 0 },
+            end: Position { byte_offset: 3, line: 0, column: 3 },
+            file_id: Some(1),
+        };
+        let range2 = Range {
+            start: Position { byte_offset: 10, line: 1, column: 2 },
+            end: Position { byte_offset: 15, line: 1, column: 7 },
+            file_id: Some(2),
+        };
+
+        // UnexpectedToken
+        let e1 = ParseError::UnexpectedToken {
+            expected: Cow::Borrowed("x"),
+            found: "y".to_string(),
+            range: range1,
+            hint: None,
+        };
+        assert_eq!(e1.range(), range1);
+
+        // UnexpectedEof
+        let e2 = ParseError::UnexpectedEof {
+            expected: Cow::Borrowed("x"),
+            range: range2,
+            hint: None,
+        };
+        assert_eq!(e2.range(), range2);
+
+        // LexError — constructs a Range from the position
+        let pos = Position { byte_offset: 7, line: 0, column: 7 };
+        let e3 = ParseError::LexError {
+            message: "bad".to_string(),
+            position: pos,
+        };
+        let r3 = e3.range();
+        assert_eq!(r3.start, pos);
+        assert_eq!(r3.end, pos);
+        assert_eq!(r3.file_id, None);
+
+        // TrailingTokens
+        let e4 = ParseError::TrailingTokens {
+            found: "z".to_string(),
+            range: range1,
+            hint: None,
+        };
+        assert_eq!(e4.range(), range1);
+
+        // RecoveryApplied
+        let e5 = ParseError::RecoveryApplied {
+            original_error: Box::new(ParseError::LexError {
+                message: "x".to_string(),
+                position: Position::zero(),
+            }),
+            repair_description: "skip".to_string(),
+            range: range2,
+        };
+        assert_eq!(e5.range(), range2);
+    }
+
+    #[test]
+    fn test_parse_error_from_string() {
+        let err: ParseError = "something went wrong".to_string().into();
+        match &err {
+            ParseError::LexError { message, position } => {
+                assert_eq!(message, "something went wrong");
+                assert_eq!(*position, Position::zero());
+            }
+            other => panic!("expected LexError variant, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_format_error_context() {
+        let input = "let x = 42\nlet y = @bad\nlet z = 0";
+        // Error at '@' on line 1, column 8, byte_offset = 11 (line 0) + 8 = 19
+        let byte_offset = input.find('@').expect("'@' not found in input");
+        let range = Range {
+            start: Position {
+                byte_offset,
+                line: 1,
+                column: 8,
+            },
+            end: Position {
+                byte_offset: byte_offset + 1,
+                line: 1,
+                column: 9,
+            },
+            file_id: None,
+        };
+        let ctx = format_error_context(input, &range);
+        // Should contain the source line
+        assert!(ctx.contains("let y = @bad"), "should contain source line, got: {}", ctx);
+        // Should contain the caret ('^') pointing at column 8
+        assert!(ctx.contains('^'), "should contain caret, got: {}", ctx);
+        // The caret should be indented by 8 spaces
+        let lines: Vec<&str> = ctx.lines().collect();
+        assert_eq!(lines.len(), 2, "should have source line + caret line, got: {:?}", lines);
+        assert_eq!(&lines[1][..8], "        ", "8 spaces of indent before caret");
+        assert_eq!(&lines[1][8..9], "^", "caret at column 8");
+    }
+
+    #[test]
+    fn test_parse_error_unexpected_token_with_hint() {
+        let err = ParseError::UnexpectedToken {
+            expected: Cow::Borrowed("')'"),
+            found: "'}'".to_string(),
+            range: Range::zero(),
+            hint: Some(Cow::Borrowed("did you forget ')' ?")),
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("hint: did you forget ')' ?"), "hint should appear, msg: {}", msg);
+    }
 }

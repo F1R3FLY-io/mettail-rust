@@ -59,6 +59,7 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     use syntax::display::generate_display;
     use syntax::var_inference::generate_var_category_inference;
     use term_gen::{generate_random_generation, generate_term_generation};
+    use term_ops::depth::generate_term_depth_methods;
     use term_ops::ground::generate_is_ground_methods;
     use term_ops::normalize::{generate_flatten_helpers, generate_normalize_functions};
     use term_ops::subst::{generate_env_substitution, generate_substitution};
@@ -79,6 +80,7 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
     let random_gen_impl = generate_random_generation(language);
     let eval_impl = generate_eval_method(language);
     let is_ground_impl = generate_is_ground_methods(language);
+    let term_depth_impl = generate_term_depth_methods(language);
     let var_inference_impl = generate_var_category_inference(language);
 
     // Parser code: PraTTaIL (inline) — also captures pipeline analysis
@@ -116,6 +118,8 @@ pub fn generate_all(language: &LanguageDef) -> (TokenStream, mettail_prattail::P
         #eval_impl
 
         #is_ground_impl
+
+        #term_depth_impl
 
         #var_inference_impl
 

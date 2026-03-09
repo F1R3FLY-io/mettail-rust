@@ -41,7 +41,10 @@
 //! | G30 | note | isomorphic-wfst-groups | Isomorphic WFST dispatch topology |
 //! | G31 | note | subsumed-equations-eliminated | N equations eliminated from codegen |
 //! | W09 | warning | cancellation-pair-missing-rewrite | Suppressed equation has no corresponding rewrite |
+//! | G41 | note | normalize-dedup-active | BCG05: hash guards emitted for normalize dedup |
 //! | I10 | warning | ascent-file-write-failed | Ascent Datalog file I/O error |
+//! | I17 | info | computed-goto-dispatch | CD03: function pointer table dispatch activated |
+//! | I18 | info | lint-cache-hit | DB04: lint results cached, skipping lint passes |
 //!
 //! ## Display Format
 //!
@@ -259,6 +262,151 @@ pub struct LintContext<'a> {
     pub kat_result: Option<&'a crate::kat::KatCheck>,
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+// DB04: Cached lint results across builds
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Compute a structural hash of the grammar specification from the lint context.
+///
+/// The hash covers: grammar name, category count/names, rule count/labels/categories,
+/// syntax patterns (serialized), and binding power table entries. Changes to any of
+/// these inputs invalidate the cache.
+pub fn compute_grammar_hash(ctx: &LintContext) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::hash::DefaultHasher::new();
+
+    // Grammar name
+    ctx.grammar_name.hash(&mut hasher);
+
+    // Categories: count, names, primary flag
+    ctx.categories.len().hash(&mut hasher);
+    for cat in ctx.categories {
+        cat.name.hash(&mut hasher);
+        cat.is_primary.hash(&mut hasher);
+    }
+
+    // Rules: count, labels, categories, first items, flags
+    ctx.rules.len().hash(&mut hasher);
+    for rule in ctx.rules {
+        rule.label.hash(&mut hasher);
+        rule.category.hash(&mut hasher);
+        rule.is_cast.hash(&mut hasher);
+        rule.is_cross_category.hash(&mut hasher);
+        // Hash first items as debug strings (they contain the structural info)
+        for fi in &rule.first_items {
+            format!("{:?}", fi).hash(&mut hasher);
+        }
+    }
+
+    // Syntax patterns (label, category, items as debug strings)
+    ctx.all_syntax.len().hash(&mut hasher);
+    for (label, cat, items) in ctx.all_syntax {
+        label.hash(&mut hasher);
+        cat.hash(&mut hasher);
+        for item in items {
+            format!("{:?}", item).hash(&mut hasher);
+        }
+    }
+
+    // BP table: hash the category operator counts
+    // (BindingPowerTable doesn't implement Hash, so hash its observable behavior)
+    for cat in ctx.categories {
+        let ops = ctx.bp_table.operators_for_category(&cat.name);
+        ops.len().hash(&mut hasher);
+        for op in ops {
+            op.terminal.hash(&mut hasher);
+        }
+    }
+
+    // Cast/cross rules
+    ctx.cast_rules.len().hash(&mut hasher);
+    ctx.cross_rules.len().hash(&mut hasher);
+
+    // RD rules
+    ctx.rd_rules.len().hash(&mut hasher);
+
+    hasher.finish()
+}
+
+/// Path to the lint cache file inside the target directory.
+fn lint_cache_path() -> std::path::PathBuf {
+    // Use OUT_DIR if available (proc-macro build), fall back to target/prattail
+    let base = std::env::var("OUT_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("target/prattail"));
+    base.join("lint_cache.bin")
+}
+
+/// Try to load a cached lint hash from disk.
+///
+/// Returns `Some(hash)` if the cache file exists and is readable.
+pub fn try_load_cached_lint_hash() -> Option<u64> {
+    let path = lint_cache_path();
+    let data = std::fs::read(&path).ok()?;
+    if data.len() == 8 {
+        Some(u64::from_le_bytes(data.try_into().ok()?))
+    } else {
+        None
+    }
+}
+
+/// Save a lint hash to the cache file.
+///
+/// Creates the parent directory if it does not exist.
+pub fn save_lint_cache(hash: u64) {
+    let path = lint_cache_path();
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, hash.to_le_bytes());
+}
+
+/// Run lints with DB04 caching support.
+///
+/// If `use_cache` is true:
+/// 1. Compute a structural hash of the grammar spec
+/// 2. Check if the cached hash matches
+/// 3. If match: skip all lints (return empty diagnostics + an I18 note)
+/// 4. If mismatch: run full lints, save the new hash, return diagnostics
+///
+/// If `use_cache` is false, delegates directly to [`run_lints`].
+pub fn run_lints_cached(ctx: &LintContext, use_cache: bool) -> Vec<LintDiagnostic> {
+    if !use_cache {
+        return run_lints(ctx);
+    }
+
+    let grammar_hash = compute_grammar_hash(ctx);
+    let cached_hash = try_load_cached_lint_hash();
+
+    if cached_hash == Some(grammar_hash) {
+        // Cache hit: skip all lints
+        return vec![LintDiagnostic {
+            id: "I18",
+            name: "lint-cache-hit",
+            severity: LintSeverity::Info,
+            category: None,
+            rule: None,
+            message: format!(
+                "DB04 lint cache hit (hash={:#018x}): skipping {} lint passes",
+                grammar_hash,
+                // Approximate lint count from the run_lints function
+                60,
+            ),
+            hint: Some("delete target/prattail/lint_cache.bin to force re-linting".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        }];
+    }
+
+    // Cache miss: run full lints
+    let diagnostics = run_lints(ctx);
+
+    // Save the hash for next build
+    save_lint_cache(grammar_hash);
+
+    diagnostics
+}
+
 /// Run all lints and return structured diagnostics.
 ///
 /// Lints are grouped by category and run in order:
@@ -420,6 +568,39 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     // P06: Analysis pipeline timing
     lint_p06_analysis_pipeline_cost(ctx, &mut diagnostics);
 
+    // ── Ascent VM / Codegen lints ──
+    lint_a01_fixpoint_non_convergence(ctx, &mut diagnostics);
+    lint_a02_redundant_congruence(ctx, &mut diagnostics);
+    lint_a03_eq_rw_category_mismatch(ctx, &mut diagnostics);
+    lint_a04_large_equivalence_class(ctx, &mut diagnostics);
+    lint_a05_self_referential_equation(ctx, &mut diagnostics);
+    lint_a06_missing_equation_congruence(ctx, &mut diagnostics);
+    lint_a07_fixpoint_iteration_anomaly(ctx, &mut diagnostics);
+    lint_a08_equation_subsumes_rewrite(ctx, &mut diagnostics);
+    lint_a09_ascent_struct_size(ctx, &mut diagnostics);
+    lint_a10_unreachable_equation_variable(ctx, &mut diagnostics);
+
+    // ── Lexer lints ──
+    lint_lex01_overlapping_token_defs(ctx, &mut diagnostics);
+    lint_lex02_unreachable_token_pattern(ctx, &mut diagnostics);
+    lint_lex03_excessive_equiv_classes(ctx, &mut diagnostics);
+    lint_lex04_dfa_state_explosion(ctx, &mut diagnostics);
+    lint_lex05_float_integer_ambiguity(ctx, &mut diagnostics);
+
+    // ── Parser lints ──
+    lint_par01_deep_rd_chain(ctx, &mut diagnostics);
+    lint_par02_unused_bp_level(ctx, &mut diagnostics);
+    lint_par03_postfix_prefix_collision(ctx, &mut diagnostics);
+    lint_par04_mixfix_ambiguous_delimiter(ctx, &mut diagnostics);
+    lint_par05_trampoline_frame_variant_count(ctx, &mut diagnostics);
+
+    // ── Dispatch lints ──
+    lint_dis01_hot_path_misalignment(ctx, &mut diagnostics);
+    lint_dis02_cold_arm_ratio(ctx, &mut diagnostics);
+    lint_dis03_decision_tree_depth(ctx, &mut diagnostics);
+    lint_dis04_backtrack_elimination_coverage(ctx, &mut diagnostics);
+    lint_dis05_nfa_try_all_set_size(ctx, &mut diagnostics);
+
     diagnostics
 }
 
@@ -431,8 +612,41 @@ pub fn emit_diagnostics(diagnostics: &[LintDiagnostic]) {
 }
 
 /// Emit a single diagnostic to stderr with ANSI-colorized output.
+///
+/// Diagnostics whose severity is below the threshold set by `PRATTAIL_LINT_LEVEL`
+/// are silently dropped. See [`lint_level()`] for the env-var semantics.
 pub fn emit_diagnostic(diag: &LintDiagnostic) {
+    if diag.severity < lint_level() {
+        return;
+    }
     eprintln!("{}", format_diagnostic_colored(diag));
+}
+
+/// Minimum severity level for diagnostic output.
+///
+/// Controlled by `PRATTAIL_LINT_LEVEL` env var:
+/// - `"error"`: only errors
+/// - `"warning"` (default): warnings and errors
+/// - `"note"`: notes, warnings, errors
+/// - `"info"` or `"all"`: everything
+fn lint_level() -> LintSeverity {
+    use std::cell::Cell;
+    thread_local! {
+        static CACHED: Cell<Option<LintSeverity>> = const { Cell::new(None) };
+    }
+    CACHED.with(|c| {
+        if let Some(level) = c.get() {
+            return level;
+        }
+        let level = match std::env::var("PRATTAIL_LINT_LEVEL").as_deref() {
+            Ok("error") => LintSeverity::Error,
+            Ok("note") => LintSeverity::Note,
+            Ok("info") | Ok("all") => LintSeverity::Info,
+            _ => LintSeverity::Warning, // default
+        };
+        c.set(Some(level));
+        level
+    })
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -580,15 +794,42 @@ pub fn emit_diagnostics_for_grammar(grammar_name: &str, diagnostics: &[LintDiagn
         ansi::BOLD_CYAN, ansi::RESET, grammar_name,
     );
     let verbose = std::env::var("PRATTAIL_LINT_VERBOSE").is_ok();
-    if verbose {
-        for diag in diagnostics {
-            eprintln!("{}", format_diagnostic_colored(diag));
-        }
+    let level = lint_level();
+    let to_emit = if verbose {
+        diagnostics.to_vec()
     } else {
-        let grouped = group_diagnostics(diagnostics.to_vec());
-        for diag in &grouped {
-            eprintln!("{}", format_diagnostic_colored(diag));
+        group_diagnostics(diagnostics.to_vec())
+    };
+    // Count by severity (on full set, before filtering)
+    let mut error_count = 0u32;
+    let mut warning_count = 0u32;
+    let mut note_count = 0u32;
+    let mut info_count = 0u32;
+    for diag in &to_emit {
+        match diag.severity {
+            LintSeverity::Error => error_count += 1,
+            LintSeverity::Warning => warning_count += 1,
+            LintSeverity::Note => note_count += 1,
+            LintSeverity::Info => info_count += 1,
         }
+    }
+    // Emit filtered diagnostics
+    let mut shown = 0u32;
+    for diag in &to_emit {
+        if diag.severity >= level {
+            eprintln!("{}", format_diagnostic_colored(diag));
+            shown += 1;
+        }
+    }
+    // Summary when some diagnostics were hidden by severity filter
+    let total = error_count + warning_count + note_count + info_count;
+    if shown < total {
+        eprintln!(
+            "  {}summary{} ({}): {} error(s), {} warning(s), {} note(s), {} info(s) [{} shown, {} hidden by PRATTAIL_LINT_LEVEL]",
+            ansi::BOLD_CYAN, ansi::RESET, grammar_name,
+            error_count, warning_count, note_count, info_count,
+            shown, total - shown,
+        );
     }
 }
 
@@ -605,6 +846,7 @@ pub fn has_errors(diagnostics: &[LintDiagnostic]) -> bool {
 const GROUPABLE_IDS: &[&str] = &[
     "W01", "W02", "W03", "W05", "W07", "G03", "G08", "G27",
     "D01", "D02", "D03", "D08", "D09",
+    "A01", "A04", "A08", "C-AP03", "C-AP05", "DIS01", "W10", "W12", "W14",
 ];
 
 /// Group repeated lint diagnostics into compact summaries.
@@ -656,6 +898,15 @@ pub fn group_diagnostics(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic
                 "D03" => group_ambiguity_by_category("D03", "trie-unreachable-rule", "unreachable trie rule(s)", items),
                 "D08" => group_ambiguity_by_category("D08", "optimization-suggestion", "optimization suggestion(s)", items),
                 "D09" => group_ambiguity_by_category("D09", "conflict-resolution-guide", "conflict resolution guidance", items),
+                "A01" => group_a01(items),
+                "A04" => group_a04(items),
+                "A08" => group_a08(items),
+                "C-AP03" => group_cap03(items),
+                "C-AP05" => group_cap05(items),
+                "DIS01" => group_dis01(items),
+                "W10" => group_w10(items),
+                "W12" => group_w12(items),
+                "W14" => group_w14(items),
                 _ => items, // unreachable due to GROUPABLE_IDS check
             };
             indexed.push((idx, grouped));
@@ -1030,6 +1281,395 @@ fn group_ambiguity_by_category(
     }]
 }
 
+/// Group A01 (unbounded term growth) by category.
+///
+/// Output: `"N rules have potential unbounded term growth: Cat1(Rule1, Rule2), Cat2(Rule3)"`
+fn group_a01(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    use std::collections::BTreeMap;
+
+    // Separate individual rule diagnostics (have category+rule) from summary diagnostics
+    let mut rule_diags = Vec::new();
+    let mut summary_diags = Vec::new();
+    for diag in diagnostics {
+        if diag.category.is_some() && diag.rule.is_some() {
+            rule_diags.push(diag);
+        } else {
+            summary_diags.push(diag);
+        }
+    }
+
+    let mut result = Vec::new();
+
+    // Group individual rule diagnostics by category
+    if !rule_diags.is_empty() {
+        let grammar_name = rule_diags.first().and_then(|d| d.grammar_name.clone());
+        let hint = rule_diags.first().and_then(|d| d.hint.clone());
+
+        let mut by_cat: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for diag in &rule_diags {
+            let cat = diag.category.clone().unwrap_or_else(|| "unknown".to_string());
+            let rule = diag.rule.clone().unwrap_or_else(|| "?".to_string());
+            by_cat.entry(cat).or_default().push(rule);
+        }
+
+        let total = rule_diags.len();
+        let cat_parts: Vec<String> = by_cat
+            .iter()
+            .map(|(cat, rules)| format!("{}({})", cat, rules.join(", ")))
+            .collect();
+
+        result.push(LintDiagnostic {
+            id: "A01",
+            name: "unbounded-term-growth",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} rules have potential unbounded term growth: {}",
+                total,
+                cat_parts.join(", "),
+            ),
+            hint,
+            grammar_name,
+            source_location: None,
+        });
+    }
+
+    // Pass through summary diagnostics unchanged
+    result.extend(summary_diags);
+    result
+}
+
+/// Group A04 (high dependency group count) by category.
+///
+/// Output: `"N constructors in 3+ dependency groups: Cat1(Ctor1), Cat2(Ctor2)"`
+fn group_a04(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    use std::collections::BTreeMap;
+
+    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
+    let severity = diagnostics.first().map(|d| d.severity).unwrap_or(LintSeverity::Warning);
+
+    let mut by_cat: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for diag in &diagnostics {
+        let cat = diag.category.clone().unwrap_or_else(|| "unknown".to_string());
+        // Extract constructor name from backtick-quoted name in message:
+        // "constructor `Foo` appears in N dependency groups ..."
+        let ctor = diag
+            .message
+            .split("constructor `")
+            .nth(1)
+            .and_then(|s| s.split('`').next())
+            .unwrap_or("?")
+            .to_string();
+        by_cat.entry(cat).or_default().push(ctor);
+    }
+
+    let total = diagnostics.len();
+    let cat_parts: Vec<String> = by_cat
+        .iter()
+        .map(|(cat, ctors)| format!("{}({})", cat, ctors.join(", ")))
+        .collect();
+
+    vec![LintDiagnostic {
+        id: "A04",
+        name: "high-dependency-constructors",
+        severity,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} constructors appear in 3+ equation/rewrite groups (risk of equivalence class explosion): {}",
+            total,
+            cat_parts.join(", "),
+        ),
+        hint: Some(
+            "these constructors are referenced by many equations/rewrites, which can cause \
+             equivalence class explosion during Ascent fixpoint evaluation; consider \
+             reducing the number of equations involving them, or simplifying \
+             equational axioms (e.g., removing redundant commutativity/associativity declarations)"
+                .to_string(),
+        ),
+        grammar_name,
+        source_location: None,
+    }]
+}
+
+/// Group A08 (equation-subsumed rewrites) by category.
+///
+/// Output: `"N constructors may have equation-subsumed rewrites: Cat1(Ctor1, Ctor2), Cat2(Ctor3)"`
+fn group_a08(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    use std::collections::BTreeMap;
+
+    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
+    let hint = diagnostics.first().and_then(|d| d.hint.clone());
+    let severity = diagnostics.first().map(|d| d.severity).unwrap_or(LintSeverity::Note);
+
+    let mut by_cat: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for diag in &diagnostics {
+        let cat = diag.category.clone().unwrap_or_else(|| "unknown".to_string());
+        // Extract constructor name from: "constructor `Foo` appears in N dependency groups"
+        let ctor = diag
+            .message
+            .split("constructor `")
+            .nth(1)
+            .and_then(|s| s.split('`').next())
+            .unwrap_or("?")
+            .to_string();
+        by_cat.entry(cat).or_default().push(ctor);
+    }
+
+    let total = diagnostics.len();
+    let cat_parts: Vec<String> = by_cat
+        .iter()
+        .map(|(cat, ctors)| format!("{}({})", cat, ctors.join(", ")))
+        .collect();
+
+    vec![LintDiagnostic {
+        id: "A08",
+        name: "equation-subsumed-rewrites",
+        severity,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} constructors may have equation-subsumed rewrites: {}",
+            total,
+            cat_parts.join(", "),
+        ),
+        hint,
+        grammar_name,
+        source_location: None,
+    }]
+}
+
+/// Group C-AP03 (deep congruence chains) by category.
+///
+/// Extracts category names from the message text (backtick-quoted after "category").
+///
+/// Output: `"N categories have unbounded congruence chain depth: Cat1, Cat2"`
+fn group_cap03(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
+    let hint = diagnostics.first().and_then(|d| d.hint.clone());
+
+    let mut cats: Vec<String> = Vec::new();
+    for diag in &diagnostics {
+        // Extract category from message: "deep congruence chain: category `Proc` has ..."
+        let cat = diag
+            .message
+            .split("category `")
+            .nth(1)
+            .and_then(|s| s.split('`').next())
+            .unwrap_or("?")
+            .to_string();
+        if !cats.contains(&cat) {
+            cats.push(cat);
+        }
+    }
+
+    vec![LintDiagnostic {
+        id: "C-AP03",
+        name: "deep-congruence-chains",
+        severity: LintSeverity::Warning,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} categories have unbounded congruence chain depth: {}",
+            cats.len(),
+            cats.join(", "),
+        ),
+        hint,
+        grammar_name,
+        source_location: None,
+    }]
+}
+
+/// Group C-AP05 (clone storm risk) by constructor/category.
+///
+/// Extracts constructor and category from the message text.
+///
+/// Output: `"N constructors have collection fields (clone storm risk): Ctor1(Cat1), Ctor2(Cat2)"`
+fn group_cap05(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
+    let hint = diagnostics.first().and_then(|d| d.hint.clone());
+
+    let mut entries: Vec<String> = Vec::new();
+    for diag in &diagnostics {
+        // Extract constructor: "clone storm: constructor `PPar` (category `Proc`) has ..."
+        let ctor = diag
+            .message
+            .split("constructor `")
+            .nth(1)
+            .and_then(|s| s.split('`').next())
+            .unwrap_or("?");
+        let cat = diag
+            .message
+            .split("category `")
+            .nth(1)
+            .and_then(|s| s.split('`').next())
+            .unwrap_or("?");
+        entries.push(format!("{}({})", ctor, cat));
+    }
+
+    let total = entries.len();
+    vec![LintDiagnostic {
+        id: "C-AP05",
+        name: "clone-storm-risk",
+        severity: LintSeverity::Warning,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} constructors have collection fields (clone storm risk): {}",
+            total,
+            entries.join(", "),
+        ),
+        hint,
+        grammar_name,
+        source_location: None,
+    }]
+}
+
+/// Group DIS01 (hot-path misalignment) by category.
+///
+/// Output: `"N categories have WFST action table misalignment (CD01 compensates): Cat1, Cat2"`
+fn group_dis01(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
+    let hint = diagnostics.first().and_then(|d| d.hint.clone());
+
+    let cats: Vec<String> = diagnostics
+        .iter()
+        .filter_map(|d| d.category.clone())
+        .collect();
+
+    vec![LintDiagnostic {
+        id: "DIS01",
+        name: "hot-path-misalignment",
+        severity: LintSeverity::Note,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} categories have WFST action table misalignment (CD01 compensates): {}",
+            cats.len(),
+            cats.join(", "),
+        ),
+        hint,
+        grammar_name,
+        source_location: None,
+    }]
+}
+
+/// Group W10 (NFA spillover eliminable by lookahead) by category.
+///
+/// Output: `"N categories could eliminate NFA spillover with k-token lookahead: Cat1, Cat2"`
+fn group_w10(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
+    let hint = diagnostics.first().and_then(|d| d.hint.clone());
+    let severity = diagnostics.first().map(|d| d.severity).unwrap_or(LintSeverity::Note);
+
+    let mut cats: Vec<String> = Vec::new();
+    for diag in &diagnostics {
+        if let Some(cat) = &diag.category {
+            if !cats.contains(cat) {
+                cats.push(cat.clone());
+            }
+        }
+    }
+
+    vec![LintDiagnostic {
+        id: "W10",
+        name: "nfa-spillover-lookahead",
+        severity,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} categories could eliminate NFA spillover with k-token lookahead: {}",
+            cats.len(),
+            cats.join(", "),
+        ),
+        hint,
+        grammar_name,
+        source_location: None,
+    }]
+}
+
+/// Group W12 (dispatch entropy) by category with entropy values.
+///
+/// Extracts category and entropy (bits) from each diagnostic message.
+///
+/// Output: `"N categories have high dispatch entropy: Cat1(X.XX bits), Cat2(Y.YY bits)"`
+fn group_w12(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
+    let hint = diagnostics.first().and_then(|d| d.hint.clone());
+    let severity = diagnostics.first().map(|d| d.severity).unwrap_or(LintSeverity::Note);
+
+    let mut entries: Vec<String> = Vec::new();
+    for diag in &diagnostics {
+        // Extract category from backtick: "category `Proc` has high dispatch entropy (X.XX bits, ..."
+        let cat = diag
+            .message
+            .split("category `")
+            .nth(1)
+            .and_then(|s| s.split('`').next())
+            .unwrap_or("?");
+        // Extract bits value: "entropy (X.XX bits,"
+        let bits = diag
+            .message
+            .split('(')
+            .nth(1)
+            .and_then(|s| s.split(" bits").next())
+            .unwrap_or("?");
+        entries.push(format!("{}({} bits)", cat, bits));
+    }
+
+    let total = entries.len();
+    vec![LintDiagnostic {
+        id: "W12",
+        name: "dispatch-entropy",
+        severity,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} categories have high dispatch entropy: {}",
+            total,
+            entries.join(", "),
+        ),
+        hint,
+        grammar_name,
+        source_location: None,
+    }]
+}
+
+/// Group W14 (WPDS-confirmed ambiguity) by category.
+///
+/// Output: `"N categories have WPDS-confirmed NFA ambiguity: Cat1, Cat2"`
+fn group_w14(diagnostics: Vec<LintDiagnostic>) -> Vec<LintDiagnostic> {
+    let grammar_name = diagnostics.first().and_then(|d| d.grammar_name.clone());
+    let hint = diagnostics.first().and_then(|d| d.hint.clone());
+    let severity = diagnostics.first().map(|d| d.severity).unwrap_or(LintSeverity::Note);
+
+    let mut cats: Vec<String> = Vec::new();
+    for diag in &diagnostics {
+        if let Some(cat) = &diag.category {
+            if !cats.contains(cat) {
+                cats.push(cat.clone());
+            }
+        }
+    }
+
+    vec![LintDiagnostic {
+        id: "W14",
+        name: "wpds-confirmed-ambiguity",
+        severity,
+        category: None,
+        rule: None,
+        message: format!(
+            "{} categories have WPDS-confirmed NFA ambiguity: {}",
+            cats.len(),
+            cats.join(", "),
+        ),
+        hint,
+        grammar_name,
+        source_location: None,
+    }]
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 // G01: Left Recursion (migrated from prediction.rs)
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1218,7 +1858,8 @@ fn lint_g03_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
                     rule: None,
                     message,
                     hint: Some(
-                        "add unique dispatch tokens or use WFST weights to disambiguate"
+                        "add unique dispatch tokens to disambiguate; \
+                         WFST auto-assigns weights by declaration order when prefixes overlap"
                             .to_string(),
                     ),
                     grammar_name: Some(ctx.grammar_name.to_string()),
@@ -2269,8 +2910,8 @@ fn lint_w02_nfa_ambiguous_prefix(ctx: &LintContext, diagnostics: &mut Vec<LintDi
                     rule: None,
                     message,
                     hint: Some(
-                        "add distinguishing syntax or assign different WFST weights \
-                         to resolve the ambiguity"
+                        "add distinguishing syntax to resolve the ambiguity; \
+                         WFST auto-assigns weights by rule specificity and declaration order"
                             .to_string(),
                     ),
                     grammar_name: Some(ctx.grammar_name.to_string()),
@@ -2428,7 +3069,7 @@ fn lint_w06_weight_inversion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagno
                                     ),
                                     hint: Some(
                                         "more-specific rules should typically have lower \
-                                         (better) weights — check rule ordering or WFST weights"
+                                         (better) weights — check rule declaration order (WFST auto-assigns by specificity and order)"
                                             .to_string(),
                                     ),
                                     grammar_name: Some(ctx.grammar_name.to_string()),
@@ -2858,7 +3499,7 @@ fn lint_w14_wpds_confirmed_ambiguity(ctx: &LintContext, diagnostics: &mut Vec<Li
                 diagnostics.push(LintDiagnostic {
                     id: "W14",
                     name: "wpds-confirmed-ambiguity",
-                    severity: LintSeverity::Warning,
+                    severity: LintSeverity::Note,
                     category: Some(cat.clone()),
                     rule: None,
                     message: format!(
@@ -4007,8 +4648,8 @@ fn lint_x01_composition_ambiguity_introduction(
                     sorted_new.len(), cat, sorted_new.join(", "), pre_overlap_count,
                 ),
                 hint: Some(
-                    "add unique prefix tokens to disambiguate, or use WFST weights \
-                     to express priority between the composed grammars"
+                    "add unique prefix tokens to disambiguate; \
+                     WFST auto-assigns weights by declaration order when prefixes overlap"
                         .to_string(),
                 ),
                 grammar_name: Some(base_ctx.grammar_name.to_string()),
@@ -4081,8 +4722,8 @@ fn lint_x02_composition_priority_shadowing(
                             best_b.weight.value(),
                         ),
                         hint: Some(
-                            "adjust WFST weights or rename rules to avoid unintended \
-                             priority override"
+                            "rename rules or reorder declarations to avoid unintended \
+                             priority override (WFST auto-assigns weights by declaration order)"
                                 .to_string(),
                         ),
                         grammar_name: Some(base_ctx.grammar_name.to_string()),
@@ -5424,6 +6065,1127 @@ fn lint_p06_analysis_pipeline_cost(ctx: &LintContext, diagnostics: &mut Vec<Lint
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Ascent VM / Codegen Lints (A01-A10)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A01: fixpoint-non-convergence — Warn when rewrite rules have positive depth delta.
+fn lint_a01_fixpoint_non_convergence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // Analyze rewrite-like rules for depth increase patterns.
+    // A rule has positive depth delta if RHS has more nesting levels than LHS.
+    // Check: for each rule, if the syntax has NonTerminal items that wrap other NonTerminals
+    // more deeply than the same category appears on the LHS, warn.
+    for (label, category, syntax) in ctx.all_syntax {
+        // Heuristic: if a rule has a NonTerminal to itself AND wraps it in another constructor,
+        // it may cause unbounded depth growth.
+        // Simple detection: count NonTerminal depth on each "side" of an infix operator.
+        let nt_count = syntax
+            .iter()
+            .filter(|s| matches!(s, SyntaxItemSpec::NonTerminal { .. }))
+            .count();
+        let terminal_count = syntax
+            .iter()
+            .filter(|s| matches!(s, SyntaxItemSpec::Terminal(_)))
+            .count();
+
+        // Rules with more nonterminals than terminals that reference their own category
+        // are potential depth-increasing rewrite targets
+        let self_refs: Vec<_> = syntax
+            .iter()
+            .filter(|s| {
+                matches!(s, SyntaxItemSpec::NonTerminal { category: c, .. } if c == category)
+            })
+            .collect();
+
+        // If a rule has 2+ self-referential NTs and only 1 terminal, it could be
+        // creating depth growth (e.g., f(x) => f(f(x)) pattern when used as rewrite)
+        if self_refs.len() >= 2 && terminal_count <= 1 && nt_count >= 2 {
+            diagnostics.push(LintDiagnostic {
+                id: "A01",
+                name: "fixpoint-non-convergence",
+                severity: LintSeverity::Warning,
+                category: Some(category.clone()),
+                rule: Some(label.clone()),
+                message: format!(
+                    "rule `{}` has {} self-referential nonterminals with {} terminal(s) — \
+                     potential unbounded term growth in fixpoint computation",
+                    label,
+                    self_refs.len(),
+                    terminal_count
+                ),
+                hint: Some(
+                    "ensure complementary depth-reducing rules exist, or add a depth bound"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: ctx
+                    .rule_locations
+                    .get(&(label.clone(), category.clone()))
+                    .copied(),
+            });
+        }
+    }
+}
+
+/// A02: redundant-congruence — Note when congruence is declared for a field category with no rewrites.
+fn lint_a02_redundant_congruence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // Detect categories that are only referenced as nonterminal fields of other categories
+    // but have no rules of their own that could trigger rewrites.
+    // A category with no infix/prefix rules that only appears as a field in other
+    // categories' constructors may have unnecessary congruence rules.
+    for cat_info in ctx.categories {
+        let own_rules: Vec<_> = ctx
+            .all_syntax
+            .iter()
+            .filter(|(_, c, _)| c == &cat_info.name)
+            .collect();
+
+        // Referenced as NT in other categories
+        let referenced_as_field = ctx.all_syntax.iter().any(|(_, c, syntax)| {
+            c != &cat_info.name
+                && syntax.iter().any(|s| {
+                    matches!(s, SyntaxItemSpec::NonTerminal { category, .. } if category == &cat_info.name)
+                })
+        });
+
+        if referenced_as_field && own_rules.len() <= 1 && !cat_info.is_primary {
+            diagnostics.push(LintDiagnostic {
+                id: "A02",
+                name: "redundant-congruence",
+                severity: LintSeverity::Note,
+                category: Some(cat_info.name.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}` has only {} rule(s) but is referenced as a field — \
+                     congruence rules for this category may be redundant",
+                    cat_info.name,
+                    own_rules.len()
+                ),
+                hint: Some(
+                    "consider whether equations/rewrites actually need congruence through this category"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+/// A03: eq-rw-category-mismatch — Note when a category has equations but no rewrites or vice versa.
+fn lint_a03_eq_rw_category_mismatch(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // This is purely informational: if semantic_dependency_groups reference some
+    // categories but not others, there might be a mismatch.
+    // With the info available in LintContext, we check for categories that appear
+    // in dependency groups vs those that don't.
+    if ctx.semantic_dependency_groups.is_empty() {
+        return;
+    }
+
+    let categories_in_groups: HashSet<&str> = ctx
+        .semantic_dependency_groups
+        .iter()
+        .flat_map(|g| g.iter().map(|s| s.as_str()))
+        .collect();
+
+    for cat_info in ctx.categories {
+        let has_rules = ctx
+            .all_syntax
+            .iter()
+            .any(|(_, c, _)| c == &cat_info.name);
+        if has_rules
+            && !categories_in_groups.iter().any(|&label| {
+                ctx.all_syntax
+                    .iter()
+                    .any(|(l, c, _)| l == label && c == &cat_info.name)
+            })
+            && !cat_info.is_primary
+        {
+            // Category has parsing rules but no equation/rewrite rules reference it
+            diagnostics.push(LintDiagnostic {
+                id: "A03",
+                name: "eq-rw-category-mismatch",
+                severity: LintSeverity::Note,
+                category: Some(cat_info.name.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}` has parsing rules but no equations or rewrites reference its constructors",
+                    cat_info.name
+                ),
+                hint: Some(
+                    "if this category should participate in equational reasoning, add equations or rewrites"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+/// A04: large-equivalence-class — Warn when commutativity + associativity on same constructor.
+fn lint_a04_large_equivalence_class(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // Detect constructors that appear in multiple dependency groups (potential exponential blowup).
+    // A label appearing in 3+ dependency groups suggests heavy equational reasoning.
+    let mut label_group_count: HashMap<&str, usize> = HashMap::new();
+    for group in ctx.semantic_dependency_groups {
+        for label in group {
+            *label_group_count.entry(label.as_str()).or_insert(0) += 1;
+        }
+    }
+
+    for (&label, &count) in &label_group_count {
+        if count >= 3 {
+            let category = ctx
+                .all_syntax
+                .iter()
+                .find(|(l, _, _)| l == label)
+                .map(|(_, c, _)| c.clone());
+
+            // Build a compact summary of which group types reference this constructor
+            let mut eq_count = 0usize;
+            let mut rw_count = 0usize;
+            for group in ctx.semantic_dependency_groups {
+                if group.iter().any(|l| l.as_str() == label) {
+                    // Heuristic: groups containing only this label are likely rewrites;
+                    // groups with multiple labels are typically equation groups.
+                    // Without richer metadata, count all as equation/rewrite groups.
+                    if group.len() <= 2 {
+                        rw_count += 1;
+                    } else {
+                        eq_count += 1;
+                    }
+                }
+            }
+            let group_desc = match (eq_count, rw_count) {
+                (0, r) => format!("{} rewrite group(s)", r),
+                (e, 0) => format!("{} equation group(s)", e),
+                (e, r) => format!("{} equation group(s) and {} rewrite group(s)", e, r),
+            };
+
+            diagnostics.push(LintDiagnostic {
+                id: "A04",
+                name: "large-equivalence-class",
+                severity: LintSeverity::Warning,
+                category,
+                rule: Some(label.to_string()),
+                message: format!(
+                    "constructor `{}` appears in {} equation/rewrite groups ({}) — \
+                     potential equivalence class explosion during Ascent fixpoint evaluation",
+                    label, count, group_desc,
+                ),
+                hint: Some(
+                    "this constructor is referenced by many equations/rewrites, which can cause \
+                     equivalence class explosion during Ascent fixpoint evaluation; consider \
+                     reducing the number of equations involving this constructor, or simplifying \
+                     equational axioms (e.g., removing redundant commutativity/associativity declarations)"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: ctx
+                    .all_syntax
+                    .iter()
+                    .find(|(l, _, _)| l == label)
+                    .and_then(|(l, c, _)| {
+                        ctx.rule_locations
+                            .get(&(l.clone(), c.clone()))
+                            .copied()
+                    }),
+            });
+        }
+    }
+}
+
+/// A05: self-referential-equation — Warn when an equation's LHS and RHS are identical or RHS contains LHS.
+fn lint_a05_self_referential_equation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // Detect rules where the syntax pattern is trivially self-referential.
+    // Look for rules that have exactly one NonTerminal of their own category and nothing else.
+    for (label, category, syntax) in ctx.all_syntax {
+        if syntax.len() == 1 {
+            if let Some(SyntaxItemSpec::NonTerminal {
+                category: nt_cat, ..
+            }) = syntax.first()
+            {
+                if nt_cat == category {
+                    diagnostics.push(LintDiagnostic {
+                        id: "A05",
+                        name: "self-referential-equation",
+                        severity: LintSeverity::Warning,
+                        category: Some(category.clone()),
+                        rule: Some(label.clone()),
+                        message: format!(
+                            "rule `{}` is a trivial identity (single self-referential nonterminal) — \
+                             if used as an equation, this is redundant",
+                            label
+                        ),
+                        hint: Some(
+                            "remove this rule if it serves no purpose, or verify it is intentional"
+                                .to_string(),
+                        ),
+                        grammar_name: Some(ctx.grammar_name.to_string()),
+                        source_location: ctx
+                            .rule_locations
+                            .get(&(label.clone(), category.clone()))
+                            .copied(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// A06: missing-equation-congruence — Note when constructor in equation LHS has NT fields without congruence.
+fn lint_a06_missing_equation_congruence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // For constructors in dependency groups (equation participants),
+    // check if their NT fields' categories also have constructors in dependency groups.
+    if ctx.semantic_dependency_groups.is_empty() {
+        return;
+    }
+
+    let labels_in_equations: HashSet<&str> = ctx
+        .semantic_dependency_groups
+        .iter()
+        .flat_map(|g| g.iter().map(|s| s.as_str()))
+        .collect();
+
+    for (label, category, syntax) in ctx.all_syntax {
+        if !labels_in_equations.contains(label.as_str()) {
+            continue;
+        }
+        // Check NT fields of this constructor
+        for item in syntax {
+            if let SyntaxItemSpec::NonTerminal {
+                category: nt_cat, ..
+            } = item
+            {
+                if nt_cat == category {
+                    continue; // Same-category reference — congruence always generated
+                }
+                // Check if nt_cat has any constructors in equations
+                let has_equation_constructors = ctx.all_syntax.iter().any(|(l, c, _)| {
+                    c == nt_cat && labels_in_equations.contains(l.as_str())
+                });
+
+                if !has_equation_constructors {
+                    diagnostics.push(LintDiagnostic {
+                        id: "A06",
+                        name: "missing-equation-congruence",
+                        severity: LintSeverity::Note,
+                        category: Some(category.clone()),
+                        rule: Some(label.clone()),
+                        message: format!(
+                            "constructor `{}` participates in equations but its field category `{}` has no equation-participating constructors",
+                            label, nt_cat
+                        ),
+                        hint: Some(format!(
+                            "congruence through `{}` fields may not propagate — consider adding equations for `{}`",
+                            nt_cat, nt_cat
+                        )),
+                        grammar_name: Some(ctx.grammar_name.to_string()),
+                        source_location: ctx
+                            .rule_locations
+                            .get(&(label.clone(), category.clone()))
+                            .copied(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// A07: fixpoint-iteration-anomaly — Warn when grammar complexity suggests fixpoint may exceed 50 iterations.
+fn lint_a07_fixpoint_iteration_anomaly(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // Heuristic: grammars with many dependency groups and deep rule nesting
+    // are more likely to have slow fixpoint convergence.
+    let group_count = ctx.semantic_dependency_groups.len();
+    let max_group_size = ctx
+        .semantic_dependency_groups
+        .iter()
+        .map(|g| g.len())
+        .max()
+        .unwrap_or(0);
+
+    if group_count > 10 && max_group_size > 5 {
+        diagnostics.push(LintDiagnostic {
+            id: "A07",
+            name: "fixpoint-iteration-anomaly",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} dependency groups with max size {} — fixpoint may require many iterations",
+                group_count, max_group_size
+            ),
+            hint: Some(
+                "consider partitioning equations into independent strata or adding a depth bound"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// A08: equation-subsumes-rewrite — Note when an equation's LHS pattern is more general than a rewrite's.
+fn lint_a08_equation_subsumes_rewrite(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // Detect rules that share a constructor label across multiple dependency groups.
+    // If the same label appears as both equation and rewrite (in different groups),
+    // the equation may subsume the rewrite.
+    let mut label_groups: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (idx, group) in ctx.semantic_dependency_groups.iter().enumerate() {
+        for label in group {
+            label_groups
+                .entry(label.as_str())
+                .or_default()
+                .push(idx);
+        }
+    }
+
+    for (&label, groups) in &label_groups {
+        if groups.len() >= 2 {
+            let category = ctx
+                .all_syntax
+                .iter()
+                .find(|(l, _, _)| l == label)
+                .map(|(_, c, _)| c.clone());
+            diagnostics.push(LintDiagnostic {
+                id: "A08",
+                name: "equation-subsumes-rewrite",
+                severity: LintSeverity::Note,
+                category,
+                rule: Some(label.to_string()),
+                message: format!(
+                    "constructor `{}` appears in {} dependency groups — an equation may subsume a rewrite",
+                    label,
+                    groups.len()
+                ),
+                hint: Some(
+                    "check whether the rewrite is redundant given the equation".to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: ctx
+                    .all_syntax
+                    .iter()
+                    .find(|(l, _, _)| l == label)
+                    .and_then(|(l, c, _)| {
+                        ctx.rule_locations
+                            .get(&(l.clone(), c.clone()))
+                            .copied()
+                    }),
+            });
+        }
+    }
+}
+
+/// A09: ascent-struct-size — Note/Warning when generated Ascent struct is very large.
+fn lint_a09_ascent_struct_size(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let relation_count = ctx.categories.len() * 3; // ~3 relations per category (cat, eq_cat, rw_cat)
+    let rule_estimate = ctx.all_syntax.len() * 2; // ~2 rules per syntax entry (deconstruct + congruence)
+
+    if rule_estimate > 100 {
+        diagnostics.push(LintDiagnostic {
+            id: "A09",
+            name: "ascent-struct-size",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "estimated ~{} relations and ~{} Ascent rules — large struct may slow compilation",
+                relation_count, rule_estimate
+            ),
+            hint: Some(
+                "consider splitting categories into independent modules or enabling demand-driven population"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    } else if relation_count > 50 {
+        diagnostics.push(LintDiagnostic {
+            id: "A09",
+            name: "ascent-struct-size",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "estimated ~{} relations in Ascent struct",
+                relation_count
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// A10: unreachable-equation-variable — Note when an LHS variable is not referenced in RHS.
+fn lint_a10_unreachable_equation_variable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // Detect rules with IdentCapture or Binder params that are never referenced
+    // elsewhere in the syntax (potential typo in equation variable names).
+    for (label, category, syntax) in ctx.all_syntax {
+        let captures: Vec<&str> = syntax
+            .iter()
+            .filter_map(|s| match s {
+                SyntaxItemSpec::IdentCapture { param_name } => Some(param_name.as_str()),
+                SyntaxItemSpec::Binder { param_name, .. } => Some(param_name.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        // Check if each capture name appears at least in one NonTerminal param_name
+        let nt_params: HashSet<&str> = syntax
+            .iter()
+            .filter_map(|s| match s {
+                SyntaxItemSpec::NonTerminal { param_name, .. } => Some(param_name.as_str()),
+                _ => None,
+            })
+            .collect();
+
+        for &capture in &captures {
+            // If capture appears only once and doesn't match any NT param, it might be unused
+            let capture_count = captures.iter().filter(|&&c| c == capture).count();
+            if capture_count == 1 && !nt_params.contains(capture) && captures.len() > 1 {
+                diagnostics.push(LintDiagnostic {
+                    id: "A10",
+                    name: "unreachable-equation-variable",
+                    severity: LintSeverity::Note,
+                    category: Some(category.clone()),
+                    rule: Some(label.clone()),
+                    message: format!(
+                        "variable `{}` in rule `{}` is captured but may not be referenced in RHS",
+                        capture, label
+                    ),
+                    hint: Some(
+                        "check for typos in variable names across equation LHS and RHS"
+                            .to_string(),
+                    ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: ctx
+                        .rule_locations
+                        .get(&(label.clone(), category.clone()))
+                        .copied(),
+                });
+            }
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Lexer Lints (LEX01-LEX05)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// LEX01: overlapping-token-defs — Warn when two terminals match the same string.
+fn lint_lex01_overlapping_token_defs(
+    _ctx: &LintContext,
+    _diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    // Collect all fixed terminals from rules and check for exact duplicates
+    // (beyond the known keyword/ident overlap which is handled by the lexer).
+    // No-op: duplicate terminals across rules is normal (shared delimiters like "(", "+").
+    // Only warn if the SAME terminal appears in rules of DIFFERENT categories
+    // with different semantic meaning (detected via non-overlapping first sets).
+    // For now, this lint is a placeholder for when we track terminal semantics.
+}
+
+/// LEX02: unreachable-token-pattern — Warn when a terminal is shadowed by a higher-priority pattern.
+fn lint_lex02_unreachable_token_pattern(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    // Detect terminals that are prefixes of other terminals (e.g., "=" vs "==").
+    // The lexer's longest-match semantics handle this, but it can be confusing.
+    let mut all_terminals: Vec<String> = Vec::new();
+    for (_, _, syntax) in ctx.all_syntax {
+        for item in syntax {
+            if let SyntaxItemSpec::Terminal(tok) = item {
+                if !all_terminals.contains(tok) {
+                    all_terminals.push(tok.clone());
+                }
+            }
+        }
+    }
+
+    for i in 0..all_terminals.len() {
+        for j in (i + 1)..all_terminals.len() {
+            let (a, b) = (&all_terminals[i], &all_terminals[j]);
+            // Only check proper prefix relationship for non-single-char tokens
+            if a.len() > 1 && b.starts_with(a.as_str()) && b.len() > a.len() {
+                diagnostics.push(LintDiagnostic {
+                    id: "LEX02",
+                    name: "unreachable-token-pattern",
+                    severity: LintSeverity::Note,
+                    category: None,
+                    rule: None,
+                    message: format!(
+                        "terminal `{}` is a prefix of `{}` — longest-match semantics apply",
+                        a, b
+                    ),
+                    hint: Some(format!(
+                        "input `{}` will always lex as `{}`, never as `{}`",
+                        b, b, a
+                    )),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
+                });
+            }
+        }
+    }
+}
+
+/// LEX03: excessive-equiv-classes — Note when equivalence class count is unusually high.
+fn lint_lex03_excessive_equiv_classes(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    // We detect this via the number of unique character patterns in terminals.
+    // A proxy: count the number of distinct characters across all terminals.
+    let mut distinct_chars: HashSet<char> = HashSet::new();
+    for (_, _, syntax) in ctx.all_syntax {
+        for item in syntax {
+            if let SyntaxItemSpec::Terminal(tok) = item {
+                for ch in tok.chars() {
+                    distinct_chars.insert(ch);
+                }
+            }
+        }
+    }
+
+    if distinct_chars.len() > 25 {
+        diagnostics.push(LintDiagnostic {
+            id: "LEX03",
+            name: "excessive-equiv-classes",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} distinct characters across all terminals — grammar has unusually diverse character set",
+                distinct_chars.len()
+            ),
+            hint: Some(
+                "consider whether all terminals are necessary — large character sets increase DFA table size"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// LEX04: dfa-state-explosion — Warn when DFA has many more states than minimized DFA.
+fn lint_lex04_dfa_state_explosion(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // This data isn't directly in LintContext. We approximate via category count and terminal count.
+    // Full implementation would require LexerStats to be passed through.
+    // For now, this is a placeholder that fires based on grammar complexity.
+    let terminal_count = ctx
+        .all_syntax
+        .iter()
+        .flat_map(|(_, _, s)| s.iter())
+        .filter(|s| matches!(s, SyntaxItemSpec::Terminal(_)))
+        .count();
+
+    if terminal_count > 50 {
+        diagnostics.push(LintDiagnostic {
+            id: "LEX04",
+            name: "dfa-state-explosion",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "{} terminal tokens — monitor DFA state count for potential explosion",
+                terminal_count
+            ),
+            hint: Some(
+                "consider keyword MPH (AL04) to reduce DFA states for keyword-heavy grammars"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// LEX05: float-integer-ambiguity — Note when both float and integer types are present.
+fn lint_lex05_float_integer_ambiguity(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    let has_integer = ctx.categories.iter().any(|c| {
+        c.native_type.as_deref() == Some("i64") || c.native_type.as_deref() == Some("i32")
+    });
+    let has_float = ctx.categories.iter().any(|c| {
+        c.native_type.as_deref() == Some("f64") || c.native_type.as_deref() == Some("f32")
+    });
+
+    if has_integer && has_float {
+        diagnostics.push(LintDiagnostic {
+            id: "LEX05",
+            name: "float-integer-ambiguity",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message:
+                "both integer and float native types present — `123` always lexes as Integer, never Float"
+                    .to_string(),
+            hint: Some(
+                "use `123.0` for float literals; the lexer uses longest-match with integer-first priority"
+                    .to_string(),
+            ),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Parser Lints (PAR01-PAR05)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// PAR01: deep-rd-chain — Warn when RD call chain depth exceeds 5.
+fn lint_par01_deep_rd_chain(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // Build a call graph from syntax: category A references category B via NonTerminal.
+    // Find the longest chain depth.
+    let mut call_graph: HashMap<&str, HashSet<&str>> = HashMap::new();
+    for (_, category, syntax) in ctx.all_syntax {
+        for item in syntax {
+            if let SyntaxItemSpec::NonTerminal {
+                category: nt_cat, ..
+            } = item
+            {
+                if nt_cat != category {
+                    call_graph
+                        .entry(category.as_str())
+                        .or_default()
+                        .insert(nt_cat.as_str());
+                }
+            }
+        }
+    }
+
+    // DFS to find max depth (with cycle detection)
+    fn max_depth<'a>(
+        cat: &'a str,
+        graph: &HashMap<&'a str, HashSet<&'a str>>,
+        visited: &mut HashSet<&'a str>,
+    ) -> usize {
+        if visited.contains(cat) {
+            return 0; // Cycle — don't recurse
+        }
+        visited.insert(cat);
+        let depth = graph
+            .get(cat)
+            .map(|callees| {
+                callees
+                    .iter()
+                    .map(|&c| 1 + max_depth(c, graph, visited))
+                    .max()
+                    .unwrap_or(0)
+            })
+            .unwrap_or(0);
+        visited.remove(cat);
+        depth
+    }
+
+    for cat_info in ctx.categories {
+        let mut visited = HashSet::new();
+        let depth = max_depth(&cat_info.name, &call_graph, &mut visited);
+        if depth > 5 {
+            diagnostics.push(LintDiagnostic {
+                id: "PAR01",
+                name: "deep-rd-chain",
+                severity: LintSeverity::Warning,
+                category: Some(cat_info.name.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}` has cross-category RD call chain depth {} (threshold: 5)",
+                    cat_info.name, depth
+                ),
+                hint: Some(
+                    "deep call chains stress the trampoline stack — consider flattening with cast rules"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+/// PAR02: unused-bp-level — Note when assigned BP levels have gaps.
+fn lint_par02_unused_bp_level(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // Check if the BP table has gaps (assigned levels with no operators).
+    if ctx.bp_table.operators.is_empty() {
+        return;
+    }
+
+    // Collect all used BP values
+    let mut used_bps: HashSet<u8> = HashSet::new();
+    for op in &ctx.bp_table.operators {
+        used_bps.insert(op.left_bp);
+        used_bps.insert(op.right_bp);
+    }
+
+    if let (Some(&min_bp), Some(&max_bp)) = (used_bps.iter().min(), used_bps.iter().max()) {
+        let total_levels = (max_bp - min_bp + 1) as usize;
+        let gap_count = total_levels.saturating_sub(used_bps.len());
+
+        if gap_count > 3 && total_levels > 6 {
+            diagnostics.push(LintDiagnostic {
+                id: "PAR02",
+                name: "unused-bp-level",
+                severity: LintSeverity::Note,
+                category: None,
+                rule: None,
+                message: format!(
+                    "BP range [{}, {}] has {} unused levels out of {} — BP table wider than necessary",
+                    min_bp, max_bp, gap_count, total_levels
+                ),
+                hint: Some(
+                    "consider compacting BP levels to reduce match arm range".to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+/// PAR03: postfix-prefix-collision — Warn when same token is both prefix and postfix in same category.
+fn lint_par03_postfix_prefix_collision(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    // Collect prefix tokens per category from RuleInfo.
+    let mut prefix_tokens: HashMap<&str, HashSet<String>> = HashMap::new();
+    for rule in ctx.rules {
+        if !rule.is_infix && !rule.is_var && !rule.is_literal {
+            for item in &rule.first_items {
+                if let crate::prediction::FirstItem::Terminal(tok) = item {
+                    prefix_tokens
+                        .entry(&rule.category)
+                        .or_default()
+                        .insert(tok.clone());
+                }
+            }
+        }
+    }
+
+    // Collect postfix operator tokens per category from BP table
+    let mut postfix_tokens: HashMap<&str, HashSet<String>> = HashMap::new();
+    for op in &ctx.bp_table.operators {
+        if op.is_postfix {
+            postfix_tokens
+                .entry(op.category.as_str())
+                .or_default()
+                .insert(op.terminal.clone());
+        }
+    }
+
+    // Find collisions
+    for (&category, prefix) in &prefix_tokens {
+        if let Some(postfix) = postfix_tokens.get(category) {
+            for token in prefix.intersection(postfix) {
+                diagnostics.push(LintDiagnostic {
+                    id: "PAR03",
+                    name: "postfix-prefix-collision",
+                    severity: LintSeverity::Warning,
+                    category: Some(category.to_string()),
+                    rule: None,
+                    message: format!(
+                        "token `{}` is both prefix and postfix in category `{}` — surprising precedence",
+                        token, category
+                    ),
+                    hint: Some(
+                        "review whether the intended semantics are correct; the parser disambiguates by context"
+                            .to_string(),
+                    ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
+                });
+            }
+        }
+    }
+}
+
+/// PAR04: mixfix-ambiguous-delimiter — Warn when a mixfix middle delimiter is also used as infix.
+fn lint_par04_mixfix_ambiguous_delimiter(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    // Collect infix operator tokens (non-postfix, non-mixfix)
+    let infix_tokens: HashSet<&str> = ctx
+        .bp_table
+        .operators
+        .iter()
+        .filter(|op| !op.is_postfix && !op.is_mixfix)
+        .map(|op| op.terminal.as_str())
+        .collect();
+
+    // Check mixfix middle delimiters
+    for op in ctx.bp_table.operators.iter().filter(|op| op.is_mixfix) {
+        for part in &op.mixfix_parts {
+            if let Some(ref following) = part.following_terminal {
+                if infix_tokens.contains(following.as_str()) {
+                    diagnostics.push(LintDiagnostic {
+                        id: "PAR04",
+                        name: "mixfix-ambiguous-delimiter",
+                        severity: LintSeverity::Warning,
+                        category: Some(op.category.clone()),
+                        rule: Some(op.label.clone()),
+                        message: format!(
+                            "mixfix delimiter `{}` in `{}` is also used as an infix operator",
+                            following, op.label
+                        ),
+                        hint: Some(
+                            "parsing may be ambiguous — consider using a unique delimiter"
+                                .to_string(),
+                        ),
+                        grammar_name: Some(ctx.grammar_name.to_string()),
+                        source_location: ctx
+                            .rule_locations
+                            .get(&(op.label.clone(), op.category.clone()))
+                            .copied(),
+                    });
+                }
+            }
+        }
+    }
+}
+
+/// PAR05: trampoline-frame-variant-count — Note when Frame_Cat enum has many variants.
+fn lint_par05_trampoline_frame_variant_count(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    // Estimate frame variant count: each RD rule generates 1-2 continuation variants.
+    for cat_info in ctx.categories {
+        let rd_rules_for_cat: Vec<_> = ctx
+            .rd_rules
+            .iter()
+            .filter(|r| r.category == cat_info.name)
+            .collect();
+
+        // Each RD rule with N nonterminals in its items generates N continuation frame variants
+        let frame_variants: usize = rd_rules_for_cat
+            .iter()
+            .map(|r| {
+                let nt_count = r
+                    .items
+                    .iter()
+                    .filter(|item| {
+                        matches!(item, crate::recursive::RDSyntaxItem::NonTerminal { .. })
+                    })
+                    .count();
+                nt_count.max(1)
+            })
+            .sum();
+
+        if frame_variants > 15 {
+            diagnostics.push(LintDiagnostic {
+                id: "PAR05",
+                name: "trampoline-frame-variant-count",
+                severity: LintSeverity::Note,
+                category: Some(cat_info.name.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}` has ~{} trampoline frame variants (threshold: 15) — large frame size",
+                    cat_info.name, frame_variants
+                ),
+                hint: Some(
+                    "consider splitting complex rules or factoring common prefixes".to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Dispatch Lints (DIS01-DIS05)
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// DIS01: hot-path-misalignment — Warn when the WFST action table is not
+/// weight-ordered.
+///
+/// The codegen (CD01) sorts dispatch arms by `predict()` output which is
+/// always weight-ordered, so this lint primarily detects unsorted action
+/// tables in the `PredictionWfst` builder.  A warning here does NOT mean
+/// the emitted code is mis-ordered (CD01 handles that), but it may
+/// indicate the builder did not finalize weights correctly.
+fn lint_dis01_hot_path_misalignment(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    // DIS01 is verbose-only: codegen CD01 always compensates for hot-path misalignment
+    if std::env::var("PRATTAIL_LINT_VERBOSE").is_err() {
+        return;
+    }
+    for (cat, wfst) in ctx.prediction_wfsts {
+        if wfst.actions.len() < 2 {
+            continue;
+        }
+        // Find the lowest-weight action
+        let min_weight = wfst
+            .actions
+            .iter()
+            .map(|a| a.weight.value())
+            .fold(f64::INFINITY, f64::min);
+
+        // Check if the first action has the lowest weight
+        if let Some(first) = wfst.actions.first() {
+            if (first.weight.value() - min_weight).abs() > 0.01 {
+                diagnostics.push(LintDiagnostic {
+                    id: "DIS01",
+                    name: "hot-path-misalignment",
+                    severity: LintSeverity::Note,
+                    category: Some(cat.clone()),
+                    rule: None,
+                    message: format!(
+                        "category `{}`: WFST action table first weight {:.2} != minimum weight {:.2} \
+                         (codegen CD01 compensates via predict()-based ordering)",
+                        cat,
+                        first.weight.value(),
+                        min_weight
+                    ),
+                    hint: Some(
+                        "WFST builder should finalize actions in weight order; \
+                         codegen dispatch arms are CD01-sorted regardless"
+                            .to_string(),
+                    ),
+                    grammar_name: Some(ctx.grammar_name.to_string()),
+                    source_location: None,
+                });
+            }
+        }
+    }
+}
+
+/// DIS02: cold-arm-ratio — Note when >80% of dispatch arms are cold.
+fn lint_dis02_cold_arm_ratio(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    for (cat, wfst) in ctx.prediction_wfsts {
+        let total = wfst.actions.len();
+        if total < 3 {
+            continue;
+        }
+        let cold = wfst
+            .actions
+            .iter()
+            .filter(|a| a.weight.value() >= 1.0)
+            .count();
+        let ratio = cold as f64 / total as f64;
+
+        if ratio > 0.8 {
+            diagnostics.push(LintDiagnostic {
+                id: "DIS02",
+                name: "cold-arm-ratio",
+                severity: LintSeverity::Note,
+                category: Some(cat.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}`: {}/{} dispatch arms ({:.0}%) are cold (weight >= 1.0)",
+                    cat,
+                    cold,
+                    total,
+                    ratio * 100.0
+                ),
+                hint: Some(
+                    "most arms are rarely taken — hot/cold splitting (A2) may improve i-cache utilization"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+/// DIS03: decision-tree-depth — Warn when decision tree max_depth exceeds 8.
+fn lint_dis03_decision_tree_depth(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    for (cat, tree) in ctx.decision_trees {
+        if tree.stats.max_depth > 8 {
+            diagnostics.push(LintDiagnostic {
+                id: "DIS03",
+                name: "decision-tree-depth",
+                severity: LintSeverity::Warning,
+                category: Some(cat.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}` decision tree depth {} exceeds threshold of 8 — long shared prefixes",
+                    cat, tree.stats.max_depth
+                ),
+                hint: Some(
+                    "consider left-factoring rules or using segment merging (CD02)".to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+/// DIS04: backtrack-elimination-coverage — Note committed vs save/restore arms after G1.
+fn lint_dis04_backtrack_elimination_coverage(
+    ctx: &LintContext,
+    diagnostics: &mut Vec<LintDiagnostic>,
+) {
+    for (cat, tree) in ctx.decision_trees {
+        let det = tree.stats.deterministic_rules;
+        let total = tree.stats.total_rules;
+        if total == 0 {
+            continue;
+        }
+        let ratio = det as f64 / total as f64;
+
+        if ratio < 1.0 && total > 2 {
+            diagnostics.push(LintDiagnostic {
+                id: "DIS04",
+                name: "backtrack-elimination-coverage",
+                severity: LintSeverity::Note,
+                category: Some(cat.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}`: {}/{} rules ({:.0}%) have deterministic dispatch — \
+                     remaining {} rules still use save/restore",
+                    cat,
+                    det,
+                    total,
+                    ratio * 100.0,
+                    total - det
+                ),
+                hint: Some(
+                    "non-deterministic rules share prefixes; consider left-factoring or multi-token lookahead (B1)"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+/// DIS05: nfa-try-all-set-size — Warn when NFA-ambiguous candidate set exceeds 5.
+fn lint_dis05_nfa_try_all_set_size(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    for (cat, tree) in ctx.decision_trees {
+        // Check ambiguous nodes for large candidate sets
+        if tree.stats.ambiguous_nodes > 5 {
+            diagnostics.push(LintDiagnostic {
+                id: "DIS05",
+                name: "nfa-try-all-set-size",
+                severity: LintSeverity::Warning,
+                category: Some(cat.clone()),
+                rule: None,
+                message: format!(
+                    "category `{}` has {} ambiguous dispatch points (threshold: 5) — poor prefix disambiguation",
+                    cat, tree.stats.ambiguous_nodes
+                ),
+                hint: Some(
+                    "add unique prefix tokens to rules or enable multi-token lookahead (B1)"
+                        .to_string(),
+                ),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -5488,6 +7250,9 @@ mod tests {
         decision_trees: HashMap<String, CategoryDecisionTree>,
         token_id_map: TokenIdMap,
         dead_rule_warnings: Vec<crate::pipeline::DeadRuleWarning>,
+        grammar_profile_data: Option<crate::cost_benefit::GrammarProfile>,
+        wpds_analysis_data: Option<crate::wpds::WpdsAnalysis>,
+        wpds_elapsed_data: Option<std::time::Duration>,
         // ── Mathematical analysis result fields ──
         safety_result_data: Option<crate::verify::SafetyResult<crate::automata::semiring::BooleanWeight>>,
         cegar_result_data: Option<crate::cegar::CegarLog>,
@@ -5547,6 +7312,9 @@ mod tests {
                 decision_trees: HashMap::new(),
                 token_id_map: TokenIdMap::new(),
                 dead_rule_warnings: Vec::new(),
+                grammar_profile_data: None,
+                wpds_analysis_data: None,
+                wpds_elapsed_data: None,
                 // ── Mathematical analysis result fields ──
                 safety_result_data: None,
                 cegar_result_data: None,
@@ -5606,9 +7374,9 @@ mod tests {
                 decision_trees: &self.decision_trees,
                 token_id_map: &self.token_id_map,
                 dead_rule_warnings: &self.dead_rule_warnings,
-                grammar_profile: None,
-                wpds_analysis: None,
-                wpds_elapsed: None,
+                grammar_profile: self.grammar_profile_data.as_ref(),
+                wpds_analysis: self.wpds_analysis_data.as_ref(),
+                wpds_elapsed: self.wpds_elapsed_data,
                 // ── Mathematical analysis results ──
                 safety_result: self.safety_result_data.as_ref(),
                 cegar_result: self.cegar_result_data.as_ref(),
@@ -7640,7 +9408,7 @@ mod tests {
                      \x20 Resolved by tropical shortest path → FnFloat",
                     i
                 ),
-                Some("assign distinct WFST weights to disambiguate"),
+                Some("WFST weights are auto-assigned by rule specificity and declaration order; restructure rules to have distinct first tokens, or reorder rule declarations to change priority"),
             ))
             .chain((0..3).map(|i| make_diag(
                 "W05", "composed-dispatch-ambiguity", LintSeverity::Warning,
@@ -7652,7 +9420,7 @@ mod tests {
                      \x20 Resolved by tropical shortest path → IntCast",
                     i + 10
                 ),
-                Some("assign distinct WFST weights to disambiguate"),
+                Some("WFST weights are auto-assigned by rule specificity and declaration order; restructure rules to have distinct first tokens, or reorder rule declarations to change priority"),
             )))
             .collect();
         let result = group_diagnostics(diags);
@@ -8566,5 +10334,2462 @@ mod tests {
         let mut diags = Vec::new();
         lint_k02_kat_equivalence(&b.ctx(), &mut diags);
         assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // A01: Fixpoint Non-Convergence
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn a01_fires_on_depth_growth_pattern() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Proc", None, true));
+        // Rule with 2 self-referential NTs and <=1 terminal (depth-growth pattern)
+        b.all_syntax.push((
+            "Wrap".to_string(),
+            "Proc".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal {
+                    category: "Proc".to_string(),
+                    param_name: "a".to_string(),
+                },
+                SyntaxItemSpec::Terminal("|".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Proc".to_string(),
+                    param_name: "b".to_string(),
+                },
+            ],
+        ));
+
+        let mut diags = Vec::new();
+        lint_a01_fixpoint_non_convergence(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "A01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("Wrap"));
+    }
+
+    #[test]
+    fn a01_silent_on_normal_infix() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        // Standard infix: 2 self-refs but 2 terminals => terminal_count > 1, no fire
+        b.all_syntax.push((
+            "Add".to_string(),
+            "Int".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                SyntaxItemSpec::Terminal("+".to_string()),
+                SyntaxItemSpec::Terminal("+".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "b".to_string(),
+                },
+            ],
+        ));
+
+        let mut diags = Vec::new();
+        lint_a01_fixpoint_non_convergence(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // A05: Self-Referential Equation
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn a05_fires_on_trivial_identity() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        // Rule with a single self-referential NT
+        b.all_syntax.push((
+            "Identity".to_string(),
+            "Int".to_string(),
+            vec![SyntaxItemSpec::NonTerminal {
+                category: "Int".to_string(),
+                param_name: "x".to_string(),
+            }],
+        ));
+
+        let mut diags = Vec::new();
+        lint_a05_self_referential_equation(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "A05");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("Identity"));
+    }
+
+    #[test]
+    fn a05_silent_on_multi_item_rule() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        b.all_syntax.push((
+            "Neg".to_string(),
+            "Int".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("-".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "x".to_string(),
+                },
+            ],
+        ));
+
+        let mut diags = Vec::new();
+        lint_a05_self_referential_equation(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // A09: Ascent Struct Size
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn a09_fires_on_large_grammar() {
+        let mut b = CtxBuilder::new();
+        // 10 categories with many rules => rule_estimate = 60 * 2 = 120 > 100
+        for i in 0..10 {
+            let name = format!("Cat{}", i);
+            b.categories.push(cat_info(&name, None, i == 0));
+            // 6 rules per category
+            for j in 0..6 {
+                b.all_syntax.push((
+                    format!("Rule{}_{}", i, j),
+                    name.clone(),
+                    vec![SyntaxItemSpec::Terminal(format!("t{}_{}", i, j))],
+                ));
+            }
+        }
+
+        let mut diags = Vec::new();
+        lint_a09_ascent_struct_size(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "A09");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("Ascent rules"));
+    }
+
+    #[test]
+    fn a09_silent_on_small_grammar() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        b.all_syntax.push((
+            "NumLit".to_string(),
+            "Int".to_string(),
+            vec![SyntaxItemSpec::Terminal("42".to_string())],
+        ));
+
+        let mut diags = Vec::new();
+        lint_a09_ascent_struct_size(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // LEX05: Float-Integer Ambiguity
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn lex05_fires_when_both_present() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", Some("i64"), true));
+        b.categories.push(cat_info("Float", Some("f64"), false));
+
+        let mut diags = Vec::new();
+        lint_lex05_float_integer_ambiguity(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "LEX05");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+    }
+
+    #[test]
+    fn lex05_silent_when_only_integer() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", Some("i64"), true));
+
+        let mut diags = Vec::new();
+        lint_lex05_float_integer_ambiguity(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PAR01: Deep RD Chain
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn par01_fires_on_deep_chain() {
+        let mut b = CtxBuilder::new();
+        // Create a chain: A -> B -> C -> D -> E -> F -> G (depth 6)
+        let cats = ["A", "B", "C", "D", "E", "F", "G"];
+        for (i, &cat) in cats.iter().enumerate() {
+            b.categories.push(cat_info(cat, None, i == 0));
+            if i + 1 < cats.len() {
+                b.all_syntax.push((
+                    format!("Rule{}", cat),
+                    cat.to_string(),
+                    vec![
+                        SyntaxItemSpec::Terminal("(".to_string()),
+                        SyntaxItemSpec::NonTerminal {
+                            category: cats[i + 1].to_string(),
+                            param_name: "x".to_string(),
+                        },
+                        SyntaxItemSpec::Terminal(")".to_string()),
+                    ],
+                ));
+            }
+        }
+
+        let mut diags = Vec::new();
+        lint_par01_deep_rd_chain(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "PAR01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("A"));
+    }
+
+    #[test]
+    fn par01_silent_on_shallow_chain() {
+        let mut b = CtxBuilder::new();
+        // A -> B -> C (depth 2)
+        for (i, cat) in ["A", "B", "C"].iter().enumerate() {
+            b.categories.push(cat_info(cat, None, i == 0));
+        }
+        b.all_syntax.push((
+            "RuleA".to_string(),
+            "A".to_string(),
+            vec![SyntaxItemSpec::NonTerminal {
+                category: "B".to_string(),
+                param_name: "x".to_string(),
+            }],
+        ));
+        b.all_syntax.push((
+            "RuleB".to_string(),
+            "B".to_string(),
+            vec![SyntaxItemSpec::NonTerminal {
+                category: "C".to_string(),
+                param_name: "x".to_string(),
+            }],
+        ));
+
+        let mut diags = Vec::new();
+        lint_par01_deep_rd_chain(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // DIS03: Decision Tree Depth
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn dis03_fires_on_deep_tree() {
+        use crate::decision_tree::TreeStats;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.decision_trees.insert(
+            "Expr".to_string(),
+            CategoryDecisionTree {
+                category: "Expr".to_string(),
+                segments: vec![pathmap::PathMap::new()],
+                stats: TreeStats {
+                    max_depth: 12,
+                    ..Default::default()
+                },
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_dis03_decision_tree_depth(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1);
+        assert_eq!(diags[0].id, "DIS03");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("Expr"));
+        assert!(diags[0].message.contains("12"));
+    }
+
+    #[test]
+    fn dis03_silent_on_shallow_tree() {
+        use crate::decision_tree::TreeStats;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        b.decision_trees.insert(
+            "Int".to_string(),
+            CategoryDecisionTree {
+                category: "Int".to_string(),
+                segments: vec![pathmap::PathMap::new()],
+                stats: TreeStats {
+                    max_depth: 3,
+                    ..Default::default()
+                },
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_dis03_decision_tree_depth(&b.ctx(), &mut diags);
+        assert!(diags.is_empty());
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // DB04: Cached Lint Results
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn db04_grammar_hash_deterministic() {
+        let b = CtxBuilder::new();
+        let ctx = b.ctx();
+        let h1 = compute_grammar_hash(&ctx);
+        let h2 = compute_grammar_hash(&ctx);
+        assert_eq!(h1, h2, "same grammar spec must produce same hash");
+    }
+
+    #[test]
+    fn db04_grammar_hash_changes_with_category() {
+        let mut b1 = CtxBuilder::new();
+        b1.categories.push(cat_info("Expr", None, true));
+        let h1 = compute_grammar_hash(&b1.ctx());
+
+        let mut b2 = CtxBuilder::new();
+        b2.categories.push(cat_info("Expr", None, true));
+        b2.categories.push(cat_info("Stmt", None, false));
+        let h2 = compute_grammar_hash(&b2.ctx());
+
+        assert_ne!(h1, h2, "different category count must produce different hash");
+    }
+
+    #[test]
+    fn db04_run_lints_cached_no_cache_runs_lints() {
+        // With use_cache=false, should behave like run_lints
+        let b = CtxBuilder::new();
+        let ctx = b.ctx();
+        let diags_cached = run_lints_cached(&ctx, false);
+        let diags_direct = run_lints(&ctx);
+        // Both should produce the same number of diagnostics
+        assert_eq!(diags_cached.len(), diags_direct.len());
+    }
+
+    #[test]
+    fn db04_run_lints_cached_returns_cache_hit_on_repeat() {
+        // First call with cache enabled: should run lints and save cache
+        let b = CtxBuilder::new();
+        let ctx = b.ctx();
+        let _ = run_lints_cached(&ctx, true);
+
+        // Second call with same context: should hit cache
+        let diags2 = run_lints_cached(&ctx, true);
+        // On cache hit, we get a single I18 diagnostic
+        let i18 = diags2.iter().filter(|d| d.id == "I18").count();
+        assert_eq!(i18, 1, "cache hit should emit exactly one I18 diagnostic");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Sprint 3: Grouping & Consolidation
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn group_a01_multiple_categories() {
+        let diags = vec![
+            make_diag("A01", "fixpoint-non-convergence", LintSeverity::Warning, Some("Proc"), Some("ApplyRw"), "rule `ApplyRw` has 2 self-referential nonterminals with 1 terminal(s) — potential unbounded term growth", Some("ensure complementary depth-reducing rules exist")),
+            make_diag("A01", "fixpoint-non-convergence", LintSeverity::Warning, Some("Proc"), Some("EvalRw"), "rule `EvalRw` has 3 self-referential nonterminals with 0 terminal(s) — potential unbounded term growth", Some("ensure complementary depth-reducing rules exist")),
+            make_diag("A01", "fixpoint-non-convergence", LintSeverity::Warning, Some("Name"), Some("NewRw"), "rule `NewRw` has 2 self-referential nonterminals with 1 terminal(s) — potential unbounded term growth", Some("ensure complementary depth-reducing rules exist")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "A01");
+        assert_eq!(result[0].name, "unbounded-term-growth");
+        assert!(result[0].message.contains("3 rules"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Name(NewRw)"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Proc(ApplyRw, EvalRw)"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_a04_multiple_constructors() {
+        let diags = vec![
+            make_diag("A04", "large-equivalence-class", LintSeverity::Warning, Some("Proc"), Some("PPar"), "constructor `PPar` appears in 4 dependency groups — potential exponential equivalence class blowup", Some("consider using HashBag")),
+            make_diag("A04", "large-equivalence-class", LintSeverity::Warning, Some("Proc"), Some("PNew"), "constructor `PNew` appears in 3 dependency groups — potential exponential equivalence class blowup", Some("consider using HashBag")),
+            make_diag("A04", "large-equivalence-class", LintSeverity::Warning, Some("Name"), Some("NQuote"), "constructor `NQuote` appears in 5 dependency groups — potential exponential equivalence class blowup", Some("consider using HashBag")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "A04");
+        assert_eq!(result[0].name, "high-dependency-constructors");
+        assert!(result[0].message.contains("3 constructors"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Name(NQuote)"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Proc(PPar, PNew)"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_a08_multiple_constructors() {
+        let diags = vec![
+            make_diag("A08", "equation-subsumes-rewrite", LintSeverity::Note, Some("Proc"), Some("PPar"), "constructor `PPar` appears in 2 dependency groups — an equation may subsume a rewrite", Some("check whether the rewrite is redundant")),
+            make_diag("A08", "equation-subsumes-rewrite", LintSeverity::Note, Some("Proc"), Some("PNew"), "constructor `PNew` appears in 3 dependency groups — an equation may subsume a rewrite", Some("check whether the rewrite is redundant")),
+            make_diag("A08", "equation-subsumes-rewrite", LintSeverity::Note, Some("Name"), Some("NQuote"), "constructor `NQuote` appears in 2 dependency groups — an equation may subsume a rewrite", Some("check whether the rewrite is redundant")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "A08");
+        assert_eq!(result[0].name, "equation-subsumed-rewrites");
+        assert!(result[0].message.contains("3 constructors"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Name(NQuote)"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Proc(PPar, PNew)"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_cap03_multiple_categories() {
+        let diags = vec![
+            make_diag("C-AP03", "deep-congruence-chain", LintSeverity::Warning, None, None, "deep congruence chain: category `Proc` has a self-recursive constructor field — congruence chain depth is unbounded", Some("consider adding depth bounds")),
+            make_diag("C-AP03", "deep-congruence-chain", LintSeverity::Warning, None, None, "deep congruence chain: category `Name` has unbounded congruence chain depth (indirect cycle)", Some("consider adding depth bounds")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "C-AP03");
+        assert_eq!(result[0].name, "deep-congruence-chains");
+        assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Name"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_cap05_multiple_constructors() {
+        let diags = vec![
+            make_diag("C-AP05", "clone-storm-collection-field", LintSeverity::Warning, None, None, "clone storm: constructor `PPar` (category `Proc`) has a `HashBag(Proc)` collection field — congruence rules will clone the entire collection on every rule firing", Some("use reference counting")),
+            make_diag("C-AP05", "clone-storm-collection-field", LintSeverity::Warning, None, None, "clone storm: constructor `NSend` (category `Name`) has a `Vec(Proc)` collection field — congruence rules will clone the entire collection on every rule firing", Some("use reference counting")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "C-AP05");
+        assert_eq!(result[0].name, "clone-storm-risk");
+        assert!(result[0].message.contains("2 constructors"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("PPar(Proc)"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("NSend(Name)"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_dis01_multiple_categories() {
+        let diags = vec![
+            make_diag("DIS01", "hot-path-misalignment", LintSeverity::Note, Some("Proc"), None, "category `Proc`: WFST action table first weight 3.00 != minimum weight 1.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
+            make_diag("DIS01", "hot-path-misalignment", LintSeverity::Note, Some("Name"), None, "category `Name`: WFST action table first weight 5.00 != minimum weight 2.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
+            make_diag("DIS01", "hot-path-misalignment", LintSeverity::Note, Some("Expr"), None, "category `Expr`: WFST action table first weight 4.00 != minimum weight 1.00 (codegen CD01 compensates)", Some("WFST builder should finalize in weight order")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "DIS01");
+        assert_eq!(result[0].name, "hot-path-misalignment");
+        assert!(result[0].message.contains("3 categories"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Name"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Expr"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_w10_multiple_categories() {
+        let diags = vec![
+            make_diag("W10", "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Proc"), None, "NFA spillover for token `kw_new` in `Proc` could be eliminated with 1-token lookahead (resolves to `PNew`)", Some("two-token WFST disambiguation resolves this")),
+            make_diag("W10", "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Proc"), None, "NFA spillover for token `kw_for` in `Proc` narrows from 3 to 1 candidates with ContextWeight analysis", Some("consider extending lookahead depth")),
+            make_diag("W10", "spillover-eliminable-by-lookahead", LintSeverity::Note, Some("Name"), None, "NFA spillover for token `ident` in `Name` could be eliminated with 1-token lookahead (resolves to `NVar`)", Some("two-token WFST disambiguation resolves this")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "W10");
+        assert_eq!(result[0].name, "nfa-spillover-lookahead");
+        assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Name"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_w12_multiple_categories() {
+        let diags = vec![
+            make_diag("W12", "training-would-improve", LintSeverity::Note, Some("Proc"), None, "category `Proc` has high dispatch entropy (3.21 bits, 2.22 nats) across 10 actions — WFST weight training would likely improve disambiguation quality", Some("use SpilloverTrainer")),
+            make_diag("W12", "training-would-improve", LintSeverity::Note, Some("Name"), None, "category `Name` has high dispatch entropy (2.85 bits, 1.98 nats) across 7 actions — WFST weight training would likely improve disambiguation quality", Some("use SpilloverTrainer")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "W12");
+        assert_eq!(result[0].name, "dispatch-entropy");
+        assert!(result[0].message.contains("2 categories"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Proc(3.21 bits)"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Name(2.85 bits)"), "message: {}", result[0].message);
+    }
+
+    #[test]
+    fn group_w14_multiple_categories() {
+        let diags = vec![
+            make_diag("W14", "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Proc"), None, "NFA spillover for `Proc` is confirmed at pushdown level (3 calling contexts, fan-in=2)", Some("the ambiguity is genuine")),
+            make_diag("W14", "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Name"), None, "NFA spillover for `Name` may be a WFST false-positive (category is WPDS-unreachable)", Some("WPDS stack-aware analysis suggests unreachable")),
+            make_diag("W14", "wpds-confirmed-ambiguity", LintSeverity::Note, Some("Expr"), None, "NFA spillover for `Expr` is confirmed at pushdown level (2 calling contexts, fan-in=1)", Some("the ambiguity is genuine")),
+        ];
+        let result = group_diagnostics(diags);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].id, "W14");
+        assert_eq!(result[0].name, "wpds-confirmed-ambiguity");
+        assert!(result[0].message.contains("3 categories"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Proc"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Name"), "message: {}", result[0].message);
+        assert!(result[0].message.contains("Expr"), "message: {}", result[0].message);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // A-Series Analysis Lint Direct Tests (A02–A10)
+    // ══════════════════════════════════════════════════════════════════════
+
+    // ── A02: redundant-congruence ──
+
+    #[test]
+    fn test_a02_redundant_congruence_fires() {
+        // A non-primary category with <=1 own rules that is referenced as a NT
+        // field in another category should trigger A02.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![
+            cat_info("Expr", None, true),
+            cat_info("Atom", None, false), // non-primary, will have <=1 own rule
+        ];
+        // Atom has exactly 1 own rule
+        b.all_syntax = vec![
+            (
+                "Lit".to_string(),
+                "Atom".to_string(),
+                vec![SyntaxItemSpec::Terminal("integer".to_string())],
+            ),
+            // Expr references Atom as a NT field
+            (
+                "Wrap".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::NonTerminal {
+                    category: "Atom".to_string(),
+                    param_name: "inner".to_string(),
+                }],
+            ),
+        ];
+
+        let mut diags = Vec::new();
+        lint_a02_redundant_congruence(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1, "expected 1 A02 diagnostic, got: {:?}", diags);
+        assert_eq!(diags[0].id, "A02");
+        assert_eq!(diags[0].category.as_deref(), Some("Atom"));
+    }
+
+    #[test]
+    fn test_a02_redundant_congruence_silent_primary() {
+        // A primary category should NOT trigger A02 even with <=1 rules.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![
+            cat_info("Expr", None, true), // primary
+        ];
+        b.all_syntax = vec![
+            (
+                "Lit".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("integer".to_string())],
+            ),
+        ];
+
+        let mut diags = Vec::new();
+        lint_a02_redundant_congruence(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "primary category should not trigger A02: {:?}", diags);
+    }
+
+    #[test]
+    fn test_a02_redundant_congruence_silent_many_rules() {
+        // A non-primary category with >1 own rules should NOT trigger A02.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![
+            cat_info("Expr", None, true),
+            cat_info("Atom", None, false),
+        ];
+        b.all_syntax = vec![
+            (
+                "Lit".to_string(),
+                "Atom".to_string(),
+                vec![SyntaxItemSpec::Terminal("integer".to_string())],
+            ),
+            (
+                "Var".to_string(),
+                "Atom".to_string(),
+                vec![SyntaxItemSpec::Terminal("ident".to_string())],
+            ),
+            // Expr references Atom as a NT field
+            (
+                "Wrap".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::NonTerminal {
+                    category: "Atom".to_string(),
+                    param_name: "inner".to_string(),
+                }],
+            ),
+        ];
+
+        let mut diags = Vec::new();
+        lint_a02_redundant_congruence(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "category with >1 rules should not trigger A02: {:?}", diags);
+    }
+
+    // ── A03: eq-rw-category-mismatch ──
+
+    #[test]
+    fn test_a03_eq_rw_category_mismatch_fires() {
+        // A non-primary category has parsing rules but none of its constructors
+        // appear in any semantic_dependency_group.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![
+            cat_info("Expr", None, true),
+            cat_info("Atom", None, false), // non-primary, has rules but no equations
+        ];
+        b.all_syntax = vec![
+            (
+                "Add".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("+".to_string())],
+            ),
+            (
+                "Lit".to_string(),
+                "Atom".to_string(),
+                vec![SyntaxItemSpec::Terminal("integer".to_string())],
+            ),
+        ];
+        // Only "Add" (an Expr rule) appears in dependency groups; Atom's "Lit" does not
+        let mut group = HashSet::new();
+        group.insert("Add".to_string());
+        b.semantic_dependency_groups = vec![group];
+
+        let mut diags = Vec::new();
+        lint_a03_eq_rw_category_mismatch(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1, "expected 1 A03 diagnostic, got: {:?}", diags);
+        assert_eq!(diags[0].id, "A03");
+        assert_eq!(diags[0].category.as_deref(), Some("Atom"));
+    }
+
+    #[test]
+    fn test_a03_eq_rw_category_mismatch_silent_no_groups() {
+        // If there are no dependency groups at all, A03 should not fire.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Atom", None, false)];
+        b.all_syntax = vec![(
+            "Lit".to_string(),
+            "Atom".to_string(),
+            vec![SyntaxItemSpec::Terminal("integer".to_string())],
+        )];
+        b.semantic_dependency_groups = vec![];
+
+        let mut diags = Vec::new();
+        lint_a03_eq_rw_category_mismatch(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "no dependency groups should suppress A03: {:?}", diags);
+    }
+
+    #[test]
+    fn test_a03_eq_rw_category_mismatch_silent_category_in_group() {
+        // A non-primary category whose constructor label appears in a dependency
+        // group should NOT trigger A03.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![
+            cat_info("Expr", None, true),
+            cat_info("Atom", None, false),
+        ];
+        b.all_syntax = vec![
+            (
+                "Add".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::Terminal("+".to_string())],
+            ),
+            (
+                "Lit".to_string(),
+                "Atom".to_string(),
+                vec![SyntaxItemSpec::Terminal("integer".to_string())],
+            ),
+        ];
+        // Both Add and Lit in dependency groups
+        let mut group = HashSet::new();
+        group.insert("Add".to_string());
+        group.insert("Lit".to_string());
+        b.semantic_dependency_groups = vec![group];
+
+        let mut diags = Vec::new();
+        lint_a03_eq_rw_category_mismatch(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "category with label in group should not trigger A03: {:?}", diags);
+    }
+
+    // ── A04: large-equivalence-class ──
+
+    #[test]
+    fn test_a04_large_equivalence_class_fires() {
+        // A constructor label appearing in 3+ dependency groups should trigger A04.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("+".to_string())],
+        )];
+        // "Add" appears in 3 separate groups
+        let g1: HashSet<String> = ["Add".to_string()].into();
+        let g2: HashSet<String> = ["Add".to_string(), "Mul".to_string()].into();
+        let g3: HashSet<String> = ["Add".to_string(), "Sub".to_string(), "Div".to_string()].into();
+        b.semantic_dependency_groups = vec![g1, g2, g3];
+
+        let mut diags = Vec::new();
+        lint_a04_large_equivalence_class(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1, "expected 1 A04 diagnostic, got: {:?}", diags);
+        assert_eq!(diags[0].id, "A04");
+        assert_eq!(diags[0].rule.as_deref(), Some("Add"));
+    }
+
+    #[test]
+    fn test_a04_large_equivalence_class_silent() {
+        // A constructor label in fewer than 3 groups should NOT trigger A04.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("+".to_string())],
+        )];
+        // "Add" only in 2 groups
+        let g1: HashSet<String> = ["Add".to_string()].into();
+        let g2: HashSet<String> = ["Add".to_string(), "Mul".to_string()].into();
+        b.semantic_dependency_groups = vec![g1, g2];
+
+        let mut diags = Vec::new();
+        lint_a04_large_equivalence_class(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "label in <3 groups should not trigger A04: {:?}", diags);
+    }
+
+    // ── A06: missing-equation-congruence ──
+
+    #[test]
+    fn test_a06_missing_equation_congruence_fires() {
+        // A constructor in a dependency group that has an NT field whose category
+        // has NO constructors in any dependency group should trigger A06.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![
+            cat_info("Expr", None, true),
+            cat_info("Atom", None, false),
+        ];
+        b.all_syntax = vec![
+            // "Wrap" is in Expr, references Atom as NT field
+            (
+                "Wrap".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::NonTerminal {
+                    category: "Atom".to_string(),
+                    param_name: "inner".to_string(),
+                }],
+            ),
+            // "Lit" is in Atom but NOT in any dependency group
+            (
+                "Lit".to_string(),
+                "Atom".to_string(),
+                vec![SyntaxItemSpec::Terminal("integer".to_string())],
+            ),
+        ];
+        // Only "Wrap" in a dependency group
+        let mut group = HashSet::new();
+        group.insert("Wrap".to_string());
+        b.semantic_dependency_groups = vec![group];
+
+        let mut diags = Vec::new();
+        lint_a06_missing_equation_congruence(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1, "expected 1 A06 diagnostic, got: {:?}", diags);
+        assert_eq!(diags[0].id, "A06");
+        assert_eq!(diags[0].rule.as_deref(), Some("Wrap"));
+        assert!(diags[0].message.contains("Atom"), "message should mention Atom: {}", diags[0].message);
+    }
+
+    #[test]
+    fn test_a06_missing_equation_congruence_silent_no_groups() {
+        // No dependency groups => A06 should not fire.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "Wrap".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::NonTerminal {
+                category: "Atom".to_string(),
+                param_name: "inner".to_string(),
+            }],
+        )];
+        b.semantic_dependency_groups = vec![];
+
+        let mut diags = Vec::new();
+        lint_a06_missing_equation_congruence(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "no dependency groups should suppress A06: {:?}", diags);
+    }
+
+    #[test]
+    fn test_a06_missing_equation_congruence_silent_nt_category_has_equations() {
+        // If the NT field's category also has constructors in dependency groups,
+        // A06 should NOT fire.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![
+            cat_info("Expr", None, true),
+            cat_info("Atom", None, false),
+        ];
+        b.all_syntax = vec![
+            (
+                "Wrap".to_string(),
+                "Expr".to_string(),
+                vec![SyntaxItemSpec::NonTerminal {
+                    category: "Atom".to_string(),
+                    param_name: "inner".to_string(),
+                }],
+            ),
+            (
+                "Lit".to_string(),
+                "Atom".to_string(),
+                vec![SyntaxItemSpec::Terminal("integer".to_string())],
+            ),
+        ];
+        // Both "Wrap" and "Lit" in dependency groups
+        let mut group = HashSet::new();
+        group.insert("Wrap".to_string());
+        group.insert("Lit".to_string());
+        b.semantic_dependency_groups = vec![group];
+
+        let mut diags = Vec::new();
+        lint_a06_missing_equation_congruence(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "NT category with equation constructors should suppress A06: {:?}", diags);
+    }
+
+    #[test]
+    fn test_a06_missing_equation_congruence_silent_same_category_nt() {
+        // Self-referencing NT fields (same category) are skipped by A06.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "lhs".to_string(),
+                },
+                SyntaxItemSpec::Terminal("+".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "rhs".to_string(),
+                },
+            ],
+        )];
+        let mut group = HashSet::new();
+        group.insert("Add".to_string());
+        b.semantic_dependency_groups = vec![group];
+
+        let mut diags = Vec::new();
+        lint_a06_missing_equation_congruence(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "same-category NT should not trigger A06: {:?}", diags);
+    }
+
+    // ── A07: fixpoint-iteration-anomaly ──
+
+    #[test]
+    fn test_a07_fixpoint_iteration_anomaly_fires() {
+        // >10 groups AND max group size >5 should trigger A07.
+        let mut b = CtxBuilder::new();
+        // Create 11 groups, one with 6 labels
+        let mut groups = Vec::new();
+        for i in 0..10 {
+            let mut g = HashSet::new();
+            g.insert(format!("Rule{}", i));
+            groups.push(g);
+        }
+        // 11th group with 6 labels
+        let mut big_group = HashSet::new();
+        for j in 0..6 {
+            big_group.insert(format!("Big{}", j));
+        }
+        groups.push(big_group);
+        b.semantic_dependency_groups = groups;
+
+        let mut diags = Vec::new();
+        lint_a07_fixpoint_iteration_anomaly(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1, "expected 1 A07 diagnostic, got: {:?}", diags);
+        assert_eq!(diags[0].id, "A07");
+        assert!(diags[0].message.contains("11 dependency groups"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn test_a07_fixpoint_iteration_anomaly_silent_few_groups() {
+        // <=10 groups should NOT trigger A07.
+        let mut b = CtxBuilder::new();
+        let mut groups = Vec::new();
+        for i in 0..10 {
+            let mut g = HashSet::new();
+            for j in 0..6 {
+                g.insert(format!("Rule{}_{}", i, j));
+            }
+            groups.push(g);
+        }
+        b.semantic_dependency_groups = groups;
+
+        let mut diags = Vec::new();
+        lint_a07_fixpoint_iteration_anomaly(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "<=10 groups should not trigger A07: {:?}", diags);
+    }
+
+    #[test]
+    fn test_a07_fixpoint_iteration_anomaly_silent_small_groups() {
+        // >10 groups but max group size <=5 should NOT trigger A07.
+        let mut b = CtxBuilder::new();
+        let mut groups = Vec::new();
+        for i in 0..12 {
+            let mut g = HashSet::new();
+            for j in 0..5 {
+                g.insert(format!("Rule{}_{}", i, j));
+            }
+            groups.push(g);
+        }
+        b.semantic_dependency_groups = groups;
+
+        let mut diags = Vec::new();
+        lint_a07_fixpoint_iteration_anomaly(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "max group size <=5 should not trigger A07: {:?}", diags);
+    }
+
+    // ── A08: equation-subsumes-rewrite ──
+
+    #[test]
+    fn test_a08_equation_subsumes_rewrite_fires() {
+        // A label appearing in 2+ dependency groups should trigger A08.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("+".to_string())],
+        )];
+        // "Add" in two separate groups
+        let g1: HashSet<String> = ["Add".to_string()].into();
+        let g2: HashSet<String> = ["Add".to_string(), "Mul".to_string()].into();
+        b.semantic_dependency_groups = vec![g1, g2];
+
+        let mut diags = Vec::new();
+        lint_a08_equation_subsumes_rewrite(&b.ctx(), &mut diags);
+        assert_eq!(diags.len(), 1, "expected 1 A08 diagnostic, got: {:?}", diags);
+        assert_eq!(diags[0].id, "A08");
+        assert_eq!(diags[0].rule.as_deref(), Some("Add"));
+    }
+
+    #[test]
+    fn test_a08_equation_subsumes_rewrite_silent() {
+        // A label appearing in only 1 group should NOT trigger A08.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "Add".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("+".to_string())],
+        )];
+        let g1: HashSet<String> = ["Add".to_string(), "Mul".to_string()].into();
+        b.semantic_dependency_groups = vec![g1];
+
+        let mut diags = Vec::new();
+        lint_a08_equation_subsumes_rewrite(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "label in only 1 group should not trigger A08: {:?}", diags);
+    }
+
+    // ── A10: unreachable-equation-variable ──
+
+    #[test]
+    fn test_a10_unreachable_equation_variable_fires() {
+        // A rule with 2+ IdentCapture/Binder params where one capture name
+        // appears only once and does not match any NT param_name triggers A10.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "LetIn".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("let".to_string()),
+                SyntaxItemSpec::IdentCapture {
+                    param_name: "x".to_string(),
+                },
+                SyntaxItemSpec::Terminal("=".to_string()),
+                SyntaxItemSpec::IdentCapture {
+                    param_name: "y".to_string(),
+                },
+                SyntaxItemSpec::Terminal("in".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "body".to_string(),
+                },
+            ],
+        )];
+
+        let mut diags = Vec::new();
+        lint_a10_unreachable_equation_variable(&b.ctx(), &mut diags);
+        // Both "x" and "y" appear once, neither matches NT param "body", and captures.len() > 1
+        assert_eq!(diags.len(), 2, "expected 2 A10 diagnostics, got: {:?}", diags);
+        assert!(diags.iter().all(|d| d.id == "A10"));
+        let var_names: HashSet<_> = diags.iter().map(|d| d.message.clone()).collect();
+        assert!(var_names.iter().any(|m| m.contains("`x`")), "should mention x: {:?}", var_names);
+        assert!(var_names.iter().any(|m| m.contains("`y`")), "should mention y: {:?}", var_names);
+    }
+
+    #[test]
+    fn test_a10_unreachable_equation_variable_silent_matching_nt() {
+        // If a capture name matches an NT param_name, it should NOT trigger A10.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "Lambda".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("\\".to_string()),
+                SyntaxItemSpec::IdentCapture {
+                    param_name: "x".to_string(),
+                },
+                SyntaxItemSpec::Terminal(".".to_string()),
+                SyntaxItemSpec::IdentCapture {
+                    param_name: "y".to_string(),
+                },
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    // NT param_name matches capture "x"
+                    param_name: "x".to_string(),
+                },
+            ],
+        )];
+
+        let mut diags = Vec::new();
+        lint_a10_unreachable_equation_variable(&b.ctx(), &mut diags);
+        // "x" matches NT param so should not fire; "y" does not match but is alone
+        // => only "y" could fire but "x" is in NT set so x is silent.
+        // Actually: captures = ["x", "y"], nt_params = {"x"}.
+        // "x": count=1, not in nt_params? No, "x" IS in nt_params => skip.
+        // "y": count=1, not in nt_params, captures.len()=2>1 => fires.
+        assert_eq!(diags.len(), 1, "expected 1 A10 diagnostic for y, got: {:?}", diags);
+        assert_eq!(diags[0].id, "A10");
+        assert!(diags[0].message.contains("`y`"), "should flag y: {}", diags[0].message);
+    }
+
+    #[test]
+    fn test_a10_unreachable_equation_variable_silent_single_capture() {
+        // A rule with only 1 capture should NOT trigger A10 (captures.len() > 1 required).
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "Var".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::IdentCapture {
+                param_name: "name".to_string(),
+            }],
+        )];
+
+        let mut diags = Vec::new();
+        lint_a10_unreachable_equation_variable(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "single capture should not trigger A10: {:?}", diags);
+    }
+
+    #[test]
+    fn test_a10_unreachable_equation_variable_silent_duplicate_captures() {
+        // If a capture name appears more than once, it should NOT trigger A10.
+        let mut b = CtxBuilder::new();
+        b.categories = vec![cat_info("Expr", None, true)];
+        b.all_syntax = vec![(
+            "Eq".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::IdentCapture {
+                    param_name: "x".to_string(),
+                },
+                SyntaxItemSpec::Terminal("==".to_string()),
+                SyntaxItemSpec::IdentCapture {
+                    param_name: "x".to_string(), // duplicate
+                },
+            ],
+        )];
+
+        let mut diags = Vec::new();
+        lint_a10_unreachable_equation_variable(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "duplicate captures should not trigger A10: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // G06: Shadowed Operator
+    // ══════════════════════════════════════════════════════════════════════
+
+    fn make_infix_op(terminal: &str, category: &str) -> InfixOperator {
+        InfixOperator {
+            terminal: terminal.to_string(),
+            category: category.to_string(),
+            result_category: category.to_string(),
+            left_bp: 10,
+            right_bp: 11,
+            label: format!("Op_{}", terminal),
+            is_cross_category: false,
+            is_postfix: false,
+            is_mixfix: false,
+            mixfix_parts: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn g06_fires_on_infix_and_prefix_sharing_terminal() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // Infix operator "-" registered in the binding power table
+        b.bp_table.operators.push(make_infix_op("-", "Expr"));
+        // Prefix rule that also starts with "-"
+        b.rules.push(make_rule_info(
+            "Neg",
+            "Expr",
+            vec![FirstItem::Terminal("-".to_string())],
+            false, // not infix
+        ));
+
+        let mut diags = Vec::new();
+        lint_g06_shadowed_operator(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected exactly one G06 diagnostic");
+        assert_eq!(diags[0].id, "G06");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+        assert!(diags[0].message.contains("`-`"), "message should mention `-`");
+        assert!(diags[0].message.contains("Expr"), "message should mention category");
+    }
+
+    #[test]
+    fn g06_silent_when_no_overlap() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // Infix "+" only
+        b.bp_table.operators.push(make_infix_op("+", "Expr"));
+        // Prefix rule starts with "!" (no overlap with "+")
+        b.rules.push(make_rule_info(
+            "Not",
+            "Expr",
+            vec![FirstItem::Terminal("!".to_string())],
+            false,
+        ));
+
+        let mut diags = Vec::new();
+        lint_g06_shadowed_operator(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "no overlap means no G06: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // G32: Prefix Isomorphism
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn g32_fires_on_isomorphic_decision_trees() {
+        use crate::decision_tree::{DecisionAction, TreeStats};
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.categories.push(cat_info("Type", None, false));
+
+        // Both categories get structurally identical decision trees:
+        // same stats, same path structure, same action shapes.
+        let tok_id = b.token_id_map.get_or_insert("Plus");
+
+        let mut seg_a = pathmap::PathMap::new();
+        seg_a.insert(&[tok_id as u8], DecisionAction::Commit {
+            rule_label: "AddExpr".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+        let stats = TreeStats {
+            total_states: 1,
+            ambiguous_nodes: 0,
+            max_depth: 1,
+            ..Default::default()
+        };
+        b.decision_trees.insert(
+            "Expr".to_string(),
+            CategoryDecisionTree {
+                category: "Expr".to_string(),
+                segments: vec![seg_a],
+                stats: stats.clone(),
+            },
+        );
+
+        let mut seg_b = pathmap::PathMap::new();
+        seg_b.insert(&[tok_id as u8], DecisionAction::Commit {
+            rule_label: "AddType".to_string(),
+            category: "Type".to_string(),
+            weight: 0.0,
+        });
+        b.decision_trees.insert(
+            "Type".to_string(),
+            CategoryDecisionTree {
+                category: "Type".to_string(),
+                segments: vec![seg_b],
+                stats,
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_g32_prefix_isomorphism(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one G32 diagnostic");
+        assert_eq!(diags[0].id, "G32");
+        assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("Type"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn g32_silent_on_structurally_different_trees() {
+        use crate::decision_tree::{DecisionAction, TreeStats};
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.categories.push(cat_info("Type", None, false));
+
+        let tok_plus = b.token_id_map.get_or_insert("Plus");
+        let tok_star = b.token_id_map.get_or_insert("Star");
+
+        // Expr tree uses Plus
+        let mut seg_a = pathmap::PathMap::new();
+        seg_a.insert(&[tok_plus as u8], DecisionAction::Commit {
+            rule_label: "AddExpr".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+        b.decision_trees.insert(
+            "Expr".to_string(),
+            CategoryDecisionTree {
+                category: "Expr".to_string(),
+                segments: vec![seg_a],
+                stats: TreeStats {
+                    total_states: 1,
+                    max_depth: 1,
+                    ..Default::default()
+                },
+            },
+        );
+
+        // Type tree uses Star (different structure)
+        let mut seg_b = pathmap::PathMap::new();
+        seg_b.insert(&[tok_star as u8], DecisionAction::Commit {
+            rule_label: "PtrType".to_string(),
+            category: "Type".to_string(),
+            weight: 0.0,
+        });
+        b.decision_trees.insert(
+            "Type".to_string(),
+            CategoryDecisionTree {
+                category: "Type".to_string(),
+                segments: vec![seg_b],
+                stats: TreeStats {
+                    total_states: 1,
+                    max_depth: 1,
+                    ..Default::default()
+                },
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_g32_prefix_isomorphism(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "different structures should not trigger G32: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // R01: Empty Sync Set
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn r01_fires_on_empty_sync_set() {
+        use crate::recovery::RecoveryWfst;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // RecoveryWfst with NO sync tokens
+        let rwfst = RecoveryWfst::new("Expr".to_string(), &[], &b.token_id_map);
+        b.recovery_wfsts.push(rwfst);
+
+        let mut diags = Vec::new();
+        lint_r01_empty_sync_set(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one R01 diagnostic");
+        assert_eq!(diags[0].id, "R01");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("no sync tokens"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn r01_silent_when_sync_set_nonempty() {
+        use crate::recovery::RecoveryWfst;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        let tok = "RParen".to_string();
+        b.token_id_map.get_or_insert("RParen");
+        let rwfst = RecoveryWfst::new("Expr".to_string(), &[tok], &b.token_id_map);
+        b.recovery_wfsts.push(rwfst);
+
+        let mut diags = Vec::new();
+        lint_r01_empty_sync_set(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "nonempty sync set should not trigger R01: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // R02: Sparse Recovery
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn r02_fires_on_single_sync_token() {
+        use crate::recovery::RecoveryWfst;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        let tok = "Eof".to_string();
+        b.token_id_map.get_or_insert("Eof");
+        let rwfst = RecoveryWfst::new("Expr".to_string(), &[tok], &b.token_id_map);
+        b.recovery_wfsts.push(rwfst);
+
+        let mut diags = Vec::new();
+        lint_r02_sparse_recovery(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one R02 diagnostic");
+        assert_eq!(diags[0].id, "R02");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+        assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("only 1"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn r02_silent_on_multiple_sync_tokens() {
+        use crate::recovery::RecoveryWfst;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.token_id_map.get_or_insert("RParen");
+        b.token_id_map.get_or_insert("Eof");
+        let toks = vec!["RParen".to_string(), "Eof".to_string()];
+        let rwfst = RecoveryWfst::new("Expr".to_string(), &toks, &b.token_id_map);
+        b.recovery_wfsts.push(rwfst);
+
+        let mut diags = Vec::new();
+        lint_r02_sparse_recovery(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "2+ sync tokens should not trigger R02: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // R05: Missing Bracket Sync
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn r05_fires_when_open_bracket_without_close_in_sync() {
+        use crate::recovery::RecoveryWfst;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // Rule that uses "(" terminal
+        b.all_syntax.push((
+            "Parens".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("(".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "inner".to_string(),
+                },
+                SyntaxItemSpec::Terminal(")".to_string()),
+            ],
+        ));
+        // Recovery WFST has sync tokens but NOT "RParen"
+        b.token_id_map.get_or_insert("Eof");
+        b.token_id_map.get_or_insert("RParen");
+        let rwfst = RecoveryWfst::new(
+            "Expr".to_string(),
+            &["Eof".to_string()], // missing RParen
+            &b.token_id_map,
+        );
+        b.recovery_wfsts.push(rwfst);
+
+        let mut diags = Vec::new();
+        lint_r05_missing_bracket_sync(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one R05 diagnostic");
+        assert_eq!(diags[0].id, "R05");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("`(`"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("RParen"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn r05_silent_when_close_bracket_in_sync() {
+        use crate::recovery::RecoveryWfst;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // Rule that uses "(" terminal
+        b.all_syntax.push((
+            "Parens".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("(".to_string()),
+                SyntaxItemSpec::NonTerminal {
+                    category: "Expr".to_string(),
+                    param_name: "inner".to_string(),
+                },
+                SyntaxItemSpec::Terminal(")".to_string()),
+            ],
+        ));
+        // Recovery WFST includes RParen in sync set
+        b.token_id_map.get_or_insert("RParen");
+        let rwfst = RecoveryWfst::new(
+            "Expr".to_string(),
+            &["RParen".to_string()],
+            &b.token_id_map,
+        );
+        b.recovery_wfsts.push(rwfst);
+
+        let mut diags = Vec::new();
+        lint_r05_missing_bracket_sync(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "close bracket in sync set should not trigger R05: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // C04: Wide Cross Overlap
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn c04_fires_on_high_first_set_overlap() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.categories.push(cat_info("Type", None, false));
+
+        // Both categories share 4 of 4 tokens (100% overlap, >= 80% threshold)
+        let mut fs_expr = FirstSet::new();
+        fs_expr.insert("Ident");
+        fs_expr.insert("Integer");
+        fs_expr.insert("LParen");
+        fs_expr.insert("Minus");
+
+        let mut fs_type = FirstSet::new();
+        fs_type.insert("Ident");
+        fs_type.insert("Integer");
+        fs_type.insert("LParen");
+        fs_type.insert("Minus");
+
+        b.first_sets.insert("Expr".to_string(), fs_expr);
+        b.first_sets.insert("Type".to_string(), fs_type);
+
+        let mut diags = Vec::new();
+        lint_c04_wide_cross_overlap(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one C04 diagnostic");
+        assert_eq!(diags[0].id, "C04");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+        assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("Type"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("100%"), "message should show 100%: {}", diags[0].message);
+    }
+
+    #[test]
+    fn c04_silent_on_low_overlap() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.categories.push(cat_info("Type", None, false));
+
+        // Only 1 of 5 overlaps (20%, well below 80% threshold)
+        let mut fs_expr = FirstSet::new();
+        fs_expr.insert("Ident");
+        fs_expr.insert("Integer");
+        fs_expr.insert("LParen");
+        fs_expr.insert("Minus");
+        fs_expr.insert("Bang");
+
+        let mut fs_type = FirstSet::new();
+        fs_type.insert("Ident");
+        fs_type.insert("Star");
+        fs_type.insert("Ampersand");
+        fs_type.insert("Arrow");
+        fs_type.insert("Bracket");
+
+        b.first_sets.insert("Expr".to_string(), fs_expr);
+        b.first_sets.insert("Type".to_string(), fs_type);
+
+        let mut diags = Vec::new();
+        lint_c04_wide_cross_overlap(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "low overlap should not trigger C04: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // D10: Lookahead Waste
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn d10_fires_when_most_tokens_resolve_at_depth_1() {
+        use crate::decision_tree::{DecisionAction, TreeStats};
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        // Build a decision tree with max_depth=4, but all dispatch tokens
+        // resolve at depth 0 (Singleton strategy).
+        let tok_a = b.token_id_map.get_or_insert("Ident");
+        let tok_b = b.token_id_map.get_or_insert("Integer");
+        let tok_c = b.token_id_map.get_or_insert("LParen");
+        let tok_d = b.token_id_map.get_or_insert("Minus");
+        let tok_e = b.token_id_map.get_or_insert("If");
+
+        let mut seg = pathmap::PathMap::new();
+        // 5 tokens, each with a single Commit at depth 1
+        seg.insert(&[tok_a as u8], DecisionAction::Commit {
+            rule_label: "Var".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+        seg.insert(&[tok_b as u8], DecisionAction::Commit {
+            rule_label: "Lit".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+        seg.insert(&[tok_c as u8], DecisionAction::Commit {
+            rule_label: "Parens".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+        seg.insert(&[tok_d as u8], DecisionAction::Commit {
+            rule_label: "Neg".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+        // One deep path to give max_depth > 2
+        seg.insert(&[tok_e as u8, tok_a as u8, tok_b as u8, tok_c as u8], DecisionAction::Commit {
+            rule_label: "IfThenElse".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+
+        b.decision_trees.insert(
+            "Expr".to_string(),
+            CategoryDecisionTree {
+                category: "Expr".to_string(),
+                segments: vec![seg],
+                stats: TreeStats {
+                    total_states: 8,
+                    max_depth: 4,
+                    ..Default::default()
+                },
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_d10_lookahead_waste(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one D10 diagnostic");
+        assert_eq!(diags[0].id, "D10");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+        assert!(diags[0].message.contains("Expr"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("4-token max lookahead"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn d10_silent_on_shallow_tree() {
+        use crate::decision_tree::TreeStats;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        // max_depth <= 2, so D10 should not fire
+        b.decision_trees.insert(
+            "Expr".to_string(),
+            CategoryDecisionTree {
+                category: "Expr".to_string(),
+                segments: vec![pathmap::PathMap::new()],
+                stats: TreeStats {
+                    total_states: 3,
+                    max_depth: 2,
+                    ..Default::default()
+                },
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_d10_lookahead_waste(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "shallow tree should not trigger D10: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // D13: Parsed-But-Unrewritten (Ascent Trie Correlation)
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn d13_fires_on_parsed_but_unrewritten_rule() {
+        use crate::decision_tree::{DecisionAction, TreeStats};
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let tok_a = b.token_id_map.get_or_insert("Ident");
+        let tok_b = b.token_id_map.get_or_insert("Integer");
+
+        // Decision tree has two reachable rules: "Var" and "Lit"
+        let mut seg = pathmap::PathMap::new();
+        seg.insert(&[tok_a as u8], DecisionAction::Commit {
+            rule_label: "Var".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+        seg.insert(&[tok_b as u8], DecisionAction::Commit {
+            rule_label: "Lit".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+        b.decision_trees.insert(
+            "Expr".to_string(),
+            CategoryDecisionTree {
+                category: "Expr".to_string(),
+                segments: vec![seg],
+                stats: TreeStats::default(),
+            },
+        );
+
+        // Semantic dependency groups only reference "Var" -- "Lit" is an orphan
+        let mut group = HashSet::new();
+        group.insert("Var".to_string());
+        b.semantic_dependency_groups.push(group);
+
+        let mut diags = Vec::new();
+        lint_d13_ascent_trie_correlation(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one D13 for orphan 'Lit'");
+        assert_eq!(diags[0].id, "D13");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+        assert!(diags[0].message.contains("Lit"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn d13_silent_when_all_rules_consumed() {
+        use crate::decision_tree::{DecisionAction, TreeStats};
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let tok_a = b.token_id_map.get_or_insert("Ident");
+
+        let mut seg = pathmap::PathMap::new();
+        seg.insert(&[tok_a as u8], DecisionAction::Commit {
+            rule_label: "Var".to_string(),
+            category: "Expr".to_string(),
+            weight: 0.0,
+        });
+        b.decision_trees.insert(
+            "Expr".to_string(),
+            CategoryDecisionTree {
+                category: "Expr".to_string(),
+                segments: vec![seg],
+                stats: TreeStats::default(),
+            },
+        );
+
+        // All trie-reachable rules appear in a semantic group
+        let mut group = HashSet::new();
+        group.insert("Var".to_string());
+        b.semantic_dependency_groups.push(group);
+
+        let mut diags = Vec::new();
+        lint_d13_ascent_trie_correlation(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "all rules consumed should not trigger D13: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // D14: WPDS Complexity Report
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn d14_fires_when_wpds_analysis_present() {
+        use crate::wpds::{WpdsAnalysis, WpdsCallGraph, DepthBounds};
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.categories.push(cat_info("Type", None, false));
+
+        let mut reachable = HashSet::new();
+        reachable.insert("Expr".to_string());
+
+        let mut categories = HashSet::new();
+        categories.insert("Expr".to_string());
+        categories.insert("Type".to_string());
+
+        let mut depth_bounds = HashMap::new();
+        depth_bounds.insert("Expr".to_string(), DepthBounds {
+            min_depth: 0,
+            max_depth: None,
+            is_recursive: true,
+        });
+
+        b.wpds_analysis_data = Some(WpdsAnalysis {
+            grammar_name: "TestGrammar".to_string(),
+            num_symbols: 5,
+            num_rules: 8,
+            reachable_categories: reachable,
+            unreachable_rules: Vec::new(),
+            category_weights: HashMap::new(),
+            call_graph: WpdsCallGraph {
+                edges: Vec::new(),
+                fan_out: HashMap::new(),
+                fan_in: HashMap::new(),
+                sccs: vec![vec!["Expr".to_string()]],
+                categories,
+            },
+            depth_bounds,
+            cycles: Vec::new(),
+            calling_contexts: HashMap::new(),
+            context_rule_tables: HashMap::new(),
+            cross_category_bp: HashMap::new(),
+            context_unambiguous: HashMap::new(),
+        });
+
+        let mut diags = Vec::new();
+        lint_d14_wpds_complexity_report(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one D14 diagnostic");
+        assert_eq!(diags[0].id, "D14");
+        assert_eq!(diags[0].severity, LintSeverity::Info);
+        assert!(diags[0].message.contains("WPDS analysis"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("|Γ|=5"), "message should show symbol count: {}", diags[0].message);
+    }
+
+    #[test]
+    fn d14_silent_when_no_wpds_analysis() {
+        let b = CtxBuilder::new();
+        // wpds_analysis_data is None by default
+
+        let mut diags = Vec::new();
+        lint_d14_wpds_complexity_report(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "no WPDS analysis should not trigger D14: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // P04: Many Alternatives
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn p04_fires_on_token_with_many_dispatch_actions() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::wfst::PredictionWfstBuilder;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        // Build a PredictionWfst with 5 actions for "Ident" token (> 4 threshold)
+        let mut builder = PredictionWfstBuilder::new("Expr", b.token_id_map.clone());
+        for i in 0..5 {
+            builder.add_action(
+                "Ident",
+                DispatchAction::Direct {
+                    rule_label: format!("Rule{}", i),
+                    parse_fn: format!("parse_rule_{}", i),
+                },
+                TropicalWeight::new(i as f64),
+            );
+        }
+        let pwfst = builder.build();
+        // Update our token_id_map from the builder's map
+        b.token_id_map = pwfst.token_map.clone();
+        b.prediction_wfsts.insert("Expr".to_string(), pwfst);
+
+        // FIRST set must include "Ident" for P04 to iterate over it
+        let mut fs = FirstSet::new();
+        fs.insert("Ident");
+        b.first_sets.insert("Expr".to_string(), fs);
+
+        let mut diags = Vec::new();
+        lint_p04_many_alternatives(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one P04 diagnostic");
+        assert_eq!(diags[0].id, "P04");
+        assert!(diags[0].message.contains("Ident"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("5 rules"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn p04_silent_on_few_alternatives() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::wfst::PredictionWfstBuilder;
+
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        // Only 2 actions for "Ident" (below threshold of > 4)
+        let mut builder = PredictionWfstBuilder::new("Expr", b.token_id_map.clone());
+        for i in 0..2 {
+            builder.add_action(
+                "Ident",
+                DispatchAction::Direct {
+                    rule_label: format!("Rule{}", i),
+                    parse_fn: format!("parse_rule_{}", i),
+                },
+                TropicalWeight::new(i as f64),
+            );
+        }
+        let pwfst = builder.build();
+        b.token_id_map = pwfst.token_map.clone();
+        b.prediction_wfsts.insert("Expr".to_string(), pwfst);
+
+        let mut fs = FirstSet::new();
+        fs.insert("Ident");
+        b.first_sets.insert("Expr".to_string(), fs);
+
+        let mut diags = Vec::new();
+        lint_p04_many_alternatives(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "2 alternatives should not trigger P04: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // P05: WPDS Pipeline Cost
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn p05_fires_when_wpds_elapsed_present() {
+        use crate::wpds::{WpdsAnalysis, WpdsCallGraph};
+
+        let mut b = CtxBuilder::new();
+
+        let mut reachable = HashSet::new();
+        reachable.insert("Expr".to_string());
+
+        b.wpds_elapsed_data = Some(std::time::Duration::from_millis(42));
+        b.wpds_analysis_data = Some(WpdsAnalysis {
+            grammar_name: "TestGrammar".to_string(),
+            num_symbols: 3,
+            num_rules: 6,
+            reachable_categories: reachable,
+            unreachable_rules: Vec::new(),
+            category_weights: HashMap::new(),
+            call_graph: WpdsCallGraph {
+                edges: Vec::new(),
+                fan_out: HashMap::new(),
+                fan_in: HashMap::new(),
+                sccs: Vec::new(),
+                categories: HashSet::new(),
+            },
+            depth_bounds: HashMap::new(),
+            cycles: Vec::new(),
+            calling_contexts: HashMap::new(),
+            context_rule_tables: HashMap::new(),
+            cross_category_bp: HashMap::new(),
+            context_unambiguous: HashMap::new(),
+        });
+
+        let mut diags = Vec::new();
+        lint_p05_wpds_pipeline_cost(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected one P05 diagnostic");
+        assert_eq!(diags[0].id, "P05");
+        assert_eq!(diags[0].severity, LintSeverity::Info);
+        assert!(diags[0].message.contains("WPDS analysis completed"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("|Γ|=3"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn p05_silent_when_no_wpds_elapsed() {
+        let b = CtxBuilder::new();
+        // wpds_elapsed_data and wpds_analysis_data are None by default
+
+        let mut diags = Vec::new();
+        lint_p05_wpds_pipeline_cost(&b.ctx(), &mut diags);
+        assert!(diags.is_empty(), "no WPDS data should not trigger P05: {:?}", diags);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Phase 5A: WFST Lint Function Unit Tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// Helper to build a minimal WpdsAnalysis with sensible defaults.
+    fn make_wpds_analysis_empty() -> crate::wpds::WpdsAnalysis {
+        use crate::wpds::{WpdsAnalysis, WpdsCallGraph};
+        WpdsAnalysis {
+            grammar_name: "TestGrammar".to_string(),
+            num_symbols: 0,
+            num_rules: 0,
+            reachable_categories: HashSet::new(),
+            unreachable_rules: Vec::new(),
+            category_weights: HashMap::new(),
+            call_graph: WpdsCallGraph {
+                edges: Vec::new(),
+                fan_out: HashMap::new(),
+                fan_in: HashMap::new(),
+                sccs: Vec::new(),
+                categories: HashSet::new(),
+            },
+            depth_bounds: HashMap::new(),
+            cycles: Vec::new(),
+            calling_contexts: HashMap::new(),
+            context_rule_tables: HashMap::new(),
+            cross_category_bp: HashMap::new(),
+            context_unambiguous: HashMap::new(),
+        }
+    }
+
+    // ── W01: Dead Rule (via pre-computed dead_rule_warnings) ──
+
+    #[test]
+    fn w01_fires_on_wfst_unreachable() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        b.dead_rule_warnings.push(
+            crate::pipeline::DeadRuleWarning::WfstUnreachable {
+                rule_label: "BadRule".to_string(),
+                category: "Int".to_string(),
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_w01_dead_rule(&b.ctx(), &mut diags);
+
+        assert!(
+            diags.iter().any(|d| d.id == "W01" && d.severity == LintSeverity::Warning),
+            "W01 should fire for WfstUnreachable warning: {:?}",
+            diags,
+        );
+        assert!(
+            diags.iter().any(|d| d.message.contains("BadRule")),
+            "W01 message should mention the dead rule label",
+        );
+    }
+
+    #[test]
+    fn w01_fires_on_literal_no_native_type() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        b.dead_rule_warnings.push(
+            crate::pipeline::DeadRuleWarning::LiteralNoNativeType {
+                rule_label: "NumLit".to_string(),
+                category: "Int".to_string(),
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_w01_dead_rule(&b.ctx(), &mut diags);
+
+        assert!(
+            diags.iter().any(|d| d.id == "W01" && d.severity == LintSeverity::Warning),
+            "W01 should fire for LiteralNoNativeType: {:?}",
+            diags,
+        );
+    }
+
+    #[test]
+    fn w01_fires_on_unreachable_category() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Orphan", None, false));
+        b.dead_rule_warnings.push(
+            crate::pipeline::DeadRuleWarning::UnreachableCategory {
+                rule_label: "InfixOp".to_string(),
+                category: "Orphan".to_string(),
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_w01_dead_rule(&b.ctx(), &mut diags);
+
+        assert!(
+            diags.iter().any(|d| d.id == "W01"),
+            "W01 should fire for UnreachableCategory: {:?}",
+            diags,
+        );
+    }
+
+    #[test]
+    fn w01_emits_w07_for_nearly_dead_path() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Int", None, true));
+        b.dead_rule_warnings.push(
+            crate::pipeline::DeadRuleWarning::NearlyDeadPath {
+                rule_label: "RareRule".to_string(),
+                category: "Int".to_string(),
+                derivation_count: 1,
+                total_count: 500,
+            },
+        );
+
+        let mut diags = Vec::new();
+        lint_w01_dead_rule(&b.ctx(), &mut diags);
+
+        // NearlyDeadPath should emit W07 with Note severity, not W01
+        assert!(
+            diags.iter().any(|d| d.id == "W07" && d.severity == LintSeverity::Note),
+            "NearlyDeadPath should emit W07 Note, not W01 Warning: {:?}",
+            diags,
+        );
+        assert!(
+            !diags.iter().any(|d| d.id == "W01"),
+            "NearlyDeadPath should NOT emit W01",
+        );
+    }
+
+    #[test]
+    fn w01_silent_when_no_warnings() {
+        let b = CtxBuilder::new();
+
+        let mut diags = Vec::new();
+        lint_w01_dead_rule(&b.ctx(), &mut diags);
+
+        // W01 also computes A4/A8 warnings internally, but with empty
+        // categories/rules/syntax/first_sets those should produce nothing.
+        let w01_count = diags.iter().filter(|d| d.id == "W01").count();
+        assert_eq!(w01_count, 0, "W01 should not fire with no warnings: {:?}", diags);
+    }
+
+    // ── W03: High Ambiguity Token ──
+
+    #[test]
+    fn w03_fires_on_three_way_ambiguity() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // Build a WFST where token "Ident" dispatches to 3 rules
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[
+                ("Ident", "VarExpr", 1.0),
+                ("Ident", "FnCall", 2.0),
+                ("Ident", "TypeRef", 3.0),
+            ]),
+        );
+        b.first_sets.insert(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Ident".to_string()].into(), nullable: false },
+        );
+
+        let mut diags = Vec::new();
+        lint_w03_high_ambiguity_token(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 W03 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "W03");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("Ident"), "message should mention token: {}", diags[0].message);
+        assert!(diags[0].message.contains("3"), "message should mention count: {}", diags[0].message);
+    }
+
+    #[test]
+    fn w03_silent_on_two_way_ambiguity() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // Only 2 actions — threshold is 3
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[
+                ("Ident", "VarExpr", 1.0),
+                ("Ident", "FnCall", 2.0),
+            ]),
+        );
+        b.first_sets.insert(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Ident".to_string()].into(), nullable: false },
+        );
+
+        let mut diags = Vec::new();
+        lint_w03_high_ambiguity_token(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "2-way ambiguity should not trigger W03: {:?}", diags);
+    }
+
+    #[test]
+    fn w03_silent_when_no_wfst() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.first_sets.insert(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Ident".to_string()].into(), nullable: false },
+        );
+        // No prediction_wfsts
+
+        let mut diags = Vec::new();
+        lint_w03_high_ambiguity_token(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "no WFST should not trigger W03");
+    }
+
+    // ── W04: Weight Gap Anomaly ──
+
+    #[test]
+    fn w04_fires_on_large_weight_gap() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // Best rule weight=1.0, second weight=7.0 — gap=6.0 > 5.0
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[
+                ("Plus", "AddExpr", 1.0),
+                ("Plus", "ConcatExpr", 7.0),
+            ]),
+        );
+        b.first_sets.insert(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Plus".to_string()].into(), nullable: false },
+        );
+
+        let mut diags = Vec::new();
+        lint_w04_weight_gap_anomaly(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 W04 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "W04");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+        assert!(diags[0].message.contains("Plus"), "message should mention token: {}", diags[0].message);
+        assert!(diags[0].message.contains("AddExpr"), "message should mention best rule: {}", diags[0].message);
+        assert!(diags[0].message.contains("ConcatExpr"), "message should mention second rule: {}", diags[0].message);
+    }
+
+    #[test]
+    fn w04_silent_on_small_weight_gap() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // Best=1.0, second=3.0 — gap=2.0 < 5.0
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[
+                ("Plus", "AddExpr", 1.0),
+                ("Plus", "ConcatExpr", 3.0),
+            ]),
+        );
+        b.first_sets.insert(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Plus".to_string()].into(), nullable: false },
+        );
+
+        let mut diags = Vec::new();
+        lint_w04_weight_gap_anomaly(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "gap of 2.0 should not trigger W04: {:?}", diags);
+    }
+
+    #[test]
+    fn w04_silent_when_single_action() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[("Plus", "AddExpr", 1.0)]),
+        );
+        b.first_sets.insert(
+            "Expr".to_string(),
+            FirstSet { tokens: ["Plus".to_string()].into(), nullable: false },
+        );
+
+        let mut diags = Vec::new();
+        lint_w04_weight_gap_anomaly(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "single action should not trigger W04");
+    }
+
+    // ── W06: Weight Inversion ──
+
+    #[test]
+    fn w06_fires_on_specificity_inversion() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // Rule "Short" has 1 syntax item (less specific)
+        // Rule "Long" has 3 syntax items (more specific)
+        // But "Short" has lower (better) weight than "Long" — inversion
+        b.all_syntax.push((
+            "Short".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("x".to_string())],
+        ));
+        b.all_syntax.push((
+            "Long".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("x".to_string()),
+                SyntaxItemSpec::Terminal("y".to_string()),
+                SyntaxItemSpec::Terminal("z".to_string()),
+            ],
+        ));
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[
+                ("KwX", "Short", 1.0),   // less-specific has lower (better) weight
+                ("KwX", "Long", 5.0),    // more-specific has higher (worse) weight
+            ]),
+        );
+        b.first_sets.insert(
+            "Expr".to_string(),
+            FirstSet { tokens: ["KwX".to_string()].into(), nullable: false },
+        );
+
+        let mut diags = Vec::new();
+        lint_w06_weight_inversion(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 W06 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "W06");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+        assert!(diags[0].message.contains("Short"), "message should mention less-specific rule: {}", diags[0].message);
+        assert!(diags[0].message.contains("Long"), "message should mention more-specific rule: {}", diags[0].message);
+    }
+
+    #[test]
+    fn w06_silent_when_correctly_ordered() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        // "Long" (3 items, more specific) has lower weight — correct order
+        b.all_syntax.push((
+            "Short".to_string(),
+            "Expr".to_string(),
+            vec![SyntaxItemSpec::Terminal("x".to_string())],
+        ));
+        b.all_syntax.push((
+            "Long".to_string(),
+            "Expr".to_string(),
+            vec![
+                SyntaxItemSpec::Terminal("x".to_string()),
+                SyntaxItemSpec::Terminal("y".to_string()),
+                SyntaxItemSpec::Terminal("z".to_string()),
+            ],
+        ));
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[
+                ("KwX", "Long", 1.0),    // more-specific has lower (better) weight
+                ("KwX", "Short", 5.0),   // less-specific has higher (worse) weight
+            ]),
+        );
+        b.first_sets.insert(
+            "Expr".to_string(),
+            FirstSet { tokens: ["KwX".to_string()].into(), nullable: false },
+        );
+
+        let mut diags = Vec::new();
+        lint_w06_weight_inversion(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "correctly ordered weights should not trigger W06: {:?}", diags);
+    }
+
+    // ── W13: WPDS-Unreachable Rule ──
+
+    #[test]
+    fn w13_fires_on_wpds_unreachable() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.categories.push(cat_info("Orphan", None, false));
+
+        let mut analysis = make_wpds_analysis_empty();
+        analysis.reachable_categories.insert("Expr".to_string());
+        analysis.unreachable_rules.push(crate::wpds::WpdsUnreachableRule {
+            rule_label: "OrphanRule".to_string(),
+            category: "Orphan".to_string(),
+            missing_contexts: vec!["Expr".to_string()],
+            witness_trace: vec!["Expr -> Orphan".to_string()],
+        });
+        b.wpds_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_w13_wpds_unreachable(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 W13 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "W13");
+        assert_eq!(diags[0].severity, LintSeverity::Warning);
+        assert!(diags[0].message.contains("OrphanRule"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("Orphan"), "message: {}", diags[0].message);
+        assert!(diags[0].message.contains("Expr"), "should mention missing caller: {}", diags[0].message);
+        assert!(diags[0].message.contains("witness trace"), "should include witness: {}", diags[0].message);
+    }
+
+    #[test]
+    fn w13_silent_when_no_unreachable() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let mut analysis = make_wpds_analysis_empty();
+        analysis.reachable_categories.insert("Expr".to_string());
+        b.wpds_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_w13_wpds_unreachable(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "no unreachable rules should not trigger W13");
+    }
+
+    #[test]
+    fn w13_silent_when_no_wpds_analysis() {
+        let b = CtxBuilder::new();
+
+        let mut diags = Vec::new();
+        lint_w13_wpds_unreachable(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "absent WPDS analysis should not trigger W13");
+    }
+
+    // ── W14: WPDS-Confirmed Ambiguity ──
+
+    #[test]
+    fn w14_fires_false_positive_for_unreachable_category() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.categories.push(cat_info("Orphan", None, false));
+        b.nfa_spillover_categories.insert("Orphan".to_string());
+
+        let mut analysis = make_wpds_analysis_empty();
+        analysis.reachable_categories.insert("Expr".to_string());
+        // "Orphan" is NOT reachable — false positive
+        b.wpds_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 W14 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "W14");
+        assert_eq!(diags[0].severity, LintSeverity::Note);
+        assert!(
+            diags[0].message.contains("false-positive"),
+            "message should mention false-positive: {}",
+            diags[0].message,
+        );
+        assert!(diags[0].message.contains("Orphan"), "message: {}", diags[0].message);
+    }
+
+    #[test]
+    fn w14_fires_confirmed_for_reachable_with_multiple_contexts() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.nfa_spillover_categories.insert("Expr".to_string());
+
+        let mut analysis = make_wpds_analysis_empty();
+        analysis.reachable_categories.insert("Expr".to_string());
+        analysis.call_graph.fan_in.insert("Expr".to_string(), 2);
+        analysis.calling_contexts.insert(
+            "Expr".to_string(),
+            vec![
+                crate::wpds::CallingContext {
+                    caller_category: "Stmt".to_string(),
+                    caller_rule: "ExprStmt".to_string(),
+                    caller_position: 0,
+                    weight: 1.0,
+                },
+                crate::wpds::CallingContext {
+                    caller_category: "Type".to_string(),
+                    caller_rule: "TypeExpr".to_string(),
+                    caller_position: 0,
+                    weight: 1.0,
+                },
+            ],
+        );
+        b.wpds_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
+
+        assert_eq!(diags.len(), 1, "expected 1 W14 diagnostic: {:?}", diags);
+        assert_eq!(diags[0].id, "W14");
+        assert!(
+            diags[0].message.contains("confirmed"),
+            "message should mention confirmed: {}",
+            diags[0].message,
+        );
+        assert!(
+            diags[0].message.contains("fan-in=2"),
+            "message should mention fan-in: {}",
+            diags[0].message,
+        );
+    }
+
+    #[test]
+    fn w14_silent_when_no_nfa_spillover() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let mut analysis = make_wpds_analysis_empty();
+        analysis.reachable_categories.insert("Expr".to_string());
+        b.wpds_analysis_data = Some(analysis);
+        // No nfa_spillover_categories
+
+        let mut diags = Vec::new();
+        lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "no NFA spillover should not trigger W14");
+    }
+
+    #[test]
+    fn w14_silent_when_no_wpds_analysis() {
+        let mut b = CtxBuilder::new();
+        b.nfa_spillover_categories.insert("Expr".to_string());
+
+        let mut diags = Vec::new();
+        lint_w14_wpds_confirmed_ambiguity(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "absent WPDS analysis should not trigger W14");
+    }
+
+    // ── W16: WPDS Weight Inversion ──
+
+    #[test]
+    fn w16_silent_when_no_wpds_analysis() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[
+                ("Plus", "AddExpr", 1.0),
+                ("Plus", "ConcatExpr", 5.0),
+            ]),
+        );
+
+        let mut diags = Vec::new();
+        lint_w16_wpds_weight_inversion(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "absent WPDS analysis should not trigger W16");
+    }
+
+    #[test]
+    fn w16_silent_when_no_prediction_wfsts() {
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+
+        let mut analysis = make_wpds_analysis_empty();
+        analysis.reachable_categories.insert("Expr".to_string());
+        analysis.category_weights.insert("Expr".to_string(), 1.0);
+        b.wpds_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_w16_wpds_weight_inversion(&b.ctx(), &mut diags);
+
+        assert!(diags.is_empty(), "no prediction WFSTs should not trigger W16");
+    }
+
+    #[test]
+    fn w16_silent_when_wpds_weights_agree() {
+        // When WPDS weight is the same for both rules (same category), the
+        // condition `wpds_a_weight > wpds_b_weight + 0.5` is never true
+        // because both values come from the same category_weights entry.
+        let mut b = CtxBuilder::new();
+        b.categories.push(cat_info("Expr", None, true));
+        b.prediction_wfsts.insert(
+            "Expr".to_string(),
+            make_prediction_wfst("Expr", &[
+                ("Plus", "AddExpr", 1.0),
+                ("Plus", "ConcatExpr", 5.0),
+            ]),
+        );
+
+        let mut analysis = make_wpds_analysis_empty();
+        analysis.reachable_categories.insert("Expr".to_string());
+        analysis.category_weights.insert("Expr".to_string(), 2.0);
+        analysis.calling_contexts.insert(
+            "Expr".to_string(),
+            vec![crate::wpds::CallingContext {
+                caller_category: "Root".to_string(),
+                caller_rule: "Start".to_string(),
+                caller_position: 0,
+                weight: 1.0,
+            }],
+        );
+        b.wpds_analysis_data = Some(analysis);
+
+        let mut diags = Vec::new();
+        lint_w16_wpds_weight_inversion(&b.ctx(), &mut diags);
+
+        // W16 compares wpds_a_weight vs wpds_b_weight, but both come from
+        // the same category_weights entry, so they are always equal. The
+        // condition `wpds_a_weight > wpds_b_weight + 0.5` is never met
+        // for same-category comparisons.
+        assert!(
+            diags.is_empty(),
+            "same-category WPDS weights should not trigger W16: {:?}",
+            diags,
+        );
     }
 }

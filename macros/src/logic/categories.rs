@@ -9,8 +9,8 @@
 //! - Congruence rules for equality
 
 use super::common::{
-    compute_category_reachability, has_collection_field, in_cat_filter, is_multi_binder,
-    relation_names, CategoryFilter,
+    compute_category_reachability, compute_demanded_categories, filter_reachable_by_demand,
+    has_collection_field, in_cat_filter, is_multi_binder, relation_names, CategoryFilter,
 };
 use crate::ast::grammar::TermParam;
 use crate::ast::{
@@ -25,23 +25,65 @@ use syn::Ident;
 ///
 /// When `cat_filter` is `Some`, only generates rules for categories in the filter set.
 /// This is used for the core Ascent struct in SCC splitting.
+///
+/// ## A-RT06: Demand-Driven Relation Population
+///
+/// Cross-category deconstruction rules are filtered by demand analysis: only `(src, tgt)`
+/// pairs where `tgt` is referenced by at least one equation, rewrite, or logic rule are
+/// generated. Self-loop pairs `(src, src)` are always kept. This avoids eagerly populating
+/// category relations with subterms that no rule ever reads.
 pub fn generate_category_rules(language: &LanguageDef, cat_filter: CategoryFilter) -> TokenStream {
     let mut rules = Vec::new();
 
     // Compute reachability for pruning dead cross-category rules
     let reachable = compute_category_reachability(language);
 
+    // A-RT06: Demand-driven filtering — only generate deconstruction for (src, tgt) pairs
+    // where tgt is referenced by at least one equation/rewrite/logic rule body.
+    let demanded = compute_demanded_categories(language);
+    let demand_filtered = filter_reachable_by_demand(&reachable, &demanded);
+
+    // Emit lint diagnostic when demand filtering prunes pairs (only for the main struct,
+    // not for the core struct where cat_filter is Some — avoids duplicate diagnostics).
+    if cat_filter.is_none() {
+        let pruned_count = reachable.len() - demand_filtered.len();
+        if pruned_count > 0 {
+            let pruned_pairs: Vec<String> = reachable
+                .difference(&demand_filtered)
+                .map(|(s, t)| format!("({}, {})", s, t))
+                .collect();
+            mettail_prattail::lint::emit_diagnostic(&mettail_prattail::lint::LintDiagnostic {
+                id: "G34",
+                name: "demand-driven-deconstruction",
+                severity: mettail_prattail::lint::LintSeverity::Note,
+                category: None,
+                rule: None,
+                message: format!(
+                    "A-RT06: pruned {} unreferenced cross-category deconstruction pair(s): {}",
+                    pruned_count,
+                    pruned_pairs.join(", "),
+                ),
+                hint: Some(
+                    "these (src, tgt) pairs are structurally reachable but no equation/rewrite/logic rule references tgt"
+                        .to_string(),
+                ),
+                grammar_name: Some(language.name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+
     // For core struct, further restrict reachable to only core-category pairs
     let core_reachable;
     let effective_reachable = if let Some(filter) = cat_filter {
-        core_reachable = reachable
+        core_reachable = demand_filtered
             .iter()
             .filter(|(s, t)| filter.contains(s) && filter.contains(t))
             .cloned()
             .collect();
         &core_reachable
     } else {
-        &reachable
+        &demand_filtered
     };
 
     // Consolidated subterm extraction: one rule per reachable (src, tgt) pair
@@ -66,8 +108,34 @@ pub fn generate_category_rules(language: &LanguageDef, cat_filter: CategoryFilte
         // (e.g., PDrop(NQuote(P)) → P) before inserting into the category relation.
         // Without this, cancellation pairs introduced by rewrites would persist
         // as un-collapsed terms in the Ascent fixpoint.
+        //
+        // BCG05: Normalize-on-insert deduplication.
+        // Before normalizing, compute a structural hash of the pre-normalized term
+        // and check a thread-local HashSet. If the hash was already seen, skip the
+        // entire rule firing — the normalized form was already inserted in a prior
+        // iteration. This avoids redundant normalize() calls when the same term
+        // appears via multiple rewrite paths.
         rules.push(quote! {
-            #cat_lower(c1.clone().normalize()) <-- #cat_lower(c0), #rw_rel(c0, c1);
+            #cat_lower(c1.clone().normalize()) <-- #cat_lower(c0), #rw_rel(c0, c1),
+                if {
+                    use std::hash::{Hash, Hasher};
+                    let mut __bcg05_h = std::hash::DefaultHasher::new();
+                    c1.hash(&mut __bcg05_h);
+                    let __bcg05_hash = __bcg05_h.finish();
+                    thread_local! {
+                        static __BCG05_EXPAND: std::cell::RefCell<(u64, std::collections::HashSet<u64>)> =
+                            std::cell::RefCell::new((0, std::collections::HashSet::new()));
+                    }
+                    let __epoch = mettail_runtime::bcg05_epoch();
+                    __BCG05_EXPAND.with(|s| {
+                        let mut guard = s.borrow_mut();
+                        if guard.0 != __epoch {
+                            guard.0 = __epoch;
+                            guard.1.clear();
+                        }
+                        guard.1.insert(__bcg05_hash)
+                    })
+                };
         });
 
         // PERFORMANCE OPTIMIZATION (2026-01-27):

@@ -10,7 +10,7 @@ relation term(Term);
 
 #[ds(crate::eqrel)] relation eq_term(Term, Term);
 
-relation rw_term(Term, Term);
+#[ds(crate::dual_indexed)] relation rw_term(Term, Term);
 
 relation step_term(Term);
 
@@ -45,7 +45,8 @@ term(sub.clone()) <--
 
 term(c1.clone().normalize()) <--
     term(c0),
-    rw_term(c0, c1);
+    rw_term(c0, c1),
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); c1.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_EXPAND : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_EXPAND.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) };
 
 rw_term(t.clone(), match t {
     Term::ApplyTerm(_, arg) => Term::ApplyTerm(Box::new(new_lam.clone()), arg.clone()),
@@ -85,6 +86,8 @@ eq_term(t.clone(), t.clone()) <--
 eq_term(s.clone(), t.clone()) <--
     term(s),
     term(t),
+    if std::mem::discriminant(s) == std::mem::discriminant(t),
+    if matches!(s, Term::App(..)),
     for (s_f0, s_f1, t_f0, t_f1) in { std::thread_local! { static POOL_TERM_EQ_CONG_0 : std::cell::Cell < Vec < (Term, Term, Term, Term) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_TERM_EQ_CONG_0.with(| p | p.take()); buf.clear(); match (s, t) {
         (Term::App(sf0, sf1), Term::App(tf0, tf1)) => {
             buf.push((sf0.as_ref().clone(), sf1.as_ref().clone(), tf0.as_ref().clone(), tf1.as_ref().clone()));
@@ -105,6 +108,7 @@ rw_term(s_orig.clone(), t) <--
     let s_f0_deref_f0_body_boxed = s_f0_deref_f0.unsafe_body(),
     let s_f0_deref_f0_body = &** s_f0_deref_f0_body_boxed,
     let s_f1_deref = &** s_f1,
+    if { use std::hash::{ Hash, Hasher }; let mut __bcg05_h = std::hash::DefaultHasher::new(); s.hash(& mut __bcg05_h); let __bcg05_hash = __bcg05_h.finish(); thread_local! { static __BCG05_RULE : std::cell::RefCell < (u64, std::collections::HashSet < u64 >) > = std::cell::RefCell::new((0, std::collections::HashSet::new())); } let __epoch = mettail_runtime::bcg05_epoch(); __BCG05_RULE.with(| s | { let mut guard = s.borrow_mut(); if guard.0 != __epoch { guard.0 = __epoch; guard.1.clear(); } guard.1.insert(__bcg05_hash) }) },
     let t = ({ let (__binder, __body) = ((s_f0_deref_f0.clone()).clone()).unbind(); (* __body).substitute_term(& __binder.0, & (s_f1_deref.clone()).clone()) }).normalize();
 
 rw_term(lhs.clone(), rhs) <--
@@ -121,6 +125,7 @@ rw_term(lhs.clone(), match (lhs, vi) {
     _ => unreachable!(),
 }) <--
     term(lhs),
+    if matches!(lhs, Term::App(..)),
     for (field_val, vi) in { std::thread_local! { static POOL_TERM_SCONG_TERM : std::cell::Cell < Vec < (Term, usize) >> = const { std::cell::Cell::new(Vec::new()) }; } let mut buf = POOL_TERM_SCONG_TERM.with(| p | p.take()); buf.clear(); match lhs {
         Term::App(x0, x1) => {
             buf.push(((** x0).clone(), 0usize));

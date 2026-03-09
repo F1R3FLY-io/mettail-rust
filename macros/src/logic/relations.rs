@@ -10,6 +10,7 @@ use crate::ast::language::LanguageDef;
 use crate::ast::types::EvalMode;
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
+use std::collections::BTreeSet;
 
 /// One relation entry for extraction: (field name ident, param type names as strings).
 pub struct RelationForExtraction {
@@ -110,8 +111,19 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
     out
 }
 
-/// Generate all relation declarations for a theory
-pub fn generate_relations(language: &LanguageDef) -> TokenStream {
+/// Generate all relation declarations for a theory.
+///
+/// Note: ALL categories get their full relation set (cat, eq_cat, rw_cat, fold_cat)
+/// declared. Ascent requires relation declarations to match all rule references.
+/// Even if a category is not "demanded" by any user equation/rewrite/logic rule,
+/// auto-generated rules (congruence, equation-rewrite closure) may reference its
+/// eq/rw relations. The ART06 demand filtering applies to RULES, not relations.
+///
+/// The `demanded` parameter is accepted for API consistency but not used for
+/// relation filtering. Categories not in the demanded set have their RULES
+/// skipped (reflexivity, congruence, user equations, eq-rw closure) but their
+/// relations remain declared.
+pub fn generate_relations(language: &LanguageDef, _demanded: &BTreeSet<String>) -> TokenStream {
     let mut relations = Vec::new();
 
     for lang_type in &language.types {
@@ -133,18 +145,24 @@ pub fn generate_relations(language: &LanguageDef) -> TokenStream {
             relation #eq_rel(#cat, #cat);
         });
 
-        // Rewrite relation (typed)
+        // Rewrite relation (typed) — dual-indexed for O(1) lookups on both columns.
+        // A-RT03: Uses BinaryRel with forward + reverse hash maps so that body
+        // clauses binding either column get hash-based index access.
         relations.push(quote! {
+            #[ds(crate::dual_indexed)]
             relation #rw_rel(#cat, #cat);
         });
 
-        // Fold (big-step eval) relation, only if this category has fold-mode constructors
+        // Fold (big-step eval) relation, only if this category has fold-mode constructors.
+        // A-RT03: dual-indexed like rw_cat — fold rules query column 0 in recursive
+        // positions, but custom logic may query column 1.
         let has_fold = language
             .terms
             .iter()
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
         if has_fold {
             relations.push(quote! {
+                #[ds(crate::dual_indexed)]
                 relation #fold_rel(#cat, #cat);
             });
         }
@@ -202,7 +220,10 @@ fn generate_collection_projection_relations(language: &LanguageDef) -> Vec<Token
             // Generate relation name: <constructor_lowercase>_contains
             let rel_name = format_ident!("{}_contains", constructor.to_string().to_lowercase());
 
+            // A-RT03: dual-indexed — population rules bind column 0 (parent),
+            // seeding rules scan all rows, custom logic may bind column 1 (element).
             relations.push(quote! {
+                #[ds(crate::dual_indexed)]
                 relation #rel_name(#parent_cat, #elem_cat);
             });
         }

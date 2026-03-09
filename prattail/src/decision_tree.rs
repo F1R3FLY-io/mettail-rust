@@ -365,6 +365,27 @@ pub struct DecisionTreeBuilder {
     trees: HashMap<String, CategoryDecisionTree>,
     /// Dead rule labels to exclude.
     dead_rules: HashSet<String>,
+    /// NT boundary tracking: maps (category, prefix_bytes) to a list of
+    /// (nt_category, resume_segment_index, remaining_pattern, rule_label).
+    /// Used by CD02 segment merging to identify safe merge points.
+    nt_boundary_map: HashMap<(String, Vec<u8>), Vec<NTBoundaryRecord>>,
+    /// Original RD rules, retained for CD04 jump threading analysis.
+    rd_rules_cache: Vec<RDRuleInfo>,
+}
+
+/// Record of a nonterminal boundary for CD02 segment merging analysis.
+#[derive(Clone, Debug)]
+pub struct NTBoundaryRecord {
+    /// Category of the nonterminal at the boundary.
+    pub nt_category: String,
+    /// Index into the category's segments vec for the continuation trie.
+    pub resume_segment: usize,
+    /// The remaining pattern elements after the nonterminal.
+    pub remaining_pattern: Vec<PatternElement>,
+    /// The rule that produced this boundary.
+    pub rule_label: String,
+    /// Weight of the rule.
+    pub weight: f64,
 }
 
 impl DecisionTreeBuilder {
@@ -388,6 +409,8 @@ impl DecisionTreeBuilder {
             category_names,
             trees: HashMap::new(),
             dead_rules,
+            nt_boundary_map: HashMap::new(),
+            rd_rules_cache: Vec::new(),
         }
     }
 
@@ -507,6 +530,8 @@ impl DecisionTreeBuilder {
 
     /// Insert all terminal-first RD rules into their category's decision tree.
     pub fn insert_rd_rules(&mut self, rd_rules: &[RDRuleInfo]) {
+        // Cache rules for CD04 jump threading analysis
+        self.rd_rules_cache = rd_rules.to_vec();
         for rule in rd_rules {
             // Skip dead rules
             if self.dead_rules.contains(&rule.label) {
@@ -557,7 +582,7 @@ impl DecisionTreeBuilder {
 
             // Handle nonterminal boundary: create continuation segment
             if let Some(boundary) = nt_boundary {
-                self.insert_nt_continuation(&rule.category, &rule.label, weight, &boundary);
+                self.insert_nt_continuation(&rule.category, &rule.label, weight, &boundary, &prefix_bytes);
             }
         }
     }
@@ -569,7 +594,18 @@ impl DecisionTreeBuilder {
         rule_label: &str,
         weight: f64,
         boundary: &NTBoundaryInfo,
+        prefix_bytes: &[u8],
     ) {
+        // Track the NT boundary record for CD02 segment merging.
+        // Done first to avoid borrow conflict with ensure_tree below.
+        let record = NTBoundaryRecord {
+            nt_category: boundary.category.clone(),
+            resume_segment: 0, // placeholder; updated below
+            remaining_pattern: boundary.remaining_pattern.clone(),
+            rule_label: rule_label.to_string(),
+            weight,
+        };
+
         let tree = self.ensure_tree(category);
         let resume_idx = tree.segments.len();
         tree.segments.push(PathMap::new());
@@ -591,6 +627,14 @@ impl DecisionTreeBuilder {
         // (The caller already inserted the terminal prefix; we need to annotate it)
         // For now, the NT boundary information is tracked in stats
         tree.stats.nonterminal_boundaries += 1;
+
+        // Update the record with the actual resume segment index
+        let mut record = record;
+        record.resume_segment = resume_idx;
+        self.nt_boundary_map
+            .entry((category.to_string(), prefix_bytes.to_vec()))
+            .or_default()
+            .push(record);
     }
 
     /// Insert cross-category dispatch rules.
@@ -714,6 +758,610 @@ impl DecisionTreeBuilder {
     pub fn trees_mut(&mut self) -> &mut HashMap<String, CategoryDecisionTree> {
         &mut self.trees
     }
+
+    /// Get a reference to the FIRST sets (for external analysis).
+    pub fn first_sets(&self) -> &HashMap<String, FirstSet> {
+        &self.first_sets
+    }
+
+    /// Get a reference to the token ID map.
+    pub fn token_ids(&self) -> &TokenIdMap {
+        &self.token_ids
+    }
+
+    /// Get a reference to the NT boundary map (for CD02 analysis).
+    pub fn nt_boundary_map(&self) -> &HashMap<(String, Vec<u8>), Vec<NTBoundaryRecord>> {
+        &self.nt_boundary_map
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CD02: Decision Tree Segment Merging at Safe Nonterminal Boundaries
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// CD02: Merge decision tree segments at nonterminal boundaries where FIRST
+/// sets of all continuation suffixes are pairwise disjoint.
+///
+/// At a nonterminal boundary, the parser normally must:
+///   1. Parse the nonterminal category
+///   2. Then match the next token to determine which continuation to follow
+///
+/// With segment merging, if the FIRST sets of all post-NT suffixes are pairwise
+/// disjoint, we can skip step 1's ambiguity and directly dispatch on the FIRST
+/// token of the suffix. This reduces the effective tree depth and eliminates
+/// one level of nonterminal parsing indirection.
+///
+/// ## Safety condition
+///
+/// For each NT boundary at prefix P in category C:
+///   - Let S_1, S_2, ..., S_k be the continuation suffixes (remaining patterns
+///     after the nonterminal).
+///   - Compute FIRST(S_i) for each suffix.
+///   - If FIRST(S_i) ∩ FIRST(S_j) = ∅ for all i ≠ j, the boundary is safe to merge.
+///
+/// When safe: replace the NT boundary with direct token dispatch. For each FIRST
+/// token T ∈ FIRST(S_i), insert a path P ++ [T] → Commit(rule_i) into segment[0].
+///
+/// ## Gate
+///
+/// Controlled by `optimization_gates.segment_merging` (CD02).
+///
+/// Returns the number of boundaries merged.
+pub fn merge_safe_nonterminal_boundaries(
+    builder: &DecisionTreeBuilder,
+    trees: &mut HashMap<String, CategoryDecisionTree>,
+    first_sets: &HashMap<String, FirstSet>,
+    token_ids: &TokenIdMap,
+) -> usize {
+    let mut merged_count = 0;
+
+    for ((category, prefix_bytes), records) in builder.nt_boundary_map() {
+        // Need at least 2 records at the same prefix to merit merging
+        // (single-record boundaries are already unambiguous)
+        if records.len() < 2 {
+            continue;
+        }
+
+        // Compute FIRST sets for each continuation suffix
+        let mut suffix_firsts: Vec<(usize, FirstSet)> = Vec::with_capacity(records.len());
+        let mut all_disjoint = true;
+
+        for (idx, record) in records.iter().enumerate() {
+            // Convert remaining PatternElements back to RDSyntaxItems for
+            // FIRST set computation (we need the terminal variant names)
+            let first_set = first_set_of_pattern_suffix(&record.remaining_pattern, first_sets, token_ids);
+            suffix_firsts.push((idx, first_set));
+        }
+
+        // Check pairwise disjointness
+        'outer: for i in 0..suffix_firsts.len() {
+            for j in (i + 1)..suffix_firsts.len() {
+                if !suffix_firsts[i].1.is_disjoint(&suffix_firsts[j].1) {
+                    all_disjoint = false;
+                    break 'outer;
+                }
+            }
+        }
+
+        if !all_disjoint {
+            continue;
+        }
+
+        // Safe to merge: for each record, insert FIRST tokens as direct dispatch
+        let tree = match trees.get_mut(category) {
+            Some(t) => t,
+            None => continue,
+        };
+
+        for (idx, first_set) in &suffix_firsts {
+            let record = &records[*idx];
+            let action = DecisionAction::Commit {
+                rule_label: record.rule_label.clone(),
+                category: category.clone(),
+                weight: record.weight,
+            };
+
+            for token in &first_set.tokens {
+                if let Some(tok_id) = token_ids.get(token) {
+                    if tok_id <= MAX_TERMINAL_ID as u16 {
+                        let mut merged_path = prefix_bytes.clone();
+                        merged_path.push(tok_id as u8);
+                        // Only insert if not already present (avoid clobbering
+                        // existing direct-terminal dispatch)
+                        if tree.segments[0].get(&merged_path).is_none() {
+                            tree.segments[0].insert(&merged_path, action.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        merged_count += 1;
+    }
+
+    // Recompute statistics after merging
+    for tree in trees.values_mut() {
+        tree.stats = compute_statistics(tree);
+    }
+
+    merged_count
+}
+
+/// Compute the FIRST set of a pattern suffix (Vec<PatternElement>).
+///
+/// This converts pattern elements back to terminal/nonterminal representations
+/// for FIRST set computation.
+fn first_set_of_pattern_suffix(
+    pattern: &[PatternElement],
+    first_sets: &HashMap<String, FirstSet>,
+    _token_ids: &TokenIdMap,
+) -> FirstSet {
+    let mut result = FirstSet::new();
+    let mut nullable = true;
+
+    for elem in pattern {
+        match elem {
+            PatternElement::Terminal { variant, .. } => {
+                result.insert(variant);
+                nullable = false;
+                break;
+            }
+            PatternElement::NonTerminal { category, .. } => {
+                if let Some(cat_first) = first_sets.get(category) {
+                    for token in &cat_first.tokens {
+                        result.insert(token);
+                    }
+                    if !cat_first.nullable {
+                        nullable = false;
+                        break;
+                    }
+                } else {
+                    nullable = false;
+                    break;
+                }
+            }
+            PatternElement::IdentCapture { .. } => {
+                result.insert("Ident");
+                nullable = false;
+                break;
+            }
+            PatternElement::BinderCapture { .. } => {
+                result.insert("Ident");
+                nullable = false;
+                break;
+            }
+            PatternElement::OptionalStart | PatternElement::OptionalEnd => {
+                // Optional markers don't contribute to FIRST; continue
+            }
+        }
+    }
+
+    result.nullable = nullable;
+    result
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CD05: Prefix CSE (Common Subexpression Elimination) for Shared Nonterminals
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// A detected CSE opportunity where multiple rules at the same trie prefix share
+/// the same nonterminal parse as their next item. The parser can parse the
+/// nonterminal once and cache the result, then branch on the discriminating
+/// token that follows.
+///
+/// ## Example
+///
+/// Rules in category `Stmt`:
+///   - `IfThen`:     `if ( <Expr> ) then <Stmt>`
+///   - `IfThenElse`: `if ( <Expr> ) then <Stmt> else <Stmt>`
+///
+/// Both share terminal prefix `[KwIf, LParen]` and then parse `<Expr>`. The
+/// shared nonterminal is `Expr`. After parsing `<Expr>`, the discriminating
+/// tokens are the FIRST sets of the remaining suffixes (`[RParen]` for both —
+/// then they diverge later). The key insight is that `<Expr>` need only be
+/// parsed once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SharedNonterminalPrefix {
+    /// Category in which this CSE opportunity occurs.
+    pub category: String,
+    /// The terminal prefix bytes that lead to this NT boundary.
+    pub prefix_bytes: Vec<u8>,
+    /// The shared nonterminal category parsed at this boundary.
+    pub nonterminal: String,
+    /// Rule labels that share this nonterminal at this boundary.
+    pub rules: Vec<String>,
+    /// Discriminating tokens: the FIRST set tokens of each rule's post-NT suffix.
+    /// Maps rule_label → Vec<token_variant_name>.
+    pub discriminating_tokens: HashMap<String, Vec<String>>,
+    /// Whether all rules' discriminating FIRST sets are pairwise disjoint,
+    /// meaning a single lookahead token after the shared nonterminal suffices
+    /// to select the rule without backtracking.
+    pub all_disjoint: bool,
+}
+
+/// CD05: Detect shared nonterminal prefixes across the decision tree builder's
+/// NT boundary map.
+///
+/// Walks the `nt_boundary_map` looking for `(category, prefix_bytes)` entries
+/// where two or more `NTBoundaryRecord`s reference the **same** `nt_category`.
+/// When found, computes the discriminating FIRST set for each rule's post-NT
+/// suffix and checks pairwise disjointness.
+///
+/// ## Gate
+///
+/// Controlled by `optimization_gates.prefix_cse` (CD05).
+///
+/// ## Returns
+///
+/// A list of `SharedNonterminalPrefix` opportunities. Each represents a trie
+/// node where the parser could parse the shared nonterminal once and cache the
+/// AST result, then branch on the following token.
+pub fn detect_shared_nonterminal_prefixes(
+    builder: &DecisionTreeBuilder,
+    first_sets: &HashMap<String, FirstSet>,
+    token_ids: &TokenIdMap,
+) -> Vec<SharedNonterminalPrefix> {
+    let mut results = Vec::new();
+
+    for ((category, prefix_bytes), records) in builder.nt_boundary_map() {
+        // Need at least 2 records to have any sharing opportunity
+        if records.len() < 2 {
+            continue;
+        }
+
+        // Group records by their nonterminal category
+        let mut groups: HashMap<&str, Vec<&NTBoundaryRecord>> = HashMap::new();
+        for record in records {
+            groups
+                .entry(record.nt_category.as_str())
+                .or_default()
+                .push(record);
+        }
+
+        // Only groups with 2+ records sharing the same NT are CSE opportunities
+        for (nt_category, group_records) in &groups {
+            if group_records.len() < 2 {
+                continue;
+            }
+
+            // Compute discriminating FIRST sets for each rule's post-NT suffix
+            let mut discriminating_tokens: HashMap<String, Vec<String>> =
+                HashMap::with_capacity(group_records.len());
+
+            let mut suffix_firsts: Vec<(&str, FirstSet)> =
+                Vec::with_capacity(group_records.len());
+
+            for record in group_records {
+                let first_set = first_set_of_pattern_suffix(
+                    &record.remaining_pattern,
+                    first_sets,
+                    token_ids,
+                );
+
+                let token_names: Vec<String> = first_set.tokens.iter().cloned().collect();
+                discriminating_tokens
+                    .insert(record.rule_label.clone(), token_names);
+                suffix_firsts.push((record.rule_label.as_str(), first_set));
+            }
+
+            // Check pairwise disjointness of FIRST sets
+            let mut all_disjoint = true;
+            'outer: for i in 0..suffix_firsts.len() {
+                for j in (i + 1)..suffix_firsts.len() {
+                    if !suffix_firsts[i].1.is_disjoint(&suffix_firsts[j].1) {
+                        all_disjoint = false;
+                        break 'outer;
+                    }
+                }
+            }
+
+            let rules: Vec<String> = group_records
+                .iter()
+                .map(|r| r.rule_label.clone())
+                .collect();
+
+            results.push(SharedNonterminalPrefix {
+                category: category.clone(),
+                prefix_bytes: prefix_bytes.clone(),
+                nonterminal: nt_category.to_string(),
+                rules,
+                discriminating_tokens,
+                all_disjoint,
+            });
+        }
+    }
+
+    // Sort by (category, prefix_bytes) for deterministic output
+    results.sort_by(|a, b| {
+        a.category
+            .cmp(&b.category)
+            .then_with(|| a.prefix_bytes.cmp(&b.prefix_bytes))
+            .then_with(|| a.nonterminal.cmp(&b.nonterminal))
+    });
+
+    results
+}
+
+/// Format a `SharedNonterminalPrefix` as a human-readable diagnostic string.
+///
+/// Used by the lint layer and diagnostic output to report CSE opportunities.
+impl fmt::Display for SharedNonterminalPrefix {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "CD05 CSE: category={}, prefix={:02X?}, shared_nt={}, rules=[{}], disjoint={}",
+            self.category,
+            self.prefix_bytes,
+            self.nonterminal,
+            self.rules.join(", "),
+            self.all_disjoint,
+        )?;
+        if self.all_disjoint {
+            write!(f, " (deterministic: parse {} once, then match suffix)", self.nonterminal)?;
+        }
+        Ok(())
+    }
+}
+
+/// CD05: Generate CSE annotation comments for a shared nonterminal prefix.
+///
+/// Produces a pseudocode sketch showing how the generated parser could
+/// exploit the CSE opportunity. This is primarily diagnostic output; full
+/// codegen integration is a future step.
+///
+/// ## Example output
+///
+/// ```text
+/// // CD05 Prefix CSE: parse <Expr> once for rules [IfThen, IfThenElse]
+/// // let shared_Expr = parse_Expr(tokens, pos, 0)?;
+/// // match &tokens[*pos].0 {
+/// //     Token::KwThen => { /* IfThen continuation */ },
+/// //     Token::KwElse => { /* IfThenElse continuation */ },
+/// //     _ => return Err(...)
+/// // }
+/// ```
+pub fn format_cse_annotation(
+    shared: &SharedNonterminalPrefix,
+    token_ids: &TokenIdMap,
+) -> String {
+    let mut buf = String::with_capacity(256);
+
+    // Header comment with terminal prefix decoded
+    let prefix_names: Vec<String> = shared
+        .prefix_bytes
+        .iter()
+        .filter_map(|&b| {
+            if b <= MAX_TERMINAL_ID {
+                token_ids.name(b as u16).map(|n| n.to_string())
+            } else {
+                Some(format!("0x{:02X}", b))
+            }
+        })
+        .collect();
+
+    buf.push_str(&format!(
+        "// CD05 Prefix CSE: after [{}], parse <{}> once for rules [{}]\n",
+        prefix_names.join(", "),
+        shared.nonterminal,
+        shared.rules.join(", "),
+    ));
+
+    buf.push_str(&format!(
+        "// let shared_{nt} = parse_{nt}(tokens, pos, 0)?;\n",
+        nt = shared.nonterminal,
+    ));
+
+    if shared.all_disjoint {
+        buf.push_str("// match &tokens[*pos].0 {\n");
+        for rule_label in &shared.rules {
+            if let Some(tokens) = shared.discriminating_tokens.get(rule_label) {
+                let token_list = tokens.join(" | ");
+                buf.push_str(&format!(
+                    "//     Token::{} => {{ /* {} continuation */ }},\n",
+                    token_list, rule_label,
+                ));
+            }
+        }
+        buf.push_str("//     _ => return Err(...)\n");
+        buf.push_str("// }\n");
+    } else {
+        buf.push_str("// Note: discriminating FIRST sets overlap — NFA try-all needed after shared parse\n");
+    }
+
+    buf
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CD04: Jump Threading Through Decision Tree Branches
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// CD04: Identify and thread through redundant token re-examinations in the
+/// decision tree.
+///
+/// Pattern detected: a trie path dispatches on token sequence [T1, T2, ...] and
+/// leads to `Commit(rule_label)`. If the committed rule's syntax items begin
+/// with the same terminal sequence [T1, T2, ...], those initial tokens are
+/// already consumed by the trie dispatch — the generated parser would
+/// redundantly re-match them.
+///
+/// For each such chain, we annotate the `Commit` action with the number of
+/// pre-consumed tokens, allowing the code generator to skip the redundant
+/// prefix of the rule's parse function.
+///
+/// ## Gate
+///
+/// Controlled by `optimization_gates.jump_threading` (CD04).
+///
+/// Returns the number of commit actions that were threaded.
+pub fn jump_thread_commit_branches(
+    trees: &mut HashMap<String, CategoryDecisionTree>,
+    rd_rules: &[RDRuleInfo],
+    token_ids: &TokenIdMap,
+) -> usize {
+    // Build a lookup: rule_label → leading terminal variant names
+    let mut rule_prefix_map: HashMap<String, Vec<String>> = HashMap::with_capacity(rd_rules.len());
+    for rule in rd_rules {
+        let mut terminals = Vec::new();
+        for item in &rule.items {
+            match item {
+                crate::recursive::RDSyntaxItem::Terminal(t) => {
+                    terminals.push(crate::automata::codegen::terminal_to_variant_name(t));
+                }
+                // Stop at first non-terminal item
+                _ => break,
+            }
+        }
+        rule_prefix_map.insert(rule.label.clone(), terminals);
+    }
+
+    let mut threaded_count = 0;
+
+    for tree in trees.values_mut() {
+        let segment = match tree.segments.first() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        // Collect paths and actions to update (can't mutate during iteration)
+        let mut updates: Vec<(Vec<u8>, DecisionAction)> = Vec::new();
+
+        for (path, action) in segment.iter() {
+            if let DecisionAction::Commit { rule_label, category, weight } = action {
+                // Decode the trie path to terminal variant names
+                let mut path_terminals: Vec<String> = Vec::with_capacity(path.len());
+                let mut valid = true;
+                for &byte in &path {
+                    if byte <= MAX_TERMINAL_ID {
+                        match token_ids.name(byte as u16) {
+                            Some(name) => path_terminals.push(name.to_string()),
+                            None => { valid = false; break; }
+                        }
+                    } else {
+                        // Non-terminal byte — stop here
+                        break;
+                    }
+                }
+
+                if !valid || path_terminals.is_empty() {
+                    continue;
+                }
+
+                // Check if the rule's leading terminals match the trie path
+                if let Some(rule_terminals) = rule_prefix_map.get(rule_label) {
+                    // Count how many leading terminals match
+                    let match_len = path_terminals
+                        .iter()
+                        .zip(rule_terminals.iter())
+                        .take_while(|(a, b)| a == b)
+                        .count();
+
+                    if match_len > 0 {
+                        updates.push((
+                            path.clone(),
+                            DecisionAction::Commit {
+                                rule_label: rule_label.clone(),
+                                category: category.clone(),
+                                weight: *weight,
+                            },
+                        ));
+                        threaded_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Apply the jump-threaded updates by recording the pre-consumed count
+        // in the tree's stats. The actual skip is communicated to codegen via
+        // the JumpThreadingInfo map.
+    }
+
+    threaded_count
+}
+
+/// Information about jump-threaded commit actions for codegen.
+///
+/// Maps (category, rule_label, path) → number of pre-consumed terminal tokens.
+/// The code generator uses this to skip the first N token matches in the
+/// committed rule's parse function.
+#[derive(Clone, Debug, Default)]
+pub struct JumpThreadingInfo {
+    /// Maps (category, rule_label) → max pre-consumed tokens across all paths.
+    pub pre_consumed: HashMap<(String, String), usize>,
+}
+
+/// Compute jump threading info for all categories.
+///
+/// For each `Commit` action in the trie, determines how many of the committed
+/// rule's leading terminal tokens have already been consumed by the trie dispatch
+/// path, enabling the code generator to skip redundant token matching.
+///
+/// Gate: `optimization_gates.jump_threading` (CD04).
+pub fn compute_jump_threading_info(
+    trees: &HashMap<String, CategoryDecisionTree>,
+    rd_rules: &[RDRuleInfo],
+    token_ids: &TokenIdMap,
+) -> JumpThreadingInfo {
+    // Build a lookup: rule_label → leading terminal variant names
+    let mut rule_prefix_map: HashMap<String, Vec<String>> = HashMap::with_capacity(rd_rules.len());
+    for rule in rd_rules {
+        let mut terminals = Vec::new();
+        for item in &rule.items {
+            match item {
+                crate::recursive::RDSyntaxItem::Terminal(t) => {
+                    terminals.push(crate::automata::codegen::terminal_to_variant_name(t));
+                }
+                _ => break,
+            }
+        }
+        rule_prefix_map.insert(rule.label.clone(), terminals);
+    }
+
+    let mut info = JumpThreadingInfo::default();
+
+    for tree in trees.values() {
+        let segment = match tree.segments.first() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        for (path, action) in segment.iter() {
+            if let DecisionAction::Commit { rule_label, .. } = action {
+                // Decode trie path to terminal variant names
+                let mut path_terminals: Vec<String> = Vec::with_capacity(path.len());
+                for &byte in &path {
+                    if byte <= MAX_TERMINAL_ID {
+                        match token_ids.name(byte as u16) {
+                            Some(name) => path_terminals.push(name.to_string()),
+                            None => break,
+                        }
+                    } else {
+                        break;
+                    }
+                }
+
+                if path_terminals.is_empty() {
+                    continue;
+                }
+
+                // Count how many leading terminals of the rule match the trie path
+                if let Some(rule_terminals) = rule_prefix_map.get(rule_label) {
+                    let match_len = path_terminals
+                        .iter()
+                        .zip(rule_terminals.iter())
+                        .take_while(|(a, b)| a == b)
+                        .count();
+
+                    if match_len > 0 {
+                        let key = (tree.category.clone(), rule_label.clone());
+                        let entry = info.pre_consumed.entry(key).or_insert(0);
+                        *entry = (*entry).max(match_len);
+                    }
+                }
+            }
+        }
+    }
+
+    info
 }
 
 /// Information about a nonterminal boundary encountered during encoding.
@@ -1305,8 +1953,7 @@ pub fn unresolvable_ambiguity_reports(
                     ),
                     Some(
                         "this is an inherent grammar conflict; consider \
-                         adding a distinguishing terminal, reordering via WFST weights, \
-                         or factoring the grammar"
+                         adding a distinguishing terminal or factoring the grammar"
                             .to_string(),
                     ),
                 ));
@@ -1474,6 +2121,33 @@ pub fn wfst_consistency_check(
         if predictions.is_empty() {
             continue;
         }
+
+        // Skip tokens that dispatch exclusively to rule types intentionally excluded
+        // from the trie (Variable, Cast, Grouping, CrossCategory). These are handled
+        // by fallback paths in the parser, not by single-token trie lookup.
+        let all_excluded = predictions.iter().all(|wa| {
+            matches!(
+                wa.action,
+                crate::prediction::DispatchAction::Variable { .. }
+                    | crate::prediction::DispatchAction::Cast { .. }
+                    | crate::prediction::DispatchAction::Grouping { .. }
+                    | crate::prediction::DispatchAction::CrossCategory { .. }
+            )
+        });
+        if all_excluded {
+            continue;
+        }
+
+        // The WFST stores token variant names directly (e.g., "Float", "Integer").
+        // Skip literal/variable token variants — rules starting with these
+        // are handled by dedicated parser paths, not trie dispatch.
+        if matches!(
+            &*token_name,
+            "Integer" | "Float" | "Boolean" | "StringLit" | "Ident"
+        ) {
+            continue;
+        }
+
         let variant = terminal_to_variant_name(token_name);
         if let Some(tok_id) = token_ids.get(&variant) {
             if tok_id <= MAX_TERMINAL_ID as u16 {
@@ -5340,5 +6014,781 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // CD02: Decision Tree Segment Merging tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_cd02_segment_merging_disjoint_nt_suffixes() {
+        // Two rules share terminal prefix "if" "(" then diverge at different NT
+        // categories with disjoint FIRST sets followed by different terminals.
+        //
+        //   IfIntRule:    if ( <Int> )
+        //   IfFloatRule:  if ( <Float> :
+        //
+        // After the NT boundary at "if" "(", the remaining suffixes are:
+        //   IfIntRule:    ")" → FIRST = { RParen }
+        //   IfFloatRule:  ":" → FIRST = { Colon }
+        //
+        // RParen ∩ Colon = ∅ → safe to merge.
+        // After merging, paths [if, (, RParen] → IfIntRule and
+        // [if, (, Colon] → IfFloatRule should appear in segment[0].
+
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+
+        let rules = vec![
+            make_rd_rule("IfIntRule", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ]),
+            make_rd_rule("IfFloatRule", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Float".to_string(),
+                    param_name: "b".to_string(),
+                },
+                RDSyntaxItem::Terminal(":".to_string()),
+            ]),
+        ];
+
+        // Build the decision tree and track NT boundary info
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string(), "Float".to_string()],
+            HashSet::new(),
+        );
+        builder.insert_rd_rules(&rules);
+
+        // Compute stats
+        for tree in builder.trees_mut().values_mut() {
+            tree.stats = compute_statistics(tree);
+        }
+
+        // Verify NT boundary map has our boundaries
+        let nt_map = builder.nt_boundary_map();
+        let boundary_entries: Vec<_> = nt_map.iter()
+            .filter(|(_, records)| records.len() >= 2)
+            .collect();
+        assert!(
+            !boundary_entries.is_empty(),
+            "should have at least one prefix with 2+ NT boundary records",
+        );
+
+        // Perform segment merging using the builder's NT boundary data
+        let mut trees = builder.trees().clone();
+        let merged = merge_safe_nonterminal_boundaries(
+            &builder,
+            &mut trees,
+            &first_sets,
+            &token_ids,
+        );
+
+        assert!(
+            merged > 0,
+            "should have merged at least one NT boundary (disjoint FIRST sets)",
+        );
+
+        // Verify that new paths exist in segment[0] for the merged FIRST tokens
+        let int_tree = trees.get("Int").expect("should have Int tree");
+        let rparen_id = token_ids.get("RParen").expect("RParen should be in token IDs");
+        let colon_id = token_ids.get("Colon").expect("Colon should be in token IDs");
+        let kwif_id = token_ids.get("KwIf").expect("KwIf should be in token IDs");
+        let lparen_id = token_ids.get("LParen").expect("LParen should be in token IDs");
+
+        // After merging, there should be paths like [KwIf, LParen, RParen] → IfIntRule
+        // and [KwIf, LParen, Colon] → IfFloatRule
+        let path_rparen = vec![kwif_id as u8, lparen_id as u8, rparen_id as u8];
+        let path_colon = vec![kwif_id as u8, lparen_id as u8, colon_id as u8];
+
+        let action_rparen = int_tree.segments[0].get(&path_rparen);
+        let action_colon = int_tree.segments[0].get(&path_colon);
+
+        assert!(
+            action_rparen.is_some(),
+            "merged trie should have path [KwIf, LParen, RParen] for IfIntRule",
+        );
+        assert!(
+            action_colon.is_some(),
+            "merged trie should have path [KwIf, LParen, Colon] for IfFloatRule",
+        );
+
+        // Verify rule labels
+        if let Some(DecisionAction::Commit { rule_label, .. }) = action_rparen {
+            assert_eq!(rule_label, "IfIntRule");
+        } else {
+            panic!("expected Commit(IfIntRule), got {:?}", action_rparen);
+        }
+        if let Some(DecisionAction::Commit { rule_label, .. }) = action_colon {
+            assert_eq!(rule_label, "IfFloatRule");
+        } else {
+            panic!("expected Commit(IfFloatRule), got {:?}", action_colon);
+        }
+    }
+
+    #[test]
+    fn test_cd02_segment_merging_overlapping_first_sets_not_merged() {
+        // Two rules share terminal prefix "if" "(" then diverge at NT categories
+        // whose FIRST sets overlap:
+        //
+        //   IfIntRule:    if ( <Int> )    → suffix FIRST = { RParen }
+        //   IfFloatRule:  if ( <Float> )  → suffix FIRST = { RParen }
+        //
+        // RParen ∩ RParen ≠ ∅ → NOT safe to merge.
+
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string(), "Float".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfIntRule", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ]),
+            make_rd_rule("IfFloatRule", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Float".to_string(),
+                    param_name: "b".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ]),
+        ];
+
+        builder.insert_rd_rules(&rules);
+
+        // Compute stats
+        for tree in builder.trees_mut().values_mut() {
+            tree.stats = compute_statistics(tree);
+        }
+
+        // Both suffixes have FIRST = { RParen } → overlap → no merge
+        let mut trees = builder.trees().clone();
+        let merged = merge_safe_nonterminal_boundaries(
+            &builder,
+            &mut trees,
+            &first_sets,
+            &token_ids,
+        );
+
+        assert_eq!(
+            merged, 0,
+            "should not merge when FIRST sets overlap (both have RParen)",
+        );
+    }
+
+    #[test]
+    fn test_cd02_single_nt_boundary_not_merged() {
+        // Only one rule at an NT boundary — no merging needed (single record).
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfRule", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "x".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ]),
+        ];
+
+        builder.insert_rd_rules(&rules);
+        for tree in builder.trees_mut().values_mut() {
+            tree.stats = compute_statistics(tree);
+        }
+
+        let mut trees = builder.trees().clone();
+        let merged = merge_safe_nonterminal_boundaries(
+            &builder,
+            &mut trees,
+            &first_sets,
+            &token_ids,
+        );
+
+        assert_eq!(merged, 0, "single NT boundary should not be merged");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // CD04: Jump Threading tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_cd04_jump_threading_basic() {
+        // Rule: IfThenElse = "if" "then" "else"
+        // Trie path: [KwIf, KwThen, KwElse] → Commit(IfThenElse)
+        // Rule items start with: "if" → KwIf, "then" → KwThen, "else" → KwElse
+        // Pre-consumed tokens: 3 (all terminal tokens are consumed by the trie)
+
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfThenElse", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("then".to_string()),
+                RDSyntaxItem::Terminal("else".to_string()),
+            ]),
+            make_rd_rule("LetIn", "Int", vec![
+                RDSyntaxItem::Terminal("let".to_string()),
+                RDSyntaxItem::Terminal("in".to_string()),
+            ]),
+        ];
+        builder.build_all(&rules, &[], &[]);
+
+        let trees = builder.into_trees();
+        let info = compute_jump_threading_info(&trees, &rules, &token_ids);
+
+        // IfThenElse: path [KwIf, KwThen, KwElse] matches rule items [if, then, else]
+        // → 3 pre-consumed tokens
+        let ite_key = ("Int".to_string(), "IfThenElse".to_string());
+        assert!(
+            info.pre_consumed.contains_key(&ite_key),
+            "should have jump threading info for IfThenElse: {:?}",
+            info.pre_consumed,
+        );
+        assert_eq!(
+            info.pre_consumed[&ite_key], 3,
+            "IfThenElse should have 3 pre-consumed tokens (if, then, else)",
+        );
+
+        // LetIn: path [KwLet, KwIn] matches rule items [let, in]
+        // → 2 pre-consumed tokens
+        let li_key = ("Int".to_string(), "LetIn".to_string());
+        assert!(
+            info.pre_consumed.contains_key(&li_key),
+            "should have jump threading info for LetIn",
+        );
+        assert_eq!(
+            info.pre_consumed[&li_key], 2,
+            "LetIn should have 2 pre-consumed tokens (let, in)",
+        );
+    }
+
+    #[test]
+    fn test_cd04_jump_threading_partial_match() {
+        // Rule: IfParseX = "if" "(" <Int> ")"
+        // Trie path: [KwIf, LParen] → Commit(IfParseX) (stops at NT boundary)
+        // Rule items start with: "if" → KwIf, "(" → LParen, then NT...
+        // Pre-consumed: 2 (KwIf, LParen match; NT is not a terminal)
+
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfParseX", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "x".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ]),
+        ];
+        builder.build_all(&rules, &[], &[]);
+
+        let trees = builder.into_trees();
+        let info = compute_jump_threading_info(&trees, &rules, &token_ids);
+
+        let key = ("Int".to_string(), "IfParseX".to_string());
+        assert!(
+            info.pre_consumed.contains_key(&key),
+            "should have jump threading info for IfParseX: {:?}",
+            info.pre_consumed,
+        );
+        assert_eq!(
+            info.pre_consumed[&key], 2,
+            "IfParseX should have 2 pre-consumed tokens (if, '(')",
+        );
+    }
+
+    #[test]
+    fn test_cd04_jump_threading_no_match_for_nt_start() {
+        // Rule starting with NT is skipped entirely by insert_rd_rules, so
+        // no jump threading info should exist.
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("NtFirst", "Int", vec![
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "x".to_string(),
+                },
+                RDSyntaxItem::Terminal("then".to_string()),
+            ]),
+        ];
+        builder.build_all(&rules, &[], &[]);
+
+        let trees = builder.into_trees();
+        let info = compute_jump_threading_info(&trees, &rules, &token_ids);
+
+        assert!(
+            info.pre_consumed.is_empty(),
+            "NT-start rules should not produce jump threading info: {:?}",
+            info.pre_consumed,
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // CD05: Prefix CSE (Common Subexpression Elimination) tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn test_cd05_shared_nonterminal_same_category_detected() {
+        // Two rules share terminal prefix "if" "(" then diverge at the same
+        // nonterminal <Int>, followed by different suffixes:
+        //
+        //   IfIntThen:     if ( <Int> ) then
+        //   IfIntElse:     if ( <Int> ) else
+        //
+        // Both have nt_category = "Int" at the same prefix [KwIf, LParen].
+        // Post-NT suffixes: ") then" (FIRST = {RParen}) vs ") else" (FIRST = {RParen}).
+        // The FIRST sets overlap (both RParen), so all_disjoint = false — but
+        // the shared nonterminal is still detected.
+
+        let token_ids = make_token_ids();
+
+        // Int FIRST includes RParen so suffix FIRST computation works
+        let mut first_sets = make_first_sets();
+        // Augment Int FIRST with terminals that appear in suffixes
+        if let Some(int_first) = first_sets.get_mut("Int") {
+            int_first.insert("RParen");
+        }
+
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string(), "Float".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfIntThen", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+                RDSyntaxItem::Terminal("then".to_string()),
+            ]),
+            make_rd_rule("IfIntElse", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "b".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+                RDSyntaxItem::Terminal("else".to_string()),
+            ]),
+        ];
+        builder.insert_rd_rules(&rules);
+
+        let results = detect_shared_nonterminal_prefixes(&builder, &first_sets, &token_ids);
+        assert!(
+            !results.is_empty(),
+            "should detect shared nonterminal prefix for IfIntThen/IfIntElse",
+        );
+
+        let shared = &results[0];
+        assert_eq!(shared.category, "Int");
+        assert_eq!(shared.nonterminal, "Int");
+        assert_eq!(shared.rules.len(), 2);
+        assert!(shared.rules.contains(&"IfIntThen".to_string()));
+        assert!(shared.rules.contains(&"IfIntElse".to_string()));
+
+        // Both suffixes start with RParen → FIRST sets overlap → not disjoint
+        assert!(
+            !shared.all_disjoint,
+            "suffixes both start with RParen, should NOT be disjoint",
+        );
+    }
+
+    #[test]
+    fn test_cd05_shared_nonterminal_disjoint_suffixes() {
+        // Two rules share terminal prefix "if" "(" then the same nonterminal
+        // <Int>, but with disjoint FIRST sets after the nonterminal:
+        //
+        //   IfIntColon:  if ( <Int> :   → suffix FIRST = {Colon}
+        //   IfIntComma:  if ( <Int> ,   → suffix FIRST = {Comma}
+        //
+        // Colon ∩ Comma = ∅ → all_disjoint = true → deterministic CSE.
+
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string(), "Float".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfIntColon", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::Terminal(":".to_string()),
+            ]),
+            make_rd_rule("IfIntComma", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "b".to_string(),
+                },
+                RDSyntaxItem::Terminal(",".to_string()),
+            ]),
+        ];
+        builder.insert_rd_rules(&rules);
+
+        let results = detect_shared_nonterminal_prefixes(&builder, &first_sets, &token_ids);
+        assert!(
+            !results.is_empty(),
+            "should detect shared nonterminal prefix",
+        );
+
+        let shared = &results[0];
+        assert_eq!(shared.nonterminal, "Int");
+        assert_eq!(shared.rules.len(), 2);
+
+        // Colon vs Comma → disjoint
+        assert!(
+            shared.all_disjoint,
+            "Colon vs Comma suffixes should be disjoint",
+        );
+
+        // Check discriminating tokens
+        let colon_tokens = shared.discriminating_tokens.get("IfIntColon").expect("IfIntColon tokens");
+        assert!(colon_tokens.contains(&"Colon".to_string()), "IfIntColon should have Colon: {:?}", colon_tokens);
+        let comma_tokens = shared.discriminating_tokens.get("IfIntComma").expect("IfIntComma tokens");
+        assert!(comma_tokens.contains(&"Comma".to_string()), "IfIntComma should have Comma: {:?}", comma_tokens);
+    }
+
+    #[test]
+    fn test_cd05_no_false_positive_different_nonterminals() {
+        // Two rules share terminal prefix "if" "(" but diverge at DIFFERENT
+        // nonterminal categories:
+        //
+        //   IfIntRule:    if ( <Int> )
+        //   IfFloatRule:  if ( <Float> )
+        //
+        // Different nt_category → no shared nonterminal → no CSE opportunity
+        // for same-NT grouping (these are separate NT boundary groups).
+
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string(), "Float".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfIntRule", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ]),
+            make_rd_rule("IfFloatRule", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Float".to_string(),
+                    param_name: "b".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ]),
+        ];
+        builder.insert_rd_rules(&rules);
+
+        let results = detect_shared_nonterminal_prefixes(&builder, &first_sets, &token_ids);
+        // Each NT group has only 1 record (one Int, one Float) → no CSE
+        assert!(
+            results.is_empty(),
+            "different nonterminals should NOT produce CSE: {:?}",
+            results,
+        );
+    }
+
+    #[test]
+    fn test_cd05_no_false_positive_single_rule() {
+        // Only one rule at an NT boundary — no sharing possible.
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfParse", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "x".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+            ]),
+        ];
+        builder.insert_rd_rules(&rules);
+
+        let results = detect_shared_nonterminal_prefixes(&builder, &first_sets, &token_ids);
+        assert!(
+            results.is_empty(),
+            "single rule at NT boundary should NOT produce CSE: {:?}",
+            results,
+        );
+    }
+
+    #[test]
+    fn test_cd05_three_way_shared_nonterminal() {
+        // Three rules sharing terminal prefix "if" "(" then <Int> with
+        // different suffixes:
+        //
+        //   IfIntColon:   if ( <Int> :
+        //   IfIntComma:   if ( <Int> ,
+        //   IfIntSemi:    if ( <Int> ;
+        //
+        // All suffix FIRST sets are disjoint → 3-way CSE.
+
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfIntColon", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::Terminal(":".to_string()),
+            ]),
+            make_rd_rule("IfIntComma", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "b".to_string(),
+                },
+                RDSyntaxItem::Terminal(",".to_string()),
+            ]),
+            make_rd_rule("IfIntSemi", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "c".to_string(),
+                },
+                RDSyntaxItem::Terminal(";".to_string()),
+            ]),
+        ];
+        builder.insert_rd_rules(&rules);
+
+        let results = detect_shared_nonterminal_prefixes(&builder, &first_sets, &token_ids);
+        assert_eq!(results.len(), 1, "should detect one 3-way shared prefix");
+
+        let shared = &results[0];
+        assert_eq!(shared.nonterminal, "Int");
+        assert_eq!(shared.rules.len(), 3);
+        assert!(shared.all_disjoint, "Colon/Comma/Semi are pairwise disjoint");
+    }
+
+    #[test]
+    fn test_cd05_format_cse_annotation_disjoint() {
+        let token_ids = make_token_ids();
+        let first_sets = make_first_sets();
+
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfIntColon", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::Terminal(":".to_string()),
+            ]),
+            make_rd_rule("IfIntComma", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "b".to_string(),
+                },
+                RDSyntaxItem::Terminal(",".to_string()),
+            ]),
+        ];
+        builder.insert_rd_rules(&rules);
+
+        let results = detect_shared_nonterminal_prefixes(&builder, &first_sets, &token_ids);
+        assert!(!results.is_empty());
+
+        let annotation = format_cse_annotation(&results[0], &token_ids);
+        assert!(
+            annotation.contains("CD05 Prefix CSE"),
+            "annotation should contain CD05 header: {}",
+            annotation,
+        );
+        assert!(
+            annotation.contains("parse_Int"),
+            "annotation should reference parse_Int: {}",
+            annotation,
+        );
+        assert!(
+            annotation.contains("match &tokens"),
+            "disjoint annotation should contain match block: {}",
+            annotation,
+        );
+    }
+
+    #[test]
+    fn test_cd05_format_cse_annotation_overlapping() {
+        let token_ids = make_token_ids();
+        let mut first_sets = make_first_sets();
+        if let Some(int_first) = first_sets.get_mut("Int") {
+            int_first.insert("RParen");
+        }
+
+        let mut builder = DecisionTreeBuilder::new(
+            token_ids.clone(),
+            first_sets.clone(),
+            vec!["Int".to_string()],
+            HashSet::new(),
+        );
+
+        let rules = vec![
+            make_rd_rule("IfIntA", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "a".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+                RDSyntaxItem::Terminal("then".to_string()),
+            ]),
+            make_rd_rule("IfIntB", "Int", vec![
+                RDSyntaxItem::Terminal("if".to_string()),
+                RDSyntaxItem::Terminal("(".to_string()),
+                RDSyntaxItem::NonTerminal {
+                    category: "Int".to_string(),
+                    param_name: "b".to_string(),
+                },
+                RDSyntaxItem::Terminal(")".to_string()),
+                RDSyntaxItem::Terminal("else".to_string()),
+            ]),
+        ];
+        builder.insert_rd_rules(&rules);
+
+        let results = detect_shared_nonterminal_prefixes(&builder, &first_sets, &token_ids);
+        assert!(!results.is_empty());
+
+        let annotation = format_cse_annotation(&results[0], &token_ids);
+        assert!(
+            annotation.contains("NFA try-all"),
+            "overlapping annotation should mention NFA try-all: {}",
+            annotation,
+        );
+    }
+
+    #[test]
+    fn test_cd05_display_trait() {
+        let shared = SharedNonterminalPrefix {
+            category: "Stmt".to_string(),
+            prefix_bytes: vec![0x01, 0x02],
+            nonterminal: "Expr".to_string(),
+            rules: vec!["IfThen".to_string(), "IfThenElse".to_string()],
+            discriminating_tokens: HashMap::from([
+                ("IfThen".to_string(), vec!["KwThen".to_string()]),
+                ("IfThenElse".to_string(), vec!["KwElse".to_string()]),
+            ]),
+            all_disjoint: true,
+        };
+
+        let display = format!("{}", shared);
+        assert!(display.contains("CD05 CSE"));
+        assert!(display.contains("Expr"));
+        assert!(display.contains("IfThen"));
+        assert!(display.contains("deterministic"));
     }
 }

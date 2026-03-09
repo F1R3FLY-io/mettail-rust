@@ -1,0 +1,11 @@
+-Q theories CodegenOptimizations
+theories/ART01_HashConsing.v
+theories/ART05_DepthBound.v
+theories/ART06_DemandAnalysis.v
+theories/BCG02_RuleFusion.v
+theories/BCG03_EqCongruencePrune.v
+theories/BCG06_EqStrata.v
+theories/AL04_MphPostLex.v
+theories/AL05_ChainCollapse.v
+theories/CD02_DisjointFirst.v
+theories/CD05_PrefixParse.v
