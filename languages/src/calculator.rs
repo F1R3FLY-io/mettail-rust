@@ -195,10 +195,13 @@ language! {
             m.get(&k).cloned().expect("get: key not found")
         ] fold;
         PutMap . m:Map, k:Proc, v:Proc |- "put" "(" m "," k "," v ")" : Map ![
-            { let mut m = m.clone(); m.insert(k, v); m }
+            { let mut m = m.clone(); m.insert(k.clone(), v.clone()); m }
         ] fold;
         DeleteMap . m:Map, k:Proc |- "delete" "(" m "," k ")" : Map ![
             { let mut m = m.clone(); m.remove(&k); m }
+        ] fold;
+        MergeMap . a:Map, b:Map |- "merge" "(" a "," b ")" : Map ![
+            { let mut m = a.clone(); for (k, v) in b.iter() { m.insert(k.clone(), v.clone()); } m }
         ] fold;
     },
     equations {
@@ -318,6 +321,8 @@ language! {
         PutMapCongVal . | S ~> T |- (PutMap M K S) ~> (PutMap M K T);
         DeleteMapCongL . | S ~> T |- (DeleteMap S R) ~> (DeleteMap T R);
         DeleteMapCongR . | S ~> T |- (DeleteMap L S) ~> (DeleteMap L T);
+        MergeMapCongL . | S ~> T |- (MergeMap S R) ~> (MergeMap T R);
+        MergeMapCongR . | S ~> T |- (MergeMap L S) ~> (MergeMap L T);
         // Custom operation
         CustomOpCongL . | S ~> T |- (CustomOp S R) ~> (CustomOp T R);
         CustomOpCongR . | S ~> T |- (CustomOp L S) ~> (CustomOp L T);

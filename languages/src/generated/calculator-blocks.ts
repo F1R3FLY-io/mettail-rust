@@ -1523,6 +1523,28 @@ const definitions = [
 		inputsInline: true,
 		output: "Map",
 		colour: "51e0b7",
+	},
+
+	// Merge Map: ... ...
+	{
+		type: "map_merge_map",
+		tooltip: "Merge Map: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Map",
+			},
+		],
+		inputsInline: true,
+		output: "Map",
+		colour: "51e0b7",
 	}
 ];
 

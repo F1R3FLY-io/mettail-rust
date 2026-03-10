@@ -549,7 +549,8 @@ fn generate_fold_big_step_rules(
         let is_native = common::native_type_for(language, category).is_some();
         let is_collection = common::is_collection_category(language, category);
 
-        if is_native {
+        // Prefer collection branch when both apply (e.g. Map): so 3-param fold rules (PutMap) are generated.
+        if is_native && !is_collection {
             // Native category (e.g. Int): fold to literal variant
             let num_lit = common::literal_label_for(language, category)
                 .expect("native category must have a literal label");
@@ -906,7 +907,7 @@ fn generate_fold_big_step_rules(
                 }
                 let param_names = fold_param_names(rule);
                 let param_count = param_names.len();
-                if param_count == 0 || param_count > 2 {
+                if param_count == 0 || param_count > 3 {
                     continue;
                 }
                 let label = &rule.label;
@@ -931,6 +932,44 @@ fn generate_fold_big_step_rules(
                             if let #category::#label(inner) = s,
                             #inner_fold_rel(inner.as_ref().clone(), lv),
                             let #p0 = lv,
+                            let res = #res_expr;
+                    });
+                } else if param_count == 3 {
+                    let p0 = &param_names[0];
+                    let p1 = &param_names[1];
+                    let p2 = &param_names[2];
+                    let (left_fold_rel, mid_fold_rel, right_fold_rel) =
+                        if let Some(ref ctx) = rule.term_context {
+                            let types: Vec<_> = ctx
+                                .iter()
+                                .filter_map(|p| match p {
+                                    TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                        Some(ident.clone())
+                                    },
+                                    _ => None,
+                                })
+                                .collect();
+                            if types.len() == 3 {
+                                let left_rn = relation_names(&types[0]);
+                                let mid_rn = relation_names(&types[1]);
+                                let right_rn = relation_names(&types[2]);
+                                (left_rn.fold_rel, mid_rn.fold_rel, right_rn.fold_rel)
+                            } else {
+                                (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
+                            }
+                        } else {
+                            (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
+                        };
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, mid, right) = s,
+                            #left_fold_rel(left.as_ref().clone(), lv),
+                            #mid_fold_rel(mid.as_ref().clone(), mv),
+                            #right_fold_rel(right.as_ref().clone(), rv),
+                            let #p0 = lv,
+                            let #p1 = mv,
+                            let #p2 = rv,
                             let res = #res_expr;
                     });
                 } else {
@@ -1068,7 +1107,45 @@ fn generate_fold_big_step_rules(
                     quote! {}
                 };
 
-                if param_names.len() == 2 {
+                if param_names.len() == 3 {
+                    let p0 = &param_names[0];
+                    let p1 = &param_names[1];
+                    let p2 = &param_names[2];
+                    let (left_fold_rel, mid_fold_rel, right_fold_rel) = if let Some(ref ctx) = rule.term_context {
+                        let types: Vec<_> = ctx
+                            .iter()
+                            .filter_map(|p| match p {
+                                TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                    Some(ident.clone())
+                                },
+                                _ => None,
+                            })
+                            .collect();
+                        if types.len() == 3 {
+                            let left_rn = relation_names(&types[0]);
+                            let mid_rn = relation_names(&types[1]);
+                            let right_rn = relation_names(&types[2]);
+                            (left_rn.fold_rel, mid_rn.fold_rel, right_rn.fold_rel)
+                        } else {
+                            (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
+                        }
+                    } else {
+                        (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
+                    };
+                    rules.push(quote! {
+                        #fold_rel(s.clone(), res) <--
+                            #cat_rel(s),
+                            if let #category::#label(left, mid, right) = s,
+                            #left_fold_rel(left.as_ref().clone(), lv),
+                            #mid_fold_rel(mid.as_ref().clone(), mv),
+                            #right_fold_rel(right.as_ref().clone(), rv),
+                            let #p0 = lv,
+                            let #p1 = mv,
+                            let #p2 = rv,
+                            let res = (#rust_code)
+                            #filter_err;
+                    });
+                } else if param_names.len() == 2 {
                     let p0 = &param_names[0];
                     let p1 = &param_names[1];
                     // Use per-param fold relation when term_context has different param types (e.g. DeleteList List,Int)

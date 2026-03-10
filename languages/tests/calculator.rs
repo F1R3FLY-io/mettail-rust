@@ -782,6 +782,14 @@ fn test_map_delete() {
     calc_normal_form("get(delete(map(1:10, 2:20), 1), 2)", "20");
 }
 
+#[test]
+fn test_map_merge() {
+    calc_normal_form("maplength(merge(map(), map()))", "0");
+    calc_normal_form("maplength(merge(map(1:10), map(2:20)))", "2");
+    calc_normal_form("get(merge(map(1:10, 2:20), map(2:99, 3:30)), 2)", "99");
+    calc_normal_form("get(merge(map(1:10, 2:20), map(2:99, 3:30)), 1)", "10");
+}
+
 // ── Regression: existing casts still work ──
 
 #[test]

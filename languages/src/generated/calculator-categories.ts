@@ -89,7 +89,8 @@ export const categoryInfo = {
 	Map: {
 		constructors: [
 			"PutMap",
-			"DeleteMap"
+			"DeleteMap",
+			"MergeMap"
 		],
 		colour: "51e0b7",
 	},
