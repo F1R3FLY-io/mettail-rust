@@ -18,6 +18,7 @@ language! {
         ![str] as Str
         ![Vec<Proc>] as List
         ![mettail_runtime::HashBag<Proc>] as Bag [ "#{", "}#", "|" ]
+        ![HashMap<Proc, Proc>] as Map
     },
 
     terms {
@@ -51,6 +52,7 @@ language! {
         CastStr . s:Str |- s : Proc;
         ProcList . l:List |- l : Proc;
         ProcBag . b:Bag |- b : Proc;
+        ProcMap . m:Map |- m : Proc;
 
         // and invoke any methods on them
         Add . a:Proc, b:Proc |- a "+" b : Proc ![
@@ -230,6 +232,83 @@ language! {
             }}
         ] fold;
 
+        // Map operations: take Proc (ProcMap/MapLit), return Proc
+        GetMap . m:Proc, k:Proc |- "get" "(" m "," k ")" : Proc ![
+            { match &m {
+                Proc::ProcMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => payload.get(&k).cloned().unwrap_or(Proc::Err),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        PutMap . m:Proc, k:Proc, v:Proc |- "put" "(" m "," k "," v ")" : Proc ![
+            { match &m {
+                Proc::ProcMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => {
+                        let mut new_map = payload.clone();
+                        new_map.insert(k.clone(), v.clone());
+                        Proc::ProcMap(Box::new(Map::MapLit(new_map)))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        DeleteMap . m:Proc, k:Proc |- "mapdelete" "(" m "," k ")" : Proc ![
+            { match &m {
+                Proc::ProcMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => {
+                        let mut new_map = payload.clone();
+                        new_map.remove(&k);
+                        Proc::ProcMap(Box::new(Map::MapLit(new_map)))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        MergeMap . a:Proc, b:Proc |- "merge" "(" a "," b ")" : Proc ![
+            { match (&a, &b) {
+                (Proc::ProcMap(ma), Proc::ProcMap(mb)) => match (ma.as_ref(), mb.as_ref()) {
+                    (Map::MapLit(pa), Map::MapLit(pb)) => {
+                        let mut m = pa.clone();
+                        for (k, v) in pb.iter() { m.insert(k.clone(), v.clone()); }
+                        Proc::ProcMap(Box::new(Map::MapLit(m)))
+                    },
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        HasMap . m:Proc, k:Proc |- "has" "(" m "," k ")" : Proc ![
+            { match &m {
+                Proc::ProcMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => Proc::CastBool(Box::new(Bool::BoolLit(payload.get(&k).is_some()))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        KeysMap . m:Proc |- "keys" "(" m ")" : Proc ![
+            { match &m {
+                Proc::ProcMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => Proc::ProcList(Box::new(List::ListLit(payload.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+        ValuesMap . m:Proc |- "values" "(" m ")" : Proc ![
+            { match &m {
+                Proc::ProcMap(inner) => match inner.as_ref() {
+                    Map::MapLit(ref payload) => Proc::ProcList(Box::new(List::ListLit(payload.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()))),
+                    _ => Proc::Err,
+                },
+                _ => Proc::Err,
+            }}
+        ] fold;
+
         Not . a:Proc |- "not" a : Proc ![
             { match &a {
                 Proc::CastBool(b) => match &**b {
@@ -268,6 +347,10 @@ language! {
                 },
                 Proc::ProcList(l) => match l.as_ref() {
                     List::ListLit(v) => Proc::CastInt(Box::new(Int::NumLit(v.len() as i64))),
+                    _ => Proc::Err,
+                },
+                Proc::ProcMap(m) => match m.as_ref() {
+                    Map::MapLit(ref payload) => Proc::CastInt(Box::new(Int::NumLit(payload.len() as i64))),
                     _ => Proc::Err,
                 },
                 _ => Proc::Err,
@@ -426,6 +509,21 @@ language! {
         CountBagCongL . | S ~> T |- (CountBag S X) ~> (CountBag T X);
         CountBagCongR . | S ~> T |- (CountBag X S) ~> (CountBag X T);
 
+        GetMapCongL . | S ~> T |- (GetMap S X) ~> (GetMap T X);
+        GetMapCongR . | S ~> T |- (GetMap X S) ~> (GetMap X T);
+        PutMapCongL . | S ~> T |- (PutMap S K V) ~> (PutMap T K V);
+        PutMapCongKey . | S ~> T |- (PutMap M S V) ~> (PutMap M T V);
+        PutMapCongVal . | S ~> T |- (PutMap M K S) ~> (PutMap M K T);
+        DeleteMapCongL . | S ~> T |- (DeleteMap S X) ~> (DeleteMap T X);
+        DeleteMapCongR . | S ~> T |- (DeleteMap X S) ~> (DeleteMap X T);
+        MergeMapCongL . | S ~> T |- (MergeMap S X) ~> (MergeMap T X);
+        MergeMapCongR . | S ~> T |- (MergeMap X S) ~> (MergeMap X T);
+        HasMapCongL . | S ~> T |- (HasMap S X) ~> (HasMap T X);
+        HasMapCongR . | S ~> T |- (HasMap X S) ~> (HasMap X T);
+        KeysMapCong . | S ~> T |- (KeysMap S) ~> (KeysMap T);
+        ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
+
+        ProcMapCong . | S ~> T |- (ProcMap S) ~> (ProcMap T);
         CastIntCong . | S ~> T |- (CastInt S) ~> (CastInt T);
         ToIntCong . | S ~> T |- (ToInt S) ~> (ToInt T);
         ToFloatCong . | S ~> T |- (ToFloat S) ~> (ToFloat T);
