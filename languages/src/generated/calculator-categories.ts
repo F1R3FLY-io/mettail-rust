@@ -83,7 +83,9 @@ export const categoryInfo = {
 	List: {
 		constructors: [
 			"ConcatList",
-			"DeleteList"
+			"DeleteList",
+			"KeysMap",
+			"ValuesMap"
 		],
 		colour: "c1e051",
 	},

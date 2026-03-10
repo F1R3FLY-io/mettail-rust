@@ -1567,6 +1567,40 @@ const definitions = [
 		inputsInline: true,
 		output: "Bool",
 		colour: "7a51e0",
+	},
+
+	// Keys Map: ...
+	{
+		type: "list_keys_map",
+		tooltip: "Keys Map: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
+	},
+
+	// Values Map: ...
+	{
+		type: "list_values_map",
+		tooltip: "Values Map: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
 	}
 ];
 

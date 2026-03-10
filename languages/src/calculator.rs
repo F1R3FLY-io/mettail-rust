@@ -206,6 +206,12 @@ language! {
         HasMap . m:Map, k:Proc |- "has" "(" m "," k ")" : Bool ![
             m.get(&k).is_some()
         ] fold;
+        KeysMap . m:Map |- "keys" "(" m ")" : List ![
+            m.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()
+        ] fold;
+        ValuesMap . m:Map |- "values" "(" m ")" : List ![
+            m.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()
+        ] fold;
     },
     equations {
     },
@@ -328,6 +334,8 @@ language! {
         MergeMapCongR . | S ~> T |- (MergeMap L S) ~> (MergeMap L T);
         HasMapCongL . | S ~> T |- (HasMap S R) ~> (HasMap T R);
         HasMapCongR . | S ~> T |- (HasMap L S) ~> (HasMap L T);
+        KeysMapCong . | S ~> T |- (KeysMap S) ~> (KeysMap T);
+        ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
         // Custom operation
         CustomOpCongL . | S ~> T |- (CustomOp S R) ~> (CustomOp T R);
         CustomOpCongR . | S ~> T |- (CustomOp L S) ~> (CustomOp L T);

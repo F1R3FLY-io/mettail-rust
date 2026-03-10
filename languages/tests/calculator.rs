@@ -798,6 +798,21 @@ fn test_map_has() {
     calc_normal_form("has(map(1:10, 2:20), 2)", "true");
 }
 
+#[test]
+fn test_map_keys() {
+    calc_normal_form("length(keys(map()))", "0");
+    calc_normal_form("length(keys(map(1:10)))", "1");
+    calc_normal_form("length(keys(map(1:10, 2:20)))", "2");
+    calc_normal_form("at(keys(map(1:10, 2:20)), 0)", "1");
+}
+
+#[test]
+fn test_map_values() {
+    calc_normal_form("length(values(map()))", "0");
+    calc_normal_form("length(values(map(1:10)))", "1");
+    calc_normal_form("at(values(map(1:10, 2:20)), 1)", "20");
+}
+
 // ── Regression: existing casts still work ──
 
 #[test]
