@@ -1545,6 +1545,28 @@ const definitions = [
 		inputsInline: true,
 		output: "Map",
 		colour: "51e0b7",
+	},
+
+	// Has Map: ... ...
+	{
+		type: "bool_has_map",
+		tooltip: "Has Map: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
 	}
 ];
 

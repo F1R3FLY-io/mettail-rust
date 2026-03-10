@@ -40,7 +40,8 @@ export const categoryInfo = {
 			"And",
 			"Or",
 			"Xor",
-			"ProcToBool"
+			"ProcToBool",
+			"HasMap"
 		],
 		colour: "7a51e0",
 	},

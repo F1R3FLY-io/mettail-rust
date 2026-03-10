@@ -790,6 +790,14 @@ fn test_map_merge() {
     calc_normal_form("get(merge(map(1:10, 2:20), map(2:99, 3:30)), 1)", "10");
 }
 
+#[test]
+fn test_map_has() {
+    calc_normal_form("has(map(), 1)", "false");
+    calc_normal_form("has(map(1:10), 1)", "true");
+    calc_normal_form("has(map(1:10), 2)", "false");
+    calc_normal_form("has(map(1:10, 2:20), 2)", "true");
+}
+
 // ── Regression: existing casts still work ──
 
 #[test]

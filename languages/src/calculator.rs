@@ -203,6 +203,9 @@ language! {
         MergeMap . a:Map, b:Map |- "merge" "(" a "," b ")" : Map ![
             { let mut m = a.clone(); for (k, v) in b.iter() { m.insert(k.clone(), v.clone()); } m }
         ] fold;
+        HasMap . m:Map, k:Proc |- "has" "(" m "," k ")" : Bool ![
+            m.get(&k).is_some()
+        ] fold;
     },
     equations {
     },
@@ -323,6 +326,8 @@ language! {
         DeleteMapCongR . | S ~> T |- (DeleteMap L S) ~> (DeleteMap L T);
         MergeMapCongL . | S ~> T |- (MergeMap S R) ~> (MergeMap T R);
         MergeMapCongR . | S ~> T |- (MergeMap L S) ~> (MergeMap L T);
+        HasMapCongL . | S ~> T |- (HasMap S R) ~> (HasMap T R);
+        HasMapCongR . | S ~> T |- (HasMap L S) ~> (HasMap L T);
         // Custom operation
         CustomOpCongL . | S ~> T |- (CustomOp S R) ~> (CustomOp T R);
         CustomOpCongR . | S ~> T |- (CustomOp L S) ~> (CustomOp L T);
