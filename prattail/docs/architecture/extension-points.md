@@ -383,23 +383,43 @@ pub fn build_nfa(terminals: &[TerminalPattern], needs: &BuiltinNeeds) -> Nfa {
 
 Follow the same steps as for a new native type (Section 3 above).
 
-### Adding User-Defined Regex Patterns
+### Customizing Literal Token Patterns (Implemented)
 
-For full generality, one could extend `TerminalPattern` to carry a regex specification
-alongside its text:
+Builtin literal token patterns (ident, integer, float, string) are compiled from
+configurable regex specifications. The defaults are defined in `literal_patterns.ebnf`:
 
-```rust
-pub struct TerminalPattern {
-    pub text: String,
-    pub kind: TokenKind,
-    pub is_keyword: bool,
-    pub regex: Option<String>,     // New: user-defined regex pattern
-}
+```ebnf
+<integer> = /[0-9]+/ ;
+<float>   = /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/ ;
+<string>  = /"([^"\\]|\\.)*"/ ;
+<ident>   = /[a-zA-Z_][a-zA-Z0-9_]*/ ;
 ```
 
-Then implement a regex-to-NFA compiler (extending Thompson's construction) in
-`nfa.rs`. This would handle patterns like `[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]+)?` for
-scientific notation floats.
+**Pipeline**: `parse_literal_patterns_ebnf(content)` → `LiteralPatterns` →
+`build_nfa(terminals, needs, patterns)` → `compile_regex(pattern, nfa, token_kind)`
+per needed builtin.
+
+To customize a pattern, edit the regex between `/` delimiters in
+`literal_patterns.ebnf`. For example, to enable Unicode identifiers:
+
+```ebnf
+<ident> = /\p{XID_Start}\p{XID_Continue}*/ ;
+```
+
+Multi-byte Unicode codepoints are decomposed into byte-level NFA transition chains
+at compile time via `automata/utf8.rs` using `regex_syntax::utf8::Utf8Sequences`.
+The downstream pipeline operates on `[u8; 256]` tables unchanged — zero UTF-8
+decoding at lex time.
+
+**Supported regex syntax**: literals, `[a-z]` / `[^…]` character classes,
+`\d` / `\w` / `\s` / `\D` / `\W` / `\S` shorthand classes, `*` / `+` / `?` /
+`{n,m}` quantifiers, `|` alternation, `(…)` grouping, `.` dot, `\u{XXXX}` /
+`\uXXXX` / `\UXXXXXXXX` Unicode escapes, `\p{Name}` / `\P{Name}` Unicode
+properties. Not supported: backreferences, lookahead/lookbehind, lazy quantifiers,
+named groups, anchors.
+
+> **Cross-reference:** See [quick-reference.md §2.8](../design/quick-reference.md#28-regex-pattern-syntax)
+> for the full supported regex syntax table.
 
 ---
 

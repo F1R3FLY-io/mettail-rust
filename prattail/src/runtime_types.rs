@@ -14,6 +14,8 @@
 use std::borrow::Cow;
 use std::fmt;
 
+use crate::automata::utf8::decode_char_at;
+
 /// A position in source code. All fields are 0-indexed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
@@ -204,7 +206,8 @@ pub fn format_error_context(input: &str, range: &Range) -> String {
     let caret_col = range.start.column;
     let caret_len =
         if range.end.byte_offset > range.start.byte_offset && range.end.line == range.start.line {
-            range.end.byte_offset - range.start.byte_offset
+            // Count characters (not bytes) for correct caret width with multi-byte UTF-8
+            input[range.start.byte_offset..range.end.byte_offset].chars().count()
         } else {
             1
         };
@@ -253,7 +256,7 @@ pub fn lex_core<'a, T>(
     let mut tokens: Vec<(T, Range)> = Vec::with_capacity(input.len() / 2);
 
     while pos < bytes.len() {
-        // Skip whitespace
+        // Skip whitespace (ASCII fast path + Unicode fallback)
         #[cfg(feature = "simd-whitespace")]
         {
             let result = skip_whitespace_simd(bytes, pos, line, col);
@@ -271,6 +274,16 @@ pub fn lex_core<'a, T>(
                     col += 1;
                 }
                 pos += 1;
+            }
+        }
+        // Unicode whitespace fallback (zero-cost for ASCII input: branch not taken)
+        while pos < bytes.len() && bytes[pos] >= 0x80 {
+            match decode_char_at(input, pos) {
+                Some((ch, ch_len)) if ch.is_whitespace() => {
+                    col += 1;
+                    pos += ch_len;
+                }
+                _ => break,
             }
         }
         if pos >= bytes.len() {
@@ -332,18 +345,11 @@ pub fn lex_core<'a, T>(
                 }
             }
             None => {
-                let ch = bytes[start] as char;
-                let msg = if ch.is_ascii() {
-                    format!(
-                        "{}:{}: unexpected character '{}'",
-                        line + 1, col + 1, ch,
-                    )
-                } else {
-                    format!(
-                        "{}:{}: unexpected byte 0x{:02X}",
-                        line + 1, col + 1, bytes[start],
-                    )
-                };
+                let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
+                let msg = format!(
+                    "{}:{}: unexpected character '{}'",
+                    line + 1, col + 1, ch.escape_debug(),
+                );
                 return Err(msg);
             }
         }
@@ -396,6 +402,16 @@ pub fn lex_weighted_core<'a, T>(
                     col += 1;
                 }
                 pos += 1;
+            }
+        }
+        // Unicode whitespace fallback
+        while pos < bytes.len() && bytes[pos] >= 0x80 {
+            match decode_char_at(input, pos) {
+                Some((ch, ch_len)) if ch.is_whitespace() => {
+                    col += 1;
+                    pos += ch_len;
+                }
+                _ => break,
             }
         }
         if pos >= bytes.len() {
@@ -459,18 +475,11 @@ pub fn lex_weighted_core<'a, T>(
                 }
             }
             None => {
-                let ch = bytes[start] as char;
-                let msg = if ch.is_ascii() {
-                    format!(
-                        "{}:{}: unexpected character '{}'",
-                        line + 1, col + 1, ch,
-                    )
-                } else {
-                    format!(
-                        "{}:{}: unexpected byte 0x{:02X}",
-                        line + 1, col + 1, bytes[start],
-                    )
-                };
+                let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
+                let msg = format!(
+                    "{}:{}: unexpected character '{}'",
+                    line + 1, col + 1, ch.escape_debug(),
+                );
                 return Err(msg);
             }
         }
@@ -544,6 +553,16 @@ pub fn lex_lattice_core<'a, T: Clone>(
                 pos += 1;
             }
         }
+        // Unicode whitespace fallback
+        while pos < bytes.len() && bytes[pos] >= 0x80 {
+            match decode_char_at(input, pos) {
+                Some((ch, ch_len)) if ch.is_whitespace() => {
+                    col += 1;
+                    pos += ch_len;
+                }
+                _ => break,
+            }
+        }
         if pos >= bytes.len() {
             break;
         }
@@ -614,18 +633,11 @@ pub fn lex_lattice_core<'a, T: Clone>(
                 });
             }
             None => {
-                let ch = bytes[start] as char;
-                let msg = if ch.is_ascii() {
-                    format!(
-                        "{}:{}: unexpected character '{}'",
-                        line + 1, col + 1, ch,
-                    )
-                } else {
-                    format!(
-                        "{}:{}: unexpected byte 0x{:02X}",
-                        line + 1, col + 1, bytes[start],
-                    )
-                };
+                let (ch, _ch_len) = decode_char_at(input, start).unwrap_or(('\u{FFFD}', 1));
+                let msg = format!(
+                    "{}:{}: unexpected character '{}'",
+                    line + 1, col + 1, ch.escape_debug(),
+                );
                 return Err(msg);
             }
         }

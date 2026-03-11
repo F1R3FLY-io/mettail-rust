@@ -1,6 +1,6 @@
 # PraTTaIL: Automata Pipeline (Lexer Generation)
 
-**Date:** 2026-02-14 (updated 2026-02-17)
+**Date:** 2026-02-14 (updated 2026-03-11)
 
 ---
 
@@ -83,17 +83,18 @@ The automata approach solves all three problems:
 ## 2. Pipeline Overview
 
 ```
-  TerminalPatterns          BuiltinNeeds
-  ["+", "*", "{}",          {ident: true,
-   "error", "==",            integer: true,
+  TerminalPatterns          BuiltinNeeds            LiteralPatterns
+  ["+", "*", "{}",          {ident: true,           (from literal_patterns.ebnf
+   "error", "==",            integer: true,          or custom override)
    "(", ")", ...]            boolean: false, ...}
-        │                        │
-        └──────────┬─────────────┘
-                   │
-                   │
-            ┌──────▼──────┐
-            │ build_nfa() │      Aho-Corasick trie + Thompson's
-            └──────┬──────┘      O(sum of terminal lengths)
+        │                        │                        │
+        └──────────┬─────────────┼────────────────────────┘
+                   │             │
+                   │             │
+            ┌──────▼─────────────▼──┐
+            │      build_nfa()      │  Aho-Corasick trie + regex-compiled
+            └──────────┬────────────┘  Thompson's  O(sum of terminal lengths)
+
                    │
                    │
                NFA (states, transitions, epsilon edges)
@@ -201,6 +202,47 @@ Float pattern [0-9]+\.[0-9]+:
                  │                       │
                  └─[0-9]→ (self-loop)    └─[0-9]→ (self-loop)
 ```
+
+### Regex-Compiled Patterns
+
+Builtin character-class patterns (ident, integer, float, string) are no longer
+hardcoded — they are compiled from configurable regex specifications via
+`compile_regex()` in `automata/regex.rs`.
+
+**Pipeline**: `literal_patterns.ebnf` → `parse_literal_patterns_ebnf()` →
+`LiteralPatterns` → `build_nfa(terminals, needs, patterns)` →
+`compile_regex(pattern, nfa, token_kind)` per needed builtin.
+
+The regex compiler uses single-pass trampolined Thompson NFA construction with
+no intermediate AST. It supports a PCRE subset: literals, character classes
+(`[a-z]`, `[^…]`), shorthand classes (`\d`, `\w`, `\s`), quantifiers (`*`, `+`,
+`?`, `{n,m}`), alternation (`|`), grouping (`(…)`), dot (`.`), Unicode escapes
+(`\u{XXXX}`, `\uXXXX`, `\UXXXXXXXX`), and Unicode properties (`\p{Name}`,
+`\P{Name}`).
+
+Multi-byte Unicode codepoints are decomposed into byte-level NFA transition
+chains at compile time via `add_codepoint_range()` in `automata/utf8.rs`, which
+uses `regex_syntax::utf8::Utf8Sequences` for minimal byte-range decomposition.
+The downstream pipeline (partition, DFA, codegen, runtime) operates on
+`[u8; 256]` tables unchanged — zero UTF-8 decoding at lex time.
+
+Default patterns are defined in `literal_patterns.ebnf`:
+
+```ebnf
+<integer> = /[0-9]+/ ;
+<float>   = /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/ ;
+<string>  = /"([^"\\]|\\.)*"/ ;
+<ident>   = /[a-zA-Z_][a-zA-Z0-9_]*/ ;
+```
+
+To override (e.g., for Unicode identifiers), edit the EBNF file:
+
+```ebnf
+<ident> = /\p{XID_Start}\p{XID_Continue}*/ ;
+```
+
+> **Cross-reference:** See [quick-reference.md §2.8](quick-reference.md#28-regex-pattern-syntax)
+> for the full supported regex syntax table.
 
 ### Alternation via Epsilon Transitions
 
@@ -470,7 +512,7 @@ optimization does not change the DFA output.
 
 ### Motivation
 
-A naive DFA transition table has 256 columns (one per ASCII byte value).
+A naive DFA transition table has 256 columns (one per byte value).
 For a DFA with S states, this is `S * 256` entries. Most of these are
 redundant: bytes `a` through `z` (excluding characters that are also
 single-character terminals like `+`, `*`, etc.) all trigger the same

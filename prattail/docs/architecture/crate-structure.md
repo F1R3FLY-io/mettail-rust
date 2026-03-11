@@ -48,12 +48,16 @@ the **lexer pipeline** (automata-based), the **parser pipeline** (Pratt + RD), a
     │ (mod.rs)  │                  │     │dispatch  │     │
     └─────┬─────┘                  │     │  .rs     │     │
           │                        │     └──────────┘     │
-    ┌─────┼─────┬─────┬─────┐      │                      │
-    │     │     │     │     │      │                      │
-    ▼     ▼     ▼     ▼     ▼      │                      │
-  nfa   part   sub   min   code    │                      │
-  .rs   ition  set   imize gen     │                      │
-        .rs    .rs   .rs   .rs     │                      │
+    ┌─────┼─────┬─────┬─────┬─────┬─────┬─────┐
+    │     │     │     │     │     │     │     │
+    ▼     ▼     ▼     ▼     ▼     ▼     ▼     ▼
+  nfa   part   sub   min   code  regex utf8  semi
+  .rs   ition  set   imize gen   .rs   .rs   ring
+        .rs    .rs   .rs   .rs               .rs
+                                   │          │
+                                   └──────────┘
+                                   (all feed into
+                                    lexer pipeline)
                                    │                      │
                                    └──────────┬───────────┘
                                               │
@@ -77,7 +81,10 @@ lib.rs
           │       │                  ├──→ automata/partition.rs (alphabet partitioning)
           │       │                  ├──→ automata/subset.rs    (NFA → DFA)
           │       │                  ├──→ automata/minimize.rs  (Hopcroft's minimization)
-          │       │                  └──→ automata/codegen.rs   (DFA → Rust code as String)
+          │       │                  ├──→ automata/codegen.rs   (DFA → Rust code as String)
+          │       │                  ├──→ automata/regex.rs     (regex → NFA compilation)
+          │       │                  ├──→ automata/utf8.rs      (Unicode byte chain decomposition)
+          │       │                  └──→ automata/semiring.rs  (semiring types for weighted analysis)
           │       │
           │       ├──→ automata/codegen.rs (terminal_to_variant_name)
           │       ├──→ automata/minimize.rs (minimize_dfa)
@@ -171,7 +178,7 @@ lib.rs
 ### `automata/partition.rs` -- Alphabet Equivalence Classes
 
 - `compute_equivalence_classes(nfa) -> AlphabetPartition`
-- Partitions 256 ASCII byte values into equivalence classes
+- Partitions 256 byte values into equivalence classes
 - Bytes that trigger identical transitions in every NFA state are grouped together
 - Typically reduces 256 columns to 12-18 equivalence classes (~15-20x compression)
 - `AlphabetPartition` contains `byte_to_class: [ClassId; 256]` lookup table
@@ -204,9 +211,46 @@ lib.rs
 - Generates `Token<'a>` enum with zero-copy borrowed fields:
   `Ident(&'a str)`, `StringLit(&'a str)`, `Dollar(&'a str)`, `DoubleDollar(&'a str)`
 - Generates `Position` and `Range` structs for structured source locations
-- Generates `ParseError` enum: `UnexpectedToken`, `UnexpectedEof`, `TrailingTokens`, `InvalidLiteral`
+- Calls `write_runtime_types_import()` to import shared `ParseError` from `runtime_types.rs`:
+  `UnexpectedToken`, `UnexpectedEof`, `TrailingTokens`, `LexError`, `RecoveryApplied`
 - `terminal_to_variant_name(terminal) -> String` converts operator strings to Rust
   identifiers (e.g., `"+"` → `"Plus"`, `"error"` → `"KwError"`)
+
+### `automata/regex.rs` -- Regex-to-NFA Compiler
+
+- `compile_regex(pattern, nfa, token_kind) -> Result<NfaFragment, RegexError>`
+  Single-pass trampolined Thompson NFA construction from a PCRE-subset regex.
+  No intermediate AST — NFA states and transitions are emitted as the pattern
+  is parsed.
+- `validate_regex(pattern) -> Result<(), RegexError>`
+  Validates regex syntax without producing NFA output.
+- `parse_literal_patterns_ebnf(content) -> Result<LiteralPatterns, RegexError>`
+  Parses the `literal_patterns.ebnf` configuration file (format: `<name> = /regex/ ;`)
+  into a `LiteralPatterns` struct carrying the regex for each builtin token kind.
+- `RegexError` struct: `{ position: usize, message: String }`
+- Supported syntax: literals, `[a-z]` / `[^…]` character classes, `\d` / `\w` / `\s`
+  shorthand classes, `*` / `+` / `?` / `{n,m}` quantifiers, `|` alternation,
+  `(…)` grouping, `.` dot, `\u{XXXX}` / `\uXXXX` / `\UXXXXXXXX` Unicode escapes,
+  `\p{Name}` / `\P{Name}` Unicode properties.
+
+### `automata/utf8.rs` -- Unicode Byte Chain Decomposition
+
+- `add_codepoint_range(nfa, from, to, start_cp, end_cp)`
+  Decomposes Unicode codepoint ranges into byte-level NFA transition chains
+  using `regex_syntax::utf8::Utf8Sequences`. Multi-byte codepoints become
+  chain sequences: `from →[byte₀]→ s₁ →[byte₁]→ … →[byteₙ]→ to`.
+- `codepoint_ranges_to_fragment(nfa, ranges) -> NfaFragment`
+  Builds a complete NFA fragment for a set of codepoint ranges (used by
+  `compile_regex` for `\p{…}` properties and Unicode `[…]` classes).
+- `resolve_property(name) -> Result<Vec<(char, char)>, String>`
+  Resolves Unicode property names (e.g., `XID_Start`, `White_Space`) to
+  codepoint ranges via `regex_syntax::unicode::class`.
+- `complement_codepoint_ranges(ranges) -> Vec<(char, char)>`
+  Complements a sorted set of codepoint ranges over `[U+0000, U+10FFFF]`
+  (used for `\P{…}` and `[^…]` with Unicode ranges).
+- `decode_char_at(input, pos) -> Option<(char, usize)>`
+  Decodes a single UTF-8 character at the given byte position in a string
+  (used by the runtime lex loop for error display).
 
 ### `lexer.rs` -- Lexer Pipeline Orchestrator
 
@@ -358,9 +402,10 @@ compiled (no feature gate); only the log semiring modules require `wfst-log`.
 ## External Dependencies
 
 ```
-proc-macro2   -- TokenStream representation (used only for final str::parse())
-quote         -- (dev-dependency only; removed from critical path by string-based codegen)
-syn           -- (dev-dependency via workspace, used by macros crate)
+proc-macro2    -- TokenStream representation (used only for final str::parse())
+quote          -- (dev-dependency only; removed from critical path by string-based codegen)
+syn            -- (dev-dependency via workspace, used by macros crate)
+regex-syntax   -- Utf8Sequences for byte chain decomposition, Unicode property resolution (v0.8, unicode feature)
 ```
 
 **Note:** The `quote` crate and `proc-macro2` token-by-token construction were removed

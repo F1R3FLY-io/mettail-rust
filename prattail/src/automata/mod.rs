@@ -11,6 +11,7 @@ pub mod partition;
 pub mod regex;
 pub mod semiring;
 pub mod subset;
+pub mod utf8;
 
 use semiring::{Semiring, TropicalWeight};
 

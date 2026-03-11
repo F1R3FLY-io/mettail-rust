@@ -14,9 +14,11 @@
 //! | Literal char | `a`, `1`, `_` | ASCII byte-level |
 //! | Escaped metachar | `\.` `\\` `\[` `\]` `\(` `\)` `\|` `\+` `\*` `\?` `\^` `\"` `\{` `\}` `\/` | |
 //! | Escape sequences | `\n` `\r` `\t` | Common whitespace |
-//! | Shorthand classes | `\d` `\w` `\s` `\D` `\W` `\S` | POSIX-like |
-//! | Character class | `[abc]` `[a-z]` `[a-zA-Z0-9_]` | Ranges within `[]` |
-//! | Negated class | `[^abc]` `[^"]` | Complement over `[0, 127]` |
+//! | Shorthand classes | `\d` `\w` `\s` `\D` `\W` `\S` | POSIX-like (ASCII) |
+//! | Unicode escape | `\u{03B1}` `\u03B1` `\U000003B1` | Codepoint by hex |
+//! | Unicode property | `\p{XID_Start}` `\P{White_Space}` | Property classes |
+//! | Character class | `[abc]` `[a-z]` `[α-ω]` `[\u0391-\u03C9]` | Byte or codepoint |
+//! | Negated class | `[^abc]` `[^\p{Letter}]` | Complement over full range |
 //! | Dot | `.` | Any byte except `\n` |
 //! | Grouping | `(...)` | Non-capturing |
 //! | Alternation | <code>a&#124;b</code> | |
@@ -24,9 +26,17 @@
 //! | Bounded repetition | `{n}` `{n,}` `{n,m}` | Count-bounded |
 //!
 //! **Not supported**: backreferences, lookahead/lookbehind, lazy quantifiers,
-//! Unicode categories, named groups, anchors (`^$` outside character classes).
+//! named groups, anchors (`^$` outside character classes).
+//!
+//! ## Unicode support
+//!
+//! Multi-byte codepoints are decomposed into byte-level NFA transition chains
+//! at compile time via `regex_syntax::utf8::Utf8Sequences`. The downstream
+//! pipeline (partition, DFA, codegen, runtime) operates on `[u8; 256]` tables
+//! unchanged. Zero UTF-8 decoding at lex time.
 
 use super::{CharClass, Nfa, NfaFragment, NfaState, TokenKind};
+use super::utf8;
 use crate::LiteralPatterns;
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -489,8 +499,8 @@ fn parse_atom(
             /* Dot: any byte except newline */
             let start = nfa.add_state(NfaState::new());
             let accept = nfa.add_state(NfaState::new());
-            /* [0, 9] ∪ [11, 127] — skip \n (10) */
-            for lo_hi in &[(0u8, 9u8), (11u8, 127u8)] {
+            /* [0, 9] ∪ [11, 255] — skip \n (10); high bytes needed for UTF-8 chains */
+            for lo_hi in &[(0u8, 9u8), (11u8, 255u8)] {
                 nfa.add_transition(start, accept, CharClass::Range(lo_hi.0, lo_hi.1));
             }
             Ok((NfaFragment { start, accept }, pos + 1))
@@ -577,6 +587,29 @@ fn parse_escape_atom(
         b't' => {
             nfa.add_transition(start, accept, CharClass::Single(b'\t'));
         },
+        /* ── Unicode escapes ───────────────────────────────────────── */
+
+        // \u{XXXX} — braced, 1-6 hex digits (Rust/ECMAScript style)
+        // \uXXXX — exactly 4 hex digits (Java/C# style)
+        b'u' => {
+            return parse_unicode_escape_u(nfa, input, pos, start, accept);
+        },
+        // \UXXXXXXXX — exactly 8 hex digits (C/Go style)
+        b'U' => {
+            return parse_unicode_escape_big_u(nfa, input, pos, start, accept);
+        },
+
+        /* ── Unicode properties ───────────────────────────────────── */
+
+        // \p{Name} — Unicode property class
+        b'p' => {
+            return parse_unicode_property(nfa, input, pos, start, accept, false);
+        },
+        // \P{Name} — negated Unicode property class
+        b'P' => {
+            return parse_unicode_property(nfa, input, pos, start, accept, true);
+        },
+
         /* Escaped metacharacters */
         b'.' | b'\\' | b'[' | b']' | b'(' | b')' | b'|' | b'+' | b'*' | b'?' | b'^'
         | b'"' | b'{' | b'}' | b'/' => {
@@ -594,10 +627,278 @@ fn parse_escape_atom(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Unicode escape and property helpers
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Parse `\u{XXXX}` (1-6 hex digits, braced) or `\uXXXX` (exactly 4 hex digits).
+fn parse_unicode_escape_u(
+    nfa: &mut Nfa,
+    input: &[u8],
+    pos: usize,
+    start: u32,
+    accept: u32,
+) -> Result<(NfaFragment, usize), RegexError> {
+    let mut i = pos + 2; // skip `\u`
+    if i >= input.len() {
+        return Err(RegexError {
+            position: pos,
+            message: "incomplete \\u escape".to_string(),
+        });
+    }
+
+    if input[i] == b'{' {
+        // Braced form: \u{1-6 hex digits}
+        i += 1;
+        let hex_start = i;
+        while i < input.len() && input[i] != b'}' {
+            if !input[i].is_ascii_hexdigit() {
+                return Err(RegexError {
+                    position: i,
+                    message: format!("invalid hex digit '{}' in \\u{{}} escape", input[i] as char),
+                });
+            }
+            i += 1;
+        }
+        if i >= input.len() {
+            return Err(RegexError {
+                position: pos,
+                message: "unclosed \\u{} escape".to_string(),
+            });
+        }
+        let hex_len = i - hex_start;
+        if hex_len == 0 || hex_len > 6 {
+            return Err(RegexError {
+                position: pos,
+                message: format!("\\u{{}} escape requires 1-6 hex digits, got {}", hex_len),
+            });
+        }
+        let hex_str = std::str::from_utf8(&input[hex_start..i]).expect("validated hex digits");
+        i += 1; // skip '}'
+        let cp = u32::from_str_radix(hex_str, 16).expect("validated hex digits");
+        let ch = validate_codepoint(cp, pos)?;
+        utf8::add_codepoint_range(nfa, start, accept, ch, ch);
+        Ok((NfaFragment { start, accept }, i))
+    } else {
+        // Unbraced form: \uXXXX (exactly 4 hex digits)
+        if i + 4 > input.len() {
+            return Err(RegexError {
+                position: pos,
+                message: "\\u escape requires 4 hex digits".to_string(),
+            });
+        }
+        for j in i..i + 4 {
+            if !input[j].is_ascii_hexdigit() {
+                return Err(RegexError {
+                    position: j,
+                    message: format!("invalid hex digit '{}' in \\u escape", input[j] as char),
+                });
+            }
+        }
+        let hex_str = std::str::from_utf8(&input[i..i + 4]).expect("validated hex digits");
+        let cp = u32::from_str_radix(hex_str, 16).expect("validated hex digits");
+        let ch = validate_codepoint(cp, pos)?;
+        utf8::add_codepoint_range(nfa, start, accept, ch, ch);
+        Ok((NfaFragment { start, accept }, i + 4))
+    }
+}
+
+/// Parse `\UXXXXXXXX` (exactly 8 hex digits, C/Go style).
+fn parse_unicode_escape_big_u(
+    nfa: &mut Nfa,
+    input: &[u8],
+    pos: usize,
+    start: u32,
+    accept: u32,
+) -> Result<(NfaFragment, usize), RegexError> {
+    let i = pos + 2; // skip `\U`
+    if i + 8 > input.len() {
+        return Err(RegexError {
+            position: pos,
+            message: "\\U escape requires 8 hex digits".to_string(),
+        });
+    }
+    for j in i..i + 8 {
+        if !input[j].is_ascii_hexdigit() {
+            return Err(RegexError {
+                position: j,
+                message: format!("invalid hex digit '{}' in \\U escape", input[j] as char),
+            });
+        }
+    }
+    let hex_str = std::str::from_utf8(&input[i..i + 8]).expect("validated hex digits");
+    let cp = u32::from_str_radix(hex_str, 16).expect("validated hex digits");
+    let ch = validate_codepoint(cp, pos)?;
+    utf8::add_codepoint_range(nfa, start, accept, ch, ch);
+    Ok((NfaFragment { start, accept }, i + 8))
+}
+
+/// Parse `\p{Name}` or `\P{Name}` Unicode property escape.
+fn parse_unicode_property(
+    nfa: &mut Nfa,
+    input: &[u8],
+    pos: usize,
+    start: u32,
+    accept: u32,
+    negated: bool,
+) -> Result<(NfaFragment, usize), RegexError> {
+    let mut i = pos + 2; // skip `\p` or `\P`
+    if i >= input.len() || input[i] != b'{' {
+        return Err(RegexError {
+            position: pos,
+            message: format!("\\{} requires {{PropertyName}}", if negated { 'P' } else { 'p' }),
+        });
+    }
+    i += 1; // skip '{'
+    let name_start = i;
+    while i < input.len() && input[i] != b'}' {
+        i += 1;
+    }
+    if i >= input.len() {
+        return Err(RegexError {
+            position: pos,
+            message: format!("unclosed \\{}{{}} property escape", if negated { 'P' } else { 'p' }),
+        });
+    }
+    let name = std::str::from_utf8(&input[name_start..i]).map_err(|_| RegexError {
+        position: name_start,
+        message: "invalid UTF-8 in property name".to_string(),
+    })?;
+    i += 1; // skip '}'
+
+    let mut ranges = utf8::resolve_property(name).map_err(|e| RegexError {
+        position: pos,
+        message: e,
+    })?;
+
+    if negated {
+        ranges = utf8::complement_codepoint_ranges(&ranges);
+    }
+
+    for &(lo, hi) in &ranges {
+        utf8::add_codepoint_range(nfa, start, accept, lo, hi);
+    }
+
+    Ok((NfaFragment { start, accept }, i))
+}
+
+/// Validate a codepoint value: must be ≤ 0x10FFFF and not a surrogate.
+fn validate_codepoint(cp: u32, error_pos: usize) -> Result<char, RegexError> {
+    if cp > 0x10FFFF {
+        return Err(RegexError {
+            position: error_pos,
+            message: format!("codepoint U+{:X} exceeds maximum U+10FFFF", cp),
+        });
+    }
+    char::from_u32(cp).ok_or_else(|| RegexError {
+        position: error_pos,
+        message: format!("U+{:04X} is a surrogate codepoint (not a valid Unicode scalar value)", cp),
+    })
+}
+
+/// Parse a Unicode escape inside a character class (returns codepoint).
+/// Handles: `\u{XXXX}`, `\uXXXX`, `\UXXXXXXXX`
+/// Returns `(codepoint, new_position)`.
+fn parse_unicode_escape_in_class(
+    input: &[u8],
+    pos: usize,
+) -> Result<(char, usize), RegexError> {
+    let escaped = input[pos + 1];
+    let mut i = pos + 2;
+
+    if escaped == b'u' {
+        if i >= input.len() {
+            return Err(RegexError {
+                position: pos,
+                message: "incomplete \\u escape in character class".to_string(),
+            });
+        }
+        if input[i] == b'{' {
+            i += 1;
+            let hex_start = i;
+            while i < input.len() && input[i] != b'}' {
+                if !input[i].is_ascii_hexdigit() {
+                    return Err(RegexError {
+                        position: i,
+                        message: format!("invalid hex digit '{}' in \\u{{}} escape", input[i] as char),
+                    });
+                }
+                i += 1;
+            }
+            if i >= input.len() {
+                return Err(RegexError {
+                    position: pos,
+                    message: "unclosed \\u{} escape in character class".to_string(),
+                });
+            }
+            let hex_len = i - hex_start;
+            if hex_len == 0 || hex_len > 6 {
+                return Err(RegexError {
+                    position: pos,
+                    message: format!("\\u{{}} escape requires 1-6 hex digits, got {}", hex_len),
+                });
+            }
+            let hex_str = std::str::from_utf8(&input[hex_start..i]).expect("validated hex digits");
+            i += 1; // skip '}'
+            let cp = u32::from_str_radix(hex_str, 16).expect("validated hex digits");
+            let ch = validate_codepoint(cp, pos)?;
+            Ok((ch, i))
+        } else {
+            if i + 4 > input.len() {
+                return Err(RegexError {
+                    position: pos,
+                    message: "\\u escape requires 4 hex digits".to_string(),
+                });
+            }
+            for j in i..i + 4 {
+                if !input[j].is_ascii_hexdigit() {
+                    return Err(RegexError {
+                        position: j,
+                        message: format!("invalid hex digit '{}' in \\u escape", input[j] as char),
+                    });
+                }
+            }
+            let hex_str = std::str::from_utf8(&input[i..i + 4]).expect("validated hex digits");
+            let cp = u32::from_str_radix(hex_str, 16).expect("validated hex digits");
+            let ch = validate_codepoint(cp, pos)?;
+            Ok((ch, i + 4))
+        }
+    } else if escaped == b'U' {
+        if i + 8 > input.len() {
+            return Err(RegexError {
+                position: pos,
+                message: "\\U escape requires 8 hex digits".to_string(),
+            });
+        }
+        for j in i..i + 8 {
+            if !input[j].is_ascii_hexdigit() {
+                return Err(RegexError {
+                    position: j,
+                    message: format!("invalid hex digit '{}' in \\U escape", input[j] as char),
+                });
+            }
+        }
+        let hex_str = std::str::from_utf8(&input[i..i + 8]).expect("validated hex digits");
+        let cp = u32::from_str_radix(hex_str, 16).expect("validated hex digits");
+        let ch = validate_codepoint(cp, pos)?;
+        Ok((ch, i + 8))
+    } else {
+        Err(RegexError {
+            position: pos,
+            message: format!("expected \\u or \\U, got \\{}", escaped as char),
+        })
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Character class parsing
 // ══════════════════════════════════════════════════════════════════════════════
 
 /// Parse a `[...]` character class atom and return its NFA fragment.
+///
+/// Supports both byte-level ranges (ASCII) and codepoint-level ranges (Unicode).
+/// When a non-ASCII byte (≥ 0x80), `\u{…}`, `\U`, `\p{…}`, or `\P{…}` is
+/// encountered, the class promotes to codepoint mode. Byte ranges are promoted
+/// to codepoint ranges transparently.
 fn parse_char_class_atom(
     nfa: &mut Nfa,
     input: &[u8],
@@ -613,16 +914,20 @@ fn parse_char_class_atom(
         i += 1;
     }
 
-    let mut ranges: Vec<(u8, u8)> = Vec::with_capacity(8);
+    // Dual tracking: byte ranges for pure-ASCII classes, codepoint ranges for Unicode.
+    // If has_unicode is true, byte_ranges are promoted to cp_ranges at emission time.
+    let mut byte_ranges: Vec<(u8, u8)> = Vec::with_capacity(8);
+    let mut cp_ranges: Vec<(char, char)> = Vec::new();
+    let mut has_unicode = false;
 
     /* Special case: ] as first char (or first after ^) is literal */
     if i < len && input[i] == b']' {
-        ranges.push((b']', b']'));
+        byte_ranges.push((b']', b']'));
         i += 1;
     }
 
     while i < len && input[i] != b']' {
-        let ch = if input[i] == b'\\' {
+        if input[i] == b'\\' {
             if i + 1 >= len {
                 return Err(RegexError {
                     position: i,
@@ -630,103 +935,210 @@ fn parse_char_class_atom(
                 });
             }
             let esc = input[i + 1];
-            i += 2;
             match esc {
-                b'd' => {
-                    ranges.push((b'0', b'9'));
-                    continue;
-                },
+                /* Shorthand classes (always byte-level, continue) */
+                b'd' => { byte_ranges.push((b'0', b'9')); i += 2; continue; },
                 b'D' => {
-                    ranges.extend_from_slice(&complement_ranges(&[(b'0', b'9')]));
-                    continue;
+                    byte_ranges.extend_from_slice(&complement_ranges(&[(b'0', b'9')]));
+                    i += 2; continue;
                 },
                 b'w' => {
-                    ranges.extend_from_slice(&[(b'0', b'9'), (b'A', b'Z'), (b'_', b'_'), (b'a', b'z')]);
-                    continue;
+                    byte_ranges.extend_from_slice(&[(b'0', b'9'), (b'A', b'Z'), (b'_', b'_'), (b'a', b'z')]);
+                    i += 2; continue;
                 },
                 b'W' => {
-                    ranges.extend_from_slice(&complement_ranges(&[
-                        (b'0', b'9'),
-                        (b'A', b'Z'),
-                        (b'_', b'_'),
-                        (b'a', b'z'),
+                    byte_ranges.extend_from_slice(&complement_ranges(&[
+                        (b'0', b'9'), (b'A', b'Z'), (b'_', b'_'), (b'a', b'z'),
                     ]));
-                    continue;
+                    i += 2; continue;
                 },
                 b's' => {
-                    ranges.extend_from_slice(&[(b'\t', b'\n'), (b'\r', b'\r'), (b' ', b' ')]);
-                    continue;
+                    byte_ranges.extend_from_slice(&[(b'\t', b'\n'), (b'\r', b'\r'), (b' ', b' ')]);
+                    i += 2; continue;
                 },
                 b'S' => {
-                    ranges.extend_from_slice(&complement_ranges(&[
-                        (b'\t', b'\n'),
-                        (b'\r', b'\r'),
-                        (b' ', b' '),
+                    byte_ranges.extend_from_slice(&complement_ranges(&[
+                        (b'\t', b'\n'), (b'\r', b'\r'), (b' ', b' '),
                     ]));
+                    i += 2; continue;
+                },
+
+                /* Unicode property escapes (promote to codepoint mode) */
+                b'p' | b'P' => {
+                    has_unicode = true;
+                    let prop_negated = esc == b'P';
+                    let prop_start = i;
+                    i += 2; // skip \p or \P
+                    if i >= len || input[i] != b'{' {
+                        return Err(RegexError {
+                            position: prop_start,
+                            message: format!(
+                                "\\{} requires {{PropertyName}} in character class",
+                                esc as char
+                            ),
+                        });
+                    }
+                    i += 1; // skip '{'
+                    let name_start = i;
+                    while i < len && input[i] != b'}' { i += 1; }
+                    if i >= len {
+                        return Err(RegexError {
+                            position: prop_start,
+                            message: format!(
+                                "unclosed \\{}{{}} property in character class",
+                                esc as char
+                            ),
+                        });
+                    }
+                    let name = std::str::from_utf8(&input[name_start..i]).map_err(|_| RegexError {
+                        position: name_start,
+                        message: "invalid UTF-8 in property name".to_string(),
+                    })?;
+                    i += 1; // skip '}'
+                    let mut prop_ranges = utf8::resolve_property(name).map_err(|e| RegexError {
+                        position: prop_start,
+                        message: e,
+                    })?;
+                    if prop_negated {
+                        prop_ranges = utf8::complement_codepoint_ranges(&prop_ranges);
+                    }
+                    cp_ranges.extend_from_slice(&prop_ranges);
                     continue;
                 },
-                b'n' => b'\n',
-                b'r' => b'\r',
-                b't' => b'\t',
-                b'\\' | b']' | b'[' | b'^' | b'-' | b'/' | b'"' => esc,
+
+                /* Unicode escapes (promote to codepoint mode) */
+                b'u' | b'U' => {
+                    has_unicode = true;
+                    let (ch, new_i) = parse_unicode_escape_in_class(input, i)?;
+                    i = new_i;
+                    // Check for range: \u{XXXX}-\u{YYYY} or \u{XXXX}-z
+                    if i + 1 < len && input[i] == b'-' && input[i + 1] != b']' {
+                        i += 1; // skip '-'
+                        let hi = parse_char_class_endpoint_cp(input, &mut i, len)?;
+                        if ch > hi {
+                            return Err(RegexError {
+                                position: pos,
+                                message: format!(
+                                    "character class range [{}(U+{:04X})-{}(U+{:04X})] is out of order",
+                                    ch.escape_debug(), ch as u32, hi.escape_debug(), hi as u32,
+                                ),
+                            });
+                        }
+                        cp_ranges.push((ch, hi));
+                    } else {
+                        cp_ranges.push((ch, ch));
+                    }
+                    continue;
+                },
+
+                /* Escape sequences → byte */
+                b'n' => { i += 2; },
+                b'r' => { i += 2; },
+                b't' => { i += 2; },
+                b'\\' | b']' | b'[' | b'^' | b'-' | b'/' | b'"' => { i += 2; },
                 _ => {
                     return Err(RegexError {
-                        position: i - 2,
+                        position: i,
                         message: format!("invalid escape '\\{}' in character class", esc as char),
                     });
                 },
             }
-        } else {
-            let c = input[i];
-            i += 1;
-            c
-        };
-
-        /* Check for range: a-z */
-        if i + 1 < len && input[i] == b'-' && input[i + 1] != b']' {
-            i += 1; /* skip '-' */
-            let hi = if input[i] == b'\\' {
-                if i + 1 >= len {
-                    return Err(RegexError {
-                        position: i,
-                        message: "trailing backslash in character class range".to_string(),
-                    });
-                }
-                let esc = input[i + 1];
-                i += 2;
-                match esc {
-                    b'n' => b'\n',
-                    b'r' => b'\r',
-                    b't' => b'\t',
-                    b'\\' | b']' | b'[' | b'^' | b'-' | b'/' | b'"' => esc,
-                    _ => {
-                        return Err(RegexError {
-                            position: i - 2,
-                            message: format!(
-                                "invalid escape '\\{}' in character class range",
-                                esc as char
-                            ),
-                        });
-                    },
-                }
-            } else {
-                let c = input[i];
-                i += 1;
-                c
+            // If we got here, the escape produced a byte value
+            let ch_byte = match esc {
+                b'n' => b'\n',
+                b'r' => b'\r',
+                b't' => b'\t',
+                other => other, // literal escaped char
             };
 
-            if ch > hi {
-                return Err(RegexError {
-                    position: pos,
-                    message: format!(
-                        "character class range [{}-{}] is out of order",
-                        ch as char, hi as char
-                    ),
-                });
+            /* Check for range: a-z */
+            if i + 1 < len && input[i] == b'-' && input[i + 1] != b']' {
+                i += 1; // skip '-'
+                let hi_byte = parse_char_class_endpoint_byte(input, &mut i, len, pos)?;
+                if ch_byte > hi_byte {
+                    return Err(RegexError {
+                        position: pos,
+                        message: format!(
+                            "character class range [{}-{}] is out of order",
+                            ch_byte as char, hi_byte as char
+                        ),
+                    });
+                }
+                byte_ranges.push((ch_byte, hi_byte));
+            } else {
+                byte_ranges.push((ch_byte, ch_byte));
             }
-            ranges.push((ch, hi));
+        } else if input[i] >= 0x80 {
+            // Non-ASCII byte → decode UTF-8 codepoint, promote to Unicode
+            has_unicode = true;
+            // We need the original string to decode. Find it via byte position.
+            let remaining = std::str::from_utf8(&input[i..]).map_err(|_| RegexError {
+                position: i,
+                message: "invalid UTF-8 in character class".to_string(),
+            })?;
+            let ch = remaining.chars().next().expect("non-empty at non-ASCII byte");
+            let ch_len = ch.len_utf8();
+            i += ch_len;
+
+            // Check for range: α-ω
+            if i + 1 < len && input[i] == b'-' && input[i + 1] != b']' {
+                i += 1; // skip '-'
+                let hi = parse_char_class_endpoint_cp(input, &mut i, len)?;
+                if ch > hi {
+                    return Err(RegexError {
+                        position: pos,
+                        message: format!(
+                            "character class range [{}(U+{:04X})-{}(U+{:04X})] is out of order",
+                            ch.escape_debug(), ch as u32, hi.escape_debug(), hi as u32,
+                        ),
+                    });
+                }
+                cp_ranges.push((ch, hi));
+            } else {
+                cp_ranges.push((ch, ch));
+            }
         } else {
-            ranges.push((ch, ch));
+            // ASCII byte
+            let ch_byte = input[i];
+            i += 1;
+
+            /* Check for range: a-z */
+            if i + 1 < len && input[i] == b'-' && input[i + 1] != b']' {
+                i += 1; // skip '-'
+                // Check if the high endpoint is Unicode
+                if i < len && (input[i] >= 0x80 || (input[i] == b'\\' && i + 1 < len
+                    && matches!(input[i + 1], b'u' | b'U')))
+                {
+                    // Promote to codepoint range
+                    has_unicode = true;
+                    let hi = parse_char_class_endpoint_cp(input, &mut i, len)?;
+                    let lo_cp = ch_byte as char;
+                    if lo_cp > hi {
+                        return Err(RegexError {
+                            position: pos,
+                            message: format!(
+                                "character class range [{}(U+{:04X})-{}(U+{:04X})] is out of order",
+                                lo_cp.escape_debug(), lo_cp as u32, hi.escape_debug(), hi as u32,
+                            ),
+                        });
+                    }
+                    cp_ranges.push((lo_cp, hi));
+                } else {
+                    let hi_byte = parse_char_class_endpoint_byte(input, &mut i, len, pos)?;
+                    if ch_byte > hi_byte {
+                        return Err(RegexError {
+                            position: pos,
+                            message: format!(
+                                "character class range [{}-{}] is out of order",
+                                ch_byte as char, hi_byte as char
+                            ),
+                        });
+                    }
+                    byte_ranges.push((ch_byte, hi_byte));
+                }
+            } else {
+                byte_ranges.push((ch_byte, ch_byte));
+            }
         }
     }
 
@@ -738,20 +1150,132 @@ fn parse_char_class_atom(
     }
     i += 1; /* skip ']' */
 
-    /* Sort and merge ranges */
-    let merged = if negated {
-        let positive = sort_and_merge_ranges(&ranges);
-        complement_ranges(&positive)
-    } else {
-        sort_and_merge_ranges(&ranges)
-    };
-
     /* Build NFA fragment */
     let start = nfa.add_state(NfaState::new());
     let accept = nfa.add_state(NfaState::new());
-    add_ranges(nfa, start, accept, &merged);
+
+    if has_unicode {
+        // Promote all byte ranges to codepoint ranges and handle together
+        for &(lo, hi) in &byte_ranges {
+            cp_ranges.push((lo as char, hi as char));
+        }
+        if negated {
+            cp_ranges = utf8::complement_codepoint_ranges(
+                &utf8::sort_and_merge_cp_ranges(&cp_ranges),
+            );
+        } else {
+            cp_ranges = utf8::sort_and_merge_cp_ranges(&cp_ranges);
+        }
+        for &(lo, hi) in &cp_ranges {
+            utf8::add_codepoint_range(nfa, start, accept, lo, hi);
+        }
+    } else {
+        // Pure byte-level class (ASCII-only path, no overhead)
+        let merged = if negated {
+            let positive = sort_and_merge_ranges(&byte_ranges);
+            complement_ranges(&positive)
+        } else {
+            sort_and_merge_ranges(&byte_ranges)
+        };
+        add_ranges(nfa, start, accept, &merged);
+    }
 
     Ok((NfaFragment { start, accept }, i))
+}
+
+/// Parse a byte-level endpoint in a character class range (after '-').
+fn parse_char_class_endpoint_byte(
+    input: &[u8],
+    i: &mut usize,
+    len: usize,
+    class_pos: usize,
+) -> Result<u8, RegexError> {
+    if *i >= len {
+        return Err(RegexError {
+            position: class_pos,
+            message: "unterminated character class range".to_string(),
+        });
+    }
+    if input[*i] == b'\\' {
+        if *i + 1 >= len {
+            return Err(RegexError {
+                position: *i,
+                message: "trailing backslash in character class range".to_string(),
+            });
+        }
+        let esc = input[*i + 1];
+        *i += 2;
+        match esc {
+            b'n' => Ok(b'\n'),
+            b'r' => Ok(b'\r'),
+            b't' => Ok(b'\t'),
+            b'\\' | b']' | b'[' | b'^' | b'-' | b'/' | b'"' => Ok(esc),
+            _ => Err(RegexError {
+                position: *i - 2,
+                message: format!("invalid escape '\\{}' in character class range", esc as char),
+            }),
+        }
+    } else {
+        let c = input[*i];
+        *i += 1;
+        Ok(c)
+    }
+}
+
+/// Parse a codepoint-level endpoint in a character class range (after '-').
+/// Handles: literal multi-byte UTF-8, `\u{…}`, `\uXXXX`, `\UXXXXXXXX`.
+fn parse_char_class_endpoint_cp(
+    input: &[u8],
+    i: &mut usize,
+    len: usize,
+) -> Result<char, RegexError> {
+    if *i >= len {
+        return Err(RegexError {
+            position: *i,
+            message: "unterminated character class range".to_string(),
+        });
+    }
+    if input[*i] == b'\\' {
+        if *i + 1 >= len {
+            return Err(RegexError {
+                position: *i,
+                message: "trailing backslash in character class range".to_string(),
+            });
+        }
+        let esc = input[*i + 1];
+        match esc {
+            b'u' | b'U' => {
+                let (ch, new_i) = parse_unicode_escape_in_class(input, *i)?;
+                *i = new_i;
+                Ok(ch)
+            }
+            b'n' => { *i += 2; Ok('\n') },
+            b'r' => { *i += 2; Ok('\r') },
+            b't' => { *i += 2; Ok('\t') },
+            b'\\' | b']' | b'[' | b'^' | b'-' | b'/' | b'"' => {
+                *i += 2;
+                Ok(esc as char)
+            },
+            _ => Err(RegexError {
+                position: *i,
+                message: format!("invalid escape '\\{}' in character class range", esc as char),
+            }),
+        }
+    } else if input[*i] >= 0x80 {
+        // Multi-byte UTF-8 literal
+        let remaining = std::str::from_utf8(&input[*i..]).map_err(|_| RegexError {
+            position: *i,
+            message: "invalid UTF-8 in character class range endpoint".to_string(),
+        })?;
+        let ch = remaining.chars().next().expect("non-empty at non-ASCII byte");
+        *i += ch.len_utf8();
+        Ok(ch)
+    } else {
+        // ASCII byte
+        let c = input[*i] as char;
+        *i += 1;
+        Ok(c)
+    }
 }
 
 /// Sort ranges by start, then merge overlapping/adjacent ranges.
@@ -778,7 +1302,7 @@ fn sort_and_merge_ranges(ranges: &[(u8, u8)]) -> Vec<(u8, u8)> {
     merged
 }
 
-/// Compute the complement of a set of ranges over `[0, 127]`.
+/// Compute the complement of a set of byte ranges over `[0, 255]`.
 fn complement_ranges(ranges: &[(u8, u8)]) -> Vec<(u8, u8)> {
     let merged = sort_and_merge_ranges(ranges);
     let mut complement: Vec<(u8, u8)> = Vec::with_capacity(merged.len() + 1);
@@ -788,13 +1312,11 @@ fn complement_ranges(ranges: &[(u8, u8)]) -> Vec<(u8, u8)> {
             complement.push((lo, range_lo - 1));
         }
         lo = range_hi.saturating_add(1);
-        if range_hi == 127 {
+        if range_hi == 255 {
             return complement;
         }
     }
-    if lo <= 127 {
-        complement.push((lo, 127));
-    }
+    complement.push((lo, 255));
     complement
 }
 
@@ -1513,5 +2035,238 @@ mod tests {
             closure.contains(&frag.start),
             "epsilon closure from NFA start should include fragment start"
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Unicode escape tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// Helper: compile a regex and test if it accepts given bytes.
+    fn regex_accepts_bytes(pattern: &str, input: &[u8]) -> bool {
+        let mut nfa = Nfa::new();
+        let frag = compile_regex(pattern, &mut nfa, TokenKind::Ident)
+            .expect("regex compilation failed");
+        nfa.add_epsilon(nfa.start, frag.start);
+        let partition = compute_equivalence_classes(&nfa);
+        let dfa = subset_construction(&nfa, &partition);
+        let min_dfa = minimize_dfa(&dfa);
+        let mut state = min_dfa.start;
+        for &b in input {
+            let class = partition.classify(b);
+            state = min_dfa.transition(state, class);
+            if state == super::super::DEAD_STATE {
+                return false;
+            }
+        }
+        min_dfa.states[state as usize].accept.is_some()
+    }
+
+    /* ── \u{XXXX} braced escapes ─────────────────────────────────────── */
+
+    #[test]
+    fn test_unicode_escape_braced_alpha() {
+        // \u{03B1} = α → 0xCE 0xB1
+        assert!(regex_accepts_bytes(r"\u{03B1}", "α".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\u{03B1}", "a".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\u{03B1}", "β".as_bytes()));
+    }
+
+    #[test]
+    fn test_unicode_escape_braced_emoji() {
+        // \u{1F600} = 😀 → 0xF0 0x9F 0x98 0x80
+        assert!(regex_accepts_bytes(r"\u{1F600}", "😀".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\u{1F600}", "a".as_bytes()));
+    }
+
+    #[test]
+    fn test_unicode_escape_braced_ascii() {
+        // \u{41} = 'A' → single byte 0x41
+        assert!(regex_accepts_bytes(r"\u{41}", b"A"));
+        assert!(!regex_accepts_bytes(r"\u{41}", b"B"));
+    }
+
+    /* ── \uXXXX 4-digit escapes ──────────────────────────────────────── */
+
+    #[test]
+    fn test_unicode_escape_4digit_alpha() {
+        // \u03B1 = α
+        assert!(regex_accepts_bytes(r"\u03B1", "α".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\u03B1", "a".as_bytes()));
+    }
+
+    /* ── \UXXXXXXXX 8-digit escapes ──────────────────────────────────── */
+
+    #[test]
+    fn test_unicode_escape_8digit_alpha() {
+        // \U000003B1 = α
+        assert!(regex_accepts_bytes(r"\U000003B1", "α".as_bytes()));
+    }
+
+    #[test]
+    fn test_unicode_escape_8digit_emoji() {
+        // \U0001F600 = 😀
+        assert!(regex_accepts_bytes(r"\U0001F600", "😀".as_bytes()));
+    }
+
+    /* ── Unicode escape errors ───────────────────────────────────────── */
+
+    #[test]
+    fn test_unicode_escape_invalid_hex() {
+        let mut nfa = Nfa::new();
+        let err = compile_regex(r"\uGGGG", &mut nfa, TokenKind::Ident);
+        assert!(err.is_err());
+        assert!(err.unwrap_err().message.contains("invalid hex digit"));
+    }
+
+    #[test]
+    fn test_unicode_escape_surrogate_rejected() {
+        let mut nfa = Nfa::new();
+        let err = compile_regex(r"\u{D800}", &mut nfa, TokenKind::Ident);
+        assert!(err.is_err());
+        assert!(err.unwrap_err().message.contains("surrogate"));
+    }
+
+    #[test]
+    fn test_unicode_escape_too_large() {
+        let mut nfa = Nfa::new();
+        let err = compile_regex(r"\U00110000", &mut nfa, TokenKind::Ident);
+        assert!(err.is_err());
+        assert!(err.unwrap_err().message.contains("exceeds maximum"));
+    }
+
+    /* ── \p{...} / \P{...} Unicode properties ────────────────────────── */
+
+    #[test]
+    fn test_property_xid_start() {
+        assert!(regex_accepts_bytes(r"\p{XID_Start}", "a".as_bytes()));
+        assert!(regex_accepts_bytes(r"\p{XID_Start}", "α".as_bytes()));
+        assert!(regex_accepts_bytes(r"\p{XID_Start}", "你".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\p{XID_Start}", "1".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\p{XID_Start}", " ".as_bytes()));
+    }
+
+    #[test]
+    fn test_property_xid_continue() {
+        assert!(regex_accepts_bytes(r"\p{XID_Continue}", "a".as_bytes()));
+        assert!(regex_accepts_bytes(r"\p{XID_Continue}", "0".as_bytes()));
+        assert!(regex_accepts_bytes(r"\p{XID_Continue}", "α".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\p{XID_Continue}", " ".as_bytes()));
+    }
+
+    #[test]
+    fn test_property_negated_white_space() {
+        assert!(regex_accepts_bytes(r"\P{White_Space}", "a".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\P{White_Space}", " ".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\P{White_Space}", "\t".as_bytes()));
+    }
+
+    #[test]
+    fn test_property_letter() {
+        assert!(regex_accepts_bytes(r"\p{Letter}", "a".as_bytes()));
+        assert!(regex_accepts_bytes(r"\p{Letter}", "α".as_bytes()));
+        assert!(regex_accepts_bytes(r"\p{Letter}", "你".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\p{Letter}", "1".as_bytes()));
+    }
+
+    #[test]
+    fn test_property_nd() {
+        assert!(regex_accepts_bytes(r"\p{Nd}", "0".as_bytes()));
+        // Arabic-Indic digit ٣ (U+0663)
+        assert!(regex_accepts_bytes(r"\p{Nd}", "٣".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\p{Nd}", "a".as_bytes()));
+    }
+
+    #[test]
+    fn test_property_greek_script() {
+        assert!(regex_accepts_bytes(r"\p{Greek}", "α".as_bytes()));
+        assert!(regex_accepts_bytes(r"\p{Greek}", "Ω".as_bytes()));
+        assert!(!regex_accepts_bytes(r"\p{Greek}", "a".as_bytes()));
+    }
+
+    /* ── Unicode character classes [α-ω] ─────────────────────────────── */
+
+    #[test]
+    fn test_char_class_unicode_literal_range() {
+        // [α-ω] matches Greek lowercase
+        assert!(regex_accepts_bytes("[α-ω]", "α".as_bytes()));
+        assert!(regex_accepts_bytes("[α-ω]", "β".as_bytes()));
+        assert!(regex_accepts_bytes("[α-ω]", "ω".as_bytes()));
+        assert!(!regex_accepts_bytes("[α-ω]", "a".as_bytes()));
+        assert!(!regex_accepts_bytes("[α-ω]", "Α".as_bytes())); // uppercase Alpha
+    }
+
+    #[test]
+    fn test_char_class_mixed_ascii_unicode() {
+        // [a-zα-ω] matches both ASCII and Greek lowercase
+        assert!(regex_accepts_bytes("[a-zα-ω]", "a".as_bytes()));
+        assert!(regex_accepts_bytes("[a-zα-ω]", "z".as_bytes()));
+        assert!(regex_accepts_bytes("[a-zα-ω]", "α".as_bytes()));
+        assert!(regex_accepts_bytes("[a-zα-ω]", "ω".as_bytes()));
+        assert!(!regex_accepts_bytes("[a-zα-ω]", "A".as_bytes()));
+    }
+
+    #[test]
+    fn test_char_class_unicode_escape_range() {
+        // [\u0391-\u03C9] matches Greek block via 4-digit escapes
+        assert!(regex_accepts_bytes(r"[\u0391-\u03C9]", "Α".as_bytes())); // U+0391
+        assert!(regex_accepts_bytes(r"[\u0391-\u03C9]", "α".as_bytes())); // U+03B1
+        assert!(regex_accepts_bytes(r"[\u0391-\u03C9]", "ω".as_bytes())); // U+03C9
+        assert!(!regex_accepts_bytes(r"[\u0391-\u03C9]", "a".as_bytes()));
+    }
+
+    #[test]
+    fn test_char_class_braced_escape_range() {
+        // [\u{0}-\u{7F}] matches ASCII range
+        assert!(regex_accepts_bytes(r"[\u{0}-\u{7F}]", b"A"));
+        assert!(regex_accepts_bytes(r"[\u{0}-\u{7F}]", b"z"));
+        assert!(regex_accepts_bytes(r"[\u{0}-\u{7F}]", b"\x00"));
+        assert!(regex_accepts_bytes(r"[\u{0}-\u{7F}]", b"\x7F"));
+    }
+
+    #[test]
+    fn test_char_class_negated_unicode_property() {
+        // [^\p{Letter}] matches non-letters
+        assert!(regex_accepts_bytes(r"[^\p{Letter}]", "1".as_bytes()));
+        assert!(regex_accepts_bytes(r"[^\p{Letter}]", " ".as_bytes()));
+        assert!(!regex_accepts_bytes(r"[^\p{Letter}]", "a".as_bytes()));
+        assert!(!regex_accepts_bytes(r"[^\p{Letter}]", "α".as_bytes()));
+    }
+
+    /* ── Expanded dot and complement ─────────────────────────────────── */
+
+    #[test]
+    fn test_dot_matches_high_bytes() {
+        // . should match byte 0x80+ (needed for UTF-8 chain intermediate bytes)
+        assert!(regex_accepts_bytes(".", &[0xFF]));
+        assert!(regex_accepts_bytes(".", &[0x80]));
+        assert!(!regex_accepts_bytes(".", &[b'\n']));
+    }
+
+    #[test]
+    fn test_complement_includes_high_bytes() {
+        // [^a] should include bytes 0x80-0xFF
+        assert!(regex_accepts_bytes("[^a]", &[0x80]));
+        assert!(regex_accepts_bytes("[^a]", &[0xFF]));
+        assert!(!regex_accepts_bytes("[^a]", b"a"));
+    }
+
+    /* ── Unicode identifier pattern ──────────────────────────────────── */
+
+    #[test]
+    fn test_unicode_ident_pattern() {
+        // \p{XID_Start}\p{XID_Continue}* — Unicode identifier pattern
+        let pattern = r"\p{XID_Start}\p{XID_Continue}*";
+        // ASCII identifiers
+        assert!(regex_accepts_bytes(pattern, "x".as_bytes()));
+        assert!(regex_accepts_bytes(pattern, "foo".as_bytes()));
+        assert!(regex_accepts_bytes(pattern, "hello_42".as_bytes()));
+        // Unicode identifiers
+        assert!(regex_accepts_bytes(pattern, "café".as_bytes()));
+        assert!(regex_accepts_bytes(pattern, "λ".as_bytes()));
+        assert!(regex_accepts_bytes(pattern, "μ".as_bytes()));
+        assert!(regex_accepts_bytes(pattern, "ω".as_bytes()));
+        // Not valid identifiers
+        assert!(!regex_accepts_bytes(pattern, "42".as_bytes()));
+        assert!(!regex_accepts_bytes(pattern, " ".as_bytes()));
     }
 }

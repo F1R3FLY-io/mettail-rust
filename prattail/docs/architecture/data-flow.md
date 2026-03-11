@@ -85,14 +85,17 @@ LanguageSpec
     │       ├───▶ extract_terminals(grammar_rules, type_infos) → LexerInput
     │       │       { language_name, terminals: Vec<TerminalPattern>, needs: BuiltinNeeds }
     │       │
-    │       ├───▶ build_nfa(terminals, needs) → Nfa
+    │       ├───▶ build_nfa(terminals, needs, literal_patterns) → Nfa
     │       │       │
     │       │       ├───▶ build_keyword_trie(nfa, fixed_terminals)
     │       │       │       Aho-Corasick prefix-sharing trie for all fixed terminals
     │       │       │       Single epsilon: global_start → trie_root
     │       │       │
-    │       │       └───▶ build_ident_fragment / build_integer_fragment / etc.
-    │       │               Builtin patterns connected via epsilon from global_start
+    │       │       └───▶ regex::compile_regex(patterns.<name>, nfa, TokenKind)
+    │       │               per needed builtin (ident, integer, float, string)
+    │       │               Regex-compiled Thompson NFA fragments with UTF-8
+    │       │               byte chain decomposition via automata/utf8.rs
+    │       │               Connected via epsilon from global_start
     │       │
     │       ├───▶ compute_equivalence_classes(nfa) → AlphabetPartition
     │       │       256 byte values → ~15 equivalence classes
@@ -218,18 +221,25 @@ Fixed terminals  ───▶  build_keyword_trie(nfa, fixed_terminals) → trie
                           trie_root reached via single epsilon from global_start
                         Priority via TokenKind::priority(): Fixed(10) > Ident(1)
 
-LexerInput.needs  ───▶  if needs.ident:
-                           build_ident_fragment(nfa)
-                           [a-zA-Z_][a-zA-Z0-9_]* → accept(Ident)
+LexerInput.needs + literal_patterns  ───▶
+                         if needs.ident:
+                           regex::compile_regex(patterns.ident, nfa, Ident)
+                           default: /[a-zA-Z_][a-zA-Z0-9_]*/ → accept(Ident)
                          if needs.integer:
-                           build_integer_fragment(nfa)
-                           [0-9]+ → accept(Integer)
+                           regex::compile_regex(patterns.integer, nfa, Integer)
+                           default: /[0-9]+/ → accept(Integer)
                          if needs.float:
-                           build_float_fragment(nfa)
-                           [0-9]+.[0-9]+ → accept(Float)
+                           regex::compile_regex(patterns.float, nfa, Float)
+                           default: /[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/ → accept(Float)
                          if needs.string_lit:
-                           build_string_lit_fragment(nfa)
-                           "[^"]*" → accept(StringLit)
+                           regex::compile_regex(patterns.string, nfa, StringLit)
+                           default: /"([^"\\]|\\.)*"/ → accept(StringLit)
+
+                         Patterns are configurable via literal_patterns.ebnf.
+                         Unicode codepoints (e.g., \p{XID_Start}) are decomposed
+                         into byte-level NFA chains via automata/utf8.rs using
+                         regex_syntax::utf8::Utf8Sequences — zero UTF-8 decoding
+                         at lex time.
 
 All fragments combined via epsilon from global start:
     global_start ──eps──▶ trie_root (single epsilon for ALL fixed terminals)
@@ -300,9 +310,9 @@ Dfa  ───▶  minimize_dfa()
     │   Builds entire lexer as a String buffer (no quote! / TokenStream intermediaries)
     │
     ├───▶ write_token_enum()     → enum Token<'a> { Eof, Ident(&'a str), Integer(i64), ... }
-    ├───▶ write_position_and_range_defs()  → struct Position { line, column, byte_offset }
-    │                                      → struct Range { start: Position, end: Position }
-    ├───▶ write_parse_error_enum()         → enum ParseError { UnexpectedToken { ... }, ... }
+    ├───▶ write_runtime_types_import()     → use mettail_prattail::runtime_types::*;
+    │       Imports shared Position, Range, ParseError from runtime_types.rs
+    │       (UnexpectedToken, UnexpectedEof, TrailingTokens, LexError, RecoveryApplied)
     ├───▶ if states ≤ 30:
     │       write_direct_coded_lexer()
     │         static CHAR_CLASS: [u8; 256] = [...];

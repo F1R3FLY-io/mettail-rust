@@ -221,7 +221,8 @@ PraTTaIL contains 50+ modules organized by function:
 
 | Module             | Lines  | Purpose                                                            |
 |--------------------|--------|--------------------------------------------------------------------|
-| `automata/`        | ~2,500 | NFA/DFA types, Thompson construction, partition, minimize, codegen |
+| `automata/`        | ~2,900 | NFA/DFA types, Thompson construction, partition, minimize, codegen |
+| `automata/utf8.rs` | ~430   | UTF-8 byte chain decomposition (Unicode → byte-level NFA chains)  |
 | `binding_power.rs` | ~400   | BP analysis for infix/prefix/postfix/mixfix                        |
 | `classify.rs`      | ~200   | Rule type classification                                           |
 | `decision_tree.rs` | ~6,800 | PathMap trie dispatch (unified mechanism)                          |
@@ -467,9 +468,19 @@ Kleene star:    start ──ε──→ body ──[a]──→ body_accept ─�
 Built-in patterns (`ident`, `integer`, `float`, `string`) are injected
 when the grammar declares native types (`i32`, `f64`, `String`, `bool`).
 
+**Unicode patterns** (`\p{…}`, `\u{…}`, codepoint ranges in `[…]`) are
+decomposed into byte-level NFA chains at compile time by
+`automata/utf8.rs`. Each codepoint range is converted via
+`regex_syntax::utf8::Utf8Sequences` into minimal sets of byte-range
+chains (1-4 bytes per chain depending on UTF-8 encoding length). All
+chains share the same start and accept states, so the NFA structure is
+unchanged — only byte-range transitions are added. The downstream
+pipeline (partition, subset construction, DFA minimization, codegen)
+operates exclusively on the `[u8; 256]` alphabet with no modifications.
+
 ### 2.3 Equivalence Class Partition
 
-The full 256-byte ASCII alphabet is partitioned into equivalence classes:
+The full 256-byte alphabet is partitioned into equivalence classes:
 bytes that produce identical transitions in every NFA state are grouped
 together.  This typically reduces the alphabet from 256 to 12-18 classes
 (~15-20× compression), yielding proportionally smaller DFA transition tables.
@@ -507,7 +518,8 @@ variant in O(1) time, avoiding sequential string comparison.
   `StringLit(&'a str)`)
 - `Position` and `Range` structs for source locations
 - `ParseError` enum: `UnexpectedToken`, `UnexpectedEof`, `TrailingTokens`,
-  `InvalidLiteral`
+  `LexError`, `RecoveryApplied` — error messages display Unicode
+  characters correctly (e.g., `unexpected character '→'`)
 - `lex()` — linear tokenization returning `Vec<(Token, Range)>`
 - `lex_weighted_core()` — weighted tokenization returning
   `Vec<(Token, Range, TropicalWeight)>` for lattice construction
@@ -536,9 +548,117 @@ types from category declarations and injects the corresponding patterns:
 | `i32`, `i64`    | `[0-9]+`                           | `Integer`                  |
 | `f64`           | `[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?` | `Float`                    |
 | `bool`          | —                                  | `True`, `False` (keywords) |
-| `String`, `str` | `"([^"\\]|\\.)*"`                  | `StringLit`                |
+| `String`, `str` | `"([^"\\]\|\\.)*"`                 | `StringLit`                |
 
 Custom literal patterns are configurable via `literal_patterns.ebnf`.
+
+The default `<ident>` pattern is ASCII-only (`[a-zA-Z_][a-zA-Z0-9_]*`).
+For Unicode identifiers, override with `\p{XID_Start}\p{XID_Continue}*`
+in `literal_patterns.ebnf`. See [Section 2.8](#28-regex-pattern-syntax)
+for the full regex syntax reference.
+
+### 2.8 Regex Pattern Syntax
+
+Token patterns are specified as PCRE-subset regular expressions compiled
+directly into Thompson NFA fragments by `automata/regex.rs`. No intermediate
+AST is allocated — NFA states and transitions are emitted as the pattern is
+parsed.
+
+**Feature table:**
+
+| Feature            | Syntax                                                                     | Notes                                          |
+|--------------------|----------------------------------------------------------------------------|------------------------------------------------|
+| Literal char       | `a`, `1`, `_`                                                              | Single byte                                    |
+| Escaped metachar   | `\.` `\\` `\[` `\]` `\(` `\)` `\|` `\+` `\*` `\?` `\^` `\"` `\{` `\}` `\/` |                                                |
+| Escape sequences   | `\n` `\r` `\t`                                                             | Common whitespace                              |
+| Shorthand classes  | `\d` `\w` `\s` `\D` `\W` `\S`                                              | ASCII-only (see note below)                    |
+| Unicode escape     | `\u{03B1}`  `\u03B1`  `\U000003B1`                                         | Braced (1-6 hex), 4-digit, 8-digit             |
+| Unicode property   | `\p{XID_Start}`  `\P{White_Space}`                                         | General categories, binary properties, scripts |
+| Character class    | `[abc]`  `[a-z]`  `[α-ω]`  `[\u0391-\u03C9]`                               | Byte or codepoint ranges                       |
+| Negated class      | `[^abc]`  `[^\p{Letter}]`                                                  | Complement over full byte/codepoint range      |
+| Dot                | `.`                                                                        | Any byte except `\n`                           |
+| Grouping           | `(...)`                                                                    | Non-capturing                                  |
+| Alternation        | `a\|b`                                                                     |                                                |
+| Quantifiers        | `*`  `+`  `?`                                                              | Greedy (NFA semantics)                         |
+| Bounded repetition | `{n}`  `{n,}`  `{n,m}`                                                     | Count-bounded                                  |
+
+**Not supported:** backreferences, lookahead/lookbehind, lazy quantifiers,
+named groups, anchors (`^`/`$` outside character classes).
+
+**Shorthand class note:** `\w`, `\d`, `\s` (and their negations) use ASCII
+ranges for backward compatibility. For Unicode-aware matching, use `\p{…}`
+explicitly: `\p{XID_Continue}` instead of `\w`, `\p{Nd}` instead of `\d`,
+`\p{White_Space}` instead of `\s`.
+
+#### Unicode support: byte-level UTF-8 automata
+
+Multi-byte codepoints are decomposed into byte-level NFA transition chains
+at compile time. The downstream pipeline (partition `[ClassId; 256]`, subset
+construction, DFA minimization, codegen `[u8; 256]`, runtime lex loop) is
+completely unchanged. **Zero UTF-8 decoding at lex time.**
+
+The decomposition uses `regex_syntax::utf8::Utf8Sequences`. Example for
+`α` (U+03B1, UTF-8 bytes `0xCE 0xB1`):
+
+```
+Pattern: \u{03B1}
+
+NFA:  start ──[0xCE]──→ s₁ ──[0xB1]──→ accept
+
+A range like [α-ω] (U+03B1–U+03C9) produces multiple byte-range chains:
+
+      start ──[0xCE]──→ s₁ ──[0xB1-0xBF]──→ accept    (α through ...)
+            ──[0xCF]──→ s₂ ──[0x80-0x89]──→ accept    (... through ω)
+```
+
+Each `Utf8Sequence` becomes a chain of 1-4 NFA transitions (one per
+byte in the encoding). All chains share the same `start` and `accept`
+states — the NFA structure is standard Thompson.
+
+#### Customizable literal patterns
+
+Default patterns are defined in `literal_patterns.ebnf`:
+
+| Pattern     | Default Regex                        | Token       |
+|-------------|--------------------------------------|-------------|
+| `<integer>` | `/[0-9]+/`                           | `Integer`   |
+| `<float>`   | `/[0-9]+\.[0-9]+([eE][+-]?[0-9]+)?/` | `Float`     |
+| `<string>`  | `/"([^"\\]\|\\.)*"/`                 | `StringLit` |
+| `<ident>`   | `/[a-zA-Z_][a-zA-Z0-9_]*/`           | `Ident`     |
+
+The default `<ident>` pattern is ASCII-only. For Unicode identifiers,
+override via `LiteralPatterns`:
+
+```
+<ident> = /\p{XID_Start}\p{XID_Continue}*/
+```
+
+This accepts identifiers like `café`, `λ`, `你好` — any codepoint with the
+Unicode `XID_Start` / `XID_Continue` property.
+
+### 2.9 Unicode Whitespace
+
+The lex loop skips whitespace between tokens using a two-tier strategy:
+
+1. **ASCII fast path:** `' '`, `\t`, `\n`, `\r` — the same four bytes as
+   before, with optional SIMD acceleration (`simd-whitespace` feature).
+2. **Unicode fallback:** After the ASCII loop, if the current byte is
+   `≥ 0x80`, decode the UTF-8 character and check `char::is_whitespace()`.
+   This handles NBSP (U+00A0), EN QUAD (U+2000), IDEOGRAPHIC SPACE
+   (U+3000), and all other Unicode whitespace codepoints.
+
+**Cost:** The `bytes[pos] >= 0x80` branch is never taken for pure-ASCII
+input (predicted-not-taken, zero overhead). For Unicode whitespace, one
+`decode_char_at()` call per whitespace character — negligible.
+
+The fallback is applied in all three lex variants: `lex_core()`,
+`lex_weighted_core()`, and `lex_lattice_core()`.
+
+**Error display:** When the lexer encounters an unexpected character,
+`decode_char_at()` decodes the full Unicode character for the error
+message (e.g., `unexpected character '→'` instead of `unexpected byte
+0xE2`). Caret length in `format_error_context()` uses `.chars().count()`
+instead of byte count, so `café` gets 4 carets, not 5.
 
 ---
 
@@ -1891,18 +2011,18 @@ existential (⊕) and universal (⊗) branching (Chandra, Kozen, & Stockmeyer
 enabling weighted game-theoretic analysis.
 
 **Applications:**
-- Q⊗ (universal) branching requires all successors to accept; Q⊕
+- Q⊗  (universal) branching requires all successors to accept; Q⊕
   (existential) requires at least one.  Polynomial transition coefficients
   weight each branch's cost, enabling weighted game-theoretic analysis
   over the alternating structure.
-- Quantifier evaluation maps `forall` to Q⊗ and `exists` to Q⊕.
+- Quantifier evaluation maps `forall` to Q⊗  and `exists` to Q⊕.
   Process bisimulation checks require alternating moves (e.g., Rholang
   "for every send in A, exists a matching receive in B").  Parse
   disambiguation models ambiguity as a game between existential (parser
   chooses rule) and universal (input chooses token) players — acceptance
   determines whether a disambiguation strategy exists.
 - N06 flags provably non-bisimilar state pairs in the polynomial
-  transition system; N07 flags significant Q⊗/Q⊕ degree asymmetry
+  transition system; N07 flags significant Q⊗/Q⊕  degree asymmetry
   (imbalanced game structure).
 - `analyze_from_bundle()` produces `AlternatingAnalysis` (branching
   statistics, polynomial data) wired into `LintContext.alternating_result`.
@@ -2520,8 +2640,8 @@ trampoline codegen — hot edges get `#[inline]` annotations, cold edges
 get `#[cold]` to improve instruction cache locality.
 
 **Applications:**
-- `hot_path_analysis()` ranks edges by `expected_weight = α(u) ⊗ w(u,v)
-  ⊗ β(v)`.  `critical_path()` extracts the single highest-weight path.
+- `hot_path_analysis()` ranks edges by `expected_weight = α(u) ⊗  w(u,v)
+  ⊗  β(v)`.  `critical_path()` extracts the single highest-weight path.
   `edge_occupancy()` normalizes per-edge contributions against
   `total_weight()` (partition function).  Semiring-generic:
   `TropicalWeight` → shortest path, `LogWeight` → log-probability,
@@ -3338,6 +3458,7 @@ PD01-04 (predicate dispatch).
 | **Binding power (BP)**    | Numeric precedence value controlling operator parsing order           |
 | **Category**              | A syntactic sort in the grammar (e.g., `Int`, `Bool`)                 |
 | **CEGAR**                 | Counterexample-guided abstraction refinement                          |
+| **Codepoint**             | Unicode scalar value (U+0000 to U+10FFFF, excluding surrogates)      |
 | **Congruence rule**       | Rewrite rule enabling reduction under a constructor context           |
 | **CRA**                   | Cost register automaton                                               |
 | **CSE**                   | Common subexpression elimination                                      |
@@ -3385,6 +3506,9 @@ PD01-04 (predicate dispatch).
 | **Thompson construction** | NFA construction from regular expressions                             |
 | **Trampoline**            | Explicit continuation stack replacing OS call stack                   |
 | **TRS**                   | Term rewriting system                                                 |
+| **Unicode property**      | Named character class from the Unicode standard (e.g., `XID_Start`, `Letter`, `Greek`) |
+| **UTF-8 byte chain**      | Sequence of byte-range NFA transitions encoding a multi-byte Unicode codepoint |
+| **Utf8Sequences**         | `regex-syntax` API that decomposes codepoint ranges into minimal byte-range chains |
 | **VPA**                   | Visibly pushdown automaton                                            |
 | **WFSA**                  | Weighted finite-state automaton                                       |
 | **WFST**                  | Weighted finite-state transducer                                      |
@@ -3421,5 +3545,6 @@ PD01-04 (predicate dispatch).
 - Rabin, M. O., & Scott, D. (1959). Finite automata and their decision problems. *IBM Journal of Research and Development*, 3(2), 114-125.
 - Reps, T., Lal, A., & Kidd, N. (2007). Program analysis using weighted pushdown systems. *FSTTCS 2007*, LNCS 4855, 23-51.
 - Thompson, K. (1968). Programming techniques: Regular expression search algorithm. *Communications of the ACM*, 11(6), 419-422.
+- Unicode Consortium. (2023). *The Unicode Standard, Version 15.1.0*. Unicode, Inc. [unicode.org/versions/Unicode15.1.0](https://unicode.org/versions/Unicode15.1.0/)
 - Viterbi, A. J. (1967). Error bounds for convolutional codes. *IEEE Transactions on Information Theory*, 13(2), 260-269.
 - Wagner, R. A., & Fischer, M. J. (1974). The string-to-string correction problem. *Journal of the ACM*, 21(1), 168-173.
