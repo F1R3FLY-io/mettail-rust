@@ -196,7 +196,7 @@ impl<K: fmt::Display + Ord, V: fmt::Display + Ord> fmt::Display for HashMapLit<K
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Generic debug-ish form; language-specific display (map(...)) is generated in macros.
         let mut entries: Vec<_> = self.0.iter().collect();
-        entries.sort_by(|(ka, _), (kb, _)| ka.cmp(kb));
+        entries.sort_by_key(|(k, _)| *k);
         write!(f, "{{")?;
         let mut first = true;
         for (k, v) in entries {
@@ -209,4 +209,3 @@ impl<K: fmt::Display + Ord, V: fmt::Display + Ord> fmt::Display for HashMapLit<K
         write!(f, "}}")
     }
 }
-

@@ -1577,6 +1577,7 @@ mod tests {
                                 element_category: "Proc".to_string(),
                                 separator: ",".to_string(),
                                 kind: CollectionKind::Vec,
+                                key_val_separator: None,
                             },
                             SyntaxItemSpec::Terminal("]".to_string()),
                         ],

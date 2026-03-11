@@ -46,10 +46,7 @@ pub enum TypeExpr {
     },
 
     /// Map type: HashMap(K, V)
-    Map {
-        key: Box<TypeExpr>,
-        value: Box<TypeExpr>,
-    },
+    Map { key: Box<TypeExpr>, value: Box<TypeExpr> },
 }
 
 impl std::fmt::Display for TypeExpr {
@@ -120,7 +117,10 @@ fn parse_type_atom(input: ParseStream) -> SynResult<TypeExpr> {
                     let key: TypeExpr = parse_type_expr(&content)?;
                     content.parse::<Token![,]>()?;
                     let value: TypeExpr = parse_type_expr(&content)?;
-                    return Ok(TypeExpr::Map { key: Box::new(key), value: Box::new(value) });
+                    return Ok(TypeExpr::Map {
+                        key: Box::new(key),
+                        value: Box::new(value),
+                    });
                 }
 
                 let element: TypeExpr = parse_type_expr(&content)?;

@@ -491,7 +491,10 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
                 let is_hashmap = match &native_type_raw {
                     Type::Path(tp) => tp.path.segments.last().is_some_and(|seg| {
                         seg.ident == "HashMap"
-                            && matches!(seg.arguments, syn::PathArguments::None | syn::PathArguments::AngleBracketed(_))
+                            && matches!(
+                                seg.arguments,
+                                syn::PathArguments::None | syn::PathArguments::AngleBracketed(_)
+                            )
                     }),
                     _ => false,
                 };

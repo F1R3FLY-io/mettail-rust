@@ -115,10 +115,8 @@ fn generate_display_impl(
                 let open = LitStr::new(&d.open, Span::call_site());
                 let close = LitStr::new(&d.close, Span::call_site());
                 let sep = LitStr::new(&d.sep, Span::call_site());
-                let key_val_sep = LitStr::new(
-                    d.key_val_sep.as_deref().unwrap_or(":"),
-                    Span::call_site(),
-                );
+                let key_val_sep =
+                    LitStr::new(d.key_val_sep.as_deref().unwrap_or(":"), Span::call_site());
                 let lit_label = syn::Ident::new("MapLit", Span::call_site());
                 match_arms.push(quote! {
                     #category::#lit_label(ref map) => {

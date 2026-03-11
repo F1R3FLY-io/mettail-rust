@@ -21,7 +21,7 @@ use super::common::{
     collect_nonterminal_fields, count_nonterminals, generate_tls_pool_iter, has_collection_field,
     is_multi_binder, literal_label_for, relation_names, PoolArm,
 };
-use crate::ast::grammar::{GrammarItem, TermParam, GrammarRule};
+use crate::ast::grammar::{GrammarItem, GrammarRule, TermParam};
 use crate::ast::language::{CollectionCategory, LanguageDef};
 use crate::ast::types::TypeExpr;
 use crate::gen::native::native_type_element_ident;

@@ -418,7 +418,10 @@ pub fn write_frame_enum(
                             },
                             CollectionKind::Vec => format!("Vec<{}>", element_category),
                             CollectionKind::HashMap => {
-                                format!("mettail_runtime::HashMapLit<{}, {}>", element_category, element_category)
+                                format!(
+                                    "mettail_runtime::HashMapLit<{}, {}>",
+                                    element_category, element_category
+                                )
                             },
                         };
                         fields.push(FrameField { name: name.clone(), type_str });
@@ -452,10 +455,9 @@ pub fn write_frame_enum(
             CollectionKind::HashBag => format!("mettail_runtime::HashBag<{}>", element_category),
             CollectionKind::HashSet => format!("std::collections::HashSet<{}>", element_category),
             CollectionKind::Vec => format!("Vec<{}>", element_category),
-            CollectionKind::HashMap => format!(
-                "mettail_runtime::HashMapLit<{}, {}>",
-                element_category, element_category
-            ),
+            CollectionKind::HashMap => {
+                format!("mettail_runtime::HashMapLit<{}, {}>", element_category, element_category)
+            },
         };
 
         variants.push(FrameVariant {
@@ -749,10 +751,7 @@ fn write_trampoline_body(
                     format!("{}::{}(std::collections::HashSet::new())", config.category, r.label)
                 },
                 CollectionKind::HashMap => {
-                    format!(
-                        "{}::{}(mettail_runtime::HashMapLit::new())",
-                        config.category, r.label
-                    )
+                    format!("{}::{}(mettail_runtime::HashMapLit::new())", config.category, r.label)
                 },
             })
             .unwrap_or_else(|| "unsafe { std::mem::zeroed() }".to_string());

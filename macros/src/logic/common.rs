@@ -44,7 +44,7 @@ pub fn relation_names(category: &Ident) -> RelationNames {
 /// Find the literal label for a category (e.g., `NumLit` for `Int`, `ListLit` for `List`).
 ///
 /// Returns `None` if the category has no native type or no literal rule.
-    /// For collection categories (List/Bag/Map), returns ListLit/BagLit/MapLit to match the enum variant.
+/// For collection categories (List/Bag/Map), returns ListLit/BagLit/MapLit to match the enum variant.
 pub fn literal_label_for(language: &LanguageDef, category: &Ident) -> Option<Ident> {
     let lang_type = language.types.iter().find(|t| t.name == *category)?;
     if let Some(ref ck) = lang_type.collection_kind {

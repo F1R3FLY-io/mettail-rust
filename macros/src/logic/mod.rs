@@ -526,12 +526,9 @@ fn generate_fold_big_step_rules(
         // we still need the literal fold rule (fold_map(t, payload) <-- map(t), if let MapLit(ref payload) = t).
         let has_fold_as_param = language.terms.iter().any(|r| {
             r.eval_mode == Some(EvalMode::Fold)
-                && r.term_context.as_ref().map_or(false, |ctx| {
+                && r.term_context.as_ref().is_some_and(|ctx| {
                     ctx.iter().any(|p| match p {
-                        TermParam::Simple {
-                            ty: TypeExpr::Base(ref id),
-                            ..
-                        } => id == category,
+                        TermParam::Simple { ty: TypeExpr::Base(ref id), .. } => id == category,
                         _ => false,
                     })
                 })
@@ -1111,27 +1108,28 @@ fn generate_fold_big_step_rules(
                     let p0 = &param_names[0];
                     let p1 = &param_names[1];
                     let p2 = &param_names[2];
-                    let (left_fold_rel, mid_fold_rel, right_fold_rel) = if let Some(ref ctx) = rule.term_context {
-                        let types: Vec<_> = ctx
-                            .iter()
-                            .filter_map(|p| match p {
-                                TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
-                                    Some(ident.clone())
-                                },
-                                _ => None,
-                            })
-                            .collect();
-                        if types.len() == 3 {
-                            let left_rn = relation_names(&types[0]);
-                            let mid_rn = relation_names(&types[1]);
-                            let right_rn = relation_names(&types[2]);
-                            (left_rn.fold_rel, mid_rn.fold_rel, right_rn.fold_rel)
+                    let (left_fold_rel, mid_fold_rel, right_fold_rel) =
+                        if let Some(ref ctx) = rule.term_context {
+                            let types: Vec<_> = ctx
+                                .iter()
+                                .filter_map(|p| match p {
+                                    TermParam::Simple { ty: TypeExpr::Base(ident), .. } => {
+                                        Some(ident.clone())
+                                    },
+                                    _ => None,
+                                })
+                                .collect();
+                            if types.len() == 3 {
+                                let left_rn = relation_names(&types[0]);
+                                let mid_rn = relation_names(&types[1]);
+                                let right_rn = relation_names(&types[2]);
+                                (left_rn.fold_rel, mid_rn.fold_rel, right_rn.fold_rel)
+                            } else {
+                                (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
+                            }
                         } else {
                             (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
-                        }
-                    } else {
-                        (fold_rel.clone(), fold_rel.clone(), fold_rel.clone())
-                    };
+                        };
                     rules.push(quote! {
                         #fold_rel(s.clone(), res) <--
                             #cat_rel(s),

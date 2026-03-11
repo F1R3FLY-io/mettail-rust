@@ -63,12 +63,9 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
         let has_fold_as_param = language.terms.iter().any(|r| {
             r.eval_mode == Some(EvalMode::Fold)
-                && r.term_context.as_ref().map_or(false, |ctx| {
+                && r.term_context.as_ref().is_some_and(|ctx| {
                     ctx.iter().any(|p| match p {
-                        TermParam::Simple {
-                            ty: TypeExpr::Base(ref id),
-                            ..
-                        } => id == cat,
+                        TermParam::Simple { ty: TypeExpr::Base(ref id), .. } => id == cat,
                         _ => false,
                     })
                 })
@@ -167,12 +164,11 @@ pub fn generate_relations(language: &LanguageDef) -> TokenStream {
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
         let has_fold_as_param = language.terms.iter().any(|r| {
             r.eval_mode == Some(EvalMode::Fold)
-                && r.term_context.as_ref().map_or(false, |ctx| {
+                && r.term_context.as_ref().is_some_and(|ctx| {
                     ctx.iter().any(|p| match p {
-                        TermParam::Simple {
-                            ty: TypeExpr::Base(ref id),
-                            ..
-                        } => id == &lang_type.name,
+                        TermParam::Simple { ty: TypeExpr::Base(ref id), .. } => {
+                            id == &lang_type.name
+                        },
                         _ => false,
                     })
                 })

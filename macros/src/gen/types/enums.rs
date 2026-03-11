@@ -521,7 +521,9 @@ fn type_expr_to_field_type_with_fresh_ident(
                 CollectionType::HashBag => quote! { mettail_runtime::HashBag<#elem_type> },
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
-                CollectionType::HashMap => quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> },
+                CollectionType::HashMap => {
+                    quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
+                },
             }
         },
         TypeExpr::Map { key, value } => {
@@ -551,7 +553,9 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
                 CollectionType::HashBag => quote! { mettail_runtime::HashBag<#elem_type> },
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
-                CollectionType::HashMap => quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> },
+                CollectionType::HashMap => {
+                    quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
+                },
             }
         },
         TypeExpr::Map { key, value } => {

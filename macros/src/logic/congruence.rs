@@ -29,7 +29,9 @@ use syn::Ident;
 /// is required. Map is treated as first-class and DOES get congruence (key and value positions).
 fn is_collection_category(language: &LanguageDef, category: &Ident) -> bool {
     matches!(
-        language.get_type(category).and_then(|t| t.collection_kind.as_ref()),
+        language
+            .get_type(category)
+            .and_then(|t| t.collection_kind.as_ref()),
         Some(crate::ast::language::CollectionCategory::List(_))
             | Some(crate::ast::language::CollectionCategory::Bag(_))
     )

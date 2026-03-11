@@ -1197,10 +1197,7 @@ fn nested_seed_pushes_for_inner_category(
 
 /// Like nested_seed_pushes_for_inner_category but for an owned value (e.g. `initial: Int` in core
 /// seed arms). Used so that when we seed Int(LenMap(m)) we also seed map(m) and fold can run.
-fn nested_seed_pushes_for_category_value(
-    language: &LanguageDef,
-    cat: &Ident,
-) -> Vec<TokenStream> {
+fn nested_seed_pushes_for_category_value(language: &LanguageDef, cat: &Ident) -> Vec<TokenStream> {
     let mut pushes = Vec::new();
     for rule in &language.terms {
         if rule.category != *cat {
@@ -1495,7 +1492,9 @@ fn generate_language_struct_multi(
             .terms
             .iter()
             .filter(|r| {
-                let Some(ref ctx) = r.term_context else { return false };
+                let Some(ref ctx) = r.term_context else {
+                    return false;
+                };
                 if ctx.len() != 1 {
                     return false;
                 }
