@@ -167,6 +167,12 @@ show all six layers acting on real input.
 - Each layer document references exact source files and line numbers
 - Cross-references point to the existing deep-dive design and theory documents
 
+**If you want to understand how advanced automata enhance disambiguation:**
+- Read [09-automata-disambiguation-integration.md](09-automata-disambiguation-integration.md) for
+  the 3-phase integration of M1--M11 analysis into prediction, recovery, and dispatch
+- Read [10-disambiguation-testing-strategy.md](10-disambiguation-testing-strategy.md) for the
+  property-based testing methodology with 60 proptest invariants
+
 **If you are debugging a parse ambiguity:**
 - Identify which layer is responsible (use the table above)
 - Read that layer's document for the disambiguation rules
@@ -184,6 +190,8 @@ show all six layers acting on real input.
 | [06-layer-interactions.md](06-layer-interactions.md)               | All   | ~700  | End-to-end traces, layer ordering, master flowchart             |
 | [07-semantic-disambiguation.md](07-semantic-disambiguation.md)     | 6     | ~450  | NFA-style parse, Ambiguous, is_ground(), three-stage resolution |
 | [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)     | 2.5   | ~600  | NFA try-all, forced-prefix replay, beam pruning, weight-aware   |
+| [09-automata-disambiguation-integration.md](09-automata-disambiguation-integration.md) | All | ~350 | M1--M11 analysis integration into disambiguation, recovery, dispatch |
+| [10-disambiguation-testing-strategy.md](10-disambiguation-testing-strategy.md) | All | ~350 | Property-based testing: 60 proptest invariants, grammar generators |
 
 ### File Numbering
 
@@ -191,6 +199,9 @@ Files 01-05 correspond to Layers 1-5 of the disambiguation model. File 06 is
 a cross-cutting interactions document (not a layer) showing end-to-end traces
 through all layers. File 07 corresponds to Layer 6 (semantic disambiguation).
 File 08 corresponds to Layer 2.5 (NFA intra-category disambiguation).
+File 09 documents the integration of all 11 advanced automata analysis modules
+(M1--M11) into disambiguation, recovery, and dispatch via three phases (A/B/C).
+File 10 documents the property-based testing strategy with 60 proptest invariants.
 The file numbers reflect creation order rather than a strict layer numbering.
 
 ### Notation Conventions
@@ -215,6 +226,8 @@ themselves.
 | 5. Recovery       | [theory/prediction-and-lookahead.md](../../../docs/theory/prediction-and-lookahead.md) §3   | [design/prediction-engine.md](../prediction-engine.md) §8               |
 | 2.5 NFA Intra-Cat | --                                                                                          | [08-nfa-wfst-disambiguation.md](08-nfa-wfst-disambiguation.md)          |
 | 6. Semantic       | --                                                                                          | [07-semantic-disambiguation.md](07-semantic-disambiguation.md)          |
+| M1--M11 Integration | [theory/disambiguation/](../../theory/disambiguation/)                                     | [09-automata-disambiguation-integration.md](09-automata-disambiguation-integration.md) |
+| Testing Strategy  | --                                                                                          | [10-disambiguation-testing-strategy.md](10-disambiguation-testing-strategy.md) |
 
 ## Key Source Files
 

@@ -260,6 +260,39 @@ pub struct LintContext<'a> {
     /// KAT check (Hoare triples, equivalences).
     #[cfg(feature = "kat")]
     pub kat_result: Option<&'a crate::kat::KatCheck>,
+
+    // ── Advanced automata analysis results ──────────────────────────────────
+
+    /// Symbolic automata guard analysis.
+    #[cfg(feature = "symbolic-automata")]
+    pub symbolic_result: Option<&'a crate::symbolic::SymbolicAnalysis>,
+    /// Weighted Büchi automaton analysis.
+    #[cfg(feature = "omega")]
+    pub buchi_result: Option<&'a crate::buchi::BuchiAnalysis>,
+    /// Weighted MSO logic analysis.
+    #[cfg(feature = "weighted-mso")]
+    pub mso_result: Option<&'a crate::weighted_mso::MsoAnalysis>,
+    /// Probabilistic automaton analysis.
+    #[cfg(feature = "probabilistic")]
+    pub probabilistic_result: Option<&'a crate::probabilistic::ProbabilisticAnalysis>,
+    /// Register automaton analysis.
+    #[cfg(feature = "register-automata")]
+    pub register_result: Option<&'a crate::register_automata::RegisterAnalysis>,
+    /// Parity tree automaton analysis.
+    #[cfg(feature = "parity-tree-automata")]
+    pub parity_tree_result: Option<&'a crate::parity_tree::ParityTreeAnalysis>,
+    /// Multi-tape automaton analysis.
+    #[cfg(feature = "multi-tape")]
+    pub multi_tape_result: Option<&'a crate::multi_tape::MultiTapeAnalysis>,
+    /// Multiset automaton analysis.
+    #[cfg(feature = "multiset-automata")]
+    pub multiset_result: Option<&'a crate::multiset_automata::MultisetAnalysisResult>,
+    /// Two-way transducer analysis.
+    #[cfg(feature = "two-way-transducer")]
+    pub two_way_result: Option<&'a crate::two_way_transducer::TwoWayAnalysis>,
+    /// Predicate dispatch diagnostics.
+    #[cfg(feature = "predicate-dispatch")]
+    pub dispatch_diagnostics: Option<&'a crate::predicate_dispatch::DispatchDiagnostics>,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -565,6 +598,91 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
         lint_k02_kat_equivalence(ctx, &mut diagnostics);
     }
 
+    // Symbolic automata
+    #[cfg(feature = "symbolic-automata")]
+    {
+        lint_sym01_unsatisfiable_guard(ctx, &mut diagnostics);
+        lint_sym02_overlapping_guards(ctx, &mut diagnostics);
+        lint_sym03_subsumed_guard(ctx, &mut diagnostics);
+        lint_sym04_non_minimal_guards(ctx, &mut diagnostics);
+    }
+
+    // Weighted Büchi
+    #[cfg(feature = "omega")]
+    {
+        lint_o01_weighted_buchi_non_convergent(ctx, &mut diagnostics);
+        lint_o02_weighted_buchi_heavy_cycle(ctx, &mut diagnostics);
+    }
+
+    // Weighted Alternating (polynomial AWA) — uses existing alternating_result
+    #[cfg(feature = "alternating")]
+    {
+        lint_n06_weighted_parity_non_convergent(ctx, &mut diagnostics);
+        lint_n07_weighted_branching_imbalance(ctx, &mut diagnostics);
+    }
+
+    // Weighted VPA — uses existing vpa_result
+    #[cfg(feature = "vpa")]
+    {
+        lint_v05_weighted_vpa_non_determinizable(ctx, &mut diagnostics);
+        lint_v06_weighted_vpa_inclusion_failure(ctx, &mut diagnostics);
+    }
+
+    // Parity tree automata
+    #[cfg(feature = "parity-tree-automata")]
+    {
+        lint_pt01_pata_emptiness_violation(ctx, &mut diagnostics);
+        lint_pt02_pata_subsumption(ctx, &mut diagnostics);
+        lint_pt03_pata_high_priority(ctx, &mut diagnostics);
+    }
+
+    // Register automata
+    #[cfg(feature = "register-automata")]
+    {
+        lint_ra01_unbound_data_reference(ctx, &mut diagnostics);
+        lint_ra02_redundant_register(ctx, &mut diagnostics);
+        lint_ra03_register_equivalence(ctx, &mut diagnostics);
+    }
+
+    // Probabilistic automata
+    #[cfg(feature = "probabilistic")]
+    {
+        lint_pr01_low_selectivity_rule(ctx, &mut diagnostics);
+        lint_pr02_non_stochastic_state(ctx, &mut diagnostics);
+        lint_pr03_high_entropy_category(ctx, &mut diagnostics);
+        lint_pr04_expected_depth_anomaly(ctx, &mut diagnostics);
+    }
+
+    // Multi-tape automata
+    #[cfg(feature = "multi-tape")]
+    {
+        lint_mt01_multi_channel_overlap(ctx, &mut diagnostics);
+        lint_mt02_multi_tape_disconnected(ctx, &mut diagnostics);
+    }
+
+    // Multiset automata
+    #[cfg(feature = "multiset-automata")]
+    {
+        lint_ms01_unsatisfiable_cardinality(ctx, &mut diagnostics);
+        lint_ms02_redundant_feature_check(ctx, &mut diagnostics);
+    }
+
+    // Weighted MSO logic
+    #[cfg(feature = "weighted-mso")]
+    {
+        lint_mso01_unrestricted_universal_set(ctx, &mut diagnostics);
+        lint_mso02_non_recognizable_step(ctx, &mut diagnostics);
+        lint_mso03_equivalent_formulas(ctx, &mut diagnostics);
+    }
+
+    // Two-way transducers
+    #[cfg(feature = "two-way-transducer")]
+    {
+        lint_tw01_circular_channel_dependency(ctx, &mut diagnostics);
+        lint_tw02_one_way_sufficient(ctx, &mut diagnostics);
+        lint_tw03_constraint_propagation_divergent(ctx, &mut diagnostics);
+    }
+
     // P06: Analysis pipeline timing
     lint_p06_analysis_pipeline_cost(ctx, &mut diagnostics);
 
@@ -600,6 +718,15 @@ pub fn run_lints(ctx: &LintContext) -> Vec<LintDiagnostic> {
     lint_dis03_decision_tree_depth(ctx, &mut diagnostics);
     lint_dis04_backtrack_elimination_coverage(ctx, &mut diagnostics);
     lint_dis05_nfa_try_all_set_size(ctx, &mut diagnostics);
+
+    // ── Predicate dispatch lints (PD01–PD04) ──
+    #[cfg(feature = "predicate-dispatch")]
+    {
+        lint_pd01_degenerate_predicate(ctx, &mut diagnostics);
+        lint_pd02_all_modules_activated(ctx, &mut diagnostics);
+        lint_pd03_dispatch_savings(ctx, &mut diagnostics);
+        lint_pd04_missing_feature_gate(ctx, &mut diagnostics);
+    }
 
     diagnostics
 }
@@ -7186,6 +7313,868 @@ fn lint_dis05_nfa_try_all_set_size(ctx: &LintContext, diagnostics: &mut Vec<Lint
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Advanced automata lints
+// ══════════════════════════════════════════════════════════════════════════════
+
+// ── Symbolic automata (SYM01-SYM04) ──────────────────────────────────────────
+
+#[cfg(feature = "symbolic-automata")]
+fn lint_sym01_unsatisfiable_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.symbolic_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (desc, sat) in &result.guard_satisfiability {
+        if !sat {
+            diagnostics.push(LintDiagnostic {
+                id: "SYM01",
+                name: "unsatisfiable-guard",
+                severity: LintSeverity::Warning,
+                category: None,
+                rule: None,
+                message: format!("guard '{}' is unsatisfiable (dead receive)", desc),
+                hint: Some("remove the unreachable guard or relax its predicate".to_string()),
+                grammar_name: Some(ctx.grammar_name.to_string()),
+                source_location: None,
+            });
+        }
+    }
+}
+
+#[cfg(feature = "symbolic-automata")]
+fn lint_sym02_overlapping_guards(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.symbolic_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (g1, g2) in &result.overlapping_guards {
+        diagnostics.push(LintDiagnostic {
+            id: "SYM02",
+            name: "overlapping-guards",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!("guards '{}' and '{}' overlap (non-disjoint)", g1, g2),
+            hint: Some("add disambiguation predicates or merge the guards".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "symbolic-automata")]
+fn lint_sym03_subsumed_guard(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.symbolic_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (sub, sup) in &result.subsumed_guards {
+        diagnostics.push(LintDiagnostic {
+            id: "SYM03",
+            name: "subsumed-guard",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!("guard '{}' is subsumed by '{}' (redundant)", sub, sup),
+            hint: Some("the subsumed guard can be removed without affecting behavior".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "symbolic-automata")]
+fn lint_sym04_non_minimal_guards(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.symbolic_result {
+        Some(r) => r,
+        None => return,
+    };
+    if result.num_states > 10 && !result.subsumed_guards.is_empty() {
+        diagnostics.push(LintDiagnostic {
+            id: "SYM04",
+            name: "non-minimal-guards",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "SFA has {} states with {} subsumed guards; minimization would reduce state count",
+                result.num_states, result.subsumed_guards.len()
+            ),
+            hint: Some("run SFA minimization to merge equivalent guard states".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Weighted Büchi (O01-O02) ─────────────────────────────────────────────────
+
+#[cfg(feature = "omega")]
+fn lint_o01_weighted_buchi_non_convergent(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.buchi_result {
+        Some(r) => r,
+        None => return,
+    };
+    // If the automaton has no accepting cycle, weight computation is trivially convergent.
+    // Warn when the automaton structure suggests convergence issues.
+    if !result.has_accepting_cycle && result.num_states > 1 {
+        diagnostics.push(LintDiagnostic {
+            id: "O01",
+            name: "weighted-buchi-non-convergent",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "weighted Büchi automaton ({} states) has no accepting cycle — weight computation trivially converges to zero",
+                result.num_states
+            ),
+            hint: Some("check that liveness properties are correctly specified".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "omega")]
+fn lint_o02_weighted_buchi_heavy_cycle(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.buchi_result {
+        Some(r) => r,
+        None => return,
+    };
+    if result.has_accepting_cycle && result.num_accepting > result.num_states / 2 {
+        diagnostics.push(LintDiagnostic {
+            id: "O02",
+            name: "weighted-buchi-heavy-cycle",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "accepting cycle weight is high ({}/{} states are accepting)",
+                result.num_accepting, result.num_states
+            ),
+            hint: Some("consider whether all accepting states are intentional".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Weighted Alternating (N06-N07) ───────────────────────────────────────────
+
+#[cfg(feature = "alternating")]
+fn lint_n06_weighted_parity_non_convergent(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.alternating_result {
+        Some(r) => r,
+        None => return,
+    };
+    // Flag when there are many non-bisimilar pairs relative to total categories,
+    // suggesting the parity game value may not converge quickly due to structural
+    // divergence across categories.
+    let pair_count = result.non_bisimilar_pairs.len();
+    if pair_count > 3 && result.state_count > 5 {
+        diagnostics.push(LintDiagnostic {
+            id: "N06",
+            name: "weighted-parity-non-convergent",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "alternating automaton has {} non-bisimilar pairs across {} states — parity game value may not converge quickly",
+                pair_count, result.state_count
+            ),
+            hint: Some("consider bounding the alternation depth or using a fixpoint iteration limit".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "alternating")]
+fn lint_n07_weighted_branching_imbalance(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.alternating_result {
+        Some(r) => r,
+        None => return,
+    };
+    // If every pair is non-bisimilar, the structure is purely adversarial —
+    // no two categories behave equivalently.
+    let total_pairs = if result.state_count > 1 {
+        result.state_count * (result.state_count - 1) / 2
+    } else {
+        0
+    };
+    if total_pairs > 0 && result.non_bisimilar_pairs.len() == total_pairs {
+        diagnostics.push(LintDiagnostic {
+            id: "N07",
+            name: "weighted-branching-imbalance",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "alternating automaton is purely adversarial ({} states, all pairs non-bisimilar)",
+                result.state_count
+            ),
+            hint: Some("all categories have structurally different behavior; consider if some can be merged".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Weighted VPA (V05-V06) ───────────────────────────────────────────────────
+
+#[cfg(feature = "vpa")]
+fn lint_v05_weighted_vpa_non_determinizable(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.vpa_result {
+        Some(r) => r,
+        None => return,
+    };
+    // A non-determinizable VPA with alphabet mismatches suggests
+    // exponential blowup risk during determinization.
+    if !result.is_determinizable && !result.alphabet_mismatches.is_empty() {
+        diagnostics.push(LintDiagnostic {
+            id: "V05",
+            name: "weighted-vpa-non-determinizable",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "weighted VPA is non-determinizable with {} alphabet mismatches — determinization may cause exponential blowup",
+                result.alphabet_mismatches.len()
+            ),
+            hint: Some("consider restricting call/return patterns to reduce nondeterminism".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "vpa")]
+fn lint_v06_weighted_vpa_inclusion_failure(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.vpa_result {
+        Some(r) => r,
+        None => return,
+    };
+    // Non-determinizable VPA with large state count suggests inclusion
+    // checking will be expensive or may fail.
+    if !result.is_determinizable && result.state_count > 20 {
+        diagnostics.push(LintDiagnostic {
+            id: "V06",
+            name: "weighted-vpa-inclusion-failure",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "weighted VPA inclusion check may fail — {} states and non-determinizable",
+                result.state_count
+            ),
+            hint: Some("tighten recovery predicates or increase cost thresholds".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Parity Tree Automata (PT01-PT03) ─────────────────────────────────────────
+
+#[cfg(feature = "parity-tree-automata")]
+fn lint_pt01_pata_emptiness_violation(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.parity_tree_result {
+        Some(r) => r,
+        None => return,
+    };
+    if result.is_empty {
+        diagnostics.push(LintDiagnostic {
+            id: "PT01",
+            name: "pata-emptiness-violation",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: "parity tree automaton is empty — no AST can match this predicate".to_string(),
+            hint: Some("check that the mu-calculus formula is not vacuously false".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "parity-tree-automata")]
+fn lint_pt02_pata_subsumption(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.parity_tree_result {
+        Some(r) => r,
+        None => return,
+    };
+    if result.num_states > 0 && result.max_priority == 0 {
+        diagnostics.push(LintDiagnostic {
+            id: "PT02",
+            name: "pata-subsumption",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "PATA has {} states but max_priority=0 — all states have trivial parity",
+                result.num_states
+            ),
+            hint: Some("consider simplifying to a non-parity tree automaton".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "parity-tree-automata")]
+fn lint_pt03_pata_high_priority(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.parity_tree_result {
+        Some(r) => r,
+        None => return,
+    };
+    if result.priority_depth > 4 {
+        diagnostics.push(LintDiagnostic {
+            id: "PT03",
+            name: "pata-high-priority",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "PATA priority depth {} > 4 — exponential blowup in emptiness checking",
+                result.priority_depth
+            ),
+            hint: Some("reduce fixpoint nesting to improve analysis performance".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Register Automata (RA01-RA03) ────────────────────────────────────────────
+
+#[cfg(feature = "register-automata")]
+fn lint_ra01_unbound_data_reference(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.register_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (trans_idx, reg_idx) in &result.unbound_references {
+        diagnostics.push(LintDiagnostic {
+            id: "RA01",
+            name: "unbound-data-reference",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "transition {} tests register {} which has no reachable Store operation",
+                trans_idx, reg_idx
+            ),
+            hint: Some("ensure the register is stored before being tested".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "register-automata")]
+fn lint_ra02_redundant_register(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.register_result {
+        Some(r) => r,
+        None => return,
+    };
+    for reg_idx in &result.dead_registers {
+        diagnostics.push(LintDiagnostic {
+            id: "RA02",
+            name: "redundant-register",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!("register {} is written but never tested", reg_idx),
+            hint: Some("remove the unused register to simplify the automaton".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "register-automata")]
+fn lint_ra03_register_equivalence(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.register_result {
+        Some(r) => r,
+        None => return,
+    };
+    // Flag when all registers are dead — suggests the RA is effectively a plain FA.
+    if result.num_registers > 0 && result.dead_registers.len() == result.num_registers {
+        diagnostics.push(LintDiagnostic {
+            id: "RA03",
+            name: "register-equivalence",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "all {} registers are dead — automaton is equivalent to a plain FA",
+                result.num_registers
+            ),
+            hint: Some("consider using a standard FA instead of a register automaton".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Probabilistic Automata (PR01-PR04) ───────────────────────────────────────
+
+#[cfg(feature = "probabilistic")]
+fn lint_pr01_low_selectivity_rule(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.probabilistic_result {
+        Some(r) => r,
+        None => return,
+    };
+    for rule in &result.low_selectivity_rules {
+        diagnostics.push(LintDiagnostic {
+            id: "PR01",
+            name: "low-selectivity-rule",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!("rule '{}' handles <1% of expected inputs", rule),
+            hint: Some("consider removing or specializing this low-frequency rule".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "probabilistic")]
+fn lint_pr02_non_stochastic_state(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.probabilistic_result {
+        Some(r) => r,
+        None => return,
+    };
+    if !result.is_normalized {
+        diagnostics.push(LintDiagnostic {
+            id: "PR02",
+            name: "non-stochastic-state",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: "probabilistic automaton has non-normalized transition weights".to_string(),
+            hint: Some("call normalize() to ensure outgoing probabilities sum to 1".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "probabilistic")]
+fn lint_pr03_high_entropy_category(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.probabilistic_result {
+        Some(r) => r,
+        None => return,
+    };
+    // High entropy (> 2.0 nats ~ > 7 equally-likely alternatives) suggests ambiguity.
+    if result.mean_entropy > 2.0 {
+        diagnostics.push(LintDiagnostic {
+            id: "PR03",
+            name: "high-entropy-category",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "mean entropy {:.2} nats — many equally-likely alternatives suggest ambiguity",
+                result.mean_entropy
+            ),
+            hint: Some("add disambiguation weights or reduce the number of alternatives".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "probabilistic")]
+fn lint_pr04_expected_depth_anomaly(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.probabilistic_result {
+        Some(r) => r,
+        None => return,
+    };
+    // Selectivity very close to 0 suggests the automaton barely accepts anything.
+    if result.total_selectivity < 0.01 && result.num_states > 1 {
+        diagnostics.push(LintDiagnostic {
+            id: "PR04",
+            name: "expected-depth-anomaly",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "total selectivity {:.4} — automaton barely accepts any inputs",
+                result.total_selectivity
+            ),
+            hint: Some("check that grammar rules cover the expected input distribution".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Multi-Tape Automata (MT01-MT02) ──────────────────────────────────────────
+
+#[cfg(feature = "multi-tape")]
+fn lint_mt01_multi_channel_overlap(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.multi_tape_result {
+        Some(r) => r,
+        None => return,
+    };
+    for (t1, t2) in &result.overlapping_tapes {
+        diagnostics.push(LintDiagnostic {
+            id: "MT01",
+            name: "multi-channel-overlap",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "tapes {} and {} are constrained to identical patterns (redundant channel)",
+                t1, t2
+            ),
+            hint: Some("merge the overlapping tapes into a single tape".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "multi-tape")]
+fn lint_mt02_multi_tape_disconnected(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.multi_tape_result {
+        Some(r) => r,
+        None => return,
+    };
+    for tape_idx in &result.disconnected_tapes {
+        diagnostics.push(LintDiagnostic {
+            id: "MT02",
+            name: "multi-tape-disconnected",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "tape {} has no auto-intersection constraints (independent channel)",
+                tape_idx
+            ),
+            hint: Some("the disconnected tape can be analyzed independently".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Multiset Automata (MS01-MS02) ────────────────────────────────────────────
+
+#[cfg(feature = "multiset-automata")]
+fn lint_ms01_unsatisfiable_cardinality(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.multiset_result {
+        Some(r) => r,
+        None => return,
+    };
+    for constraint in &result.unsatisfiable_constraints {
+        diagnostics.push(LintDiagnostic {
+            id: "MS01",
+            name: "unsatisfiable-cardinality",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "cardinality constraint on feature '{}' ([{}, {}]) is unsatisfiable",
+                constraint.feature,
+                constraint.min.map_or("*".to_string(), |v| v.to_string()),
+                constraint.max.map_or("*".to_string(), |v| v.to_string()),
+            ),
+            hint: Some("relax the cardinality constraint or add more feature-producing rules".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "multiset-automata")]
+fn lint_ms02_redundant_feature_check(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.multiset_result {
+        Some(r) => r,
+        None => return,
+    };
+    // If there are no unsatisfiable constraints and no feature interactions,
+    // the multiset analysis is trivially satisfied.
+    if result.num_features > 0 && result.feature_interactions.is_empty()
+        && result.unsatisfiable_constraints.is_empty()
+    {
+        diagnostics.push(LintDiagnostic {
+            id: "MS02",
+            name: "redundant-feature-check",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "all {} features are independent with trivially satisfied constraints",
+                result.num_features
+            ),
+            hint: Some("multiset analysis adds no value for independent features".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Weighted MSO Logic (MSO01-MSO03) ─────────────────────────────────────────
+
+#[cfg(feature = "weighted-mso")]
+fn lint_mso01_unrestricted_universal_set(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.mso_result {
+        Some(r) => r,
+        None => return,
+    };
+    use crate::weighted_mso::MsoFormulaClass;
+    if matches!(result.formula_class, MsoFormulaClass::Full) {
+        diagnostics.push(LintDiagnostic {
+            id: "MSO01",
+            name: "unrestricted-universal-set",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: "formula uses unrestricted \u{2200}X (full MSO \u{2014} not recognizable, T3/T4)".to_string(),
+            hint: Some("restrict to \u{2203}X quantification or bounded \u{2200}x for decidability".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "weighted-mso")]
+fn lint_mso02_non_recognizable_step(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.mso_result {
+        Some(r) => r,
+        None => return,
+    };
+    use crate::symbolic::DecidabilityTier;
+    if matches!(result.decidability, DecidabilityTier::SemiDecidable | DecidabilityTier::Undecidable) {
+        diagnostics.push(LintDiagnostic {
+            id: "MSO02",
+            name: "non-recognizable-step",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "formula decidability tier {} \u{2014} \u{2200}x body is not a recognizable step function",
+                result.decidability
+            ),
+            hint: Some("provide a user proof/assertion or restrict to first-order fragment".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "weighted-mso")]
+fn lint_mso03_equivalent_formulas(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.mso_result {
+        Some(r) => r,
+        None => return,
+    };
+    // If the formula is a sentence with no free variables, note it for potential optimization.
+    if result.is_sentence && !result.free_vars.is_empty() {
+        // This shouldn't happen (sentence = no free vars), but flag inconsistency.
+        diagnostics.push(LintDiagnostic {
+            id: "MSO03",
+            name: "equivalent-formulas",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: "MSO formula is marked as sentence but has free variables \u{2014} internal inconsistency".to_string(),
+            hint: Some("check formula construction for variable binding errors".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ── Two-Way Transducers (TW01-TW03) ─────────────────────────────────────────
+
+#[cfg(feature = "two-way-transducer")]
+fn lint_tw01_circular_channel_dependency(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.two_way_result {
+        Some(r) => r,
+        None => return,
+    };
+    for cycle in &result.deadlock_cycles {
+        diagnostics.push(LintDiagnostic {
+            id: "TW01",
+            name: "circular-channel-dependency",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "circular channel dependency detected: {}",
+                cycle.join(" \u{2192} ")
+            ),
+            hint: Some("break the circular dependency to prevent deadlock".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "two-way-transducer")]
+fn lint_tw02_one_way_sufficient(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.two_way_result {
+        Some(r) => r,
+        None => return,
+    };
+    if result.is_one_way_equivalent && result.num_backward == 0 {
+        diagnostics.push(LintDiagnostic {
+            id: "TW02",
+            name: "one-way-sufficient",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "two-way transducer ({} states, 0 backward) is one-way equivalent \u{2014} one-way transducer suffices",
+                result.num_states
+            ),
+            hint: Some("use a standard one-way transducer for simpler implementation".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+#[cfg(feature = "two-way-transducer")]
+fn lint_tw03_constraint_propagation_divergent(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let result = match ctx.two_way_result {
+        Some(r) => r,
+        None => return,
+    };
+    // If there are backward states and deadlock cycles, constraint propagation may diverge.
+    if result.num_backward > 0 && !result.deadlock_cycles.is_empty() {
+        diagnostics.push(LintDiagnostic {
+            id: "TW03",
+            name: "constraint-propagation-divergent",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "backward constraint propagation may diverge: {} backward states with {} deadlock cycles",
+                result.num_backward, result.deadlock_cycles.len()
+            ),
+            hint: Some("add a propagation depth limit or break the deadlock cycles".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PD01–PD04: Predicate Dispatch Lints
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// PD01: Predicate activates no specialized module beyond base (M1 + M10).
+///
+/// Indicates a trivially evaluable guard that may be removable.
+#[cfg(feature = "predicate-dispatch")]
+fn lint_pd01_degenerate_predicate(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let diag = match ctx.dispatch_diagnostics {
+        Some(d) => d,
+        None => return,
+    };
+    for &idx in &diag.degenerate_predicates {
+        let profile = &diag.profiles[idx];
+        diagnostics.push(LintDiagnostic {
+            id: "PD01",
+            name: "degenerate-predicate",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "predicate guard #{} activates no specialized module (signature = {})",
+                idx, profile.signature
+            ),
+            hint: Some("consider removing the trivially-true guard or adding a structural constraint".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// PD02: Predicate activates all 11 modules (no dispatch benefit).
+#[cfg(feature = "predicate-dispatch")]
+fn lint_pd02_all_modules_activated(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let diag = match ctx.dispatch_diagnostics {
+        Some(d) => d,
+        None => return,
+    };
+    for &idx in &diag.full_activation_predicates {
+        let profile = &diag.profiles[idx];
+        diagnostics.push(LintDiagnostic {
+            id: "PD02",
+            name: "all-modules-activated",
+            severity: LintSeverity::Note,
+            category: None,
+            rule: None,
+            message: format!(
+                "predicate guard #{} activates all {} modules — no dispatch benefit (signature = {})",
+                idx,
+                crate::predicate_dispatch::PredicateSignature::NUM_MODULES,
+                profile.signature
+            ),
+            hint: Some("decompose the predicate into simpler sub-predicates for targeted dispatch".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// PD03: Dispatch savings report (informational).
+#[cfg(feature = "predicate-dispatch")]
+fn lint_pd03_dispatch_savings(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let diag = match ctx.dispatch_diagnostics {
+        Some(d) => d,
+        None => return,
+    };
+    if diag.total_modules_skipped > 0 {
+        diagnostics.push(LintDiagnostic {
+            id: "PD03",
+            name: "dispatch-savings",
+            severity: LintSeverity::Info,
+            category: None,
+            rule: None,
+            message: format!(
+                "predicate dispatch skipped {} module invocation(s)",
+                diag.total_modules_skipped
+            ),
+            hint: None,
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+/// PD04: Cross-channel predicate detected but `two-way-transducer` feature not enabled.
+#[cfg(feature = "predicate-dispatch")]
+fn lint_pd04_missing_feature_gate(ctx: &LintContext, diagnostics: &mut Vec<LintDiagnostic>) {
+    let diag = match ctx.dispatch_diagnostics {
+        Some(d) => d,
+        None => return,
+    };
+    for &idx in &diag.cross_channel_without_two_way {
+        diagnostics.push(LintDiagnostic {
+            id: "PD04",
+            name: "missing-feature-gate",
+            severity: LintSeverity::Warning,
+            category: None,
+            rule: None,
+            message: format!(
+                "predicate guard #{} has cross-channel constraints but `two-way-transducer` feature is not enabled",
+                idx
+            ),
+            hint: Some("enable the `two-way-transducer` feature to analyze cross-channel constraint propagation".to_string()),
+            grammar_name: Some(ctx.grammar_name.to_string()),
+            source_location: None,
+        });
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -7286,6 +8275,27 @@ mod tests {
         morphism_result_data: Option<crate::morphism::MorphismCheck>,
         #[cfg(feature = "kat")]
         kat_result_data: Option<crate::kat::KatCheck>,
+        // ── Advanced automata analysis result fields ──
+        #[cfg(feature = "symbolic-automata")]
+        symbolic_result_data: Option<crate::symbolic::SymbolicAnalysis>,
+        #[cfg(feature = "omega")]
+        buchi_result_data: Option<crate::buchi::BuchiAnalysis>,
+        #[cfg(feature = "weighted-mso")]
+        mso_result_data: Option<crate::weighted_mso::MsoAnalysis>,
+        #[cfg(feature = "probabilistic")]
+        probabilistic_result_data: Option<crate::probabilistic::ProbabilisticAnalysis>,
+        #[cfg(feature = "register-automata")]
+        register_result_data: Option<crate::register_automata::RegisterAnalysis>,
+        #[cfg(feature = "parity-tree-automata")]
+        parity_tree_result_data: Option<crate::parity_tree::ParityTreeAnalysis>,
+        #[cfg(feature = "multi-tape")]
+        multi_tape_result_data: Option<crate::multi_tape::MultiTapeAnalysis>,
+        #[cfg(feature = "multiset-automata")]
+        multiset_result_data: Option<crate::multiset_automata::MultisetAnalysisResult>,
+        #[cfg(feature = "two-way-transducer")]
+        two_way_result_data: Option<crate::two_way_transducer::TwoWayAnalysis>,
+        #[cfg(feature = "predicate-dispatch")]
+        dispatch_diagnostics_data: Option<crate::predicate_dispatch::DispatchDiagnostics>,
     }
 
     impl CtxBuilder {
@@ -7348,6 +8358,27 @@ mod tests {
                 morphism_result_data: None,
                 #[cfg(feature = "kat")]
                 kat_result_data: None,
+                // ── Advanced automata analysis result fields ──
+                #[cfg(feature = "symbolic-automata")]
+                symbolic_result_data: None,
+                #[cfg(feature = "omega")]
+                buchi_result_data: None,
+                #[cfg(feature = "weighted-mso")]
+                mso_result_data: None,
+                #[cfg(feature = "probabilistic")]
+                probabilistic_result_data: None,
+                #[cfg(feature = "register-automata")]
+                register_result_data: None,
+                #[cfg(feature = "parity-tree-automata")]
+                parity_tree_result_data: None,
+                #[cfg(feature = "multi-tape")]
+                multi_tape_result_data: None,
+                #[cfg(feature = "multiset-automata")]
+                multiset_result_data: None,
+                #[cfg(feature = "two-way-transducer")]
+                two_way_result_data: None,
+                #[cfg(feature = "predicate-dispatch")]
+                dispatch_diagnostics_data: None,
             }
         }
 
@@ -7410,6 +8441,27 @@ mod tests {
                 morphism_result: self.morphism_result_data.as_ref(),
                 #[cfg(feature = "kat")]
                 kat_result: self.kat_result_data.as_ref(),
+                // ── Advanced automata analysis results ──
+                #[cfg(feature = "symbolic-automata")]
+                symbolic_result: self.symbolic_result_data.as_ref(),
+                #[cfg(feature = "omega")]
+                buchi_result: self.buchi_result_data.as_ref(),
+                #[cfg(feature = "weighted-mso")]
+                mso_result: self.mso_result_data.as_ref(),
+                #[cfg(feature = "probabilistic")]
+                probabilistic_result: self.probabilistic_result_data.as_ref(),
+                #[cfg(feature = "register-automata")]
+                register_result: self.register_result_data.as_ref(),
+                #[cfg(feature = "parity-tree-automata")]
+                parity_tree_result: self.parity_tree_result_data.as_ref(),
+                #[cfg(feature = "multi-tape")]
+                multi_tape_result: self.multi_tape_result_data.as_ref(),
+                #[cfg(feature = "multiset-automata")]
+                multiset_result: self.multiset_result_data.as_ref(),
+                #[cfg(feature = "two-way-transducer")]
+                two_way_result: self.two_way_result_data.as_ref(),
+                #[cfg(feature = "predicate-dispatch")]
+                dispatch_diagnostics: self.dispatch_diagnostics_data.as_ref(),
             }
         }
     }
@@ -9746,6 +10798,7 @@ mod tests {
             is_determinizable: true,
             alphabet_mismatches: vec![],
             state_count: 5,
+            max_nesting_bound: 5,
         });
         let mut diags = Vec::new();
         lint_v01_vpa_determinizable(&b.ctx(), &mut diags);
@@ -9762,6 +10815,7 @@ mod tests {
             is_determinizable: false,
             alphabet_mismatches: vec![],
             state_count: 5,
+            max_nesting_bound: 5,
         });
         let mut diags = Vec::new();
         lint_v01_vpa_determinizable(&b.ctx(), &mut diags);
@@ -9776,6 +10830,7 @@ mod tests {
             is_determinizable: false,
             alphabet_mismatches: vec!["|".to_string()],
             state_count: 3,
+            max_nesting_bound: 3,
         });
         let mut diags = Vec::new();
         lint_v02_vpa_alphabet_mismatch(&b.ctx(), &mut diags);
@@ -9792,6 +10847,7 @@ mod tests {
             is_determinizable: true,
             alphabet_mismatches: vec![],
             state_count: 3,
+            max_nesting_bound: 3,
         });
         let mut diags = Vec::new();
         lint_v02_vpa_alphabet_mismatch(&b.ctx(), &mut diags);

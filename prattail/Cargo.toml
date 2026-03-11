@@ -54,15 +54,51 @@ kat = []
 ## Theory morphisms: cross-theory translation and proof transfer.
 morphisms = []
 
+# ── Advanced Automata Infrastructure ──────────────────────────────────────────
+
+## Symbolic automata: predicate-labeled transitions, BooleanAlgebra trait,
+## decidability classification (T1-T4), guard analysis.
+symbolic-automata = ["kat"]
+## Weighted MSO logic: grammar property specification, lint-as-formula,
+## Büchi-Elgot-Trakhtenbrot bridge (Droste & Gastin 2007).
+weighted-mso = ["symbolic-automata"]
+## Parity alternating tree automata: mu-calculus model checking on ASTs,
+## structural verification, test generation (Emerson & Jutla 1991).
+parity-tree-automata = ["alternating", "tree-automata"]
+## Register automata: data-aware finite-state computation, context-sensitive
+## parsing, binding verification (Kaminski & Francez 1994).
+register-automata = ["nominal"]
+## Probabilistic automata: statistical disambiguation, expected-case
+## optimization, corpus-driven weight training.
+probabilistic = ["wfst-log"]
+## Multi-tape automata: synchronized multi-stream computation,
+## multi-channel receives, parallel tokenization (Kempe 2004).
+multi-tape = ["wfst-log"]
+## Multiset automata: process multiplicity, resource-bounded parsing,
+## cardinality predicates (Müller, Weiß & Lochau 2024).
+multiset-automata = []
+## Weighted two-way transducers: bidirectional weighted transductions,
+## cross-channel constraint propagation (Feng & Maletti 2022).
+two-way-transducer = ["wfst-log"]
+## Predicate Dispatch Automaton: algebraic variety classification for directed
+## module dispatch. Decomposes predicate formulas into morphemes and activates
+## only the relevant Phase 7 modules (Eilenberg variety theorem).
+predicate-dispatch = ["symbolic-automata", "weighted-mso"]
+
 # ── Convenience groups ───────────────────────────────────────────────────────
 
 ## Grammar-level analysis (tree automata + VPA + TRS).
 analysis = ["tree-automata", "vpa", "trs-analysis"]
 ## Program verification (omega + LTL + KAT + relational WPDS).
 verification = ["omega", "ltl", "kat", "wpds-relational"]
-## Process algebra analysis (nominal + Petri + omega + alternating).
-process-algebra = ["nominal", "petri", "omega", "alternating"]
-## Everything: all analysis and verification features.
+## Process algebra analysis (nominal + Petri + omega + alternating + symbolic + two-way).
+process-algebra = ["nominal", "petri", "omega", "alternating", "symbolic-automata",
+                   "two-way-transducer"]
+## Predicated types infrastructure (all modules needed for predicate evaluation).
+predicated-types = ["symbolic-automata", "weighted-mso", "parity-tree-automata",
+                    "register-automata", "multi-tape", "multiset-automata",
+                    "two-way-transducer"]
+## Everything: all analysis, verification, and advanced automata features.
 full-analysis = [
     "wfst-log", "quantum",
     "wpds-relational", "wpds-extended", "wpds-ara",
@@ -70,6 +106,11 @@ full-analysis = [
     "trs-analysis", "vpa", "tree-automata",
     "omega", "ltl", "alternating",
     "nominal", "petri", "cra", "kat", "morphisms",
+    "symbolic-automata", "weighted-mso",
+    "parity-tree-automata", "register-automata",
+    "probabilistic", "multi-tape", "multiset-automata",
+    "two-way-transducer",
+    "predicate-dispatch",
 ]
 
 [dependencies]

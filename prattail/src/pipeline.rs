@@ -882,6 +882,7 @@ pub struct LexerBundle {
 }
 
 /// Category metadata for the parser pipeline. Send+Sync.
+#[derive(Debug, Clone)]
 pub struct CategoryInfo {
     /// Category name (e.g., "Proc", "Int").
     pub name: String,
@@ -1419,6 +1420,25 @@ pub(crate) struct MathAnalysisResults {
     pub morphism_result: Option<crate::morphism::MorphismCheck>,
     #[cfg(feature = "kat")]
     pub kat_result: Option<crate::kat::KatCheck>,
+    // ── Advanced automata analyses ──
+    #[cfg(feature = "symbolic-automata")]
+    pub symbolic_result: Option<crate::symbolic::SymbolicAnalysis>,
+    #[cfg(feature = "omega")]
+    pub buchi_result: Option<crate::buchi::BuchiAnalysis>,
+    #[cfg(feature = "weighted-mso")]
+    pub mso_result: Option<crate::weighted_mso::MsoAnalysis>,
+    #[cfg(feature = "probabilistic")]
+    pub probabilistic_result: Option<crate::probabilistic::ProbabilisticAnalysis>,
+    #[cfg(feature = "register-automata")]
+    pub register_result: Option<crate::register_automata::RegisterAnalysis>,
+    #[cfg(feature = "parity-tree-automata")]
+    pub parity_tree_result: Option<crate::parity_tree::ParityTreeAnalysis>,
+    #[cfg(feature = "multi-tape")]
+    pub multi_tape_result: Option<crate::multi_tape::MultiTapeAnalysis>,
+    #[cfg(feature = "multiset-automata")]
+    pub multiset_result: Option<crate::multiset_automata::MultisetAnalysisResult>,
+    #[cfg(feature = "two-way-transducer")]
+    pub two_way_result: Option<crate::two_way_transducer::TwoWayAnalysis>,
 }
 
 /// Count the number of analysis phases based on enabled features.
@@ -1454,6 +1474,24 @@ pub(crate) fn count_analysis_phases() -> u32 {
     { count += 1; }
     #[cfg(feature = "kat")]
     { count += 1; }
+    #[cfg(feature = "symbolic-automata")]
+    { count += 1; }
+    #[cfg(feature = "omega")]
+    { count += 1; } // buchi analysis (separate from LTL)
+    #[cfg(feature = "weighted-mso")]
+    { count += 1; }
+    #[cfg(feature = "probabilistic")]
+    { count += 1; }
+    #[cfg(feature = "register-automata")]
+    { count += 1; }
+    #[cfg(feature = "parity-tree-automata")]
+    { count += 1; }
+    #[cfg(feature = "multi-tape")]
+    { count += 1; }
+    #[cfg(feature = "multiset-automata")]
+    { count += 1; }
+    #[cfg(feature = "two-way-transducer")]
+    { count += 1; }
     count
 }
 
@@ -1486,6 +1524,11 @@ fn run_math_analyses_parallel(
 
     let phase_count = count_analysis_phases();
 
+    // Phase 7A: Predicate dispatch classification (before thread scope so
+    // spawned threads can borrow it)
+    #[cfg(feature = "predicate-dispatch")]
+    let dispatch_plan = crate::predicate_dispatch::classify_grammar(all_syntax, categories);
+
     std::thread::scope(|s| {
         // Phase 1: TRS (no dependencies)
         #[cfg(feature = "trs-analysis")]
@@ -1500,6 +1543,10 @@ fn run_math_analyses_parallel(
         // Phase 2: Automata (no dependencies)
         #[cfg(feature = "vpa")]
         let h_vpa = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Vpa) {
+                return None;
+            }
             crate::vpa::analyze_from_bundle(categories, all_syntax)
         });
         #[cfg(feature = "tree-automata")]
@@ -1546,11 +1593,6 @@ fn run_math_analyses_parallel(
         let h_nominal = s.spawn(|| {
             Some(crate::nominal::analyze_from_bundle(all_syntax))
         });
-        #[cfg(feature = "alternating")]
-        let h_alternating = s.spawn(|| {
-            Some(crate::alternating::analyze_from_bundle(all_syntax, categories))
-        });
-
         // Phase 5: Temporal
         #[cfg(feature = "ltl")]
         let h_ltl = s.spawn(|| {
@@ -1577,6 +1619,89 @@ fn run_math_analyses_parallel(
             wpds_ref.and_then(|wa| {
                 crate::kat::check_from_bundle(wa, all_syntax)
             })
+        });
+
+        // Phase 7B: Advanced automata — conditional spawning via dispatch plan
+        // When predicate-dispatch is disabled, all modules run unconditionally.
+        #[cfg(feature = "symbolic-automata")]
+        let h_symbolic = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Symbolic) {
+                return None;
+            }
+            Some(crate::symbolic::analyze_from_bundle(all_syntax, categories))
+        });
+        #[cfg(feature = "omega")]
+        let h_buchi = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Buchi) {
+                return None;
+            }
+            Some(crate::buchi::analyze_from_bundle(all_syntax, categories))
+        });
+        #[cfg(feature = "weighted-mso")]
+        let h_mso = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Mso) {
+                return None;
+            }
+            Some(crate::weighted_mso::analyze_from_bundle(all_syntax, categories))
+        });
+        #[cfg(feature = "probabilistic")]
+        let h_probabilistic = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Probabilistic) {
+                return None;
+            }
+            Some(crate::probabilistic::analyze_from_bundle(all_syntax, categories))
+        });
+        #[cfg(feature = "register-automata")]
+        let h_register = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Register) {
+                return None;
+            }
+            Some(crate::register_automata::analyze_from_bundle(all_syntax, categories))
+        });
+        #[cfg(feature = "parity-tree-automata")]
+        let h_parity_tree = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::ParityTree) {
+                return None;
+            }
+            Some(crate::parity_tree::analyze_from_bundle(all_syntax, categories))
+        });
+        #[cfg(feature = "multi-tape")]
+        let h_multi_tape = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::MultiTape) {
+                return None;
+            }
+            Some(crate::multi_tape::analyze_from_bundle(all_syntax, categories))
+        });
+        #[cfg(feature = "multiset-automata")]
+        let h_multiset = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Multiset) {
+                return None;
+            }
+            Some(crate::multiset_automata::analyze_from_bundle(all_syntax, categories))
+        });
+        #[cfg(feature = "two-way-transducer")]
+        let h_two_way = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::TwoWay) {
+                return None;
+            }
+            Some(crate::two_way_transducer::analyze_from_bundle(all_syntax, categories))
+        });
+        #[cfg(feature = "alternating")]
+        let h_alternating = s.spawn(|| {
+            #[cfg(feature = "predicate-dispatch")]
+            if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::Awa) {
+                return None;
+            }
+            Some(crate::alternating::analyze_from_bundle(all_syntax, categories))
         });
 
         // ── Collect results ──────────────────────────────────────────────
@@ -1613,6 +1738,24 @@ fn run_math_analyses_parallel(
             morphism_result: h_morphism.join().expect("DB03: morphism check thread panicked"),
             #[cfg(feature = "kat")]
             kat_result: h_kat.join().expect("DB03: KAT check thread panicked"),
+            #[cfg(feature = "symbolic-automata")]
+            symbolic_result: h_symbolic.join().expect("DB03: symbolic analysis thread panicked"),
+            #[cfg(feature = "omega")]
+            buchi_result: h_buchi.join().expect("DB03: Büchi analysis thread panicked"),
+            #[cfg(feature = "weighted-mso")]
+            mso_result: h_mso.join().expect("DB03: MSO analysis thread panicked"),
+            #[cfg(feature = "probabilistic")]
+            probabilistic_result: h_probabilistic.join().expect("DB03: probabilistic analysis thread panicked"),
+            #[cfg(feature = "register-automata")]
+            register_result: h_register.join().expect("DB03: register analysis thread panicked"),
+            #[cfg(feature = "parity-tree-automata")]
+            parity_tree_result: h_parity_tree.join().expect("DB03: parity tree analysis thread panicked"),
+            #[cfg(feature = "multi-tape")]
+            multi_tape_result: h_multi_tape.join().expect("DB03: multi-tape analysis thread panicked"),
+            #[cfg(feature = "multiset-automata")]
+            multiset_result: h_multiset.join().expect("DB03: multiset analysis thread panicked"),
+            #[cfg(feature = "two-way-transducer")]
+            two_way_result: h_two_way.join().expect("DB03: two-way transducer analysis thread panicked"),
         }
     })
 }
@@ -1624,6 +1767,26 @@ fn run_math_analyses_sequential(
     wpds_analysis: Option<&crate::wpds::WpdsAnalysis>,
     eligible: bool,
 ) -> MathAnalysisResults {
+    // Build dispatch plan for sequential path so dispatch gates are respected.
+    #[cfg(feature = "predicate-dispatch")]
+    let dispatch_plan = crate::predicate_dispatch::classify_grammar(
+        &bundle.all_syntax, &bundle.categories,
+    );
+
+    /// Helper macro: returns `None` when dispatch says module is not needed.
+    /// The inner `#[cfg]` gate ensures this compiles when `predicate-dispatch` is off.
+    #[allow(unused_macros)]
+    macro_rules! dispatch_gate {
+        ($module:ident) => {
+            {
+                #[cfg(feature = "predicate-dispatch")]
+                if !dispatch_plan.requires(crate::predicate_dispatch::ModuleId::$module) {
+                    return None;
+                }
+            }
+        };
+    }
+
     MathAnalysisResults {
         phase_count: 0,
 
@@ -1655,7 +1818,10 @@ fn run_math_analyses_sequential(
         } else { None },
         #[cfg(feature = "vpa")]
         vpa_result: if eligible {
-            crate::vpa::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
+            (|| {
+                dispatch_gate!(Vpa);
+                crate::vpa::analyze_from_bundle(&bundle.categories, &bundle.all_syntax)
+            })()
         } else { None },
         #[cfg(feature = "tree-automata")]
         wta_result: if eligible {
@@ -1691,7 +1857,10 @@ fn run_math_analyses_sequential(
         } else { None },
         #[cfg(feature = "alternating")]
         alternating_result: if eligible {
-            Some(crate::alternating::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            (|| {
+                dispatch_gate!(Awa);
+                Some(crate::alternating::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
         } else { None },
         #[cfg(feature = "ltl")]
         ltl_results: if eligible {
@@ -1718,6 +1887,69 @@ fn run_math_analyses_sequential(
             wpds_analysis.and_then(|wa| {
                 crate::kat::check_from_bundle(wa, &bundle.all_syntax)
             })
+        } else { None },
+        #[cfg(feature = "symbolic-automata")]
+        symbolic_result: if eligible {
+            (|| {
+                dispatch_gate!(Symbolic);
+                Some(crate::symbolic::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        #[cfg(feature = "omega")]
+        buchi_result: if eligible {
+            (|| {
+                dispatch_gate!(Buchi);
+                Some(crate::buchi::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        #[cfg(feature = "weighted-mso")]
+        mso_result: if eligible {
+            (|| {
+                dispatch_gate!(Mso);
+                Some(crate::weighted_mso::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        #[cfg(feature = "probabilistic")]
+        probabilistic_result: if eligible {
+            (|| {
+                dispatch_gate!(Probabilistic);
+                Some(crate::probabilistic::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        #[cfg(feature = "register-automata")]
+        register_result: if eligible {
+            (|| {
+                dispatch_gate!(Register);
+                Some(crate::register_automata::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        #[cfg(feature = "parity-tree-automata")]
+        parity_tree_result: if eligible {
+            (|| {
+                dispatch_gate!(ParityTree);
+                Some(crate::parity_tree::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        #[cfg(feature = "multi-tape")]
+        multi_tape_result: if eligible {
+            (|| {
+                dispatch_gate!(MultiTape);
+                Some(crate::multi_tape::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        #[cfg(feature = "multiset-automata")]
+        multiset_result: if eligible {
+            (|| {
+                dispatch_gate!(Multiset);
+                Some(crate::multiset_automata::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
+        } else { None },
+        #[cfg(feature = "two-way-transducer")]
+        two_way_result: if eligible {
+            (|| {
+                dispatch_gate!(TwoWay);
+                Some(crate::two_way_transducer::analyze_from_bundle(&bundle.all_syntax, &bundle.categories))
+            })()
         } else { None },
     }
 }
@@ -2956,6 +3188,24 @@ fn generate_parser_code(
     let morphism_result = math_results.morphism_result;
     #[cfg(feature = "kat")]
     let kat_result = math_results.kat_result;
+    #[cfg(feature = "symbolic-automata")]
+    let symbolic_result = math_results.symbolic_result;
+    #[cfg(feature = "omega")]
+    let buchi_result = math_results.buchi_result;
+    #[cfg(feature = "weighted-mso")]
+    let mso_result = math_results.mso_result;
+    #[cfg(feature = "probabilistic")]
+    let probabilistic_result = math_results.probabilistic_result;
+    #[cfg(feature = "register-automata")]
+    let register_result = math_results.register_result;
+    #[cfg(feature = "parity-tree-automata")]
+    let parity_tree_result = math_results.parity_tree_result;
+    #[cfg(feature = "multi-tape")]
+    let multi_tape_result = math_results.multi_tape_result;
+    #[cfg(feature = "multiset-automata")]
+    let multiset_result = math_results.multiset_result;
+    #[cfg(feature = "two-way-transducer")]
+    let two_way_result = math_results.two_way_result;
 
     let math_analysis_elapsed = math_analysis_start.elapsed();
 
@@ -2975,6 +3225,71 @@ fn generate_parser_code(
                 bundle.categories.len(),
             )),
         );
+    }
+
+    // ── Sprint A2: Wire VPA bracket mismatch tokens into recovery WFSTs ────
+    // When VPA analysis finds tokens used as both call and return symbols,
+    // InsertToken for those tokens becomes unreliable. Penalize insertion of
+    // bracket mismatch tokens with a 2.0× multiplier in all recovery WFSTs.
+    #[cfg(feature = "vpa")]
+    if let Some(ref vpa) = vpa_result {
+        if !vpa.alphabet_mismatches.is_empty() {
+            let mismatch_ids: std::collections::BTreeSet<crate::token_id::TokenId> = vpa
+                .alphabet_mismatches
+                .iter()
+                .filter_map(|name| token_id_map.get(name))
+                .collect();
+            if !mismatch_ids.is_empty() {
+                for rwfst in &mut recovery_wfsts {
+                    rwfst.set_bracket_mismatch_ids(mismatch_ids.clone());
+                }
+                pipeline_diagnostic(
+                    &bundle.grammar_name, "I20", "bracket-mismatch-insert-penalty",
+                    crate::lint::LintSeverity::Info,
+                    format!(
+                        "Sprint A2: applied 2.0× InsertToken penalty for {} bracket mismatch token(s): {}",
+                        mismatch_ids.len(),
+                        vpa.alphabet_mismatches.join(", "),
+                    ),
+                    None,
+                );
+            }
+        }
+    }
+
+    // ── Sprint C2: Wire Büchi accepting SCC categories into recovery WFSTs ──
+    // Categories in accepting SCCs (recursive grammar loops) prefer InsertToken
+    // recovery to maintain the loop structure. SkipToSync is penalized because
+    // breaking out of a recursive loop is structurally damaging.
+    #[cfg(feature = "omega")]
+    if let Some(ref buchi) = buchi_result {
+        if buchi.has_accepting_cycle {
+            let scc_cats: HashSet<&str> = buchi
+                .accepting_sccs
+                .iter()
+                .flatten()
+                .map(|s| s.as_str())
+                .collect();
+            let mut count = 0_usize;
+            for rwfst in &mut recovery_wfsts {
+                if scc_cats.contains(rwfst.category()) {
+                    rwfst.set_recursive_category(true);
+                    count += 1;
+                }
+            }
+            if count > 0 {
+                pipeline_diagnostic(
+                    &bundle.grammar_name, "I21", "liveness-recovery",
+                    crate::lint::LintSeverity::Info,
+                    format!(
+                        "Sprint C2: applied liveness-aware recovery to {} recursive category(ies): {}",
+                        count,
+                        scc_cats.iter().copied().collect::<Vec<_>>().join(", "),
+                    ),
+                    None,
+                );
+            }
+        }
     }
 
     // ── Unified lint layer ─────────────────────────────────────────────────
@@ -3054,6 +3369,27 @@ fn generate_parser_code(
             morphism_result: morphism_result.as_ref(),
             #[cfg(feature = "kat")]
             kat_result: kat_result.as_ref(),
+            // ── Advanced automata analysis results ──
+            #[cfg(feature = "symbolic-automata")]
+            symbolic_result: symbolic_result.as_ref(),
+            #[cfg(feature = "omega")]
+            buchi_result: buchi_result.as_ref(),
+            #[cfg(feature = "weighted-mso")]
+            mso_result: mso_result.as_ref(),
+            #[cfg(feature = "probabilistic")]
+            probabilistic_result: probabilistic_result.as_ref(),
+            #[cfg(feature = "register-automata")]
+            register_result: register_result.as_ref(),
+            #[cfg(feature = "parity-tree-automata")]
+            parity_tree_result: parity_tree_result.as_ref(),
+            #[cfg(feature = "multi-tape")]
+            multi_tape_result: multi_tape_result.as_ref(),
+            #[cfg(feature = "multiset-automata")]
+            multiset_result: multiset_result.as_ref(),
+            #[cfg(feature = "two-way-transducer")]
+            two_way_result: two_way_result.as_ref(),
+            #[cfg(feature = "predicate-dispatch")]
+            dispatch_diagnostics: None, // TODO: wire from Phase 7A dispatch plan when available
         };
 
         // DB04: Use cached lint results when the optimization gate is enabled.
@@ -3658,12 +3994,31 @@ fn generate_parser_code(
     // ── Build PipelineAnalysis from computed data ──────────────────────────
     // Uses all_dead_rule_labels (unconditionally computed) rather than
     // dead_rules (gated by enhanced_dce) so Ascent DCE always has full data.
+    // Advanced automata results are passed through for codegen promotion.
+    let advanced = AdvancedAnalysisBundle {
+        #[cfg(feature = "symbolic-automata")]
+        symbolic: symbolic_result.as_ref(),
+        #[cfg(feature = "alternating")]
+        alternating: alternating_result.as_ref(),
+        #[cfg(feature = "vpa")]
+        vpa: vpa_result.as_ref(),
+        #[cfg(feature = "register-automata")]
+        register: register_result.as_ref(),
+        #[cfg(feature = "probabilistic")]
+        probabilistic: probabilistic_result.as_ref(),
+        #[cfg(feature = "multi-tape")]
+        multi_tape: multi_tape_result.as_ref(),
+        #[cfg(feature = "omega")]
+        buchi: buchi_result.as_ref(),
+        _phantom: std::marker::PhantomData,
+    };
     let analysis = build_pipeline_analysis(
         &all_dead_rule_labels,
         &prediction_wfsts,
         &bundle.categories,
         &bundle.rule_infos,
         decision_trees.trees().clone(),
+        &advanced,
     );
 
     // Layer 10: Save updated incremental state to .prattail-cache
@@ -3674,17 +4029,55 @@ fn generate_parser_code(
     (buf, analysis)
 }
 
+/// Bundle of advanced automata analysis results for codegen promotion.
+///
+/// Passed to [`build_pipeline_analysis()`] to integrate feature-gated analysis
+/// data into the pipeline. Each field is `Option<&AnalysisType>` — `None` when
+/// the corresponding analysis was not run (e.g., no grammar features triggered it).
+struct AdvancedAnalysisBundle<'a> {
+    #[cfg(feature = "symbolic-automata")]
+    symbolic: Option<&'a crate::symbolic::SymbolicAnalysis>,
+    #[cfg(feature = "alternating")]
+    alternating: Option<&'a crate::alternating::AlternatingAnalysis>,
+    #[cfg(feature = "vpa")]
+    vpa: Option<&'a crate::vpa::VpaAnalysis>,
+    #[cfg(feature = "register-automata")]
+    register: Option<&'a crate::register_automata::RegisterAnalysis>,
+    #[cfg(feature = "probabilistic")]
+    probabilistic: Option<&'a crate::probabilistic::ProbabilisticAnalysis>,
+    #[cfg(feature = "multi-tape")]
+    multi_tape: Option<&'a crate::multi_tape::MultiTapeAnalysis>,
+    #[cfg(feature = "omega")]
+    buchi: Option<&'a crate::buchi::BuchiAnalysis>,
+    /// PhantomData to bind the lifetime when no advanced features are enabled.
+    _phantom: std::marker::PhantomData<&'a ()>,
+}
+
 /// Build a [`PipelineAnalysis`] from the data computed during parser code generation.
 ///
 /// Extracts constructor weights from prediction WFSTs, computes category-level
-/// averages, and identifies fully unreachable categories. Isomorphic group
-/// detection is deferred to Sprint 8.
+/// averages, identifies fully unreachable categories, and integrates advanced
+/// automata analysis results for codegen optimization promotion.
+///
+/// # Advanced Automata Integration (Sprints 1-7, A3)
+///
+/// When feature-gated analysis results are available, this function:
+/// - **SYM01-DCE**: Extends `dead_rule_labels` with unsatisfiable symbolic guards
+/// - **PR01-DCE**: Extends `dead_rule_labels` with low-selectivity rules (when normalized)
+/// - **PR01-WEIGHT**: Blends probabilistic selectivity into `constructor_weights`
+/// - **N06-ISO**: Extends `isomorphic_groups` with bisimulation-equivalent category pairs
+/// - **A3**: Adds +0.5 tropical weight penalty to constructors of bisimilar categories'
+///   lexicographically second member, reducing redundant NFA try-all work
+/// - **RA01-SKIP**: Populates `dead_binder_categories` from dead register analysis
+/// - **V05-INFO**: Sets `bracket_deterministic` flag from VPA analysis
+/// - **MT01-INFO**: Populates `independent_categories` from disconnected tape analysis
 fn build_pipeline_analysis(
     dead_rules: &HashSet<String>,
     prediction_wfsts: &HashMap<String, PredictionWfst>,
     categories: &[CategoryInfo],
     rule_infos: &[RuleInfo],
     decision_trees: HashMap<String, crate::decision_tree::CategoryDecisionTree>,
+    _advanced: &AdvancedAnalysisBundle<'_>,
 ) -> crate::PipelineAnalysis {
     let mut constructor_weights = HashMap::new();
     let mut category_weights = HashMap::new();
@@ -3717,13 +4110,51 @@ fn build_pipeline_analysis(
         }
     }
 
+    // ── Sprint 3 (PR01-WEIGHT): Blend probabilistic selectivity into constructor weights ──
+    #[cfg(feature = "probabilistic")]
+    if let Some(prob) = _advanced.probabilistic {
+        if prob.is_normalized {
+            for (label, selectivity) in &prob.rule_selectivities {
+                if *selectivity > 0.0 {
+                    let prob_weight = -selectivity.ln(); // tropical: lower = more frequent
+                    let existing = constructor_weights.get(label.as_str()).copied().unwrap_or(f64::INFINITY);
+                    // Geometric mean blend: (WFST_weight + prob_weight) / 2
+                    constructor_weights.insert(label.clone(), (existing + prob_weight) / 2.0);
+                }
+            }
+        }
+    }
+
+    // ── Dead rule extension from advanced automata analyses ───────────────
+    // mut needed when symbolic-automata or probabilistic features extend the set.
+    #[allow(unused_mut)]
+    let mut dead_rules_extended = dead_rules.clone();
+
+    // Sprint 1 (SYM01-DCE): Unsatisfiable symbolic guards → dead rules
+    #[cfg(feature = "symbolic-automata")]
+    if let Some(sym) = _advanced.symbolic {
+        for label in &sym.unsatisfiable_rule_labels {
+            dead_rules_extended.insert(label.clone());
+        }
+    }
+
+    // Sprint 2 (PR01-DCE): Low-selectivity rules → dead rules (only when normalized)
+    #[cfg(feature = "probabilistic")]
+    if let Some(prob) = _advanced.probabilistic {
+        if prob.is_normalized && !prob.low_selectivity_rules.is_empty() {
+            for label in &prob.low_selectivity_rules {
+                dead_rules_extended.insert(label.clone());
+            }
+        }
+    }
+
     // Determine unreachable categories: categories where ALL rules are dead.
     let mut unreachable_categories = HashSet::new();
     for cat in categories {
         let all_dead = rule_infos
             .iter()
             .filter(|r| r.category == cat.name)
-            .all(|r| dead_rules.contains(&r.label));
+            .all(|r| dead_rules_extended.contains(&r.label));
         // Only mark as unreachable if the category actually has rules
         let has_rules = rule_infos.iter().any(|r| r.category == cat.name);
         if has_rules && all_dead {
@@ -3732,19 +4163,221 @@ fn build_pipeline_analysis(
     }
 
     // Sprint 8: Detect isomorphic WFST groups using De Bruijn canonicalization.
-    let isomorphic_groups =
+    // mut needed when feature = "alternating" extends groups with bisimulation equivalences.
+    #[allow(unused_mut)]
+    let mut isomorphic_groups =
         group_isomorphic_wfsts(prediction_wfsts);
+
+    // ── Sprint 4 (N06-ISO): Extend isomorphic groups with bisimulation equivalences ──
+    #[cfg(feature = "alternating")]
+    if let Some(alt) = _advanced.alternating {
+        // Collect new bisimulation groups into a separate vec to avoid borrow conflict.
+        let new_groups = {
+            // Categories already in De Bruijn groups
+            let already_grouped: HashSet<&str> = isomorphic_groups
+                .iter()
+                .flatten()
+                .map(|s| s.as_str())
+                .collect();
+
+            // Build set of non-bisimilar pairs for fast lookup
+            let non_bisimilar: HashSet<(&str, &str)> = alt
+                .non_bisimilar_pairs
+                .iter()
+                .flat_map(|(a, b)| vec![(a.as_str(), b.as_str()), (b.as_str(), a.as_str())])
+                .collect();
+
+            // Find bisimilar pairs not already grouped
+            let cat_names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
+            let mut groups = Vec::new();
+            for i in 0..cat_names.len() {
+                for j in (i + 1)..cat_names.len() {
+                    let a = cat_names[i];
+                    let b = cat_names[j];
+                    if !already_grouped.contains(a)
+                        && !already_grouped.contains(b)
+                        && !non_bisimilar.contains(&(a, b))
+                    {
+                        groups.push(vec![a.to_string(), b.to_string()]);
+                    }
+                }
+            }
+            groups
+        };
+        isomorphic_groups.extend(new_groups);
+    }
+
+    // ── Sprint A3: Bisimilar weight discount ──
+    // Deprioritize the lexicographically second category in each bisimilar pair
+    // by adding 0.5 to its constructor weights. This reduces redundant NFA try-all
+    // work when two categories accept the same language (bisimilar).
+    #[cfg(feature = "alternating")]
+    if let Some(alt) = _advanced.alternating {
+        let cat_names: Vec<&str> = categories.iter().map(|c| c.name.as_str()).collect();
+        let non_bisimilar: HashSet<(&str, &str)> = alt
+            .non_bisimilar_pairs
+            .iter()
+            .flat_map(|(a, b)| vec![(a.as_str(), b.as_str()), (b.as_str(), a.as_str())])
+            .collect();
+
+        // Build rule-label → category mapping for weight lookup
+        let rule_to_cat: HashMap<&str, &str> = rule_infos
+            .iter()
+            .map(|r| (r.label.as_str(), r.category.as_str()))
+            .collect();
+
+        // Collect all deprioritized categories
+        let mut deprioritized_cats: HashSet<&str> = HashSet::new();
+        for i in 0..cat_names.len() {
+            for j in (i + 1)..cat_names.len() {
+                let a = cat_names[i];
+                let b = cat_names[j];
+                if !non_bisimilar.contains(&(a, b)) {
+                    // Bisimilar pair — deprioritize the lexicographically second
+                    let deprioritized = if a > b { a } else { b };
+                    deprioritized_cats.insert(deprioritized);
+                }
+            }
+        }
+
+        // Apply +0.5 tropical weight penalty to all rules in deprioritized categories
+        for (label, weight) in constructor_weights.iter_mut() {
+            if let Some(&cat) = rule_to_cat.get(label.as_str()) {
+                if deprioritized_cats.contains(cat) {
+                    *weight += 0.5;
+                }
+            }
+        }
+    }
+
+    // Build action maps after bisimulation extension so they reflect all groups.
     let isomorphic_action_maps =
         build_isomorphic_action_maps(prediction_wfsts, &isomorphic_groups);
 
+    // ── Sprint 5 (RA01-SKIP): Dead registers → skip binder alpha-equivalence ──
+    #[cfg(feature = "register-automata")]
+    let dead_binder_categories = if let Some(reg) = _advanced.register {
+        // Map dead register indices to category names.
+        // In register automata analysis, register index i corresponds to
+        // the i-th category. A dead register means the binder associated
+        // with that category's scope is stored but never tested.
+        reg.dead_registers
+            .iter()
+            .filter_map(|&idx| categories.get(idx).map(|c| c.name.clone()))
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    // ── Sprint 6 (V05-INFO): VPA bracket deterministic flag ──
+    #[cfg(feature = "vpa")]
+    let bracket_deterministic = _advanced
+        .vpa
+        .map_or(false, |v| v.is_determinizable && v.alphabet_mismatches.is_empty());
+
+    // ── Sprint A1: VPA nesting depth bound ──
+    #[cfg(feature = "vpa")]
+    let vpa_max_nesting_bound = _advanced.vpa.map(|v| v.max_nesting_bound);
+
+    // ── Sprint A2: VPA bracket mismatch tokens ──
+    #[cfg(feature = "vpa")]
+    let bracket_mismatch_tokens: HashSet<String> = _advanced
+        .vpa
+        .map_or_else(HashSet::new, |v| v.alphabet_mismatches.iter().cloned().collect());
+
+    // ── Sprint 7 (MT01-INFO): Independent categories from multi-tape analysis ──
+    #[cfg(feature = "multi-tape")]
+    let independent_categories = if let Some(mt) = _advanced.multi_tape {
+        mt.disconnected_tapes
+            .iter()
+            .filter_map(|&idx| categories.get(idx).map(|c| c.name.clone()))
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    // ── Sprint C1: Guard-disambiguated tokens ──
+    // Tokens where one category's guard subsumes another's can be dispatched
+    // without backtracking. A subsumed guard pair (A, B) means guard A ⊂ guard B,
+    // so the subsuming category can be tried first deterministically.
+    #[cfg(feature = "symbolic-automata")]
+    let guard_disambiguated_tokens: HashSet<String> = if let Some(sym) = _advanced.symbolic {
+        sym.subsumed_guards
+            .iter()
+            .map(|(subsumed, _subsumer)| subsumed.clone())
+            .collect()
+    } else {
+        HashSet::new()
+    };
+
+    // ── Sprint C3: Per-category entropy from probabilistic analysis ──
+    // Compute Shannon entropy per category from rule selectivities.
+    // High entropy → more ambiguous alternatives → wider beam needed.
+    // Categories with a single dominant rule have entropy near zero.
+    #[cfg(feature = "probabilistic")]
+    let per_category_entropy: HashMap<String, f64> = if let Some(prob) = _advanced.probabilistic {
+        // Group rule selectivities by category and compute per-category entropy.
+        let mut cat_probs: HashMap<String, Vec<f64>> = HashMap::new();
+        for (qualified_label, &selectivity) in &prob.rule_selectivities {
+            // qualified_label format is "Category::Rule"
+            if let Some(cat) = qualified_label.split("::").next() {
+                cat_probs.entry(cat.to_string()).or_default().push(selectivity);
+            }
+        }
+
+        let mut entropy_map = HashMap::new();
+        for (cat, probs) in &cat_probs {
+            let sum: f64 = probs.iter().sum();
+            if sum > 0.0 {
+                let mut entropy = 0.0_f64;
+                for &p in probs {
+                    let normalized = p / sum;
+                    if normalized > 0.0 {
+                        entropy -= normalized * normalized.ln();
+                    }
+                }
+                entropy_map.insert(cat.clone(), entropy);
+            }
+        }
+        entropy_map
+    } else {
+        HashMap::new()
+    };
+
+    // ── Recursive SCC categories from Buchi analysis ──
+    // Categories participating in accepting SCCs (recursive grammar loops).
+    // Recovery prefers InsertToken in these categories to maintain the loop.
+    #[cfg(feature = "omega")]
+    let recursive_scc_categories: HashSet<String> = if let Some(buchi) = _advanced.buchi {
+        buchi.accepting_sccs.iter().flatten().cloned().collect()
+    } else {
+        HashSet::new()
+    };
+
     crate::PipelineAnalysis {
-        dead_rule_labels: dead_rules.clone(),
+        dead_rule_labels: dead_rules_extended,
         unreachable_categories,
         constructor_weights,
         category_weights,
         isomorphic_groups,
         isomorphic_action_maps,
         decision_trees,
+        #[cfg(feature = "register-automata")]
+        dead_binder_categories,
+        #[cfg(feature = "vpa")]
+        bracket_deterministic,
+        #[cfg(feature = "vpa")]
+        vpa_max_nesting_bound,
+        #[cfg(feature = "vpa")]
+        bracket_mismatch_tokens,
+        #[cfg(feature = "multi-tape")]
+        independent_categories,
+        #[cfg(feature = "symbolic-automata")]
+        guard_disambiguated_tokens,
+        #[cfg(feature = "probabilistic")]
+        per_category_entropy,
+        #[cfg(feature = "omega")]
+        recursive_scc_categories,
     }
 }
 
@@ -5527,5 +6160,1964 @@ mod tests {
         assert!(results.safety_result.is_none(), "safety_result should be None without WPDS");
         assert!(results.cegar_result.is_none(), "cegar_result should be None without WPDS");
         assert!(results.algebraic_result.is_none(), "algebraic_result should be None without WPDS");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Advanced automata codegen promotion tests
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Helper: construct an empty AdvancedAnalysisBundle (all fields None).
+    #[allow(dead_code)]
+    fn empty_bundle<'a>() -> super::AdvancedAnalysisBundle<'a> {
+        super::AdvancedAnalysisBundle {
+            #[cfg(feature = "symbolic-automata")]
+            symbolic: None,
+            #[cfg(feature = "alternating")]
+            alternating: None,
+            #[cfg(feature = "vpa")]
+            vpa: None,
+            #[cfg(feature = "register-automata")]
+            register: None,
+            #[cfg(feature = "probabilistic")]
+            probabilistic: None,
+            #[cfg(feature = "multi-tape")]
+            multi_tape: None,
+            #[cfg(feature = "omega")]
+            buchi: None,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Helper: call build_pipeline_analysis with minimal inputs and a given bundle.
+    #[allow(dead_code)]
+    fn run_build_pipeline(
+        dead_rules: &HashSet<String>,
+        prediction_wfsts: &HashMap<String, PredictionWfst>,
+        categories: &[CategoryInfo],
+        rule_infos: &[RuleInfo],
+        bundle: &super::AdvancedAnalysisBundle<'_>,
+    ) -> crate::PipelineAnalysis {
+        super::build_pipeline_analysis(
+            dead_rules,
+            prediction_wfsts,
+            categories,
+            rule_infos,
+            HashMap::new(), // decision_trees
+            bundle,
+        )
+    }
+
+    // ── Test 1: SYM01-DCE — unsatisfiable guards extend dead rules ──────────
+
+    #[cfg(feature = "symbolic-automata")]
+    #[test]
+    fn test_symbolic_dead_guard_extends_dead_rules() {
+        let sym = crate::symbolic::SymbolicAnalysis {
+            num_states: 2,
+            num_transitions: 2,
+            guard_satisfiability: vec![
+                ("guard_1".into(), false),
+                ("guard_2".into(), false),
+            ],
+            overlapping_guards: Vec::new(),
+            subsumed_guards: Vec::new(),
+            unsatisfiable_rule_labels: vec!["dead_guard_1".into(), "dead_guard_2".into()],
+        };
+        let mut bundle = empty_bundle();
+        bundle.symbolic = Some(&sym);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![
+            rule("dead_guard_1", "Expr"),
+            rule("dead_guard_2", "Expr"),
+            rule("alive_rule", "Expr"),
+        ];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.dead_rule_labels.contains("dead_guard_1"),
+            "dead_guard_1 should be in dead_rule_labels"
+        );
+        assert!(
+            analysis.dead_rule_labels.contains("dead_guard_2"),
+            "dead_guard_2 should be in dead_rule_labels"
+        );
+    }
+
+    // ── Test 2: SYM01-DCE — satisfiable guards do not add dead rules ────────
+
+    #[cfg(feature = "symbolic-automata")]
+    #[test]
+    fn test_symbolic_satisfiable_guards_no_dead() {
+        let sym = crate::symbolic::SymbolicAnalysis {
+            num_states: 1,
+            num_transitions: 1,
+            guard_satisfiability: vec![("guard_ok".into(), true)],
+            overlapping_guards: Vec::new(),
+            subsumed_guards: Vec::new(),
+            unsatisfiable_rule_labels: Vec::new(),
+        };
+        let mut bundle = empty_bundle();
+        bundle.symbolic = Some(&sym);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("alive", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.dead_rule_labels.is_empty(),
+            "no dead rules should be added when all guards are satisfiable"
+        );
+    }
+
+    // ── Test 3: PR01-DCE — low-selectivity rules extend dead rules ──────────
+
+    #[cfg(feature = "probabilistic")]
+    #[test]
+    fn test_probabilistic_low_selectivity_extends_dead() {
+        let prob = crate::probabilistic::ProbabilisticAnalysis {
+            num_states: 3,
+            is_normalized: true,
+            total_selectivity: 0.8,
+            mean_entropy: 1.5,
+            low_selectivity_rules: vec!["low_1".into(), "low_2".into()],
+            rule_selectivities: HashMap::new(),
+        };
+        let mut bundle = empty_bundle();
+        bundle.probabilistic = Some(&prob);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![
+            rule("low_1", "Expr"),
+            rule("low_2", "Expr"),
+            rule("alive", "Expr"),
+        ];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.dead_rule_labels.contains("low_1"),
+            "low_1 should be in dead_rule_labels"
+        );
+        assert!(
+            analysis.dead_rule_labels.contains("low_2"),
+            "low_2 should be in dead_rule_labels"
+        );
+    }
+
+    // ── Test 4: PR01-DCE — not-normalized PA does not extend dead rules ─────
+
+    #[cfg(feature = "probabilistic")]
+    #[test]
+    fn test_probabilistic_not_normalized_no_dead() {
+        let prob = crate::probabilistic::ProbabilisticAnalysis {
+            num_states: 2,
+            is_normalized: false,
+            total_selectivity: 0.5,
+            mean_entropy: 1.0,
+            low_selectivity_rules: vec!["low_1".into()],
+            rule_selectivities: HashMap::new(),
+        };
+        let mut bundle = empty_bundle();
+        bundle.probabilistic = Some(&prob);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("low_1", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            !analysis.dead_rule_labels.contains("low_1"),
+            "low_1 should NOT be in dead_rule_labels when not normalized"
+        );
+    }
+
+    // ── Test 5: PR01-WEIGHT — probabilistic weight blending ─────────────────
+
+    #[cfg(feature = "probabilistic")]
+    #[test]
+    fn test_probabilistic_weight_blend() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::{PredictionWfst, WeightedAction, WfstState};
+
+        // Build a PredictionWfst with one action for "rule_1" at weight 1.0.
+        let mut wfst = PredictionWfst {
+            category: "Expr".into(),
+            states: vec![WfstState::new(0)],
+            start: 0,
+            actions: vec![WeightedAction {
+                action: DispatchAction::Direct {
+                    rule_label: "rule_1".into(),
+                    parse_fn: "parse_rule_1".into(),
+                },
+                weight: TropicalWeight::new(1.0),
+            }],
+            token_map: TokenIdMap::new(),
+            beam_width: None,
+            context_labels: HashMap::new(),
+        };
+        // Make state 0 final so the WFST is well-formed.
+        wfst.states[0].is_final = true;
+
+        let mut prediction_wfsts = HashMap::new();
+        prediction_wfsts.insert("Expr".into(), wfst);
+
+        let selectivity = 0.5_f64;
+        let prob = crate::probabilistic::ProbabilisticAnalysis {
+            num_states: 1,
+            is_normalized: true,
+            total_selectivity: 1.0,
+            mean_entropy: 0.0,
+            low_selectivity_rules: Vec::new(),
+            rule_selectivities: {
+                let mut m = HashMap::new();
+                m.insert("rule_1".into(), selectivity);
+                m
+            },
+        };
+        let mut bundle = empty_bundle();
+        bundle.probabilistic = Some(&prob);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("rule_1", "Expr")];
+        let dead_rules = HashSet::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        // Expected: (1.0 + (-ln(0.5))) / 2 = (1.0 + 0.6931...) / 2 = 0.8465...
+        let expected = (1.0 + (-selectivity.ln())) / 2.0;
+        let actual = analysis.constructor_weights.get("rule_1")
+            .copied()
+            .expect("rule_1 should have a constructor weight");
+        assert!(
+            (actual - expected).abs() < 1e-9,
+            "blended weight should be {expected}, got {actual}"
+        );
+    }
+
+    // ── Test 6: PR01-WEIGHT — zero selectivity does not panic ───────────────
+
+    #[cfg(feature = "probabilistic")]
+    #[test]
+    fn test_probabilistic_zero_selectivity_skipped() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::{PredictionWfst, WeightedAction, WfstState};
+
+        let mut wfst = PredictionWfst {
+            category: "Expr".into(),
+            states: vec![WfstState::new(0)],
+            start: 0,
+            actions: vec![WeightedAction {
+                action: DispatchAction::Direct {
+                    rule_label: "rule_z".into(),
+                    parse_fn: "parse_rule_z".into(),
+                },
+                weight: TropicalWeight::new(2.0),
+            }],
+            token_map: TokenIdMap::new(),
+            beam_width: None,
+            context_labels: HashMap::new(),
+        };
+        wfst.states[0].is_final = true;
+
+        let mut prediction_wfsts = HashMap::new();
+        prediction_wfsts.insert("Expr".into(), wfst);
+
+        let prob = crate::probabilistic::ProbabilisticAnalysis {
+            num_states: 1,
+            is_normalized: true,
+            total_selectivity: 1.0,
+            mean_entropy: 0.0,
+            low_selectivity_rules: Vec::new(),
+            rule_selectivities: {
+                let mut m = HashMap::new();
+                m.insert("rule_z".into(), 0.0); // zero selectivity
+                m
+            },
+        };
+        let mut bundle = empty_bundle();
+        bundle.probabilistic = Some(&prob);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("rule_z", "Expr")];
+        let dead_rules = HashSet::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        // Zero selectivity is skipped (guard: *selectivity > 0.0), so the
+        // weight should remain at the original WFST value (2.0).
+        let actual = analysis.constructor_weights.get("rule_z")
+            .copied()
+            .expect("rule_z should have a constructor weight");
+        assert!(
+            (actual - 2.0).abs() < 1e-9,
+            "weight should remain 2.0 when selectivity is 0.0, got {actual}"
+        );
+    }
+
+    // ── Test 7: N06-ISO — bisimulation extends isomorphic groups ────────────
+
+    #[cfg(feature = "alternating")]
+    #[test]
+    fn test_alternating_bisimulation_extends_groups() {
+        // All 3 categories are bisimilar (no non-bisimilar pairs),
+        // so every pair (A,B), (A,C), (B,C) should be grouped.
+        let alt = crate::alternating::AlternatingAnalysis {
+            non_bisimilar_pairs: Vec::new(),
+            state_count: 3,
+        };
+        let mut bundle = empty_bundle();
+        bundle.alternating = Some(&alt);
+
+        let categories = vec![
+            category("A", true),
+            category("B", false),
+            category("C", false),
+        ];
+        let rule_infos = vec![
+            rule("r1", "A"),
+            rule("r2", "B"),
+            rule("r3", "C"),
+        ];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        // With empty prediction_wfsts (no De Bruijn groups), and no non-bisimilar
+        // pairs, we expect new isomorphic groups for all 3 pairs: [A,B], [A,C], [B,C].
+        let all_grouped: HashSet<String> = analysis.isomorphic_groups
+            .iter()
+            .flatten()
+            .cloned()
+            .collect();
+        assert!(
+            all_grouped.contains("A"),
+            "A should appear in isomorphic groups"
+        );
+        assert!(
+            all_grouped.contains("B"),
+            "B should appear in isomorphic groups"
+        );
+        assert!(
+            all_grouped.contains("C"),
+            "C should appear in isomorphic groups"
+        );
+        assert!(
+            analysis.isomorphic_groups.len() >= 3,
+            "should have at least 3 isomorphic groups (one per pair), got {}",
+            analysis.isomorphic_groups.len()
+        );
+    }
+
+    // ── Test 8: N06-ISO — all non-bisimilar → no new groups ─────────────────
+
+    #[cfg(feature = "alternating")]
+    #[test]
+    fn test_alternating_all_non_bisimilar_no_groups() {
+        let alt = crate::alternating::AlternatingAnalysis {
+            non_bisimilar_pairs: vec![
+                ("A".into(), "B".into()),
+                ("A".into(), "C".into()),
+                ("B".into(), "C".into()),
+            ],
+            state_count: 3,
+        };
+        let mut bundle = empty_bundle();
+        bundle.alternating = Some(&alt);
+
+        let categories = vec![
+            category("A", true),
+            category("B", false),
+            category("C", false),
+        ];
+        let rule_infos = vec![
+            rule("r1", "A"),
+            rule("r2", "B"),
+            rule("r3", "C"),
+        ];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        // With no prediction WFSTs there are no De Bruijn groups, and all pairs
+        // are non-bisimilar, so no new isomorphic groups should be added.
+        assert!(
+            analysis.isomorphic_groups.is_empty(),
+            "no isomorphic groups should be added when all pairs are non-bisimilar, got {:?}",
+            analysis.isomorphic_groups
+        );
+    }
+
+    // ── Test A3a: Bisimilar categories → weight discount ──────────────────
+
+    #[cfg(feature = "alternating")]
+    #[test]
+    fn test_bisimilar_categories_weight_discount() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::{PredictionWfst, WeightedAction, WfstState};
+
+        // Two categories: Alpha and Beta, both bisimilar (no non-bisimilar pairs).
+        // Beta > Alpha lexicographically, so Beta should be deprioritized (+0.5).
+        let alt = crate::alternating::AlternatingAnalysis {
+            non_bisimilar_pairs: Vec::new(),
+            state_count: 2,
+        };
+        let mut bundle = empty_bundle();
+        bundle.alternating = Some(&alt);
+
+        // Build WFSTs with known weights so constructor_weights are populated.
+        let mut wfst_alpha = PredictionWfst {
+            category: "Alpha".into(),
+            states: vec![WfstState::new(0)],
+            start: 0,
+            actions: vec![WeightedAction {
+                action: DispatchAction::Direct {
+                    rule_label: "r_alpha".into(),
+                    parse_fn: "parse_r_alpha".into(),
+                },
+                weight: TropicalWeight::new(1.0),
+            }],
+            token_map: TokenIdMap::new(),
+            beam_width: None,
+            context_labels: HashMap::new(),
+        };
+        wfst_alpha.states[0].is_final = true;
+
+        let mut wfst_beta = PredictionWfst {
+            category: "Beta".into(),
+            states: vec![WfstState::new(0)],
+            start: 0,
+            actions: vec![WeightedAction {
+                action: DispatchAction::Direct {
+                    rule_label: "r_beta".into(),
+                    parse_fn: "parse_r_beta".into(),
+                },
+                weight: TropicalWeight::new(1.0),
+            }],
+            token_map: TokenIdMap::new(),
+            beam_width: None,
+            context_labels: HashMap::new(),
+        };
+        wfst_beta.states[0].is_final = true;
+
+        let mut prediction_wfsts = HashMap::new();
+        prediction_wfsts.insert("Alpha".into(), wfst_alpha);
+        prediction_wfsts.insert("Beta".into(), wfst_beta);
+
+        let categories = vec![
+            category("Alpha", true),
+            category("Beta", false),
+        ];
+        let rule_infos = vec![
+            rule("r_alpha", "Alpha"),
+            rule("r_beta", "Beta"),
+        ];
+        let dead_rules = HashSet::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        // Alpha's rule should keep its original weight (1.0).
+        let alpha_w = analysis.constructor_weights.get("r_alpha")
+            .copied()
+            .expect("r_alpha should have a constructor weight");
+        assert!(
+            (alpha_w - 1.0).abs() < 1e-9,
+            "Alpha's weight should remain 1.0, got {alpha_w}"
+        );
+
+        // Beta's rule should be penalized by +0.5 (Beta > Alpha lexicographically).
+        let beta_w = analysis.constructor_weights.get("r_beta")
+            .copied()
+            .expect("r_beta should have a constructor weight");
+        assert!(
+            (beta_w - 1.5).abs() < 1e-9,
+            "Beta's weight should be 1.5 (1.0 + 0.5 penalty), got {beta_w}"
+        );
+    }
+
+    // ── Test A3b: Non-bisimilar categories → no weight discount ─────────────
+
+    #[cfg(feature = "alternating")]
+    #[test]
+    fn test_non_bisimilar_categories_no_weight_discount() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::{PredictionWfst, WeightedAction, WfstState};
+
+        // Alpha and Beta are explicitly non-bisimilar → no penalty.
+        let alt = crate::alternating::AlternatingAnalysis {
+            non_bisimilar_pairs: vec![("Alpha".into(), "Beta".into())],
+            state_count: 2,
+        };
+        let mut bundle = empty_bundle();
+        bundle.alternating = Some(&alt);
+
+        let mut wfst_alpha = PredictionWfst {
+            category: "Alpha".into(),
+            states: vec![WfstState::new(0)],
+            start: 0,
+            actions: vec![WeightedAction {
+                action: DispatchAction::Direct {
+                    rule_label: "r_alpha".into(),
+                    parse_fn: "parse_r_alpha".into(),
+                },
+                weight: TropicalWeight::new(2.0),
+            }],
+            token_map: TokenIdMap::new(),
+            beam_width: None,
+            context_labels: HashMap::new(),
+        };
+        wfst_alpha.states[0].is_final = true;
+
+        let mut wfst_beta = PredictionWfst {
+            category: "Beta".into(),
+            states: vec![WfstState::new(0)],
+            start: 0,
+            actions: vec![WeightedAction {
+                action: DispatchAction::Direct {
+                    rule_label: "r_beta".into(),
+                    parse_fn: "parse_r_beta".into(),
+                },
+                weight: TropicalWeight::new(3.0),
+            }],
+            token_map: TokenIdMap::new(),
+            beam_width: None,
+            context_labels: HashMap::new(),
+        };
+        wfst_beta.states[0].is_final = true;
+
+        let mut prediction_wfsts = HashMap::new();
+        prediction_wfsts.insert("Alpha".into(), wfst_alpha);
+        prediction_wfsts.insert("Beta".into(), wfst_beta);
+
+        let categories = vec![
+            category("Alpha", true),
+            category("Beta", false),
+        ];
+        let rule_infos = vec![
+            rule("r_alpha", "Alpha"),
+            rule("r_beta", "Beta"),
+        ];
+        let dead_rules = HashSet::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        // Both weights should remain unchanged (no bisimilar pair found).
+        let alpha_w = analysis.constructor_weights.get("r_alpha")
+            .copied()
+            .expect("r_alpha should have a constructor weight");
+        assert!(
+            (alpha_w - 2.0).abs() < 1e-9,
+            "Alpha's weight should remain 2.0 (non-bisimilar), got {alpha_w}"
+        );
+
+        let beta_w = analysis.constructor_weights.get("r_beta")
+            .copied()
+            .expect("r_beta should have a constructor weight");
+        assert!(
+            (beta_w - 3.0).abs() < 1e-9,
+            "Beta's weight should remain 3.0 (non-bisimilar), got {beta_w}"
+        );
+    }
+
+    // ── Test A3c: Three categories, partial bisimilarity → selective discount ─
+
+    #[cfg(feature = "alternating")]
+    #[test]
+    fn test_bisimilar_partial_three_categories() {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::{PredictionWfst, WeightedAction, WfstState};
+
+        // Three categories: A, B, C.
+        // A-B and A-C are bisimilar, but B-C is non-bisimilar.
+        // Deprioritized: B (B > A), C (C > A). B-C non-bisimilar doesn't matter
+        // because the penalty is based on *any* bisimilar pair.
+        let alt = crate::alternating::AlternatingAnalysis {
+            non_bisimilar_pairs: vec![("B".into(), "C".into())],
+            state_count: 3,
+        };
+        let mut bundle = empty_bundle();
+        bundle.alternating = Some(&alt);
+
+        let make_wfst = |cat: &str, rl: &str| {
+            let mut w = PredictionWfst {
+                category: cat.into(),
+                states: vec![WfstState::new(0)],
+                start: 0,
+                actions: vec![WeightedAction {
+                    action: DispatchAction::Direct {
+                        rule_label: rl.into(),
+                        parse_fn: format!("parse_{rl}"),
+                    },
+                    weight: TropicalWeight::new(1.0),
+                }],
+                token_map: TokenIdMap::new(),
+                beam_width: None,
+                context_labels: HashMap::new(),
+            };
+            w.states[0].is_final = true;
+            w
+        };
+
+        let mut prediction_wfsts = HashMap::new();
+        prediction_wfsts.insert("A".into(), make_wfst("A", "rA"));
+        prediction_wfsts.insert("B".into(), make_wfst("B", "rB"));
+        prediction_wfsts.insert("C".into(), make_wfst("C", "rC"));
+
+        let categories = vec![
+            category("A", true),
+            category("B", false),
+            category("C", false),
+        ];
+        let rule_infos = vec![
+            rule("rA", "A"),
+            rule("rB", "B"),
+            rule("rC", "C"),
+        ];
+        let dead_rules = HashSet::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        // A should keep original weight (always the lexicographically first in its pairs).
+        let wa = analysis.constructor_weights.get("rA")
+            .copied()
+            .expect("rA should have a constructor weight");
+        assert!(
+            (wa - 1.0).abs() < 1e-9,
+            "A's weight should remain 1.0, got {wa}"
+        );
+
+        // B should be penalized (B > A and they are bisimilar).
+        let wb = analysis.constructor_weights.get("rB")
+            .copied()
+            .expect("rB should have a constructor weight");
+        assert!(
+            (wb - 1.5).abs() < 1e-9,
+            "B's weight should be 1.5 (penalized via A-B bisimilarity), got {wb}"
+        );
+
+        // C should be penalized (C > A and they are bisimilar).
+        let wc = analysis.constructor_weights.get("rC")
+            .copied()
+            .expect("rC should have a constructor weight");
+        assert!(
+            (wc - 1.5).abs() < 1e-9,
+            "C's weight should be 1.5 (penalized via A-C bisimilarity), got {wc}"
+        );
+    }
+
+    // ── Test 9: RA01-SKIP — dead registers populate dead_binder_categories ──
+
+    #[cfg(feature = "register-automata")]
+    #[test]
+    fn test_register_dead_binders_populated() {
+        let reg = crate::register_automata::RegisterAnalysis {
+            num_states: 3,
+            num_registers: 3,
+            dead_registers: vec![0, 2],
+            unbound_references: Vec::new(),
+        };
+        let mut bundle = empty_bundle();
+        bundle.register = Some(&reg);
+
+        let categories = vec![
+            category("Alpha", true),
+            category("Beta", false),
+            category("Gamma", false),
+        ];
+        let rule_infos = vec![
+            rule("r1", "Alpha"),
+            rule("r2", "Beta"),
+            rule("r3", "Gamma"),
+        ];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        // Register index 0 → "Alpha", index 2 → "Gamma"
+        assert!(
+            analysis.dead_binder_categories.contains("Alpha"),
+            "Alpha (register 0) should be in dead_binder_categories"
+        );
+        assert!(
+            analysis.dead_binder_categories.contains("Gamma"),
+            "Gamma (register 2) should be in dead_binder_categories"
+        );
+        assert!(
+            !analysis.dead_binder_categories.contains("Beta"),
+            "Beta (register 1) should NOT be in dead_binder_categories"
+        );
+    }
+
+    // ── Test 10: RA01-SKIP — out-of-bounds register index is safely skipped ─
+
+    #[cfg(feature = "register-automata")]
+    #[test]
+    fn test_register_out_of_bounds_skipped() {
+        let reg = crate::register_automata::RegisterAnalysis {
+            num_states: 3,
+            num_registers: 3,
+            dead_registers: vec![99], // out of bounds
+            unbound_references: Vec::new(),
+        };
+        let mut bundle = empty_bundle();
+        bundle.register = Some(&reg);
+
+        let categories = vec![
+            category("A", true),
+            category("B", false),
+            category("C", false),
+        ];
+        let rule_infos = vec![
+            rule("r1", "A"),
+            rule("r2", "B"),
+            rule("r3", "C"),
+        ];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.dead_binder_categories.is_empty(),
+            "dead_binder_categories should be empty for out-of-bounds register index"
+        );
+    }
+
+    // ── Test 11: V05-INFO — VPA determinizable + no mismatches → true ───────
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn test_vpa_bracket_deterministic_true() {
+        let vpa = crate::vpa::VpaAnalysis {
+            is_determinizable: true,
+            alphabet_mismatches: Vec::new(),
+            state_count: 5,
+            max_nesting_bound: 5,
+        };
+        let mut bundle = empty_bundle();
+        bundle.vpa = Some(&vpa);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("r1", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.bracket_deterministic,
+            "bracket_deterministic should be true when is_determinizable and no mismatches"
+        );
+    }
+
+    // ── Test 12: V05-INFO — VPA not determinizable → false ──────────────────
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn test_vpa_bracket_not_deterministic() {
+        let vpa = crate::vpa::VpaAnalysis {
+            is_determinizable: false,
+            alphabet_mismatches: Vec::new(),
+            state_count: 3,
+            max_nesting_bound: 3,
+        };
+        let mut bundle = empty_bundle();
+        bundle.vpa = Some(&vpa);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("r1", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            !analysis.bracket_deterministic,
+            "bracket_deterministic should be false when not determinizable"
+        );
+    }
+
+    // ── Test 13: V05-INFO — mismatches force non-deterministic ──────────────
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn test_vpa_mismatches_not_deterministic() {
+        let vpa = crate::vpa::VpaAnalysis {
+            is_determinizable: true,
+            alphabet_mismatches: vec!["(".into()],
+            state_count: 3,
+            max_nesting_bound: 3,
+        };
+        let mut bundle = empty_bundle();
+        bundle.vpa = Some(&vpa);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("r1", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            !analysis.bracket_deterministic,
+            "bracket_deterministic should be false when alphabet_mismatches is non-empty"
+        );
+    }
+
+    // ── Test A1: VPA nesting bound wired into PipelineAnalysis ──────────────
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn test_vpa_nesting_bound_wired() {
+        let vpa = crate::vpa::VpaAnalysis {
+            is_determinizable: true,
+            alphabet_mismatches: Vec::new(),
+            state_count: 7,
+            max_nesting_bound: 7,
+        };
+        let mut bundle = empty_bundle();
+        bundle.vpa = Some(&vpa);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("r1", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert_eq!(
+            analysis.vpa_max_nesting_bound, Some(7),
+            "vpa_max_nesting_bound should be Some(7) when VPA analysis is present"
+        );
+    }
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn test_vpa_nesting_bound_none_without_vpa() {
+        let bundle = empty_bundle();
+        // No VPA analysis → vpa_max_nesting_bound should be None
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("r1", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert_eq!(
+            analysis.vpa_max_nesting_bound, None,
+            "vpa_max_nesting_bound should be None when no VPA analysis is available"
+        );
+    }
+
+    // ── Test A2a: VPA bracket mismatch tokens wired into PipelineAnalysis ──
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn test_vpa_bracket_mismatch_tokens_populated() {
+        let vpa = crate::vpa::VpaAnalysis {
+            is_determinizable: true,
+            alphabet_mismatches: vec!["|".into(), "`".into()],
+            state_count: 4,
+            max_nesting_bound: 4,
+        };
+        let mut bundle = empty_bundle();
+        bundle.vpa = Some(&vpa);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("r1", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.bracket_mismatch_tokens.contains("|"),
+            "bracket_mismatch_tokens should contain '|'"
+        );
+        assert!(
+            analysis.bracket_mismatch_tokens.contains("`"),
+            "bracket_mismatch_tokens should contain '`'"
+        );
+        assert_eq!(
+            analysis.bracket_mismatch_tokens.len(), 2,
+            "bracket_mismatch_tokens should have exactly 2 entries"
+        );
+    }
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn test_vpa_bracket_mismatch_empty_when_no_mismatches() {
+        let vpa = crate::vpa::VpaAnalysis {
+            is_determinizable: true,
+            alphabet_mismatches: Vec::new(),
+            state_count: 3,
+            max_nesting_bound: 3,
+        };
+        let mut bundle = empty_bundle();
+        bundle.vpa = Some(&vpa);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("r1", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.bracket_mismatch_tokens.is_empty(),
+            "bracket_mismatch_tokens should be empty when no VPA mismatches"
+        );
+    }
+
+    #[cfg(feature = "vpa")]
+    #[test]
+    fn test_vpa_bracket_mismatch_empty_when_no_vpa() {
+        let bundle = empty_bundle();
+        // No VPA analysis → bracket_mismatch_tokens should be empty
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("r1", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.bracket_mismatch_tokens.is_empty(),
+            "bracket_mismatch_tokens should be empty when no VPA analysis"
+        );
+    }
+
+    // ── Test 14: MT01-INFO — disconnected tapes → independent categories ────
+
+    #[cfg(feature = "multi-tape")]
+    #[test]
+    fn test_multi_tape_disconnected_mapped() {
+        let mt = crate::multi_tape::MultiTapeAnalysis {
+            num_states: 3,
+            num_tapes: 3,
+            disconnected_tapes: vec![1],
+            overlapping_tapes: Vec::new(),
+        };
+        let mut bundle = empty_bundle();
+        bundle.multi_tape = Some(&mt);
+
+        let categories = vec![
+            category("Proc", true),
+            category("Int", false),
+            category("Bool", false),
+        ];
+        let rule_infos = vec![
+            rule("r1", "Proc"),
+            rule("r2", "Int"),
+            rule("r3", "Bool"),
+        ];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        // Tape index 1 → "Int"
+        assert!(
+            analysis.independent_categories.contains("Int"),
+            "Int (tape 1) should be in independent_categories"
+        );
+        assert_eq!(
+            analysis.independent_categories.len(), 1,
+            "only 1 independent category expected, got {:?}",
+            analysis.independent_categories
+        );
+    }
+
+    // ── Test 15: MT01-INFO — out-of-bounds tape index is safely skipped ─────
+
+    #[cfg(feature = "multi-tape")]
+    #[test]
+    fn test_multi_tape_out_of_bounds_skipped() {
+        let mt = crate::multi_tape::MultiTapeAnalysis {
+            num_states: 3,
+            num_tapes: 3,
+            disconnected_tapes: vec![99], // out of bounds
+            overlapping_tapes: Vec::new(),
+        };
+        let mut bundle = empty_bundle();
+        bundle.multi_tape = Some(&mt);
+
+        let categories = vec![
+            category("Proc", true),
+            category("Int", false),
+            category("Bool", false),
+        ];
+        let rule_infos = vec![
+            rule("r1", "Proc"),
+            rule("r2", "Int"),
+            rule("r3", "Bool"),
+        ];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.independent_categories.is_empty(),
+            "independent_categories should be empty for out-of-bounds tape index"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sprint C1: Guard-disambiguated tokens from symbolic subsumption
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "symbolic-automata")]
+    #[test]
+    fn guard_disambiguated_tokens_from_subsumption() {
+        let sym = crate::symbolic::SymbolicAnalysis {
+            num_states: 1,
+            num_transitions: 2,
+            guard_satisfiability: vec![
+                ("Expr::A".to_string(), true),
+                ("Expr::B".to_string(), true),
+            ],
+            overlapping_guards: vec![],
+            subsumed_guards: vec![("Expr::A".to_string(), "Expr::B".to_string())],
+            unsatisfiable_rule_labels: vec![],
+        };
+
+        let mut bundle = empty_bundle();
+        bundle.symbolic = Some(&sym);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos = vec![rule("A", "Expr")];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            !analysis.guard_disambiguated_tokens.is_empty(),
+            "subsumed guards should produce disambiguated tokens"
+        );
+        assert!(
+            analysis.guard_disambiguated_tokens.contains("Expr::A"),
+            "subsumed guard 'Expr::A' should be in disambiguated set"
+        );
+    }
+
+    #[cfg(feature = "symbolic-automata")]
+    #[test]
+    fn no_subsumption_no_disambiguated_tokens() {
+        let sym = crate::symbolic::SymbolicAnalysis {
+            num_states: 1,
+            num_transitions: 0,
+            guard_satisfiability: vec![],
+            overlapping_guards: vec![],
+            subsumed_guards: vec![],
+            unsatisfiable_rule_labels: vec![],
+        };
+
+        let mut bundle = empty_bundle();
+        bundle.symbolic = Some(&sym);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos: Vec<RuleInfo> = vec![];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.guard_disambiguated_tokens.is_empty(),
+            "no subsumption should produce empty disambiguated set"
+        );
+    }
+
+    #[cfg(feature = "symbolic-automata")]
+    #[test]
+    fn empty_symbolic_analysis_no_disambiguated_tokens() {
+        let bundle = empty_bundle();
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos: Vec<RuleInfo> = vec![];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.guard_disambiguated_tokens.is_empty(),
+            "no symbolic analysis should produce empty disambiguated set"
+        );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sprint C3: Per-category entropy from probabilistic analysis
+    // ══════════════════════════════════════════════════════════════════════════
+
+    #[cfg(feature = "probabilistic")]
+    #[test]
+    fn per_category_entropy_two_rules() {
+        let mut rule_selectivities = HashMap::new();
+        rule_selectivities.insert("Expr::A".to_string(), 0.7);
+        rule_selectivities.insert("Expr::B".to_string(), 0.3);
+
+        let prob = crate::probabilistic::ProbabilisticAnalysis {
+            num_states: 1,
+            is_normalized: true,
+            total_selectivity: 1.0,
+            mean_entropy: 0.6,
+            low_selectivity_rules: vec![],
+            rule_selectivities,
+        };
+
+        let mut bundle = empty_bundle();
+        bundle.probabilistic = Some(&prob);
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos: Vec<RuleInfo> = vec![];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.per_category_entropy.contains_key("Expr"),
+            "should have entropy for Expr"
+        );
+        let e = analysis.per_category_entropy["Expr"];
+        assert!(e > 0.0, "two rules with different weights should have positive entropy");
+    }
+
+    #[cfg(feature = "probabilistic")]
+    #[test]
+    fn per_category_entropy_no_analysis() {
+        let bundle = empty_bundle();
+
+        let categories = vec![category("Expr", true)];
+        let rule_infos: Vec<RuleInfo> = vec![];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert!(
+            analysis.per_category_entropy.is_empty(),
+            "no probabilistic analysis should produce empty entropy"
+        );
+    }
+
+    #[cfg(feature = "probabilistic")]
+    #[test]
+    fn per_category_entropy_multiple_categories() {
+        let mut rule_selectivities = HashMap::new();
+        // Expr has 2 rules with uniform distribution
+        rule_selectivities.insert("Expr::A".to_string(), 0.5);
+        rule_selectivities.insert("Expr::B".to_string(), 0.5);
+        // Stmt has 1 rule → entropy = 0
+        rule_selectivities.insert("Stmt::X".to_string(), 1.0);
+
+        let prob = crate::probabilistic::ProbabilisticAnalysis {
+            num_states: 2,
+            is_normalized: true,
+            total_selectivity: 2.0,
+            mean_entropy: 0.3,
+            low_selectivity_rules: vec![],
+            rule_selectivities,
+        };
+
+        let mut bundle = empty_bundle();
+        bundle.probabilistic = Some(&prob);
+
+        let categories = vec![
+            category("Expr", true),
+            category("Stmt", false),
+        ];
+        let rule_infos: Vec<RuleInfo> = vec![];
+        let dead_rules = HashSet::new();
+        let prediction_wfsts = HashMap::new();
+
+        let analysis = run_build_pipeline(
+            &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+        );
+
+        assert_eq!(analysis.per_category_entropy.len(), 2);
+        // Uniform distribution has max entropy: ln(2) ≈ 0.693
+        let expr_entropy = analysis.per_category_entropy["Expr"];
+        assert!(
+            (expr_entropy - 2.0_f64.ln()).abs() < 0.01,
+            "uniform 2-rule entropy should be ln(2), got {expr_entropy}"
+        );
+        // Single rule has zero entropy
+        let stmt_entropy = analysis.per_category_entropy["Stmt"];
+        assert!(
+            stmt_entropy.abs() < 0.01,
+            "single-rule entropy should be ~0, got {stmt_entropy}"
+        );
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Property-based tests (proptest)
+// ══════════════════════════════════════════════════════════════════════════════
+
+#[cfg(test)]
+#[allow(dead_code, unused_imports)]
+mod proptest_tests {
+    use super::*;
+    use proptest::prelude::*;
+    use crate::prediction::RuleInfo;
+    use std::collections::{HashMap, HashSet};
+
+    /// Helper: create a RuleInfo with sensible defaults.
+    #[allow(dead_code)]
+    fn rule(label: &str, category: &str) -> RuleInfo {
+        RuleInfo {
+            label: label.to_string(),
+            category: category.to_string(),
+            first_items: Vec::new(),
+            is_infix: false,
+            is_var: false,
+            is_literal: false,
+            is_cross_category: false,
+            is_cast: false,
+        }
+    }
+
+    /// Helper: create a CategoryInfo.
+    fn category(name: &str, is_primary: bool) -> CategoryInfo {
+        CategoryInfo {
+            name: name.to_string(),
+            native_type: None,
+            is_primary,
+        }
+    }
+
+    /// Helper: construct an empty AdvancedAnalysisBundle (all fields None).
+    fn empty_bundle<'a>() -> super::AdvancedAnalysisBundle<'a> {
+        super::AdvancedAnalysisBundle {
+            #[cfg(feature = "symbolic-automata")]
+            symbolic: None,
+            #[cfg(feature = "alternating")]
+            alternating: None,
+            #[cfg(feature = "vpa")]
+            vpa: None,
+            #[cfg(feature = "register-automata")]
+            register: None,
+            #[cfg(feature = "probabilistic")]
+            probabilistic: None,
+            #[cfg(feature = "multi-tape")]
+            multi_tape: None,
+            #[cfg(feature = "omega")]
+            buchi: None,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Helper: call build_pipeline_analysis with minimal inputs and a given bundle.
+    fn run_build_pipeline(
+        dead_rules: &HashSet<String>,
+        prediction_wfsts: &HashMap<String, crate::wfst::PredictionWfst>,
+        categories: &[CategoryInfo],
+        rule_infos: &[RuleInfo],
+        bundle: &super::AdvancedAnalysisBundle<'_>,
+    ) -> crate::PipelineAnalysis {
+        super::build_pipeline_analysis(
+            dead_rules,
+            prediction_wfsts,
+            categories,
+            rule_infos,
+            HashMap::new(), // decision_trees
+            bundle,
+        )
+    }
+
+    /// Helper: build a single-state, single-action PredictionWfst for the given
+    /// category and rule label, with the specified tropical weight.
+    #[cfg(feature = "alternating")]
+    fn make_wfst(cat: &str, rule_label: &str, weight: f64) -> crate::wfst::PredictionWfst {
+        use crate::automata::semiring::TropicalWeight;
+        use crate::prediction::DispatchAction;
+        use crate::token_id::TokenIdMap;
+        use crate::wfst::{PredictionWfst, WeightedAction, WfstState};
+
+        let mut w = PredictionWfst {
+            category: cat.into(),
+            states: vec![WfstState::new(0)],
+            start: 0,
+            actions: vec![WeightedAction {
+                action: DispatchAction::Direct {
+                    rule_label: rule_label.into(),
+                    parse_fn: format!("parse_{rule_label}"),
+                },
+                weight: TropicalWeight::new(weight),
+            }],
+            token_map: TokenIdMap::new(),
+            beam_width: None,
+            context_labels: HashMap::new(),
+        };
+        w.states[0].is_final = true;
+        w
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sprint A3: Bisimilar weight discount (feature = "alternating")
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Strategy: generate a pair of distinct category names (ASCII alpha, 1..8 chars)
+    /// where `first < second` lexicographically. Both names start with an uppercase
+    /// letter to mimic real grammar category names.
+    #[cfg(feature = "alternating")]
+    fn arb_category_pair() -> impl Strategy<Value = (String, String)> {
+        // Generate two distinct uppercase-starting names, then sort them.
+        (
+            "[A-Z][a-z]{0,6}",
+            "[A-Z][a-z]{0,6}",
+        )
+            .prop_filter("category names must differ", |(a, b)| a != b)
+            .prop_map(|(a, b)| {
+                let mut pair = [a, b];
+                pair.sort();
+                (pair[0].clone(), pair[1].clone())
+            })
+    }
+
+    /// Strategy: generate a sorted, deduplicated Vec of 2..=5 distinct category names
+    /// (uppercase-starting, 1..8 chars).
+    #[cfg(feature = "alternating")]
+    fn arb_category_names(min: usize, max: usize) -> impl Strategy<Value = Vec<String>> {
+        proptest::collection::hash_set("[A-Z][a-z]{0,6}", min..=max)
+            .prop_map(|s| {
+                let mut v: Vec<String> = s.into_iter().collect();
+                v.sort();
+                v
+            })
+    }
+
+    #[cfg(feature = "alternating")]
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(30))]
+
+        // ── A3.1: Bisimilar pair — lexicographic second gets +0.5 penalty ────
+
+        /// For two bisimilar categories (a, b) where a < b lexicographically,
+        /// the second (b) receives an additional +0.5 tropical weight penalty.
+        #[test]
+        fn prop_bisimilar_discount_lexicographic_second(
+            (first, second) in arb_category_pair(),
+            base_weight in 0.1_f64..100.0,
+        ) {
+            let alt = crate::alternating::AlternatingAnalysis {
+                non_bisimilar_pairs: Vec::new(), // all pairs bisimilar
+                state_count: 2,
+            };
+            let mut bundle = empty_bundle();
+            bundle.alternating = Some(&alt);
+
+            let r_first = format!("r_{first}");
+            let r_second = format!("r_{second}");
+
+            let mut prediction_wfsts = HashMap::new();
+            prediction_wfsts.insert(first.clone(), make_wfst(&first, &r_first, base_weight));
+            prediction_wfsts.insert(second.clone(), make_wfst(&second, &r_second, base_weight));
+
+            let categories = vec![
+                category(&first, true),
+                category(&second, false),
+            ];
+            let rule_infos = vec![
+                rule(&r_first, &first),
+                rule(&r_second, &second),
+            ];
+            let dead_rules = HashSet::new();
+
+            let analysis = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+            );
+
+            // first < second, so second is deprioritized
+            let w_first = analysis.constructor_weights.get(&r_first)
+                .copied()
+                .expect("first category rule should have a weight");
+            let w_second = analysis.constructor_weights.get(&r_second)
+                .copied()
+                .expect("second category rule should have a weight");
+
+            prop_assert!(
+                (w_first - base_weight).abs() < 1e-9,
+                "lexicographically first category ({first}) should keep base weight {base_weight}, got {w_first}"
+            );
+            prop_assert!(
+                (w_second - (base_weight + 0.5)).abs() < 1e-9,
+                "lexicographically second category ({second}) should get +0.5 penalty: expected {}, got {w_second}",
+                base_weight + 0.5
+            );
+        }
+
+        // ── A3.2: Non-bisimilar pairs get no discount ────────────────────────
+
+        /// Categories explicitly listed in `non_bisimilar_pairs` should not
+        /// receive the +0.5 bisimilar discount.
+        #[test]
+        fn prop_non_bisimilar_no_discount(
+            (first, second) in arb_category_pair(),
+            w1 in 0.1_f64..100.0,
+            w2 in 0.1_f64..100.0,
+        ) {
+            let alt = crate::alternating::AlternatingAnalysis {
+                non_bisimilar_pairs: vec![(first.clone(), second.clone())],
+                state_count: 2,
+            };
+            let mut bundle = empty_bundle();
+            bundle.alternating = Some(&alt);
+
+            let r_first = format!("r_{first}");
+            let r_second = format!("r_{second}");
+
+            let mut prediction_wfsts = HashMap::new();
+            prediction_wfsts.insert(first.clone(), make_wfst(&first, &r_first, w1));
+            prediction_wfsts.insert(second.clone(), make_wfst(&second, &r_second, w2));
+
+            let categories = vec![
+                category(&first, true),
+                category(&second, false),
+            ];
+            let rule_infos = vec![
+                rule(&r_first, &first),
+                rule(&r_second, &second),
+            ];
+            let dead_rules = HashSet::new();
+
+            let analysis = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+            );
+
+            let actual_w1 = analysis.constructor_weights.get(&r_first)
+                .copied()
+                .expect("first rule should have a weight");
+            let actual_w2 = analysis.constructor_weights.get(&r_second)
+                .copied()
+                .expect("second rule should have a weight");
+
+            prop_assert!(
+                (actual_w1 - w1).abs() < 1e-9,
+                "non-bisimilar {first}: weight should remain {w1}, got {actual_w1}"
+            );
+            prop_assert!(
+                (actual_w2 - w2).abs() < 1e-9,
+                "non-bisimilar {second}: weight should remain {w2}, got {actual_w2}"
+            );
+        }
+
+        // ── A3.3: Bisimilar discount is exactly +0.5 ────────────────────────
+
+        /// The discount applied to the lexicographically second category in a
+        /// bisimilar pair is exactly +0.5 tropical weight.
+        #[test]
+        fn prop_bisimilar_discount_is_0_5(
+            names in arb_category_names(2, 5),
+            base_weight in 0.1_f64..100.0,
+        ) {
+            let alt = crate::alternating::AlternatingAnalysis {
+                non_bisimilar_pairs: Vec::new(), // all pairs bisimilar
+                state_count: names.len(),
+            };
+            let mut bundle = empty_bundle();
+            bundle.alternating = Some(&alt);
+
+            let mut prediction_wfsts = HashMap::new();
+            let mut categories = Vec::new();
+            let mut rule_infos = Vec::new();
+
+            for (i, name) in names.iter().enumerate() {
+                let rl = format!("r_{name}");
+                prediction_wfsts.insert(name.clone(), make_wfst(name, &rl, base_weight));
+                categories.push(category(name, i == 0));
+                rule_infos.push(rule(&rl, name));
+            }
+
+            let dead_rules = HashSet::new();
+
+            let analysis = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+            );
+
+            // The lexicographically smallest category keeps its base weight.
+            // All others (deprioritized) get exactly +0.5.
+            let smallest = &names[0]; // names is sorted
+            for name in &names {
+                let rl = format!("r_{name}");
+                let w = analysis.constructor_weights.get(&rl)
+                    .copied()
+                    .unwrap_or(f64::NAN);
+
+                if name == smallest {
+                    prop_assert!(
+                        (w - base_weight).abs() < 1e-9,
+                        "smallest category ({name}) should keep base weight {base_weight}, got {w}"
+                    );
+                } else {
+                    let expected = base_weight + 0.5;
+                    prop_assert!(
+                        (w - expected).abs() < 1e-9,
+                        "deprioritized category ({name}) should have weight {expected}, got {w}"
+                    );
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sprint C1: Guard disambiguation (feature = "symbolic-automata")
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Strategy: generate a list of subsumed guard pairs where labels follow
+    /// the "Category::Rule" format.
+    #[cfg(feature = "symbolic-automata")]
+    fn arb_subsumed_guards(max_pairs: usize) -> impl Strategy<Value = Vec<(String, String)>> {
+        proptest::collection::vec(
+            (
+                "[A-Z][a-z]{0,4}::[A-Z][a-z]{0,4}",
+                "[A-Z][a-z]{0,4}::[A-Z][a-z]{0,4}",
+            )
+                .prop_filter("subsumed and subsumer must differ", |(a, b)| a != b),
+            0..=max_pairs,
+        )
+    }
+
+    #[cfg(feature = "symbolic-automata")]
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(30))]
+
+        // ── C1.1: Disambiguated tokens are a subset of subsumed labels ──────
+
+        /// Every token in `guard_disambiguated_tokens` must come from the first
+        /// element of some pair in `subsumed_guards`.
+        #[test]
+        fn prop_disambiguated_subset_subsumed_labels(
+            subsumed_guards in arb_subsumed_guards(8),
+        ) {
+            let subsumed_labels: HashSet<String> = subsumed_guards
+                .iter()
+                .map(|(subsumed, _)| subsumed.clone())
+                .collect();
+
+            let sym = crate::symbolic::SymbolicAnalysis {
+                num_states: 1,
+                num_transitions: subsumed_guards.len(),
+                guard_satisfiability: subsumed_guards.iter()
+                    .flat_map(|(a, b)| vec![(a.clone(), true), (b.clone(), true)])
+                    .collect(),
+                overlapping_guards: Vec::new(),
+                subsumed_guards,
+                unsatisfiable_rule_labels: Vec::new(),
+            };
+
+            let mut bundle = empty_bundle();
+            bundle.symbolic = Some(&sym);
+
+            let categories = vec![category("Expr", true)];
+            let rule_infos: Vec<RuleInfo> = vec![];
+            let dead_rules = HashSet::new();
+            let prediction_wfsts = HashMap::new();
+
+            let analysis = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+            );
+
+            for token in &analysis.guard_disambiguated_tokens {
+                prop_assert!(
+                    subsumed_labels.contains(token),
+                    "disambiguated token {:?} not found among subsumed labels {:?}",
+                    token, subsumed_labels,
+                );
+            }
+        }
+
+        // ── C1.2: Empty subsumed_guards ⟹ empty disambiguation ─────────────
+
+        /// When there are no subsumed guard pairs, the disambiguation set must
+        /// be empty.
+        #[test]
+        fn prop_no_subsumption_no_disambiguation(
+            num_guards in 0_usize..5,
+        ) {
+            // Create guard_satisfiability entries but NO subsumed_guards.
+            let guard_satisfiability: Vec<(String, bool)> = (0..num_guards)
+                .map(|i| (format!("Cat::R{i}"), true))
+                .collect();
+
+            let sym = crate::symbolic::SymbolicAnalysis {
+                num_states: 1,
+                num_transitions: num_guards,
+                guard_satisfiability,
+                overlapping_guards: Vec::new(),
+                subsumed_guards: Vec::new(),
+                unsatisfiable_rule_labels: Vec::new(),
+            };
+
+            let mut bundle = empty_bundle();
+            bundle.symbolic = Some(&sym);
+
+            let categories = vec![category("Expr", true)];
+            let rule_infos: Vec<RuleInfo> = vec![];
+            let dead_rules = HashSet::new();
+            let prediction_wfsts = HashMap::new();
+
+            let analysis = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+            );
+
+            prop_assert!(
+                analysis.guard_disambiguated_tokens.is_empty(),
+                "empty subsumed_guards should produce empty guard_disambiguated_tokens, \
+                 got {:?}",
+                analysis.guard_disambiguated_tokens,
+            );
+        }
+
+        // ── C1.3: Every subsumed label appears in disambiguated set ─────────
+
+        /// Every first element (the subsumed label) of each pair in
+        /// `subsumed_guards` should appear in `guard_disambiguated_tokens`.
+        #[test]
+        fn prop_all_subsumed_all_disambiguated(
+            subsumed_guards in arb_subsumed_guards(8),
+        ) {
+            let expected_labels: HashSet<String> = subsumed_guards
+                .iter()
+                .map(|(subsumed, _)| subsumed.clone())
+                .collect();
+
+            let sym = crate::symbolic::SymbolicAnalysis {
+                num_states: 1,
+                num_transitions: subsumed_guards.len(),
+                guard_satisfiability: subsumed_guards.iter()
+                    .flat_map(|(a, b)| vec![(a.clone(), true), (b.clone(), true)])
+                    .collect(),
+                overlapping_guards: Vec::new(),
+                subsumed_guards,
+                unsatisfiable_rule_labels: Vec::new(),
+            };
+
+            let mut bundle = empty_bundle();
+            bundle.symbolic = Some(&sym);
+
+            let categories = vec![category("Expr", true)];
+            let rule_infos: Vec<RuleInfo> = vec![];
+            let dead_rules = HashSet::new();
+            let prediction_wfsts = HashMap::new();
+
+            let analysis = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+            );
+
+            for label in &expected_labels {
+                prop_assert!(
+                    analysis.guard_disambiguated_tokens.contains(label),
+                    "subsumed label {:?} should appear in guard_disambiguated_tokens, \
+                     got {:?}",
+                    label, analysis.guard_disambiguated_tokens,
+                );
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // Sprint C3: Per-category entropy (feature = "probabilistic")
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Strategy: generate a HashMap of `"Cat::RuleN" -> selectivity` entries
+    /// for a single category, with `n` rules and positive selectivities.
+    #[cfg(feature = "probabilistic")]
+    fn arb_single_cat_selectivities(
+        cat: &str,
+        n: usize,
+    ) -> impl Strategy<Value = HashMap<String, f64>> {
+        let cat = cat.to_string();
+        proptest::collection::vec(0.01_f64..10.0, n)
+            .prop_map(move |weights| {
+                weights.into_iter().enumerate().map(|(i, w)| {
+                    (format!("{cat}::R{i}"), w)
+                }).collect()
+            })
+    }
+
+    #[cfg(feature = "probabilistic")]
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(30))]
+
+        // ── C3.1: All entropy values are non-negative ───────────────────────
+
+        /// Shannon entropy is always non-negative. This verifies that for any
+        /// set of rule selectivities, every value in `per_category_entropy` is
+        /// >= 0.0.
+        #[test]
+        fn prop_entropy_non_negative_all(
+            selectivities in arb_single_cat_selectivities("Expr", 5),
+        ) {
+            let prob = crate::probabilistic::ProbabilisticAnalysis {
+                num_states: 1,
+                is_normalized: true,
+                total_selectivity: selectivities.values().sum(),
+                mean_entropy: 0.5,
+                low_selectivity_rules: Vec::new(),
+                rule_selectivities: selectivities,
+            };
+            let mut bundle = empty_bundle();
+            bundle.probabilistic = Some(&prob);
+
+            let categories = vec![category("Expr", true)];
+            let rule_infos: Vec<RuleInfo> = vec![];
+            let dead_rules = HashSet::new();
+            let prediction_wfsts = HashMap::new();
+
+            let analysis = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+            );
+
+            for (cat, &entropy) in &analysis.per_category_entropy {
+                prop_assert!(
+                    entropy >= 0.0,
+                    "entropy for category {cat} should be >= 0.0, got {entropy}"
+                );
+            }
+        }
+
+        // ── C3.2: Single rule → zero entropy ───────────────────────────────
+
+        /// A category with exactly one rule has a degenerate (single-outcome)
+        /// distribution, so its Shannon entropy should be approximately zero.
+        #[test]
+        fn prop_single_rule_zero_entropy(
+            selectivity in 0.01_f64..100.0,
+        ) {
+            let mut rule_selectivities = HashMap::new();
+            rule_selectivities.insert("Expr::Only".to_string(), selectivity);
+
+            let prob = crate::probabilistic::ProbabilisticAnalysis {
+                num_states: 1,
+                is_normalized: true,
+                total_selectivity: selectivity,
+                mean_entropy: 0.0,
+                low_selectivity_rules: Vec::new(),
+                rule_selectivities,
+            };
+            let mut bundle = empty_bundle();
+            bundle.probabilistic = Some(&prob);
+
+            let categories = vec![category("Expr", true)];
+            let rule_infos: Vec<RuleInfo> = vec![];
+            let dead_rules = HashSet::new();
+            let prediction_wfsts = HashMap::new();
+
+            let analysis = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+            );
+
+            if let Some(&e) = analysis.per_category_entropy.get("Expr") {
+                prop_assert!(
+                    e.abs() < 1e-9,
+                    "single-rule category should have entropy ~0, got {e}"
+                );
+            }
+            // If the category is absent from the map, that's also acceptable
+            // (sum <= 0 guard or other pipeline path).
+        }
+
+        // ── C3.3: Uniform distribution → max entropy = ln(n) ────────────────
+
+        /// For n rules with equal selectivity weights, the Shannon entropy
+        /// should be ln(n) (the maximum entropy for n outcomes).
+        #[test]
+        fn prop_uniform_max_entropy(
+            n in 2_usize..=8,
+            uniform_weight in 0.1_f64..10.0,
+        ) {
+            let mut rule_selectivities = HashMap::new();
+            for i in 0..n {
+                rule_selectivities.insert(format!("Expr::R{i}"), uniform_weight);
+            }
+
+            let prob = crate::probabilistic::ProbabilisticAnalysis {
+                num_states: 1,
+                is_normalized: true,
+                total_selectivity: uniform_weight * n as f64,
+                mean_entropy: (n as f64).ln(),
+                low_selectivity_rules: Vec::new(),
+                rule_selectivities,
+            };
+            let mut bundle = empty_bundle();
+            bundle.probabilistic = Some(&prob);
+
+            let categories = vec![category("Expr", true)];
+            let rule_infos: Vec<RuleInfo> = vec![];
+            let dead_rules = HashSet::new();
+            let prediction_wfsts = HashMap::new();
+
+            let analysis = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle,
+            );
+
+            let expected = (n as f64).ln();
+            let actual = analysis.per_category_entropy.get("Expr")
+                .copied()
+                .expect("Expr should have an entropy entry for uniform distribution");
+
+            prop_assert!(
+                (actual - expected).abs() < 1e-9,
+                "uniform {n}-rule entropy should be ln({n}) = {expected}, got {actual}"
+            );
+        }
+
+        // ── C3.4: Adding a rule does not decrease entropy ───────────────────
+
+        /// Shannon entropy is monotonically non-decreasing when adding an
+        /// outcome (rule) to a uniform distribution. This tests that property
+        /// by comparing entropy of n uniform rules vs. n+1 uniform rules.
+        #[test]
+        fn prop_more_rules_higher_entropy(
+            n in 2_usize..=7,
+            uniform_weight in 0.1_f64..10.0,
+        ) {
+            // Build "smaller" distribution: n uniform rules
+            let mut sels_small = HashMap::new();
+            for i in 0..n {
+                sels_small.insert(format!("Expr::R{i}"), uniform_weight);
+            }
+
+            let prob_small = crate::probabilistic::ProbabilisticAnalysis {
+                num_states: 1,
+                is_normalized: true,
+                total_selectivity: uniform_weight * n as f64,
+                mean_entropy: (n as f64).ln(),
+                low_selectivity_rules: Vec::new(),
+                rule_selectivities: sels_small,
+            };
+            let mut bundle_small = empty_bundle();
+            bundle_small.probabilistic = Some(&prob_small);
+
+            let categories = vec![category("Expr", true)];
+            let rule_infos: Vec<RuleInfo> = vec![];
+            let dead_rules = HashSet::new();
+            let prediction_wfsts = HashMap::new();
+
+            let analysis_small = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle_small,
+            );
+
+            // Build "larger" distribution: n+1 uniform rules
+            let mut sels_large = HashMap::new();
+            for i in 0..=n {
+                sels_large.insert(format!("Expr::R{i}"), uniform_weight);
+            }
+
+            let prob_large = crate::probabilistic::ProbabilisticAnalysis {
+                num_states: 1,
+                is_normalized: true,
+                total_selectivity: uniform_weight * (n + 1) as f64,
+                mean_entropy: ((n + 1) as f64).ln(),
+                low_selectivity_rules: Vec::new(),
+                rule_selectivities: sels_large,
+            };
+            let mut bundle_large = empty_bundle();
+            bundle_large.probabilistic = Some(&prob_large);
+
+            let analysis_large = run_build_pipeline(
+                &dead_rules, &prediction_wfsts, &categories, &rule_infos, &bundle_large,
+            );
+
+            let e_small = analysis_small.per_category_entropy.get("Expr")
+                .copied()
+                .expect("Expr should have entropy for n-rule distribution");
+            let e_large = analysis_large.per_category_entropy.get("Expr")
+                .copied()
+                .expect("Expr should have entropy for (n+1)-rule distribution");
+
+            prop_assert!(
+                e_large >= e_small - 1e-9,
+                "adding a rule should not decrease entropy: \
+                 {n} rules = {e_small}, {} rules = {e_large}",
+                n + 1,
+            );
+        }
     }
 }

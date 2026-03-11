@@ -681,7 +681,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
 
             // Copy all transitions from ba_phi, shifted.
             for (&(from, ref label), targets) in &ba_phi.transitions {
-                for &to in targets {
+                for &(to, _) in targets {
                     ba.add_transition(from + offset, label.clone(), to + offset);
                 }
             }
@@ -724,7 +724,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
             // This handles the case where phi is an atom: q0 --p--> phi's targets.
             for (&(from, ref label), targets) in &ba_phi.transitions {
                 if ba_phi.initial_states.contains(&from) {
-                    for &to in targets {
+                    for &(to, _) in targets {
                         ba.add_transition(q0, label.clone(), to + offset);
                     }
                 }
@@ -732,7 +732,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
 
             // Copy all phi transitions shifted.
             for (&(from, ref label), targets) in &ba_phi.transitions {
-                for &to in targets {
+                for &(to, _) in targets {
                     ba.add_transition(from + offset, label.clone(), to + offset);
                 }
             }
@@ -797,7 +797,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
 
                     // Copy transitions.
                     for (&(from, ref label), targets) in &ba_phi.transitions {
-                        for &to in targets {
+                        for &(to, _) in targets {
                             ba.add_transition(from, label.clone(), to);
                         }
                     }
@@ -810,7 +810,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                             // from acc.
                             for (&(from, ref label), targets) in &ba_phi.transitions {
                                 if from == init {
-                                    for &to in targets {
+                                    for &(to, _) in targets {
                                         ba.add_transition(acc, label.clone(), to);
                                     }
                                 }
@@ -861,7 +861,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
                 // Copy initial transitions of psi from q0 to psi's first targets.
                 for (&(from, ref label), targets) in &ba_psi.transitions {
                     if from == init {
-                        for &to in targets {
+                        for &(to, _) in targets {
                             ba.add_transition(q0, label.clone(), to + psi_offset);
                         }
                     }
@@ -870,7 +870,7 @@ pub fn ltl_to_buchi(formula: &LtlFormula) -> BuchiAutomaton {
 
             // Copy all psi transitions shifted.
             for (&(from, ref label), targets) in &ba_psi.transitions {
-                for &to in targets {
+                for &(to, _) in targets {
                     ba.add_transition(from + psi_offset, label.clone(), to + psi_offset);
                 }
             }
@@ -983,14 +983,14 @@ fn buchi_union(a: &BuchiAutomaton, b: &BuchiAutomaton) -> BuchiAutomaton {
 
     // Copy A's transitions.
     for (&(from, ref label), targets) in &a.transitions {
-        for &to in targets {
+        for &(to, _) in targets {
             result.add_transition(from + offset_a, label.clone(), to + offset_a);
         }
     }
 
     // Copy B's transitions (shifted).
     for (&(from, ref label), targets) in &b.transitions {
-        for &to in targets {
+        for &(to, _) in targets {
             result.add_transition(from + offset_b, label.clone(), to + offset_b);
         }
     }

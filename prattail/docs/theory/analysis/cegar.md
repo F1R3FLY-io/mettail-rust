@@ -20,6 +20,10 @@ This follows the standard CEGAR paradigm: verify cheaply, refine lazily.
 
 ## 2. Theoretical Foundations
 
+**Formal verification**: See `formal/rocq/mathematical_analyses/theories/CegarSoundness.v`
+for Rocq proofs of soundness (Theorem `cegar_soundness`), relative completeness
+(Theorem `cegar_relative_completeness`), and termination (Theorem `cegar_terminates`).
+
 ### 2.1. Abstraction Hierarchy
 
 The CEGAR loop walks a lattice of semiring precision:

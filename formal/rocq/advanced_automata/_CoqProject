@@ -1,0 +1,24 @@
+# Rocq project file for Advanced Automata Infrastructure proofs (Sprint 14)
+#
+# Verifies correctness of advanced automata constructions:
+#
+#   1. MSO-Automata Equivalence   — Restricted MSO sentences recognizable by WFA
+#   2. Stochastic Normalization   — Probabilistic automaton normalization preserves language
+#   3. PATA Emptiness             — Zielonka parity game termination for emptiness
+#   4. Register Equivalence       — Orbit-finite bisimulation decidability
+#   5. Multiset Semiring Laws     — MultisetWeight and TropicalMultisetWeight axioms
+#   6. AWA Polynomial Evaluation  — Bottom-up equals top-down evaluation
+#   7. W2T Crossing Sequence      — Crossing sequence finiteness implies one-way equivalence
+#
+# All files are standalone (no inter-file dependencies).
+
+-Q theories AdvancedAutomata
+
+# Source files (alphabetical order, all standalone)
+theories/MsoAutomataEquivalence.v
+theories/StochasticNormalization.v
+theories/PataEmptiness.v
+theories/RegisterEquivalence.v
+theories/MultisetSemiringLaws.v
+theories/AwaPolynomialEvaluation.v
+theories/TwoWayCrossingSequence.v

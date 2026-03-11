@@ -158,6 +158,54 @@ pub mod morphism;
 #[cfg(feature = "proofs")]
 pub mod proof_output;
 
+// ── Advanced Automata Infrastructure ─────────────────────────────────────────
+
+/// Symbolic automata: predicate-labeled transitions over infinite domains.
+/// BooleanAlgebra trait, decidability classification (T1-T4), guard analysis.
+#[cfg(feature = "symbolic-automata")]
+pub mod symbolic;
+
+/// Weighted MSO logic: grammar property specification, lint-as-formula,
+/// Büchi-Elgot-Trakhtenbrot theorem bridge (Droste & Gastin 2007).
+#[cfg(feature = "weighted-mso")]
+pub mod weighted_mso;
+
+/// Parity alternating tree automata: mu-calculus model checking on ASTs,
+/// structural verification, test generation (Emerson & Jutla 1991).
+#[cfg(feature = "parity-tree-automata")]
+pub mod parity_tree;
+
+/// Register automata: data-aware finite-state computation with register storage.
+/// Context-sensitive parsing, binding verification (Kaminski & Francez 1994).
+#[cfg(feature = "register-automata")]
+pub mod register_automata;
+
+/// Probabilistic automata: statistical disambiguation, expected-case optimization,
+/// corpus-driven weight training via Baum-Welch EM.
+#[cfg(feature = "probabilistic")]
+pub mod probabilistic;
+
+/// Multi-tape automata: synchronized multi-stream computation with k tapes.
+/// Multi-channel receives, parallel tokenization (Kempe 2004).
+#[cfg(feature = "multi-tape")]
+pub mod multi_tape;
+
+/// Multiset automata: multiset-weighted computation for process multiplicity
+/// and resource analysis (Müller, Weiß & Lochau 2024).
+#[cfg(feature = "multiset-automata")]
+pub mod multiset_automata;
+
+/// Weighted two-way transducers: bidirectional weighted transductions for
+/// cross-channel constraint propagation (Feng & Maletti 2022).
+#[cfg(feature = "two-way-transducer")]
+pub mod two_way_transducer;
+
+/// Predicate Dispatch Automaton: algebraic variety classification for directed
+/// module dispatch. Decomposes predicate formulas into morphemes and activates
+/// only the relevant Phase 7 modules (Eilenberg variety theorem).
+#[cfg(feature = "predicate-dispatch")]
+pub mod predicate_dispatch;
+
 /// Safety/liveness verification API: WPDS-based property checking.
 pub mod verify;
 
@@ -170,6 +218,8 @@ pub mod repair;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub mod test_generators;
 
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -654,6 +704,50 @@ pub struct PipelineAnalysis {
     /// Available for downstream composition analysis (X06/X07), incremental
     /// codegen (Layer 10 `.prattail-cache`), and diagnostic tools.
     pub decision_trees: HashMap<String, decision_tree::CategoryDecisionTree>,
+
+    /// Binder categories where register analysis proves the bound name
+    /// is stored but never tested (dead register). Codegen can skip
+    /// alpha-equivalence checking for these categories (RA01-SKIP).
+    #[cfg(feature = "register-automata")]
+    pub dead_binder_categories: HashSet<String>,
+
+    /// Whether the grammar's bracket structure is deterministic (VPA analysis).
+    /// True when `is_determinizable == true` AND `alphabet_mismatches` is empty.
+    /// Currently informational; may enable future optimizations (V05-INFO).
+    #[cfg(feature = "vpa")]
+    pub bracket_deterministic: bool,
+
+    /// Upper bound on valid nesting depth from VPA analysis.
+    /// Recovery at depths exceeding this bound strongly favors skip.
+    #[cfg(feature = "vpa")]
+    pub vpa_max_nesting_bound: Option<usize>,
+
+    /// Tokens that VPA analysis found used as both call and return symbols.
+    /// Recovery should penalize InsertToken for these tokens (Sprint A2).
+    #[cfg(feature = "vpa")]
+    pub bracket_mismatch_tokens: HashSet<String>,
+
+    /// Categories whose multi-tape analysis shows they are independent
+    /// (no cross-tape constraints). Currently informational (MT01-INFO).
+    #[cfg(feature = "multi-tape")]
+    pub independent_categories: HashSet<String>,
+
+    /// Tokens where symbolic guard analysis proves one category's guard subsumes another's.
+    /// These tokens can be dispatched without backtracking (subsuming category tried first).
+    #[cfg(feature = "symbolic-automata")]
+    pub guard_disambiguated_tokens: HashSet<String>,
+
+    /// Per-category Shannon entropy from probabilistic analysis.
+    /// Higher entropy indicates more ambiguous alternatives, suggesting a wider
+    /// beam is needed during spillover beam pruning. Categories with entropy
+    /// near zero have a single dominant rule and need no beam at all.
+    #[cfg(feature = "probabilistic")]
+    pub per_category_entropy: HashMap<String, f64>,
+
+    /// Categories that participate in accepting SCCs (recursive grammar loops).
+    /// Recovery prefers InsertToken in these categories to maintain the loop.
+    #[cfg(feature = "omega")]
+    pub recursive_scc_categories: HashSet<String>,
 }
 
 /// Generate a complete parser for a language specification.

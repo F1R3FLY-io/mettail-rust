@@ -97,3 +97,4 @@ prattail/target/*
 perf-profiles/
 
 .lia.cache
+.nia.cache

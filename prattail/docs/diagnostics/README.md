@@ -121,7 +121,7 @@ Ordering: `Info < Note < Warning < Error`
 | [T03](analysis/trs/T03-non-terminating-cycle.md) | non-terminating-cycle | Warning | `trs-analysis` | Dependency pair SCC with non-decreasing cycle |
 | [T04](analysis/trs/T04-termination-verified.md) | termination-verified | Note | `trs-analysis` | All SCCs have decreasing measures — system terminates |
 
-### Automata Analysis (V01–V04)
+### Automata Analysis (V01–V06)
 
 | ID | Name | Severity | Feature Gate | Description |
 |---|---|---|---|---|
@@ -129,6 +129,8 @@ Ordering: `Info < Note < Warning < Error`
 | [V02](analysis/automata/V02-vpa-alphabet-mismatch.md) | vpa-alphabet-mismatch | Warning | `vpa` | Delimiter classified as both call and return |
 | [V03](analysis/automata/V03-wta-unrecognized-term.md) | wta-unrecognized-term | Warning | `tree-automata` | Term pattern not in regular tree language |
 | [V04](analysis/automata/V04-wta-hot-path.md) | wta-hot-path | Note | `tree-automata` | High-frequency term pattern — specialization candidate |
+
+*See also V05–V06 in the [Weighted VPA](#weighted-vpa-v05v06) section below.*
 
 ### Safety & Verification (S01–S06)
 
@@ -141,7 +143,7 @@ Ordering: `Info < Note < Warning < Error`
 | [S05](analysis/safety/S05-ara-invariant.md) | ara-invariant | Note | `wpds-ara` | ARA affine-relation invariants discovered |
 | [S06](analysis/safety/S06-algebraic-summary.md) | algebraic-summary | Note | always-on | Tarjan SCC path expression summary |
 
-### Concurrency (N01–N05)
+### Concurrency (N01–N07)
 
 | ID | Name | Severity | Feature Gate | Description |
 |---|---|---|---|---|
@@ -150,6 +152,8 @@ Ordering: `Info < Note < Warning < Error`
 | [N03](analysis/concurrency/N03-scope-violation.md) | scope-violation | Warning | `nominal` | Name used outside its binding scope |
 | [N04](analysis/concurrency/N04-scope-narrowing.md) | scope-narrowing | Note | `nominal` | PNew scope can be tightened |
 | [N05](analysis/concurrency/N05-non-bisimilar.md) | non-bisimilar | Warning | `alternating` | Categories not bisimilar — attacker wins game |
+
+*See also N06–N07 in the [Weighted Alternating](#weighted-alternating-n06n07) section below.*
 
 ### Temporal (L01–L02)
 
@@ -178,6 +182,100 @@ Ordering: `Info < Note < Warning < Error`
 |---|---|---|---|---|
 | [K01](analysis/kat/K01-hoare-failure.md) | hoare-failure | Warning | `kat` | Hoare triple {p} e {q} fails |
 | [K02](analysis/kat/K02-kat-equivalence.md) | kat-equivalence | Note | `kat` | KAT expression equivalence result |
+
+### Symbolic Automata (SYM01–SYM04)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| SYM01 | unsatisfiable-guard | Warning | `symbolic-automata` | Receive guard is BOT (dead receive) — SFA emptiness check confirms no satisfying value exists |
+| SYM02 | overlapping-guards | Warning | `symbolic-automata` | Two guards on same channel overlap — SFA intersection is non-empty, causing ambiguous dispatch |
+| SYM03 | subsumed-guard | Note | `symbolic-automata` | Guard A ⊇ Guard B (redundant) — subsumption check via complement ∩ intersection emptiness |
+| SYM04 | non-minimal-guards | Note | `symbolic-automata` | SFA has mergeable states — symbolic Hopcroft minimization can reduce guard automaton |
+
+### Weighted Buchi (O01–O02)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| O01 | weighted-buchi-non-convergent | Warning | `omega` | Accepting cycle weight computation did not converge — Tarjan SCC + `matrix_star()` exceeded iteration limit |
+| O02 | weighted-buchi-heavy-cycle | Note | `omega` | Accepting cycle weight exceeds threshold — potential liveness concern or very expensive accepting run |
+
+### Weighted Alternating (N06–N07)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| N06 | weighted-parity-non-convergent | Warning | `alternating` | Parity game value computation did not converge — Jurdzinski small progress measures exceeded limit |
+| N07 | weighted-branching-imbalance | Note | `alternating` | Universal successor weights differ by >10x — one branch dominates product, potential design issue |
+
+### Weighted VPA (V05–V06)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| V05 | weighted-vpa-non-determinizable | Warning | `vpa` | Non-idempotent semiring weights combined with ambiguous transitions — weighted subset construction may diverge |
+| V06 | weighted-vpa-inclusion-failure | Warning | `vpa` | Recovery automaton accepts inputs with cost exceeding threshold — stack-bounded repair too expensive |
+
+### Parity Tree Automata (PT01–PT03)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| PT01 | pata-emptiness-violation | Warning | `parity-tree-automata` | Predicate unsatisfiable — Zielonka's recursive parity game confirms no AST can match the mu-calculus formula |
+| PT02 | pata-subsumption | Note | `parity-tree-automata` | Predicate A subsumes predicate B — redundant guard check detected via PATA inclusion |
+| PT03 | pata-high-priority | Note | `parity-tree-automata` | Parity priority depth exceeds 4 — exponential blowup warning for emptiness/inclusion algorithms |
+
+### Register Automata (RA01–RA03)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| RA01 | unbound-data-reference | Warning | `register-automata` | Data value referenced (TestEq/TestNeq) but never stored — register is always uninitialized at test point |
+| RA02 | redundant-register | Note | `register-automata` | Register written (Store) but never tested — dead register can be eliminated by `normalize()` |
+| RA03 | register-equivalence | Note | `register-automata` | Two registers always hold the same value — orbit-finite bisimulation confirms equivalence, one can be eliminated |
+
+### Probabilistic Automata (PR01–PR04)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| PR01 | low-selectivity-rule | Warning | `probabilistic` | Rule handles <1% of expected inputs — guard has extremely low selectivity against corpus distribution |
+| PR02 | non-stochastic-state | Warning | `probabilistic` | Outgoing probabilities do not sum to 1 — per-state log-sum-exp normalization violated |
+| PR03 | high-entropy-category | Note | `probabilistic` | Category has high Shannon entropy — many equally-likely alternatives suggest poor disambiguation |
+| PR04 | expected-depth-anomaly | Note | `probabilistic` | Expected recursion depth exceeds threshold — forward-backward analysis detects deep expected nesting |
+
+### Multi-Tape Automata (MT01–MT02)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| MT01 | multi-channel-overlap | Warning | `multi-tape` | Two tapes constrained to identical patterns — redundant channel in multi-tape automaton |
+| MT02 | multi-tape-disconnected | Note | `multi-tape` | Tape has no auto-intersection constraints with other tapes — independent channel can be analyzed separately |
+
+### Multiset Automata (MS01–MS02)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| MS01 | unsatisfiable-cardinality | Warning | `multiset-automata` | Cardinality constraint impossible given multiset structure — e.g., `count(f) >= k` when max multiplicity < k |
+| MS02 | redundant-feature-check | Note | `multiset-automata` | Feature multiplicity always >= threshold (tautological guard) — constraint is always satisfied |
+
+### Weighted MSO (MSO01–MSO03)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| MSO01 | unrestricted-universal-set | Warning | `weighted-mso` | Formula uses ∀X (second-order universal set quantification) — not in restricted MSO, classified T3/T4 |
+| MSO02 | non-recognizable-step | Warning | `weighted-mso` | ∀x.φ where φ is not a recognizable step function — violates restricted MSO constraint (Def. 3.6) |
+| MSO03 | equivalent-formulas | Note | `weighted-mso` | Two guard formulas have identical semantics — decidable equivalence check (Cor. 6.5) detects redundancy |
+
+### Two-Way Transducers (TW01–TW03)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| TW01 | circular-channel-dependency | Warning | `two-way-transducer` | Bidirectional reachability detects deadlock cycle among channels — circular constraint propagation |
+| TW02 | one-way-sufficient | Note | `two-way-transducer` | W2T analysis determines backward pass is unnecessary — one-way transducer suffices for this pattern |
+| TW03 | constraint-propagation-divergent | Warning | `two-way-transducer` | Backward constraint propagation does not converge — infinite constraint refinement detected |
+
+### Predicate Dispatch (PD01–PD04)
+
+| ID | Name | Severity | Feature Gate | Description |
+|---|---|---|---|---|
+| [PD01](predicate-dispatch/PD01.md) | degenerate-predicate | Warning | `predicate-dispatch` | Predicate activates no specialized module beyond base (M1+M10) |
+| [PD02](predicate-dispatch/PD02.md) | all-modules-activated | Note | `predicate-dispatch` | Predicate activates all 11 modules (no dispatch benefit) |
+| [PD03](predicate-dispatch/PD03.md) | dispatch-savings | Info | `predicate-dispatch` | Reports number of module invocations skipped by dispatch |
+| [PD04](predicate-dispatch/PD04.md) | missing-feature-gate | Warning | `predicate-dispatch` | Cross-channel predicate but required module feature not enabled |
 
 ### Performance (P02–P06)
 
@@ -321,3 +419,8 @@ info messages (I01--I19) are emitted inline. Macro-phase lints (G25--G31, W09, I
 C-AP01--C-AP05) are emitted by the macros crate via `emit_diagnostic()`.
 Mathematical analysis lints (T/V/S/N/L/E/M/K) run in the same phase, with results
 provided by the 6-phase analysis pipeline (feature-gated).
+Advanced automata lints (SYM/O/N06-07/V05-06/PT/RA/PR/MT/MS/MSO/TW) run in the
+same parallel analysis phase, each gated by its respective feature flag. Results
+are collected into `MathAnalysisResults` fields and fed to `LintContext` for
+emission. See [advanced-automata-overview.md](../design/advanced-automata-overview.md)
+for the full module architecture.

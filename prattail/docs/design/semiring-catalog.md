@@ -106,6 +106,81 @@ in PraTTaIL's WFST pipeline.
 - **Documentation:**
   - Design: [amplitude-weight.md](wfst/semirings/amplitude-weight.md) *(planned)*
 
+### 1.16 MultisetWeight *(feature: `multiset-automata`)*
+- **Algebra:** `(ℕ₀^F, ⊕, ⊗, 0̄, 1̄)` — multiset over features F
+  - `⊕` = pointwise max: `(M₁ ⊕ M₂)(f) = max(M₁(f), M₂(f))`
+  - `⊗` = pointwise add: `(M₁ ⊗ M₂)(f) = M₁(f) + M₂(f)`
+  - `0̄(f) = 0` for all f (zero multiplicity everywhere)
+  - `1̄(f) = 0` for all f (identity for pointwise addition)
+- **Carrier:** `HashMap<String, u64>` — feature names to multiplicities
+- **Properties:** commutative, idempotent (max is idempotent), NOT complete (unbounded multiplicities), NOT star
+- **NOT `Copy`:** Heap-allocated `HashMap` carrier. Implements `Clone + Eq + Hash`.
+- **Use case:** Process multiplicity counting in PPar parallel composition (connects
+  to `runtime/src/hashbag.rs`). Ambiguity counting per grammar feature — extends
+  `CountingWeight` to per-feature counting. Resource-bounded parsing with
+  cardinality constraints on multiset configurations. Feature interaction analysis
+  for correlated grammar features.
+- **Consumers:** `multiset_automata.rs`
+- **Hasse diagram position:** Above `CountingWeight` (generalizes scalar counting to
+  per-feature counting). Below `TropicalMultisetWeight` (tropical is the decidable
+  subclass). Not comparable to `ContextWeight` (different carrier: integers vs bits).
+  ```
+  TropicalMultisetWeight
+         │  (projection: min over features)
+         ▼
+    MultisetWeight
+         │  (specialization: single feature = scalar)
+         ▼
+    CountingWeight
+  ```
+- **Petri net connection:** Multiset configurations M: F → ℕ₀ are isomorphic to
+  Petri net markings where features are places and multiplicities are token counts.
+  Multiset rewriting ↔ Petri net firing (bridge to `petri.rs`).
+- **Reference:** Müller, Weiß & Lochau, "Mapping Cardinality-based Feature Models
+  to Weighted Automata over Featured Multiset Semirings" (2024)
+- **Documentation:**
+  - Design: [multiset-weight.md](wfst/semirings/multiset-weight.md) *(planned)*
+
+### 1.17 TropicalMultisetWeight *(feature: `multiset-automata`)*
+- **Algebra:** `(ℝ₊^F ∪ {+∞^F}, ⊕, ⊗, ∞̄, 0̄)` — tropical (min-plus) over multiset features
+  - `⊕` = pointwise min: `(M₁ ⊕ M₂)(f) = min(M₁(f), M₂(f))`
+  - `⊗` = pointwise add: `(M₁ ⊗ M₂)(f) = M₁(f) + M₂(f)`
+  - `∞̄(f) = +∞` for all f (zero: infinite cost everywhere)
+  - `0̄(f) = 0.0` for all f (one: zero cost everywhere)
+- **Carrier:** `HashMap<String, f64>` — feature names to tropical (min-plus) weights
+- **Properties:** commutative, idempotent (min is idempotent), complete (infinite
+  sums converge to pointwise infimum), star (pointwise `a* = 0` since `min(0, a) = 0`)
+- **NOT `Copy`:** Heap-allocated `HashMap` carrier. Implements `Clone + PartialEq`.
+- **Key property — decidability:** The tropical-over-multiset variant forms a
+  **decidable subclass** of multiset automata (Müller et al. 2024). Standard
+  automata-theoretic algorithms (emptiness, equivalence, inclusion) remain decidable
+  over this semiring, unlike the general `MultisetWeight` where some problems are
+  undecidable.
+- **Use case:** Tractable approximation when full multiset analysis is too expensive.
+  Per-feature shortest-path computation. Cost analysis for resource-bounded
+  parsing where each resource (feature) has a tropical cost metric.
+- **Consumers:** `multiset_automata.rs` (`tropical_projection()`)
+- **Hasse diagram position:** Above `MultisetWeight` (decidable subclass with
+  stronger algebraic properties). Structurally analogous to how `TropicalWeight`
+  relates to the general naturals.
+  ```
+  TropicalWeight (scalar)
+         │  (per-feature generalization)
+         ▼
+  TropicalMultisetWeight (per-feature tropical)
+         │  (forgetful: project to max-add)
+         ▼
+    MultisetWeight (per-feature counting)
+  ```
+- **Isomorphism:** For a single feature f, `TropicalMultisetWeight({f: w})` is
+  isomorphic to `TropicalWeight(w)`. The multi-feature generalization lifts
+  tropical analysis to product domains without requiring explicit `ProductWeight`
+  composition.
+- **Reference:** Müller, Weiß & Lochau, "Mapping Cardinality-based Feature Models
+  to Weighted Automata over Featured Multiset Semirings" (2024)
+- **Documentation:**
+  - Design: [tropical-multiset-weight.md](wfst/semirings/tropical-multiset-weight.md) *(planned)*
+
 ## 2. Deferred Semirings
 
 ### D1. Formal Language Semiring `(𝒫(Σ*), ∪, ·, ∅, {ε})`
@@ -156,7 +231,7 @@ in PraTTaIL's WFST pipeline.
 | Bottleneck `(ℝ, max, min)`          | FuzzyWeight + ComplexityWeight | Covered by both                                          |
 | Equivalence / Mod2 / Wrappers       | —                              | Utility newtypes, no new semiring functionality          |
 | Extended Naturals `(ℕ∪{∞}, +, ·)`   | CountingWeight                 | Saturating arithmetic at `u64::MAX`                      |
-| Multiset / Cardinal / Burnside      | —                              | No parser-generator application                          |
+| Multiset / Cardinal / Burnside      | MultisetWeight (1.16)          | MultisetWeight now implemented for PPar analysis         |
 | Endomorphism `End(M)`               | —                              | Not `Copy` (function objects)                            |
 | Directed Semiring                   | matrix_star approach           | Subsumed by matrix-over-semiring                         |
 | Conway Semiring (trait)             | —                              | All our complete star semirings are automatically Conway |
@@ -192,9 +267,12 @@ Semiring (existing base trait)
 | FuzzyWeight      |       ✓        |     ✓      |    ✓     |  ✓   |
 | TruncationWeight |       ✓        |     ✓      |    ✓     |  —   |
 | AmplitudeWeight  |       ✓        |     —      |    —     |  —   |
+| MultisetWeight³  |       ✓        |     ✓      |    —     |  —   |
+| TropMultisetW³   |       ✓        |     ✓      |    ✓     |  ✓   |
 
 ¹ Saturates at `u64::MAX` for non-zero values
 ² Conditional on both components implementing the trait
+³ NOT `Copy` — heap-allocated `HashMap` carrier. Implements `Clone` instead.
 
 ### Generic Algorithm: `matrix_star()`
 

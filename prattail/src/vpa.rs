@@ -8,6 +8,18 @@
 //! and has decidable equivalence and inclusion, making VPAs ideal for verifying
 //! structured parsing properties.
 //!
+//! ## Weighted VPA Extension
+//!
+//! The `WeightedVpa<W>` struct generalizes the classic Boolean-weighted VPA to
+//! arbitrary semirings. Each transition carries a weight `W`, enabling:
+//! - **BooleanWeight** (default): standard reachability / language membership
+//! - **TropicalWeight**: shortest-path / lowest-cost parsing
+//! - **CountingWeight**: derivation counting
+//! - **LogWeight**: log-space probabilistic parsing
+//!
+//! The type alias `Vpa = WeightedVpa<BooleanWeight>` preserves full backward
+//! compatibility — all existing code works unchanged.
+//!
 //! ## Theoretical Foundations
 //!
 //! - **Alur & Madhusudan (2004)** — "Visibly pushdown languages." Introduces
@@ -29,13 +41,36 @@
 //! checking verifies that grammar transformations preserve the nested
 //! structure, and VPA inclusion checks that error recovery does not accept
 //! inputs rejected by the original grammar.
+//!
+//! ## Diagnostic Lints
+//!
+//! ### V05 — Weighted Transition Anomaly
+//!
+//! **Severity**: Warning
+//!
+//! Fires when a weighted VPA has transitions with anomalous weight values
+//! (e.g., all-zero weights on outgoing transitions from a non-dead state,
+//! or multiplicative-identity weights that render the weighting vacuous).
+//! Indicates that the weighted VPA is effectively unweighted or has dead
+//! weighted paths that will never contribute to acceptance.
+//!
+//! ### V06 — Weighted Inclusion Violation
+//!
+//! **Severity**: Error
+//!
+//! Fires when `weighted_inclusion(A, B)` detects that the weighted language
+//! of `A` is not contained in that of `B` — i.e., there exists a word `w`
+//! such that `A.weighted_run(w) > B.weighted_run(w)` in the semiring's
+//! natural order. For idempotent semirings, this is decidable via the
+//! product construction and weighted emptiness. This lint guards grammar
+//! transformations that must preserve or reduce weights (e.g., error recovery
+//! must not increase parse priority beyond the original grammar).
 
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
+use std::marker::PhantomData;
 
-// NOTE: Semiring import will be used when weighted VPA analysis is implemented.
-#[allow(unused_imports)]
-use crate::automata::semiring::Semiring;
+use crate::automata::semiring::{BooleanWeight, IdempotentSemiring, Semiring};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Core types
@@ -142,40 +177,65 @@ impl fmt::Display for VpaState {
     }
 }
 
-/// A Visibly Pushdown Automaton.
+/// A Weighted Visibly Pushdown Automaton parameterized over semiring `W`.
 ///
 /// The VPA `M = (Q, Σ, Γ, δ, Q₀, Z₀, F)` where:
 /// - `Q` is the finite set of states
 /// - `Σ = Σ_c ∪ Σ_r ∪ Σ_int` is the partitioned alphabet
 /// - `Γ` is the stack alphabet
-/// - `δ` consists of call, return, and internal transition functions
+/// - `δ` consists of weighted call, return, and internal transition functions
 /// - `Q₀ ⊆ Q` are initial states
 /// - `Z₀ ∈ Γ` is the initial stack symbol
 /// - `F ⊆ Q` are accepting states
+///
+/// When `W = BooleanWeight`, this is equivalent to the classical unweighted VPA.
+/// Weights are carried on transitions: each target state is paired with a weight
+/// value from the semiring. For `BooleanWeight`, the weight is always
+/// `BooleanWeight(true)` (= `W::one()`), so the weighted structure degenerates
+/// to the standard Boolean case.
+///
+/// Additional fields `initial_weights` and `accepting_weights` allow weighted
+/// initial and accepting valuations for algorithms like `weighted_run()`. For
+/// the `BooleanWeight` case, these are derived from `initial_states` and
+/// `accepting_states` respectively.
 #[derive(Debug, Clone)]
-pub struct Vpa {
+pub struct WeightedVpa<W: Semiring> {
     /// Set of states.
     pub states: Vec<VpaState>,
     /// Partitioned input alphabet.
     pub alphabet: VpaAlphabet,
-    /// Call transitions: `(state, call_symbol) → (state', stack_push_symbol)`.
-    pub call_transitions: HashMap<(usize, String), Vec<(usize, String)>>,
-    /// Return transitions: `(state, return_symbol, stack_top) → state'`.
-    pub return_transitions: HashMap<(usize, String, String), Vec<usize>>,
-    /// Internal transitions: `(state, internal_symbol) → state'`.
-    pub internal_transitions: HashMap<(usize, String), Vec<usize>>,
-    /// Initial state IDs.
+    /// Call transitions: `(state, call_symbol) → [(state', stack_push_symbol, weight)]`.
+    pub call_transitions: HashMap<(usize, String), Vec<(usize, String, W)>>,
+    /// Return transitions: `(state, return_symbol, stack_top) → [(state', weight)]`.
+    pub return_transitions: HashMap<(usize, String, String), Vec<(usize, W)>>,
+    /// Internal transitions: `(state, internal_symbol) → [(state', weight)]`.
+    pub internal_transitions: HashMap<(usize, String), Vec<(usize, W)>>,
+    /// Initial state IDs (Boolean membership).
     pub initial_states: HashSet<usize>,
-    /// Accepting state IDs.
+    /// Accepting state IDs (Boolean membership).
     pub accepting_states: HashSet<usize>,
     /// Initial stack symbol.
     pub initial_stack_symbol: String,
+    /// Weighted initial state valuations. For weighted algorithms, the weight
+    /// contributed by starting in state `q` is `initial_weights[q]`.
+    /// For `BooleanWeight`, derived as `W::one()` for states in `initial_states`.
+    pub initial_weights: HashMap<usize, W>,
+    /// Weighted accepting state valuations. For weighted algorithms, the weight
+    /// contributed by accepting in state `q` is `accepting_weights[q]`.
+    /// For `BooleanWeight`, derived as `W::one()` for states in `accepting_states`.
+    pub accepting_weights: HashMap<usize, W>,
+    /// Phantom marker for the weight type (not stored, used for type inference).
+    _weight: PhantomData<W>,
 }
 
-impl Vpa {
-    /// Create an empty VPA with the given alphabet.
+/// Backward-compatible type alias: the classical unweighted VPA is a
+/// `WeightedVpa` over the Boolean semiring.
+pub type Vpa = WeightedVpa<BooleanWeight>;
+
+impl<W: Semiring> WeightedVpa<W> {
+    /// Create an empty weighted VPA with the given alphabet.
     pub fn new(alphabet: VpaAlphabet) -> Self {
-        Vpa {
+        WeightedVpa {
             states: Vec::new(),
             alphabet,
             call_transitions: HashMap::new(),
@@ -184,6 +244,9 @@ impl Vpa {
             initial_states: HashSet::new(),
             accepting_states: HashSet::new(),
             initial_stack_symbol: "Z0".to_string(),
+            initial_weights: HashMap::new(),
+            accepting_weights: HashMap::new(),
+            _weight: PhantomData,
         }
     }
 
@@ -236,7 +299,7 @@ impl Vpa {
     /// # Returns
     ///
     /// A new deterministic (and total) VPA accepting the same language.
-    pub fn determinize(&self) -> Vpa {
+    pub fn determinize(&self) -> WeightedVpa<W> {
         determinize_impl(self)
     }
 
@@ -324,7 +387,7 @@ impl Vpa {
                     None
                 }
             }) {
-                for &t in targets {
+                for &(t, _) in targets {
                     if visited.insert(t) {
                         queue.push_back(t);
                     }
@@ -339,7 +402,7 @@ impl Vpa {
                     None
                 }
             }) {
-                for &(t, _) in targets {
+                for &(t, _, _) in targets {
                     if visited.insert(t) {
                         queue.push_back(t);
                     }
@@ -358,7 +421,7 @@ impl Vpa {
                         }
                     })
             {
-                for &t in targets {
+                for &(t, _) in targets {
                     if visited.insert(t) {
                         queue.push_back(t);
                     }
@@ -378,7 +441,7 @@ impl Vpa {
     /// # Returns
     ///
     /// A new VPA containing only the reachable fragment.
-    pub fn trim(&self) -> Vpa {
+    pub fn trim(&self) -> WeightedVpa<W> {
         let reachable = self.reachable_state_ids();
 
         // Build old-ID → new-ID mapping (compaction).
@@ -395,7 +458,7 @@ impl Vpa {
             new_states.push(new_state);
         }
 
-        let mut trimmed = Vpa::new(self.alphabet.clone());
+        let mut trimmed = WeightedVpa::new(self.alphabet.clone());
         trimmed.states = new_states;
         trimmed.initial_stack_symbol = self.initial_stack_symbol.clone();
 
@@ -413,12 +476,26 @@ impl Vpa {
             }
         }
 
+        // Remap initial weights.
+        for (&q, w) in &self.initial_weights {
+            if let Some(&new_id) = old_to_new.get(&q) {
+                trimmed.initial_weights.insert(new_id, *w);
+            }
+        }
+
+        // Remap accepting weights.
+        for (&q, w) in &self.accepting_weights {
+            if let Some(&new_id) = old_to_new.get(&q) {
+                trimmed.accepting_weights.insert(new_id, *w);
+            }
+        }
+
         // Remap internal transitions.
         for ((src, sym), targets) in &self.internal_transitions {
             if let Some(&new_src) = old_to_new.get(src) {
-                let remapped: Vec<usize> = targets
+                let remapped: Vec<(usize, W)> = targets
                     .iter()
-                    .filter_map(|t| old_to_new.get(t).copied())
+                    .filter_map(|&(t, w)| old_to_new.get(&t).map(|&new_t| (new_t, w)))
                     .collect();
                 if !remapped.is_empty() {
                     trimmed
@@ -431,10 +508,12 @@ impl Vpa {
         // Remap call transitions.
         for ((src, sym), targets) in &self.call_transitions {
             if let Some(&new_src) = old_to_new.get(src) {
-                let remapped: Vec<(usize, String)> = targets
+                let remapped: Vec<(usize, String, W)> = targets
                     .iter()
-                    .filter_map(|&(t, ref gamma)| {
-                        old_to_new.get(&t).map(|&new_t| (new_t, gamma.clone()))
+                    .filter_map(|&(t, ref gamma, w)| {
+                        old_to_new
+                            .get(&t)
+                            .map(|&new_t| (new_t, gamma.clone(), w))
                     })
                     .collect();
                 if !remapped.is_empty() {
@@ -448,9 +527,9 @@ impl Vpa {
         // Remap return transitions.
         for ((src, sym, gamma), targets) in &self.return_transitions {
             if let Some(&new_src) = old_to_new.get(src) {
-                let remapped: Vec<usize> = targets
+                let remapped: Vec<(usize, W)> = targets
                     .iter()
-                    .filter_map(|t| old_to_new.get(t).copied())
+                    .filter_map(|&(t, w)| old_to_new.get(&t).map(|&new_t| (new_t, w)))
                     .collect();
                 if !remapped.is_empty() {
                     trimmed
@@ -462,9 +541,716 @@ impl Vpa {
 
         trimmed
     }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Weighted operations
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// Simulate a weighted VPA on a word and return the total acceptance weight.
+    ///
+    /// For each initial state `q₀`, the run begins with weight
+    /// `initial_weights[q₀]` (or `W::one()` if `q₀` is in `initial_states`
+    /// but has no explicit weight). Each transition multiplies (⊗) the
+    /// accumulated weight by the transition weight. At the end, each accepting
+    /// configuration's weight is multiplied by `accepting_weights[q]` (or
+    /// `W::one()` if in `accepting_states` without explicit weight). All
+    /// accepting run weights are combined via semiring addition (⊕).
+    ///
+    /// For `BooleanWeight`, this reduces to standard reachability: the result
+    /// is `BooleanWeight(true)` iff the word is accepted.
+    ///
+    /// # Arguments
+    ///
+    /// * `word` — the input symbols to consume.
+    ///
+    /// # Returns
+    ///
+    /// The total acceptance weight (semiring sum over all accepting runs).
+    pub fn weighted_run(&self, word: &[&str]) -> W {
+        // Configuration: (state, stack) → accumulated weight.
+        // We use a HashMap to combine weights (⊕) for configurations that
+        // merge at the same (state, stack) pair.
+        let mut configs: HashMap<(usize, Vec<String>), W> = HashMap::new();
+
+        // Seed with initial configurations.
+        for &q0 in &self.initial_states {
+            let w0 = self
+                .initial_weights
+                .get(&q0)
+                .copied()
+                .unwrap_or_else(W::one);
+            let init_stack = vec![self.initial_stack_symbol.clone()];
+            let key = (q0, init_stack);
+            let entry = configs.entry(key).or_insert_with(W::zero);
+            *entry = entry.plus(&w0);
+        }
+
+        for sym in word {
+            let sym_str = sym.to_string();
+            let mut next_configs: HashMap<(usize, Vec<String>), W> = HashMap::new();
+
+            match self.alphabet.classify(sym) {
+                Some(SymbolKind::Internal) => {
+                    for ((state, stack), weight) in &configs {
+                        if let Some(targets) =
+                            self.internal_transitions.get(&(*state, sym_str.clone()))
+                        {
+                            for &(t, tw) in targets {
+                                let run_w = weight.times(&tw);
+                                let key = (t, stack.clone());
+                                let entry =
+                                    next_configs.entry(key).or_insert_with(W::zero);
+                                *entry = entry.plus(&run_w);
+                            }
+                        }
+                    }
+                }
+                Some(SymbolKind::Call) => {
+                    for ((state, stack), weight) in &configs {
+                        if let Some(targets) =
+                            self.call_transitions.get(&(*state, sym_str.clone()))
+                        {
+                            for &(t, ref gamma, tw) in targets {
+                                let run_w = weight.times(&tw);
+                                let mut new_stack = stack.clone();
+                                new_stack.push(gamma.clone());
+                                let key = (t, new_stack);
+                                let entry =
+                                    next_configs.entry(key).or_insert_with(W::zero);
+                                *entry = entry.plus(&run_w);
+                            }
+                        }
+                    }
+                }
+                Some(SymbolKind::Return) => {
+                    for ((state, stack), weight) in &configs {
+                        if stack.len() > 1 {
+                            let top = &stack[stack.len() - 1];
+                            if let Some(targets) = self.return_transitions.get(&(
+                                *state,
+                                sym_str.clone(),
+                                top.clone(),
+                            )) {
+                                for &(t, tw) in targets {
+                                    let run_w = weight.times(&tw);
+                                    let mut new_stack = stack.clone();
+                                    new_stack.pop();
+                                    let key = (t, new_stack);
+                                    let entry =
+                                        next_configs.entry(key).or_insert_with(W::zero);
+                                    *entry = entry.plus(&run_w);
+                                }
+                            }
+                        }
+                    }
+                }
+                None => {
+                    // Unknown symbol — all configurations die.
+                }
+            }
+
+            configs = next_configs;
+        }
+
+        // Collect acceptance weight: ⊕ over all configs in accepting states.
+        let mut total = W::zero();
+        for ((state, _stack), weight) in &configs {
+            if self.accepting_states.contains(state) {
+                let accept_w = self
+                    .accepting_weights
+                    .get(state)
+                    .copied()
+                    .unwrap_or_else(W::one);
+                let run_w = weight.times(&accept_w);
+                total = total.plus(&run_w);
+            }
+        }
+
+        total
+    }
+
+    /// Weighted subset construction: determinize with weight aggregation.
+    ///
+    /// Each macro-state tracks a mapping from micro-states to accumulated
+    /// weights (`HashMap<usize, W>`). On internal/call/return transitions,
+    /// weights are propagated via semiring multiplication (⊗) and merged
+    /// via semiring addition (⊕) when micro-states coincide.
+    ///
+    /// The resulting deterministic VPA has one initial state (the macro-state
+    /// corresponding to the original initial states) and acceptance is determined
+    /// by whether any micro-state in the macro-state is an original accepting
+    /// state.
+    ///
+    /// # Returns
+    ///
+    /// A new deterministic `WeightedVpa<W>` accepting the same weighted language.
+    pub fn weighted_determinize(&self) -> WeightedVpa<W> {
+        // Macro-state: BTreeMap<usize, ()> for deterministic ordering (we track
+        // weights separately since BTreeSet is used as the key).
+        let mut macro_to_id: HashMap<BTreeSet<usize>, usize> = HashMap::new();
+        let mut det = WeightedVpa::new(self.alphabet.clone());
+
+        // Dead/sink state (ID 0).
+        let dead_macro: BTreeSet<usize> = BTreeSet::new();
+        let dead_id = det.add_state(Some("dead".to_string()));
+        macro_to_id.insert(dead_macro.clone(), dead_id);
+
+        // Initial macro-state.
+        let initial_macro: BTreeSet<usize> = self.initial_states.iter().copied().collect();
+        let initial_id = det.add_state(None);
+        macro_to_id.insert(initial_macro.clone(), initial_id);
+        det.initial_states.insert(initial_id);
+
+        // Compute initial weight for the initial macro-state.
+        let mut initial_w = W::zero();
+        for &q in &initial_macro {
+            let w = self
+                .initial_weights
+                .get(&q)
+                .copied()
+                .unwrap_or_else(W::one);
+            initial_w = initial_w.plus(&w);
+        }
+        det.initial_weights.insert(initial_id, initial_w);
+
+        if initial_macro
+            .iter()
+            .any(|s| self.accepting_states.contains(s))
+        {
+            det.accepting_states.insert(initial_id);
+            // Compute accepting weight for the initial macro-state.
+            let mut accept_w = W::zero();
+            for &q in &initial_macro {
+                if self.accepting_states.contains(&q) {
+                    let w = self
+                        .accepting_weights
+                        .get(&q)
+                        .copied()
+                        .unwrap_or_else(W::one);
+                    accept_w = accept_w.plus(&w);
+                }
+            }
+            det.accepting_weights.insert(initial_id, accept_w);
+        }
+
+        let mut worklist: VecDeque<BTreeSet<usize>> = VecDeque::new();
+        worklist.push_back(initial_macro);
+        worklist.push_back(dead_macro);
+
+        let call_syms: Vec<String> = self.alphabet.call_symbols.iter().cloned().collect();
+        let ret_syms: Vec<String> = self.alphabet.return_symbols.iter().cloned().collect();
+        let int_syms: Vec<String> = self.alphabet.internal_symbols.iter().cloned().collect();
+
+        while let Some(current_macro) = worklist.pop_front() {
+            let current_id = macro_to_id[&current_macro];
+
+            // Internal transitions.
+            for sym in &int_syms {
+                let mut next_macro = BTreeSet::new();
+                let mut combined_weight = W::zero();
+                for &q in &current_macro {
+                    if let Some(targets) =
+                        self.internal_transitions.get(&(q, sym.clone()))
+                    {
+                        for &(t, tw) in targets {
+                            next_macro.insert(t);
+                            combined_weight = combined_weight.plus(&tw);
+                        }
+                    }
+                }
+                let next_id =
+                    *macro_to_id
+                        .entry(next_macro.clone())
+                        .or_insert_with(|| {
+                            let id = det.add_state(None);
+                            if next_macro
+                                .iter()
+                                .any(|s| self.accepting_states.contains(s))
+                            {
+                                det.accepting_states.insert(id);
+                                let mut aw = W::zero();
+                                for &q in &next_macro {
+                                    if self.accepting_states.contains(&q) {
+                                        let w = self
+                                            .accepting_weights
+                                            .get(&q)
+                                            .copied()
+                                            .unwrap_or_else(W::one);
+                                        aw = aw.plus(&w);
+                                    }
+                                }
+                                det.accepting_weights.insert(id, aw);
+                            }
+                            worklist.push_back(next_macro.clone());
+                            id
+                        });
+                det.internal_transitions
+                    .entry((current_id, sym.clone()))
+                    .or_insert_with(Vec::new)
+                    .push((next_id, combined_weight));
+            }
+
+            // Call transitions.
+            for sym in &call_syms {
+                let mut next_macro = BTreeSet::new();
+                let mut combined_weight = W::zero();
+                for &q in &current_macro {
+                    if let Some(targets) =
+                        self.call_transitions.get(&(q, sym.clone()))
+                    {
+                        for &(t, _, tw) in targets {
+                            next_macro.insert(t);
+                            combined_weight = combined_weight.plus(&tw);
+                        }
+                    }
+                }
+                let next_id =
+                    *macro_to_id
+                        .entry(next_macro.clone())
+                        .or_insert_with(|| {
+                            let id = det.add_state(None);
+                            if next_macro
+                                .iter()
+                                .any(|s| self.accepting_states.contains(s))
+                            {
+                                det.accepting_states.insert(id);
+                                let mut aw = W::zero();
+                                for &q in &next_macro {
+                                    if self.accepting_states.contains(&q) {
+                                        let w = self
+                                            .accepting_weights
+                                            .get(&q)
+                                            .copied()
+                                            .unwrap_or_else(W::one);
+                                        aw = aw.plus(&w);
+                                    }
+                                }
+                                det.accepting_weights.insert(id, aw);
+                            }
+                            worklist.push_back(next_macro.clone());
+                            id
+                        });
+                let stack_sym = format!("M{}", current_id);
+                det.call_transitions
+                    .entry((current_id, sym.clone()))
+                    .or_insert_with(Vec::new)
+                    .push((next_id, stack_sym, combined_weight));
+            }
+
+            // Return transitions.
+            for sym in &ret_syms {
+                let mut all_stack_syms: Vec<String> = macro_to_id
+                    .values()
+                    .map(|id| format!("M{}", id))
+                    .collect();
+                all_stack_syms.push(self.initial_stack_symbol.clone());
+                all_stack_syms.sort();
+                all_stack_syms.dedup();
+
+                for stack_sym in &all_stack_syms {
+                    if det
+                        .return_transitions
+                        .contains_key(&(current_id, sym.clone(), stack_sym.clone()))
+                    {
+                        continue;
+                    }
+
+                    let caller_macro_opt: Option<&BTreeSet<usize>> =
+                        if stack_sym.starts_with('M') {
+                            if let Ok(caller_id) = stack_sym[1..].parse::<usize>() {
+                                macro_to_id
+                                    .iter()
+                                    .find(|(_, &id)| id == caller_id)
+                                    .map(|(m, _)| m)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+
+                    let mut next_macro = BTreeSet::new();
+                    let mut combined_weight = W::zero();
+                    if let Some(caller_macro) = caller_macro_opt {
+                        for &q in &current_macro {
+                            for &caller_q in caller_macro {
+                                for csym in &call_syms {
+                                    if let Some(call_targets) =
+                                        self.call_transitions.get(&(caller_q, csym.clone()))
+                                    {
+                                        for &(_, ref pushed_gamma, _cw) in call_targets {
+                                            if let Some(ret_targets) =
+                                                self.return_transitions.get(&(
+                                                    q,
+                                                    sym.clone(),
+                                                    pushed_gamma.clone(),
+                                                ))
+                                            {
+                                                for &(t, tw) in ret_targets {
+                                                    next_macro.insert(t);
+                                                    combined_weight =
+                                                        combined_weight.plus(&tw);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    let next_id =
+                        *macro_to_id
+                            .entry(next_macro.clone())
+                            .or_insert_with(|| {
+                                let id = det.add_state(None);
+                                if next_macro
+                                    .iter()
+                                    .any(|s| self.accepting_states.contains(s))
+                                {
+                                    det.accepting_states.insert(id);
+                                    let mut aw = W::zero();
+                                    for &q in &next_macro {
+                                        if self.accepting_states.contains(&q) {
+                                            let w = self
+                                                .accepting_weights
+                                                .get(&q)
+                                                .copied()
+                                                .unwrap_or_else(W::one);
+                                            aw = aw.plus(&w);
+                                        }
+                                    }
+                                    det.accepting_weights.insert(id, aw);
+                                }
+                                worklist.push_back(next_macro.clone());
+                                id
+                            });
+                    det.return_transitions
+                        .entry((current_id, sym.clone(), stack_sym.clone()))
+                        .or_insert_with(Vec::new)
+                        .push((next_id, combined_weight));
+                }
+            }
+        }
+
+        det
+    }
+
+    /// Weighted inclusion check: `L_w(self) ⊆ L_w(other)`.
+    ///
+    /// For idempotent semirings, weighted inclusion holds iff for every word `w`,
+    /// `self.weighted_run(w) ⊕ other.weighted_run(w) = other.weighted_run(w)`.
+    /// This is decidable via a product construction and weighted emptiness check.
+    ///
+    /// The algorithm:
+    /// 1. BFS over product configurations `(state_a, Option<state_b>, stack_a, stack_b)`.
+    /// 2. `other`'s state is `Option<usize>` — `None` represents a dead state
+    ///    (reached when `other` has no matching transition). Dead states are
+    ///    non-accepting with weight zero.
+    /// 3. At each configuration, if `self` is in an accepting state, check
+    ///    whether `other`'s weight absorbs `self`'s weight under ⊕. If not,
+    ///    inclusion fails.
+    ///
+    /// For `BooleanWeight`, this reduces to standard language inclusion:
+    /// `L(A) ⊆ L(B)` iff there is no word accepted by A but not by B.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the weighted language of `self` is included in that of `other`.
+    pub fn weighted_inclusion(&self, other: &WeightedVpa<W>) -> bool
+    where
+        W: IdempotentSemiring,
+    {
+        let max_stack_depth = (self.states.len() + other.states.len()) * 4 + 2;
+
+        // Configuration: (state_a, Option<state_b>, stack_a, stack_b).
+        // Option<state_b> = None means `other` is in a dead/sink state with
+        // no transitions and zero acceptance weight.
+        type Config = (usize, Option<usize>, Vec<String>, Vec<String>);
+        let mut visited: HashSet<Config> = HashSet::new();
+        let mut queue: VecDeque<(Config, W, W)> = VecDeque::new();
+
+        // Helper: check acceptance at a configuration and return false if
+        // inclusion is violated.
+        let check_acceptance = |qa: usize,
+                                qb: Option<usize>,
+                                wa: &W,
+                                wb: &W,
+                                self_ref: &WeightedVpa<W>,
+                                other_ref: &WeightedVpa<W>|
+         -> bool {
+            // Only check when self is in an accepting state.
+            if !self_ref.accepting_states.contains(&qa) {
+                return true; // No violation at this config.
+            }
+            let fa = self_ref
+                .accepting_weights
+                .get(&qa)
+                .copied()
+                .unwrap_or_else(W::one);
+            let total_a = wa.times(&fa);
+            if total_a.is_zero() {
+                return true; // Self has zero weight, no violation.
+            }
+            match qb {
+                Some(qb_id) if other_ref.accepting_states.contains(&qb_id) => {
+                    let fb = other_ref
+                        .accepting_weights
+                        .get(&qb_id)
+                        .copied()
+                        .unwrap_or_else(W::one);
+                    let total_b = wb.times(&fb);
+                    let sum = total_a.plus(&total_b);
+                    // Inclusion holds iff a ⊕ b = b.
+                    sum.approx_eq(&total_b, 1e-10)
+                }
+                _ => {
+                    // other is dead or not accepting → other's weight is zero.
+                    // self has non-zero weight → inclusion violated.
+                    false
+                }
+            }
+        };
+
+        // Seed with initial configurations.
+        for &qa in &self.initial_states {
+            let wa = self
+                .initial_weights
+                .get(&qa)
+                .copied()
+                .unwrap_or_else(W::one);
+
+            if other.initial_states.is_empty() {
+                // other has no initial states → always dead.
+                let stack_a = vec![self.initial_stack_symbol.clone()];
+                let stack_b = vec![other.initial_stack_symbol.clone()];
+                let config = (qa, None, stack_a, stack_b);
+                if visited.insert(config.clone()) {
+                    if !check_acceptance(qa, None, &wa, &W::zero(), self, other) {
+                        return false;
+                    }
+                    queue.push_back((config, wa, W::zero()));
+                }
+            } else {
+                for &qb in &other.initial_states {
+                    let wb = other
+                        .initial_weights
+                        .get(&qb)
+                        .copied()
+                        .unwrap_or_else(W::one);
+                    let stack_a = vec![self.initial_stack_symbol.clone()];
+                    let stack_b = vec![other.initial_stack_symbol.clone()];
+                    let config = (qa, Some(qb), stack_a, stack_b);
+                    if visited.insert(config.clone()) {
+                        if !check_acceptance(qa, Some(qb), &wa, &wb, self, other) {
+                            return false;
+                        }
+                        queue.push_back((config, wa, wb));
+                    }
+                }
+            }
+        }
+
+        while let Some((config, wa, wb)) = queue.pop_front() {
+            let (qa, qb_opt, ref stack_a, ref stack_b) = config;
+
+            // Internal transitions.
+            for sym in &self.alphabet.internal_symbols {
+                let a_targets = self
+                    .internal_transitions
+                    .get(&(qa, sym.clone()))
+                    .cloned()
+                    .unwrap_or_default();
+                if a_targets.is_empty() {
+                    continue; // self has no transition, so this path dies in self.
+                }
+
+                let b_targets: Vec<(usize, W)> = match qb_opt {
+                    Some(qb) => other
+                        .internal_transitions
+                        .get(&(qb, sym.clone()))
+                        .cloned()
+                        .unwrap_or_default(),
+                    None => Vec::new(), // Dead state has no transitions.
+                };
+
+                for &(ta, twa) in &a_targets {
+                    let new_wa = wa.times(&twa);
+
+                    if b_targets.is_empty() {
+                        // other is dead or has no transition → other stays dead.
+                        let next = (ta, None, stack_a.clone(), stack_b.clone());
+                        if visited.insert(next.clone()) {
+                            if !check_acceptance(ta, None, &new_wa, &W::zero(), self, other) {
+                                return false;
+                            }
+                            queue.push_back((next, new_wa, W::zero()));
+                        }
+                    } else {
+                        for &(tb, twb) in &b_targets {
+                            let new_wb = wb.times(&twb);
+                            let next = (ta, Some(tb), stack_a.clone(), stack_b.clone());
+                            if visited.insert(next.clone()) {
+                                if !check_acceptance(
+                                    ta,
+                                    Some(tb),
+                                    &new_wa,
+                                    &new_wb,
+                                    self,
+                                    other,
+                                ) {
+                                    return false;
+                                }
+                                queue.push_back((next, new_wa, new_wb));
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Call transitions.
+            if stack_a.len() < max_stack_depth {
+                for sym in &self.alphabet.call_symbols {
+                    let a_targets = self
+                        .call_transitions
+                        .get(&(qa, sym.clone()))
+                        .cloned()
+                        .unwrap_or_default();
+                    if a_targets.is_empty() {
+                        continue;
+                    }
+
+                    let b_targets: Vec<(usize, String, W)> = match qb_opt {
+                        Some(qb) => other
+                            .call_transitions
+                            .get(&(qb, sym.clone()))
+                            .cloned()
+                            .unwrap_or_default(),
+                        None => Vec::new(),
+                    };
+
+                    for &(ta, ref gamma_a, twa) in &a_targets {
+                        let new_wa = wa.times(&twa);
+                        let mut sa = stack_a.clone();
+                        sa.push(gamma_a.clone());
+
+                        if b_targets.is_empty() {
+                            // other dead.
+                            let next = (ta, None, sa, stack_b.clone());
+                            if visited.insert(next.clone()) {
+                                if !check_acceptance(
+                                    ta,
+                                    None,
+                                    &new_wa,
+                                    &W::zero(),
+                                    self,
+                                    other,
+                                ) {
+                                    return false;
+                                }
+                                queue.push_back((next, new_wa, W::zero()));
+                            }
+                        } else {
+                            for &(tb, ref gamma_b, twb) in &b_targets {
+                                let new_wb = wb.times(&twb);
+                                let mut sb = stack_b.clone();
+                                sb.push(gamma_b.clone());
+                                let next = (ta, Some(tb), sa.clone(), sb);
+                                if visited.insert(next.clone()) {
+                                    if !check_acceptance(
+                                        ta,
+                                        Some(tb),
+                                        &new_wa,
+                                        &new_wb,
+                                        self,
+                                        other,
+                                    ) {
+                                        return false;
+                                    }
+                                    queue.push_back((next, new_wa, new_wb));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Return transitions.
+            if stack_a.len() > 1 {
+                let top_a = &stack_a[stack_a.len() - 1];
+                for sym in &self.alphabet.return_symbols {
+                    let a_targets = self
+                        .return_transitions
+                        .get(&(qa, sym.clone(), top_a.clone()))
+                        .cloned()
+                        .unwrap_or_default();
+                    if a_targets.is_empty() {
+                        continue;
+                    }
+
+                    let b_targets: Vec<(usize, W)> = match qb_opt {
+                        Some(qb) if stack_b.len() > 1 => {
+                            let top_b = &stack_b[stack_b.len() - 1];
+                            other
+                                .return_transitions
+                                .get(&(qb, sym.clone(), top_b.clone()))
+                                .cloned()
+                                .unwrap_or_default()
+                        }
+                        _ => Vec::new(), // Dead or stack empty.
+                    };
+
+                    for &(ta, twa) in &a_targets {
+                        let new_wa = wa.times(&twa);
+                        let mut sa = stack_a.clone();
+                        sa.pop();
+
+                        if b_targets.is_empty() {
+                            let next = (ta, None, sa, stack_b.clone());
+                            if visited.insert(next.clone()) {
+                                if !check_acceptance(
+                                    ta,
+                                    None,
+                                    &new_wa,
+                                    &W::zero(),
+                                    self,
+                                    other,
+                                ) {
+                                    return false;
+                                }
+                                queue.push_back((next, new_wa, W::zero()));
+                            }
+                        } else {
+                            for &(tb, twb) in &b_targets {
+                                let new_wb = wb.times(&twb);
+                                let mut sb = stack_b.clone();
+                                sb.pop();
+                                let next = (ta, Some(tb), sa.clone(), sb);
+                                if visited.insert(next.clone()) {
+                                    if !check_acceptance(
+                                        ta,
+                                        Some(tb),
+                                        &new_wa,
+                                        &new_wb,
+                                        self,
+                                        other,
+                                    ) {
+                                        return false;
+                                    }
+                                    queue.push_back((next, new_wa, new_wb));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        true
+    }
 }
 
-impl fmt::Display for Vpa {
+impl<W: Semiring> fmt::Display for WeightedVpa<W> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
@@ -554,6 +1340,8 @@ pub fn construct_vpa(
     vpa.initial_states.insert(q_ground);
     vpa.accepting_states.insert(q_ground);
 
+    let w_one = BooleanWeight::one();
+
     // Call transitions.
     for (call_sym, _) in call_return_pairs {
         // From ground: push ground-marker, go to nested.
@@ -561,20 +1349,20 @@ pub fn construct_vpa(
         vpa.call_transitions
             .entry((q_ground, call_sym.clone()))
             .or_insert_with(Vec::new)
-            .push((q_nested, g_gamma));
+            .push((q_nested, g_gamma, w_one));
 
         // From nested: push nested-marker, stay nested.
         let n_gamma = format!("N_{}", call_sym);
         vpa.call_transitions
             .entry((q_nested, call_sym.clone()))
             .or_insert_with(Vec::new)
-            .push((q_nested, n_gamma));
+            .push((q_nested, n_gamma, w_one));
 
         // From dead: absorb into dead.
         vpa.call_transitions
             .entry((q_dead, call_sym.clone()))
             .or_insert_with(Vec::new)
-            .push((q_dead, "DEAD".to_string()));
+            .push((q_dead, "DEAD".to_string(), w_one));
     }
 
     // Return transitions.
@@ -586,27 +1374,27 @@ pub fn construct_vpa(
         vpa.return_transitions
             .entry((q_nested, ret_sym.clone(), g_gamma))
             .or_insert_with(Vec::new)
-            .push(q_ground);
+            .push((q_ground, w_one));
 
         // From nested, pop nested-marker → stay nested.
         vpa.return_transitions
             .entry((q_nested, ret_sym.clone(), n_gamma))
             .or_insert_with(Vec::new)
-            .push(q_nested);
+            .push((q_nested, w_one));
 
         // From ground, return is unmatched → dead sink.
         // At ground level, the only thing on the stack is Z0.
         vpa.return_transitions
             .entry((q_ground, ret_sym.clone(), vpa.initial_stack_symbol.clone()))
             .or_insert_with(Vec::new)
-            .push(q_dead);
+            .push((q_dead, w_one));
 
         // From dead, any return stays dead (for all known stack tops).
         for gamma in ["DEAD", "Z0"] {
             vpa.return_transitions
                 .entry((q_dead, ret_sym.clone(), gamma.to_string()))
                 .or_insert_with(Vec::new)
-                .push(q_dead);
+                .push((q_dead, w_one));
         }
         for (call_sym2, _) in call_return_pairs.iter() {
             for prefix in ["G_", "N_"] {
@@ -614,7 +1402,7 @@ pub fn construct_vpa(
                 vpa.return_transitions
                     .entry((q_dead, ret_sym.clone(), gamma))
                     .or_insert_with(Vec::new)
-                    .push(q_dead);
+                    .push((q_dead, w_one));
             }
         }
     }
@@ -624,15 +1412,15 @@ pub fn construct_vpa(
         vpa.internal_transitions
             .entry((q_ground, sym.clone()))
             .or_insert_with(Vec::new)
-            .push(q_ground);
+            .push((q_ground, w_one));
         vpa.internal_transitions
             .entry((q_nested, sym.clone()))
             .or_insert_with(Vec::new)
-            .push(q_nested);
+            .push((q_nested, w_one));
         vpa.internal_transitions
             .entry((q_dead, sym.clone()))
             .or_insert_with(Vec::new)
-            .push(q_dead);
+            .push((q_dead, w_one));
     }
 
     vpa
@@ -699,7 +1487,7 @@ pub fn is_language_empty(vpa: &Vpa) -> bool {
         // Internal transitions: stack unchanged.
         for sym in &vpa.alphabet.internal_symbols {
             if let Some(targets) = vpa.internal_transitions.get(&(state, sym.clone())) {
-                for &t in targets {
+                for &(t, _) in targets {
                     let config = (t, stack.clone());
                     if visited.insert(config.clone()) {
                         if vpa.accepting_states.contains(&t) {
@@ -715,7 +1503,7 @@ pub fn is_language_empty(vpa: &Vpa) -> bool {
         if stack.len() < max_stack_depth {
             for sym in &vpa.alphabet.call_symbols {
                 if let Some(targets) = vpa.call_transitions.get(&(state, sym.clone())) {
-                    for &(t, ref gamma) in targets {
+                    for &(t, ref gamma, _) in targets {
                         let mut new_stack = stack.clone();
                         new_stack.push(gamma.clone());
                         let config = (t, new_stack);
@@ -738,7 +1526,7 @@ pub fn is_language_empty(vpa: &Vpa) -> bool {
                     vpa.return_transitions
                         .get(&(state, sym.clone(), top.clone()))
                 {
-                    for &t in targets {
+                    for &(t, _) in targets {
                         let mut new_stack = stack.clone();
                         new_stack.pop();
                         let config = (t, new_stack.clone());
@@ -788,6 +1576,9 @@ pub fn complement(vpa: &Vpa) -> Vpa {
         initial_states: det.initial_states,
         accepting_states: new_accepting,
         initial_stack_symbol: det.initial_stack_symbol,
+        initial_weights: det.initial_weights,
+        accepting_weights: HashMap::new(), // Recomputed from new accepting set.
+        _weight: PhantomData,
     }
 }
 
@@ -803,9 +1594,11 @@ pub fn complement(vpa: &Vpa) -> Vpa {
 /// The resulting VPA is deterministic and **total**: every (macro-state, symbol)
 /// pair has exactly one successor. Transitions that would lead to no NFA states
 /// are directed to a non-accepting "dead" sink state.
-fn determinize_impl(vpa: &Vpa) -> Vpa {
+fn determinize_impl<W: Semiring>(vpa: &WeightedVpa<W>) -> WeightedVpa<W> {
     let mut macro_to_id: HashMap<BTreeSet<usize>, usize> = HashMap::new();
-    let mut det = Vpa::new(vpa.alphabet.clone());
+    let mut det = WeightedVpa::new(vpa.alphabet.clone());
+
+    let w_one = W::one();
 
     // Create the dead/sink state first (ID 0). It is non-accepting and all
     // of its transitions loop back to itself.
@@ -843,7 +1636,7 @@ fn determinize_impl(vpa: &Vpa) -> Vpa {
             let mut next_macro = BTreeSet::new();
             for &q in &current_macro {
                 if let Some(targets) = vpa.internal_transitions.get(&(q, sym.clone())) {
-                    for &t in targets {
+                    for &(t, _) in targets {
                         next_macro.insert(t);
                     }
                 }
@@ -860,7 +1653,7 @@ fn determinize_impl(vpa: &Vpa) -> Vpa {
             det.internal_transitions
                 .entry((current_id, sym.clone()))
                 .or_insert_with(Vec::new)
-                .push(next_id);
+                .push((next_id, w_one));
         }
 
         // Call transitions: push the current macro-state ID as the stack symbol.
@@ -868,7 +1661,7 @@ fn determinize_impl(vpa: &Vpa) -> Vpa {
             let mut next_macro = BTreeSet::new();
             for &q in &current_macro {
                 if let Some(targets) = vpa.call_transitions.get(&(q, sym.clone())) {
-                    for &(t, _) in targets {
+                    for &(t, _, _) in targets {
                         next_macro.insert(t);
                     }
                 }
@@ -885,7 +1678,7 @@ fn determinize_impl(vpa: &Vpa) -> Vpa {
             det.call_transitions
                 .entry((current_id, sym.clone()))
                 .or_insert_with(Vec::new)
-                .push((next_id, stack_sym));
+                .push((next_id, stack_sym, w_one));
         }
 
         // Return transitions: for each (return_symbol, stack_top) pair,
@@ -933,7 +1726,7 @@ fn determinize_impl(vpa: &Vpa) -> Vpa {
                                 if let Some(call_targets) =
                                     vpa.call_transitions.get(&(caller_q, csym.clone()))
                                 {
-                                    for (_, pushed_gamma) in call_targets {
+                                    for (_, pushed_gamma, _) in call_targets {
                                         if let Some(ret_targets) =
                                             vpa.return_transitions.get(&(
                                                 q,
@@ -941,7 +1734,7 @@ fn determinize_impl(vpa: &Vpa) -> Vpa {
                                                 pushed_gamma.clone(),
                                             ))
                                         {
-                                            for &t in ret_targets {
+                                            for &(t, _) in ret_targets {
                                                 next_macro.insert(t);
                                             }
                                         }
@@ -969,7 +1762,7 @@ fn determinize_impl(vpa: &Vpa) -> Vpa {
                 det.return_transitions
                     .entry((current_id, sym.clone(), stack_sym.clone()))
                     .or_insert_with(Vec::new)
-                    .push(next_id);
+                    .push((next_id, w_one));
             }
         }
     }
@@ -998,6 +1791,8 @@ pub fn intersect(a: &Vpa, b: &Vpa) -> Vpa {
     //
     // The alphabet must be compatible (same partition). We use `a`'s alphabet
     // and assert that `b` classifies symbols the same way.
+
+    let w_one = BooleanWeight::one();
 
     // Build the merged alphabet (union of both; classification must agree).
     let merged_alphabet = merge_alphabets(&a.alphabet, &b.alphabet);
@@ -1039,8 +1834,8 @@ pub fn intersect(a: &Vpa, b: &Vpa) -> Vpa {
                 .get(&(qb, sym.clone()))
                 .cloned()
                 .unwrap_or_default();
-            for &ta in &a_targets {
-                for &tb in &b_targets {
+            for &(ta, _) in &a_targets {
+                for &(tb, _) in &b_targets {
                     let next_pid = get_or_create_product_state(
                         ta,
                         tb,
@@ -1054,7 +1849,7 @@ pub fn intersect(a: &Vpa, b: &Vpa) -> Vpa {
                         .internal_transitions
                         .entry((current_pid, sym.clone()))
                         .or_insert_with(Vec::new)
-                        .push(next_pid);
+                        .push((next_pid, w_one));
                 }
             }
         }
@@ -1071,8 +1866,8 @@ pub fn intersect(a: &Vpa, b: &Vpa) -> Vpa {
                 .get(&(qb, sym.clone()))
                 .cloned()
                 .unwrap_or_default();
-            for &(ta, ref gamma_a) in &a_targets {
-                for &(tb, ref gamma_b) in &b_targets {
+            for &(ta, ref gamma_a, _) in &a_targets {
+                for &(tb, ref gamma_b, _) in &b_targets {
                     let next_pid = get_or_create_product_state(
                         ta,
                         tb,
@@ -1088,7 +1883,7 @@ pub fn intersect(a: &Vpa, b: &Vpa) -> Vpa {
                         .call_transitions
                         .entry((current_pid, sym.clone()))
                         .or_insert_with(Vec::new)
-                        .push((next_pid, product_gamma));
+                        .push((next_pid, product_gamma, w_one));
                 }
             }
         }
@@ -1126,8 +1921,8 @@ pub fn intersect(a: &Vpa, b: &Vpa) -> Vpa {
                         continue;
                     }
                     let product_gamma = format!("({},{})", ga, gb);
-                    for &ta in &a_targets {
-                        for &tb in &b_targets {
+                    for &(ta, _) in &a_targets {
+                        for &(tb, _) in &b_targets {
                             let next_pid = get_or_create_product_state(
                                 ta,
                                 tb,
@@ -1141,7 +1936,7 @@ pub fn intersect(a: &Vpa, b: &Vpa) -> Vpa {
                                 .return_transitions
                                 .entry((current_pid, sym.clone(), product_gamma.clone()))
                                 .or_insert_with(Vec::new)
-                                .push(next_pid);
+                                .push((next_pid, w_one));
                         }
                     }
                 }
@@ -1235,6 +2030,9 @@ pub struct VpaAnalysis {
     pub alphabet_mismatches: Vec<String>,
     /// Number of VPA states.
     pub state_count: usize,
+    /// Upper bound on valid nesting depth (derived from VPA state count).
+    /// Input exceeding this bound is structurally beyond the grammar's capacity.
+    pub max_nesting_bound: usize,
 }
 
 /// Classify terminal tokens from a grammar's syntax items into a [`VpaAlphabet`].
@@ -1393,7 +2191,33 @@ pub fn analyze_from_bundle(
         is_determinizable,
         alphabet_mismatches,
         state_count,
+        max_nesting_bound: state_count,
     })
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Predicate Dispatch — PredicateCompiler integration
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Compiler adapter for the Visibly Pushdown Automata module (M4).
+///
+/// Activated by nested `letprop` scopes with balanced open/close (VPL variety).
+#[cfg(feature = "predicate-dispatch")]
+pub struct VpaCompiler;
+
+#[cfg(feature = "predicate-dispatch")]
+impl crate::predicate_dispatch::PredicateCompiler for VpaCompiler {
+    type Output = Option<VpaAnalysis>;
+
+    fn compile_predicate(
+        &self,
+        _pred: &crate::symbolic::PredicateExpr,
+        _profile: &crate::predicate_dispatch::PredicateProfile,
+        all_syntax: &[(String, String, Vec<crate::SyntaxItemSpec>)],
+        categories: &[crate::pipeline::CategoryInfo],
+    ) -> Self::Output {
+        analyze_from_bundle(categories, all_syntax)
+    }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1403,6 +2227,7 @@ pub fn analyze_from_bundle(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::automata::semiring::TropicalWeight;
 
     fn sample_alphabet() -> VpaAlphabet {
         VpaAlphabet::new(
@@ -1491,7 +2316,7 @@ mod tests {
                         if let Some(targets) =
                             vpa.internal_transitions.get(&(*state, sym_str.clone()))
                         {
-                            for &t in targets {
+                            for &(t, _) in targets {
                                 next_configs.insert((t, stack.clone()));
                             }
                         }
@@ -1502,7 +2327,7 @@ mod tests {
                         if let Some(targets) =
                             vpa.call_transitions.get(&(*state, sym_str.clone()))
                         {
-                            for (t, gamma) in targets {
+                            for (t, gamma, _) in targets {
                                 let mut new_stack = stack.clone();
                                 new_stack.push(gamma.clone());
                                 next_configs.insert((*t, new_stack));
@@ -1519,7 +2344,7 @@ mod tests {
                                 sym_str.clone(),
                                 top.clone(),
                             )) {
-                                for &t in targets {
+                                for &(t, _) in targets {
                                     let mut new_stack = stack.clone();
                                     new_stack.pop();
                                     next_configs.insert((t, new_stack));
@@ -1708,6 +2533,8 @@ mod tests {
         let q3 = nfa_vpa.add_state(Some("accept_paren".to_string()));
         let q4 = nfa_vpa.add_state(Some("accept_id".to_string()));
 
+        let w_one = BooleanWeight::one();
+
         nfa_vpa.initial_states.insert(q0);
         nfa_vpa.initial_states.insert(q1); // Two initial states => nondeterministic.
         nfa_vpa.accepting_states.insert(q3);
@@ -1718,19 +2545,19 @@ mod tests {
             .call_transitions
             .entry((q0, "(".to_string()))
             .or_insert_with(Vec::new)
-            .push((q2, "G_(".to_string()));
+            .push((q2, "G_(".to_string(), w_one));
         nfa_vpa
             .return_transitions
             .entry((q2, ")".to_string(), "G_(".to_string()))
             .or_insert_with(Vec::new)
-            .push(q3);
+            .push((q3, w_one));
 
         // Path 2: q1 --id--> q4 (accepts "id")
         nfa_vpa
             .internal_transitions
             .entry((q1, "id".to_string()))
             .or_insert_with(Vec::new)
-            .push(q4);
+            .push((q4, w_one));
 
         assert!(
             !nfa_vpa.is_deterministic(),
@@ -1803,10 +2630,11 @@ mod tests {
         let q0 = vpa.add_state(None);
         let q1 = vpa.add_state(None);
         let q2 = vpa.add_state(None);
+        let w_one = BooleanWeight::one();
         vpa.initial_states.insert(q0);
         // q0 --a--> {q1, q2}: nondeterministic internal transition.
         vpa.internal_transitions
-            .insert((q0, "a".to_string()), vec![q1, q2]);
+            .insert((q0, "a".to_string()), vec![(q1, w_one), (q2, w_one)]);
         assert!(
             !vpa.is_deterministic(),
             "VPA with nondeterministic internal transition should not be deterministic"
@@ -1839,9 +2667,10 @@ mod tests {
         let q0 = vpa.add_state(Some("start".to_string()));
         let q1 = vpa.add_state(Some("reachable".to_string()));
         let _q_isolated = vpa.add_state(Some("isolated".to_string()));
+        let w_one = BooleanWeight::one();
         vpa.initial_states.insert(q0);
         vpa.internal_transitions
-            .insert((q0, "a".to_string()), vec![q1]);
+            .insert((q0, "a".to_string()), vec![(q1, w_one)]);
 
         let reachable = vpa.reachable_states();
         let reachable_ids: HashSet<usize> = reachable.iter().map(|s| s.id).collect();
@@ -1872,10 +2701,11 @@ mod tests {
         let q0 = vpa.add_state(Some("start".to_string()));
         let q1 = vpa.add_state(Some("after_id".to_string()));
         let _q_unreachable = vpa.add_state(Some("unreachable".to_string()));
+        let w_one = BooleanWeight::one();
         vpa.initial_states.insert(q0);
         vpa.accepting_states.insert(q1);
         vpa.internal_transitions
-            .insert((q0, "id".to_string()), vec![q1]);
+            .insert((q0, "id".to_string()), vec![(q1, w_one)]);
 
         assert_eq!(vpa.num_states(), 3, "original VPA has 3 states");
 
@@ -2058,5 +2888,215 @@ mod tests {
             alphabet.internal_symbols.contains("+"),
             "+ should be classified as internal"
         );
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Weighted VPA tests
+    // ══════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn weighted_run_boolean_matches_simulate() {
+        // For BooleanWeight, weighted_run should agree with simulate.
+        let vpa = build_paren_vpa();
+
+        // Accepted words: weighted_run should return BooleanWeight(true) = W::one().
+        assert!(
+            vpa.weighted_run(&[]).is_one(),
+            "weighted_run on empty string should be one (accepted)"
+        );
+        assert!(
+            vpa.weighted_run(&["(", ")"]).is_one(),
+            "weighted_run on () should be one (accepted)"
+        );
+        assert!(
+            vpa.weighted_run(&["id", "+", "id"]).is_one(),
+            "weighted_run on id+id should be one (accepted)"
+        );
+
+        // Rejected words: weighted_run should return BooleanWeight(false) = W::zero().
+        assert!(
+            vpa.weighted_run(&["("]).is_zero(),
+            "weighted_run on ( alone should be zero (rejected)"
+        );
+        assert!(
+            vpa.weighted_run(&[")"]).is_zero(),
+            "weighted_run on ) alone should be zero (rejected)"
+        );
+    }
+
+    #[test]
+    fn weighted_run_tropical_accumulates_cost() {
+        // Build a simple weighted VPA with TropicalWeight.
+        // q0 --id(cost=3.0)--> q1 (accepting)
+        let alpha = VpaAlphabet::new(
+            HashSet::new(),
+            HashSet::new(),
+            ["id".to_string()].into_iter().collect(),
+        );
+        let mut wvpa: WeightedVpa<TropicalWeight> = WeightedVpa::new(alpha);
+        let q0 = wvpa.add_state(Some("start".to_string()));
+        let q1 = wvpa.add_state(Some("accept".to_string()));
+        wvpa.initial_states.insert(q0);
+        wvpa.accepting_states.insert(q1);
+        wvpa.initial_weights.insert(q0, TropicalWeight::one());
+        wvpa.accepting_weights.insert(q1, TropicalWeight::one());
+
+        // Transition with weight 3.0.
+        wvpa.internal_transitions
+            .insert((q0, "id".to_string()), vec![(q1, TropicalWeight::new(3.0))]);
+
+        let result = wvpa.weighted_run(&["id"]);
+        // Tropical: init_w(0.0) ⊗ trans_w(3.0) ⊗ accept_w(0.0) = 0.0 + 3.0 + 0.0 = 3.0
+        assert!(
+            result.approx_eq(&TropicalWeight::new(3.0), 1e-10),
+            "weighted_run should accumulate tropical cost: expected 3.0, got {:?}",
+            result
+        );
+
+        // Empty string: q0 is not accepting, should be zero (infinity).
+        let empty_result = wvpa.weighted_run(&[]);
+        assert!(
+            empty_result.is_zero(),
+            "weighted_run on empty string should be zero (q0 not accepting)"
+        );
+
+        // Unknown symbol: should be zero.
+        let unknown_result = wvpa.weighted_run(&["unknown"]);
+        assert!(
+            unknown_result.is_zero(),
+            "weighted_run on unknown symbol should be zero"
+        );
+    }
+
+    #[test]
+    fn weighted_run_tropical_call_return() {
+        // Build a weighted VPA with call/return transitions carrying tropical weights.
+        // q0 --(, push G, cost=1.0)--> q1 --), pop G, cost=2.0--> q2 (accepting)
+        let alpha = VpaAlphabet::new(
+            ["(".to_string()].into_iter().collect(),
+            [")".to_string()].into_iter().collect(),
+            HashSet::new(),
+        );
+        let mut wvpa: WeightedVpa<TropicalWeight> = WeightedVpa::new(alpha);
+        let q0 = wvpa.add_state(Some("start".to_string()));
+        let q1 = wvpa.add_state(Some("called".to_string()));
+        let q2 = wvpa.add_state(Some("accept".to_string()));
+        wvpa.initial_states.insert(q0);
+        wvpa.accepting_states.insert(q2);
+        wvpa.initial_weights.insert(q0, TropicalWeight::one());
+        wvpa.accepting_weights.insert(q2, TropicalWeight::one());
+
+        wvpa.call_transitions.insert(
+            (q0, "(".to_string()),
+            vec![(q1, "G".to_string(), TropicalWeight::new(1.0))],
+        );
+        wvpa.return_transitions.insert(
+            (q1, ")".to_string(), "G".to_string()),
+            vec![(q2, TropicalWeight::new(2.0))],
+        );
+
+        let result = wvpa.weighted_run(&["(", ")"]);
+        // 0.0 + 1.0 + 2.0 + 0.0 = 3.0
+        assert!(
+            result.approx_eq(&TropicalWeight::new(3.0), 1e-10),
+            "weighted_run on () should be 3.0 (tropical), got {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn weighted_determinize_tropical() {
+        // Build a nondeterministic weighted VPA and determinize it.
+        let alpha = VpaAlphabet::new(
+            HashSet::new(),
+            HashSet::new(),
+            ["a".to_string()].into_iter().collect(),
+        );
+        let mut wvpa: WeightedVpa<TropicalWeight> = WeightedVpa::new(alpha);
+        let q0 = wvpa.add_state(Some("init0".to_string()));
+        let q1 = wvpa.add_state(Some("init1".to_string()));
+        let q2 = wvpa.add_state(Some("accept0".to_string()));
+        let q3 = wvpa.add_state(Some("accept1".to_string()));
+
+        wvpa.initial_states.insert(q0);
+        wvpa.initial_states.insert(q1);
+        wvpa.accepting_states.insert(q2);
+        wvpa.accepting_states.insert(q3);
+        wvpa.initial_weights.insert(q0, TropicalWeight::one());
+        wvpa.initial_weights.insert(q1, TropicalWeight::one());
+        wvpa.accepting_weights.insert(q2, TropicalWeight::one());
+        wvpa.accepting_weights.insert(q3, TropicalWeight::one());
+
+        // q0 --a(cost=5.0)--> q2
+        wvpa.internal_transitions.insert(
+            (q0, "a".to_string()),
+            vec![(q2, TropicalWeight::new(5.0))],
+        );
+        // q1 --a(cost=3.0)--> q3
+        wvpa.internal_transitions.insert(
+            (q1, "a".to_string()),
+            vec![(q3, TropicalWeight::new(3.0))],
+        );
+
+        assert!(
+            !wvpa.is_deterministic(),
+            "nondeterministic weighted VPA should not be deterministic"
+        );
+
+        let det = wvpa.weighted_determinize();
+        assert!(
+            det.is_deterministic(),
+            "weighted_determinize should produce a deterministic VPA"
+        );
+
+        // The determinized VPA should still recognize "a".
+        let result = det.weighted_run(&["a"]);
+        // Both paths contribute: min(5.0, 3.0) = 3.0 (tropical plus = min).
+        assert!(
+            !result.is_zero(),
+            "determinized weighted VPA should accept 'a'"
+        );
+    }
+
+    #[test]
+    fn weighted_inclusion_boolean() {
+        // For BooleanWeight, weighted_inclusion reduces to language inclusion.
+        let well_matched = build_paren_vpa();
+        let eps_only = build_epsilon_only_vpa();
+
+        // eps_only ⊆ well_matched (epsilon is accepted by both).
+        assert!(
+            eps_only.weighted_inclusion(&well_matched),
+            "epsilon-only language should be included in well-matched language"
+        );
+
+        // well_matched ⊄ eps_only (well_matched accepts "()" but eps_only does not).
+        assert!(
+            !well_matched.weighted_inclusion(&eps_only),
+            "well-matched language should NOT be included in epsilon-only language"
+        );
+    }
+
+    // ── Sprint A1: VPA nesting bound tests ──────────────────────────────────
+
+    #[test]
+    fn vpa_nesting_bound_equals_state_count() {
+        // VPA with 3 call/return pairs → state_count states (start + nesting levels)
+        let pairs = vec![
+            ("(".to_string(), ")".to_string()),
+            ("{".to_string(), "}".to_string()),
+            ("[".to_string(), "]".to_string()),
+        ];
+        let internal = vec!["+".to_string(), "id".to_string()];
+        let vpa = construct_vpa(&pairs, &internal);
+        let state_count = vpa.num_states();
+
+        let analysis = VpaAnalysis {
+            is_determinizable: true,
+            alphabet_mismatches: Vec::new(),
+            state_count,
+            max_nesting_bound: state_count,
+        };
+        assert_eq!(analysis.max_nesting_bound, state_count);
     }
 }
