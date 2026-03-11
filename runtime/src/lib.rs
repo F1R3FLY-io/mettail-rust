@@ -19,6 +19,9 @@ pub use canonical_float::{CanonicalFloat32, CanonicalFloat64};
 mod hashbag;
 pub use hashbag::HashBag;
 
+mod hashmap_lit;
+pub use hashmap_lit::HashMapLit;
+
 // Language metadata for REPL introspection
 mod metadata;
 pub use metadata::*;

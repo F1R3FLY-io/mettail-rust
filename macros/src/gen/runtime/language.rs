@@ -868,9 +868,29 @@ fn generate_var_collection_impl(
                                                         }
                                                     }
                                                 },
+                                                crate::ast::types::CollectionType::HashMap => {
+                                                    quote! {
+                                                        for (k, v) in #field_name.iter() {
+                                                            Self::#impl_fn_name(root_term, k, result, seen);
+                                                            Self::#impl_fn_name(root_term, v, result, seen);
+                                                        }
+                                                    }
+                                                },
                                             };
                                             recurse_calls.push(iter_recurse);
                                         }
+                                    }
+                                },
+                                TypeExpr::Map { key, value } => {
+                                    let key_is_primary = matches!(key.as_ref(), TypeExpr::Base(ident) if ident.to_string() == primary_type.to_string());
+                                    let val_is_primary = matches!(value.as_ref(), TypeExpr::Base(ident) if ident.to_string() == primary_type.to_string());
+                                    if key_is_primary || val_is_primary {
+                                        recurse_calls.push(quote! {
+                                            for (k, v) in #field_name.iter() {
+                                                Self::#impl_fn_name(root_term, k, result, seen);
+                                                Self::#impl_fn_name(root_term, v, result, seen);
+                                            }
+                                        });
                                     }
                                 },
                                 _ => {},
@@ -999,6 +1019,12 @@ fn generate_var_collection_impl(
                                             Self::#impl_fn_name(root_term, elem, result, seen);
                                         }
                                     },
+                                    crate::ast::types::CollectionType::HashMap => quote! {
+                                        for (k, v) in #field_name.iter() {
+                                            Self::#impl_fn_name(root_term, k, result, seen);
+                                            Self::#impl_fn_name(root_term, v, result, seen);
+                                        }
+                                    },
                                 };
                                 recurse_calls.push(iter_recurse);
                             }
@@ -1092,6 +1118,9 @@ fn generate_var_collection_impl(
 /// For a category (e.g. Proc) that has injection rules (e.g. ProcInt . i:Int |- i : Proc), generate
 /// seed pushes so that when we seed proc(ProcInt(inner)) we also seed int(inner). This allows the
 /// fixpoint to reduce Int and then propagate via ProcIntCong to rw_proc.
+///
+/// When the injected term has sub-terms of other categories (e.g. Int::LenMap(Map)), we also push
+/// those sub-terms so fold rules (e.g. fold_map) can run and cross-category folds like LenMap work.
 fn injection_seed_pushes_for_category(language: &LanguageDef, cat: &Ident) -> TokenStream {
     let mut pushes = Vec::new();
     for rule in &language.terms {
@@ -1116,14 +1145,89 @@ fn injection_seed_pushes_for_category(language: &LanguageDef, cat: &Ident) -> To
         }
         let label = &rule.label;
         let inner_cat_lower = format_ident!("{}", inner_cat.to_string().to_lowercase());
+        let nest_pushes = nested_seed_pushes_for_inner_category(language, inner_cat);
         // Injection variants use Box<Inner> (e.g. ProcInt(Box<Int>)); push the unwrapped value.
         pushes.push(quote! {
             if let #cat::#label(inner) = &initial {
                 prog.#inner_cat_lower.push((inner.as_ref().clone(),));
+                #(#nest_pushes)*
             }
         });
     }
     quote! { #(#pushes)* }
+}
+
+/// Generate nested seed pushes for a category: when we have pushed `inner` (of type inner_cat),
+/// also push any sub-term that is a single-param constructor whose param is another category.
+fn nested_seed_pushes_for_inner_category(
+    language: &LanguageDef,
+    inner_cat: &Ident,
+) -> Vec<TokenStream> {
+    let mut pushes = Vec::new();
+    for rule in &language.terms {
+        if rule.category != *inner_cat {
+            continue;
+        }
+        let Some(ref ctx) = rule.term_context else {
+            continue;
+        };
+        if ctx.len() != 1 {
+            continue;
+        }
+        let param = &ctx[0];
+        let TermParam::Simple { ty, .. } = param else {
+            continue;
+        };
+        let TypeExpr::Base(param_cat) = ty else {
+            continue;
+        };
+        if *param_cat == *inner_cat {
+            continue;
+        }
+        let rule_label = &rule.label;
+        let param_cat_lower = format_ident!("{}", param_cat.to_string().to_lowercase());
+        pushes.push(quote! {
+            if let #inner_cat::#rule_label(sub) = inner.as_ref() {
+                prog.#param_cat_lower.push((sub.as_ref().clone(),));
+            }
+        });
+    }
+    pushes
+}
+
+/// Like nested_seed_pushes_for_inner_category but for an owned value (e.g. `initial: Int` in core
+/// seed arms). Used so that when we seed Int(LenMap(m)) we also seed map(m) and fold can run.
+fn nested_seed_pushes_for_category_value(language: &LanguageDef, cat: &Ident) -> Vec<TokenStream> {
+    let mut pushes = Vec::new();
+    for rule in &language.terms {
+        if rule.category != *cat {
+            continue;
+        }
+        let Some(ref ctx) = rule.term_context else {
+            continue;
+        };
+        if ctx.len() != 1 {
+            continue;
+        }
+        let param = &ctx[0];
+        let TermParam::Simple { ty, .. } = param else {
+            continue;
+        };
+        let TypeExpr::Base(param_cat) = ty else {
+            continue;
+        };
+        if *param_cat == *cat {
+            continue;
+        }
+        let rule_label = &rule.label;
+        let param_cat_lower = format_ident!("{}", param_cat.to_string().to_lowercase());
+        pushes.push(quote! {
+            if let #cat::#rule_label(sub) = &initial {
+                prog.#param_cat_lower.push((sub.as_ref().clone(),));
+            }
+        });
+    }
+    pushes
 }
 
 /// Generate the Language struct when the language has multiple types (multi-category parse and run).
@@ -1224,12 +1328,15 @@ fn generate_language_struct_multi(
             } else {
                 quote! {}
             };
+            // When seeding e.g. Int(LenMap(m)), also seed map(m) so fold_map can run (same as core arms).
+            let nest_pushes = nested_seed_pushes_for_category_value(language, cat);
             quote! {
                 #inner_enum_name::#variant(inner) => {
                     let initial = inner.clone();
                     prog.#cat_lower.push((initial.clone(),));
                     #seed_step_term
                     #injection_pushes
+                    #(#nest_pushes)*
                 }
             }
         })
@@ -1250,8 +1357,13 @@ fn generate_language_struct_multi(
             // List/Bag implement Display (ListLit/BagLit produce [] and {}), use Display for round-trip parsing
             let display_fmt = quote! { format!("{}", t) };
             quote! {
-                #inner_enum_name::#variant(_) => {
-                    let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
+                #inner_enum_name::#variant(inner) => {
+                    let mut all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
+                    // Ensure the seed term is in the graph so normal_form_reachable_from(term.term_id()) finds it.
+                    let initial_inner = inner.clone();
+                    if !all_terms.contains(&initial_inner) {
+                        all_terms.push(initial_inner);
+                    }
                     let rewrites: Vec<(#cat, #cat)> = prog.#rw_rel.iter().map(|(from, to)| (from.clone(), to.clone())).collect();
                     let term_infos: Vec<mettail_runtime::TermInfo> = all_terms.iter().map(|t| {
                         let wrapped = #inner_enum_name::#variant(t.clone());
@@ -1373,7 +1485,28 @@ fn generate_language_struct_multi(
         let core_cats_ref = core_cats
             .as_ref()
             .expect("core_raw_content implies core_cats");
-        let core_cats_for_dispatch: std::collections::BTreeSet<String> = if primary_has_injections {
+        // Categories that have rules with a single param from another category (e.g. Int has LenMap(Map), LenList(List))
+        // must use the full struct so nested seeding and cross-category rules run; core struct may omit or
+        // filter those rules, leading to 1 term and 0 rewrites when exec'ing e.g. maplength(x) from env.
+        let cats_with_cross_category_param: std::collections::BTreeSet<String> = language
+            .terms
+            .iter()
+            .filter(|r| {
+                let Some(ref ctx) = r.term_context else {
+                    return false;
+                };
+                if ctx.len() != 1 {
+                    return false;
+                }
+                let param = &ctx[0];
+                let TermParam::Simple { ty: TypeExpr::Base(param_cat), .. } = param else {
+                    return false;
+                };
+                param_cat.to_string() != r.category.to_string()
+            })
+            .map(|r| r.category.to_string())
+            .collect();
+        let base: std::collections::BTreeSet<String> = if primary_has_injections {
             core_cats_ref
                 .iter()
                 .filter(|c| **c != primary_type.to_string())
@@ -1382,8 +1515,13 @@ fn generate_language_struct_multi(
         } else {
             core_cats_ref.clone()
         };
+        let core_cats_for_dispatch: std::collections::BTreeSet<String> = base
+            .difference(&cats_with_cross_category_param)
+            .cloned()
+            .collect();
 
-        // Build seed+extract arms for core struct (same logic, different prog type)
+        // Build seed+extract arms for core struct (same logic, different prog type).
+        // Include nested seed pushes so that e.g. Int(LenMap(m)) also seeds map(m) and fold can run.
         let core_seed_arms: Vec<TokenStream> = language
             .types
             .iter()
@@ -1401,11 +1539,13 @@ fn generate_language_struct_multi(
                         }
                     })
                     .unwrap_or_default();
+                let nest_pushes = nested_seed_pushes_for_category_value(language, cat);
                 quote! {
                     #inner_enum_name::#variant(inner) => {
                         let initial = inner.clone();
                         prog.#cat_lower.push((initial.clone(),));
                         #seed_step_term
+                        #(#nest_pushes)*
                     }
                 }
             })
@@ -1424,8 +1564,12 @@ fn generate_language_struct_multi(
                 // List/Bag implement Display (ListLit/BagLit produce [] and {}), use Display for round-trip parsing
                 let display_fmt = quote! { format!("{}", t) };
                 quote! {
-                    #inner_enum_name::#variant(_) => {
-                        let all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
+                    #inner_enum_name::#variant(inner) => {
+                        let mut all_terms: Vec<#cat> = prog.#cat_lower.iter().map(|(p,)| p.clone()).collect();
+                        let initial_inner = inner.clone();
+                        if !all_terms.contains(&initial_inner) {
+                            all_terms.push(initial_inner);
+                        }
                         let rewrites: Vec<(#cat, #cat)> = prog.#rw_rel.iter().map(|(from, to)| (from.clone(), to.clone())).collect();
                         let term_infos: Vec<mettail_runtime::TermInfo> = all_terms.iter().map(|t| {
                             let wrapped = #inner_enum_name::#variant(t.clone());

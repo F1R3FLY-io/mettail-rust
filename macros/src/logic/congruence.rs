@@ -23,12 +23,18 @@ use quote::{format_ident, quote};
 use std::collections::BTreeMap;
 use syn::Ident;
 
-/// True if this category is List or Bag (collection type); no congruence rules are generated for these.
+/// True if this category is a collection-only category that should NOT get congruence rules.
+///
+/// We skip List/Bag because only the injected primary category congruence (e.g. ProcList/ProcBag)
+/// is required. Map is treated as first-class and DOES get congruence (key and value positions).
 fn is_collection_category(language: &LanguageDef, category: &Ident) -> bool {
-    language
-        .get_type(category)
-        .and_then(|t| t.collection_kind.as_ref())
-        .is_some()
+    matches!(
+        language
+            .get_type(category)
+            .and_then(|t| t.collection_kind.as_ref()),
+        Some(crate::ast::language::CollectionCategory::List(_))
+            | Some(crate::ast::language::CollectionCategory::Bag(_))
+    )
 }
 
 /// Entry for a simple congruence rule to be consolidated.
@@ -164,11 +170,73 @@ pub fn generate_auto_congruence_rules(
         }
     }
 
-    // No congruence for List/Bag literal constructors (ListLit, BagLit).
-    // We only need rewrites for Proc (e.g. ProcList/ProcBag congruence); rewriting
-    // inside list/bag literals element-by-element is not required.
+    // Add congruence for Map literal constructor (MapLit) when Map exists as a type.
+    for lang_type in &language.types {
+        if !in_cat_filter(&lang_type.name, cat_filter) {
+            continue;
+        }
+        let is_map = matches!(
+            lang_type.collection_kind.as_ref(),
+            Some(crate::ast::language::CollectionCategory::Map(_))
+        );
+        if !is_map {
+            continue;
+        }
+        let map_cat = &lang_type.name;
+        let elem_cat = language
+            .collection_element_type_for_category(map_cat)
+            .unwrap_or_else(|| format_ident!("Proc"));
+        if let Some(ts) = generate_map_literal_congruence(map_cat, &elem_cat) {
+            rules.push(ts);
+        }
+    }
 
     rules
+}
+
+/// Congruence for `Map::MapLit(HashMapLit<Proc, Proc>)`.
+///
+/// Generates both:
+/// - rewrite in key position
+/// - rewrite in value position
+fn generate_map_literal_congruence(
+    map_category: &Ident,
+    element_category: &Ident,
+) -> Option<TokenStream> {
+    let rn = relation_names(map_category);
+    let cat_lower = &rn.cat_lower;
+    let rw_rel = &rn.rw_rel;
+    let elem_rn = relation_names(element_category);
+    let elem_rw_rel = &elem_rn.rw_rel;
+
+    let constructor = format_ident!("MapLit");
+
+    Some(quote! {
+        // Rewrite a value at some key.
+        #rw_rel(parent.clone(), result) <--
+            #cat_lower(parent),
+            if let #map_category::#constructor(ref map) = parent,
+            for (k, v) in map.iter(),
+            #elem_rw_rel(v.clone(), v_rewritten),
+            let result = #map_category::#constructor({
+                let mut m = map.clone();
+                m.insert(k.clone(), v_rewritten.clone());
+                m
+            });
+
+        // Rewrite a key (moving its value).
+        #rw_rel(parent.clone(), result) <--
+            #cat_lower(parent),
+            if let #map_category::#constructor(ref map) = parent,
+            for (k, v) in map.iter(),
+            #elem_rw_rel(k.clone(), k_rewritten),
+            let result = #map_category::#constructor({
+                let mut m = map.clone();
+                m.remove(k);
+                m.insert(k_rewritten.clone(), v.clone());
+                m
+            });
+    })
 }
 
 /// Classify a congruence rewrite rule and either generate it immediately
@@ -473,6 +541,11 @@ fn generate_collection_congruence(
                         });
                 })
             }
+        },
+        CollectionType::HashMap => {
+            // Phase 1 Map is a literal constructor (MapLit) rather than a GrammarItem::Collection,
+            // so we don't generate congruence for HashMap here.
+            None
         },
     }
 }

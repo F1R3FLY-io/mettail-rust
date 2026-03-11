@@ -16,6 +16,7 @@ language! {
         ![str] as Str
         ![Vec<Proc>] as List
         ![mettail_runtime::HashBag<Proc>] as Bag
+        ![HashMap<Proc, Proc>] as Map
     },
     terms {
         // Injection into Proc (unified variant) so List/Bag elements are Proc
@@ -25,6 +26,7 @@ language! {
         ProcStr . s:Str |- s : Proc ;
         ProcList . l:List |- l : Proc ;
         ProcBag . b:Bag |- b : Proc ;
+        ProcMap . m:Map |- m : Proc ;
         // Ternary conditional (right-associative so a ? b : c ? d : e = a ? b : (c ? d : e))
         Tern . c:Int, t:Int, e:Int |- c "?" t ":" e : Int ![{ if c != 0 { t } else { e } }] step right;
         // Comparison operations
@@ -185,6 +187,31 @@ language! {
         RemoveBag . a:Bag, e:Proc |- "remove" "(" a "," e ")" : Bag ![a.remove_one(&e)] fold;
         DiffBag . a:Bag, b:Bag |- "diff" "(" a "," b ")" : Bag ![a.diff(&b)] fold;
         CountBag . b:Bag, e:Proc |- "count" "(" b "," e ")" : Int ![{ mettail_runtime::HashBag::count(&b, &e) as i32 }] fold;
+        // Map operations (Map = HashMapLit<Proc, Proc>). Use "maplength" to avoid ambiguous dispatch with length(List).
+        LenMap . a:Map |- "maplength" "(" a ")" : Int ![
+            a.len() as i32
+        ] fold;
+        GetMap . m:Map, k:Proc |- "get" "(" m "," k ")" : Proc ![
+            m.get(&k).cloned().expect("get: key not found")
+        ] fold;
+        PutMap . m:Map, k:Proc, v:Proc |- "put" "(" m "," k "," v ")" : Map ![
+            { let mut m = m.clone(); m.insert(k.clone(), v.clone()); m }
+        ] fold;
+        DeleteMap . m:Map, k:Proc |- "delete" "(" m "," k ")" : Map ![
+            { let mut m = m.clone(); m.remove(&k); m }
+        ] fold;
+        MergeMap . a:Map, b:Map |- "merge" "(" a "," b ")" : Map ![
+            { let mut m = a.clone(); for (k, v) in b.iter() { m.insert(k.clone(), v.clone()); } m }
+        ] fold;
+        HasMap . m:Map, k:Proc |- "has" "(" m "," k ")" : Bool ![
+            m.get(&k).is_some()
+        ] fold;
+        KeysMap . m:Map |- "keys" "(" m ")" : List ![
+            m.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()
+        ] fold;
+        ValuesMap . m:Map |- "values" "(" m ")" : List ![
+            m.iter().map(|(_, v)| v.clone()).collect::<Vec<_>>()
+        ] fold;
     },
     equations {
     },
@@ -293,6 +320,22 @@ language! {
         ProcStrCong . | S ~> T |- (ProcStr S) ~> (ProcStr T);
         ProcListCong . | S ~> T |- (ProcList S) ~> (ProcList T);
         ProcBagCong . | S ~> T |- (ProcBag S) ~> (ProcBag T);
+        ProcMapCong . | S ~> T |- (ProcMap S) ~> (ProcMap T);
+        // Map operations
+        LenMapCong . | S ~> T |- (LenMap S) ~> (LenMap T);
+        GetMapCongL . | S ~> T |- (GetMap S R) ~> (GetMap T R);
+        GetMapCongR . | S ~> T |- (GetMap L S) ~> (GetMap L T);
+        PutMapCongL . | S ~> T |- (PutMap S K V) ~> (PutMap T K V);
+        PutMapCongKey . | S ~> T |- (PutMap M S V) ~> (PutMap M T V);
+        PutMapCongVal . | S ~> T |- (PutMap M K S) ~> (PutMap M K T);
+        DeleteMapCongL . | S ~> T |- (DeleteMap S R) ~> (DeleteMap T R);
+        DeleteMapCongR . | S ~> T |- (DeleteMap L S) ~> (DeleteMap L T);
+        MergeMapCongL . | S ~> T |- (MergeMap S R) ~> (MergeMap T R);
+        MergeMapCongR . | S ~> T |- (MergeMap L S) ~> (MergeMap L T);
+        HasMapCongL . | S ~> T |- (HasMap S R) ~> (HasMap T R);
+        HasMapCongR . | S ~> T |- (HasMap L S) ~> (HasMap L T);
+        KeysMapCong . | S ~> T |- (KeysMap S) ~> (KeysMap T);
+        ValuesMapCong . | S ~> T |- (ValuesMap S) ~> (ValuesMap T);
         // Custom operation
         CustomOpCongL . | S ~> T |- (CustomOp S R) ~> (CustomOp T R);
         CustomOpCongR . | S ~> T |- (CustomOp L S) ~> (CustomOp L T);

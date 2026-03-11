@@ -40,7 +40,8 @@ export const categoryInfo = {
 			"And",
 			"Or",
 			"Xor",
-			"ProcToBool"
+			"ProcToBool",
+			"HasMap"
 		],
 		colour: "7a51e0",
 	},
@@ -74,16 +75,27 @@ export const categoryInfo = {
 			"ProcToInt",
 			"CustomOp",
 			"LenList",
-			"CountBag"
+			"CountBag",
+			"LenMap"
 		],
 		colour: "51b0e0",
 	},
 	List: {
 		constructors: [
 			"ConcatList",
-			"DeleteList"
+			"DeleteList",
+			"KeysMap",
+			"ValuesMap"
 		],
 		colour: "c1e051",
+	},
+	Map: {
+		constructors: [
+			"PutMap",
+			"DeleteMap",
+			"MergeMap"
+		],
+		colour: "51e0b7",
 	},
 	Proc: {
 		constructors: [
@@ -93,7 +105,9 @@ export const categoryInfo = {
 			"ProcStr",
 			"ProcList",
 			"ProcBag",
-			"ElemList"
+			"ProcMap",
+			"ElemList",
+			"GetMap"
 		],
 		colour: "208bfe",
 	},

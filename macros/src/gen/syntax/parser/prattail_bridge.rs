@@ -86,7 +86,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
         }
     }
 
-    // Add synthetic literal rules for List/Bag categories (parameterised by delimiters)
+    // Add synthetic literal rules for List/Bag/Map categories (parameterised by delimiters)
     let elem_cat = language
         .types
         .iter()
@@ -96,13 +96,14 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
     if let Some(ref elem_cat) = elem_cat {
         for lang_type in &language.types {
             if let Some(ref coll) = lang_type.collection_kind {
-                let (label, open, close, sep, kind) = match coll {
+                let (label, open, close, sep, kind, key_val_sep) = match coll {
                     CollectionCategory::List(d) => (
                         "ListLit".to_string(),
                         d.open.clone(),
                         d.close.clone(),
                         d.sep.clone(),
                         CollectionKind::Vec,
+                        None,
                     ),
                     CollectionCategory::Bag(d) => (
                         "BagLit".to_string(),
@@ -110,6 +111,15 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                         d.close.clone(),
                         d.sep.clone(),
                         CollectionKind::HashBag,
+                        None,
+                    ),
+                    CollectionCategory::Map(d) => (
+                        "MapLit".to_string(),
+                        d.open.clone(),
+                        d.close.clone(),
+                        d.sep.clone(),
+                        CollectionKind::HashMap,
+                        d.key_val_sep.clone(),
                     ),
                 };
                 let category = lang_type.name.to_string();
@@ -123,6 +133,7 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
                             element_category: elem_cat.clone(),
                             separator: sep,
                             kind,
+                            key_val_separator: key_val_sep,
                         },
                         SyntaxItemSpec::Terminal(close),
                     ],
@@ -384,6 +395,7 @@ fn convert_pattern_op(
                         element_category: elem_cat,
                         separator: separator.clone(),
                         kind,
+                        key_val_separator: None,
                     });
                 }
             }
@@ -517,6 +529,7 @@ fn convert_chained_sep(
                         element_category: "Unknown".to_string(),
                         separator: separator.to_string(),
                         kind: CollectionKind::Vec,
+                        key_val_separator: None,
                     });
                 },
             }
@@ -528,6 +541,7 @@ fn convert_chained_sep(
                 element_category: "Unknown".to_string(),
                 separator: separator.to_string(),
                 kind: CollectionKind::Vec,
+                key_val_separator: None,
             });
         },
     }
@@ -600,6 +614,7 @@ fn convert_grammar_items(
                     CollectionType::HashBag => CollectionKind::HashBag,
                     CollectionType::HashSet => CollectionKind::HashSet,
                     CollectionType::Vec => CollectionKind::Vec,
+                    CollectionType::HashMap => CollectionKind::HashMap,
                 };
                 // Add open delimiter if present
                 if let Some((ref open, _)) = delimiters {
@@ -610,6 +625,7 @@ fn convert_grammar_items(
                     element_category: element_type.to_string(),
                     separator: separator.clone(),
                     kind,
+                    key_val_separator: None,
                 });
                 // Add close delimiter if present
                 if let Some((_, ref close)) = delimiters {
@@ -630,6 +646,7 @@ fn extract_base_category(ty: &TypeExpr) -> String {
         TypeExpr::Collection { element, .. } => extract_base_category(element),
         TypeExpr::Arrow { codomain, .. } => extract_base_category(codomain),
         TypeExpr::MultiBinder(inner) => extract_base_category(inner),
+        TypeExpr::Map { value, .. } => extract_base_category(value),
     }
 }
 
@@ -653,6 +670,7 @@ fn find_collection_info(name: &str, context: &[TermParam]) -> (String, Collectio
                         CollectionType::HashBag => CollectionKind::HashBag,
                         CollectionType::HashSet => CollectionKind::HashSet,
                         CollectionType::Vec => CollectionKind::Vec,
+                        CollectionType::HashMap => CollectionKind::HashMap,
                     };
                     return (elem_cat, kind);
                 }

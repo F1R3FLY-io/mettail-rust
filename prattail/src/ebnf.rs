@@ -809,11 +809,13 @@ fn format_syntax_item(item: &SyntaxItemSpec) -> String {
             element_category,
             separator,
             kind,
+            key_val_separator: _,
         } => {
             let kind_str = match kind {
                 CollectionKind::HashBag => "HashBag",
                 CollectionKind::HashSet => "HashSet",
                 CollectionKind::Vec => "Vec",
+                CollectionKind::HashMap => "HashMap",
             };
             format!("{{ {} / \"{}\" }}  (* {} *)", element_category, separator, kind_str)
         },
@@ -934,6 +936,7 @@ fn format_rule_annotation(
                 CollectionKind::HashBag => "HashBag",
                 CollectionKind::HashSet => "HashSet",
                 CollectionKind::Vec => "Vec",
+                CollectionKind::HashMap => "HashMap",
             })
             .unwrap_or("collection");
         parts.push(kind.to_string());
@@ -1569,11 +1572,13 @@ mod tests {
                 element_category,
                 separator,
                 kind,
+                key_val_separator,
             } => RDSyntaxItem::Collection {
                 param_name: param_name.clone(),
                 element_category: element_category.clone(),
                 separator: separator.clone(),
                 kind: *kind,
+                key_val_separator: key_val_separator.clone(),
             },
             SyntaxItemSpec::ZipMapSep {
                 left_name,
@@ -1768,6 +1773,7 @@ mod tests {
                                 element_category: "Proc".to_string(),
                                 separator: ",".to_string(),
                                 kind: CollectionKind::Vec,
+                                key_val_separator: None,
                             },
                             SyntaxItemSpec::Terminal("]".to_string()),
                         ],

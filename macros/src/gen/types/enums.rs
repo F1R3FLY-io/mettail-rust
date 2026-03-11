@@ -36,6 +36,9 @@ fn generate_variant_from_items_for_term_context(
                     CollectionType::HashBag => quote! { mettail_runtime::HashBag<#element_type> },
                     CollectionType::HashSet => quote! { std::collections::HashSet<#element_type> },
                     CollectionType::Vec => quote! { Vec<#element_type> },
+                    CollectionType::HashMap => {
+                        quote! { mettail_runtime::HashMapLit<#element_type, #element_type> }
+                    },
                 };
                 field_types.push(coll_ts);
             },
@@ -102,7 +105,7 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             }
         }
 
-        // Auto-generate literal variant for List/Bag (payload from native_type when set, else Vec<elem>/HashBag<elem>)
+        // Auto-generate literal variant for List/Bag/Map (payload from native_type when set, else Vec/HashBag/HashMapLit)
         let elem_type = language
             .types
             .iter()
@@ -111,17 +114,26 @@ pub fn generate_ast_enums(language: &LanguageDef) -> TokenStream {
             .or_else(|| language.types.first().map(|t| &t.name));
         if let Some(ref collection_kind) = lang_type.collection_kind.as_ref() {
             let payload_opt: Option<TokenStream> = if let Some(ref native_type) = lang_type.native_type {
-                Some(quote! { #native_type })
+                // `![HashMap] as Map` (implicit params) parses as a bare `HashMap` type.
+                // Use the runtime wrapper type so the generated enums can derive Hash/Ord.
+                let nt = quote! { #native_type }.to_string();
+                if matches!(collection_kind, CollectionCategory::Map(_)) && nt.trim() == "HashMap" {
+                    elem_type.map(|elem_type| quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> })
+                } else {
+                    Some(quote! { #native_type })
+                }
             } else {
                 elem_type.map(|elem_type| match collection_kind {
                     CollectionCategory::List(_) => quote! { Vec<#elem_type> },
                     CollectionCategory::Bag(_) => quote! { mettail_runtime::HashBag<#elem_type> },
+                    CollectionCategory::Map(_) => quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> },
                 })
             };
             if let (Some(payload_type), false) = (payload_opt, has_literal_rule) {
                 let literal_label = match collection_kind {
                     CollectionCategory::List(_) => quote::format_ident!("ListLit"),
                     CollectionCategory::Bag(_) => quote::format_ident!("BagLit"),
+                    CollectionCategory::Map(_) => quote::format_ident!("MapLit"),
                 };
                 variants.push(quote! {
                     #literal_label(#payload_type)
@@ -309,6 +321,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                     CollectionType::HashBag => quote! { mettail_runtime::HashBag },
                     CollectionType::HashSet => quote! { std::collections::HashSet },
                     CollectionType::Vec => quote! { Vec },
+                    CollectionType::HashMap => quote! { mettail_runtime::HashMapLit },
                 };
                 quote! { #label(#coll_type_ident<#element_type>) }
             },
@@ -329,6 +342,7 @@ fn generate_variant(rule: &GrammarRule, language: &LanguageDef) -> TokenStream {
                         CollectionType::HashBag => quote! { mettail_runtime::HashBag },
                         CollectionType::HashSet => quote! { std::collections::HashSet },
                         CollectionType::Vec => quote! { Vec },
+                        CollectionType::HashMap => quote! { mettail_runtime::HashMapLit },
                     };
                     quote! { #coll_type_ident<#element_type> }
                 },
@@ -439,6 +453,8 @@ fn generate_binder_variant(rule: &GrammarRule) -> TokenStream {
                         CollectionType::HashBag => quote! { mettail_runtime::HashBag },
                         CollectionType::HashSet => quote! { std::collections::HashSet },
                         CollectionType::Vec => quote! { Vec },
+                        // Map collection fields are not supported in old-syntax GrammarItem::Collection.
+                        CollectionType::HashMap => quote! { mettail_runtime::HashBag },
                     };
                     fields.push(quote! { #coll_type_ident<#element_type> });
                 },
@@ -505,7 +521,15 @@ fn type_expr_to_field_type_with_fresh_ident(
                 CollectionType::HashBag => quote! { mettail_runtime::HashBag<#elem_type> },
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
+                CollectionType::HashMap => {
+                    quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
+                },
             }
+        },
+        TypeExpr::Map { key, value } => {
+            let k = type_expr_to_rust_type(key);
+            let v = type_expr_to_rust_type(value);
+            quote! { mettail_runtime::HashMapLit<#k, #v> }
         },
         TypeExpr::Arrow { .. } => {
             quote! { Box<dyn std::any::Any> }
@@ -529,7 +553,15 @@ fn type_expr_to_rust_type(ty: &TypeExpr) -> TokenStream {
                 CollectionType::HashBag => quote! { mettail_runtime::HashBag<#elem_type> },
                 CollectionType::HashSet => quote! { std::collections::HashSet<#elem_type> },
                 CollectionType::Vec => quote! { Vec<#elem_type> },
+                CollectionType::HashMap => {
+                    quote! { mettail_runtime::HashMapLit<#elem_type, #elem_type> }
+                },
             }
+        },
+        TypeExpr::Map { key, value } => {
+            let k = type_expr_to_rust_type(key);
+            let v = type_expr_to_rust_type(value);
+            quote! { mettail_runtime::HashMapLit<#k, #v> }
         },
         TypeExpr::Arrow { domain, codomain } => {
             let dom = type_expr_to_rust_type(domain);

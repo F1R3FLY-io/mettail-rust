@@ -7,7 +7,7 @@
 use super::common::relation_names;
 use crate::ast::grammar::TermParam;
 use crate::ast::language::LanguageDef;
-use crate::ast::types::EvalMode;
+use crate::ast::types::{EvalMode, TypeExpr};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -54,13 +54,23 @@ pub fn list_all_relations_for_extraction(language: &LanguageDef) -> Vec<Relation
         });
     }
 
-    // Fold relations (for collection categories, second param is payload type)
+    // Fold relations (for categories that have fold rules or appear as fold-rule params)
     for lang_type in &language.types {
         let cat = &lang_type.name;
-        let has_fold = language
+        let has_fold_as_result = language
             .terms
             .iter()
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
+        let has_fold_as_param = language.terms.iter().any(|r| {
+            r.eval_mode == Some(EvalMode::Fold)
+                && r.term_context.as_ref().is_some_and(|ctx| {
+                    ctx.iter().any(|p| match p {
+                        TermParam::Simple { ty: TypeExpr::Base(ref id), .. } => id == cat,
+                        _ => false,
+                    })
+                })
+        });
+        let has_fold = has_fold_as_result || has_fold_as_param;
         if has_fold {
             let fold_rel = format_ident!("fold_{}", cat.to_string().to_lowercase());
             let ty = cat.to_string();
@@ -145,13 +155,25 @@ pub fn generate_relations(language: &LanguageDef) -> TokenStream {
             relation #rw_rel(#cat, #cat);
         });
 
-        // Fold (big-step eval) relation, only if this category has fold-mode constructors.
-        // For collection categories (List, Bag), second param is the payload type (Vec<Proc>, HashBag<Proc>).
-        // For native-only (Int, Float, etc.) we keep (#cat, #cat) so Ascent relation types satisfy Eq+Hash.
-        let has_fold = language
+        // Fold (big-step eval) relation when (1) this category has fold-mode constructors, or
+        // (2) this category appears as a parameter in some fold rule (e.g. Map in LenMap(Map)->Int).
+        // For collection categories (List, Bag, Map), second param is the payload type.
+        let has_fold_as_result = language
             .terms
             .iter()
             .any(|r| r.category == *cat && r.eval_mode == Some(EvalMode::Fold));
+        let has_fold_as_param = language.terms.iter().any(|r| {
+            r.eval_mode == Some(EvalMode::Fold)
+                && r.term_context.as_ref().is_some_and(|ctx| {
+                    ctx.iter().any(|p| match p {
+                        TermParam::Simple { ty: TypeExpr::Base(ref id), .. } => {
+                            id == &lang_type.name
+                        },
+                        _ => false,
+                    })
+                })
+        });
+        let has_fold = has_fold_as_result || has_fold_as_param;
         if has_fold {
             let fold_second_ty =
                 match (lang_type.collection_kind.as_ref(), lang_type.native_type.as_ref()) {

@@ -9,6 +9,7 @@ pub enum CollectionType {
     HashBag,
     HashSet,
     Vec,
+    HashMap,
 }
 
 //=============================================================================
@@ -43,6 +44,9 @@ pub enum TypeExpr {
         coll_type: CollectionType,
         element: Box<TypeExpr>,
     },
+
+    /// Map type: HashMap(K, V)
+    Map { key: Box<TypeExpr>, value: Box<TypeExpr> },
 }
 
 impl std::fmt::Display for TypeExpr {
@@ -56,9 +60,11 @@ impl std::fmt::Display for TypeExpr {
                     CollectionType::Vec => "Vec",
                     CollectionType::HashBag => "HashBag",
                     CollectionType::HashSet => "HashSet",
+                    CollectionType::HashMap => "HashMap",
                 };
                 write!(f, "{}({})", coll_name, element)
             },
+            TypeExpr::Map { key, value } => write!(f, "HashMap({}, {})", key, value),
         }
     }
 }
@@ -99,15 +105,25 @@ fn parse_type_atom(input: ParseStream) -> SynResult<TypeExpr> {
         let ident: Ident = fork.parse()?;
         let ident_str = ident.to_string();
 
-        if matches!(ident_str.as_str(), "Vec" | "HashBag" | "HashSet") {
+        if matches!(ident_str.as_str(), "Vec" | "HashBag" | "HashSet" | "HashMap") {
             // Check if followed by parentheses
             if fork.peek(syn::token::Paren) {
                 // Commit to collection parse
                 let _: Ident = input.parse()?;
                 let content;
                 syn::parenthesized!(content in input);
-                let element: TypeExpr = parse_type_expr(&content)?;
 
+                if ident_str == "HashMap" {
+                    let key: TypeExpr = parse_type_expr(&content)?;
+                    content.parse::<Token![,]>()?;
+                    let value: TypeExpr = parse_type_expr(&content)?;
+                    return Ok(TypeExpr::Map {
+                        key: Box::new(key),
+                        value: Box::new(value),
+                    });
+                }
+
+                let element: TypeExpr = parse_type_expr(&content)?;
                 let coll_type = match ident_str.as_str() {
                     "Vec" => CollectionType::Vec,
                     "HashBag" => CollectionType::HashBag,

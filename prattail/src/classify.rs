@@ -373,6 +373,7 @@ mod tests {
                 element_category: "Int".to_string(),
                 separator: ",".to_string(),
                 kind: CollectionKind::Vec,
+                key_val_separator: None,
             },
             SyntaxItemSpec::Terminal("]".to_string()),
         ];

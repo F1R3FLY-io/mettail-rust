@@ -195,30 +195,46 @@ pub struct CollectionDelimiters {
     pub open: String,
     pub close: String,
     pub sep: String,
+    /// Map-only separator between key and value (e.g., ":").
+    /// `None` for List/Bag, `Some` for Map.
+    pub key_val_sep: Option<String>,
 }
 
-/// Collection category kind (List or Bag) with optional delimiters.
+/// Collection category kind (List, Bag, Map) with optional delimiters.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CollectionCategory {
     List(CollectionDelimiters),
     Bag(CollectionDelimiters),
+    Map(CollectionDelimiters),
 }
 
 impl CollectionCategory {
-    /// Default delimiters for List: `[`, `]`, `,`
+    /// Default delimiters for List: `list(`, `)`, `,`
     pub fn list_defaults() -> CollectionDelimiters {
         CollectionDelimiters {
-            open: "[".to_string(),
-            close: "]".to_string(),
+            open: "list(".to_string(),
+            close: ")".to_string(),
             sep: ",".to_string(),
+            key_val_sep: None,
         }
     }
-    /// Default delimiters for Bag: `{`, `}`, `,`
+    /// Default delimiters for Bag: `bag(`, `)`, `,`
     pub fn bag_defaults() -> CollectionDelimiters {
         CollectionDelimiters {
-            open: "{".to_string(),
-            close: "}".to_string(),
+            open: "bag(".to_string(),
+            close: ")".to_string(),
             sep: ",".to_string(),
+            key_val_sep: None,
+        }
+    }
+
+    /// Default delimiters for Map: `map(`, `)`, `,`, `:`
+    pub fn map_defaults() -> CollectionDelimiters {
+        CollectionDelimiters {
+            open: "map(".to_string(),
+            close: ")".to_string(),
+            sep: ",".to_string(),
+            key_val_sep: Some(":".to_string()),
         }
     }
 }
@@ -291,15 +307,19 @@ impl LanguageDef {
     pub fn collection_element_type_for_category(&self, category: &Ident) -> Option<Ident> {
         // Type-based first: when category is a collection type (List/Bag) with native_type, extract element from e.g. Vec<Proc>, HashBag<Proc>
         let cat_str = category.to_string();
-        if cat_str == "List" || cat_str == "Bag" {
+        if cat_str == "List" || cat_str == "Bag" || cat_str == "Map" {
             if let Some(lang_type) = self.types.iter().find(|t| &t.name == category) {
                 if lang_type.collection_kind.is_some() {
+                    // Map is implicitly HashMap<Proc, Proc> for Phase 1, so element type is always Proc.
+                    if cat_str == "Map" {
+                        return Some(quote::format_ident!("Proc"));
+                    }
                     if let Some(native_type) = lang_type.native_type.as_ref() {
                         if let Some(elem) = element_ident_from_native_type(native_type) {
                             return Some(elem);
                         }
                     }
-                    // Fallback: native_type parse failed (e.g. different Type shape from macro input); assume element type Proc
+                    // Fallback: native_type parse failed (e.g. different Type shape from macro input); assume element type Proc.
                     return Some(quote::format_ident!("Proc"));
                 }
             }
@@ -332,6 +352,15 @@ impl LanguageDef {
         self.types
             .iter()
             .find(|t| matches!(t.collection_kind.as_ref(), Some(CollectionCategory::Bag(_))))
+            .map(|t| &t.name)
+    }
+
+    /// Type name for the Map category (e.g. "Map") if present.
+    #[allow(dead_code)]
+    pub fn map_type_name(&self) -> Option<&Ident> {
+        self.types
+            .iter()
+            .find(|t| matches!(t.collection_kind.as_ref(), Some(CollectionCategory::Map(_))))
             .map(|t| &t.name)
     }
 }
@@ -450,18 +479,46 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
             // Parse [Type] - the brackets are part of the syntax, not the type
             let bracket_content;
             syn::bracketed!(bracket_content in content);
-            let native_type = bracket_content.parse::<Type>()?;
+            let native_type_raw = bracket_content.parse::<Type>()?;
 
             let _ = content.parse::<Token![as]>()?;
             let name = content.parse::<Ident>()?;
             let name_str = name.to_string();
+
+            // Special-case Map: `![HashMap] as Map` or `![HashMap<Proc, Proc>] as Map`.
+            // Both expand to the runtime wrapper (HashMapLit) so the engine's deterministic Hash/Ord apply.
+            let native_type = if name_str == "Map" {
+                let is_hashmap = match &native_type_raw {
+                    Type::Path(tp) => tp.path.segments.last().is_some_and(|seg| {
+                        seg.ident == "HashMap"
+                            && matches!(
+                                seg.arguments,
+                                syn::PathArguments::None | syn::PathArguments::AngleBracketed(_)
+                            )
+                    }),
+                    _ => false,
+                };
+                if is_hashmap {
+                    syn::parse_str::<Type>("mettail_runtime::HashMapLit<Proc, Proc>")
+                        .expect("parse Map native type")
+                } else {
+                    native_type_raw
+                }
+            } else {
+                native_type_raw
+            };
             // Optional (Param) for collection: ![Vec<Proc>] as List or List(Proc), same for Bag
             // Optional [ "open", "close", "sep" ] for custom literal delimiters (e.g. Bag in rhocalc to avoid conflict with PPar)
-            let collection_kind = if name_str == "List" || name_str == "Bag" {
+            let collection_kind = if name_str == "List" || name_str == "Bag" || name_str == "Map" {
                 if content.peek(syn::token::Paren) {
                     let _content;
                     syn::parenthesized!(_content in content);
-                    let _ = _content.parse::<Ident>()?; // consume e.g. (Proc) for backward compat
+                    // Consume legacy params for backward compat: List(Proc), Bag(Proc), Map(Proc, Proc)
+                    let _ = _content.parse::<Ident>()?;
+                    if name_str == "Map" && _content.peek(Token![,]) {
+                        let _ = _content.parse::<Token![,]>()?;
+                        let _ = _content.parse::<Ident>()?;
+                    }
                 }
                 let delimiters: CollectionDelimiters = if content.peek(syn::token::Bracket) {
                     let bracket_content;
@@ -471,20 +528,36 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
                     let close: syn::LitStr = bracket_content.parse()?;
                     let _ = bracket_content.parse::<Token![,]>()?;
                     let sep: syn::LitStr = bracket_content.parse()?;
-                    CollectionDelimiters {
-                        open: open.value(),
-                        close: close.value(),
-                        sep: sep.value(),
+                    if name_str == "Map" {
+                        let _ = bracket_content.parse::<Token![,]>()?;
+                        let key_val_sep: syn::LitStr = bracket_content.parse()?;
+                        CollectionDelimiters {
+                            open: open.value(),
+                            close: close.value(),
+                            sep: sep.value(),
+                            key_val_sep: Some(key_val_sep.value()),
+                        }
+                    } else {
+                        CollectionDelimiters {
+                            open: open.value(),
+                            close: close.value(),
+                            sep: sep.value(),
+                            key_val_sep: None,
+                        }
                     }
                 } else if name_str == "List" {
                     CollectionCategory::list_defaults()
-                } else {
+                } else if name_str == "Bag" {
                     CollectionCategory::bag_defaults()
+                } else {
+                    CollectionCategory::map_defaults()
                 };
                 Some(if name_str == "List" {
                     CollectionCategory::List(delimiters)
-                } else {
+                } else if name_str == "Bag" {
                     CollectionCategory::Bag(delimiters)
+                } else {
+                    CollectionCategory::Map(delimiters)
                 })
             } else {
                 None
@@ -502,6 +575,8 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
                 Some(CollectionCategory::List(CollectionCategory::list_defaults()))
             } else if name_str == "Bag" {
                 Some(CollectionCategory::Bag(CollectionCategory::bag_defaults()))
+            } else if name_str == "Map" {
+                Some(CollectionCategory::Map(CollectionCategory::map_defaults()))
             } else {
                 None
             };

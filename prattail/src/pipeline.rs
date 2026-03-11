@@ -892,8 +892,13 @@ fn collect_terminals_recursive(items: &[SyntaxItemSpec]) -> Vec<String> {
     for item in items {
         match item {
             SyntaxItemSpec::Terminal(t) => terminals.push(t.clone()),
-            SyntaxItemSpec::Collection { separator, .. }
-            | SyntaxItemSpec::BinderCollection { separator, .. } => {
+            SyntaxItemSpec::Collection { separator, key_val_separator, .. } => {
+                terminals.push(separator.clone());
+                if let Some(kv) = key_val_separator {
+                    terminals.push(kv.clone());
+                }
+            },
+            SyntaxItemSpec::BinderCollection { separator, .. } => {
                 terminals.push(separator.clone());
             },
             SyntaxItemSpec::ZipMapSep { body_items, separator, .. } => {
@@ -999,11 +1004,13 @@ fn convert_syntax_item_to_rd(item: &SyntaxItemSpec) -> RDSyntaxItem {
             element_category,
             separator,
             kind,
+            key_val_separator,
         } => RDSyntaxItem::Collection {
             param_name: param_name.clone(),
             element_category: element_category.clone(),
             separator: separator.clone(),
             kind: *kind,
+            key_val_separator: key_val_separator.clone(),
         },
         SyntaxItemSpec::ZipMapSep {
             left_name,

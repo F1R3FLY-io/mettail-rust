@@ -95,6 +95,9 @@ fn collection_all_ground(name: TokenStream, coll_type: &CollectionType) -> Token
         CollectionType::Vec | CollectionType::HashSet => {
             quote! { #name.iter().all(|x| x.is_ground()) }
         },
+        CollectionType::HashMap => {
+            quote! { #name.iter().all(|(k, v)| k.is_ground() && v.is_ground()) }
+        },
     }
 }
 

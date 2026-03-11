@@ -461,6 +461,57 @@ mod native_ops {
         }
     }
 
+    mod map {
+        use super::*;
+
+        #[test]
+        fn map_len_empty() {
+            assert_reduces_to("{len(map())}", "0");
+        }
+
+        #[test]
+        fn map_len_one() {
+            assert_reduces_to("{len(map(1:2))}", "1");
+        }
+
+        #[test]
+        fn map_get() {
+            assert_reduces_to("{get(map(1:10), 1)}", "10");
+        }
+
+        #[test]
+        fn map_put() {
+            assert_reduces_to("{get(put(map(), 1, 10), 1)}", "10");
+        }
+
+        #[test]
+        fn map_merge() {
+            assert_reduces_to("{get(merge(map(1:10), map(2:20)), 2)}", "20");
+        }
+
+        #[test]
+        fn map_has() {
+            assert_reduces_to("{has(map(1:2), 1)}", "true");
+            assert_reduces_to("{has(map(1:2), 3)}", "false");
+        }
+
+        #[test]
+        fn map_keys() {
+            assert_reduces_to("{len(keys(map(1:10, 2:20)))}", "2");
+        }
+
+        #[test]
+        fn map_values() {
+            assert_reduces_to("{at(values(map(1:10, 2:20)), 1)}", "20");
+        }
+
+        #[test]
+        fn map_mapdelete() {
+            assert_reduces_to("{len(mapdelete(map(1:10, 2:20), 1))}", "1");
+            assert_reduces_to("{get(mapdelete(map(1:10, 2:20), 1), 2)}", "20");
+        }
+    }
+
     mod type_conversion {
         use super::*;
 

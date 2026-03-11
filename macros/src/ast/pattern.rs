@@ -1405,6 +1405,8 @@ impl Pattern {
         let coll_type_tok = match coll_type {
             Some(CollectionType::Vec) => quote! { Vec },
             Some(CollectionType::HashSet) => quote! { std::collections::HashSet },
+            // Map patterns are not supported yet; treat as bag-shaped for codegen.
+            Some(CollectionType::HashMap) => quote! { mettail_runtime::HashBag },
             Some(CollectionType::HashBag) | None => quote! { mettail_runtime::HashBag },
         };
 
@@ -1505,6 +1507,8 @@ fn generate_collection_rhs_with_constructor(
     let coll_type_tok = match coll_type {
         Some(CollectionType::Vec) => quote! { Vec },
         Some(CollectionType::HashSet) => quote! { std::collections::HashSet },
+        // Map patterns are not supported yet; treat as bag-shaped for codegen.
+        Some(CollectionType::HashMap) => quote! { mettail_runtime::HashBag },
         Some(CollectionType::HashBag) | None => quote! { mettail_runtime::HashBag },
     };
 

@@ -113,6 +113,24 @@ const definitions = [
 		colour: "208bfe",
 	},
 
+	// Proc Map: ...
+	{
+		type: "proc_proc_map",
+		tooltip: "Proc Map: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
 	// Tern: ... ... ...
 	{
 		type: "int_tern",
@@ -1416,6 +1434,173 @@ const definitions = [
 		inputsInline: true,
 		output: "Int",
 		colour: "51b0e0",
+	},
+
+	// Len Map: ...
+	{
+		type: "int_len_map",
+		tooltip: "Len Map: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+		],
+		inputsInline: true,
+		output: "Int",
+		colour: "51b0e0",
+	},
+
+	// Get Map: ... ...
+	{
+		type: "proc_get_map",
+		tooltip: "Get Map: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		previousStatement: "Proc",
+		nextStatement: "Proc",
+		colour: "208bfe",
+	},
+
+	// Put Map: ... ... ...
+	{
+		type: "map_put_map",
+		tooltip: "Put Map: ... ... ...",
+		message0: "%1 %2 %3",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+			{
+				type: "input_value",
+				name: "ARG3",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Map",
+		colour: "51e0b7",
+	},
+
+	// Delete Map: ... ...
+	{
+		type: "map_delete_map",
+		tooltip: "Delete Map: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Map",
+		colour: "51e0b7",
+	},
+
+	// Merge Map: ... ...
+	{
+		type: "map_merge_map",
+		tooltip: "Merge Map: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+			{
+				type: "input_value",
+				name: "ARG2",
+				check: "Map",
+			},
+		],
+		inputsInline: true,
+		output: "Map",
+		colour: "51e0b7",
+	},
+
+	// Has Map: ... ...
+	{
+		type: "bool_has_map",
+		tooltip: "Has Map: ... ...",
+		message0: "%1 %2",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+			{
+				type: "input_value",
+				name: "MESSAGE",
+				check: "Proc",
+			},
+		],
+		inputsInline: true,
+		output: "Bool",
+		colour: "7a51e0",
+	},
+
+	// Keys Map: ...
+	{
+		type: "list_keys_map",
+		tooltip: "Keys Map: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
+	},
+
+	// Values Map: ...
+	{
+		type: "list_values_map",
+		tooltip: "Values Map: ...",
+		message0: "%1",
+		args0: [
+			{
+				type: "input_value",
+				name: "ARG1",
+				check: "Map",
+			},
+		],
+		inputsInline: true,
+		output: "List",
+		colour: "c1e051",
 	}
 ];
 
