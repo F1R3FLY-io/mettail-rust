@@ -580,7 +580,7 @@ parsed.
 | Grouping           | `(...)`                                                                    | Non-capturing                                  |
 | Alternation        | `a\|b`                                                                     |                                                |
 | Quantifiers        | `*`  `+`  `?`                                                              | Greedy (NFA semantics)                         |
-| Bounded repetition | `{n}`  `{n,}`  `{n,m}`                                                     | Count-bounded                                  |
+| Bounded repetition | `{n}`  `{n,}`  `{n,m}`  `{,n}`  `{,}`                                      | Count-bounded                                  |
 
 **Not supported:** backreferences, lookahead/lookbehind, lazy quantifiers,
 named groups, anchors (`^`/`$` outside character classes).

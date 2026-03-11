@@ -23,7 +23,7 @@
 //! | Grouping | `(...)` | Non-capturing |
 //! | Alternation | <code>a&#124;b</code> | |
 //! | Quantifiers | `*` `+` `?` | Greedy (NFA semantics) |
-//! | Bounded repetition | `{n}` `{n,}` `{n,m}` | Count-bounded |
+//! | Bounded repetition | `{n}` `{n,}` `{n,m}` `{,n}` `{,}` | Count-bounded |
 //!
 //! **Not supported**: backreferences, lookahead/lookbehind, lazy quantifiers,
 //! named groups, anchors (`^$` outside character classes).
@@ -1353,7 +1353,7 @@ fn parse_quantifier(
     }
 }
 
-/// Parse `{n}`, `{n,}`, or `{n,m}`.
+/// Parse `{n}`, `{n,}`, `{n,m}`, `{,n}`, or `{,}`.
 fn parse_bounded_quantifier(
     input: &[u8],
     pos: usize,
@@ -1362,26 +1362,43 @@ fn parse_bounded_quantifier(
     let len = input.len();
     let mut i = pos + 1;
 
-    /* Parse min */
+    /* Parse min (optional — absent in {,n} and {,}) */
     let min_start = i;
     while i < len && input[i].is_ascii_digit() {
         i += 1;
     }
-    if i == min_start || i >= len {
+    if i >= len {
         return Err(RegexError {
             position: pos,
-            message: "invalid bounded repetition: expected digit after '{'".to_string(),
+            message: "unclosed bounded repetition".to_string(),
         });
     }
-    let min: u32 = std::str::from_utf8(&input[min_start..i])
-        .unwrap()
-        .parse()
-        .map_err(|_| RegexError {
-            position: min_start,
-            message: "bounded repetition: min too large".to_string(),
-        })?;
+    let has_min_digits = i > min_start;
+    let min: u32 = if has_min_digits {
+        std::str::from_utf8(&input[min_start..i])
+            .expect("digits are valid UTF-8")
+            .parse()
+            .map_err(|_| RegexError {
+                position: min_start,
+                message: "bounded repetition: min too large".to_string(),
+            })?
+    } else if input[i] == b',' {
+        0 // {,n} or {,} — min defaults to 0
+    } else {
+        return Err(RegexError {
+            position: pos,
+            message: "invalid bounded repetition: expected digit or ',' after '{'".to_string(),
+        });
+    };
 
     if input[i] == b'}' {
+        if !has_min_digits {
+            /* Empty braces {} — not a valid quantifier */
+            return Err(RegexError {
+                position: pos,
+                message: "empty bounded repetition '{}'".to_string(),
+            });
+        }
         /* Exact: {n} */
         return Ok(Some((QuantifyKind::Repeat { min, max: Some(min) }, i + 1)));
     }
@@ -1710,6 +1727,24 @@ mod tests {
         assert!(!regex_accepts("a{2,}", TokenKind::Ident, "a"));
         assert!(regex_accepts("a{2,}", TokenKind::Ident, "aa"));
         assert!(regex_accepts("a{2,}", TokenKind::Ident, "aaaaaaa"));
+    }
+
+    #[test]
+    fn test_bounded_max_only() {
+        // {,n} = {0,n}
+        assert!(regex_accepts("a{,3}", TokenKind::Ident, ""));
+        assert!(regex_accepts("a{,3}", TokenKind::Ident, "a"));
+        assert!(regex_accepts("a{,3}", TokenKind::Ident, "aa"));
+        assert!(regex_accepts("a{,3}", TokenKind::Ident, "aaa"));
+        assert!(!regex_accepts("a{,3}", TokenKind::Ident, "aaaa"));
+    }
+
+    #[test]
+    fn test_bounded_comma_unbounded() {
+        // {,} = {0,} = *
+        assert!(regex_accepts("a{,}", TokenKind::Ident, ""));
+        assert!(regex_accepts("a{,}", TokenKind::Ident, "a"));
+        assert!(regex_accepts("a{,}", TokenKind::Ident, "aaaaaaa"));
     }
 
     /* ── Character classes ─────────────────────────────────────────────── */

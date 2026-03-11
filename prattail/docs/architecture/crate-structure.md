@@ -229,7 +229,7 @@ lib.rs
   into a `LiteralPatterns` struct carrying the regex for each builtin token kind.
 - `RegexError` struct: `{ position: usize, message: String }`
 - Supported syntax: literals, `[a-z]` / `[^…]` character classes, `\d` / `\w` / `\s`
-  shorthand classes, `*` / `+` / `?` / `{n,m}` quantifiers, `|` alternation,
+  shorthand classes, `*` / `+` / `?` / `{n,m}` / `{,n}` quantifiers, `|` alternation,
   `(…)` grouping, `.` dot, `\u{XXXX}` / `\uXXXX` / `\UXXXXXXXX` Unicode escapes,
   `\p{Name}` / `\P{Name}` Unicode properties.
 

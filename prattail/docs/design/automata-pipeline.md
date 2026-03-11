@@ -216,7 +216,7 @@ hardcoded — they are compiled from configurable regex specifications via
 The regex compiler uses single-pass trampolined Thompson NFA construction with
 no intermediate AST. It supports a PCRE subset: literals, character classes
 (`[a-z]`, `[^…]`), shorthand classes (`\d`, `\w`, `\s`), quantifiers (`*`, `+`,
-`?`, `{n,m}`), alternation (`|`), grouping (`(…)`), dot (`.`), Unicode escapes
+`?`, `{n,m}`, `{,n}`), alternation (`|`), grouping (`(…)`), dot (`.`), Unicode escapes
 (`\u{XXXX}`, `\uXXXX`, `\UXXXXXXXX`), and Unicode properties (`\p{Name}`,
 `\P{Name}`).
 

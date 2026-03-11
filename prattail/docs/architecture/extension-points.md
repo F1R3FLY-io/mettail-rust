@@ -413,7 +413,7 @@ decoding at lex time.
 
 **Supported regex syntax**: literals, `[a-z]` / `[^…]` character classes,
 `\d` / `\w` / `\s` / `\D` / `\W` / `\S` shorthand classes, `*` / `+` / `?` /
-`{n,m}` quantifiers, `|` alternation, `(…)` grouping, `.` dot, `\u{XXXX}` /
+`{n,m}` / `{,n}` quantifiers, `|` alternation, `(…)` grouping, `.` dot, `\u{XXXX}` /
 `\uXXXX` / `\UXXXXXXXX` Unicode escapes, `\p{Name}` / `\P{Name}` Unicode
 properties. Not supported: backreferences, lookahead/lookbehind, lazy quantifiers,
 named groups, anchors.
