@@ -45,6 +45,8 @@ pub enum TokenKind {
     True,
     /// Boolean literal `false`
     False,
+    /// Custom boolean literal (regex match, eval converts text to bool). Used when literal_patterns.boolean is Some.
+    BooleanLit,
     /// String literal
     StringLit,
     /// A fixed terminal symbol (operator, keyword, delimiter).
@@ -65,7 +67,7 @@ impl TokenKind {
             TokenKind::Ident => 1,
             TokenKind::Integer => 2,
             TokenKind::Float => 3,
-            TokenKind::True | TokenKind::False => 10,
+            TokenKind::True | TokenKind::False | TokenKind::BooleanLit => 10,
             TokenKind::StringLit => 2,
             TokenKind::Fixed(_) => 10,
             TokenKind::Dollar => 5,

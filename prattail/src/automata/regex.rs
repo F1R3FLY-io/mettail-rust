@@ -470,6 +470,7 @@ pub fn parse_literal_patterns_ebnf(content: &str) -> Result<LiteralPatterns, Reg
         float: float.expect("validated above"),
         string: string.expect("validated above"),
         ident: ident.expect("validated above"),
+        boolean: None,
     })
 }
 

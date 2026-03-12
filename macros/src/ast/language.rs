@@ -35,6 +35,8 @@ pub struct LanguageDef {
     /// Configuration options parsed from `options { ... }` block. Empty if block omitted.
     pub options: HashMap<String, AttributeValue>,
     pub types: Vec<LangType>,
+    /// Optional literals { Int { pattern, eval } ... }. Types must precede literals.
+    pub literals: Option<LiteralBlock>,
     pub terms: Vec<GrammarRule>,
     pub equations: Vec<Equation>,
     pub rewrites: Vec<RewriteRule>,
@@ -239,6 +241,24 @@ impl CollectionCategory {
     }
 }
 
+/// Literal subsection: pattern (regex string) + eval (Rust code) for one type (Int, Float, Bool, Str, etc.)
+/// Syntax: `Int { pattern: r"..."; eval: ![ ... ] }`
+#[derive(Debug, Clone)]
+pub struct LiteralSpec {
+    /// Type/category name (e.g. Int, Float, Bool, Str)
+    pub type_name: Ident,
+    /// Regex-like pattern string for the lexer
+    pub pattern: String,
+    /// Rust expression to convert matched text to value (receives `text: &str` in scope)
+    pub eval: syn::Expr,
+}
+
+/// Optional `literals { ... }` block: per-type pattern + eval. Types section must precede this.
+#[derive(Debug, Clone)]
+pub struct LiteralBlock {
+    pub specs: Vec<LiteralSpec>,
+}
+
 /// Export: category name, optionally with native Rust type or collection kind
 /// types { Elem; Name; ![i32] as Int; List; Bag ["{", "}", ","]; }
 pub struct LangType {
@@ -401,6 +421,18 @@ impl Parse for LanguageDef {
             Vec::new()
         };
 
+        // Parse: literals { ... } (optional; types must precede)
+        let literals = if input.peek(Ident) {
+            let lookahead = input.fork().parse::<Ident>()?;
+            if lookahead == "literals" {
+                Some(parse_literals(input)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         // Parse: terms { ... }
         let terms = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
@@ -453,12 +485,73 @@ impl Parse for LanguageDef {
             name,
             options,
             types,
+            literals,
             terms,
             equations,
             rewrites,
             logic,
         })
     }
+}
+
+/// Parse `literals { TypeName { pattern: "..." ; eval: ![ ... ] } ... }`
+fn parse_literals(input: ParseStream) -> SynResult<LiteralBlock> {
+    let literals_ident = input.parse::<Ident>()?;
+    if literals_ident != "literals" {
+        return Err(syn::Error::new(literals_ident.span(), "expected 'literals'"));
+    }
+    let content;
+    syn::braced!(content in input);
+
+    let mut specs = Vec::new();
+    while !content.is_empty() {
+        let type_name = content.parse::<Ident>()?;
+        let type_block;
+        syn::braced!(type_block in content);
+
+        // pattern: "..." or r"..."
+        let pattern_kw = type_block.parse::<Ident>()?;
+        if pattern_kw != "pattern" {
+            return Err(syn::Error::new(pattern_kw.span(), "expected 'pattern'"));
+        }
+        let _ = type_block.parse::<Token![:]>()?;
+        let pattern_lit: syn::LitStr = type_block.parse()?;
+        let pattern = pattern_lit.value();
+        let _ = type_block.parse::<Token![;]>()?;
+
+        // eval: ![ ... ]
+        let eval_kw = type_block.parse::<Ident>()?;
+        if eval_kw != "eval" {
+            return Err(syn::Error::new(eval_kw.span(), "expected 'eval'"));
+        }
+        let _ = type_block.parse::<Token![:]>()?;
+        if !type_block.peek(Token![!]) || !type_block.peek2(syn::token::Bracket) {
+            return Err(syn::Error::new(
+                type_block.span(),
+                "expected eval: ![ ... ]",
+            ));
+        }
+        let _ = type_block.parse::<Token![!]>()?;
+        let eval_content;
+        syn::bracketed!(eval_content in type_block);
+        let eval = eval_content.parse::<syn::Expr>()?;
+
+        specs.push(LiteralSpec {
+            type_name,
+            pattern,
+            eval,
+        });
+
+        if type_block.peek(Token![;]) {
+            let _ = type_block.parse::<Token![;]>()?;
+        }
+    }
+
+    if input.peek(Token![,]) {
+        let _ = input.parse::<Token![,]>()?;
+    }
+
+    Ok(LiteralBlock { specs })
 }
 
 fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {

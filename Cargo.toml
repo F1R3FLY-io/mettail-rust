@@ -54,7 +54,10 @@ ascent_syntax_export = { path = "ascent_syntax_export" }
 query = { path = "query" }
 
 [profile.dev]
-codegen-backend = "cranelift" # Fast compile, slower runtime (~2.7x vs LLVM)
+# Use LLVM; cranelift can abort with "Rust cannot catch foreign exceptions" when
+# building proc-macro-heavy crates (e.g. mettail-languages). For faster dev
+# compile you can try cranelift and build with -p mettail-repl to skip languages.
+# codegen-backend = "cranelift"
 debug = "line-tables-only"    # Saves debuginfo generation time
 
 [profile.release]

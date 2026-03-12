@@ -60,6 +60,13 @@ pub fn build_nfa(
             .expect("string pattern should be a valid regex");
         fragments.push(frag);
     }
+    if needs.boolean {
+        if let Some(ref boolean_pattern) = patterns.boolean {
+            let frag = regex::compile_regex(boolean_pattern, &mut nfa, TokenKind::BooleanLit)
+                .expect("boolean pattern should be a valid regex");
+            fragments.push(frag);
+        }
+    }
 
     // Combine character-class fragments via alternation
     for frag in &fragments {

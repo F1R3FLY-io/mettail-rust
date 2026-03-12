@@ -309,7 +309,13 @@ fn run_codegen_pipeline(
         token_kinds.push(terminal.kind.clone());
     }
 
-    let (code, _strategy) = generate_lexer_string(&min_dfa, &partition, &token_kinds, "test");
+    let (code, _strategy) = generate_lexer_string(
+        &min_dfa,
+        &partition,
+        &token_kinds,
+        "test",
+        &std::collections::HashMap::new(),
+    );
     code
 }
 

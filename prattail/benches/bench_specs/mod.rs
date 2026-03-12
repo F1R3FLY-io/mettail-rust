@@ -247,6 +247,7 @@ pub fn minimal_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
+        literal_eval: std::collections::HashMap::new(),
     }
 }
 
@@ -296,6 +297,7 @@ pub fn small_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
+        literal_eval: std::collections::HashMap::new(),
     }
 }
 
@@ -342,6 +344,7 @@ pub fn medium_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
+        literal_eval: std::collections::HashMap::new(),
     }
 }
 
@@ -398,6 +401,7 @@ pub fn complex_spec() -> LanguageSpec {
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
+        literal_eval: std::collections::HashMap::new(),
     }
 }
 
@@ -452,6 +456,7 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
         log_semiring_model_path: None,
         dispatch_strategy: DispatchStrategy::Static,
         literal_patterns: LiteralPatterns::default(),
+        literal_eval: std::collections::HashMap::new(),
     }
 }
 

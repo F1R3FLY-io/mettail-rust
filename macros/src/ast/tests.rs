@@ -730,4 +730,36 @@ mod tests {
             .any(|expr| matches!(expr, SyntaxExpr::Op(PatternOp::Zip { .. })));
         assert!(has_zip, "Pattern should contain Zip operation");
     }
+
+    #[test]
+    fn parse_literals_block() {
+        let input = r#"
+            name: TestLiterals,
+            types { ![i32] as Int ![bool] as Bool }
+            literals {
+                Int {
+                    pattern: r"[0-9]+";
+                    eval: ![ { text.parse::<i32>().unwrap_or(-1) } ]
+                }
+                Bool {
+                    pattern: r"yes|no";
+                    eval: ![ { text == "yes" } ]
+                }
+            }
+            terms { }
+        "#;
+
+        let result = syn::parse_str::<LanguageDef>(input);
+        assert!(result.is_ok(), "Failed to parse literals block: {:?}", result.err());
+
+        let language = result.unwrap();
+        let literals = language.literals.as_ref().expect("literals should be Some");
+        assert_eq!(literals.specs.len(), 2);
+
+        assert_eq!(literals.specs[0].type_name.to_string(), "Int");
+        assert_eq!(literals.specs[0].pattern, "[0-9]+");
+
+        assert_eq!(literals.specs[1].type_name.to_string(), "Bool");
+        assert_eq!(literals.specs[1].pattern, "yes|no");
+    }
 }

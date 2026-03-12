@@ -213,6 +213,7 @@ fn bench_full_codegen(c: &mut Criterion) {
                     &prepared.partition,
                     &prepared.token_kinds,
                     &prepared.spec.name,
+                    &std::collections::HashMap::new(),
                 )
             });
         });
@@ -239,6 +240,7 @@ fn bench_codegen_scaling(c: &mut Criterion) {
                     &prepared.partition,
                     &prepared.token_kinds,
                     &prepared.spec.name,
+                    &std::collections::HashMap::new(),
                 )
             });
         });

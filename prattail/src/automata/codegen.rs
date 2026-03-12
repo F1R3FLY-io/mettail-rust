@@ -42,8 +42,10 @@ pub fn generate_lexer_code(
     partition: &AlphabetPartition,
     token_kinds: &[TokenKind],
     language_name: &str,
+    literal_eval: &std::collections::HashMap<String, String>,
 ) -> (TokenStream, CodegenStrategy) {
-    let (buf, strategy) = generate_lexer_string(dfa, partition, token_kinds, language_name);
+    let (buf, strategy) =
+        generate_lexer_string(dfa, partition, token_kinds, language_name, literal_eval);
     let ts = buf
         .parse::<TokenStream>()
         .expect("generated lexer code must be valid Rust");
@@ -62,6 +64,7 @@ pub fn generate_lexer_string(
     partition: &AlphabetPartition,
     token_kinds: &[TokenKind],
     _language_name: &str,
+    literal_eval: &std::collections::HashMap<String, String>,
 ) -> (String, CodegenStrategy) {
     // Estimate buffer size: ~8KB for typical grammars, scales with DFA size
     let estimated_size = 4096 + dfa.states.len() * partition.num_classes * 16;
@@ -72,10 +75,10 @@ pub fn generate_lexer_string(
     write_parse_error_enum(&mut buf);
 
     let strategy = if dfa.states.len() <= DIRECT_CODED_THRESHOLD {
-        write_direct_coded_lexer(&mut buf, dfa, partition);
+        write_direct_coded_lexer(&mut buf, dfa, partition, literal_eval);
         CodegenStrategy::DirectCoded
     } else {
-        write_compressed_lexer(&mut buf, dfa, partition)
+        write_compressed_lexer(&mut buf, dfa, partition, literal_eval)
     };
 
     (buf, strategy)
@@ -114,14 +117,14 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
                     buf.push_str("Float(f64),");
                 }
             },
-            TokenKind::True | TokenKind::False => {
+            TokenKind::True | TokenKind::False | TokenKind::BooleanLit => {
                 if seen.insert("Boolean".to_string()) {
                     buf.push_str("Boolean(bool),");
                 }
             },
             TokenKind::StringLit => {
                 if seen.insert("StringLit".to_string()) {
-                    buf.push_str("StringLit(&'a str),");
+                    buf.push_str("StringLit(std::borrow::Cow<'a, str>),");
                 }
             },
             TokenKind::Fixed(text) => {
@@ -257,12 +260,16 @@ fn write_class_table(buf: &mut String, partition: &AlphabetPartition) {
 }
 
 /// Write the accept_token match arms to a string buffer.
-fn write_accept_arms(buf: &mut String, dfa: &Dfa) {
+fn write_accept_arms(
+    buf: &mut String,
+    dfa: &Dfa,
+    literal_eval: &std::collections::HashMap<String, String>,
+) {
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(ref kind) = state.accept {
             write!(buf, "{}u32 => Some(", state_idx).unwrap();
-            write_token_constructor(buf, kind);
+            write_token_constructor(buf, kind, literal_eval);
             buf.push_str("),");
         }
     }
@@ -328,20 +335,49 @@ fn write_transition_table(buf: &mut String, dfa: &Dfa, num_classes: usize) {
 ///
 /// Zero-copy: string-carrying variants borrow from the input `text` slice
 /// rather than allocating new `String`s.
-fn write_token_constructor(buf: &mut String, kind: &TokenKind) {
+/// When literal_eval contains custom eval for a category, that expression (with `text` in scope) is used.
+fn write_token_constructor(
+    buf: &mut String,
+    kind: &TokenKind,
+    literal_eval: &std::collections::HashMap<String, String>,
+) {
     match kind {
         TokenKind::Eof => buf.push_str("Token::Eof"),
         TokenKind::Ident => buf.push_str("Token::Ident(text)"),
         TokenKind::Integer => {
-            buf.push_str("Token::Integer(text.parse::<i64>().expect(\"invalid integer literal\"))");
+            if let Some(eval) = literal_eval.get("Int") {
+                write!(buf, "Token::Integer({{ let text = text; {} }})", eval).unwrap();
+            } else {
+                buf.push_str("Token::Integer(text.parse::<i64>().expect(\"invalid integer literal\"))");
+            }
         },
         TokenKind::Float => {
-            buf.push_str("Token::Float(text.parse::<f64>().expect(\"invalid float literal\"))");
+            if let Some(eval) = literal_eval.get("Float") {
+                write!(buf, "Token::Float({{ let text = text; {} }})", eval).unwrap();
+            } else {
+                buf.push_str("Token::Float(text.parse::<f64>().expect(\"invalid float literal\"))");
+            }
         },
         TokenKind::True => buf.push_str("Token::Boolean(true)"),
         TokenKind::False => buf.push_str("Token::Boolean(false)"),
+        TokenKind::BooleanLit => {
+            if let Some(eval) = literal_eval.get("Bool") {
+                write!(buf, "Token::Boolean({{ let text = text; {} }})", eval).unwrap();
+            } else {
+                buf.push_str("Token::Boolean(false)");
+            }
+        },
         TokenKind::StringLit => {
-            buf.push_str("Token::StringLit(&text[1..text.len()-1])");
+            if let Some(eval) = literal_eval.get("Str") {
+                write!(
+                    buf,
+                    "Token::StringLit(std::borrow::Cow::Owned({{ let text = text; {} }}))",
+                    eval
+                )
+                .unwrap();
+            } else {
+                buf.push_str("Token::StringLit(std::borrow::Cow::Borrowed(&text[1..text.len()-1]))");
+            }
         },
         TokenKind::Fixed(text) => {
             let variant_name = terminal_to_variant_name(text);
@@ -355,7 +391,12 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind) {
 }
 
 /// Write a complete direct-coded lexer to a string buffer.
-fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPartition) {
+fn write_direct_coded_lexer(
+    buf: &mut String,
+    dfa: &Dfa,
+    partition: &AlphabetPartition,
+    literal_eval: &std::collections::HashMap<String, String>,
+) {
     write_class_table(buf, partition);
 
     write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
@@ -420,7 +461,7 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
 
     // accept_token() function — returns Token<'a> borrowing from text
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(buf, dfa);
+    write_accept_arms(buf, dfa, literal_eval);
     buf.push('}');
 
     // WFST weight emission: accept_weight() + lex_weighted()
@@ -570,7 +611,7 @@ fn write_table_driven_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
 
     // accept_token() function — returns Token<'a> borrowing from text
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(buf, dfa);
+    write_accept_arms(buf, dfa, &std::collections::HashMap::new());
     buf.push('}');
 }
 
@@ -902,6 +943,7 @@ fn write_compressed_lexer(
     buf: &mut String,
     dfa: &Dfa,
     partition: &AlphabetPartition,
+    literal_eval: &std::collections::HashMap<String, String>,
 ) -> CodegenStrategy {
     let num_classes = partition.num_classes;
     let comb = compress_rows_comb(dfa, num_classes);
@@ -909,12 +951,12 @@ fn write_compressed_lexer(
     if num_classes <= 32 {
         let bitmap = build_bitmap_tables(dfa).expect("num_classes verified <= 32");
         if bitmap.total_bytes() <= comb.total_bytes() {
-            write_bitmap_driven_lexer(buf, dfa, partition, &bitmap);
+            write_bitmap_driven_lexer(buf, dfa, partition, &bitmap, literal_eval);
             return CodegenStrategy::BitmapCompressed;
         }
     }
 
-    write_comb_driven_lexer(buf, dfa, partition, &comb);
+    write_comb_driven_lexer(buf, dfa, partition, &comb, literal_eval);
     CodegenStrategy::CombCompressed
 }
 
@@ -924,6 +966,7 @@ fn write_comb_driven_lexer(
     dfa: &Dfa,
     partition: &AlphabetPartition,
     comb: &CombTable,
+    literal_eval: &std::collections::HashMap<String, String>,
 ) {
     write_class_table(buf, partition);
     write_comb_tables(buf, comb);
@@ -949,7 +992,7 @@ fn write_comb_driven_lexer(
 
     // accept_token() function
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(buf, dfa);
+    write_accept_arms(buf, dfa, literal_eval);
     buf.push('}');
 
     // WFST weight emission: accept_weight() + lex_weighted()
@@ -972,6 +1015,7 @@ fn write_bitmap_driven_lexer(
     dfa: &Dfa,
     partition: &AlphabetPartition,
     tables: &BitmapTables,
+    literal_eval: &std::collections::HashMap<String, String>,
 ) {
     write_class_table(buf, partition);
     write_bitmap_tables(buf, tables);
@@ -998,7 +1042,7 @@ fn write_bitmap_driven_lexer(
 
     // accept_token() function
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(buf, dfa);
+    write_accept_arms(buf, dfa, literal_eval);
     buf.push('}');
 
     // WFST weight emission: accept_weight() + lex_weighted()
@@ -1179,7 +1223,7 @@ pub fn generate_token_enum(token_kinds: &[TokenKind]) -> TokenStream {
                     });
                 }
             },
-            TokenKind::True | TokenKind::False => {
+            TokenKind::True | TokenKind::False | TokenKind::BooleanLit => {
                 if seen.insert("Boolean".to_string()) {
                     variants.push(quote! {
                         /// Boolean literal
@@ -1576,6 +1620,7 @@ pub fn token_kind_to_constructor(kind: &TokenKind) -> TokenStream {
         },
         TokenKind::True => quote! { Token::Boolean(true) },
         TokenKind::False => quote! { Token::Boolean(false) },
+        TokenKind::BooleanLit => quote! { Token::Boolean(false) },
         TokenKind::StringLit => quote! {
             Token::StringLit(text[1..text.len()-1].to_string())
         },
@@ -2047,7 +2092,13 @@ mod tests {
             TokenKind::Fixed("-".to_string()),
         ];
 
-        let (code, _strategy) = generate_lexer_string(&dfa, &partition, &token_kinds, "test");
+        let (code, _strategy) = generate_lexer_string(
+            &dfa,
+            &partition,
+            &token_kinds,
+            "test",
+            &std::collections::HashMap::new(),
+        );
         // If this doesn't panic, the generated code is valid Rust
         let _ts: TokenStream = code
             .parse()
