@@ -457,6 +457,72 @@ This would go in either `dispatch.rs` (for cross-category contexts) or `pratt.rs
 
 ---
 
+## 7. Adding Custom Token Kinds via `tokens { ... }`
+
+The `tokens { ... }` block in the `language!` macro allows users to define custom
+token kinds, override built-in patterns, and enable advanced lexer features (modal
+lexing, multi-stream, VPA grouping, tree automata validation).
+
+### Step 1: Define a `TokenDef` in the macro AST
+
+File: `macros/src/ast/language.rs`
+
+The `TokenDef` struct captures each token definition:
+
+```rust
+pub struct TokenDef {
+    pub name: Ident,           // Token name (e.g., "HexLiteral")
+    pub pattern: String,       // Regex pattern
+    pub category: Option<Ident>, // Optional target category
+    pub rust_code: Option<TokenStream>, // Constructor code
+    pub priority: Option<u8>,  // Disambiguation priority
+    pub push_mode: Option<Ident>, // Push into named mode
+    pub is_pop: bool,          // Pop current mode
+    pub stream: Option<Ident>, // Output stream name
+}
+```
+
+### Step 2: Bridge to `CustomTokenSpec`
+
+File: `macros/src/gen/syntax/parser/prattail_bridge.rs`
+
+Each `TokenDef` is converted to a `CustomTokenSpec` (defined in `prattail/src/lib.rs`).
+Built-in names (`Integer`, `Float`, `StringLit`, `Ident`) set `is_builtin_override = true`
+and modify `LiteralPatterns` instead of adding a new token kind.
+
+### Step 3: NFA construction
+
+File: `prattail/src/automata/nfa.rs`
+
+- **Default mode tokens**: `build_nfa_with_custom()` compiles non-override custom token
+  regex patterns as additional NFA fragments alongside built-in patterns.
+- **Named mode tokens**: `build_nfa_for_mode()` builds a separate NFA containing only
+  the mode's declared token patterns.
+
+### Step 4: Codegen
+
+File: `prattail/src/automata/codegen.rs`
+
+Custom tokens generate:
+- **Token enum variants**: `HexLit(i64),` (payload) or `MyToken,` (unit)
+- **Constructor code**: `Token::HexLit({ let text = text; user_code })`
+- **Display impl**: Payload variants bind the value, unit variants use the name
+
+For modal lexing, `generate_modal_lexer_string()` produces per-mode DFA tables with
+suffixed names and a mode-dispatched lex loop.
+
+### Step 5: Parser integration
+
+File: `prattail/src/pipeline.rs`
+
+Custom tokens with `: Category` are added to that category's FIRST set, allowing
+the parser to recognize them as alternative literal producers (e.g., `HexLiteral`
+tokens produce `Int` values alongside `Integer` tokens).
+
+> **Detailed documentation**: See [tokens/ design docs](../design/tokens/README.md)
+
+---
+
 ## Summary of Files to Modify per Extension
 
 | Extension              | lib.rs         | automata/                    | lexer.rs               | binding_power.rs       | prediction.rs            | pratt.rs                | recursive.rs             | dispatch.rs                |
@@ -467,3 +533,4 @@ This would go in either `dispatch.rs` (for cross-category contexts) or `pratt.rs
 | Precedence Annotations | RuleSpec       | --                           | --                     | analyze_binding_powers | --                       | --                      | --                       | --                         |
 | New Lexer Pattern      | --             | nfa.rs + mod.rs + codegen.rs | BuiltinNeeds + extract | --                     | generate_first_set_check | --                      | --                       | --                         |
 | New Dispatch Strategy  | --             | --                           | --                     | --                     | DispatchAction           | generate_prefix_handler | --                       | generate_category_dispatch |
+| Custom Token Kind      | CustomTokenSpec| nfa.rs + codegen.rs          | LexerInput + pipeline  | --                     | FIRST set augmentation   | --                      | --                       | --                         |

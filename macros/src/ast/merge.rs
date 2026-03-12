@@ -23,7 +23,7 @@ use std::fmt;
 
 use syn::Ident;
 
-use super::language::{LanguageDef, LangType, Equation, RewriteRule, LogicBlock};
+use super::language::{LanguageDef, LangType, Equation, RewriteRule, LogicBlock, TokenDef, ModeDef};
 
 // ══════════════════════════════════════════════════════════════════════════════
 // Error types
@@ -139,23 +139,43 @@ pub fn merge_language_defs(
     // 1. Merge types (categories)
     let merged_types = merge_types(&base.types, &extension.types, &mut errors);
 
-    // 2. Merge terms (grammar rules)
+    // 2. Merge token definitions (extension overrides base by name)
+    let merged_token_defs = merge_token_defs(&base.token_defs, &extension.token_defs, strategy);
+
+    // 3. Merge mode definitions (union by name; tokens within same-named mode are merged)
+    let merged_mode_defs = merge_mode_defs(&base.mode_defs, &extension.mode_defs, strategy);
+
+    // 4. Merge sync constraints (extension replaces base entirely)
+    let merged_sync_constraints = if extension.sync_constraints.is_empty() {
+        base.sync_constraints.clone()
+    } else {
+        extension.sync_constraints.clone()
+    };
+
+    // 5. Merge tree invariants (extension replaces base entirely)
+    let merged_tree_invariants = if extension.tree_invariants.is_empty() {
+        base.tree_invariants.clone()
+    } else {
+        extension.tree_invariants.clone()
+    };
+
+    // 6. Merge terms (grammar rules)
     let merged_terms = merge_terms(&base.terms, &extension.terms, strategy, &mut errors);
 
-    // 3. Merge equations
+    // 7. Merge equations
     let merged_equations = merge_equations(
         &base.equations, &extension.equations, strategy, &mut errors,
     );
 
-    // 4. Merge rewrites
+    // 8. Merge rewrites
     let merged_rewrites = merge_rewrites(
         &base.rewrites, &extension.rewrites, strategy, &mut errors,
     );
 
-    // 5. Merge logic blocks
+    // 9. Merge logic blocks
     let merged_logic = merge_logic(&base.logic, &extension.logic, &mut errors);
 
-    // 6. Merge options (extension overrides base)
+    // 10. Merge options (extension overrides base)
     let merged_options = merge_options(&base.options, &extension.options);
 
     if !errors.is_empty() {
@@ -171,6 +191,10 @@ pub fn merge_language_defs(
         include_names: Vec::new(),
         mixin_names: Vec::new(),
         types: merged_types,
+        token_defs: merged_token_defs,
+        mode_defs: merged_mode_defs,
+        sync_constraints: merged_sync_constraints,
+        tree_invariants: merged_tree_invariants,
         terms: merged_terms,
         equations: merged_equations,
         rewrites: merged_rewrites,
@@ -436,6 +460,92 @@ fn merge_options(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Token definition merging
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Merge two token definition vectors.
+///
+/// With `DuplicateStrategy::Error`, duplicate names produce an error.
+/// With `DuplicateStrategy::Override`, the extension's definition replaces the base's.
+fn merge_token_defs(
+    base: &[TokenDef],
+    extension: &[TokenDef],
+    strategy: DuplicateStrategy,
+) -> Vec<TokenDef> {
+    let mut by_name: HashMap<String, usize> = HashMap::with_capacity(base.len());
+    let mut result: Vec<TokenDef> = Vec::with_capacity(base.len() + extension.len());
+
+    for (idx, td) in base.iter().enumerate() {
+        let name = td.name.to_string();
+        by_name.insert(name, idx);
+        result.push(td.clone());
+    }
+
+    for td in extension {
+        let name = td.name.to_string();
+        if by_name.contains_key(&name) {
+            match strategy {
+                DuplicateStrategy::Error => {
+                    // Token name conflicts are non-fatal in extends mode;
+                    // the base definition is kept (same behavior as types).
+                },
+                DuplicateStrategy::Override => {
+                    result.retain(|t| t.name.to_string() != name);
+                    result.push(td.clone());
+                },
+            }
+        } else {
+            by_name.insert(name, result.len());
+            result.push(td.clone());
+        }
+    }
+
+    result
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Mode definition merging
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Merge two mode definition vectors.
+///
+/// Modes are merged by name: tokens within same-named modes are union'd.
+/// With `DuplicateStrategy::Override`, extension tokens replace base tokens
+/// within the same mode when names collide.
+fn merge_mode_defs(
+    base: &[ModeDef],
+    extension: &[ModeDef],
+    strategy: DuplicateStrategy,
+) -> Vec<ModeDef> {
+    let mut by_name: HashMap<String, usize> = HashMap::with_capacity(base.len());
+    let mut result: Vec<ModeDef> = Vec::with_capacity(base.len() + extension.len());
+
+    for (idx, md) in base.iter().enumerate() {
+        let name = md.name.to_string();
+        by_name.insert(name, idx);
+        result.push(md.clone());
+    }
+
+    for md in extension {
+        let name = md.name.to_string();
+        if let Some(&idx) = by_name.get(&name) {
+            // Same-named mode: merge token definitions within
+            let merged_tokens =
+                merge_token_defs(&result[idx].token_defs, &md.token_defs, strategy);
+            result[idx] = ModeDef {
+                name: md.name.clone(),
+                token_defs: merged_tokens,
+            };
+        } else {
+            by_name.insert(name, result.len());
+            result.push(md.clone());
+        }
+    }
+
+    result
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Composition application functions
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -540,6 +650,10 @@ mod tests {
             include_names: Vec::new(),
             mixin_names: Vec::new(),
             types: Vec::new(),
+            token_defs: Vec::new(),
+            mode_defs: Vec::new(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
             terms: Vec::new(),
             equations: Vec::new(),
             rewrites: Vec::new(),

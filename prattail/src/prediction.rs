@@ -2276,6 +2276,7 @@ fn token_kind_to_variant_name(kind: &super::automata::TokenKind) -> String {
         super::automata::TokenKind::Fixed(text) => terminal_to_variant_name(text),
         super::automata::TokenKind::Dollar => "Dollar".to_string(),
         super::automata::TokenKind::DoubleDollar => "DoubleDollar".to_string(),
+        super::automata::TokenKind::Custom(name) => name.clone(),
     }
 }
 

@@ -19,7 +19,8 @@ use crate::ast::{
 use crate::gen::native::native_type_to_string;
 use mettail_prattail::{
     binding_power::Associativity, recursive::CollectionKind, BeamWidthConfig, CategorySpec,
-    LanguageSpec, LiteralPatterns, RuleSpecInput, SyntaxItemSpec,
+    CustomTokenSpec, LanguageSpec, LexerModeSpec, LiteralPatterns, RuleSpecInput,
+    SyncConstraintSpec, SyncSpec, SyntaxItemSpec, TreeInvariantSpec,
 };
 
 /// Convert a `LanguageDef` to a PraTTaIL `LanguageSpec`.
@@ -69,15 +70,135 @@ pub fn language_def_to_spec(language: &LanguageDef) -> LanguageSpec {
 
     let semantic_dependency_groups = collect_semantic_dependency_groups(language);
 
+    // Convert token definitions to CustomTokenSpec
+    let builtin_names: std::collections::HashSet<&str> =
+        ["Integer", "Float", "StringLit", "Ident"].iter().copied().collect();
+
+    let mut literal_patterns = LiteralPatterns::default();
+    let custom_tokens: Vec<CustomTokenSpec> = language
+        .token_defs
+        .iter()
+        .map(|td| {
+            let name = td.name.to_string();
+            let is_builtin = builtin_names.contains(name.as_str());
+
+            // For built-in overrides, update the LiteralPatterns
+            if is_builtin {
+                match name.as_str() {
+                    "Integer" => literal_patterns.integer = td.pattern.clone(),
+                    "Float" => literal_patterns.float = td.pattern.clone(),
+                    "StringLit" => literal_patterns.string = td.pattern.clone(),
+                    "Ident" => literal_patterns.ident = td.pattern.clone(),
+                    _ => {},
+                }
+            }
+
+            // Resolve payload type from the target category's native type
+            let payload_type = td.category.as_ref().and_then(|cat| {
+                categories.iter()
+                    .find(|c| c.name == cat.to_string())
+                    .and_then(|c| c.native_type.clone())
+            });
+
+            CustomTokenSpec {
+                name,
+                pattern: td.pattern.clone(),
+                category: td.category.as_ref().map(|c| c.to_string()),
+                payload_type,
+                constructor_code: td.rust_code.as_ref().map(|code| code.to_string()),
+                is_builtin_override: is_builtin,
+                priority: td.priority.unwrap_or(2),
+                push_mode: td.push_mode.as_ref().map(|m| m.to_string()),
+                is_pop: td.is_pop,
+                stream: td.stream.as_ref().map(|s| s.to_string()),
+            }
+        })
+        .collect();
+
+    // Convert mode definitions
+    let modes: Vec<LexerModeSpec> = language
+        .mode_defs
+        .iter()
+        .map(|md| LexerModeSpec {
+            name: md.name.to_string(),
+            token_specs: md
+                .token_defs
+                .iter()
+                .map(|td| {
+                    let payload_type = td.category.as_ref().and_then(|cat| {
+                        categories.iter()
+                            .find(|c| c.name == cat.to_string())
+                            .and_then(|c| c.native_type.clone())
+                    });
+                    CustomTokenSpec {
+                        name: td.name.to_string(),
+                        pattern: td.pattern.clone(),
+                        category: td.category.as_ref().map(|c| c.to_string()),
+                        payload_type,
+                        constructor_code: td.rust_code.as_ref().map(|code| code.to_string()),
+                        is_builtin_override: false, // modes can't override built-ins
+                        priority: td.priority.unwrap_or(2),
+                        push_mode: td.push_mode.as_ref().map(|m| m.to_string()),
+                        is_pop: td.is_pop,
+                        stream: td.stream.as_ref().map(|s| s.to_string()),
+                    }
+                })
+                .collect(),
+        })
+        .collect();
+
+    // Convert sync constraints
+    let sync = if language.sync_constraints.is_empty() {
+        None
+    } else {
+        Some(SyncSpec {
+            constraints: language
+                .sync_constraints
+                .iter()
+                .map(|sc| match sc {
+                    crate::ast::language::SyncConstraint::Align {
+                        stream_a,
+                        stream_b,
+                        boundary_pattern,
+                    } => SyncConstraintSpec::Align {
+                        stream_a: stream_a.to_string(),
+                        stream_b: stream_b.to_string(),
+                        boundary_pattern: boundary_pattern.clone(),
+                    },
+                    crate::ast::language::SyncConstraint::Track { auxiliary, primary } => {
+                        SyncConstraintSpec::Track {
+                            auxiliary: auxiliary.to_string(),
+                            primary: primary.to_string(),
+                        }
+                    },
+                })
+                .collect(),
+        })
+    };
+
+    // Convert tree invariants to spec (formula as string for now)
+    let tree_invariants: Vec<TreeInvariantSpec> = language
+        .tree_invariants
+        .iter()
+        .map(|ti| TreeInvariantSpec {
+            name: ti.name.to_string(),
+            formula: format!("{:?}", ti.constraint),
+        })
+        .collect();
+
     let mut spec = LanguageSpec::with_options(
         language.name.to_string(),
         categories,
         inputs,
         beam_width,
         log_semiring_model_path,
-        LiteralPatterns::default(),
+        literal_patterns,
     );
     spec.semantic_dependency_groups = semantic_dependency_groups;
+    spec.custom_tokens = custom_tokens;
+    spec.modes = modes;
+    spec.sync = sync;
+    spec.tree_invariants = tree_invariants;
     spec
 }
 

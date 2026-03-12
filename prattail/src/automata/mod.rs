@@ -56,6 +56,8 @@ pub enum TokenKind {
     Dollar,
     /// Double-dollar-prefixed application: `$$proc(`, `$$name(`, etc.
     DoubleDollar,
+    /// Custom user-defined token kind from the `tokens { ... }` block.
+    Custom(String),
 }
 
 impl TokenKind {
@@ -72,6 +74,9 @@ impl TokenKind {
             TokenKind::Fixed(_) => 10,
             TokenKind::Dollar => 5,
             TokenKind::DoubleDollar => 6,
+            // Default priority for custom tokens; actual priority is set from
+            // CustomTokenSpec.priority at the NFA accept-state level.
+            TokenKind::Custom(_) => 2,
         }
     }
 }

@@ -1299,3 +1299,66 @@ fn accept_token(state: u32, text: &str) -> Option<Token> {
 │ Code generation strategy   │ direct  │
 └────────────────────────────┴─────────┘
 ```
+
+---
+
+## 10. Custom Tokens and Modal Lexing Extensions
+
+The `tokens { ... }` block in the `language!` macro extends the standard automata
+pipeline with custom token NFA fragments, per-mode DFA generation, stream routing,
+and VPA-based delimiter verification.
+
+### 10.1 Custom Token NFA Fragments
+
+Custom token regex patterns are compiled via the same Thompson NFA construction
+pipeline as built-in patterns. Non-override custom tokens are injected as additional
+alternation branches from the global start state:
+
+```
+                                ┌──[ integer regex ]──→ accept(Integer)
+                                │
+  global_start ──ε──→ trie_root │──[ keyword trie  ]──→ accept(Fixed("..."))
+              │                 │
+              │                 └──[ ident regex   ]──→ accept(Ident)
+              │
+              ├──ε──→ [custom: 0x[0-9a-fA-F]+  ]──→ accept(Custom("HexLit"))
+              │
+              └──ε──→ [custom: 0b[01]+          ]──→ accept(Custom("BinLit"))
+```
+
+Accept state weights are set from `CustomTokenSpec.priority` via
+`TropicalWeight::from_priority()`, enabling priority-based disambiguation
+when custom and built-in patterns overlap.
+
+### 10.2 Per-Mode DFA Generation
+
+When named modes are present, each mode gets its own independent pipeline:
+
+```
+  Default mode:  build_nfa_with_custom() → partition → DFA → minimize → codegen(DEFAULT)
+  Mode "str":    build_nfa_for_mode()    → partition → DFA → minimize → codegen(STR)
+  Mode "cmnt":   build_nfa_for_mode()    → partition → DFA → minimize → codegen(CMNT)
+```
+
+Each mode produces suffixed tables: `CHAR_CLASS_{MODE}`, `dfa_next_{mode}()`,
+`accept_token_{mode}()`, `push_target_{mode}()`, `should_pop_{mode}()`.
+
+### 10.3 Stream Routing
+
+When `-> stream_name` annotations are present, per-mode `stream_id_{mode}(state)`
+dispatch functions route accepted tokens to named output streams. Stream 0 is always
+"main"; auxiliary streams (comments, whitespace, etc.) use indices 1+.
+
+### 10.4 VPA Delimiter Grouping (feature = "vpa")
+
+Post-lex, `build_skip_table()` constructs an O(n) skip table from the flat token
+stream using VPA call/return classification of push/pop tokens. `build_token_tree()`
+converts the flat stream + skip table into nested `TokenTree` structures in O(n).
+
+### 10.5 Tree Automata Validation (feature = "tree-automata" + "vpa")
+
+`token_tree_to_term()` maps `TokenTree` → tree automaton `Term`, and
+`validate_token_tree()` runs bottom-up WTA evaluation against the grammar's
+tree automaton to verify structural well-formedness.
+
+> **Detailed documentation**: See [tokens/ design docs](tokens/README.md)

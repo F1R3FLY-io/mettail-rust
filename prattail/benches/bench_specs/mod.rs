@@ -248,6 +248,10 @@ pub fn minimal_spec() -> LanguageSpec {
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
         semantic_dependency_groups: Vec::new(),
+        custom_tokens: Vec::new(),
+        modes: Vec::new(),
+        sync: None,
+        tree_invariants: Vec::new(),
     }
 }
 
@@ -295,6 +299,10 @@ pub fn small_spec() -> LanguageSpec {
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
         semantic_dependency_groups: Vec::new(),
+        custom_tokens: Vec::new(),
+        modes: Vec::new(),
+        sync: None,
+        tree_invariants: Vec::new(),
     }
 }
 
@@ -340,6 +348,10 @@ pub fn medium_spec() -> LanguageSpec {
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
         semantic_dependency_groups: Vec::new(),
+        custom_tokens: Vec::new(),
+        modes: Vec::new(),
+        sync: None,
+        tree_invariants: Vec::new(),
     }
 }
 
@@ -394,6 +406,10 @@ pub fn complex_spec() -> LanguageSpec {
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
         semantic_dependency_groups: Vec::new(),
+        custom_tokens: Vec::new(),
+        modes: Vec::new(),
+        sync: None,
+        tree_invariants: Vec::new(),
     }
 }
 
@@ -448,6 +464,10 @@ pub fn synthetic_spec(n_ops: usize) -> LanguageSpec {
         literal_patterns: LiteralPatterns::default(),
         recovery_config: RecoveryConfig::default(),
         semantic_dependency_groups: Vec::new(),
+        custom_tokens: Vec::new(),
+        modes: Vec::new(),
+        sync: None,
+        tree_invariants: Vec::new(),
     }
 }
 
@@ -964,6 +984,7 @@ pub fn prepare_wfst(spec: &LanguageSpec) -> WfstPreparedSpec {
             TokenKind::Fixed(s) => mettail_prattail::automata::codegen::terminal_to_variant_name(s),
             TokenKind::Dollar => "Dollar".to_string(),
             TokenKind::DoubleDollar => "DoubleDollar".to_string(),
+            TokenKind::Custom(name) => name.clone(),
         })
         .collect();
 

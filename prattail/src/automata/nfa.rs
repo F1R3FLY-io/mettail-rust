@@ -13,7 +13,7 @@ use super::{
     regex, semiring::TropicalWeight, CharClass, Nfa, NfaFragment, NfaState, StateId,
     TerminalPattern, TokenKind,
 };
-use crate::LiteralPatterns;
+use crate::{CustomTokenSpec, LiteralPatterns};
 
 /// Build a complete NFA from a set of terminal patterns plus built-in
 /// character-class patterns (identifiers, integers, floats, strings).
@@ -28,6 +28,21 @@ pub fn build_nfa(
     terminals: &[TerminalPattern],
     needs: &BuiltinNeeds,
     patterns: &LiteralPatterns,
+) -> Nfa {
+    build_nfa_with_custom(terminals, needs, patterns, &[])
+}
+
+/// Build a complete NFA from terminal patterns, built-in patterns, and custom tokens.
+///
+/// Custom tokens (from the `tokens { ... }` block) are compiled from their regex
+/// patterns via Thompson's NFA construction. Built-in overrides are already reflected
+/// in the `patterns` parameter by the bridge layer; only non-override custom tokens
+/// are added as additional NFA fragments here.
+pub fn build_nfa_with_custom(
+    terminals: &[TerminalPattern],
+    needs: &BuiltinNeeds,
+    patterns: &LiteralPatterns,
+    custom_tokens: &[CustomTokenSpec],
 ) -> Nfa {
     let mut nfa = Nfa::new();
     let global_start = nfa.start;
@@ -61,6 +76,20 @@ pub fn build_nfa(
         fragments.push(frag);
     }
 
+    // Build custom (non-override) token patterns
+    for spec in custom_tokens {
+        if spec.is_builtin_override {
+            continue; // Already handled via LiteralPatterns
+        }
+        let kind = TokenKind::Custom(spec.name.clone());
+        let frag = regex::compile_regex(&spec.pattern, &mut nfa, kind)
+            .unwrap_or_else(|e| panic!("custom token '{}': invalid regex '{}': {}", spec.name, spec.pattern, e));
+        // Override the accept state's priority if the spec has a custom one
+        let accept_state = &mut nfa.states[frag.accept as usize];
+        accept_state.weight = TropicalWeight::from_priority(spec.priority);
+        fragments.push(frag);
+    }
+
     // Combine character-class fragments via alternation
     for frag in &fragments {
         nfa.add_epsilon(global_start, frag.start);
@@ -69,7 +98,35 @@ pub fn build_nfa(
     nfa
 }
 
+/// Build an NFA for a named lexer mode containing only its custom token patterns.
+///
+/// Unlike [`build_nfa_with_custom`] which includes grammar terminals and built-in
+/// patterns (identifiers, integers, etc.), a mode NFA contains only the tokens
+/// declared in that mode. This produces a separate NFA per mode that gets its own
+/// independent DFA → minimize pipeline.
+pub fn build_nfa_for_mode(custom_tokens: &[crate::CustomTokenSpec]) -> Nfa {
+    let mut nfa = Nfa::new();
+    let global_start = nfa.start;
+    let mut fragments: Vec<NfaFragment> = Vec::new();
 
+    for spec in custom_tokens {
+        let kind = TokenKind::Custom(spec.name.clone());
+        let frag = regex::compile_regex(&spec.pattern, &mut nfa, kind)
+            .unwrap_or_else(|e| panic!(
+                "mode token '{}': invalid regex '{}': {}",
+                spec.name, spec.pattern, e
+            ));
+        let accept_state = &mut nfa.states[frag.accept as usize];
+        accept_state.weight = TropicalWeight::from_priority(spec.priority);
+        fragments.push(frag);
+    }
+
+    for frag in &fragments {
+        nfa.add_epsilon(global_start, frag.start);
+    }
+
+    nfa
+}
 
 /// What built-in character-class patterns are needed by the grammar.
 #[derive(Debug, Clone, Default)]

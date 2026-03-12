@@ -661,6 +661,10 @@ mod tests {
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         }
     }
 

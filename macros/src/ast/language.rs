@@ -45,6 +45,14 @@ pub struct LanguageDef {
     /// Parsed from `mixins: [ArithOps, BoolOps]`. Uses `DuplicateStrategy::Override`.
     pub mixin_names: Vec<Ident>,
     pub types: Vec<LangType>,
+    /// Custom token definitions from `tokens { ... }` (default mode).
+    pub token_defs: Vec<TokenDef>,
+    /// Named lexer modes from `tokens { mode name { ... } }`.
+    pub mode_defs: Vec<ModeDef>,
+    /// Cross-stream sync constraints from `tokens { sync { ... } }`.
+    pub sync_constraints: Vec<SyncConstraint>,
+    /// Tree structural invariants from `tokens { tree_invariants { ... } }`.
+    pub tree_invariants: Vec<TreeInvariant>,
     pub terms: Vec<GrammarRule>,
     pub equations: Vec<Equation>,
     pub rewrites: Vec<RewriteRule>,
@@ -210,6 +218,93 @@ pub struct LangType {
     pub native_type: Option<Type>,
 }
 
+/// A token definition from the `tokens { ... }` block.
+///
+/// Specifies a custom or overridden lexer token kind with regex pattern,
+/// optional category mapping, optional Rust constructor code, and
+/// optional lexer mode transitions / stream routing.
+#[derive(Debug, Clone)]
+pub struct TokenDef {
+    /// Token name (e.g., "Integer", "HexLiteral").
+    pub name: Ident,
+    /// Regex pattern for matching this token.
+    pub pattern: String,
+    /// Optional target category name (e.g., "Int").
+    /// Determines payload type via the category's native type.
+    pub category: Option<Ident>,
+    /// Optional Rust code for constructing the payload from `text: &str`.
+    pub rust_code: Option<TokenStream>,
+    /// Optional explicit disambiguation priority (0–255).
+    pub priority: Option<u8>,
+    /// Push into a named mode after matching.
+    pub push_mode: Option<Ident>,
+    /// Pop the current mode after matching (return to caller).
+    pub is_pop: bool,
+    /// Output stream name (default: "main").
+    pub stream: Option<Ident>,
+}
+
+/// A named lexer mode containing token definitions.
+///
+/// Each mode has its own DFA; at runtime the active DFA is determined
+/// by the top of the mode stack.
+#[derive(Debug, Clone)]
+pub struct ModeDef {
+    /// Mode name (e.g., "string_body", "comment_body").
+    pub name: Ident,
+    /// Token definitions within this mode.
+    pub token_defs: Vec<TokenDef>,
+}
+
+/// A cross-stream synchronization constraint from `sync { ... }`.
+#[derive(Debug, Clone)]
+pub enum SyncConstraint {
+    /// Align token positions in `stream_a` with `stream_b` at a regex boundary.
+    Align {
+        stream_a: Ident,
+        stream_b: Ident,
+        boundary_pattern: String,
+    },
+    /// Track `auxiliary` stream positions relative to `primary` stream.
+    Track {
+        auxiliary: Ident,
+        primary: Ident,
+    },
+}
+
+/// A tree structural invariant from the `tree_invariants { ... }` block.
+///
+/// Compiled to mu-calculus formulas for PATA verification.
+#[derive(Debug, Clone)]
+pub struct TreeInvariant {
+    /// Invariant name (e.g., "no_nested_braces").
+    pub name: Ident,
+    /// Constraint expression in the tree DSL.
+    pub constraint: TreeConstraintExpr,
+}
+
+/// Tree constraint expression DSL.
+///
+/// Supports both keyword (`forall`, `exists`, `not`, `and`, `or`, `match`)
+/// and Unicode operator (`∀`, `∃`, `¬`, `∧`, `∨`, `∈`, `↓`) forms.
+#[derive(Debug, Clone)]
+pub enum TreeConstraintExpr {
+    /// `forall children of Symbol { body }` / `∀ ↓ Symbol { body }`
+    ForallChildren { symbol: String, body: Box<TreeConstraintExpr> },
+    /// `exists child` / `∃ child`
+    ExistsChild,
+    /// `not expr` / `¬ expr`
+    Not(Box<TreeConstraintExpr>),
+    /// `match { A | B | C }` / `∈ { A | B | C }`
+    Match(Vec<String>),
+    /// Atomic symbol check (leaf).
+    Atom(String),
+    /// `expr and expr` / `expr ∧ expr`
+    And(Box<TreeConstraintExpr>, Box<TreeConstraintExpr>),
+    /// `expr or expr` / `expr ∨ expr`
+    Or(Box<TreeConstraintExpr>, Box<TreeConstraintExpr>),
+}
+
 use super::grammar::GrammarItem;
 
 impl LanguageDef {
@@ -321,6 +416,18 @@ impl Parse for LanguageDef {
             Vec::new()
         };
 
+        // Parse: tokens { ... } (optional)
+        let (token_defs, mode_defs, sync_constraints, tree_invariants) = if input.peek(Ident) {
+            let lookahead = input.fork().parse::<Ident>()?;
+            if lookahead == "tokens" {
+                parse_tokens(input)?
+            } else {
+                (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+            }
+        } else {
+            (Vec::new(), Vec::new(), Vec::new(), Vec::new())
+        };
+
         // Parse: terms { ... }
         let terms = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
@@ -376,6 +483,10 @@ impl Parse for LanguageDef {
             include_names,
             mixin_names,
             types,
+            token_defs,
+            mode_defs,
+            sync_constraints,
+            tree_invariants,
             terms,
             equations,
             rewrites,
@@ -429,6 +540,495 @@ fn parse_types(input: ParseStream) -> SynResult<Vec<LangType>> {
 /// Public wrapper for `parse_types` for use by `fragment.rs`.
 pub fn parse_types_public(input: ParseStream) -> SynResult<Vec<LangType>> {
     parse_types(input)
+}
+
+/// Reconstruct a proc_macro2 token tree as a string without inserted whitespace.
+///
+/// Used for regex pattern reconstruction: proc_macro2 may add spaces between tokens
+/// that are significant in regex patterns (e.g., `[0 - 9]` vs `[0-9]`), so we
+/// concatenate without separators.
+fn token_tree_to_string(tt: &proc_macro2::TokenTree) -> String {
+    match tt {
+        proc_macro2::TokenTree::Group(g) => {
+            let (open, close) = match g.delimiter() {
+                proc_macro2::Delimiter::Parenthesis => ("(", ")"),
+                proc_macro2::Delimiter::Brace => ("{", "}"),
+                proc_macro2::Delimiter::Bracket => ("[", "]"),
+                proc_macro2::Delimiter::None => ("", ""),
+            };
+            let inner: String = g
+                .stream()
+                .into_iter()
+                .map(|t| token_tree_to_string(&t))
+                .collect();
+            format!("{}{}{}", open, inner, close)
+        },
+        proc_macro2::TokenTree::Ident(i) => i.to_string(),
+        proc_macro2::TokenTree::Punct(p) => p.as_char().to_string(),
+        proc_macro2::TokenTree::Literal(l) => l.to_string(),
+    }
+}
+
+/// Parse a regex pattern between `/` delimiters.
+///
+/// Collects all tokens between opening and closing `/`, reconstructing
+/// the regex string without spaces. Handles `\/` escape (backslash before
+/// `/` prevents it from being treated as the closing delimiter).
+///
+/// **Limitation**: Patterns containing unescaped `"` characters are tokenized
+/// as string literals by proc_macro2 and may not reconstruct correctly. Use
+/// the string literal form (`"pattern"` or `r"pattern"`) for such patterns.
+fn parse_regex_pattern(input: ParseStream) -> SynResult<String> {
+    // Parse opening /
+    let _open_slash: Token![/] = input.parse()?;
+
+    let mut tokens: Vec<proc_macro2::TokenTree> = Vec::new();
+    let mut prev_was_backslash = false;
+
+    loop {
+        if input.is_empty() {
+            return Err(input.error("unterminated regex pattern: expected closing '/'"));
+        }
+
+        // Check for closing / (not preceded by \)
+        if !prev_was_backslash && input.peek(Token![/]) {
+            break;
+        }
+
+        let tt: proc_macro2::TokenTree = input.parse()?;
+        prev_was_backslash =
+            matches!(&tt, proc_macro2::TokenTree::Punct(p) if p.as_char() == '\\');
+        tokens.push(tt);
+    }
+
+    // Parse closing /
+    let _: Token![/] = input.parse()?;
+
+    // Reconstruct regex string without spaces
+    let pattern: String = tokens.iter().map(token_tree_to_string).collect();
+    Ok(pattern)
+}
+
+/// Parse a regex/pattern specifier: either `/regex/` or a string literal.
+///
+/// Supports both forms:
+/// - `/[0-9]+/` — slash-delimited (convenient for simple patterns)
+/// - `r"[0-9]+"` or `"[0-9]+"` — string literal (required for patterns with `"`)
+fn parse_pattern_spec(input: ParseStream) -> SynResult<String> {
+    if input.peek(Token![/]) {
+        parse_regex_pattern(input)
+    } else if input.peek(syn::LitStr) {
+        let lit: syn::LitStr = input.parse()?;
+        Ok(lit.value())
+    } else {
+        Err(input.error(
+            "expected regex pattern: /pattern/ or \"pattern\" (use string literal for patterns containing '\"')",
+        ))
+    }
+}
+
+/// Parse a single token definition.
+///
+/// Grammar:
+/// ```text
+/// token_def ::= Name "=" pattern_spec [":" Category] ["!" "[" rust_code "]"]
+///               ["push" "(" mode_name ")"] ["pop"]
+///               ["->" stream_name] ["priority" "(" integer ")"] ";"
+/// pattern_spec ::= "/" regex "/" | string_literal
+/// ```
+fn parse_token_def(input: ParseStream) -> SynResult<TokenDef> {
+    let name = input.parse::<Ident>()?;
+    let _ = input.parse::<Token![=]>()?;
+
+    // Parse regex pattern (either /regex/ or "regex")
+    let pattern = parse_pattern_spec(input)?;
+
+    // Optional: : Category
+    let category = if input.peek(Token![:]) {
+        let _ = input.parse::<Token![:]>()?;
+        Some(input.parse::<Ident>()?)
+    } else {
+        None
+    };
+
+    // Optional: ![code]
+    let rust_code = if input.peek(Token![!]) {
+        let _ = input.parse::<Token![!]>()?;
+        let bracket_content;
+        syn::bracketed!(bracket_content in input);
+        let code: TokenStream = bracket_content.parse()?;
+        Some(code)
+    } else {
+        None
+    };
+
+    // Parse modifiers in any order before ;
+    let mut push_mode = None;
+    let mut is_pop = false;
+    let mut stream = None;
+    let mut priority = None;
+
+    while !input.peek(Token![;]) && !input.is_empty() {
+        if input.peek(Ident) {
+            let fork = input.fork();
+            let kw = fork.parse::<Ident>()?;
+            match kw.to_string().as_str() {
+                "push" => {
+                    let _ = input.parse::<Ident>()?; // consume "push"
+                    let content;
+                    syn::parenthesized!(content in input);
+                    push_mode = Some(content.parse::<Ident>()?);
+                },
+                "pop" => {
+                    let _ = input.parse::<Ident>()?; // consume "pop"
+                    is_pop = true;
+                },
+                "priority" => {
+                    let _ = input.parse::<Ident>()?; // consume "priority"
+                    let content;
+                    syn::parenthesized!(content in input);
+                    let lit: syn::LitInt = content.parse()?;
+                    priority = Some(lit.base10_parse::<u8>().map_err(|e| {
+                        syn::Error::new(lit.span(), format!("invalid priority: {}", e))
+                    })?);
+                },
+                _ => {
+                    return Err(syn::Error::new(
+                        kw.span(),
+                        format!(
+                            "unexpected modifier '{}' in token definition; \
+                             expected 'push', 'pop', 'priority', or '->'",
+                            kw
+                        ),
+                    ));
+                },
+            }
+        } else if input.peek(Token![->]) {
+            let _ = input.parse::<Token![->]>()?;
+            stream = Some(input.parse::<Ident>()?);
+        } else {
+            return Err(input.error(
+                "unexpected token in token definition; expected ';', \
+                 a modifier (push, pop, priority), or '-> stream'",
+            ));
+        }
+    }
+
+    let _ = input.parse::<Token![;]>()?;
+
+    Ok(TokenDef {
+        name,
+        pattern,
+        category,
+        rust_code,
+        priority,
+        push_mode,
+        is_pop,
+        stream,
+    })
+}
+
+/// Parse a `mode name { ... }` block containing token definitions.
+fn parse_mode_def(input: ParseStream) -> SynResult<ModeDef> {
+    let _ = input.parse::<Ident>()?; // consume "mode"
+    let name = input.parse::<Ident>()?;
+
+    let content;
+    syn::braced!(content in input);
+
+    let mut token_defs = Vec::new();
+    while !content.is_empty() {
+        token_defs.push(parse_token_def(&content)?);
+    }
+
+    Ok(ModeDef { name, token_defs })
+}
+
+/// Parse `sync { ... }` block with cross-stream synchronization constraints.
+fn parse_sync_block(input: ParseStream) -> SynResult<Vec<SyncConstraint>> {
+    let _ = input.parse::<Ident>()?; // consume "sync"
+
+    let content;
+    syn::braced!(content in input);
+
+    let mut constraints = Vec::new();
+    while !content.is_empty() {
+        let kw = content.parse::<Ident>()?;
+        match kw.to_string().as_str() {
+            "align" => {
+                let args;
+                syn::parenthesized!(args in content);
+                let stream_a = args.parse::<Ident>()?;
+                let _ = args.parse::<Token![,]>()?;
+                let stream_b = args.parse::<Ident>()?;
+
+                let on_kw = content.parse::<Ident>()?;
+                if on_kw != "on" {
+                    return Err(syn::Error::new(
+                        on_kw.span(),
+                        "expected 'on' after align(stream_a, stream_b)",
+                    ));
+                }
+                let boundary_pattern = parse_pattern_spec(&content)?;
+                let _ = content.parse::<Token![;]>()?;
+
+                constraints.push(SyncConstraint::Align {
+                    stream_a,
+                    stream_b,
+                    boundary_pattern,
+                });
+            },
+            "track" => {
+                let args;
+                syn::parenthesized!(args in content);
+                let auxiliary = args.parse::<Ident>()?;
+                let _ = args.parse::<Token![,]>()?;
+                let primary = args.parse::<Ident>()?;
+                let _ = content.parse::<Token![;]>()?;
+
+                constraints.push(SyncConstraint::Track { auxiliary, primary });
+            },
+            _ => {
+                return Err(syn::Error::new(
+                    kw.span(),
+                    format!(
+                        "unknown sync constraint '{}'; expected 'align' or 'track'",
+                        kw
+                    ),
+                ));
+            },
+        }
+    }
+
+    Ok(constraints)
+}
+
+/// Parse a tree constraint expression.
+///
+/// Supports both keyword and Unicode operator forms at each position.
+/// Grammar:
+/// ```text
+/// tree_expr ::= tree_atom (("and" | "∧" | "or" | "∨") tree_expr)?
+/// tree_atom ::= ("forall" | "∀") children_of? Symbol "{" tree_expr "}"
+///             | ("exists" | "∃") "child"
+///             | ("not" | "¬") tree_atom
+///             | ("match" | "∈") "{" symbol ("|" symbol)* "}"
+///             | "(" tree_expr ")"
+///             | Symbol
+/// children_of ::= ("children" "of" | "↓")
+/// ```
+fn parse_tree_constraint_expr(input: ParseStream) -> SynResult<TreeConstraintExpr> {
+    let left = parse_tree_constraint_atom(input)?;
+
+    // Check for binary operators: and/∧, or/∨
+    if input.peek(Ident) {
+        let fork = input.fork();
+        if let Ok(kw) = fork.parse::<Ident>() {
+            let kw_str = kw.to_string();
+            if kw_str == "and" || kw_str == "\u{2227}" {
+                // ∧ = U+2227
+                let _ = input.parse::<Ident>()?;
+                let right = parse_tree_constraint_expr(input)?;
+                return Ok(TreeConstraintExpr::And(Box::new(left), Box::new(right)));
+            } else if kw_str == "or" || kw_str == "\u{2228}" {
+                // ∨ = U+2228
+                let _ = input.parse::<Ident>()?;
+                let right = parse_tree_constraint_expr(input)?;
+                return Ok(TreeConstraintExpr::Or(Box::new(left), Box::new(right)));
+            }
+        }
+    }
+
+    Ok(left)
+}
+
+/// Parse an atomic tree constraint expression (unary/leaf).
+fn parse_tree_constraint_atom(input: ParseStream) -> SynResult<TreeConstraintExpr> {
+    if input.peek(Ident) {
+        let fork = input.fork();
+        let kw = fork.parse::<Ident>()?;
+        let kw_str = kw.to_string();
+
+        match kw_str.as_str() {
+            // forall / ∀
+            "forall" | "\u{2200}" => {
+                let _ = input.parse::<Ident>()?; // consume forall/∀
+
+                // Check for "children of" / "↓"
+                let fork2 = input.fork();
+                let next = fork2.parse::<Ident>()?;
+                let next_str = next.to_string();
+
+                if next_str == "children" {
+                    let _ = input.parse::<Ident>()?; // consume "children"
+                    let of_kw = input.parse::<Ident>()?; // consume "of"
+                    if of_kw != "of" {
+                        return Err(syn::Error::new(
+                            of_kw.span(),
+                            "expected 'of' after 'children'",
+                        ));
+                    }
+                    let symbol = input.parse::<Ident>()?;
+                    let body_content;
+                    syn::braced!(body_content in input);
+                    let body = parse_tree_constraint_expr(&body_content)?;
+                    Ok(TreeConstraintExpr::ForallChildren {
+                        symbol: symbol.to_string(),
+                        body: Box::new(body),
+                    })
+                } else if next_str == "\u{2193}" {
+                    // ↓ = U+2193
+                    let _ = input.parse::<Ident>()?; // consume "↓"
+                    let symbol = input.parse::<Ident>()?;
+                    let body_content;
+                    syn::braced!(body_content in input);
+                    let body = parse_tree_constraint_expr(&body_content)?;
+                    Ok(TreeConstraintExpr::ForallChildren {
+                        symbol: symbol.to_string(),
+                        body: Box::new(body),
+                    })
+                } else {
+                    // forall Symbol { body } (shorthand: symbol is next token)
+                    let _ = input.parse::<Ident>()?; // consume symbol
+                    let body_content;
+                    syn::braced!(body_content in input);
+                    let body = parse_tree_constraint_expr(&body_content)?;
+                    Ok(TreeConstraintExpr::ForallChildren {
+                        symbol: next_str,
+                        body: Box::new(body),
+                    })
+                }
+            },
+            // exists / ∃
+            "exists" | "\u{2203}" => {
+                let _ = input.parse::<Ident>()?; // consume exists/∃
+                let next = input.parse::<Ident>()?;
+                if next != "child" {
+                    return Err(syn::Error::new(
+                        next.span(),
+                        "expected 'child' after 'exists'/'∃'",
+                    ));
+                }
+                Ok(TreeConstraintExpr::ExistsChild)
+            },
+            // not / ¬
+            "not" | "\u{00AC}" => {
+                let _ = input.parse::<Ident>()?; // consume not/¬
+                let inner = parse_tree_constraint_atom(input)?;
+                Ok(TreeConstraintExpr::Not(Box::new(inner)))
+            },
+            // match / ∈
+            "match" | "\u{2208}" => {
+                let _ = input.parse::<Ident>()?; // consume match/∈
+                let body_content;
+                syn::braced!(body_content in input);
+                let mut symbols = Vec::new();
+                while !body_content.is_empty() {
+                    symbols.push(body_content.parse::<Ident>()?.to_string());
+                    if body_content.peek(Token![|]) {
+                        let _ = body_content.parse::<Token![|]>()?;
+                    }
+                }
+                Ok(TreeConstraintExpr::Match(symbols))
+            },
+            // Plain atom: symbol name
+            _ => {
+                let _ = input.parse::<Ident>()?;
+                Ok(TreeConstraintExpr::Atom(kw_str))
+            },
+        }
+    } else if input.peek(syn::token::Paren) {
+        // Parenthesized sub-expression
+        let paren_content;
+        syn::parenthesized!(paren_content in input);
+        parse_tree_constraint_expr(&paren_content)
+    } else {
+        Err(input.error("expected tree constraint expression"))
+    }
+}
+
+/// Parse `tree_invariants { ... }` block with structural constraints.
+fn parse_tree_invariants_block(input: ParseStream) -> SynResult<Vec<TreeInvariant>> {
+    let _ = input.parse::<Ident>()?; // consume "tree_invariants"
+
+    let content;
+    syn::braced!(content in input);
+
+    let mut invariants = Vec::new();
+    while !content.is_empty() {
+        let name = content.parse::<Ident>()?;
+        let _ = content.parse::<Token![:]>()?;
+        let constraint = parse_tree_constraint_expr(&content)?;
+        let _ = content.parse::<Token![;]>()?;
+        invariants.push(TreeInvariant { name, constraint });
+    }
+
+    Ok(invariants)
+}
+
+/// Parse the `tokens { ... }` block.
+///
+/// Contains token definitions (default mode), named mode blocks,
+/// optional `sync { ... }` block, and optional `tree_invariants { ... }` block.
+fn parse_tokens(
+    input: ParseStream,
+) -> SynResult<(Vec<TokenDef>, Vec<ModeDef>, Vec<SyncConstraint>, Vec<TreeInvariant>)> {
+    let tokens_ident = input.parse::<Ident>()?;
+    if tokens_ident != "tokens" {
+        return Err(syn::Error::new(tokens_ident.span(), "expected 'tokens'"));
+    }
+
+    let content;
+    syn::braced!(content in input);
+
+    let mut token_defs = Vec::new();
+    let mut mode_defs = Vec::new();
+    let mut sync_constraints = Vec::new();
+    let mut tree_invariants_vec = Vec::new();
+
+    while !content.is_empty() {
+        // Peek at the next identifier to determine what to parse
+        if content.peek(Ident) {
+            let fork = content.fork();
+            let kw = fork.parse::<Ident>()?;
+            let kw_str = kw.to_string();
+
+            match kw_str.as_str() {
+                "mode" => {
+                    mode_defs.push(parse_mode_def(&content)?);
+                },
+                "sync" => {
+                    sync_constraints = parse_sync_block(&content)?;
+                },
+                "tree_invariants" => {
+                    tree_invariants_vec = parse_tree_invariants_block(&content)?;
+                },
+                _ => {
+                    // Token definition: Name = /regex/ ...
+                    token_defs.push(parse_token_def(&content)?);
+                },
+            }
+        } else {
+            return Err(content.error(
+                "expected token definition, 'mode', 'sync', or 'tree_invariants'",
+            ));
+        }
+    }
+
+    // Optional comma after closing brace
+    if input.peek(Token![,]) {
+        let _ = input.parse::<Token![,]>()?;
+    }
+
+    Ok((token_defs, mode_defs, sync_constraints, tree_invariants_vec))
+}
+
+/// Public wrapper for `parse_tokens` for use by `fragment.rs`.
+pub fn parse_tokens_public(
+    input: ParseStream,
+) -> SynResult<(Vec<TokenDef>, Vec<ModeDef>)> {
+    let (token_defs, mode_defs, _, _) = parse_tokens(input)?;
+    Ok((token_defs, mode_defs))
 }
 
 fn parse_options(input: ParseStream) -> SynResult<HashMap<String, AttributeValue>> {

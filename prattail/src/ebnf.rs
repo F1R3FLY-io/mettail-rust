@@ -1313,6 +1313,10 @@ mod tests {
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         }
     }
 
@@ -1515,6 +1519,7 @@ mod tests {
             all_syntax,
             rule_locations: std::collections::HashMap::new(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
         }
     }
 
@@ -1725,6 +1730,10 @@ mod tests {
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1798,6 +1807,10 @@ mod tests {
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         };
 
         let bundle = build_bundle(&spec);
@@ -1864,6 +1877,10 @@ mod tests {
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         };
 
         let bundle = build_bundle(&spec);

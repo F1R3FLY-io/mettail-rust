@@ -4,11 +4,12 @@
 use crate::automata::{
     codegen::generate_lexer_string,
     minimize::minimize_dfa,
-    nfa::{build_nfa, build_nfa_prefix_only, BuiltinNeeds},
+    nfa::{build_nfa, build_nfa_for_mode, build_nfa_prefix_only, build_nfa_with_custom, BuiltinNeeds},
     partition::compute_equivalence_classes,
     subset::subset_construction,
     TerminalPattern, TokenKind, DEAD_STATE,
 };
+use crate::CustomTokenSpec;
 
 /// Build a complete automata pipeline for a set of terminals and verify
 /// the resulting DFA recognizes the expected tokens.
@@ -310,7 +311,7 @@ fn run_codegen_pipeline(
     }
 
     let (code, _strategy, _variant_map, _ambiguity) =
-        generate_lexer_string(&min_dfa, &partition, &token_kinds, "test");
+        generate_lexer_string(&min_dfa, &partition, &token_kinds, "test", &[]);
     code
 }
 
@@ -505,5 +506,205 @@ fn test_dafsa_vs_prefix_identical_codegen_rhocalc() {
     assert_eq!(
         dafsa_code, prefix_code,
         "RhoCalc: DAFSA and prefix-only should produce identical lexer code"
+    );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Custom token NFA unit tests
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Helper to create a [`CustomTokenSpec`] with common defaults.
+fn custom_token(name: &str, pattern: &str, priority: u8) -> CustomTokenSpec {
+    CustomTokenSpec {
+        name: name.to_string(),
+        pattern: pattern.to_string(),
+        category: None,
+        payload_type: None,
+        constructor_code: None,
+        is_builtin_override: false,
+        priority,
+        push_mode: None,
+        is_pop: false,
+        stream: None,
+    }
+}
+
+/// Build pipeline with custom tokens.
+fn build_pipeline_with_custom(
+    terminals: &[(&str, TokenKind)],
+    needs: BuiltinNeeds,
+    custom_tokens: &[CustomTokenSpec],
+) -> (crate::automata::Dfa, crate::automata::partition::AlphabetPartition) {
+    let terminal_patterns: Vec<TerminalPattern> = terminals
+        .iter()
+        .map(|(text, kind)| TerminalPattern {
+            text: text.to_string(),
+            kind: kind.clone(),
+            is_keyword: text.chars().all(|c| c.is_alphanumeric() || c == '_'),
+        })
+        .collect();
+
+    let nfa = build_nfa_with_custom(
+        &terminal_patterns,
+        &needs,
+        &crate::LiteralPatterns::default(),
+        custom_tokens,
+    );
+    let partition = compute_equivalence_classes(&nfa);
+    let dfa = subset_construction(&nfa, &partition);
+    let min_dfa = minimize_dfa(&dfa);
+
+    (min_dfa, partition)
+}
+
+/// Build pipeline for a mode's custom tokens only.
+fn build_mode_pipeline(
+    custom_tokens: &[CustomTokenSpec],
+) -> (crate::automata::Dfa, crate::automata::partition::AlphabetPartition) {
+    let nfa = build_nfa_for_mode(custom_tokens);
+    let partition = compute_equivalence_classes(&nfa);
+    let dfa = subset_construction(&nfa, &partition);
+    let min_dfa = minimize_dfa(&dfa);
+    (min_dfa, partition)
+}
+
+#[test]
+fn test_custom_token_nfa() {
+    let hex_token = custom_token("HexLiteral", "0x[0-9a-fA-F]+", 2);
+    let (dfa, partition) = build_pipeline_with_custom(&[], BuiltinNeeds::default(), &[hex_token]);
+
+    // "0xFF" should be accepted as Custom("HexLiteral")
+    assert_eq!(
+        lex_string(&dfa, &partition, "0xFF"),
+        Some(TokenKind::Custom("HexLiteral".into())),
+        "0xFF should be recognized as a HexLiteral custom token"
+    );
+
+    // "0xGG" should NOT match — 'G' is not a valid hex digit
+    assert_eq!(
+        lex_string(&dfa, &partition, "0xGG"),
+        None,
+        "0xGG should not match any token (G is not a hex digit)"
+    );
+}
+
+#[test]
+fn test_custom_token_priority() {
+    let alpha_num = custom_token("AlphaNum", "[a-z0-9]+", 2);
+    let hex_lit = custom_token("HexLit", "[0-9a-f]+", 5);
+    let (dfa, partition) =
+        build_pipeline_with_custom(&[], BuiltinNeeds::default(), &[alpha_num, hex_lit]);
+
+    // "xyz" contains letters outside hex range — only AlphaNum can match
+    assert_eq!(
+        lex_string(&dfa, &partition, "xyz"),
+        Some(TokenKind::Custom("AlphaNum".into())),
+        "xyz should match AlphaNum (not valid hex)"
+    );
+
+    // "999" is valid for both patterns; the higher-priority HexLit should win
+    assert_eq!(
+        lex_string(&dfa, &partition, "999"),
+        Some(TokenKind::Custom("HexLit".into())),
+        "999 is valid hex and alphanumeric — higher-priority HexLit should win"
+    );
+}
+
+#[test]
+fn test_builtin_override_pattern() {
+    // Create a custom spec with is_builtin_override = true.
+    // The NFA builder skips builtin overrides (they modify LiteralPatterns instead),
+    // so "0xFF" should NOT be recognized as Custom("Integer").
+    let override_spec = CustomTokenSpec {
+        name: "Integer".to_string(),
+        pattern: "0x[0-9a-fA-F]+|[0-9]+".to_string(),
+        category: None,
+        payload_type: None,
+        constructor_code: None,
+        is_builtin_override: true,
+        priority: 2,
+        push_mode: None,
+        is_pop: false,
+        stream: None,
+    };
+
+    let (dfa, partition) =
+        build_pipeline_with_custom(&[], BuiltinNeeds::default(), &[override_spec]);
+
+    // Since the override path modifies LiteralPatterns (not the NFA custom fragment),
+    // "0xFF" should NOT match Custom("Integer").
+    assert_ne!(
+        lex_string(&dfa, &partition, "0xFF"),
+        Some(TokenKind::Custom("Integer".into())),
+        "builtin override should NOT appear as a Custom token in the NFA"
+    );
+}
+
+#[test]
+fn test_multi_mode_nfa() {
+    let string_chars = custom_token("StringChars", "[^\"\\\\]+", 2);
+    let string_end = custom_token("StringEnd", "\"", 2);
+    let (dfa, partition) = build_mode_pipeline(&[string_chars, string_end]);
+
+    // "hello world" (non-quote, non-backslash chars) → StringChars
+    assert_eq!(
+        lex_string(&dfa, &partition, "hello world"),
+        Some(TokenKind::Custom("StringChars".into())),
+        "plain text should match StringChars in string mode"
+    );
+
+    // A lone double-quote → StringEnd
+    assert_eq!(
+        lex_string(&dfa, &partition, "\""),
+        Some(TokenKind::Custom("StringEnd".into())),
+        "a double-quote should match StringEnd in string mode"
+    );
+
+    // Empty string matches nothing (no token consumes zero characters)
+    assert_eq!(
+        lex_string(&dfa, &partition, ""),
+        None,
+        "empty input should not match any mode token"
+    );
+}
+
+#[test]
+fn test_custom_token_alongside_builtins() {
+    let bin_literal = custom_token("BinLiteral", "0b[01]+", 2);
+    let needs = BuiltinNeeds {
+        ident: true,
+        integer: true,
+        ..Default::default()
+    };
+    let (dfa, partition) = build_pipeline_with_custom(&[], needs, &[bin_literal]);
+
+    // "foo" → Ident (built-in)
+    assert_eq!(
+        lex_string(&dfa, &partition, "foo"),
+        Some(TokenKind::Ident),
+        "foo should be recognized as a built-in Ident"
+    );
+
+    // "42" → Integer (built-in)
+    assert_eq!(
+        lex_string(&dfa, &partition, "42"),
+        Some(TokenKind::Integer),
+        "42 should be recognized as a built-in Integer"
+    );
+
+    // "0b1010" → Custom("BinLiteral")
+    assert_eq!(
+        lex_string(&dfa, &partition, "0b1010"),
+        Some(TokenKind::Custom("BinLiteral".into())),
+        "0b1010 should be recognized as a BinLiteral custom token"
+    );
+
+    // "0b2" should NOT fully match BinLiteral ('2' is not a binary digit).
+    // The DFA may partially match "0b" then die on '2', or match "0" as Integer
+    // prefix then die. Either way, it must not yield Custom("BinLiteral").
+    assert_ne!(
+        lex_string(&dfa, &partition, "0b2"),
+        Some(TokenKind::Custom("BinLiteral".into())),
+        "0b2 should not match BinLiteral (2 is not a binary digit)"
     );
 }

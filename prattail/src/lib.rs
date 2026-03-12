@@ -334,6 +334,98 @@ impl Default for LiteralPatterns {
     }
 }
 
+/// Specification for a custom or overridden token kind.
+///
+/// Produced by the macros crate's bridge from `TokenDef` AST nodes.
+/// Consumed by the automata pipeline to build NFA fragments and codegen.
+#[derive(Debug, Clone)]
+pub struct CustomTokenSpec {
+    /// Token name (e.g., "Integer", "HexLiteral").
+    pub name: String,
+    /// Regex pattern for this token.
+    pub pattern: String,
+    /// Target category name (e.g., "Int"). None = no payload.
+    pub category: Option<String>,
+    /// Resolved Rust type for the payload (e.g., "i64", "f64", "&'a str").
+    /// Set by the bridge from the category's native type. None = unit variant.
+    pub payload_type: Option<String>,
+    /// Rust code expression for constructing the payload from `text: &str`.
+    pub constructor_code: Option<String>,
+    /// Whether this overrides a built-in token kind (Integer, Float, StringLit, Ident).
+    pub is_builtin_override: bool,
+    /// Disambiguation priority (higher = preferred). Default: 2.
+    pub priority: u8,
+    /// Push into a named mode after matching. None = no push.
+    pub push_mode: Option<String>,
+    /// Pop the current mode after matching (return to caller).
+    pub is_pop: bool,
+    /// Output stream name. None = "main".
+    pub stream: Option<String>,
+}
+
+/// A lexer mode with its own set of token patterns.
+///
+/// Each mode gets its own NFA → DFA pipeline and separate codegen.
+#[derive(Debug, Clone)]
+pub struct LexerModeSpec {
+    /// Mode name (e.g., "string_body", "comment_body").
+    pub name: String,
+    /// Token specs within this mode.
+    pub token_specs: Vec<CustomTokenSpec>,
+}
+
+/// Result of multi-stream lexing.
+///
+/// Contains the main token stream (consumed by the parser) plus auxiliary streams
+/// for tokens routed via `-> stream_name` annotations in the `tokens { ... }` block.
+/// Auxiliary streams are available as metadata for tools (IDE comment extraction,
+/// formatter whitespace preservation, etc.).
+///
+/// When no `-> stream` annotations exist, `streams` is empty (zero allocation).
+#[derive(Debug, Clone)]
+pub struct LexResult<T> {
+    /// Main token stream (consumed by the parser). Includes the Eof token.
+    pub tokens: Vec<(T, runtime_types::Range)>,
+    /// Auxiliary streams (comments, whitespace, etc.), keyed by stream name.
+    pub streams: std::collections::HashMap<String, Vec<(T, runtime_types::Range)>>,
+}
+
+/// Specification for cross-stream synchronization constraints.
+#[derive(Debug, Clone)]
+pub struct SyncSpec {
+    /// Synchronization constraints.
+    pub constraints: Vec<SyncConstraintSpec>,
+}
+
+/// A single cross-stream synchronization constraint.
+#[derive(Debug, Clone)]
+pub enum SyncConstraintSpec {
+    /// Align token positions in `stream_a` with `stream_b` at a boundary pattern.
+    Align {
+        stream_a: String,
+        stream_b: String,
+        boundary_pattern: String,
+    },
+    /// Track `auxiliary` stream positions relative to `primary` stream.
+    Track {
+        auxiliary: String,
+        primary: String,
+    },
+}
+
+/// Specification for a tree structural invariant.
+///
+/// Compiled from the `tree_invariants { ... }` DSL in the `tokens` block.
+/// Contains the mu-calculus formula string and invariant name for diagnostics.
+#[derive(Debug, Clone)]
+pub struct TreeInvariantSpec {
+    /// Invariant name (e.g., "no_nested_braces").
+    pub name: String,
+    /// The tree constraint formula as a string representation.
+    /// Compiled to `MuCalculusFormula` during pipeline analysis.
+    pub formula: String,
+}
+
 /// Language definition input for the parser generator.
 ///
 /// This is a simplified, serializable representation of the grammar,
@@ -368,6 +460,19 @@ pub struct LanguageSpec {
     ///
     /// Default: empty (backward compatible — no semantic info available).
     pub semantic_dependency_groups: Vec<HashSet<String>>,
+    /// Custom token definitions (default mode). Overrides built-in patterns
+    /// for matching names, defines new token kinds for non-matching names.
+    /// Default: empty (backward compatible — uses `literal_patterns` only).
+    pub custom_tokens: Vec<CustomTokenSpec>,
+    /// Named lexer modes with their own DFA pipelines.
+    /// Default: empty (single-mode lexing).
+    pub modes: Vec<LexerModeSpec>,
+    /// Cross-stream synchronization constraints.
+    /// Default: None (no multi-stream analysis).
+    pub sync: Option<SyncSpec>,
+    /// Tree structural invariants for PATA verification.
+    /// Default: empty.
+    pub tree_invariants: Vec<TreeInvariantSpec>,
 }
 
 /// A category (type) in the language.
@@ -594,6 +699,10 @@ impl LanguageSpec {
             literal_patterns,
             recovery_config: recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         }
     }
 }

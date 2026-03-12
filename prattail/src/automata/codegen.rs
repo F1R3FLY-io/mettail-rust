@@ -21,6 +21,7 @@ use std::fmt::Write;
 use proc_macro2::TokenStream;
 
 use super::{partition::AlphabetPartition, semiring::TropicalWeight, Dfa, StateId, TokenKind, DEAD_STATE};
+use crate::CustomTokenSpec;
 
 /// Threshold: use direct-coded for small DFAs, table-driven for larger ones.
 const DIRECT_CODED_THRESHOLD: usize = 30;
@@ -116,6 +117,7 @@ impl TokenVariantMap {
                 TokenKind::Fixed(text) => terminal_to_variant_name(text),
                 TokenKind::Dollar => "Dollar".to_string(),
                 TokenKind::DoubleDollar => "DoubleDollar".to_string(),
+                TokenKind::Custom(name) => name.clone(),
             };
             insert(name);
         }
@@ -150,6 +152,7 @@ impl TokenVariantMap {
             TokenKind::Fixed(text) => terminal_to_variant_name(text),
             TokenKind::Dollar => "Dollar".to_string(),
             TokenKind::DoubleDollar => "DoubleDollar".to_string(),
+            TokenKind::Custom(name) => name.clone(),
         };
         self.get_id(&name)
     }
@@ -261,9 +264,10 @@ pub fn generate_lexer_code(
     partition: &AlphabetPartition,
     token_kinds: &[TokenKind],
     language_name: &str,
+    custom_tokens: &[CustomTokenSpec],
 ) -> (TokenStream, CodegenStrategy) {
     let (buf, strategy, _variant_map, _ambiguity) =
-        generate_lexer_string(dfa, partition, token_kinds, language_name);
+        generate_lexer_string(dfa, partition, token_kinds, language_name, custom_tokens);
     let ts = buf
         .parse::<TokenStream>()
         .expect("generated lexer code must be valid Rust");
@@ -279,9 +283,10 @@ pub fn generate_lexer_code_hybrid(
     token_kinds: &[TokenKind],
     language_name: &str,
     hybrid_lexer: bool,
+    custom_tokens: &[CustomTokenSpec],
 ) -> (TokenStream, CodegenStrategy) {
     let (buf, strategy, _variant_map, _ambiguity) =
-        generate_lexer_string_hybrid(dfa, partition, token_kinds, language_name, hybrid_lexer);
+        generate_lexer_string_hybrid(dfa, partition, token_kinds, language_name, hybrid_lexer, custom_tokens);
     let ts = buf
         .parse::<TokenStream>()
         .expect("generated lexer code must be valid Rust");
@@ -301,8 +306,9 @@ pub fn generate_lexer_string(
     partition: &AlphabetPartition,
     token_kinds: &[TokenKind],
     _language_name: &str,
+    custom_tokens: &[CustomTokenSpec],
 ) -> (String, CodegenStrategy, TokenVariantMap, LexerAmbiguityInfo) {
-    generate_lexer_string_hybrid(dfa, partition, token_kinds, _language_name, false)
+    generate_lexer_string_hybrid(dfa, partition, token_kinds, _language_name, false, custom_tokens)
 }
 
 /// Generate lexer code as a `String` with AL02 hybrid gating.
@@ -317,18 +323,19 @@ pub fn generate_lexer_string_hybrid(
     token_kinds: &[TokenKind],
     _language_name: &str,
     hybrid_lexer: bool,
+    custom_tokens: &[CustomTokenSpec],
 ) -> (String, CodegenStrategy, TokenVariantMap, LexerAmbiguityInfo) {
     // Estimate buffer size: ~8KB for typical grammars, scales with DFA size
     let estimated_size = 4096 + dfa.states.len() * partition.num_classes * 16;
     let mut buf = String::with_capacity(estimated_size);
 
-    write_token_enum(&mut buf, token_kinds);
-    write_token_display(&mut buf, token_kinds);
+    write_token_enum(&mut buf, token_kinds, custom_tokens);
+    write_token_display(&mut buf, token_kinds, custom_tokens);
     write_runtime_types_import(&mut buf);
 
     let strategy = if dfa.states.len() <= DIRECT_CODED_THRESHOLD {
         // Small DFA: all states direct-coded (existing behavior, no hybrid needed)
-        write_direct_coded_lexer(&mut buf, dfa, partition);
+        write_direct_coded_lexer(&mut buf, dfa, partition, custom_tokens);
         CodegenStrategy::DirectCoded
     } else if hybrid_lexer {
         // AL02: Hybrid mode — hot states direct-coded, cold states table-driven
@@ -353,10 +360,10 @@ pub fn generate_lexer_string_hybrid(
             source_location: None,
         });
 
-        write_hybrid_lexer(&mut buf, dfa, partition, &hot_states);
+        write_hybrid_lexer(&mut buf, dfa, partition, &hot_states, custom_tokens);
         CodegenStrategy::HybridDirectCompressed
     } else {
-        write_compressed_lexer(&mut buf, dfa, partition)
+        write_compressed_lexer(&mut buf, dfa, partition, custom_tokens)
     };
 
     let variant_map = TokenVariantMap::from_token_kinds(token_kinds);
@@ -373,7 +380,7 @@ pub fn generate_lexer_string_hybrid(
 ///
 /// Generates `Token<'a>` with borrowed `&'a str` for string-carrying variants
 /// (Ident, StringLit, Dollar, DoubleDollar), eliminating allocations during lexing.
-fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
+fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind], custom_tokens: &[CustomTokenSpec]) {
     let mut seen = std::collections::HashSet::<String>::new();
 
     buf.push_str("#[derive(Debug, Clone, PartialEq)] pub enum Token<'a> {");
@@ -424,6 +431,23 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
                     buf.push_str("DoubleDollar(&'a str),");
                 }
             },
+            TokenKind::Custom(name) => {
+                if seen.insert(name.clone()) {
+                    if let Some(pt) = custom_tokens.iter()
+                        .find(|s| s.name == *name)
+                        .and_then(|s| s.payload_type.as_deref())
+                    {
+                        // Payload-carrying variant: use &'a str for str types, type directly otherwise
+                        if pt == "str" {
+                            write!(buf, "{}(&'a str),", name).unwrap();
+                        } else {
+                            write!(buf, "{}({}),", name, pt).unwrap();
+                        }
+                    } else {
+                        write!(buf, "{},", name).unwrap();
+                    }
+                }
+            },
         }
     }
 
@@ -438,7 +462,7 @@ fn write_token_enum(buf: &mut String, token_kinds: &[TokenKind]) {
 /// - `Token::Integer(n)` → `` "integer `42`" ``
 /// - `Token::KwFoo` → `` "`foo`" ``
 /// - `Token::Plus` → `` "`+`" ``
-fn write_token_display(buf: &mut String, token_kinds: &[TokenKind]) {
+fn write_token_display(buf: &mut String, token_kinds: &[TokenKind], custom_tokens: &[CustomTokenSpec]) {
     let mut seen = std::collections::HashSet::<String>::new();
 
     buf.push_str("fn format_token_friendly(token: &Token<'_>) -> String { match token {");
@@ -489,6 +513,19 @@ fn write_token_display(buf: &mut String, token_kinds: &[TokenKind]) {
             TokenKind::DoubleDollar => {
                 if seen.insert("DoubleDollar".to_string()) {
                     buf.push_str("Token::DoubleDollar(s) => format!(\"`$${}`\", s),");
+                }
+            },
+            TokenKind::Custom(name) => {
+                if seen.insert(name.clone()) {
+                    let has_payload = custom_tokens.iter()
+                        .find(|s| s.name == *name)
+                        .and_then(|s| s.payload_type.as_ref())
+                        .is_some();
+                    if has_payload {
+                        write!(buf, "Token::{}(v) => format!(\"{} `{{}}`\", v),", name, name).unwrap();
+                    } else {
+                        write!(buf, "Token::{} => \"`{}`\".to_string(),", name, name).unwrap();
+                    }
                 }
             },
         }
@@ -565,12 +602,12 @@ fn write_is_accepting_check(buf: &mut String, dfa: &Dfa) {
 }
 
 /// Write the accept_token match arms to a string buffer.
-fn write_accept_arms(buf: &mut String, dfa: &Dfa) {
+fn write_accept_arms(buf: &mut String, dfa: &Dfa, custom_tokens: &[CustomTokenSpec]) {
     buf.push_str("match state {");
     for (state_idx, state) in dfa.states.iter().enumerate() {
         if let Some(ref kind) = state.accept {
             write!(buf, "{}u32 => Some(", state_idx).unwrap();
-            write_token_constructor(buf, kind);
+            write_token_constructor(buf, kind, custom_tokens);
             buf.push_str("),");
         }
     }
@@ -616,7 +653,7 @@ fn write_transition_arms(buf: &mut String, dfa: &Dfa) {
 ///
 /// Zero-copy: string-carrying variants borrow from the input `text` slice
 /// rather than allocating new `String`s.
-fn write_token_constructor(buf: &mut String, kind: &TokenKind) {
+fn write_token_constructor(buf: &mut String, kind: &TokenKind, custom_tokens: &[CustomTokenSpec]) {
     match kind {
         TokenKind::Eof => buf.push_str("Token::Eof"),
         TokenKind::Ident => buf.push_str("Token::Ident(text)"),
@@ -639,11 +676,29 @@ fn write_token_constructor(buf: &mut String, kind: &TokenKind) {
         TokenKind::DoubleDollar => {
             buf.push_str("Token::DoubleDollar(&text[2..text.len()-1])");
         },
+        TokenKind::Custom(name) => {
+            if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
+                if let Some(ref code) = spec.constructor_code {
+                    write!(buf, "Token::{}({{ let text = text; {} }})", name, code).unwrap();
+                } else if let Some(ref pt) = spec.payload_type {
+                    // Payload variant without custom code: default constructor
+                    if pt == "str" {
+                        write!(buf, "Token::{}(text)", name).unwrap();
+                    } else {
+                        write!(buf, "Token::{}(text.parse::<{}>().expect(\"invalid {} literal\"))", name, pt, name).unwrap();
+                    }
+                } else {
+                    write!(buf, "Token::{}", name).unwrap();
+                }
+            } else {
+                write!(buf, "Token::{}", name).unwrap();
+            }
+        },
     }
 }
 
 /// Write a complete direct-coded lexer to a string buffer.
-fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPartition) {
+fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPartition, custom_tokens: &[CustomTokenSpec]) {
     write_class_table(buf, partition);
 
     write!(buf, "const NUM_CLASSES: usize = {};", partition.num_classes).unwrap();
@@ -665,7 +720,7 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
 
     // accept_token() function — returns Token<'a> borrowing from text
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(buf, dfa);
+    write_accept_arms(buf, dfa, custom_tokens);
     buf.push('}');
 
     // lex()/lex_with_file_id() — chain-aware if chains detected, otherwise via lex_core()
@@ -684,7 +739,7 @@ fn write_direct_coded_lexer(buf: &mut String, dfa: &Dfa, partition: &AlphabetPar
     write_lex_weighted_via_core(buf);
 
     // B3: Lattice-aware lexing with multi-accept alternatives
-    write_accept_alternatives(buf, dfa);
+    write_accept_alternatives(buf, dfa, custom_tokens);
     write_lex_lattice_via_core(buf);
 }
 
@@ -699,6 +754,7 @@ fn write_hybrid_lexer(
     dfa: &Dfa,
     partition: &AlphabetPartition,
     hot_states: &HashSet<usize>,
+    custom_tokens: &[CustomTokenSpec],
 ) {
     let num_classes = partition.num_classes;
 
@@ -764,7 +820,7 @@ fn write_hybrid_lexer(
 
     // accept_token() function — returns Token<'a> borrowing from text
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(buf, dfa);
+    write_accept_arms(buf, dfa, custom_tokens);
     buf.push('}');
 
     // lex()/lex_with_file_id() via lex_core()
@@ -777,7 +833,7 @@ fn write_hybrid_lexer(
     write_lex_weighted_via_core(buf);
 
     // B3: Lattice-aware lexing with multi-accept alternatives
-    write_accept_alternatives(buf, dfa);
+    write_accept_alternatives(buf, dfa, custom_tokens);
     write_lex_lattice_via_core(buf);
 }
 
@@ -912,7 +968,7 @@ fn write_lex_weighted_via_core(buf: &mut String) {
 /// Non-accepting states return an empty Vec.
 ///
 /// Used by `lex_lattice_core()` to construct `TokenLattice` at ambiguous positions.
-fn write_accept_alternatives(buf: &mut String, dfa: &Dfa) {
+fn write_accept_alternatives(buf: &mut String, dfa: &Dfa, custom_tokens: &[CustomTokenSpec]) {
     use std::fmt::Write;
 
     buf.push_str("fn accept_alternatives<'a>(state: u32, text: &'a str) -> Vec<(Token<'a>, f64)> {");
@@ -922,7 +978,7 @@ fn write_accept_alternatives(buf: &mut String, dfa: &Dfa) {
         if let Some(ref primary_kind) = state.accept {
             if state.alt_accepts.is_empty() {
                 // Unambiguous: single alternative
-                let primary_variant = token_kind_to_constructor(primary_kind, "text");
+                let primary_variant = token_kind_to_constructor(primary_kind, "text", custom_tokens);
                 write!(
                     buf,
                     "{}u32 => vec![({}, {:.1}_f64)],",
@@ -935,11 +991,11 @@ fn write_accept_alternatives(buf: &mut String, dfa: &Dfa) {
                 // Multi-accept: primary + alternatives
                 write!(buf, "{}u32 => vec![", state_idx).unwrap();
                 // Primary first (best weight)
-                let primary_variant = token_kind_to_constructor(primary_kind, "text");
+                let primary_variant = token_kind_to_constructor(primary_kind, "text", custom_tokens);
                 write!(buf, "({}, {:.1}_f64),", primary_variant, state.weight.value()).unwrap();
                 // Alternatives
                 for (alt_kind, alt_weight) in &state.alt_accepts {
-                    let alt_variant = token_kind_to_constructor(alt_kind, "text");
+                    let alt_variant = token_kind_to_constructor(alt_kind, "text", custom_tokens);
                     write!(buf, "({}, {:.1}_f64),", alt_variant, alt_weight.value()).unwrap();
                 }
                 buf.push_str("],");
@@ -951,7 +1007,7 @@ fn write_accept_alternatives(buf: &mut String, dfa: &Dfa) {
 }
 
 /// Convert a TokenKind enum variant to its Rust `Token` constructor expression.
-fn token_kind_to_constructor(kind: &TokenKind, text_var: &str) -> String {
+fn token_kind_to_constructor(kind: &TokenKind, text_var: &str, custom_tokens: &[CustomTokenSpec]) -> String {
     match kind {
         TokenKind::Eof => "Token::Eof".to_string(),
         TokenKind::Ident => format!("Token::Ident({})", text_var),
@@ -974,6 +1030,23 @@ fn token_kind_to_constructor(kind: &TokenKind, text_var: &str) -> String {
         TokenKind::Fixed(terminal) => {
             let variant = terminal_to_variant_name(terminal);
             format!("Token::{}", variant)
+        }
+        TokenKind::Custom(name) => {
+            if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
+                if let Some(ref code) = spec.constructor_code {
+                    format!("Token::{}({{ let text = {}; {} }})", name, text_var, code)
+                } else if let Some(ref pt) = spec.payload_type {
+                    if pt == "str" {
+                        format!("Token::{}({})", name, text_var)
+                    } else {
+                        format!("Token::{}({}.parse::<{}>().expect(\"invalid {} literal\"))", name, text_var, pt, name)
+                    }
+                } else {
+                    format!("Token::{}", name)
+                }
+            } else {
+                format!("Token::{}", name)
+            }
         }
     }
 }
@@ -1723,6 +1796,7 @@ fn write_compressed_lexer(
     buf: &mut String,
     dfa: &Dfa,
     partition: &AlphabetPartition,
+    custom_tokens: &[CustomTokenSpec],
 ) -> CodegenStrategy {
     let num_classes = partition.num_classes;
     let mut comb = compress_rows_comb(dfa, num_classes);
@@ -1735,12 +1809,12 @@ fn write_compressed_lexer(
     if num_classes <= 32 {
         let bitmap = build_bitmap_tables(dfa).expect("num_classes verified <= 32");
         if bitmap.total_bytes() <= comb.total_bytes() {
-            write_bitmap_driven_lexer(buf, dfa, partition, &bitmap);
+            write_bitmap_driven_lexer(buf, dfa, partition, &bitmap, custom_tokens);
             return CodegenStrategy::BitmapCompressed;
         }
     }
 
-    write_comb_driven_lexer(buf, dfa, partition, &comb);
+    write_comb_driven_lexer(buf, dfa, partition, &comb, custom_tokens);
     CodegenStrategy::CombCompressed
 }
 
@@ -1750,6 +1824,7 @@ fn write_comb_driven_lexer(
     dfa: &Dfa,
     partition: &AlphabetPartition,
     comb: &CombTable,
+    custom_tokens: &[CustomTokenSpec],
 ) {
     write_class_table(buf, partition);
     write_comb_tables(buf, comb);
@@ -1778,7 +1853,7 @@ fn write_comb_driven_lexer(
 
     // accept_token() function
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(buf, dfa);
+    write_accept_arms(buf, dfa, custom_tokens);
     buf.push('}');
 
     // lex()/lex_with_file_id() — chain-aware if chains detected, otherwise via lex_core()
@@ -1795,7 +1870,7 @@ fn write_comb_driven_lexer(
     write_lex_weighted_via_core(buf);
 
     // B3: Lattice-aware lexing with multi-accept alternatives
-    write_accept_alternatives(buf, dfa);
+    write_accept_alternatives(buf, dfa, custom_tokens);
     write_lex_lattice_via_core(buf);
 }
 
@@ -1805,6 +1880,7 @@ fn write_bitmap_driven_lexer(
     dfa: &Dfa,
     partition: &AlphabetPartition,
     tables: &BitmapTables,
+    custom_tokens: &[CustomTokenSpec],
 ) {
     write_class_table(buf, partition);
     write_bitmap_tables(buf, tables);
@@ -1834,7 +1910,7 @@ fn write_bitmap_driven_lexer(
 
     // accept_token() function
     buf.push_str("fn accept_token<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {");
-    write_accept_arms(buf, dfa);
+    write_accept_arms(buf, dfa, custom_tokens);
     buf.push('}');
 
     // lex()/lex_with_file_id() — chain-aware if chains detected, otherwise via lex_core()
@@ -1851,7 +1927,7 @@ fn write_bitmap_driven_lexer(
     write_lex_weighted_via_core(buf);
 
     // B3: Lattice-aware lexing with multi-accept alternatives
-    write_accept_alternatives(buf, dfa);
+    write_accept_alternatives(buf, dfa, custom_tokens);
     write_lex_lattice_via_core(buf);
 }
 
@@ -2145,6 +2221,708 @@ pub fn write_mph_keyword_tables(
             false
         }
     }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// Sprint 5: WPDS Modal Lexing — multi-mode DFA codegen with mode stack dispatch
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Write the equivalence class table with a suffixed static name.
+///
+/// Emits `static CHAR_CLASS_{SUFFIX}: [u8; 256] = [...]` for the given partition.
+fn write_class_table_suffixed(buf: &mut String, partition: &AlphabetPartition, suffix: &str) {
+    write!(buf, "static CHAR_CLASS_{}: [u8; 256] = [", suffix).unwrap();
+    for (i, &class) in partition.byte_to_class.iter().enumerate() {
+        if i > 0 {
+            buf.push(',');
+        }
+        write!(buf, "{}", class).unwrap();
+    }
+    buf.push_str("];");
+}
+
+/// Write a suffixed IS_ACCEPTING bitmap and inline check function.
+///
+/// Emits:
+/// - `static IS_ACCEPTING_{SUFFIX}: [u64; K] = [...]`
+/// - `fn is_accepting_state_{suffix}(state: u32) -> bool`
+fn write_is_accepting_suffixed(buf: &mut String, dfa: &Dfa, suffix: &str) {
+    let n = dfa.states.len();
+    let num_words = (n + 63) / 64;
+
+    let mut words = vec![0u64; num_words];
+    for (i, state) in dfa.states.iter().enumerate() {
+        if state.accept.is_some() {
+            words[i >> 6] |= 1u64 << (i & 63);
+        }
+    }
+
+    write!(buf, "static IS_ACCEPTING_{}: [u64; {}] = [", suffix, num_words).unwrap();
+    for (i, &w) in words.iter().enumerate() {
+        if i > 0 {
+            buf.push(',');
+        }
+        write!(buf, "0x{:016x}", w).unwrap();
+    }
+    buf.push_str("];");
+
+    write!(
+        buf,
+        "#[inline(always)] fn is_accepting_state_{}(state: u32) -> bool {{ \
+         (IS_ACCEPTING_{}[(state >> 6) as usize] >> (state & 63)) & 1 != 0 \
+         }}",
+        suffix.to_lowercase(),
+        suffix
+    )
+    .unwrap();
+}
+
+/// Write a suffixed `dfa_next_{suffix}` transition function.
+///
+/// Uses match-arm dispatch (direct-coded) for the given DFA's transitions.
+fn write_dfa_next_suffixed(buf: &mut String, dfa: &Dfa, suffix: &str) {
+    write!(
+        buf,
+        "fn dfa_next_{}(state: u32, class: u8) -> u32 {{",
+        suffix.to_lowercase()
+    )
+    .unwrap();
+    buf.push_str("match state {");
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        let has_transitions = state.transitions.iter().any(|&t| t != DEAD_STATE);
+        if !has_transitions {
+            continue;
+        }
+        write!(buf, "{}u32 => match class {{", state_idx).unwrap();
+        for (class_id, &target) in state.transitions.iter().enumerate() {
+            if target != DEAD_STATE {
+                write!(buf, "{}u8 => {}u32,", class_id, target).unwrap();
+            }
+        }
+        buf.push_str("_ => u32::MAX },");
+    }
+    buf.push_str("_ => u32::MAX }");
+    buf.push('}');
+}
+
+/// Write a suffixed `accept_token_{suffix}` function.
+///
+/// Maps accepting DFA states to `Token` constructor expressions using
+/// the mode-specific custom token specs for payload resolution.
+fn write_accept_token_suffixed(
+    buf: &mut String,
+    dfa: &Dfa,
+    custom_tokens: &[CustomTokenSpec],
+    suffix: &str,
+) {
+    write!(
+        buf,
+        "fn accept_token_{}<'a>(state: u32, text: &'a str) -> Option<Token<'a>> {{",
+        suffix.to_lowercase()
+    )
+    .unwrap();
+    buf.push_str("match state {");
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        if let Some(ref kind) = state.accept {
+            write!(buf, "{}u32 => Some(", state_idx).unwrap();
+            write_token_constructor(buf, kind, custom_tokens);
+            buf.push_str("),");
+        }
+    }
+    buf.push_str("_ => None }");
+    buf.push('}');
+}
+
+/// Write suffixed `push_target_{suffix}` and `should_pop_{suffix}` functions.
+///
+/// For each accepting DFA state with a `Custom` token kind, looks up the
+/// corresponding `CustomTokenSpec` to determine push/pop mode transitions.
+///
+/// - `push_target_{suffix}(state) -> u8`: returns the target mode ID if this
+///   accept state's custom token has `push_mode`, or `u8::MAX` if no push.
+/// - `should_pop_{suffix}(state) -> bool`: returns `true` if this accept state's
+///   custom token has `is_pop` set.
+fn write_push_pop_tables(
+    buf: &mut String,
+    dfa: &Dfa,
+    custom_tokens: &[CustomTokenSpec],
+    mode_results: &[crate::lexer::ModeDfaResult],
+    suffix: &str,
+) {
+    // push_target_{suffix}(state) -> u8
+    write!(
+        buf,
+        "fn push_target_{}(state: u32) -> u8 {{ match state {{",
+        suffix.to_lowercase()
+    )
+    .unwrap();
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        if let Some(TokenKind::Custom(ref name)) = state.accept {
+            if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
+                if let Some(ref target_mode) = spec.push_mode {
+                    let target_id = if target_mode == "default" {
+                        0u8
+                    } else {
+                        mode_results
+                            .iter()
+                            .find(|m| m.name == *target_mode)
+                            .map(|m| m.mode_id)
+                            .unwrap_or(0)
+                    };
+                    write!(buf, "{}u32 => {}u8,", state_idx, target_id).unwrap();
+                }
+            }
+        }
+    }
+    buf.push_str("_ => u8::MAX } }");
+
+    // should_pop_{suffix}(state) -> bool
+    write!(
+        buf,
+        "fn should_pop_{}(state: u32) -> bool {{ match state {{",
+        suffix.to_lowercase()
+    )
+    .unwrap();
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        if let Some(TokenKind::Custom(ref name)) = state.accept {
+            if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
+                if spec.is_pop {
+                    write!(buf, "{}u32 => true,", state_idx).unwrap();
+                }
+            }
+        }
+    }
+    buf.push_str("_ => false } }");
+}
+
+/// Write the modal lex loop: `lex()` and `lex_with_file_id()` with mode stack dispatch.
+///
+/// The generated code maintains a `Vec<u8>` mode stack initialized to `[0]` (MODE_DEFAULT).
+/// On each token, the active mode's DFA tables are selected via a `match` on the top of
+/// the mode stack. After accepting a token, push/pop actions are applied to the stack.
+fn write_modal_lex_functions(
+    buf: &mut String,
+    mode_results: &[crate::lexer::ModeDfaResult],
+) {
+    // lex() delegates to lex_with_file_id()
+    buf.push_str(
+        "pub fn lex<'a>(input: &'a str) -> Result<Vec<(Token<'a>, Range)>, String> { \
+         lex_with_file_id(input, None) \
+         }"
+    );
+
+    // lex_with_file_id() — main modal lexer
+    buf.push_str(
+        "pub fn lex_with_file_id<'a>(input: &'a str, file_id: Option<u32>) \
+         -> Result<Vec<(Token<'a>, Range)>, String> {"
+    );
+    buf.push_str("let bytes = input.as_bytes();");
+    buf.push_str("let mut pos: usize = 0;");
+    buf.push_str("let mut line: usize = 0;");
+    buf.push_str("let mut col: usize = 0;");
+    buf.push_str("let mut tokens: Vec<(Token<'a>, Range)> = Vec::with_capacity(input.len() / 2);");
+    buf.push_str("let mut mode_stack: Vec<u8> = vec![0u8];");
+
+    // Main lexer loop
+    buf.push_str("while pos < bytes.len() {");
+
+    // Whitespace skip (ASCII fast path + Unicode fallback)
+    buf.push_str(
+        "let b = bytes[pos]; \
+         if b == b' ' || b == b'\\t' || b == b'\\r' { pos += 1; col += 1; continue; } \
+         if b == b'\\n' { pos += 1; line += 1; col = 0; continue; } \
+         if b >= 0x80 { \
+            let rest = &input[pos..]; \
+            if let Some(ch) = rest.chars().next() { \
+                if ch.is_whitespace() { \
+                    let ch_len = ch.len_utf8(); \
+                    if ch == '\\u{2028}' || ch == '\\u{2029}' { line += 1; col = 0; } \
+                    else { col += 1; } \
+                    pos += ch_len; continue; \
+                } \
+            } \
+         }"
+    );
+
+    // Read current mode and set up DFA walk
+    buf.push_str("let mode = *mode_stack.last().expect(\"mode stack empty\");");
+    buf.push_str("let start_pos = pos; let start_line = line; let start_col = col;");
+    buf.push_str("let mut state: u32 = 0;");
+    buf.push_str("let mut last_accept: Option<(u32, usize, usize, usize)> = None;");
+
+    // Check if initial state (0) is accepting for the active mode
+    buf.push_str("let is_acc_init = match mode {");
+    buf.push_str("0u8 => is_accepting_state_default(0),");
+    for mode in mode_results {
+        write!(
+            buf,
+            "{}u8 => is_accepting_state_{}(0),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        )
+        .unwrap();
+    }
+    buf.push_str("_ => false };");
+    buf.push_str("if is_acc_init { last_accept = Some((0, pos, line, col)); }");
+
+    // DFA walk loop
+    buf.push_str("while pos < bytes.len() {");
+    buf.push_str("let b = bytes[pos];");
+
+    // Mode-dispatched DFA transition
+    buf.push_str("let next_state = match mode {");
+    buf.push_str("0u8 => { let class = CHAR_CLASS_DEFAULT[b as usize]; dfa_next_default(state, class) }");
+    for mode in mode_results {
+        write!(
+            buf,
+            "{}u8 => {{ let class = CHAR_CLASS_{}[b as usize]; dfa_next_{}(state, class) }}",
+            mode.mode_id,
+            mode.name.to_uppercase(),
+            mode.name.to_lowercase()
+        )
+        .unwrap();
+    }
+    buf.push_str("_ => u32::MAX };");
+
+    buf.push_str("if next_state == u32::MAX { break; }");
+    buf.push_str("state = next_state;");
+
+    // Line/col tracking
+    buf.push_str("if b == b'\\n' { line += 1; col = 0; } else { col += 1; }");
+    buf.push_str("pos += 1;");
+
+    // Check if new state is accepting
+    buf.push_str("let is_acc = match mode {");
+    buf.push_str("0u8 => is_accepting_state_default(state),");
+    for mode in mode_results {
+        write!(
+            buf,
+            "{}u8 => is_accepting_state_{}(state),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        )
+        .unwrap();
+    }
+    buf.push_str("_ => false };");
+    buf.push_str("if is_acc { last_accept = Some((state, pos, line, col)); }");
+
+    buf.push_str("}"); // end DFA walk loop
+
+    // Process accept result
+    buf.push_str("match last_accept {");
+    buf.push_str("Some((accept_state, end, end_line, end_col)) => {");
+    buf.push_str("pos = end; line = end_line; col = end_col;");
+    buf.push_str("let text = &input[start_pos..end];");
+
+    // Get token from mode-specific accept function
+    buf.push_str("let token_opt = match mode {");
+    buf.push_str("0u8 => accept_token_default(accept_state, text),");
+    for mode in mode_results {
+        write!(
+            buf,
+            "{}u8 => accept_token_{}(accept_state, text),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        )
+        .unwrap();
+    }
+    buf.push_str("_ => None };");
+
+    buf.push_str("if let Some(token) = token_opt {");
+
+    // Get push/pop actions
+    buf.push_str("let push_target = match mode {");
+    buf.push_str("0u8 => push_target_default(accept_state),");
+    for mode in mode_results {
+        write!(
+            buf,
+            "{}u8 => push_target_{}(accept_state),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        )
+        .unwrap();
+    }
+    buf.push_str("_ => u8::MAX };");
+
+    buf.push_str("let do_pop = match mode {");
+    buf.push_str("0u8 => should_pop_default(accept_state),");
+    for mode in mode_results {
+        write!(
+            buf,
+            "{}u8 => should_pop_{}(accept_state),",
+            mode.mode_id,
+            mode.name.to_lowercase()
+        )
+        .unwrap();
+    }
+    buf.push_str("_ => false };");
+
+    // Emit token with range
+    buf.push_str(
+        "tokens.push((token, Range { \
+         start: Position { byte_offset: start_pos, line: start_line, column: start_col }, \
+         end: Position { byte_offset: end, line: end_line, column: end_col }, \
+         file_id }));"
+    );
+
+    // Execute push/pop transitions
+    buf.push_str("if push_target != u8::MAX { mode_stack.push(push_target); }");
+    buf.push_str("if do_pop { mode_stack.pop(); if mode_stack.is_empty() { mode_stack.push(0u8); } }");
+
+    buf.push_str("}"); // end if let Some(token)
+    buf.push_str("}"); // end Some(...)
+
+    // Error case: no accept found
+    buf.push_str("None => {");
+    buf.push_str("let rest = &input[pos..];");
+    buf.push_str("let bad_char = rest.chars().next().unwrap_or('?');");
+    buf.push_str(
+        "return Err(format!(\"unexpected character '{}' at line {}:{}\", bad_char, line + 1, col + 1));"
+    );
+    buf.push_str("}"); // end None
+    buf.push_str("}"); // end match last_accept
+
+    buf.push_str("}"); // end while pos < bytes.len()
+
+    // Eof token
+    buf.push_str("let eof_pos = Position { byte_offset: pos, line, column: col };");
+    buf.push_str(
+        "tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }));"
+    );
+    buf.push_str("Ok(tokens)");
+    buf.push_str("}"); // end fn lex_with_file_id
+}
+
+/// Write stream routing table for a single mode.
+///
+/// Emits `fn stream_id_{suffix}(state: u32) -> u8` that returns the stream index
+/// for each accepting state. Stream 0 = "main" (default), 1+ = named streams.
+fn write_stream_tables(
+    buf: &mut String,
+    dfa: &Dfa,
+    custom_tokens: &[CustomTokenSpec],
+    stream_names: &[String],
+    suffix: &str,
+) {
+    write!(
+        buf,
+        "fn stream_id_{}(state: u32) -> u8 {{ match state {{",
+        suffix.to_lowercase()
+    )
+    .unwrap();
+    for (state_idx, state) in dfa.states.iter().enumerate() {
+        if let Some(TokenKind::Custom(ref name)) = state.accept {
+            if let Some(spec) = custom_tokens.iter().find(|s| s.name == *name) {
+                if let Some(ref stream) = spec.stream {
+                    if stream != "main" {
+                        if let Some(idx) = stream_names.iter().position(|s| s == stream) {
+                            write!(buf, "{}u32 => {}u8,", state_idx, idx + 1).unwrap();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    buf.push_str("_ => 0u8 } }");
+}
+
+/// Write `lex_with_streams()` / `lex_streams_with_file_id()` that return multi-stream results.
+///
+/// These functions are only generated when at least one custom token has a `-> stream`
+/// annotation. They return the main token stream plus a `HashMap` of auxiliary streams.
+/// The `lex()` function continues to return only the main stream for backward compatibility.
+fn write_modal_lex_with_streams(
+    buf: &mut String,
+    mode_results: &[crate::lexer::ModeDfaResult],
+) {
+    buf.push_str("pub fn lex_with_streams<'a>(input: &'a str) -> Result<mettail_prattail::LexResult<Token<'a>>, String> { lex_streams_with_file_id(input, None) }");
+
+    buf.push_str(
+        "pub fn lex_streams_with_file_id<'a>(input: &'a str, file_id: Option<u32>) \
+         -> Result<mettail_prattail::LexResult<Token<'a>>, String> {"
+    );
+    buf.push_str("let bytes = input.as_bytes();");
+    buf.push_str("let mut pos: usize = 0;");
+    buf.push_str("let mut line: usize = 0;");
+    buf.push_str("let mut col: usize = 0;");
+    buf.push_str("let mut tokens: Vec<(Token<'a>, Range)> = Vec::with_capacity(input.len() / 2);");
+    buf.push_str("let mut streams: std::collections::HashMap<String, Vec<(Token<'a>, Range)>> = std::collections::HashMap::new();");
+    buf.push_str("let mut mode_stack: Vec<u8> = vec![0u8];");
+
+    // Same loop structure as write_modal_lex_functions but with stream routing
+    buf.push_str("while pos < bytes.len() {");
+
+    // Whitespace skip
+    buf.push_str(
+        "let b = bytes[pos]; \
+         if b == b' ' || b == b'\\t' || b == b'\\r' { pos += 1; col += 1; continue; } \
+         if b == b'\\n' { pos += 1; line += 1; col = 0; continue; } \
+         if b >= 0x80 { \
+            let rest = &input[pos..]; \
+            if let Some(ch) = rest.chars().next() { \
+                if ch.is_whitespace() { \
+                    let ch_len = ch.len_utf8(); \
+                    if ch == '\\u{2028}' || ch == '\\u{2029}' { line += 1; col = 0; } \
+                    else { col += 1; } \
+                    pos += ch_len; continue; \
+                } \
+            } \
+         }"
+    );
+
+    buf.push_str("let mode = *mode_stack.last().expect(\"mode stack empty\");");
+    buf.push_str("let start_pos = pos; let start_line = line; let start_col = col;");
+    buf.push_str("let mut state: u32 = 0;");
+    buf.push_str("let mut last_accept: Option<(u32, usize, usize, usize)> = None;");
+
+    // Initial state acceptance check
+    buf.push_str("let is_acc_init = match mode {");
+    buf.push_str("0u8 => is_accepting_state_default(0),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => is_accepting_state_{}(0),", mode.mode_id, mode.name.to_lowercase()).unwrap();
+    }
+    buf.push_str("_ => false };");
+    buf.push_str("if is_acc_init { last_accept = Some((0, pos, line, col)); }");
+
+    // DFA walk
+    buf.push_str("while pos < bytes.len() {");
+    buf.push_str("let b = bytes[pos];");
+    buf.push_str("let next_state = match mode {");
+    buf.push_str("0u8 => { let class = CHAR_CLASS_DEFAULT[b as usize]; dfa_next_default(state, class) }");
+    for mode in mode_results {
+        write!(buf, "{}u8 => {{ let class = CHAR_CLASS_{}[b as usize]; dfa_next_{}(state, class) }}",
+               mode.mode_id, mode.name.to_uppercase(), mode.name.to_lowercase()).unwrap();
+    }
+    buf.push_str("_ => u32::MAX };");
+    buf.push_str("if next_state == u32::MAX { break; }");
+    buf.push_str("state = next_state;");
+    buf.push_str("if b == b'\\n' { line += 1; col = 0; } else { col += 1; }");
+    buf.push_str("pos += 1;");
+
+    // Accept check
+    buf.push_str("let is_acc = match mode {");
+    buf.push_str("0u8 => is_accepting_state_default(state),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => is_accepting_state_{}(state),", mode.mode_id, mode.name.to_lowercase()).unwrap();
+    }
+    buf.push_str("_ => false };");
+    buf.push_str("if is_acc { last_accept = Some((state, pos, line, col)); }");
+    buf.push_str("}"); // end DFA walk
+
+    // Process accept
+    buf.push_str("match last_accept {");
+    buf.push_str("Some((accept_state, end, end_line, end_col)) => {");
+    buf.push_str("pos = end; line = end_line; col = end_col;");
+    buf.push_str("let text = &input[start_pos..end];");
+
+    // Token from mode
+    buf.push_str("let token_opt = match mode {");
+    buf.push_str("0u8 => accept_token_default(accept_state, text),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => accept_token_{}(accept_state, text),", mode.mode_id, mode.name.to_lowercase()).unwrap();
+    }
+    buf.push_str("_ => None };");
+
+    buf.push_str("if let Some(token) = token_opt {");
+
+    // Push/pop
+    buf.push_str("let push_target = match mode {");
+    buf.push_str("0u8 => push_target_default(accept_state),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => push_target_{}(accept_state),", mode.mode_id, mode.name.to_lowercase()).unwrap();
+    }
+    buf.push_str("_ => u8::MAX };");
+
+    buf.push_str("let do_pop = match mode {");
+    buf.push_str("0u8 => should_pop_default(accept_state),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => should_pop_{}(accept_state),", mode.mode_id, mode.name.to_lowercase()).unwrap();
+    }
+    buf.push_str("_ => false };");
+
+    // Stream routing — the key difference from the main lex loop
+    buf.push_str("let stream_id = match mode {");
+    buf.push_str("0u8 => stream_id_default(accept_state),");
+    for mode in mode_results {
+        write!(buf, "{}u8 => stream_id_{}(accept_state),", mode.mode_id, mode.name.to_lowercase()).unwrap();
+    }
+    buf.push_str("_ => 0u8 };");
+
+    buf.push_str(
+        "let range = Range { \
+         start: Position { byte_offset: start_pos, line: start_line, column: start_col }, \
+         end: Position { byte_offset: end, line: end_line, column: end_col }, \
+         file_id };"
+    );
+    buf.push_str(
+        "if stream_id == 0 { tokens.push((token, range)); } \
+         else { streams.entry(STREAM_NAMES[stream_id as usize].to_string()).or_default().push((token, range)); }"
+    );
+
+    // Execute push/pop
+    buf.push_str("if push_target != u8::MAX { mode_stack.push(push_target); }");
+    buf.push_str("if do_pop { mode_stack.pop(); if mode_stack.is_empty() { mode_stack.push(0u8); } }");
+
+    buf.push_str("}"); // end if let Some(token)
+    buf.push_str("}"); // end Some(...)
+
+    // Error
+    buf.push_str("None => {");
+    buf.push_str("let rest = &input[pos..];");
+    buf.push_str("let bad_char = rest.chars().next().unwrap_or('?');");
+    buf.push_str("return Err(format!(\"unexpected character '{}' at line {}:{}\", bad_char, line + 1, col + 1));");
+    buf.push_str("}");
+    buf.push_str("}"); // end match
+
+    buf.push_str("}"); // end while
+
+    // Eof
+    buf.push_str("let eof_pos = Position { byte_offset: pos, line, column: col };");
+    buf.push_str("tokens.push((Token::Eof, Range { start: eof_pos, end: eof_pos, file_id }));");
+    buf.push_str("Ok(mettail_prattail::LexResult { tokens, streams })");
+    buf.push_str("}"); // end fn
+}
+
+/// Generate a complete modal lexer with per-mode DFA tables and mode stack dispatch.
+///
+/// Called when the grammar has named lexer modes (`mode name { ... }` blocks).
+/// The default mode's DFA handles grammar terminals + default-mode custom tokens.
+/// Each named mode gets its own DFA containing only its declared token patterns.
+/// The generated lex loop maintains a `Vec<u8>` mode stack and dispatches to the
+/// active mode's DFA tables.
+///
+/// # Generated code structure
+///
+/// 1. **Token enum** (shared across all modes) — merged token kinds + all custom tokens
+/// 2. **Token display** — `format_token_friendly()` for merged token kinds
+/// 3. **Runtime types import** — `use mettail_prattail::runtime_types::*;`
+/// 4. **Mode constants** — `const MODE_DEFAULT: u8 = 0;`, etc.
+/// 5. **Per-mode DFA tables** — suffixed `CHAR_CLASS_{MODE}`, `IS_ACCEPTING_{MODE}`,
+///    `dfa_next_{mode}`, `accept_token_{mode}`, `is_accepting_state_{mode}`
+/// 6. **Push/pop action tables** — per-mode `push_target_{mode}`, `should_pop_{mode}`
+/// 7. **Modal lex loop** — mode-dispatched `lex()` / `lex_with_file_id()`
+pub fn generate_modal_lexer_string(
+    default_dfa: &Dfa,
+    default_partition: &AlphabetPartition,
+    default_token_kinds: &[TokenKind],
+    mode_results: &[crate::lexer::ModeDfaResult],
+    _language_name: &str,
+    default_custom_tokens: &[CustomTokenSpec],
+    all_custom_tokens: &[CustomTokenSpec],
+) -> String {
+    let estimated_size = 8192 + (mode_results.len() + 1) * 4096;
+    let mut buf = String::with_capacity(estimated_size);
+
+    // 1. Merge all token kinds for the shared Token enum.
+    //    The default mode's token kinds come first, then each named mode's
+    //    token kinds are appended. Deduplication is handled by write_token_enum
+    //    via its internal `seen` set.
+    let mut all_token_kinds = default_token_kinds.to_vec();
+    for mode in mode_results {
+        all_token_kinds.extend(mode.token_kinds.iter().cloned());
+    }
+
+    // 2. Write Token enum + display (shared across all modes)
+    write_token_enum(&mut buf, &all_token_kinds, all_custom_tokens);
+    write_token_display(&mut buf, &all_token_kinds, all_custom_tokens);
+    write_runtime_types_import(&mut buf);
+
+    // 3. Mode constants
+    buf.push_str("const MODE_DEFAULT: u8 = 0;");
+    for mode in mode_results {
+        write!(
+            buf,
+            "const MODE_{}: u8 = {};",
+            mode.name.to_uppercase(),
+            mode.mode_id
+        )
+        .unwrap();
+    }
+
+    // 4. Default mode DFA tables
+    write_class_table_suffixed(&mut buf, default_partition, "DEFAULT");
+    write_is_accepting_suffixed(&mut buf, default_dfa, "DEFAULT");
+    write_dfa_next_suffixed(&mut buf, default_dfa, "DEFAULT");
+    write_accept_token_suffixed(&mut buf, default_dfa, default_custom_tokens, "DEFAULT");
+    write_push_pop_tables(
+        &mut buf,
+        default_dfa,
+        default_custom_tokens,
+        mode_results,
+        "DEFAULT",
+    );
+
+    // 5. Named mode DFA tables
+    for mode in mode_results {
+        let suffix = mode.name.to_uppercase();
+        write_class_table_suffixed(&mut buf, &mode.partition, &suffix);
+        write_is_accepting_suffixed(&mut buf, &mode.min_dfa, &suffix);
+        write_dfa_next_suffixed(&mut buf, &mode.min_dfa, &suffix);
+        write_accept_token_suffixed(&mut buf, &mode.min_dfa, &mode.custom_tokens, &suffix);
+        write_push_pop_tables(
+            &mut buf,
+            &mode.min_dfa,
+            &mode.custom_tokens,
+            mode_results,
+            &suffix,
+        );
+    }
+
+    // 6. Check if any custom token uses stream routing (-> stream_name)
+    let has_streams = all_custom_tokens.iter().any(|s| s.stream.is_some());
+
+    if has_streams {
+        // Collect unique stream names (excluding "main" which is the default)
+        let mut stream_names: Vec<String> = Vec::new();
+        for spec in all_custom_tokens {
+            if let Some(ref stream) = spec.stream {
+                if stream != "main" && !stream_names.contains(stream) {
+                    stream_names.push(stream.clone());
+                }
+            }
+        }
+
+        // Stream ID constants (0 = main, 1+ = named streams)
+        for (i, name) in stream_names.iter().enumerate() {
+            write!(buf, "const STREAM_{}: u8 = {};", name.to_uppercase(), i + 1).unwrap();
+        }
+
+        // Per-mode stream routing tables
+        write_stream_tables(
+            &mut buf,
+            default_dfa,
+            default_custom_tokens,
+            &stream_names,
+            "DEFAULT",
+        );
+        for mode in mode_results {
+            let suffix = mode.name.to_uppercase();
+            write_stream_tables(
+                &mut buf,
+                &mode.min_dfa,
+                &mode.custom_tokens,
+                &stream_names,
+                &suffix,
+            );
+        }
+
+        // Generate stream name array for runtime
+        write!(buf, "static STREAM_NAMES: [&str; {}] = [\"main\"", stream_names.len() + 1).unwrap();
+        for name in &stream_names {
+            write!(buf, ",\"{}\"", name).unwrap();
+        }
+        buf.push_str("];");
+    }
+
+    // 7. Modal lex functions (main stream only)
+    write_modal_lex_functions(&mut buf, mode_results);
+
+    // 8. If streams are used, add lex_with_streams()
+    if has_streams {
+        write_modal_lex_with_streams(&mut buf, mode_results);
+    }
+
+    buf
 }
 
 #[cfg(test)]
@@ -2547,7 +3325,7 @@ mod tests {
         ];
 
         let (code, _strategy, _variant_map, _ambiguity) =
-            generate_lexer_string(&dfa, &partition, &token_kinds, "test");
+            generate_lexer_string(&dfa, &partition, &token_kinds, "test", &[]);
         // If this doesn't panic, the generated code is valid Rust
         let _ts: TokenStream = code
             .parse()
@@ -3007,7 +3785,7 @@ mod tests {
         }
 
         let (code, strategy, _variant_map, _ambiguity) =
-            generate_lexer_string_hybrid(&dfa, &partition, &token_kinds, "test_hybrid", true);
+            generate_lexer_string_hybrid(&dfa, &partition, &token_kinds, "test_hybrid", true, &[]);
 
         // Verify hybrid strategy was selected
         assert_eq!(
@@ -3062,7 +3840,7 @@ mod tests {
         ];
 
         let (_code, strategy, _variant_map, _ambiguity) =
-            generate_lexer_string_hybrid(&dfa, &partition, &token_kinds, "test_small", true);
+            generate_lexer_string_hybrid(&dfa, &partition, &token_kinds, "test_small", true, &[]);
 
         assert_eq!(
             strategy,
@@ -3267,5 +4045,235 @@ mod tests {
         // Should reference end states
         assert!(buf.contains("5u32"), "missing end state 5: {buf}");
         assert!(buf.contains("4u32"), "missing end state 4: {buf}");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Custom token codegen tests (Token enum, display, constructor)
+    // ══════════════════════════════════════════════════════════════════════
+
+    /// Helper: build a CustomTokenSpec for testing.
+    fn test_custom_spec(name: &str, pattern: &str, payload_type: Option<&str>) -> crate::CustomTokenSpec {
+        crate::CustomTokenSpec {
+            name: name.to_string(),
+            pattern: pattern.to_string(),
+            category: if payload_type.is_some() { Some("Int".to_string()) } else { None },
+            payload_type: payload_type.map(String::from),
+            constructor_code: None,
+            is_builtin_override: false,
+            priority: 2,
+            push_mode: None,
+            is_pop: false,
+            stream: None,
+        }
+    }
+
+    #[test]
+    fn test_write_token_enum_with_custom_unit() {
+        let token_kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Custom("MyToken".into()),
+        ];
+        let custom_tokens: &[crate::CustomTokenSpec] = &[];
+        let mut buf = String::new();
+        write_token_enum(&mut buf, &token_kinds, custom_tokens);
+
+        assert!(
+            buf.contains("MyToken,"),
+            "should contain unit variant MyToken, got:\n{}",
+            buf
+        );
+        // Unit variant should not have a payload in parens
+        assert!(
+            !buf.contains("MyToken("),
+            "unit variant should not have payload, got:\n{}",
+            buf
+        );
+    }
+
+    #[test]
+    fn test_write_token_enum_with_custom_payload() {
+        let token_kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Custom("HexLit".into()),
+        ];
+        let custom_tokens = vec![
+            test_custom_spec("HexLit", "0x[0-9a-fA-F]+", Some("i64")),
+        ];
+        let mut buf = String::new();
+        write_token_enum(&mut buf, &token_kinds, &custom_tokens);
+
+        assert!(
+            buf.contains("HexLit(i64),"),
+            "should contain payload variant HexLit(i64), got:\n{}",
+            buf
+        );
+    }
+
+    #[test]
+    fn test_write_token_enum_with_custom_str_payload() {
+        let token_kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Custom("HexLit".into()),
+        ];
+        let custom_tokens = vec![
+            test_custom_spec("HexLit", "0x[0-9a-fA-F]+", Some("str")),
+        ];
+        let mut buf = String::new();
+        write_token_enum(&mut buf, &token_kinds, &custom_tokens);
+
+        assert!(
+            buf.contains("HexLit(&'a str),"),
+            "str payload should get lifetime annotation &'a str, got:\n{}",
+            buf
+        );
+    }
+
+    #[test]
+    fn test_write_token_display_custom_unit() {
+        let token_kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Custom("MyToken".into()),
+        ];
+        let custom_tokens: &[crate::CustomTokenSpec] = &[];
+        let mut buf = String::new();
+        write_token_display(&mut buf, &token_kinds, custom_tokens);
+
+        assert!(
+            buf.contains("Token::MyToken => \"`MyToken`\".to_string()"),
+            "unit custom token display should produce Token::MyToken => \"`MyToken`\".to_string(), got:\n{}",
+            buf
+        );
+    }
+
+    #[test]
+    fn test_write_token_display_custom_payload() {
+        let token_kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Custom("HexLit".into()),
+        ];
+        let custom_tokens = vec![
+            test_custom_spec("HexLit", "0x[0-9a-fA-F]+", Some("i64")),
+        ];
+        let mut buf = String::new();
+        write_token_display(&mut buf, &token_kinds, &custom_tokens);
+
+        // Payload variant should bind the value
+        assert!(
+            buf.contains("Token::HexLit(v)"),
+            "payload custom token display should bind value, got:\n{}",
+            buf
+        );
+        assert!(
+            buf.contains("format!(\"HexLit `{}`\", v)"),
+            "payload custom token display should format with value, got:\n{}",
+            buf
+        );
+    }
+
+    #[test]
+    fn test_token_kind_to_constructor_custom() {
+        let custom_tokens = vec![{
+            let mut spec = test_custom_spec("HexLit", "0x[0-9a-fA-F]+", Some("i64"));
+            spec.constructor_code = Some("i64::from_str_radix(&text[2..], 16).expect(\"bad hex\")".to_string());
+            spec
+        }];
+        let kind = TokenKind::Custom("HexLit".into());
+        let result = token_kind_to_constructor(&kind, "text", &custom_tokens);
+
+        assert!(
+            result.contains("Token::HexLit("),
+            "should generate Token::HexLit constructor, got: {}",
+            result
+        );
+        assert!(
+            result.contains("i64::from_str_radix"),
+            "should use custom constructor_code, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_token_kind_to_constructor_custom_no_code() {
+        // Without constructor_code but with category/payload_type — should use default parse
+        let custom_tokens = vec![
+            test_custom_spec("HexLit", "0x[0-9a-fA-F]+", Some("i64")),
+        ];
+        let kind = TokenKind::Custom("HexLit".into());
+        let result = token_kind_to_constructor(&kind, "text", &custom_tokens);
+
+        assert!(
+            result.contains("Token::HexLit("),
+            "should generate Token::HexLit constructor, got: {}",
+            result
+        );
+        assert!(
+            result.contains(".parse::<i64>()"),
+            "should use default parse::<i64>() when no constructor_code, got: {}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_generate_modal_lexer_has_mode_constants() {
+        use crate::automata::nfa::build_nfa_for_mode;
+        use crate::lexer::ModeDfaResult;
+
+        // Build default DFA from a simple terminal spec
+        let (default_dfa, default_partition) = build_test_dfa(
+            &[("+", TokenKind::Fixed("+".to_string()))],
+            BuiltinNeeds { ident: true, integer: false, float: false, string_lit: false, boolean: false },
+        );
+        let default_token_kinds = vec![
+            TokenKind::Eof,
+            TokenKind::Ident,
+            TokenKind::Fixed("+".to_string()),
+        ];
+
+        // Build a named mode with a custom token
+        let mode_spec = test_custom_spec("HexLit", "0x[0-9a-fA-F]+", Some("i64"));
+        let mode_nfa = build_nfa_for_mode(&[mode_spec.clone()]);
+        let mode_partition = compute_equivalence_classes(&mode_nfa);
+        let mode_dfa_raw = subset_construction(&mode_nfa, &mode_partition);
+        let mode_dfa = minimize_dfa(&mode_dfa_raw);
+
+        let mode_results = vec![ModeDfaResult {
+            name: "hex".to_string(),
+            mode_id: 1,
+            min_dfa: mode_dfa,
+            partition: mode_partition,
+            token_kinds: vec![TokenKind::Custom("HexLit".into())],
+            custom_tokens: vec![mode_spec.clone()],
+        }];
+
+        let output = generate_modal_lexer_string(
+            &default_dfa,
+            &default_partition,
+            &default_token_kinds,
+            &mode_results,
+            "test_lang",
+            &[],                // default_custom_tokens
+            &[mode_spec],       // all_custom_tokens
+        );
+
+        assert!(
+            output.contains("MODE_DEFAULT"),
+            "should contain MODE_DEFAULT constant, got:\n{}",
+            &output[..output.len().min(500)]
+        );
+        assert!(
+            output.contains("MODE_HEX"),
+            "should contain MODE_HEX constant, got:\n{}",
+            &output[..output.len().min(500)]
+        );
+        assert!(
+            output.contains("const MODE_DEFAULT: u8 = 0;"),
+            "MODE_DEFAULT should be 0, got:\n{}",
+            &output[..output.len().min(500)]
+        );
+        assert!(
+            output.contains("const MODE_HEX: u8 = 1;"),
+            "MODE_HEX should be 1, got:\n{}",
+            &output[..output.len().min(500)]
+        );
     }
 }

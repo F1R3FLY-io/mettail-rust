@@ -22,12 +22,16 @@ use syn::{
 };
 
 use super::grammar::{parse_terms, GrammarItem, GrammarRule};
-use super::language::{LangType, LanguageDef};
+use super::language::{LangType, LanguageDef, ModeDef, TokenDef};
 
-/// A reusable grammar fragment: types + terms only.
+/// A reusable grammar fragment: types + tokens + terms.
 pub struct FragmentDef {
     pub name: Ident,
     pub types: Vec<LangType>,
+    /// Custom token definitions (merged into the consuming language's default mode).
+    pub token_defs: Vec<TokenDef>,
+    /// Named lexer modes (merged by name with the consuming language's modes).
+    pub mode_defs: Vec<ModeDef>,
     pub terms: Vec<GrammarRule>,
 }
 
@@ -54,6 +58,18 @@ impl Parse for FragmentDef {
             Vec::new()
         };
 
+        // Parse: tokens { ... } (optional)
+        let (token_defs, mode_defs) = if input.peek(Ident) {
+            let lookahead = input.fork().parse::<Ident>()?;
+            if lookahead == "tokens" {
+                super::language::parse_tokens_public(input)?
+            } else {
+                (Vec::new(), Vec::new())
+            }
+        } else {
+            (Vec::new(), Vec::new())
+        };
+
         // Parse: terms { ... }
         let terms = if input.peek(Ident) {
             let lookahead = input.fork().parse::<Ident>()?;
@@ -66,7 +82,7 @@ impl Parse for FragmentDef {
             Vec::new()
         };
 
-        Ok(FragmentDef { name, types, terms })
+        Ok(FragmentDef { name, types, token_defs, mode_defs, terms })
     }
 }
 
@@ -81,6 +97,10 @@ impl FragmentDef {
             include_names: Vec::new(),
             mixin_names: Vec::new(),
             types: self.types.clone(),
+            token_defs: self.token_defs.clone(),
+            mode_defs: self.mode_defs.clone(),
+            sync_constraints: Vec::new(),
+            tree_invariants: Vec::new(),
             terms: self.terms.clone(),
             equations: Vec::new(),
             rewrites: Vec::new(),

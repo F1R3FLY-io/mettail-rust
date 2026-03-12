@@ -17,12 +17,12 @@ use crate::automata::{
         CodegenStrategy, LexerAmbiguityInfo, TokenVariantMap,
     },
     minimize::minimize_dfa,
-    nfa::{build_nfa, BuiltinNeeds},
+    nfa::{build_nfa_with_custom, BuiltinNeeds},
     partition::compute_equivalence_classes,
     subset::subset_construction,
     TerminalPattern, TokenKind,
 };
-use crate::LiteralPatterns;
+use crate::{CustomTokenSpec, LiteralPatterns};
 
 /// Information about a language's grammar needed for lexer generation.
 pub struct LexerInput {
@@ -34,6 +34,36 @@ pub struct LexerInput {
     pub needs: BuiltinNeeds,
     /// Configurable literal token patterns for lexer generation.
     pub literal_patterns: LiteralPatterns,
+    /// Custom token definitions from the `tokens { ... }` block.
+    pub custom_tokens: Vec<CustomTokenSpec>,
+    /// Named lexer modes (each gets its own NFA-to-DFA pipeline).
+    pub modes: Vec<LexerModeInput>,
+}
+
+/// Input for a single named lexer mode's NFA-to-DFA pipeline.
+#[derive(Debug, Clone)]
+pub struct LexerModeInput {
+    /// Mode name (e.g., "string_body").
+    pub name: String,
+    /// Custom token definitions within this mode.
+    pub custom_tokens: Vec<CustomTokenSpec>,
+}
+
+/// Result of the NFA-to-DFA pipeline for a single named lexer mode.
+#[derive(Debug, Clone)]
+pub struct ModeDfaResult {
+    /// Mode name.
+    pub name: String,
+    /// Mode index (0 = default, 1+ = named modes in declaration order).
+    pub mode_id: u8,
+    /// Minimized DFA for this mode.
+    pub min_dfa: crate::automata::Dfa,
+    /// Alphabet partition (equivalence classes) for this mode.
+    pub partition: crate::automata::partition::AlphabetPartition,
+    /// Token kinds in this mode.
+    pub token_kinds: Vec<TokenKind>,
+    /// Custom tokens in this mode (for codegen payload resolution).
+    pub custom_tokens: Vec<CustomTokenSpec>,
 }
 
 /// Statistics from the lexer generation pipeline (for diagnostics).
@@ -56,8 +86,8 @@ pub struct LexerStats {
 
 /// Run the full lexer generation pipeline and return generated Rust code.
 pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
-    // Step 1: Build NFA from terminal patterns
-    let nfa = build_nfa(&input.terminals, &input.needs, &input.literal_patterns);
+    // Step 1: Build NFA from terminal patterns + custom tokens
+    let nfa = build_nfa_with_custom(&input.terminals, &input.needs, &input.literal_patterns, &input.custom_tokens);
     let num_nfa_states = nfa.states.len();
 
     // Step 2: Compute alphabet equivalence classes
@@ -93,13 +123,19 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
     }
+    // Add custom (non-override) token kinds
+    for spec in &input.custom_tokens {
+        if !spec.is_builtin_override {
+            token_kinds.push(TokenKind::Custom(spec.name.clone()));
+        }
+    }
 
     // Step 5: Analyze sparsity
     let sparsity = analyze_sparsity(&min_dfa);
 
     // Step 6: Generate code
     let (code, codegen_strategy) =
-        generate_lexer_code(&min_dfa, &partition, &token_kinds, &input.language_name);
+        generate_lexer_code(&min_dfa, &partition, &token_kinds, &input.language_name, &input.custom_tokens);
 
     // Build variant map and ambiguity info (also needed for diagnostics)
     let variant_map = TokenVariantMap::from_token_kinds(&token_kinds);
@@ -126,8 +162,8 @@ pub fn generate_lexer(input: &LexerInput) -> (TokenStream, LexerStats) {
 /// Used by `generate_parser()` to build a combined string buffer for a single
 /// `parse::<TokenStream>()` call at the end, avoiding per-component proc_macro2 overhead.
 pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
-    // Step 1: Build NFA from terminal patterns
-    let nfa = build_nfa(&input.terminals, &input.needs, &input.literal_patterns);
+    // Step 1: Build NFA from terminal patterns + custom tokens
+    let nfa = build_nfa_with_custom(&input.terminals, &input.needs, &input.literal_patterns, &input.custom_tokens);
     let num_nfa_states = nfa.states.len();
 
     // Step 2: Compute alphabet equivalence classes
@@ -163,13 +199,19 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
     }
+    // Add custom (non-override) token kinds
+    for spec in &input.custom_tokens {
+        if !spec.is_builtin_override {
+            token_kinds.push(TokenKind::Custom(spec.name.clone()));
+        }
+    }
 
     // Step 5: Analyze sparsity
     let sparsity = analyze_sparsity(&min_dfa);
 
     // Step 6: Generate code as string
     let (code, codegen_strategy, variant_map, ambiguity_info) =
-        generate_lexer_string(&min_dfa, &partition, &token_kinds, &input.language_name);
+        generate_lexer_string(&min_dfa, &partition, &token_kinds, &input.language_name, &input.custom_tokens);
 
     let stats = LexerStats {
         num_terminals: input.terminals.len(),
@@ -192,8 +234,8 @@ pub fn generate_lexer_as_string(input: &LexerInput) -> (String, LexerStats) {
 /// When true and the DFA exceeds the direct-coded threshold, hot states (BFS depth ≤ 2)
 /// are direct-coded while cold states use compressed table lookup.
 pub fn generate_lexer_as_string_hybrid(input: &LexerInput, hybrid_lexer: bool) -> (String, LexerStats) {
-    // Step 1: Build NFA from terminal patterns
-    let nfa = build_nfa(&input.terminals, &input.needs, &input.literal_patterns);
+    // Step 1: Build NFA from terminal patterns + custom tokens
+    let nfa = build_nfa_with_custom(&input.terminals, &input.needs, &input.literal_patterns, &input.custom_tokens);
     let num_nfa_states = nfa.states.len();
 
     // Step 2: Compute alphabet equivalence classes
@@ -229,13 +271,65 @@ pub fn generate_lexer_as_string_hybrid(input: &LexerInput, hybrid_lexer: bool) -
     for terminal in &input.terminals {
         token_kinds.push(terminal.kind.clone());
     }
+    // Add custom (non-override) token kinds
+    for spec in &input.custom_tokens {
+        if !spec.is_builtin_override {
+            token_kinds.push(TokenKind::Custom(spec.name.clone()));
+        }
+    }
 
     // Step 5: Analyze sparsity
     let sparsity = analyze_sparsity(&min_dfa);
 
     // Step 6: Generate code as string with hybrid gating
-    let (code, codegen_strategy, variant_map, ambiguity_info) =
-        generate_lexer_string_hybrid(&min_dfa, &partition, &token_kinds, &input.language_name, hybrid_lexer);
+    let (mut code, codegen_strategy, variant_map, ambiguity_info) =
+        generate_lexer_string_hybrid(&min_dfa, &partition, &token_kinds, &input.language_name, hybrid_lexer, &input.custom_tokens);
+
+    // Step 7: If modes or stream annotations are present, use modal lexer codegen.
+    // Stream-annotated tokens (-> stream_name) require the modal lex loop for routing
+    // even if no explicit mode blocks are defined.
+    let has_streams = input.custom_tokens.iter().any(|s| s.stream.is_some())
+        || input.modes.iter().any(|m| m.custom_tokens.iter().any(|s| s.stream.is_some()));
+    if !input.modes.is_empty() || has_streams {
+        use crate::automata::nfa::build_nfa_for_mode;
+
+        let mode_results: Vec<ModeDfaResult> = input.modes.iter().enumerate().map(|(i, mode_input)| {
+            let mode_nfa = build_nfa_for_mode(&mode_input.custom_tokens);
+            let mode_partition = compute_equivalence_classes(&mode_nfa);
+            let mode_dfa = subset_construction(&mode_nfa, &mode_partition);
+            let mode_min_dfa = minimize_dfa(&mode_dfa);
+
+            let mode_token_kinds: Vec<TokenKind> = mode_input.custom_tokens.iter()
+                .map(|spec| TokenKind::Custom(spec.name.clone()))
+                .collect();
+
+            ModeDfaResult {
+                name: mode_input.name.clone(),
+                mode_id: (i + 1) as u8,
+                min_dfa: mode_min_dfa,
+                partition: mode_partition,
+                token_kinds: mode_token_kinds,
+                custom_tokens: mode_input.custom_tokens.clone(),
+            }
+        }).collect();
+
+        // Merge all mode token kinds into a combined list for the Token enum
+        let mut all_custom_tokens = input.custom_tokens.clone();
+        for mode in &input.modes {
+            all_custom_tokens.extend(mode.custom_tokens.iter().cloned());
+        }
+
+        // Generate modal lexer code, replacing the single-DFA code
+        code = crate::automata::codegen::generate_modal_lexer_string(
+            &min_dfa,
+            &partition,
+            &token_kinds,
+            &mode_results,
+            &input.language_name,
+            &input.custom_tokens,
+            &all_custom_tokens,
+        );
+    }
 
     let stats = LexerStats {
         num_terminals: input.terminals.len(),
@@ -364,6 +458,8 @@ pub fn extract_terminals(
         terminals: terminal_set.into_iter().collect(),
         needs,
         literal_patterns: LiteralPatterns::default(),
+        custom_tokens: Vec::new(),
+        modes: Vec::new(),
     }
 }
 

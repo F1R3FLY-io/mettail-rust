@@ -970,6 +970,474 @@ impl crate::predicate_dispatch::PredicateCompiler for MultiTapeCompiler {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Sprint 6C: Multi-Tape Synchronized Stream Parsing
+// ══════════════════════════════════════════════════════════════════════════════
+//
+// Builds a synchronized K-tape automaton from stream DFAs and sync constraints.
+// Each stream's token sequence becomes a 1-tape automaton; `pair()` combines
+// them into a 2-tape automaton; `auto_intersect()` applies `Align` constraints
+// from the `sync { ... }` block.
+//
+// ## Design Note on const generic K
+//
+// Rust's const generics require K to be known at compile time. Since `pair()`
+// produces `WeightedMultiTapeAutomaton<W, 2>` from two 1-tape automata, and
+// there is no generic way to iteratively increase K at runtime, we provide:
+//
+// 1. **`build_stream_automaton()`** — Builds a 1-tape automaton from a named
+//    token stream (applicable to any number of streams independently).
+// 2. **`build_synced_stream_automaton()`** — The K=2 workhorse: combines
+//    exactly two stream automata via `pair()`, then applies `Align` constraints
+//    via `auto_intersect()`. This covers the dominant use case (2-stream sync).
+// 3. **`validate_sync_constraints()`** — General validation for any number of
+//    streams and constraints, reporting satisfiability without constructing the
+//    full product automaton. Works by checking each constraint pair independently
+//    and combining diagnostics.
+//
+// For K>2, one would need to extend `pair()` to an iterative fold with type-level
+// encoding (e.g., `pair_extend()` producing K+1 from K), which requires either
+// procedural macros or a runtime-indexed automaton representation. This is left
+// as a future extension (see TODO below).
+
+/// Result of building a synchronized multi-tape stream automaton.
+///
+/// Contains the combined automaton, per-constraint diagnostics, and an overall
+/// satisfiability verdict. This is a compile-time validation tool — it verifies
+/// constraint satisfiability but does not affect runtime lexing.
+#[derive(Debug, Clone)]
+pub struct SyncedStreamResult<W: Semiring> {
+    /// The synchronized 2-tape automaton combining both streams.
+    pub automaton: WeightedMultiTapeAutomaton<W, 2>,
+    /// Per-constraint diagnostic messages.
+    ///
+    /// Each entry corresponds to a constraint from the `SyncSpec`. An `Ok(msg)`
+    /// indicates the constraint was successfully applied (with a descriptive
+    /// message); an `Err(msg)` indicates the constraint could not be satisfied
+    /// (e.g., the boundary pattern does not appear in both streams).
+    pub constraint_diagnostics: Vec<Result<String, String>>,
+    /// Whether all constraints are satisfiable (the automaton has at least one
+    /// accepting path after all constraints are applied).
+    pub is_satisfiable: bool,
+}
+
+/// Build a 1-tape automaton from a stream's token sequence.
+///
+/// The automaton is a simple linear chain: one state per token boundary,
+/// with each transition labeled by the corresponding token string and weighted
+/// with `W::one()`. The resulting automaton accepts exactly the given token
+/// sequence.
+///
+/// # Parameters
+///
+/// - `stream_name`: Human-readable name for state labels (e.g., "main", "comments").
+/// - `tokens`: The ordered token strings in this stream.
+///
+/// # Returns
+///
+/// A 1-tape automaton with `tokens.len() + 1` states and `tokens.len()` transitions.
+/// If `tokens` is empty, returns a single-state automaton that accepts the empty
+/// string (initial = accepting = q0).
+pub fn build_stream_automaton<W: Semiring>(
+    stream_name: &str,
+    tokens: &[String],
+) -> WeightedMultiTapeAutomaton<W, 1> {
+    let mut automaton = WeightedMultiTapeAutomaton::<W, 1>::new();
+    let n = tokens.len();
+
+    // Create n+1 states: q0 --tok[0]--> q1 --tok[1]--> q2 ... --tok[n-1]--> qn
+    // Preallocate for the full chain.
+    automaton.states.reserve(n + 1);
+    for i in 0..=n {
+        automaton.add_state(Some(format!("{stream_name}:q{i}")));
+    }
+
+    automaton.set_initial(0, W::one());
+    automaton.set_accepting(n, W::one());
+
+    for (i, token) in tokens.iter().enumerate() {
+        automaton.add_transition(i, i + 1, [Some(token.clone())], W::one());
+    }
+
+    automaton
+}
+
+/// Build a synchronized 2-tape automaton from two stream automata and sync
+/// constraints.
+///
+/// This is the primary entry point for Sprint 6C's multi-tape synchronized
+/// stream parsing. It performs the following steps:
+///
+/// 1. **Combine** the two 1-tape stream automata into a 2-tape automaton via
+///    [`pair()`], creating the full product state space with epsilon-extended
+///    transitions (each tape can advance independently).
+///
+/// 2. **Apply `Align` constraints** via [`auto_intersect()`]. An `Align`
+///    constraint between `stream_a` and `stream_b` with a boundary pattern
+///    means the two tapes must synchronize at positions where the boundary
+///    pattern appears. Since `auto_intersect(0, 1)` enforces label equality
+///    on both tapes, we filter to transitions matching the boundary pattern
+///    before intersecting, then re-add unconstrained transitions for
+///    non-boundary tokens.
+///
+///    In the current implementation, `Align` constraints are applied by
+///    running `auto_intersect(0, 1)` on the paired automaton, which enforces
+///    that both tapes must read the same token at every step. This is the
+///    strongest form of alignment — future refinements could relax this to
+///    synchronize only at boundary tokens.
+///
+/// 3. **Check satisfiability** by verifying the resulting automaton has at
+///    least one reachable accepting state (via forward reachability from
+///    initial states).
+///
+/// `Track` constraints are recorded in diagnostics but do not modify the
+/// automaton (they are metadata for runtime position tracking, not structural
+/// constraints).
+///
+/// # Parameters
+///
+/// - `stream_a`: The first 1-tape stream automaton (becomes tape 0).
+/// - `stream_b`: The second 1-tape stream automaton (becomes tape 1).
+/// - `stream_a_name`: Name of the first stream (for constraint matching).
+/// - `stream_b_name`: Name of the second stream (for constraint matching).
+/// - `sync`: The synchronization specification from the `sync { ... }` block.
+///
+/// # Returns
+///
+/// A [`SyncedStreamResult`] containing the combined automaton, per-constraint
+/// diagnostics, and satisfiability verdict.
+///
+/// # Complexity
+///
+/// - **States**: O(|Q_a| * |Q_b|) from the product construction in `pair()`.
+/// - **Transitions**: O(|T_a| * |T_b| + |T_a| * |Q_b| + |Q_a| * |T_b|) from
+///   synchronized + epsilon-extended transitions, then filtered by constraints.
+/// - This is a compile-time cost, not a runtime cost.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use prattail::multi_tape::*;
+/// use prattail::automata::semiring::TropicalWeight;
+/// use prattail::{SyncSpec, SyncConstraintSpec};
+///
+/// let main_stream = build_stream_automaton::<TropicalWeight>(
+///     "main",
+///     &["let".into(), "x".into(), "=".into(), "42".into()],
+/// );
+/// let comment_stream = build_stream_automaton::<TropicalWeight>(
+///     "comments",
+///     &["/* doc */".into()],
+/// );
+/// let sync = SyncSpec {
+///     constraints: vec![SyncConstraintSpec::Track {
+///         auxiliary: "comments".into(),
+///         primary: "main".into(),
+///     }],
+/// };
+/// let result = build_synced_stream_automaton(
+///     &main_stream, &comment_stream,
+///     "main", "comments",
+///     &sync,
+/// );
+/// assert!(result.is_satisfiable);
+/// ```
+pub fn build_synced_stream_automaton<W: Semiring>(
+    stream_a: &WeightedMultiTapeAutomaton<W, 1>,
+    stream_b: &WeightedMultiTapeAutomaton<W, 1>,
+    stream_a_name: &str,
+    stream_b_name: &str,
+    sync: &crate::SyncSpec,
+) -> SyncedStreamResult<W> {
+    // Step 1: Combine via pair() — product construction with epsilon extension.
+    let mut combined = pair(stream_a, stream_b);
+
+    // Step 2: Apply constraints and collect diagnostics.
+    let mut constraint_diagnostics =
+        Vec::with_capacity(sync.constraints.len());
+
+    for constraint in &sync.constraints {
+        match constraint {
+            crate::SyncConstraintSpec::Align {
+                stream_a: ref constraint_a,
+                stream_b: ref constraint_b,
+                boundary_pattern,
+            } => {
+                // Check that this Align constraint applies to our two streams.
+                let applies = (constraint_a == stream_a_name
+                    && constraint_b == stream_b_name)
+                    || (constraint_a == stream_b_name
+                        && constraint_b == stream_a_name);
+
+                if !applies {
+                    constraint_diagnostics.push(Ok(format!(
+                        "Align({}, {}) skipped: does not involve streams '{}' and '{}'",
+                        constraint_a, constraint_b, stream_a_name, stream_b_name,
+                    )));
+                    continue;
+                }
+
+                // Check that the boundary pattern appears in at least one
+                // transition on each tape. If not, the constraint is trivially
+                // unsatisfiable (no synchronization points exist).
+                let tape_0_has_boundary = stream_a
+                    .transitions
+                    .iter()
+                    .any(|t| t.labels[0].as_deref() == Some(boundary_pattern.as_str()));
+                let tape_1_has_boundary = stream_b
+                    .transitions
+                    .iter()
+                    .any(|t| t.labels[0].as_deref() == Some(boundary_pattern.as_str()));
+
+                if !tape_0_has_boundary && !tape_1_has_boundary {
+                    constraint_diagnostics.push(Err(format!(
+                        "Align({}, {}, '{}'): boundary pattern '{}' not found in either stream",
+                        constraint_a, constraint_b, boundary_pattern, boundary_pattern,
+                    )));
+                    continue;
+                }
+                if !tape_0_has_boundary {
+                    constraint_diagnostics.push(Err(format!(
+                        "Align({}, {}, '{}'): boundary pattern '{}' not found in stream '{}'",
+                        constraint_a, constraint_b, boundary_pattern,
+                        boundary_pattern, stream_a_name,
+                    )));
+                    continue;
+                }
+                if !tape_1_has_boundary {
+                    constraint_diagnostics.push(Err(format!(
+                        "Align({}, {}, '{}'): boundary pattern '{}' not found in stream '{}'",
+                        constraint_a, constraint_b, boundary_pattern,
+                        boundary_pattern, stream_b_name,
+                    )));
+                    continue;
+                }
+
+                // Apply auto_intersect(0, 1) to enforce label equality on
+                // both tapes. This is the strongest alignment: at every step,
+                // both tapes must read the same token.
+                //
+                // A more refined approach would only enforce equality at
+                // boundary positions, but auto_intersect is the correct
+                // Kempe (2004) operation for full synchronization. Selective
+                // boundary-only synchronization would require a custom
+                // transition filter, which can be added as a future refinement.
+                combined = combined.auto_intersect(0, 1);
+
+                constraint_diagnostics.push(Ok(format!(
+                    "Align({}, {}, '{}'): applied auto_intersect(0, 1) — \
+                     {} transitions remain after synchronization",
+                    constraint_a, constraint_b, boundary_pattern,
+                    combined.num_transitions(),
+                )));
+            }
+            crate::SyncConstraintSpec::Track {
+                auxiliary,
+                primary,
+            } => {
+                // Track constraints are metadata — they instruct the runtime
+                // to maintain position correspondence between the auxiliary
+                // and primary streams but do not structurally constrain the
+                // automaton. Record for diagnostics.
+                constraint_diagnostics.push(Ok(format!(
+                    "Track({} relative to {}): recorded (metadata-only, no structural constraint)",
+                    auxiliary, primary,
+                )));
+            }
+        }
+    }
+
+    // Step 3: Check satisfiability via forward reachability.
+    let is_satisfiable = check_reachable_accepting(&combined);
+
+    SyncedStreamResult {
+        automaton: combined,
+        constraint_diagnostics,
+        is_satisfiable,
+    }
+}
+
+/// Check whether any accepting state is reachable from an initial state.
+///
+/// Performs a BFS/DFS from all initial states through the transition graph.
+/// Returns `true` if at least one accepting state is reached. This is used
+/// to determine constraint satisfiability after `auto_intersect()` filtering.
+fn check_reachable_accepting<W: Semiring, const K: usize>(
+    automaton: &WeightedMultiTapeAutomaton<W, K>,
+) -> bool {
+    if automaton.initial.is_empty() || automaton.accepting.is_empty() {
+        return false;
+    }
+
+    // Build adjacency list for forward traversal.
+    let num_states = automaton.num_states();
+    let mut adj: Vec<Vec<usize>> = vec![Vec::new(); num_states];
+    for t in &automaton.transitions {
+        adj[t.from].push(t.to);
+    }
+
+    // BFS from all initial states.
+    let mut visited = vec![false; num_states];
+    let mut queue = VecDeque::with_capacity(automaton.initial.len());
+    for &state in automaton.initial.keys() {
+        if !visited[state] {
+            visited[state] = true;
+            queue.push_back(state);
+        }
+    }
+
+    while let Some(state) = queue.pop_front() {
+        if automaton.accepting.contains_key(&state) {
+            return true;
+        }
+        for &next in &adj[state] {
+            if !visited[next] {
+                visited[next] = true;
+                queue.push_back(next);
+            }
+        }
+    }
+
+    false
+}
+
+/// Validate synchronization constraints against a set of named streams.
+///
+/// This is a general-purpose validation function that works for any number of
+/// streams (not just K=2). It checks each constraint independently:
+///
+/// - **`Align`**: Verifies both referenced streams exist and that the boundary
+///   pattern appears in at least one token of each stream.
+/// - **`Track`**: Verifies both referenced streams exist.
+///
+/// For K=2 synchronization with actual automaton construction, use
+/// [`build_synced_stream_automaton()`] instead.
+///
+/// # Parameters
+///
+/// - `stream_tokens`: Map from stream name to its ordered token strings.
+/// - `sync`: The synchronization specification.
+///
+/// # Returns
+///
+/// A vector of per-constraint diagnostics. `Ok` = valid, `Err` = problem found.
+pub fn validate_sync_constraints(
+    stream_tokens: &HashMap<String, Vec<String>>,
+    sync: &crate::SyncSpec,
+) -> Vec<Result<String, String>> {
+    let mut diagnostics = Vec::with_capacity(sync.constraints.len());
+
+    for constraint in &sync.constraints {
+        match constraint {
+            crate::SyncConstraintSpec::Align {
+                stream_a,
+                stream_b,
+                boundary_pattern,
+            } => {
+                let a_tokens = stream_tokens.get(stream_a);
+                let b_tokens = stream_tokens.get(stream_b);
+
+                match (a_tokens, b_tokens) {
+                    (None, None) => {
+                        diagnostics.push(Err(format!(
+                            "Align({}, {}, '{}'): neither stream '{}' nor '{}' exists",
+                            stream_a, stream_b, boundary_pattern,
+                            stream_a, stream_b,
+                        )));
+                    }
+                    (None, Some(_)) => {
+                        diagnostics.push(Err(format!(
+                            "Align({}, {}, '{}'): stream '{}' does not exist",
+                            stream_a, stream_b, boundary_pattern, stream_a,
+                        )));
+                    }
+                    (Some(_), None) => {
+                        diagnostics.push(Err(format!(
+                            "Align({}, {}, '{}'): stream '{}' does not exist",
+                            stream_a, stream_b, boundary_pattern, stream_b,
+                        )));
+                    }
+                    (Some(a_toks), Some(b_toks)) => {
+                        let a_has = a_toks.iter().any(|t| t == boundary_pattern);
+                        let b_has = b_toks.iter().any(|t| t == boundary_pattern);
+
+                        if !a_has && !b_has {
+                            diagnostics.push(Err(format!(
+                                "Align({}, {}, '{}'): boundary pattern '{}' not found in either stream",
+                                stream_a, stream_b, boundary_pattern, boundary_pattern,
+                            )));
+                        } else if !a_has {
+                            diagnostics.push(Err(format!(
+                                "Align({}, {}, '{}'): boundary pattern '{}' not found in stream '{}'",
+                                stream_a, stream_b, boundary_pattern,
+                                boundary_pattern, stream_a,
+                            )));
+                        } else if !b_has {
+                            diagnostics.push(Err(format!(
+                                "Align({}, {}, '{}'): boundary pattern '{}' not found in stream '{}'",
+                                stream_a, stream_b, boundary_pattern,
+                                boundary_pattern, stream_b,
+                            )));
+                        } else {
+                            diagnostics.push(Ok(format!(
+                                "Align({}, {}, '{}'): boundary pattern '{}' found in both streams ({} in '{}', {} in '{}')",
+                                stream_a, stream_b, boundary_pattern, boundary_pattern,
+                                a_toks.iter().filter(|t| *t == boundary_pattern).count(), stream_a,
+                                b_toks.iter().filter(|t| *t == boundary_pattern).count(), stream_b,
+                            )));
+                        }
+                    }
+                }
+            }
+            crate::SyncConstraintSpec::Track {
+                auxiliary,
+                primary,
+            } => {
+                let aux_exists = stream_tokens.contains_key(auxiliary);
+                let pri_exists = stream_tokens.contains_key(primary);
+
+                if !aux_exists && !pri_exists {
+                    diagnostics.push(Err(format!(
+                        "Track({} relative to {}): neither stream '{}' nor '{}' exists",
+                        auxiliary, primary, auxiliary, primary,
+                    )));
+                } else if !aux_exists {
+                    diagnostics.push(Err(format!(
+                        "Track({} relative to {}): auxiliary stream '{}' does not exist",
+                        auxiliary, primary, auxiliary,
+                    )));
+                } else if !pri_exists {
+                    diagnostics.push(Err(format!(
+                        "Track({} relative to {}): primary stream '{}' does not exist",
+                        auxiliary, primary, primary,
+                    )));
+                } else {
+                    diagnostics.push(Ok(format!(
+                        "Track({} relative to {}): both streams exist ({} tokens in '{}', {} tokens in '{}')",
+                        auxiliary, primary,
+                        stream_tokens[auxiliary].len(), auxiliary,
+                        stream_tokens[primary].len(), primary,
+                    )));
+                }
+            }
+        }
+    }
+
+    diagnostics
+}
+
+// TODO(Sprint 6C+): For K>2 synchronized stream automata, implement one of:
+//   (a) A `pair_extend()` operation that lifts a K-tape automaton to (K+1)-tape
+//       by pairing with a 1-tape automaton on a designated new tape index.
+//       This requires a type-level fold or procedural macro to handle the
+//       const generic arithmetic (K -> K+1).
+//   (b) A runtime-indexed `DynMultiTapeAutomaton` that uses `Vec<Option<String>>`
+//       instead of `[Option<String>; K]` for transition labels, trading compile-time
+//       safety for runtime flexibility. This would allow arbitrary K without
+//       const generic constraints.
+//   For now, the K=2 `build_synced_stream_automaton()` covers the dominant use
+//   case, and `validate_sync_constraints()` handles arbitrary-arity validation.
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1751,6 +2219,514 @@ mod tests {
         let result = analyze_from_bundle(&all_syntax, &categories);
         // Only C (index 2) should be disconnected
         assert_eq!(result.disconnected_tapes, vec![2]);
+    }
+
+    // ── Sprint 6C: build_stream_automaton() tests ──────────────────────────
+
+    #[test]
+    fn build_stream_automaton_linear_chain() {
+        let tokens: Vec<String> = vec!["let".into(), "x".into(), "=".into(), "42".into()];
+        let automaton = build_stream_automaton::<TropicalWeight>("main", &tokens);
+
+        // n+1 states for n tokens.
+        assert_eq!(automaton.num_states(), 5);
+        assert_eq!(automaton.num_transitions(), 4);
+        assert_eq!(automaton.initial.len(), 1);
+        assert_eq!(automaton.accepting.len(), 1);
+
+        // Initial is state 0, accepting is state 4.
+        assert!(automaton.initial.contains_key(&0));
+        assert!(automaton.accepting.contains_key(&4));
+
+        // Verify labels.
+        assert_eq!(automaton.transitions[0].labels[0].as_deref(), Some("let"));
+        assert_eq!(automaton.transitions[1].labels[0].as_deref(), Some("x"));
+        assert_eq!(automaton.transitions[2].labels[0].as_deref(), Some("="));
+        assert_eq!(automaton.transitions[3].labels[0].as_deref(), Some("42"));
+    }
+
+    #[test]
+    fn build_stream_automaton_empty_tokens() {
+        let tokens: Vec<String> = vec![];
+        let automaton = build_stream_automaton::<TropicalWeight>("empty", &tokens);
+
+        // 1 state (q0), which is both initial and accepting.
+        assert_eq!(automaton.num_states(), 1);
+        assert_eq!(automaton.num_transitions(), 0);
+        assert!(automaton.initial.contains_key(&0));
+        assert!(automaton.accepting.contains_key(&0));
+    }
+
+    #[test]
+    fn build_stream_automaton_single_token() {
+        let tokens: Vec<String> = vec!["hello".into()];
+        let automaton = build_stream_automaton::<TropicalWeight>("single", &tokens);
+
+        assert_eq!(automaton.num_states(), 2);
+        assert_eq!(automaton.num_transitions(), 1);
+
+        // Evaluate to verify acceptance.
+        let result = automaton.evaluate(&[vec!["hello".into()]]);
+        assert!(!result.is_zero(), "should accept the single token");
+    }
+
+    #[test]
+    fn build_stream_automaton_state_labels() {
+        let tokens: Vec<String> = vec!["a".into(), "b".into()];
+        let automaton = build_stream_automaton::<TropicalWeight>("comments", &tokens);
+
+        assert_eq!(
+            automaton.states[0].label.as_deref(),
+            Some("comments:q0"),
+        );
+        assert_eq!(
+            automaton.states[1].label.as_deref(),
+            Some("comments:q1"),
+        );
+        assert_eq!(
+            automaton.states[2].label.as_deref(),
+            Some("comments:q2"),
+        );
+    }
+
+    #[test]
+    fn build_stream_automaton_with_log_weight() {
+        let tokens: Vec<String> = vec!["tok".into()];
+        let automaton = build_stream_automaton::<LogWeight>("log_stream", &tokens);
+
+        assert_eq!(automaton.num_states(), 2);
+        assert_eq!(automaton.num_transitions(), 1);
+
+        let result = automaton.evaluate(&[vec!["tok".into()]]);
+        assert!(
+            result.approx_eq(&LogWeight::one(), 1e-9),
+            "all-one weights should yield one()"
+        );
+    }
+
+    // ── Sprint 6C: build_synced_stream_automaton() tests ───────────────────
+
+    #[test]
+    fn synced_stream_track_only() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let main_tokens: Vec<String> =
+            vec!["let".into(), "x".into(), "=".into(), "42".into()];
+        let comment_tokens: Vec<String> = vec!["/* doc */".into()];
+
+        let main_aut = build_stream_automaton::<TropicalWeight>("main", &main_tokens);
+        let comment_aut =
+            build_stream_automaton::<TropicalWeight>("comments", &comment_tokens);
+
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Track {
+                auxiliary: "comments".into(),
+                primary: "main".into(),
+            }],
+        };
+
+        let result = build_synced_stream_automaton(
+            &main_aut, &comment_aut, "main", "comments", &sync,
+        );
+
+        // Track constraints don't modify the automaton, so it should be the
+        // full pair() product and should be satisfiable.
+        assert!(result.is_satisfiable);
+        assert_eq!(result.constraint_diagnostics.len(), 1);
+        assert!(result.constraint_diagnostics[0].is_ok());
+
+        // Product of 5 states * 2 states = 10 states.
+        assert_eq!(result.automaton.num_states(), 10);
+    }
+
+    #[test]
+    fn synced_stream_align_identical_tokens() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        // Two streams with the same tokens — Align should work.
+        let tokens: Vec<String> = vec!["a".into(), "b".into()];
+        let aut_a = build_stream_automaton::<TropicalWeight>("s1", &tokens);
+        let aut_b = build_stream_automaton::<TropicalWeight>("s2", &tokens);
+
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Align {
+                stream_a: "s1".into(),
+                stream_b: "s2".into(),
+                boundary_pattern: "a".into(),
+            }],
+        };
+
+        let result = build_synced_stream_automaton(
+            &aut_a, &aut_b, "s1", "s2", &sync,
+        );
+
+        assert_eq!(result.constraint_diagnostics.len(), 1);
+        assert!(
+            result.constraint_diagnostics[0].is_ok(),
+            "Align should succeed when boundary exists in both streams"
+        );
+        // After auto_intersect, only transitions with matching labels survive.
+        // The identical streams should retain some synchronized transitions.
+        assert!(
+            result.automaton.num_transitions() > 0,
+            "synchronized identical streams should have transitions"
+        );
+    }
+
+    #[test]
+    fn synced_stream_align_missing_boundary_in_one() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let tokens_a: Vec<String> = vec!["a".into(), "b".into()];
+        let tokens_b: Vec<String> = vec!["c".into(), "d".into()];
+        let aut_a = build_stream_automaton::<TropicalWeight>("s1", &tokens_a);
+        let aut_b = build_stream_automaton::<TropicalWeight>("s2", &tokens_b);
+
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Align {
+                stream_a: "s1".into(),
+                stream_b: "s2".into(),
+                boundary_pattern: "a".into(), // exists in s1 but not s2
+            }],
+        };
+
+        let result = build_synced_stream_automaton(
+            &aut_a, &aut_b, "s1", "s2", &sync,
+        );
+
+        assert_eq!(result.constraint_diagnostics.len(), 1);
+        assert!(
+            result.constraint_diagnostics[0].is_err(),
+            "Align should fail when boundary missing from one stream"
+        );
+    }
+
+    #[test]
+    fn synced_stream_align_missing_boundary_in_both() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let tokens_a: Vec<String> = vec!["a".into()];
+        let tokens_b: Vec<String> = vec!["b".into()];
+        let aut_a = build_stream_automaton::<TropicalWeight>("s1", &tokens_a);
+        let aut_b = build_stream_automaton::<TropicalWeight>("s2", &tokens_b);
+
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Align {
+                stream_a: "s1".into(),
+                stream_b: "s2".into(),
+                boundary_pattern: "MISSING".into(),
+            }],
+        };
+
+        let result = build_synced_stream_automaton(
+            &aut_a, &aut_b, "s1", "s2", &sync,
+        );
+
+        assert_eq!(result.constraint_diagnostics.len(), 1);
+        assert!(
+            result.constraint_diagnostics[0].is_err(),
+            "Align should fail when boundary missing from both streams"
+        );
+    }
+
+    #[test]
+    fn synced_stream_align_wrong_streams() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let tokens: Vec<String> = vec!["a".into()];
+        let aut_a = build_stream_automaton::<TropicalWeight>("s1", &tokens);
+        let aut_b = build_stream_automaton::<TropicalWeight>("s2", &tokens);
+
+        // Constraint references streams that don't match our pair.
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Align {
+                stream_a: "other1".into(),
+                stream_b: "other2".into(),
+                boundary_pattern: "a".into(),
+            }],
+        };
+
+        let result = build_synced_stream_automaton(
+            &aut_a, &aut_b, "s1", "s2", &sync,
+        );
+
+        // Constraint is skipped (doesn't apply to our streams), so the
+        // automaton is unmodified and satisfiable.
+        assert!(result.is_satisfiable);
+        assert_eq!(result.constraint_diagnostics.len(), 1);
+        assert!(result.constraint_diagnostics[0].is_ok());
+        // Should contain "skipped" in the message.
+        let msg = result.constraint_diagnostics[0].as_ref().expect("should be Ok");
+        assert!(
+            msg.contains("skipped"),
+            "diagnostic should mention skipping: {msg}"
+        );
+    }
+
+    #[test]
+    fn synced_stream_empty_sync_spec() {
+        use crate::SyncSpec;
+
+        let tokens: Vec<String> = vec!["a".into()];
+        let aut_a = build_stream_automaton::<TropicalWeight>("s1", &tokens);
+        let aut_b = build_stream_automaton::<TropicalWeight>("s2", &tokens);
+
+        let sync = SyncSpec {
+            constraints: vec![],
+        };
+
+        let result = build_synced_stream_automaton(
+            &aut_a, &aut_b, "s1", "s2", &sync,
+        );
+
+        // No constraints → just pair(), should be satisfiable.
+        assert!(result.is_satisfiable);
+        assert!(result.constraint_diagnostics.is_empty());
+    }
+
+    #[test]
+    fn synced_stream_multiple_constraints() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let tokens: Vec<String> = vec!["a".into(), "b".into()];
+        let aut_a = build_stream_automaton::<TropicalWeight>("s1", &tokens);
+        let aut_b = build_stream_automaton::<TropicalWeight>("s2", &tokens);
+
+        let sync = SyncSpec {
+            constraints: vec![
+                SyncConstraintSpec::Track {
+                    auxiliary: "s2".into(),
+                    primary: "s1".into(),
+                },
+                SyncConstraintSpec::Align {
+                    stream_a: "s1".into(),
+                    stream_b: "s2".into(),
+                    boundary_pattern: "a".into(),
+                },
+            ],
+        };
+
+        let result = build_synced_stream_automaton(
+            &aut_a, &aut_b, "s1", "s2", &sync,
+        );
+
+        assert_eq!(result.constraint_diagnostics.len(), 2);
+        assert!(result.constraint_diagnostics[0].is_ok()); // Track
+        assert!(result.constraint_diagnostics[1].is_ok()); // Align
+    }
+
+    // ── Sprint 6C: check_reachable_accepting() tests ───────────────────────
+
+    #[test]
+    fn check_reachable_accepting_simple_path() {
+        let mut a = WeightedMultiTapeAutomaton::<TropicalWeight, 1>::new();
+        let q0 = a.add_state(None);
+        let q1 = a.add_state(None);
+        a.set_initial(q0, TropicalWeight::one());
+        a.set_accepting(q1, TropicalWeight::one());
+        a.add_transition(q0, q1, [Some("x".into())], TropicalWeight::one());
+
+        assert!(check_reachable_accepting(&a));
+    }
+
+    #[test]
+    fn check_reachable_accepting_unreachable() {
+        let mut a = WeightedMultiTapeAutomaton::<TropicalWeight, 1>::new();
+        let q0 = a.add_state(None);
+        let _q1 = a.add_state(None); // accepting but no transitions to it
+        let q2 = a.add_state(None);
+        a.set_initial(q0, TropicalWeight::one());
+        a.set_accepting(q2, TropicalWeight::one());
+        // Only transition: q0 -> q1 (not accepting)
+        a.add_transition(q0, _q1, [Some("x".into())], TropicalWeight::one());
+
+        assert!(
+            !check_reachable_accepting(&a),
+            "accepting state q2 should be unreachable"
+        );
+    }
+
+    #[test]
+    fn check_reachable_accepting_empty() {
+        let a = WeightedMultiTapeAutomaton::<TropicalWeight, 1>::new();
+        assert!(
+            !check_reachable_accepting(&a),
+            "empty automaton has no reachable accepting state"
+        );
+    }
+
+    #[test]
+    fn check_reachable_accepting_initial_is_accepting() {
+        let mut a = WeightedMultiTapeAutomaton::<TropicalWeight, 1>::new();
+        let q0 = a.add_state(None);
+        a.set_initial(q0, TropicalWeight::one());
+        a.set_accepting(q0, TropicalWeight::one());
+
+        assert!(
+            check_reachable_accepting(&a),
+            "initial state that is also accepting should be reachable"
+        );
+    }
+
+    // ── Sprint 6C: validate_sync_constraints() tests ───────────────────────
+
+    #[test]
+    fn validate_sync_align_both_present() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let mut streams = HashMap::new();
+        streams.insert("s1".into(), vec!["a".into(), "b".into(), "a".into()]);
+        streams.insert("s2".into(), vec!["a".into(), "c".into()]);
+
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Align {
+                stream_a: "s1".into(),
+                stream_b: "s2".into(),
+                boundary_pattern: "a".into(),
+            }],
+        };
+
+        let diagnostics = validate_sync_constraints(&streams, &sync);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].is_ok());
+        // Should mention counts.
+        let msg = diagnostics[0].as_ref().expect("should be Ok");
+        assert!(msg.contains("2 in 's1'"), "should show 2 occurrences in s1: {msg}");
+        assert!(msg.contains("1 in 's2'"), "should show 1 occurrence in s2: {msg}");
+    }
+
+    #[test]
+    fn validate_sync_align_missing_stream() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let mut streams = HashMap::new();
+        streams.insert("s1".into(), vec!["a".into()]);
+        // s2 does not exist
+
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Align {
+                stream_a: "s1".into(),
+                stream_b: "s2".into(),
+                boundary_pattern: "a".into(),
+            }],
+        };
+
+        let diagnostics = validate_sync_constraints(&streams, &sync);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].is_err());
+        let msg = diagnostics[0].as_ref().expect_err("should be Err");
+        assert!(msg.contains("s2"), "should mention missing stream: {msg}");
+    }
+
+    #[test]
+    fn validate_sync_track_both_exist() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let mut streams = HashMap::new();
+        streams.insert("comments".into(), vec!["/* x */".into()]);
+        streams.insert("main".into(), vec!["let".into(), "x".into()]);
+
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Track {
+                auxiliary: "comments".into(),
+                primary: "main".into(),
+            }],
+        };
+
+        let diagnostics = validate_sync_constraints(&streams, &sync);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].is_ok());
+    }
+
+    #[test]
+    fn validate_sync_track_missing_primary() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let mut streams = HashMap::new();
+        streams.insert("comments".into(), vec!["/* x */".into()]);
+        // "main" does not exist
+
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Track {
+                auxiliary: "comments".into(),
+                primary: "main".into(),
+            }],
+        };
+
+        let diagnostics = validate_sync_constraints(&streams, &sync);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].is_err());
+    }
+
+    #[test]
+    fn validate_sync_empty_constraints() {
+        let streams = HashMap::new();
+        let sync = crate::SyncSpec {
+            constraints: vec![],
+        };
+
+        let diagnostics = validate_sync_constraints(&streams, &sync);
+        assert!(diagnostics.is_empty());
+    }
+
+    #[test]
+    fn validate_sync_align_boundary_not_in_either_stream() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let mut streams = HashMap::new();
+        streams.insert("s1".into(), vec!["x".into()]);
+        streams.insert("s2".into(), vec!["y".into()]);
+
+        let sync = SyncSpec {
+            constraints: vec![SyncConstraintSpec::Align {
+                stream_a: "s1".into(),
+                stream_b: "s2".into(),
+                boundary_pattern: "BOUNDARY".into(),
+            }],
+        };
+
+        let diagnostics = validate_sync_constraints(&streams, &sync);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].is_err());
+        let msg = diagnostics[0].as_ref().expect_err("should be Err");
+        assert!(
+            msg.contains("either stream"),
+            "should mention neither stream has the boundary: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_sync_multiple_mixed_constraints() {
+        use crate::{SyncSpec, SyncConstraintSpec};
+
+        let mut streams = HashMap::new();
+        streams.insert("main".into(), vec!["a".into(), "b".into()]);
+        streams.insert("ws".into(), vec![" ".into()]);
+        streams.insert("comments".into(), vec!["/* */".into()]);
+
+        let sync = SyncSpec {
+            constraints: vec![
+                SyncConstraintSpec::Track {
+                    auxiliary: "ws".into(),
+                    primary: "main".into(),
+                },
+                SyncConstraintSpec::Align {
+                    stream_a: "main".into(),
+                    stream_b: "comments".into(),
+                    boundary_pattern: "a".into(), // in main but not comments
+                },
+                SyncConstraintSpec::Track {
+                    auxiliary: "comments".into(),
+                    primary: "main".into(),
+                },
+            ],
+        };
+
+        let diagnostics = validate_sync_constraints(&streams, &sync);
+        assert_eq!(diagnostics.len(), 3);
+        assert!(diagnostics[0].is_ok());  // Track ws/main — both exist
+        assert!(diagnostics[1].is_err()); // Align main/comments — "a" not in comments
+        assert!(diagnostics[2].is_ok());  // Track comments/main — both exist
     }
 }
 

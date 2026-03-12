@@ -619,6 +619,10 @@ pub fn compose_many(specs: &[&LanguageSpec]) -> Result<LanguageSpec, Vec<Composi
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         });
     }
 
@@ -1127,6 +1131,10 @@ mod tests {
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         }
     }
 
@@ -1253,6 +1261,10 @@ mod tests {
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         };
 
         let err = compose_languages(&spec_a, &spec_b).expect_err("should fail");
@@ -1495,6 +1507,10 @@ mod tests {
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         };
 
         let merged = compose_languages(&spec_a, &spec_b).expect("composition should succeed");
@@ -1576,6 +1592,10 @@ mod tests {
                     literal_patterns: LiteralPatterns::default(),
                 recovery_config: crate::recovery::RecoveryConfig::default(),
                 semantic_dependency_groups: Vec::new(),
+                custom_tokens: Vec::new(),
+                modes: Vec::new(),
+                sync: None,
+                tree_invariants: Vec::new(),
             };
             // Manually set prefix_precedence to simulate user override
             spec.rules[0].prefix_precedence = Some(10);
@@ -1611,6 +1631,10 @@ mod tests {
                     literal_patterns: LiteralPatterns::default(),
                 recovery_config: crate::recovery::RecoveryConfig::default(),
                 semantic_dependency_groups: Vec::new(),
+                custom_tokens: Vec::new(),
+                modes: Vec::new(),
+                sync: None,
+                tree_invariants: Vec::new(),
             };
             spec.rules[0].prefix_precedence = Some(20);
             spec
@@ -1659,6 +1683,10 @@ mod tests {
                     literal_patterns: LiteralPatterns::default(),
                 recovery_config: crate::recovery::RecoveryConfig::default(),
                 semantic_dependency_groups: Vec::new(),
+                custom_tokens: Vec::new(),
+                modes: Vec::new(),
+                sync: None,
+                tree_invariants: Vec::new(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec
@@ -1692,6 +1720,10 @@ mod tests {
                     literal_patterns: LiteralPatterns::default(),
                 recovery_config: crate::recovery::RecoveryConfig::default(),
                 semantic_dependency_groups: Vec::new(),
+                custom_tokens: Vec::new(),
+                modes: Vec::new(),
+                sync: None,
+                tree_invariants: Vec::new(),
             };
             spec.rules[0].prefix_precedence = Some(10);
             spec

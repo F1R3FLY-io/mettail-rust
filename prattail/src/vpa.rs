@@ -2221,6 +2221,185 @@ impl crate::predicate_dispatch::PredicateCompiler for VpaCompiler {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// Sprint 6B — VPA Delimiter Verification
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Build a VPA alphabet from custom token push/pop annotations.
+///
+/// Tokens with `push_mode` become call symbols, tokens with `is_pop` become
+/// return symbols, and all others become internal symbols.  This classifies
+/// tokens from *both* the default-mode token list and every named mode's
+/// token list, producing a single unified alphabet.
+///
+/// # Arguments
+///
+/// * `default_tokens` — token specs from the default (top-level) lexer mode.
+/// * `modes` — named lexer modes, each containing its own token specs.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let alphabet = build_vpa_alphabet_from_modes(&default_tokens, &modes);
+/// assert!(alphabet.call_symbols.contains("("));
+/// assert!(alphabet.return_symbols.contains(")"));
+/// ```
+pub fn build_vpa_alphabet_from_modes(
+    default_tokens: &[crate::CustomTokenSpec],
+    modes: &[crate::LexerModeSpec],
+) -> VpaAlphabet {
+    let mut call_symbols: HashSet<String> = HashSet::new();
+    let mut return_symbols: HashSet<String> = HashSet::new();
+    let mut internal_symbols: HashSet<String> = HashSet::new();
+
+    // Classify a single token spec by its push/pop annotations.
+    let mut classify_token = |spec: &crate::CustomTokenSpec| {
+        if spec.push_mode.is_some() {
+            call_symbols.insert(spec.name.clone());
+        } else if spec.is_pop {
+            return_symbols.insert(spec.name.clone());
+        } else {
+            internal_symbols.insert(spec.name.clone());
+        }
+    };
+
+    for spec in default_tokens {
+        classify_token(spec);
+    }
+    for mode in modes {
+        for spec in &mode.token_specs {
+            classify_token(spec);
+        }
+    }
+
+    VpaAlphabet::new(call_symbols, return_symbols, internal_symbols)
+}
+
+/// Build a delimiter skip table from a flat token stream.
+///
+/// For each opening delimiter at index `i`, `skip_table[i] = Some(j)` where `j`
+/// is the index of the matching closer.  For non-delimiters and unmatched
+/// openers, `skip_table[i] = None`.
+///
+/// Built in O(n) via a single stack pass using the VPA alphabet classification.
+///
+/// # Arguments
+///
+/// * `tokens` — flat token stream of `(token, range)` pairs.
+/// * `classify` — closure that maps a token reference to a [`SymbolKind`].
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// let table = build_skip_table(&tokens, |tok| alphabet.classify(tok).unwrap_or(SymbolKind::Internal));
+/// // table[0] == Some(3) means the opener at 0 matches the closer at 3.
+/// ```
+pub fn build_skip_table<T>(
+    tokens: &[(T, crate::runtime_types::Range)],
+    classify: impl Fn(&T) -> SymbolKind,
+) -> Vec<Option<usize>> {
+    let mut table = vec![None; tokens.len()];
+    let mut stack: Vec<usize> = Vec::new();
+    for (i, (tok, _)) in tokens.iter().enumerate() {
+        match classify(tok) {
+            SymbolKind::Call => stack.push(i),
+            SymbolKind::Return => {
+                if let Some(opener) = stack.pop() {
+                    table[opener] = Some(i);
+                }
+            }
+            SymbolKind::Internal => {}
+        }
+    }
+    table
+}
+
+/// A token tree: either a leaf token or a delimited group.
+///
+/// Constructed from a flat token stream and its [`build_skip_table`] output
+/// in O(n) time.  Groups nest recursively — a `Group`'s `children` may
+/// themselves contain further `Group` nodes.
+///
+/// # Type Parameter
+///
+/// * `T` — the token type (e.g., a generated `Token` enum).
+#[derive(Debug, Clone)]
+pub enum TokenTree<T> {
+    /// A leaf token (non-delimiter or unmatched delimiter).
+    Token(T, crate::runtime_types::Range),
+    /// A delimited group: opener, contents, closer.
+    Group {
+        /// The opening delimiter token and its source range.
+        open: (T, crate::runtime_types::Range),
+        /// The closing delimiter token and its source range.
+        close: (T, crate::runtime_types::Range),
+        /// Child nodes between the delimiters.
+        children: Vec<TokenTree<T>>,
+    },
+}
+
+/// Build a token tree from a flat token stream and skip table.
+///
+/// Uses the skip table produced by [`build_skip_table`] to group matching
+/// delimiters into nested [`TokenTree::Group`] nodes.  Unmatched openers
+/// (where `skip_table[i] == None` despite the token being a `Call` symbol)
+/// are demoted to leaf [`TokenTree::Token`] nodes.
+///
+/// Runs in O(n) time (each token is visited exactly once).
+///
+/// # Arguments
+///
+/// * `tokens` — flat token stream of `(token, range)` pairs.
+/// * `skip_table` — the skip table built by [`build_skip_table`].
+/// * `classify` — closure mapping a token reference to a [`SymbolKind`].
+pub fn build_token_tree<T: Clone>(
+    tokens: &[(T, crate::runtime_types::Range)],
+    skip_table: &[Option<usize>],
+    classify: impl Fn(&T) -> SymbolKind,
+) -> Vec<TokenTree<T>> {
+    /// Recursive helper that builds children within the half-open range
+    /// `[start, end)` of the token stream.
+    fn build_range<T: Clone>(
+        tokens: &[(T, crate::runtime_types::Range)],
+        skip_table: &[Option<usize>],
+        classify: &dyn Fn(&T) -> SymbolKind,
+        start: usize,
+        end: usize,
+    ) -> Vec<TokenTree<T>> {
+        let mut result = Vec::new();
+        let mut i = start;
+        while i < end {
+            match classify(&tokens[i].0) {
+                SymbolKind::Call => {
+                    if let Some(closer) = skip_table[i] {
+                        let children =
+                            build_range(tokens, skip_table, classify, i + 1, closer);
+                        result.push(TokenTree::Group {
+                            open: tokens[i].clone(),
+                            close: tokens[closer].clone(),
+                            children,
+                        });
+                        i = closer + 1;
+                    } else {
+                        // Unmatched opener — demote to leaf.
+                        result.push(TokenTree::Token(
+                            tokens[i].0.clone(),
+                            tokens[i].1,
+                        ));
+                        i += 1;
+                    }
+                }
+                _ => {
+                    result.push(TokenTree::Token(tokens[i].0.clone(), tokens[i].1));
+                    i += 1;
+                }
+            }
+        }
+        result
+    }
+    build_range(tokens, skip_table, &classify, 0, tokens.len())
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -3098,5 +3277,316 @@ mod tests {
             max_nesting_bound: state_count,
         };
         assert_eq!(analysis.max_nesting_bound, state_count);
+    }
+
+    // ── VPA token grouping tests ─────────────────────────────────────────────
+
+    fn test_range(byte_offset: usize) -> crate::runtime_types::Range {
+        let pos = crate::runtime_types::Position {
+            byte_offset,
+            line: 1,
+            column: byte_offset,
+        };
+        crate::runtime_types::Range {
+            start: pos,
+            end: pos,
+            file_id: None,
+        }
+    }
+
+    fn classify_test_token(tok: &str) -> SymbolKind {
+        match tok {
+            "(" | "{" | "[" => SymbolKind::Call,
+            ")" | "}" | "]" => SymbolKind::Return,
+            _ => SymbolKind::Internal,
+        }
+    }
+
+    #[test]
+    fn test_build_vpa_alphabet_from_modes() {
+        use crate::{CustomTokenSpec, LexerModeSpec};
+
+        let default_tokens = vec![
+            CustomTokenSpec {
+                name: "LParen".into(),
+                pattern: "\\(".into(),
+                category: None,
+                payload_type: None,
+                constructor_code: None,
+                is_builtin_override: false,
+                priority: 2,
+                push_mode: Some("inner".into()),
+                is_pop: false,
+                stream: None,
+            },
+            CustomTokenSpec {
+                name: "Plus".into(),
+                pattern: "\\+".into(),
+                category: None,
+                payload_type: None,
+                constructor_code: None,
+                is_builtin_override: false,
+                priority: 2,
+                push_mode: None,
+                is_pop: false,
+                stream: None,
+            },
+        ];
+        let modes = vec![LexerModeSpec {
+            name: "inner".into(),
+            token_specs: vec![CustomTokenSpec {
+                name: "RParen".into(),
+                pattern: "\\)".into(),
+                category: None,
+                payload_type: None,
+                constructor_code: None,
+                is_builtin_override: false,
+                priority: 2,
+                push_mode: None,
+                is_pop: true,
+                stream: None,
+            }],
+        }];
+
+        let alphabet = build_vpa_alphabet_from_modes(&default_tokens, &modes);
+        assert!(
+            alphabet.call_symbols.contains("LParen"),
+            "LParen with push_mode should be a call symbol"
+        );
+        assert!(
+            alphabet.return_symbols.contains("RParen"),
+            "RParen with is_pop should be a return symbol"
+        );
+        assert!(
+            alphabet.internal_symbols.contains("Plus"),
+            "Plus (no push/pop) should be an internal symbol"
+        );
+        assert!(
+            !alphabet.call_symbols.contains("Plus"),
+            "Plus should not appear in call symbols"
+        );
+        assert!(
+            !alphabet.return_symbols.contains("Plus"),
+            "Plus should not appear in return symbols"
+        );
+    }
+
+    #[test]
+    fn test_skip_table_simple() {
+        // Token stream: ( a + b )
+        let tokens: Vec<(&str, _)> = vec![
+            ("(", test_range(0)),
+            ("a", test_range(1)),
+            ("+", test_range(2)),
+            ("b", test_range(3)),
+            (")", test_range(4)),
+        ];
+
+        let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
+
+        assert_eq!(
+            table[0],
+            Some(4),
+            "opener at 0 should match closer at 4"
+        );
+        assert_eq!(table[1], None, "leaf 'a' should have no skip");
+        assert_eq!(table[2], None, "leaf '+' should have no skip");
+        assert_eq!(table[3], None, "leaf 'b' should have no skip");
+        assert_eq!(table[4], None, "closer ')' should have no skip entry");
+    }
+
+    #[test]
+    fn test_skip_table_nested() {
+        // Token stream: ( ( a ) )
+        let tokens: Vec<(&str, _)> = vec![
+            ("(", test_range(0)),
+            ("(", test_range(1)),
+            ("a", test_range(2)),
+            (")", test_range(3)),
+            (")", test_range(4)),
+        ];
+
+        let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
+
+        assert_eq!(
+            table[0],
+            Some(4),
+            "outer opener at 0 should match outer closer at 4"
+        );
+        assert_eq!(
+            table[1],
+            Some(3),
+            "inner opener at 1 should match inner closer at 3"
+        );
+        assert_eq!(table[2], None, "leaf 'a' should have no skip");
+        assert_eq!(table[3], None, "closer at 3 should have no skip entry");
+        assert_eq!(table[4], None, "closer at 4 should have no skip entry");
+    }
+
+    #[test]
+    fn test_skip_table_unbalanced() {
+        // Token stream: ( a ( b — two unmatched openers
+        let tokens: Vec<(&str, _)> = vec![
+            ("(", test_range(0)),
+            ("a", test_range(1)),
+            ("(", test_range(2)),
+            ("b", test_range(3)),
+        ];
+
+        let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
+
+        assert_eq!(
+            table[0], None,
+            "unmatched opener at 0 should be None"
+        );
+        assert_eq!(table[1], None, "leaf 'a' should have no skip");
+        assert_eq!(
+            table[2], None,
+            "unmatched opener at 2 should be None"
+        );
+        assert_eq!(table[3], None, "leaf 'b' should have no skip");
+    }
+
+    #[test]
+    fn test_token_tree_simple() {
+        // Token stream: ( a + b )
+        let tokens: Vec<(&str, _)> = vec![
+            ("(", test_range(0)),
+            ("a", test_range(1)),
+            ("+", test_range(2)),
+            ("b", test_range(3)),
+            (")", test_range(4)),
+        ];
+        let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
+        let tree = build_token_tree(&tokens, &table, |tok| classify_test_token(tok));
+
+        assert_eq!(tree.len(), 1, "should produce exactly 1 top-level Group");
+        match &tree[0] {
+            TokenTree::Group {
+                open,
+                close,
+                children,
+            } => {
+                assert_eq!(open.0, "(", "group opener should be '('");
+                assert_eq!(close.0, ")", "group closer should be ')'");
+                assert_eq!(children.len(), 3, "group should contain 3 children: a, +, b");
+                // Verify all children are leaf tokens
+                for (i, child) in children.iter().enumerate() {
+                    match child {
+                        TokenTree::Token(tok, _) => {
+                            let expected = ["a", "+", "b"][i];
+                            assert_eq!(
+                                *tok, expected,
+                                "child {i} should be '{expected}'"
+                            );
+                        }
+                        TokenTree::Group { .. } => {
+                            panic!("child {i} should be a Token, not a Group");
+                        }
+                    }
+                }
+            }
+            TokenTree::Token(_, _) => panic!("expected a Group, got a Token"),
+        }
+    }
+
+    #[test]
+    fn test_token_tree_nested() {
+        // Token stream: ( ( a ) b )
+        let tokens: Vec<(&str, _)> = vec![
+            ("(", test_range(0)),
+            ("(", test_range(1)),
+            ("a", test_range(2)),
+            (")", test_range(3)),
+            ("b", test_range(4)),
+            (")", test_range(5)),
+        ];
+        let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
+        let tree = build_token_tree(&tokens, &table, |tok| classify_test_token(tok));
+
+        assert_eq!(tree.len(), 1, "should produce exactly 1 top-level Group");
+        match &tree[0] {
+            TokenTree::Group {
+                open,
+                close,
+                children,
+            } => {
+                assert_eq!(open.0, "(");
+                assert_eq!(close.0, ")");
+                assert_eq!(
+                    children.len(),
+                    2,
+                    "outer group should contain 2 children: inner Group and leaf 'b'"
+                );
+
+                // First child: nested Group([a])
+                match &children[0] {
+                    TokenTree::Group {
+                        open: inner_open,
+                        close: inner_close,
+                        children: inner_children,
+                    } => {
+                        assert_eq!(inner_open.0, "(");
+                        assert_eq!(inner_close.0, ")");
+                        assert_eq!(
+                            inner_children.len(),
+                            1,
+                            "inner group should contain 1 child: 'a'"
+                        );
+                        match &inner_children[0] {
+                            TokenTree::Token(tok, _) => assert_eq!(*tok, "a"),
+                            TokenTree::Group { .. } => {
+                                panic!("inner child should be Token 'a'");
+                            }
+                        }
+                    }
+                    TokenTree::Token(_, _) => {
+                        panic!("first child of outer group should be a nested Group");
+                    }
+                }
+
+                // Second child: leaf "b"
+                match &children[1] {
+                    TokenTree::Token(tok, _) => assert_eq!(*tok, "b"),
+                    TokenTree::Group { .. } => {
+                        panic!("second child of outer group should be leaf 'b'");
+                    }
+                }
+            }
+            TokenTree::Token(_, _) => panic!("expected a Group, got a Token"),
+        }
+    }
+
+    #[test]
+    fn test_token_tree_unmatched_opener() {
+        // Token stream: ( a b — unmatched opener is demoted to leaf Token
+        let tokens: Vec<(&str, _)> = vec![
+            ("(", test_range(0)),
+            ("a", test_range(1)),
+            ("b", test_range(2)),
+        ];
+        let table = build_skip_table(&tokens, |tok| classify_test_token(tok));
+        let tree = build_token_tree(&tokens, &table, |tok| classify_test_token(tok));
+
+        assert_eq!(
+            tree.len(),
+            3,
+            "unmatched opener should produce 3 leaf tokens"
+        );
+        // All nodes should be leaf tokens since the opener is unmatched
+        for (i, node) in tree.iter().enumerate() {
+            match node {
+                TokenTree::Token(tok, _) => {
+                    let expected = ["(", "a", "b"][i];
+                    assert_eq!(
+                        *tok, expected,
+                        "leaf {i} should be '{expected}'"
+                    );
+                }
+                TokenTree::Group { .. } => {
+                    panic!("node {i} should be a demoted leaf Token, not a Group");
+                }
+            }
+        }
     }
 }

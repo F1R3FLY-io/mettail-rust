@@ -1071,6 +1071,146 @@ fn collect_nonterminal_children(
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+// TokenTree ↔ Term conversion and validation
+// ══════════════════════════════════════════════════════════════════════════════
+
+/// Convert a VPA [`TokenTree`] to the tree automaton's [`Term`] representation.
+///
+/// Leaf tokens become terms with the token name as symbol and no children.
+/// Delimited groups become terms with the opener token as symbol and the
+/// group's children recursively converted.
+///
+/// # Type Parameters
+///
+/// * `T` — the token type carried by the token tree (must implement `Debug`).
+///
+/// # Arguments
+///
+/// * `tt` — a reference to the token tree node to convert.
+/// * `token_to_symbol` — a closure mapping token references to symbol strings
+///   for the tree automaton's ranked alphabet.
+///
+/// # Examples
+///
+/// ```ignore
+/// // Given TokenTree::Token("Lit", range), produces Term { symbol: "Lit", children: [] }
+/// // Given TokenTree::Group { open: ("LParen", _), children: [...], close: _ },
+/// //   produces Term { symbol: "LParen", children: [... recursively converted ...] }
+/// ```
+#[cfg(all(feature = "tree-automata", feature = "vpa"))]
+pub fn token_tree_to_term<T: std::fmt::Debug>(
+    tt: &crate::vpa::TokenTree<T>,
+    token_to_symbol: &dyn Fn(&T) -> String,
+) -> Term {
+    match tt {
+        crate::vpa::TokenTree::Token(tok, _range) => Term {
+            symbol: token_to_symbol(tok),
+            children: vec![],
+        },
+        crate::vpa::TokenTree::Group {
+            open, children, ..
+        } => Term {
+            symbol: token_to_symbol(&open.0),
+            children: children
+                .iter()
+                .map(|child| token_tree_to_term(child, token_to_symbol))
+                .collect(),
+        },
+    }
+}
+
+/// Validation error for token trees that do not match the grammar WTA.
+///
+/// Produced by [`validate_token_tree`] when the bottom-up evaluation of the
+/// converted term fails to reach any final state with a non-zero weight.
+#[cfg(all(feature = "tree-automata", feature = "vpa"))]
+#[derive(Debug, Clone)]
+pub struct TreeValidationError {
+    /// Human-readable description of the validation failure.
+    pub message: String,
+}
+
+#[cfg(all(feature = "tree-automata", feature = "vpa"))]
+impl fmt::Display for TreeValidationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+#[cfg(all(feature = "tree-automata", feature = "vpa"))]
+impl std::error::Error for TreeValidationError {}
+
+/// Validate a token tree against a grammar WTA.
+///
+/// Converts the token tree to a [`Term`] via [`token_tree_to_term`], then runs
+/// [`bottom_up_evaluate`] against the given automaton. If any final state is
+/// reached with a non-zero weight, that weight is returned. Otherwise, a
+/// [`TreeValidationError`] is produced describing the failure.
+///
+/// # Type Parameters
+///
+/// * `W` — the semiring weight type of the tree automaton.
+/// * `T` — the token type carried by the token tree.
+///
+/// # Arguments
+///
+/// * `automaton` — the weighted tree automaton encoding the grammar's term
+///   structure.
+/// * `tree` — the token tree to validate.
+/// * `token_to_symbol` — a closure mapping token references to symbol strings
+///   used in the automaton's ranked alphabet.
+///
+/// # Returns
+///
+/// * `Ok(weight)` if the tree is accepted (reaches a final state with non-zero
+///   weight). When multiple final states are reachable, their weights are
+///   combined via semiring `plus` to yield a single aggregate weight.
+/// * `Err(TreeValidationError)` if no final state is reached or all final state
+///   weights are zero.
+///
+/// # Examples
+///
+/// ```ignore
+/// let result = validate_token_tree(&wta, &token_tree, &|tok| format!("{:?}", tok));
+/// match result {
+///     Ok(weight) => println!("accepted with weight {:?}", weight),
+///     Err(err) => eprintln!("validation failed: {}", err),
+/// }
+/// ```
+#[cfg(all(feature = "tree-automata", feature = "vpa"))]
+pub fn validate_token_tree<W: Semiring, T: std::fmt::Debug>(
+    automaton: &TreeAutomaton<W>,
+    tree: &crate::vpa::TokenTree<T>,
+    token_to_symbol: &dyn Fn(&T) -> String,
+) -> Result<W, TreeValidationError> {
+    let term = token_tree_to_term(tree, token_to_symbol);
+    let state_map = bottom_up_evaluate(automaton, &term);
+
+    // Aggregate weights across all final states using semiring plus.
+    let mut aggregate: Option<W> = None;
+    for &final_id in &automaton.final_states {
+        if let Some(&w) = state_map.get(&final_id) {
+            if !w.is_zero() {
+                aggregate = Some(match aggregate {
+                    Some(acc) => acc.plus(&w),
+                    None => w,
+                });
+            }
+        }
+    }
+
+    match aggregate {
+        Some(w) => Ok(w),
+        None => Err(TreeValidationError {
+            message: format!(
+                "token tree not accepted: no final state reached for root symbol '{}'",
+                term.symbol
+            ),
+        }),
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
 // Tests
 // ══════════════════════════════════════════════════════════════════════════════
 
@@ -1545,6 +1685,140 @@ mod tests {
         );
         assert_eq!(report.specialization_candidates[0].parent_symbol, "Hot");
         assert!(report.coverage > 0.9, "hot transition dominates");
+    }
+
+    // ──────────────────────────────────────────────────────────────────────
+    // token_tree_to_term / validate_token_tree tests
+    // ──────────────────────────────────────────────────────────────────────
+
+    #[cfg(all(feature = "tree-automata", feature = "vpa"))]
+    mod token_tree_tests {
+        use super::*;
+        use crate::vpa::TokenTree;
+
+        /// Convenience helper: a zero-length range for test token trees.
+        fn test_range() -> crate::runtime_types::Range {
+            crate::runtime_types::Range::zero()
+        }
+
+        /// Map `&str` tokens to their string symbol.
+        fn str_to_symbol(tok: &&str) -> String {
+            tok.to_string()
+        }
+
+        #[test]
+        fn test_token_tree_to_term_leaf() {
+            let tt: TokenTree<&str> = TokenTree::Token("Ident", test_range());
+            let term = token_tree_to_term(&tt, &str_to_symbol);
+
+            assert_eq!(term.symbol, "Ident");
+            assert!(term.children.is_empty(), "leaf token should have no children");
+            assert_eq!(term, Term::leaf("Ident"));
+        }
+
+        #[test]
+        fn test_token_tree_to_term_group() {
+            let tt: TokenTree<&str> = TokenTree::Group {
+                open: ("LParen", test_range()),
+                close: ("RParen", test_range()),
+                children: vec![TokenTree::Token("Plus", test_range())],
+            };
+            let term = token_tree_to_term(&tt, &str_to_symbol);
+
+            assert_eq!(term.symbol, "LParen");
+            assert_eq!(term.children.len(), 1);
+            assert_eq!(term.children[0].symbol, "Plus");
+            assert!(term.children[0].children.is_empty());
+            assert_eq!(
+                term,
+                Term::new("LParen", vec![Term::leaf("Plus")])
+            );
+        }
+
+        #[test]
+        fn test_token_tree_to_term_nested() {
+            // Structure: Group(LParen, [Group(LBrace, [Token(Ident)]), Token(Comma)])
+            let inner_group: TokenTree<&str> = TokenTree::Group {
+                open: ("LBrace", test_range()),
+                close: ("RBrace", test_range()),
+                children: vec![TokenTree::Token("Ident", test_range())],
+            };
+            let tt: TokenTree<&str> = TokenTree::Group {
+                open: ("LParen", test_range()),
+                close: ("RParen", test_range()),
+                children: vec![inner_group, TokenTree::Token("Comma", test_range())],
+            };
+            let term = token_tree_to_term(&tt, &str_to_symbol);
+
+            assert_eq!(term.symbol, "LParen");
+            assert_eq!(term.children.len(), 2);
+
+            // First child is the nested group.
+            let nested = &term.children[0];
+            assert_eq!(nested.symbol, "LBrace");
+            assert_eq!(nested.children.len(), 1);
+            assert_eq!(nested.children[0].symbol, "Ident");
+            assert!(nested.children[0].children.is_empty());
+
+            // Second child is a flat token.
+            let comma = &term.children[1];
+            assert_eq!(comma.symbol, "Comma");
+            assert!(comma.children.is_empty());
+
+            assert_eq!(
+                term,
+                Term::new(
+                    "LParen",
+                    vec![
+                        Term::new("LBrace", vec![Term::leaf("Ident")]),
+                        Term::leaf("Comma"),
+                    ],
+                )
+            );
+        }
+
+        #[test]
+        fn test_validate_token_tree_valid() {
+            // Build a minimal WTA that accepts a single "Lit" leaf.
+            //
+            //   Transition: Lit → q0 [1.0]   (leaf, weight = one)
+            //   q0 is final.
+            let mut wta: TreeAutomaton<TropicalWeight> = TreeAutomaton::new();
+            let q0 = wta.add_state(true); // final state
+            wta.add_transition(TreeTransition::leaf("Lit", q0, TropicalWeight::one()));
+
+            let tt: TokenTree<&str> = TokenTree::Token("Lit", test_range());
+            let result = validate_token_tree(&wta, &tt, &str_to_symbol);
+
+            assert!(result.is_ok(), "expected Ok, got {:?}", result);
+            let weight = result.expect("already checked Ok");
+            // TropicalWeight::one() is 0.0 (tropical identity for ⊗).
+            assert!(
+                (weight.0 - TropicalWeight::one().0).abs() < f64::EPSILON,
+                "weight should be one (0.0 in tropical), got {:?}",
+                weight,
+            );
+        }
+
+        #[test]
+        fn test_validate_token_tree_invalid() {
+            // Build a WTA that only accepts "Lit" leaves — passing "Unknown"
+            // should produce an Err.
+            let mut wta: TreeAutomaton<TropicalWeight> = TreeAutomaton::new();
+            let q0 = wta.add_state(true);
+            wta.add_transition(TreeTransition::leaf("Lit", q0, TropicalWeight::one()));
+
+            let tt: TokenTree<&str> = TokenTree::Token("Unknown", test_range());
+            let result = validate_token_tree(&wta, &tt, &str_to_symbol);
+
+            assert!(result.is_err(), "expected Err for unrecognized symbol, got {:?}", result);
+            let err = result.unwrap_err();
+            assert!(
+                err.message.contains("Unknown"),
+                "error message should mention the unrecognized root symbol 'Unknown', got: {}",
+                err.message,
+            );
+        }
     }
 
     #[test]

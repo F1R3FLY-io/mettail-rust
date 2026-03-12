@@ -879,6 +879,10 @@ pub struct LexerBundle {
     category_names: Vec<String>,
     /// Configurable literal token patterns for lexer generation.
     literal_patterns: LiteralPatterns,
+    /// Custom token definitions from the `tokens { ... }` block.
+    custom_tokens: Vec<crate::CustomTokenSpec>,
+    /// Named lexer modes from the `tokens { ... }` block.
+    modes: Vec<crate::LexerModeSpec>,
 }
 
 /// Category metadata for the parser pipeline. Send+Sync.
@@ -915,6 +919,8 @@ pub struct ParserBundle {
     pub(crate) rule_locations: std::collections::HashMap<(String, String), crate::SourceLocation>,
     /// Dependency groups from equations/rewrites/logic for transitive liveness analysis.
     pub(crate) semantic_dependency_groups: Vec<HashSet<String>>,
+    /// Custom token specs from the `tokens { ... }` block.
+    pub(crate) custom_tokens: Vec<crate::CustomTokenSpec>,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1104,6 +1110,8 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         has_binders,
         category_names: lexer_category_names,
         literal_patterns: spec.literal_patterns.clone(),
+        custom_tokens: spec.custom_tokens.clone(),
+        modes: spec.modes.clone(),
     };
 
     // ── Parser bundle ──
@@ -1313,6 +1321,7 @@ fn extract_from_spec(spec: &LanguageSpec) -> (LexerBundle, ParserBundle) {
         all_syntax,
         rule_locations,
         semantic_dependency_groups: spec.semantic_dependency_groups.clone(),
+        custom_tokens: spec.custom_tokens.clone(),
     };
 
     (lexer_bundle, parser_bundle)
@@ -1339,6 +1348,11 @@ fn generate_lexer_code_with_map(
         &bundle.category_names,
     );
     lexer_input.literal_patterns = bundle.literal_patterns.clone();
+    lexer_input.custom_tokens = bundle.custom_tokens.clone();
+    lexer_input.modes = bundle.modes.iter().map(|m| crate::lexer::LexerModeInput {
+        name: m.name.clone(),
+        custom_tokens: m.token_specs.clone(),
+    }).collect();
     let (lexer_str, stats) = generate_lexer_as_string_hybrid(&lexer_input, hybrid_lexer);
     (lexer_str, stats.variant_map, stats.ambiguity_info)
 }
@@ -2040,6 +2054,18 @@ fn generate_parser_code(
                     },
                     _ => {},
                 }
+            }
+        }
+    }
+
+    // Augment FIRST sets with custom tokens targeting each category.
+    // Custom tokens with `: Category` (e.g., `HexLiteral : Int`) produce
+    // additional literal values for that category, so the category's FIRST
+    // set must include the custom token's variant name.
+    for spec in &bundle.custom_tokens {
+        if let Some(ref cat_name) = spec.category {
+            if let Some(first_set) = first_sets.get_mut(cat_name.as_str()) {
+                first_set.insert(&spec.name);
             }
         }
     }
@@ -6100,6 +6126,7 @@ mod tests {
             all_syntax: Vec::new(),
             rule_locations: std::collections::HashMap::new(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
         };
 
         let results = super::run_math_analyses_sequential(&bundle, None, false);
@@ -6151,6 +6178,7 @@ mod tests {
             ],
             rule_locations: std::collections::HashMap::new(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
         };
 
         let results = super::run_math_analyses_parallel(&bundle, None);

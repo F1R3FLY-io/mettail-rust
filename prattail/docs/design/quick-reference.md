@@ -203,6 +203,45 @@ language! {
         GtInt . a:Int, b:Int |- a ">" b : Bool ![a > b] step;
     }
 
+    // Custom token definitions (optional, between types and terms)
+    tokens {
+        // Override built-in integer to support hex prefix
+        Integer = /[0-9]+/ ![text.parse::<i64>().expect("bad int")];
+
+        // New token kind: hex literals
+        HexLiteral = /0x[0-9a-fA-F]+/ : Int
+            ![i64::from_str_radix(&text[2..], 16).expect("bad hex")];
+
+        // Explicit priority for disambiguation
+        BinaryLiteral = /0b[01]+/ : Int
+            ![i64::from_str_radix(&text[2..], 2).expect("bad bin")]
+            priority(4);
+
+        // String interpolation via modal lexing
+        StringStart = /"/ push(string_body);
+        mode string_body {
+            StringChars = /[^"\\$]+/;
+            StringEscape = /\\./;
+            InterpStart = /\$\{/ push(default);
+            StringEnd = /"/ pop : Str ![process_string(text)];
+        }
+
+        // Route comments to auxiliary stream
+        LineComment = /\/\/[^\n]*/ -> comments;
+
+        // Cross-stream sync constraints
+        sync {
+            align(comments, main) on /\n/;
+            track(whitespace, main);
+        }
+
+        // Tree structural invariants (feature = "parity-tree-automata")
+        tree_invariants {
+            no_nested_braces: forall children of Brace { not Brace };
+            no_empty_parens: forall Paren { exists child };
+        }
+    },
+
     equations { }
 
     rewrites {
@@ -212,6 +251,36 @@ language! {
     }
 }
 ```
+
+> **See also**: [tokens/ design docs](tokens/README.md) for detailed documentation
+> of each `tokens { ... }` sub-feature.
+
+#### `tokens { ... }` Block Grammar
+
+```
+tokens_block     ::= "tokens" "{" token_item* "}"
+token_item       ::= token_def | mode_def | sync_block | invariants_block
+token_def        ::= Name "=" "/" regex "/" [":" Category]
+                      ["!" "[" rust_code "]"] ["priority" "(" integer ")"]
+                      ["push" "(" mode_name ")"] ["pop"]
+                      ["->" stream_name] ";"
+mode_def         ::= "mode" Name "{" token_def* "}"
+sync_block       ::= "sync" "{" sync_constraint* "}"
+sync_constraint  ::= "align" "(" stream "," stream ")" "on" "/" regex "/" ";"
+                    | "track" "(" stream "," stream ")" ";"
+invariants_block ::= "tree_invariants" "{" invariant* "}"
+invariant        ::= Name ":" constraint_expr ";"
+```
+
+| Sub-feature        | Feature Gate               | Key Functions                                  |
+|--------------------|----------------------------|------------------------------------------------|
+| Custom tokens      | (always on)                | `build_nfa_with_custom()`, `write_token_enum()` |
+| Modal lexing       | (always on)                | `build_nfa_for_mode()`, `generate_modal_lexer_string()` |
+| Multi-stream       | (always on)                | `write_stream_tables()`, `write_modal_lex_with_streams()` |
+| VPA delimiter      | `vpa`                      | `build_vpa_alphabet_from_modes()`, `build_skip_table()` |
+| Tree automata      | `tree-automata` + `vpa`    | `validate_token_tree()`, `token_tree_to_term()` |
+| Tree invariants    | `parity-tree-automata`     | `tree_invariants { ... }` DSL                   |
+| Multi-tape sync    | `multi-tape`               | `build_synced_stream_automaton()`, `sync { ... }` |
 
 ### 1.4 PraTTaIL Module Map
 

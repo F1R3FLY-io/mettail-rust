@@ -134,6 +134,10 @@ lib.rs
   (delegates to `pipeline::run_pipeline`)
 - **Data types**: `LanguageSpec`, `CategorySpec`, `RuleSpec`, `SyntaxItemSpec`,
   `CollectionKind`, `Associativity`
+- **Token types**: `CustomTokenSpec` (custom/override token definitions),
+  `LexerModeSpec` (named lexer modes), `LexResult<T>` (multi-stream lex output),
+  `SyncSpec`/`SyncConstraintSpec` (cross-stream sync), `TreeInvariantSpec`
+- `LanguageSpec` token-related fields: `custom_tokens`, `modes`, `sync`, `tree_invariants`
 - `RuleSpec` fields include: `is_unary_prefix`, `is_postfix`, `prefix_precedence`,
   `associativity`, `eval_mode`, `has_rust_code`, `rust_code`
 - `SyntaxItemSpec` variants: `Terminal`, `NonTerminal`, `IdentCapture`, `Binder`,
@@ -145,9 +149,9 @@ lib.rs
   `Ready` → `Generated` → `Complete`
 - **Public API**: `run_pipeline(spec: &LanguageSpec) -> TokenStream`
 - **Send+Sync data bundles** (extracted from `!Send` `LanguageSpec`):
-  - `LexerBundle` { grammar_rules, type_infos }
+  - `LexerBundle` { grammar_rules, type_infos, modes }
   - `ParserBundle` { categories, bp_table, rule_infos, follow_inputs, rd_rules,
-    cross_rules, cast_rules }
+    cross_rules, cast_rules, custom_tokens }
 - **Extraction**: `extract_from_spec()` converts `LanguageSpec` into bundles,
   handling terminal collection, mixfix part extraction, and RD syntax conversion
 - **Code generation**: calls lexer and parser codegen, builds a single `String` buffer,
@@ -158,7 +162,7 @@ lib.rs
 
 - `StateId` (u32), `ClassId` (u8), `DEAD_STATE` sentinel
 - `Span` (start, end positions)
-- `TokenKind` enum (Eof, Ident, Integer, Float, True, False, StringLit, Fixed, Dollar, DoubleDollar)
+- `TokenKind` enum (Eof, Ident, Integer, Float, True, False, StringLit, Fixed, Dollar, DoubleDollar, Custom)
 - `CharClass` (Single, Range, Class)
 - `NfaState`, `Nfa`, `NfaFragment` -- NFA representation
 - `DfaState`, `Dfa` -- DFA representation (dense `Vec<StateId>` transitions)
@@ -167,6 +171,9 @@ lib.rs
 ### `automata/nfa.rs` -- Thompson's Construction + Aho-Corasick Keyword Trie
 
 - `build_nfa(terminals, needs) -> Nfa`
+- `build_nfa_with_custom(terminals, needs, patterns, custom_tokens) -> Nfa` -- adds
+  custom token regex fragments alongside built-in patterns
+- `build_nfa_for_mode(custom_tokens) -> Nfa` -- builds a mode-only NFA (no terminals/builtins)
 - `build_keyword_trie(nfa, terminals) -> StateId` -- builds prefix-sharing trie
   directly into the NFA, replacing per-terminal epsilon chains for fixed terminals.
   Single epsilon from `global_start` to `trie_root` (vs N epsilons for N terminals).
@@ -203,13 +210,16 @@ lib.rs
 
 ### `automata/codegen.rs` -- DFA to Rust Code (String-Based)
 
-- `generate_lexer_string(dfa, partition, token_kinds, language_name) -> String`
+- `generate_lexer_string(dfa, partition, token_kinds, language_name, custom_tokens) -> String`
+- `generate_modal_lexer_string(...)` -- generates multi-mode lexer with per-mode DFA
+  tables, mode stack dispatch, push/pop action tables, and optional stream routing
 - Builds entire lexer as a `String` buffer; no intermediate `TokenStream` allocations
 - Two strategies:
   - **Direct-coded** (DFA states <= 30): each state is a match arm in `dfa_next()`
   - **Table-driven** (DFA states > 30): flat `TRANSITIONS` array with row indexing
 - Generates `Token<'a>` enum with zero-copy borrowed fields:
-  `Ident(&'a str)`, `StringLit(&'a str)`, `Dollar(&'a str)`, `DoubleDollar(&'a str)`
+  `Ident(&'a str)`, `StringLit(&'a str)`, `Dollar(&'a str)`, `DoubleDollar(&'a str)`,
+  plus custom payload variants (e.g., `HexLit(i64)`) and unit variants
 - Generates `Position` and `Range` structs for structured source locations
 - Calls `write_runtime_types_import()` to import shared `ParseError` from `runtime_types.rs`:
   `UnexpectedToken`, `UnexpectedEof`, `TrailingTokens`, `LexError`, `RecoveryApplied`
@@ -256,8 +266,14 @@ lib.rs
 
 - `generate_lexer(input) -> (TokenStream, LexerStats)`
 - `generate_lexer_as_string(input) -> (String, LexerStats)` (used by pipeline)
+- `generate_lexer_as_string_hybrid(input) -> (String, LexerStats)` -- with AL02 hybrid
+  gating; when modes or stream annotations present, calls `generate_modal_lexer_string()`
 - `extract_terminals(grammar_rules, type_infos) -> LexerInput`
+- `LexerInput` includes `custom_tokens`, `modes: Vec<LexerModeInput>`
+- `LexerModeInput` { name, custom_tokens } -- per-mode token definitions
+- `ModeDfaResult` { name, mode_id, min_dfa, partition, token_kinds, custom_tokens }
 - Chains: terminals → NFA (with Aho-Corasick trie) → partition → DFA → minimize → codegen
+- Modal path: per-mode `build_nfa_for_mode()` → subset → minimize → `ModeDfaResult`
 - Detects native types (i32/i64 → integer, f64 → float, bool → boolean, String → string)
 - Injects `true`/`false` keyword terminals for bool types
 - Returns pipeline statistics (NFA/DFA/minimized state counts, equivalence class count)

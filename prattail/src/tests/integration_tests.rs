@@ -72,6 +72,10 @@ fn calculator_spec() -> LanguageSpec {
         literal_patterns: LiteralPatterns::default(),
         recovery_config: crate::recovery::RecoveryConfig::default(),
         semantic_dependency_groups: Vec::new(),
+        custom_tokens: Vec::new(),
+        modes: Vec::new(),
+        sync: None,
+        tree_invariants: Vec::new(),
     }
 }
 
@@ -187,6 +191,10 @@ fn test_generate_parser_two_categories() {
         literal_patterns: LiteralPatterns::default(),
         recovery_config: crate::recovery::RecoveryConfig::default(),
         semantic_dependency_groups: Vec::new(),
+        custom_tokens: Vec::new(),
+        modes: Vec::new(),
+        sync: None,
+        tree_invariants: Vec::new(),
     };
 
     let code = generate_parser(&spec);
@@ -476,7 +484,7 @@ mod wfst_lexer_weight_tests {
         let dfa = subset_construction(&nfa, &partition);
         let dfa = minimize_dfa(&dfa);
         let (code, _, _variant_map, _ambiguity) =
-            generate_lexer_string(&dfa, &partition, &token_kinds, "test");
+            generate_lexer_string(&dfa, &partition, &token_kinds, "test", &[]);
         code
     }
 
@@ -1145,6 +1153,10 @@ mod wfst_lexer_weight_tests {
             literal_patterns: LiteralPatterns::default(),
             recovery_config: crate::recovery::RecoveryConfig::default(),
             semantic_dependency_groups: Vec::new(),
+            custom_tokens: Vec::new(),
+            modes: Vec::new(),
+            sync: None,
+            tree_invariants: Vec::new(),
         };
 
         let (_code, analysis) = crate::generate_parser_with_analysis(&spec);
