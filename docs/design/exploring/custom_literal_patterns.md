@@ -1,3 +1,4 @@
+<!--
 ---
 name: Custom numeric literal patterns
 overview: Add an optional `literals { ... }` block so users define Int/Float literal syntax via a regex-like pattern (what the lexer matches) and Rust parse code (how to convert matched text to a value). Patterns can be prefix or suffix (e.g. 0x or xh); the Rust code must align. Collection delimiters stay in `types { ... }`.
@@ -17,8 +18,8 @@ todos:
   - id: tests
     content: Add tests for Int (prefix/suffix, hex/octal/binary, underscore), Float (underscore, exponent), Bool (yes/no), Str (single-quoted, escaping); and backward compatibility when literals {} is absent.
     status: pending
-isProject: false
 ---
+-->
 
 ### Goal
 
