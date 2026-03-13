@@ -383,6 +383,34 @@ impl LanguageDef {
             .find(|t| matches!(t.collection_kind.as_ref(), Some(CollectionCategory::Map(_))))
             .map(|t| &t.name)
     }
+
+    /// Label of the term that injects a collection type (List, Bag, Map) into the primary category.
+    /// E.g. for RhoCalc with CastList . l:List |- l : Proc, returns CastList for "List".
+    pub fn injection_term_label_for_collection(&self, collection_type: &str) -> Option<Ident> {
+        use super::grammar::TermParam;
+        use super::types::TypeExpr;
+        let primary = self.types.first().map(|t| &t.name)?;
+        for rule in &self.terms {
+            if &rule.category != primary {
+                continue;
+            }
+            let ctx = rule.term_context.as_ref()?;
+            if ctx.len() != 1 {
+                continue;
+            }
+            let param = &ctx[0];
+            let TermParam::Simple { ty, .. } = param else {
+                continue;
+            };
+            let TypeExpr::Base(cat) = ty else {
+                continue;
+            };
+            if cat.to_string() == collection_type {
+                return Some(rule.label.clone());
+            }
+        }
+        None
+    }
 }
 
 // Implement Parse for LanguageDef

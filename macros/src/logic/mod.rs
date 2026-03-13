@@ -774,7 +774,7 @@ fn generate_fold_big_step_rules(
                             } else {
                                 (fold_rel.clone(), fold_rel.clone())
                             };
-                        // CountBag(bag, elem): only fold when first arg is ProcBag (avoids panic
+                        // CountBag(bag, elem): only fold when first arg is Bag-injection variant (avoids panic
                         // when folding count(*(b), *(e)) before comm substitutes b,e)
                         let is_count_bag_proc = rule.label == "CountBag"
                             && rule
@@ -784,7 +784,15 @@ fn generate_fold_big_step_rules(
                                 .map(|p| matches!(p, TermParam::Simple { ty: TypeExpr::Base(t), .. } if *t == "Proc"))
                                 .unwrap_or(false);
                         let proc_bag_guard = if is_count_bag_proc {
-                            quote! { if (match & lv { Proc::ProcBag(_) => true, _ => false }), }
+                            let primary_cat = language
+                                .types
+                                .first()
+                                .map(|t| t.name.clone())
+                                .unwrap_or_else(|| format_ident!("Proc"));
+                            let bag_label = language
+                                .injection_term_label_for_collection("Bag")
+                                .unwrap_or_else(|| format_ident!("ProcBag"));
+                            quote! { if (match & lv { #primary_cat::#bag_label(_) => true, _ => false }), }
                         } else {
                             quote! {}
                         };

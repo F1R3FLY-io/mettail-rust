@@ -246,8 +246,15 @@ fn generate_subterm_pool_arms(language: &LanguageDef, src: &Ident, tgt: &Ident) 
                 .filter_map(|&i| {
                     let name = format_ident!("f{}", i);
                     let wrapper_variant = match fields[i].1.to_string().as_str() {
-                        "List" => quote! { ProcList },
-                        "Bag" => quote! { ProcBag },
+                        "List" => language
+                            .injection_term_label_for_collection("List")
+                            .unwrap_or_else(|| format_ident!("ProcList")),
+                        "Bag" => language
+                            .injection_term_label_for_collection("Bag")
+                            .unwrap_or_else(|| format_ident!("ProcBag")),
+                        "Map" => language
+                            .injection_term_label_for_collection("Map")
+                            .unwrap_or_else(|| format_ident!("ProcMap")),
                         _ => return None,
                     };
                     Some(quote! { buf.push(#proc_ident::#wrapper_variant(Box::new(#name.as_ref().clone()))); })

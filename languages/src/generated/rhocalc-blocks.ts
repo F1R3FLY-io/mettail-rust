@@ -222,10 +222,10 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Proc List: ...
+	// Cast List: ...
 	{
-		type: "proc_proc_list",
-		tooltip: "Proc List: ...",
+		type: "proc_cast_list",
+		tooltip: "Cast List: ...",
 		message0: "%1",
 		args0: [
 			{
@@ -240,10 +240,10 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Proc Bag: ...
+	// Cast Bag: ...
 	{
-		type: "proc_proc_bag",
-		tooltip: "Proc Bag: ...",
+		type: "proc_cast_bag",
+		tooltip: "Cast Bag: ...",
 		message0: "%1",
 		args0: [
 			{
@@ -258,10 +258,10 @@ const definitions = [
 		colour: "208bfe",
 	},
 
-	// Proc Map: ...
+	// Cast Map: ...
 	{
-		type: "proc_proc_map",
-		tooltip: "Proc Map: ...",
+		type: "proc_cast_map",
+		tooltip: "Cast Map: ...",
 		message0: "%1",
 		args0: [
 			{
