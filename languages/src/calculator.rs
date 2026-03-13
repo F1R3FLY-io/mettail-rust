@@ -40,8 +40,16 @@ language! {
             eval: ![ { text.replace('_', "").parse::<f64>().unwrap_or(f64::NAN) } ]
         }
         Bool {
-            pattern: r"yes|no";
-            eval: ![ { text == "yes" } ]
+            pattern: r"yeap|nope|true|false";
+            eval: ![ {
+                match text {
+                    "yeap" => true,
+                    "nope" => false,
+                    "true" => true,
+                    "false" => false,
+                    _ => panic!("expected \"yeap\" or \"nope\", \"true\" or \"false\", got {:?}", text),
+                }
+            } ]
         }
         Str {
             pattern: r"'([^'\\]|\\.)*'";
