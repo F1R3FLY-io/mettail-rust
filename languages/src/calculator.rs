@@ -20,20 +20,17 @@ language! {
     },
     literals {
         Int {
-            pattern: r"[+-]?(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
+            pattern: r"(0b[01](_?[01])*|0o[0-7](_?[0-7])*|0x[0-9A-Fa-f](_?[0-9A-Fa-f])*|[0-9](_?[0-9])*)";
             eval: ![ {
                 let s = text.replace('_', "");
-                let (sign, body) = match s.strip_prefix('-') {
-                    Some(rest) => (-1_i32, rest),
-                    None => (1_i32, s.as_str()),
-                };
+                let body = s.as_str();
                 let (radix, digits) = if let Some(h) = body.strip_prefix("0x") { (16, h) }
                     else if let Some(o) = body.strip_prefix("0o") { (8, o) }
                     else if let Some(b) = body.strip_prefix("0b") { (2, b) }
                     else { (10, body) };
 
-                match i32::from_str_radix(digits, radix) {
-                    Ok(n) => Ok(sign * n),
+                match i64::from_str_radix(digits, radix) {
+                    Ok(n) => Ok(n),
                     Err(e) => Err(e),
                 }
             } ]
@@ -62,14 +59,14 @@ language! {
             } ]
         }
         Str {
-            pattern: r"'([^'\\]|\\.)*'";
+            pattern: r#""([^"\\]|\\.)*""#;
             eval: ![ {
                 if text.len() < 2 {
                     Err(())
                 } else {
                     let inner = &text[1..text.len()-1];
                     let unescaped = inner
-                        .replace("\\'", "'")
+                        .replace("\\\"", "\"")
                         .replace("\\\\", "\\");
                     Ok(unescaped.to_string())
                 }

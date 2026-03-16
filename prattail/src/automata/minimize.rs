@@ -259,8 +259,9 @@ pub fn minimize_dfa(dfa: &Dfa) -> Dfa {
     let representative = partitions[start_partition][0];
     new_dfa.states[0].accept = dfa.states[representative as usize].accept.clone();
     new_dfa.states[0].weight = dfa.states[representative as usize].weight;
-    new_dfa.states[0].accept_candidates =
-        dfa.states[representative as usize].accept_candidates.clone();
+    new_dfa.states[0].accept_candidates = dfa.states[representative as usize]
+        .accept_candidates
+        .clone();
 
     // Assign remaining states
     for &part_idx in &non_empty {

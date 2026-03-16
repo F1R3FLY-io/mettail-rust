@@ -405,7 +405,7 @@ impl LanguageDef {
             let TypeExpr::Base(cat) = ty else {
                 continue;
             };
-            if cat.to_string() == collection_type {
+            if *cat == collection_type {
                 return Some(rule.label.clone());
             }
         }
@@ -554,21 +554,14 @@ fn parse_literals(input: ParseStream) -> SynResult<LiteralBlock> {
         }
         let _ = type_block.parse::<Token![:]>()?;
         if !type_block.peek(Token![!]) || !type_block.peek2(syn::token::Bracket) {
-            return Err(syn::Error::new(
-                type_block.span(),
-                "expected eval: ![ ... ]",
-            ));
+            return Err(syn::Error::new(type_block.span(), "expected eval: ![ ... ]"));
         }
         let _ = type_block.parse::<Token![!]>()?;
         let eval_content;
         syn::bracketed!(eval_content in type_block);
         let eval = eval_content.parse::<syn::Expr>()?;
 
-        specs.push(LiteralSpec {
-            type_name,
-            pattern,
-            eval,
-        });
+        specs.push(LiteralSpec { type_name, pattern, eval });
 
         if type_block.peek(Token![;]) {
             let _ = type_block.parse::<Token![;]>()?;

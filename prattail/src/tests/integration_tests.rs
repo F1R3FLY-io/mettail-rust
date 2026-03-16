@@ -101,10 +101,7 @@ fn test_custom_literal_eval_in_generated_lexer() {
     use crate::RuleSpecInput;
     // When literal_eval is set for Int, generated code should use it instead of default parse
     let mut literal_eval = std::collections::HashMap::new();
-    literal_eval.insert(
-        "Int".to_string(),
-        "text.parse::<i64>().unwrap_or(-1_i64)".to_string(),
-    );
+    literal_eval.insert("Int".to_string(), "text.parse::<i64>().unwrap_or(-1_i64)".to_string());
     let spec = LanguageSpec::with_options(
         "CustomInt".to_string(),
         vec![CategorySpec {

@@ -444,6 +444,7 @@ impl LanguageSpec {
     /// All classification flags (is_infix, is_postfix, is_cast, etc.) are
     /// derived automatically via [`classify::classify_rule()`]. The bridge
     /// only needs to provide structural data and DSL annotations.
+    #[allow(clippy::too_many_arguments)]
     pub fn with_options(
         name: String,
         types: Vec<CategorySpec>,

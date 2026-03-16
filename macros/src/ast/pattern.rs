@@ -1399,13 +1399,13 @@ impl Pattern {
                             .injection_term_label_for_collection("List")
                             .unwrap_or_else(|| quote::format_ident!("ProcList"));
                         quote! { #elem_cat::#label(Box::new(#expr)) }
-                    }
+                    },
                     Some("Bag") => {
                         let label = language
                             .injection_term_label_for_collection("Bag")
                             .unwrap_or_else(|| quote::format_ident!("ProcBag"));
                         quote! { #elem_cat::#label(Box::new(#expr)) }
-                    }
+                    },
                     _ => expr,
                 }
             })
@@ -1510,13 +1510,13 @@ fn generate_collection_rhs_with_constructor(
                             .injection_term_label_for_collection("List")
                             .unwrap_or_else(|| quote::format_ident!("ProcList"));
                         quote! { #elem_cat::#label(Box::new(#expr)) }
-                    }
+                    },
                     Some("Bag") => {
                         let label = language
                             .injection_term_label_for_collection("Bag")
                             .unwrap_or_else(|| quote::format_ident!("ProcBag"));
                         quote! { #elem_cat::#label(Box::new(#expr)) }
-                    }
+                    },
                     _ => expr,
                 }
             })

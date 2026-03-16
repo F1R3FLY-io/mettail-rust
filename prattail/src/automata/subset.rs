@@ -256,7 +256,11 @@ mod tests {
         for &byte in b"error" {
             let class = partition.classify(byte);
             state = dfa.transition(state, class);
-            assert_ne!(state, DEAD_STATE, "should not reach dead state while lexing 'error'");
+            assert_ne!(
+                state,
+                crate::automata::DEAD_STATE,
+                "should not reach dead state while lexing 'error'"
+            );
         }
 
         // After "error", should be in a state accepting Fixed("error"), not Ident
